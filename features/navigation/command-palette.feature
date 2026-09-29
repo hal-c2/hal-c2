@@ -235,7 +235,6 @@ Feature: Command palette
         | entry                            | title                       | outcome                                                        |
         | action:usage                     | Open usage                  | the usage page opens                                           |
         | action:settings                  | Open settings               | settings open                                                  |
-
         | action:new-thread                | New thread in hal-c2        | a new thread starts in "hal-c2"                                |
         | action:new-thread-in             | New thread in...            | the palette lists projects with the current project first      |
         | action:copy-thread-reference     | Copy thread ID              | the thread id is on the clipboard                              |
