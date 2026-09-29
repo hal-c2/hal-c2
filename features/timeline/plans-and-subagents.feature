@@ -14,6 +14,11 @@
 #   apps/desktop-qt/src/native/ComposerController.cpp (a plan is offered once its turn is over)
 #   apps/tui/src/orchestrationV2Adapter.ts (Proposed plan, Updated plan, subagent progress, Forked thread, Transferred context, Created thread)
 #   apps/tui/src/components/ChatView.tsx (Implement plan)
+#   apps/web/src/components/AgentsPanel.tsx at d58daf4f5^ (the Agents tab: status, elapsed, activity)
+#   apps/server-ex/lib/hal_c2/projection/background_work.ex (running commands)
+#   apps/desktop-qt/src/native/AgentsModel.cpp
+#   apps/desktop-qt/qml/HalC2/Bricks/AgentsPanel.qml
+#   apps/desktop-qt/tests/native/features/AgentsSteps.cpp
 
 Feature: Plans and subagents
   An agent in plan mode proposes a plan the user can refine or implement. An agent can
@@ -135,3 +140,44 @@ Feature: Plans and subagents
       | the context is handed to another agent | Context handoff   |
       | the agent creates a thread             | Created thread    |
       | the context is compacted               | Context compacted |
+
+  @desktop
+  Scenario: The Agents tab lists the thread's subagents
+    Given the agent started the subagents "Tax tests" and "Docs"
+    And "Docs" finished 75 seconds after it started
+    When the user opens the Agents tab
+    Then the Agents tab lists "Tax tests" as "Working" and "Docs" as "Completed"
+    And "Docs" is shown to have taken "1m 15s"
+
+  @desktop
+  Scenario: A subagent's elapsed time moves only while the Agents tab shows
+    Given the agent started the subagent "Tax tests" 12 seconds ago
+    When the user opens the Agents tab
+    Then "Tax tests" is shown to have taken "12s"
+    When a second passes
+    Then "Tax tests" is shown to have taken "13s"
+    When the user switches to the Diff tab
+    Then the Agents tab's times stand still
+
+  @desktop
+  Scenario: The Agents tab follows a subagent as it finishes
+    Given the agent started the subagent "Tax tests" 12 seconds ago
+    And the user opens the Agents tab
+    When the subagent finishes with "12 tests added"
+    Then the Agents tab lists "Tax tests" as "Completed" with "12 tests added"
+    And the Agents tab's times stand still
+
+  @desktop
+  Scenario: The Agents tab lists the commands still running
+    Given the agent is running the command "bun test cart"
+    When the user opens the Agents tab
+    Then the Agents tab lists the running command "bun test cart"
+    When the command finishes
+    Then the Agents tab lists no running command
+
+  @desktop
+  Scenario: A subagent's thread opens from the Agents tab
+    Given the agent started the subagent "Tax tests" 12 seconds ago
+    And the user opens the Agents tab
+    When the user opens "Tax tests" from the Agents tab
+    Then the subagent's thread is shown

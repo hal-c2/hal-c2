@@ -3,6 +3,8 @@
 #include <QJsonObject>
 #include <QUrl>
 
+#include <algorithm>
+
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "NativeShell.h"
@@ -10,6 +12,7 @@
 #include "NodeClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "TerminalController.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
 
@@ -19,9 +22,13 @@ const NativeControllerRegistrar<RightPanelController> registrar(QStringLiteral("
                                                                 "Panel");
 
 const QString kRightPanel = QStringLiteral("rightPanel");
+const QString kTerminalTab = QStringLiteral("terminal:");
 
 QString titleOf(const QString& kind) {
-  return kind == QLatin1String("diff") ? QStringLiteral("Diff") : QStringLiteral("Files");
+  if (kind == QLatin1String("diff")) return QStringLiteral("Diff");
+  if (kind == QLatin1String("agents")) return QStringLiteral("Agents");
+  if (kind == QLatin1String("terminal")) return QStringLiteral("Terminal");
+  return QStringLiteral("Files");
 }
 
 }  // namespace
@@ -36,7 +43,8 @@ RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* clie
                if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) toasts->show(type, title, description);
              },
              this),
-      m_files(client, this) {
+      m_files(client, this),
+      m_agents(this) {
   connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
     if (key == kRightPanel) onPage(value);
   });
@@ -51,6 +59,10 @@ void RightPanelController::activate() {
   auto* shell = NativeShell::of(this);
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, &RightPanelController::retarget);
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &RightPanelController::retarget);
+  // Its panel groups come and go with their terminals.
+  if (auto* terminals = shell->controller<TerminalController>()) {
+    connect(terminals, &TerminalController::changed, this, &RightPanelController::update);
+  }
   if (auto* keys = shell->controller<KeybindingController>()) {
     const auto add = [keys](const QString& command, std::function<void()> run) {
       keys->commands()->add(command, keybindings::commandLabel(command), std::move(run));
@@ -74,6 +86,8 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     closeTab(map.value(QStringLiteral("id")).toString());
   } else if (action == QLatin1String("rightPanel.add")) {
     addTab(map.value(QStringLiteral("kind")).toString());
+  } else if (action == QLatin1String("rightPanel.openThread")) {
+    openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {
     open(map.value(QStringLiteral("tab")).toString(), map);
   } else {
@@ -103,10 +117,21 @@ void RightPanelController::retarget() {
                  .value(QLatin1String("workspaceRoot"))
                  .toString();
     }
-    m_diff.setThread(environmentId, threadId, shell->controller<ThreadStore>()->timeline(threadKey));
+    TimelineModel* timeline = shell->controller<ThreadStore>()->timeline(threadKey);
+    m_diff.setThread(environmentId, threadId, timeline);
+    m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root);
   }
   update();
+}
+
+QString RightPanelController::kindOf(const QString& id) {
+  return id.startsWith(kTerminalTab) ? QStringLiteral("terminal") : id;
+}
+
+QStringList RightPanelController::terminalGroups() const {
+  auto* terminals = NativeShell::of(this)->controller<TerminalController>();
+  return terminals ? terminals->panelGroups(m_thread) : QStringList();
 }
 
 // --- The page's tabs -----------------------------------------------------------------
@@ -117,7 +142,7 @@ QVariantList RightPanelController::pageTabs() const {
   for (const QVariant& value : m_page.value(QStringLiteral("surfaces")).toList()) {
     const QVariantMap surface = value.toMap();
     const QString kind = surface.value(QStringLiteral("kind")).toString();
-    // The page's diff, files and file tabs are drawn natively instead.
+    // The page's diff, files, file and terminal tabs are drawn natively instead.
     if (nativeKinds.contains(kind) || kind == QLatin1String("file")) continue;
     tabs.append(QVariantMap{{QStringLiteral("id"), surface.value(QStringLiteral("id"))},
                             {QStringLiteral("kind"), kind},
@@ -213,7 +238,7 @@ void RightPanelController::setOpen(bool open) {
 }
 
 void RightPanelController::open(const QString& tab, const QVariantMap& options) {
-  if (!m_onThread || !nativeKinds.contains(tab)) return;
+  if (!m_onThread || (tab != QLatin1String("diff") && tab != QLatin1String("files"))) return;
   showTab(tab);
   const QString path = options.value(QStringLiteral("path")).toString();
   if (tab == QLatin1String("diff")) {
@@ -233,7 +258,10 @@ void RightPanelController::open(const QString& tab, const QVariantMap& options) 
 void RightPanelController::showTab(const QString& id) {
   if (!m_onThread || id.isEmpty()) return;
   Panel& state = panel();
-  if (nativeKinds.contains(id)) {
+  if (kindOf(id) == QLatin1String("terminal")) {
+    if (!terminalGroups().contains(id.mid(kTerminalTab.size()))) return;
+    if (!state.tabs.contains(id)) state.tabs.append(id);
+  } else if (nativeKinds.contains(id)) {
     if (!state.tabs.contains(id)) state.tabs.append(id);
   } else if (!hasPageTab(id)) {
     return;
@@ -261,11 +289,22 @@ void RightPanelController::closeTab(const QString& id) {
     state.active = after.isEmpty() ? QString() : after.at(std::min(at, after.size() - 1));
     if (after.isEmpty()) state.open = false;
   }
+  if (kindOf(closing) == QLatin1String("terminal")) {
+    // Its terminals go too, as the web's closeTerminalSurface.
+    if (auto* terminals = NativeShell::of(this)->controller<TerminalController>()) terminals->closeGroup(closing.mid(kTerminalTab.size()));
+  }
   update();
 }
 
 void RightPanelController::addTab(const QString& kind) {
   if (!m_onThread) return;
+  if (kind == QLatin1String("terminal")) {
+    // A new terminal of its own, beside the drawer's.
+    auto* terminals = NativeShell::of(this)->controller<TerminalController>();
+    const QString group = terminals && terminals->threadKey() == m_thread ? terminals->addPanelGroup() : QString();
+    if (!group.isEmpty()) showTab(kTerminalTab + group);
+    return;
+  }
   if (nativeKinds.contains(kind)) {
     showTab(kind);
     return;
@@ -283,12 +322,30 @@ void RightPanelController::toggleDiff() {
   }
 }
 
+void RightPanelController::openThread(const QString& threadKey) {
+  if (threadKey.isEmpty()) return;
+  NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(threadKey));
+}
+
 // --- Out -----------------------------------------------------------------------------
 
 void RightPanelController::update() {
   if (m_onThread) {
     Panel& state = panel();
-    // A page tab that went away (closed on the page) hands over to the next.
+    // A terminal tab whose terminals all ended (here, in another client, or
+    // the node's) goes, and so does a page tab that went away (closed on the
+    // page): the next one shows.
+    const QStringList groups = terminalGroups();
+    const QStringList before = tabIds();
+    state.tabs.removeIf([&groups](const QString& id) {
+      return kindOf(id) == QLatin1String("terminal") && !groups.contains(id.mid(kTerminalTab.size()));
+    });
+    if (kindOf(state.active) == QLatin1String("terminal") && !state.tabs.contains(state.active)) {
+      const QStringList after = tabIds();
+      const qsizetype at = before.indexOf(state.active);
+      state.active = after.isEmpty() ? QString() : after.at(std::clamp<qsizetype>(at, 0, after.size() - 1));
+      if (after.isEmpty()) state.open = false;
+    }
     if (isPageTab(state.active) && m_page.value(QStringLiteral("threadKey")).toString() == m_thread &&
         !hasPageTab(state.active)) {
       const QStringList ids = tabIds();
@@ -299,6 +356,7 @@ void RightPanelController::update() {
   const bool open = isOpen();
   m_diff.setActive(open && activeTab() == QLatin1String("diff"));
   m_files.setActive(open && activeTab() == QLatin1String("files"));
+  m_agents.setActive(open && activeTab() == QLatin1String("agents"));
   follow();
   publish();
   emit changed();
@@ -329,10 +387,13 @@ void RightPanelController::publish() {
   const Panel state = current();
   QVariantList tabs;
   for (const QString& id : state.tabs) {
-    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), id}, {QStringLiteral("title"), titleOf(id)}, {QStringLiteral("native"), true}});
+    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(kindOf(id))}, {QStringLiteral("native"), true}});
   }
   tabs.append(pageTabs());
   const bool pageKnown = m_page.value(QStringLiteral("threadKey")).toString() == m_thread;
+  // Terminals need the thread's place on an environment the node reaches.
+  auto* terminals = NativeShell::of(this)->controller<TerminalController>();
+  const bool canTerminal = terminals && terminals->available() && terminals->threadKey() == m_thread;
   const QVariantMap canAdd = pageKnown ? m_page.value(QStringLiteral("canAdd")).toMap() : QVariantMap();
   const QString environmentId = m_thread.left(m_thread.indexOf(QLatin1Char(':')));
   const QString threadId = m_thread.mid(m_thread.indexOf(QLatin1Char(':')) + 1);
@@ -345,7 +406,8 @@ void RightPanelController::publish() {
                         {QStringLiteral("canAdd"),
                          QVariantMap{{QStringLiteral("diff"), true},
                                      {QStringLiteral("files"), !m_files.root().isEmpty()},
-                                     {QStringLiteral("terminal"), canAdd.value(QStringLiteral("terminal")).toBool()},
+                                     {QStringLiteral("agents"), true},
+                                     {QStringLiteral("terminal"), canTerminal},
                                      {QStringLiteral("pullRequest"), canAdd.value(QStringLiteral("pullRequest")).toBool()}}},
                         {QStringLiteral("embedPath"),
                          pageKnown ? m_page.value(QStringLiteral("embedPath")).toString()

@@ -382,8 +382,9 @@ private slots:
     QVERIFY(terminals);
     terminals->setProperty("available", true);
     terminals->setProperty("height", 240);
-    QMetaObject::invokeMethod(terminals, "addTab", Q_ARG(QVariant, "term-1"), Q_ARG(QVariant, "Terminal 1"));
+    QMetaObject::invokeMethod(terminals, "addTab", Q_ARG(QVariant, "term-1"), Q_ARG(QVariant, "Terminal 1"), Q_ARG(QVariant, QVariant()));
     terminals->setProperty("activeTerminalId", "term-1");
+    terminals->setProperty("activeGroup", "term-1");
     auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
     QVERIFY(window);
     window->requestActivate();
@@ -397,7 +398,7 @@ private slots:
 
     // The toggle opened the drawer and asked for focus: the terminal gets the keys.
     terminals->setProperty("open", true);
-    QMetaObject::invokeMethod(terminals, "focusRequested");
+    QMetaObject::invokeMethod(terminals, "focusRequested", Q_ARG(QString, "term-1"));
     QTRY_VERIFY(window->activeFocusItem() && drawer->isAncestorOf(window->activeFocusItem()));
     QCOMPARE(window->activeFocusItem()->objectName(), QString("HalC2Terminal"));
 
@@ -412,6 +413,62 @@ private slots:
     terminals->setProperty("open", false);
     QTRY_COMPARE(window->activeFocusItem(), composer);
 
+    QMetaObject::invokeMethod(terminals, "reset");
+  }
+
+  // Scenario: The user splits a terminal tab (features/terminal/tabs.feature): the
+  // right panel's terminal tab lays its group out side by side, and its split
+  // buttons act on the group's active terminal until the group is full.
+  void terminalPanelTabShowsItsSplitGroup() {
+    QFile source(directory.filePath("shell.qml"));
+    QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    source.write("import QtQuick\nimport HalC2.Bricks\nShellWindow { width: 800; height: 400; RightPanel { anchors.fill: parent } }");
+    source.close();
+    bridge.publish("panel", QJsonDocument::fromJson(R"({
+      "isOpen": true, "activeId": "terminal:group-1", "embedPath": "/test",
+      "tabs": [{"id": "terminal:group-1", "kind": "terminal", "title": "Terminal", "native": true}],
+      "canAdd": {"diff": true, "files": true, "terminal": true, "pullRequest": false}
+    })").toVariant());
+    runtime->reload();
+    QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    QObject* terminals = terminalsOf(engine);
+    QVERIFY(terminals);
+    terminals->setProperty("available", true);
+    QMetaObject::invokeMethod(terminals, "addTab", Q_ARG(QVariant, "term-1"), Q_ARG(QVariant, "Terminal 1"), Q_ARG(QVariant, QVariant()));
+    QMetaObject::invokeMethod(terminals, "addTab", Q_ARG(QVariant, "term-2"), Q_ARG(QVariant, "Terminal 2"),
+                              Q_ARG(QVariant, QVariantMap({{"group", "group-1"}, {"panel", true}, {"slot", 0}, {"span", 2}})));
+    QMetaObject::invokeMethod(terminals, "addTab", Q_ARG(QVariant, "term-3"), Q_ARG(QVariant, "Terminal 3"),
+                              Q_ARG(QVariant, QVariantMap({{"group", "group-1"}, {"panel", true}, {"slot", 1}, {"span", 2}, {"current", true}})));
+    terminals->setProperty("groupSizes", QVariantMap{{"group-1", 2}});
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    QTRY_VERIFY(findVisualItem(window->contentItem(), "terminalCell-term-3"));
+    auto* left = findVisualItem(window->contentItem(), "terminalCell-term-2");
+    auto* right = findVisualItem(window->contentItem(), "terminalCell-term-3");
+    QVERIFY(left);
+    auto* drawers = findVisualItem(window->contentItem(), "terminalCell-term-1");
+    QVERIFY(drawers && !drawers->isVisible() && !drawers->property("item").value<QQuickItem*>());  // the drawer's, not made here
+    QTRY_VERIFY(right->width() > 0);
+    QCOMPARE(left->y(), right->y());
+    QCOMPARE(left->x() + left->width(), right->x());
+    QVERIFY(qAbs(left->width() - right->width()) <= 1);
+
+    auto* split = findVisualItem(window->contentItem(), "terminalPanelSplit");
+    QVERIFY(split);
+    QSignalSpy actions(&bridge, &ShellBridge::actionRequested);
+    QVERIFY(QMetaObject::invokeMethod(split, "clicked"));
+    QCOMPARE(actions.size(), 1);
+    QCOMPARE(actions.last().at(0).toString(), QString("terminal.split"));
+    QCOMPARE(actions.last().at(1).toMap().value("terminalId").toString(), QString("term-3"));
+
+    terminals->setProperty("groupSizes", QVariantMap{{"group-1", 4}});
+    QTRY_VERIFY(!split->isEnabled());
+    bridge.publish("panel", QVariant());
     QMetaObject::invokeMethod(terminals, "reset");
   }
 

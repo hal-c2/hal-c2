@@ -77,6 +77,8 @@ const ICONS = [
   "sparkles",
   "square",
   "square-pen",
+  "square-split-horizontal",
+  "square-split-vertical",
   "star",
   "terminal",
   "trash",

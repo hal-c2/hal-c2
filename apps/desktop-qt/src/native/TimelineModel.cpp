@@ -14,10 +14,11 @@ namespace {
 // The entity kinds the timeline reads; the stream's others (nodes, provider
 // sessions, ...) are left out. Plans and the user's messages are kept for the
 // composer (turnChanged), checkpoints for the diff panel (checkpointsChanged)
-// and a reply's revert (checkpointOf); they draw no rows.
+// and a reply's revert (checkpointOf), subagents for the Agents tab
+// (agentsChanged); they draw no rows.
 const QSet<QString> kKinds{QStringLiteral("turn-item"),       QStringLiteral("run"),  QStringLiteral("run-attempt"),
                            QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message"),
-                           QStringLiteral("checkpoint")};
+                           QStringLiteral("checkpoint"),      QStringLiteral("subagent")};
 // Turn items the composer's turn state reads (requests).
 const QSet<QString> kTurnItems{QStringLiteral("approval_request"), QStringLiteral("user_input_request")};
 // Turn item fields that move, regroup or refold rows. Anything else (text,
@@ -191,6 +192,7 @@ void TimelineModel::snapshot(int part, const QJsonArray& rows, bool done) {
   restructure({}, true);
   emit turnChanged();
   emit checkpointsChanged();
+  emit agentsChanged();
 }
 
 void TimelineModel::events(const QJsonArray& events) {
@@ -198,12 +200,14 @@ void TimelineModel::events(const QJsonArray& events) {
   bool structural = false;
   m_turnTouched = false;
   m_checkpointsTouched = false;
+  m_agentsTouched = false;
   for (const QJsonValue& value : events) {
     const QJsonArray event = value.toArray();
     structural |= apply(event.at(1).toString(), event.at(2).toString(), event.at(3).toObject(), changed);
   }
   if (m_turnTouched) emit turnChanged();
   if (m_checkpointsTouched) emit checkpointsChanged();
+  if (m_agentsTouched) emit agentsChanged();
   if (structural) {
     restructure(changed, false);
     return;
@@ -222,8 +226,8 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   const auto current = byKind.constFind(id);
   const bool existed = current != byKind.cend();
   const std::optional<QJsonObject> next = patched(existed ? *current : QJsonObject(), patch);
-  if (kind == QLatin1String("checkpoint")) {
-    m_checkpointsTouched = true;
+  if (kind == QLatin1String("checkpoint") || kind == QLatin1String("subagent")) {
+    (kind == QLatin1String("subagent") ? m_agentsTouched : m_checkpointsTouched) = true;
     if (next) {
       byKind.insert(id, *next);
     } else {
@@ -248,6 +252,8 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   }
   if (kind != QLatin1String("turn-item")) {
     m_turnTouched = true;
+    // A run rolled back drops its commands from the Agents tab.
+    if (kind == QLatin1String("run")) m_agentsTouched = true;
     // Runs, attempts and requests change fold labels, visibility and the
     // working state; they change far less often than items.
     if (next) {
@@ -261,6 +267,11 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   const QString type = text(next ? *next : existed ? *current : QJsonObject(), QLatin1String("type"));
   if (kTurnItems.contains(type)) m_turnTouched = true;
   const bool replaced = patch.value(QLatin1String("d")).toBool();
+  // A command starting, settling or going away; not its streamed output.
+  if (type == QLatin1String("command_execution") &&
+      (!existed || !next || replaced || patch.contains(QLatin1String("s")) || patch.contains(QLatin1String("u")))) {
+    m_agentsTouched = true;
+  }
   bool structural = !existed || !next || replaced;
   QStringList fields = patch.value(QLatin1String("s")).toObject().keys();
   for (const QJsonValue& field : patch.value(QLatin1String("u")).toArray()) fields.append(field.toString());

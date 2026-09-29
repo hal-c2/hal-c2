@@ -13,6 +13,7 @@
 #include "NavigationController.h"
 #include "SettingsController.h"
 #include "ThreadMenuController.h"
+#include "RightPanelController.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
 
@@ -98,6 +99,7 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<ComposerController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ThreadStore>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<RightPanelController>()->agents()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
 }
 

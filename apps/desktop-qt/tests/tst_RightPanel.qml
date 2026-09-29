@@ -35,6 +35,33 @@ Item {
         }
     }
 
+    Component {
+        id: agentsComponent
+        AgentsPanel {
+            width: 400
+            height: 600
+        }
+    }
+
+    // An AgentsModel: a running subagent, a finished one, a running command.
+    Component {
+        id: fakeAgents
+        ListModel {
+            ListElement {
+                agentId: "task-tax"; kind: "subagent"; title: "Tax tests"; status: "running"; statusLabel: "Working"
+                elapsed: "12s"; detail: "Writing cart tests"; modelName: "gpt-5.5"; childThreadKey: "env-a:thread-tax"
+            }
+            ListElement {
+                agentId: "task-docs"; kind: "subagent"; title: "Docs"; status: "failed"; statusLabel: "Failed"
+                elapsed: "1m 15s"; detail: "No docs folder"; modelName: ""; childThreadKey: "env-a:thread-docs"
+            }
+            ListElement {
+                agentId: "turn-item:9"; kind: "command"; title: "bun test cart"; status: "running"; statusLabel: "Working"
+                elapsed: "3s"; detail: ""; modelName: ""; childThreadKey: ""
+            }
+        }
+    }
+
     // A WorkspaceFiles with one open file of one long line.
     Component {
         id: fakeFiles
@@ -95,7 +122,7 @@ Item {
             isOpen: true,
             activeId: activeId,
             embedPath: "",
-            canAdd: { diff: true, files: true, terminal: true, pullRequest: false },
+            canAdd: { diff: true, files: true, agents: true, terminal: true, pullRequest: false },
             tabs: [
                 { id: "diff", kind: "diff", title: "Diff", native: true },
                 { id: "files", kind: "files", title: "Files", native: true },
@@ -112,6 +139,7 @@ Item {
             Shell.reset();
             Panel.diff = null;
             Panel.files = null;
+            Panel.agents = null;
         }
 
         function test_nativeTabsKeepTheirBodyAndOnlyPageTabsShowThePage() {
@@ -138,6 +166,26 @@ Item {
             Shell.state = Object.assign({}, Shell.state, { panel: panelState("terminal:default") });
             verify(page.visible);
             verify(!diff.visible && !files.visible);
+        }
+
+        function test_agentsOpenTheirThreadAndCommandsDoNot() {
+            const agents = createTemporaryObject(agentsComponent, root, { source: createTemporaryObject(fakeAgents, root) });
+            const tax = findChild(agents, "agentRow-task-tax");
+            const command = findChild(agents, "agentRow-turn-item:9");
+            tryVerify(() => tax !== null && command !== null);
+            verify(!findChild(agents, "agentsEmpty").visible);
+            mouseClick(tax);
+            compare(Shell.dispatchedActions.length, 1);
+            compare(Shell.dispatchedActions[0].action, "rightPanel.openThread");
+            compare(Shell.dispatchedActions[0].payload.threadKey, "env-a:thread-tax");
+            mouseClick(command);
+            compare(Shell.dispatchedActions.length, 1, "a command has no thread to open");
+        }
+
+        function test_agentsTabSaysWhenThereIsNothing() {
+            const agents = createTemporaryObject(agentsComponent, root, { source: createTemporaryObject(fakeAgents, root) });
+            agents.source.clear();
+            tryVerify(() => findChild(agents, "agentsEmpty").visible);
         }
 
         function test_fileViewerWrapsOrScrollsSideways() {

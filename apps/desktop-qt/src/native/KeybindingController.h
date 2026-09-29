@@ -26,8 +26,9 @@ class ShellBridge;
 //     goes to it as `keybinding.press`; with the page focused the shortcut
 //     stands down and the page handles its own keydown.
 //   - In a terminal, only a sequence that resolves to a native command with
-//     terminalFocus set is taken (mod+j, mod+n, mod+w by default); every other
-//     chord, Ctrl+D or Ctrl+K included, reaches the terminal.
+//     terminalFocus set is taken (mod+j, mod+d, mod+shift+d, mod+n, mod+w by
+//     default, as the web's); every other chord, Ctrl+K included, reaches the
+//     terminal. Where mod is Ctrl, the web's split takes Ctrl+D from the shell.
 //   - Unmodified keys are never registered.
 //
 // Settings → Keybindings edits the rules through the node (`bindings`,

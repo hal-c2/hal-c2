@@ -407,6 +407,19 @@ const Steps steps([] {
     world.waitFor([&world] { return terminals(world)->tabs()->rowCount() == 2; }, [&world] { return describePress(world); });
     expect(!ran(world, QStringLiteral("chat.new")), describePress(world));
   });
+  step(QStringLiteral("a second terminal opens (side by side|stacked below)"), [](World& world, const Captures& c, const Table&) {
+    const bool stacked = c[0] == QLatin1String("stacked below");
+    world.waitFor([&world, stacked] {
+      const QList<TerminalTabs::Row> rows = terminals(world)->tabs()->rows();
+      return rows.size() == 2 && rows.at(0).group == rows.at(1).group && rows.at(1).slot == 1 && rows.at(1).vertical == stacked;
+    }, [&world] { return describePress(world); });
+  });
+  step(QStringLiteral("the terminal splits"), [](World& world, const Captures&, const Table&) {
+    expect(ran(world, QStringLiteral("terminal.split")), describePress(world));
+  });
+  step(QStringLiteral("the diff panel does not toggle"), [](World& world, const Captures&, const Table&) {
+    expect(!ran(world, QStringLiteral("diff.toggle")), describePress(world));
+  });
   step(QStringLiteral("the focused terminal closes"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&world] { return terminals(world)->tabs()->rowCount() == 0 || !terminals(world)->isOpen(); },
                   [&world] { return describePress(world); });

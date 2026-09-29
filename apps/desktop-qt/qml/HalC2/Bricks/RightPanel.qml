@@ -189,9 +189,18 @@ Rectangle {
                     }
 
                     ShellMenuItem {
+                        text: qsTr("Agents")
+                        iconName: "bot"
+                        enabled: panel.open && panel.model.canAdd.agents === true
+                        onTriggered: Shell.dispatch("rightPanel.add", {
+                            kind: "agents"
+                        })
+                    }
+
+                    ShellMenuItem {
                         text: qsTr("Terminal")
                         iconName: "terminal"
-                        enabled: panel.open && panel.model.canAdd.terminal
+                        enabled: panel.open && panel.model.canAdd.terminal === true
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "terminal"
                         })
@@ -225,7 +234,7 @@ Rectangle {
 
                     required property string modelData
                     readonly property var tab: PanelTabs.tabs[modelData]
-                    readonly property bool shown: panel.activeId === modelData
+                    readonly property bool shown: panel.activeTab !== null && panel.activeTab.native && panel.activeTab.kind === modelData
 
                     objectName: "panelBody-" + modelData
                     anchors.fill: parent
@@ -235,7 +244,7 @@ Rectangle {
                         active = true
                     Component.onCompleted: {
                         setSource(Qt.resolvedUrl(tab.brick + ".qml"), {
-                            source: Qt.binding(() => Panel[nativeBody.tab.source])
+                            source: Qt.binding(() => nativeBody.tab.source ? Panel[nativeBody.tab.source] : null)
                         });
                         active = shown;
                     }

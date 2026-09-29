@@ -6,6 +6,7 @@
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop's keymap: native commands, keybinding.press for the page's)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
 #   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake node)
+#   apps/desktop-qt/src/native/TerminalController.cpp (terminal.split, terminal.splitVertical on the focused terminal)
 #   apps/web/src/components/Sidebar.tsx (thread.previous, thread.next and thread.jump follow the sidebar's order)
 #   apps/desktop-qt/qml/HalC2/Bricks/ModelPicker.qml (modelPicker.previousProvider, nextProvider and jump.1-9 while the picker is open)
 #   Keybinding ids: sidebar.toggle, navigation.back, navigation.forward, terminal.toggle,
@@ -68,6 +69,8 @@ Feature: Keybindings
         | modelPicker.jump.9           | mod+9               | with the model picker open | aligned |
         | terminal.new                 | mod+n               | in a terminal              | aligned |
         | terminal.close               | mod+w               | in a terminal              | aligned |
+        | terminal.split               | mod+d               | in a terminal              | aligned |
+        | terminal.splitVertical       | mod+shift+d         | in a terminal              | aligned |
         | rightPanel.close             | mod+w               | outside a terminal         | aligned |
         | pullRequest.copyNumber       | mod+shift+k         | outside a terminal         | aligned |
         | appearance.cycle             | mod+alt+shift+a     | outside a terminal         | aligned |
@@ -93,8 +96,6 @@ Feature: Keybindings
       @backlog
       Examples: Not yet honoured by the native client
         | command                   | key             | context                           | status  |
-        | terminal.split            | mod+d           | in a terminal                     | backlog |
-        | terminal.splitVertical    | mod+shift+d     | in a terminal                     | backlog |
         | preview.toggle            | mod+shift+j     | anywhere                          | backlog |
         | preview.refresh           | mod+r           | in the preview                    | backlog |
         | preview.focusUrl          | mod+l           | in the preview                    | backlog |
@@ -130,7 +131,7 @@ Feature: Keybindings
       Then the command palette does not open
       And the terminal receives the key
 
-    @backlog @desktop
+    @desktop
     Scenario: The same key runs different commands in different contexts
       Given the user is in a terminal
       When the user presses mod+d
@@ -182,7 +183,7 @@ Feature: Keybindings
       @backlog
       Examples: backlog
         | command                   | key           | status  | note                                                  |
-        | terminal.split            | mod+d         | backlog | the native terminal drawer has no splits              |
+        | terminal.split            | mod+d         | backlog | only applies with terminal focus                      |
         | plan and build toggle     | shift+tab     | backlog | the native composer does not handle it                |
         | prompt history            | arrowup       | backlog | the native composer does not recall prompts           |
         | composer.sendAlternate    | mod+enter     | backlog | the window shortcut takes it and loses composer focus |
@@ -328,10 +329,6 @@ Feature: Keybindings
         | key         | result                                       |
         | mod+n       | a new terminal opens instead of a new thread |
         | mod+w       | the focused terminal closes                  |
-
-      @backlog
-      Examples: The native drawer has no splits
-        | key         | result                                       |
         | mod+d       | a second terminal opens side by side         |
         | mod+shift+d | a second terminal opens stacked below        |
 
