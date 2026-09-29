@@ -11,7 +11,8 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/AppWindow.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/AppView.qml
 #   apps/desktop-qt/src/native/NativeShell.cpp (window.new, per-window state)
-#   apps/desktop-qt/tests/tst_ShellWindow.qml (a window's title and minimum size)
+#   apps/desktop-qt/tests/tst_ShellWindow.qml (a window's title and minimum size, the zoomed body, a menu at the pointer)
+#   apps/desktop-qt/src/native/LayoutController.cpp (the app zoom)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (frameless drag and maximize)
 #   apps/desktop-qt/tests/tst_WindowControls.qml (the header asks the system to move the window)
 #   apps/desktop-qt/src/ThemeStore.cpp (the theme's window frame and opacity)
@@ -118,25 +119,38 @@ Feature: Windows, zoom and quitting
 
   Rule: Zoom
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Zooming the app
       When the user presses <key>
       Then the app content is <result>
 
       Examples:
-        | key    | result                 |
-        | mod+=  | larger                 |
-        | mod++  | larger                 |
-        | mod+-  | smaller                |
-        | mod+0  | back to its actual size|
+        | key    | result  |
+        | mod+=  | larger  |
+        | mod++  | larger  |
+        | mod+-  | smaller |
 
+    @desktop
+    Scenario: Actual size undoes the zoom
+      Given the app is zoomed in
+      When the user presses mod+0
+      Then the app content is back to its actual size
+
+    @desktop
+    Scenario: Every window follows the app's zoom
+      Given a second window is open
+      When the user presses mod+=
+      Then the second window's content is larger too
+
+    # The Qt desktop embeds no preview browser (PreviewsPanel opens tabs in the
+    # user's browser), so it has no preview zoom for the app's to disturb.
     @backlog @desktop
     Scenario: Zooming the app keeps the preview's own zoom
       Given the preview is zoomed to 125 percent
       When the user zooms the app in
       Then the preview is still at 125 percent
 
-    @backlog @desktop
+    @desktop
     Scenario: Context menus follow the zoomed app
       Given the app is zoomed in
       When the user opens a context menu

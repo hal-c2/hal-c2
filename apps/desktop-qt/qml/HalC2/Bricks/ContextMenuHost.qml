@@ -56,7 +56,8 @@ Item {
     }
 
     onRequestChanged: {
-        if (!mine) {
+        // Not `mine`: its binding may not have seen this request yet.
+        if (request === null || request.surfaceId !== surfaceId) {
             if (menu.visible) {
                 menu.close();
             }
@@ -73,6 +74,7 @@ Item {
     ShellMenu {
         id: menu
 
+        objectName: "contextMenu"
         property bool chosen: false
 
         onClosed: {

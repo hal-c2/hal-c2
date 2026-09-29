@@ -1,5 +1,9 @@
 #include "LayoutController.h"
 
+#include <QtMath>
+
+#include <algorithm>
+
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "NativeShell.h"
@@ -11,6 +15,11 @@ namespace {
 const NativeControllerRegistrar<LayoutController> registrar(QStringLiteral("layout"), {QStringLiteral("layout")});
 
 const QString kSidebarCollapsed = QStringLiteral("sidebarCollapsed");
+const QString kZoomLevel = QStringLiteral("zoomLevel");
+// The Electron zoom menu's step, and Chromium's 25% to 500%.
+constexpr double kZoomStep = 0.5;
+constexpr double kMinZoomLevel = -7.5;
+constexpr double kMaxZoomLevel = 8.5;
 
 }  // namespace
 
@@ -26,6 +35,14 @@ void LayoutController::load() {
   m_loaded = true;
   if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
     m_sidebarCollapsed = settings->deviceValue(kSidebarCollapsed).toBool();
+    m_zoomLevel = settings->deviceValue(kZoomLevel).toDouble();
+    // Another window zoomed.
+    connect(settings, &SettingsController::deviceChanged, this, [this, settings] {
+      const double level = settings->deviceValue(kZoomLevel).toDouble();
+      if (level == m_zoomLevel) return;
+      m_zoomLevel = level;
+      publish();
+    });
   }
   m_bridge->claimKey(QStringLiteral("layout"));
   publish();
@@ -38,6 +55,9 @@ void LayoutController::activate() {
   if (auto* keys = NativeShell::of(this)->controller<KeybindingController>()) {
     keys->commands()->add(QStringLiteral("sidebar.toggle"), keybindings::commandLabel(QStringLiteral("sidebar.toggle")),
                           [this] { toggleSidebar(); });
+    keys->commands()->add(QStringLiteral("view.zoomIn"), tr("Zoom in"), [this] { setZoomLevel(m_zoomLevel + kZoomStep); });
+    keys->commands()->add(QStringLiteral("view.zoomOut"), tr("Zoom out"), [this] { setZoomLevel(m_zoomLevel - kZoomStep); });
+    keys->commands()->add(QStringLiteral("view.resetZoom"), tr("Actual size"), [this] { setZoomLevel(0); });
   }
 }
 
@@ -57,6 +77,22 @@ void LayoutController::setSidebarCollapsed(bool collapsed) {
   publish();
 }
 
+double LayoutController::zoom() const {
+  return qPow(1.2, m_zoomLevel);
+}
+
+void LayoutController::setZoomLevel(double level) {
+  load();
+  level = std::clamp(level, kMinZoomLevel, kMaxZoomLevel);
+  if (level == m_zoomLevel) return;
+  m_zoomLevel = level;
+  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    settings->writeDevice(kZoomLevel, level == 0 ? QVariant() : QVariant(level));
+  }
+  publish();
+}
+
 void LayoutController::publish() {
-  m_bridge->publish(QStringLiteral("layout"), QVariantMap{{kSidebarCollapsed, m_sidebarCollapsed}});
+  m_bridge->publish(QStringLiteral("layout"),
+                    QVariantMap{{kSidebarCollapsed, m_sidebarCollapsed}, {QStringLiteral("zoom"), zoom()}});
 }

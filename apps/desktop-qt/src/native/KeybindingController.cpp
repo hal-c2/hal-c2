@@ -30,6 +30,10 @@ bool isScriptRun(const QString& command) {
 const QList<std::pair<QString, QString>>& menuKeys() {
   static const QList<std::pair<QString, QString>> keys{
       {QStringLiteral("mod+,"), QStringLiteral("settings.open")},
+      {QStringLiteral("mod+0"), QStringLiteral("view.resetZoom")},
+      {QStringLiteral("mod+="), QStringLiteral("view.zoomIn")},
+      {QStringLiteral("mod++"), QStringLiteral("view.zoomIn")},
+      {QStringLiteral("mod+-"), QStringLiteral("view.zoomOut")},
   };
   return keys;
 }

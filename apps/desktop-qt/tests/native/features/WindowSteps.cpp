@@ -8,6 +8,7 @@
 
 #include "ComposerController.h"
 #include "Harness.h"
+#include "LayoutController.h"
 #include "NavigationController.h"
 #include "Stream.h"
 #include "World.h"
@@ -81,6 +82,11 @@ void expectFirstOn(World& world, const QString& thread) {
 }
 
 const QString kDraft = QStringLiteral("Carry on from the other window");
+
+// The zoom factor `window` draws its content at (LayoutController's `layout`).
+double zoomOf(NativeWindow* window) {
+  return at(window->bridge()->state()->value(QStringLiteral("layout")), QStringLiteral("zoom")).toDouble();
+}
 
 const Steps steps([] {
   step(QStringLiteral("the user's shell layout opens a second window"), [](World& world, const Captures&, const Table&) {
@@ -173,6 +179,28 @@ const Steps steps([] {
     expectFirstOn(world, kFirst);
     expect(world.native().main()->controller<ComposerController>()->draft(keyOf(world, kSecond)).isEmpty(),
            QStringLiteral("the first window has the other window's draft"));
+  });
+
+  // The app's zoom (the application menu's mod+=, mod++, mod+-, mod+0).
+  step(QStringLiteral("the app is zoomed in"), [](World& world, const Captures&, const Table&) {
+    if (world.shellSubscriptions() == 0) {
+      world.connect();
+      world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+    }
+    world.native().controller<LayoutController>()->setZoomLevel(1);
+    world.sync();
+    expect(zoomOf(world.native().main()) > 1, QStringLiteral("the app is at %1").arg(zoomOf(world.native().main())));
+  });
+  step(QStringLiteral("the app content is (larger|smaller|back to its actual size)"), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const double zoom = zoomOf(world.native().main());
+    const bool ok = c[0] == u"larger" ? zoom > 1 : c[0] == u"smaller" ? zoom > 0 && zoom < 1 : qFuzzyCompare(zoom, 1.0);
+    expect(ok, QStringLiteral("the app is at %1").arg(zoom));
+  });
+  step(QStringLiteral("the second window's content is larger too"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(zoomOf(world.native().main()) > 1 && qFuzzyCompare(zoomOf(second(world)), zoomOf(world.native().main())),
+           QStringLiteral("the first window is at %1, the second at %2").arg(zoomOf(world.native().main())).arg(zoomOf(second(world))));
   });
 });
 

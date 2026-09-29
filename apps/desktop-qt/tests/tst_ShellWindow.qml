@@ -16,6 +16,36 @@ Item {
         ShellWindow {}
     }
 
+    // A layout whose content asks for the shell's menu where the user
+    // right-clicks, as the sidebar's rows do (point.scenePosition), and the
+    // shell (MenuController) answers with `menu` at that point.
+    Component {
+        id: menuWindowComponent
+        ShellWindow {
+            Item {
+                objectName: "content"
+                anchors.fill: parent
+
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onPressedChanged: {
+                        if (pressed) {
+                            Shell.state = Object.assign({}, Shell.state, {
+                                menu: {
+                                    requestId: "menu:1",
+                                    surfaceId: "shell",
+                                    x: point.scenePosition.x,
+                                    y: point.scenePosition.y,
+                                    items: [{ id: "rename", label: "Rename" }]
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     TestCase {
         name: "ShellWindowTests"
         when: windowShown
@@ -37,6 +67,39 @@ Item {
             // Once it shows a thread the title is the thread's.
             Shell.state = Object.assign({}, Shell.state, { route: { kind: "thread", title: "Tax line" } });
             compare(window.title, "Tax line — HAL-C2");
+        }
+
+        // Scenario Outline: Zooming the app (features/navigation/windows.feature):
+        // the content draws larger and lays out in the smaller room it leaves.
+        function test_zoomScalesTheBody() {
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1.25 } });
+            const window = createTemporaryObject(windowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const body = findChild(window.contentItem, "shellBody");
+            compare(body.scale, 1.25);
+            fuzzyCompare(body.width * body.scale, window.width, 0.01);
+            fuzzyCompare(body.height * body.scale, window.height, 0.01);
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1 } });
+            compare(body.scale, 1);
+            compare(body.width, window.width);
+        }
+
+        // Scenario: Context menus follow the zoomed app (features/navigation/windows.feature)
+        function test_menuAtThePointerWhenZoomed() {
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1.5 } });
+            const window = createTemporaryObject(menuWindowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const content = findChild(window.contentItem, "content");
+            // (200, 120) in the zoomed content is (300, 180) in the window.
+            mousePress(content, 200, 120, Qt.RightButton);
+            mouseRelease(content, 200, 120, Qt.RightButton);
+            const menu = findChild(findChild(window.contentItem, "shellMenuHost"), "contextMenu");
+            tryVerify(() => menu.visible);
+            // Where it shows in the window, whatever its host's transform.
+            const shown = menu.parent.mapToItem(null, menu.x, menu.y);
+            fuzzyCompare(shown.x, 300, 1);
+            fuzzyCompare(shown.y, 180, 1);
+            menu.close();
         }
     }
 }
