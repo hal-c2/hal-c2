@@ -355,7 +355,14 @@ bool ProviderSettingsController::handleInstance(const QString& action, const QVa
       rows.removeAt(index);
     } else {
       QJsonObject row = rows.at(index).toObject();
-      if (input.contains(QStringLiteral("name"))) row.insert(QStringLiteral("name"), input.value(QStringLiteral("name")).toString().trimmed());
+      if (input.contains(QStringLiteral("name"))) {
+        const QString name = input.value(QStringLiteral("name")).toString().trimmed();
+        // The stored secret belongs to the old name; a renamed row asks for its value again.
+        if (name != row.value(QLatin1String("name")).toString() && row.value(QLatin1String("valueRedacted")).toBool()) {
+          row.insert(QStringLiteral("valueRedacted"), false);
+        }
+        row.insert(QStringLiteral("name"), name);
+      }
       if (input.contains(QStringLiteral("value"))) {
         row.insert(QStringLiteral("value"), input.value(QStringLiteral("value")).toString());
         row.insert(QStringLiteral("valueRedacted"), false);

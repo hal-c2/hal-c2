@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QSet>
 
 #include <optional>
 
@@ -42,18 +43,21 @@ bool ownsDocument(const FakeConfig& fake, const QString& environment) {
 }
 
 // The document as HalC2.ProviderSecrets.seal keeps it: each sensitive
-// provider variable's value moved to the secret store, a redacted one kept.
+// provider variable's value moved to the secret store, a redacted one kept
+// when a secret is stored under its name, and the secrets of variables gone.
 QJsonObject sealed(FakeConfig& fake, QJsonObject settings) {
   QJsonObject instances = settings.value(QLatin1String("providerInstances")).toObject();
   for (auto it = instances.begin(); it != instances.end(); ++it) {
     QJsonObject instance = it.value().toObject();
     QJsonArray environment = instance.value(QLatin1String("environment")).toArray();
+    QSet<QString> kept;
     for (qsizetype i = 0; i < environment.size(); ++i) {
       QJsonObject variable = environment.at(i).toObject();
       if (!variable.value(QLatin1String("sensitive")).toBool()) continue;
       const QString key = it.key() + QLatin1Char('/') + variable.value(QLatin1String("name")).toString();
       const QString value = variable.value(QLatin1String("value")).toString();
-      if (variable.value(QLatin1String("valueRedacted")).toBool()) {
+      kept.insert(key);
+      if (variable.value(QLatin1String("valueRedacted")).toBool() && fake.secrets.contains(key)) {
         variable.insert(QStringLiteral("value"), QString());
       } else if (!value.isEmpty()) {
         fake.secrets.insert(key, value);
@@ -64,6 +68,9 @@ QJsonObject sealed(FakeConfig& fake, QJsonObject settings) {
         variable.remove(QStringLiteral("valueRedacted"));
       }
       environment.replace(i, variable);
+    }
+    for (const QString& secret : fake.secrets.keys()) {
+      if (secret.startsWith(it.key() + QLatin1Char('/')) && !kept.contains(secret)) fake.secrets.remove(secret);
     }
     if (!environment.isEmpty()) instance.insert(QStringLiteral("environment"), environment);
     it.value() = instance;

@@ -303,6 +303,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/providers-panel.feature:Renaming an instance*"),
     QStringLiteral("settings/providers-panel.feature:Sensitive environment variables*"),
     QStringLiteral("settings/providers-panel.feature:Removing an environment variable"),
+    QStringLiteral("settings/providers-panel.feature:Renaming a stored secret*"),
     QStringLiteral("settings/providers-panel.feature:Deleting an instance*"),
     QStringLiteral("settings/providers-panel.feature:A recommended version is installed*"),
     QStringLiteral("settings/providers-panel.feature:Installing the recommended version"),

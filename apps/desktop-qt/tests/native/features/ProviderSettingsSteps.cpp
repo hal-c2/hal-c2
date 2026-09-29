@@ -735,6 +735,41 @@ const Steps steps([] {
     waitForEntry(world, QStringLiteral("Claude Work"), [](const QVariantMap& found) { return found.value(QStringLiteral("variables")).toList().size() == 1; },
                  QStringLiteral("to list its variable"));
   });
+  step(QStringLiteral("the instance keeps %1 as a stored secret").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeConfig(world.node).secrets.insert(QStringLiteral("claudeAgent_work/") + c[0], QStringLiteral("sk-secret"));
+    seedWork(world, QStringLiteral("Claude Work"),
+             {QJsonObject{{QStringLiteral("name"), c[0]}, {QStringLiteral("value"), QString()}, {QStringLiteral("sensitive"), true},
+                          {QStringLiteral("valueRedacted"), true}}});
+    waitForEntry(world, QStringLiteral("Claude Work"), [](const QVariantMap& found) {
+      const QVariantList rows = found.value(QStringLiteral("variables")).toList();
+      return rows.size() == 1 && at(rows.first(), QStringLiteral("redacted")).toBool();
+    }, QStringLiteral("to show its stored secret"));
+  });
+  step(QStringLiteral("the user renames the variable %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList rows = variables(world, QStringLiteral("Claude Work"));
+    for (qsizetype i = 0; i < rows.size(); ++i) {
+      if (at(rows.at(i), QStringLiteral("name")) != c[0]) continue;
+      act(world, QStringLiteral("variable"), {{QStringLiteral("instanceId"), fake(world).instanceId}, {QStringLiteral("index"), int(i)}, {QStringLiteral("name"), c[1]}});
+      return;
+    }
+    expect(false, QStringLiteral("%1 to be listed; the rows are %2").arg(c[0], show(rows)));
+  });
+  step(QStringLiteral("%1 asks for a new value instead of showing a stored secret").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForEntry(world, QStringLiteral("Claude Work"), [&](const QVariantMap& found) {
+      const QVariantList rows = found.value(QStringLiteral("variables")).toList();
+      return rows.size() == 1 && at(rows.first(), QStringLiteral("name")) == c[0] && !at(rows.first(), QStringLiteral("redacted")).toBool() &&
+             at(rows.first(), QStringLiteral("placeholder")) == QLatin1String("value");
+    }, QStringLiteral("to ask for a value for ") + c[0]);
+    world.waitFor([&] {
+      const QJsonArray environment = savedInstance(world, fake(world).instanceId).value(QLatin1String("environment")).toArray();
+      return environment.size() == 1 && environment.at(0).toObject().value(QLatin1String("name")) == c[0] &&
+             !environment.at(0).toObject().contains(QLatin1String("valueRedacted"));
+    }, [&] { return QStringLiteral("%1 to be saved without a secret; the instance is %2").arg(c[0], show(savedInstance(world, fake(world).instanceId))); });
+  });
+  step(QStringLiteral("the secret stored for %1 is forgotten").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !fakeConfig(world.node).secrets.contains(fake(world).instanceId + QLatin1Char('/') + c[0]); },
+                  [&] { return QStringLiteral("the secret of %1 to be deleted").arg(c[0]); });
+  });
   step(QStringLiteral("the user removes %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QVariantList rows = variables(world, QStringLiteral("Claude Work"));
     for (qsizetype i = 0; i < rows.size(); ++i) {

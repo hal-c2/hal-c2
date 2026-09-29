@@ -235,6 +235,13 @@ Feature: Providers settings panel
       And the page shows it as a stored secret that a new value replaces
 
     @desktop
+    Scenario: Renaming a stored secret asks for its value again
+      Given the instance keeps "API_KEY" as a stored secret
+      When the user renames the variable "API_KEY" to "OPENAI_KEY"
+      Then "OPENAI_KEY" asks for a new value instead of showing a stored secret
+      And the secret stored for "API_KEY" is forgotten
+
+    @desktop
     Scenario: Removing an environment variable
       Given the instance has the environment variable "API_KEY"
       When the user removes "API_KEY"
