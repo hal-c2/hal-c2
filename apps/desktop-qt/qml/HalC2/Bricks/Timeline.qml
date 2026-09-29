@@ -34,8 +34,8 @@ Item {
     // A fold or tool call group was opened or closed.
     signal toggled(string rowId)
     // A file to open in the right panel: "diff" for a reply's changed files,
-    // "files" for a file a tool call changed.
-    signal fileActivated(string path, string tab)
+    // "files" for a file a tool call changed; `rowId` is the row it is on.
+    signal fileActivated(string path, string tab, string rowId)
     // The user asked to revert the thread to this reply's turn.
     signal revertRequested(string rowId)
     // A message went to the clipboard.
@@ -330,7 +330,7 @@ Item {
                                         cursorShape: Qt.PointingHandCursor
                                     }
                                     TapHandler {
-                                        onTapped: root.fileActivated(modelData.path, "diff")
+                                        onTapped: root.fileActivated(modelData.path, "diff", row.rowId)
                                     }
                                 }
                                 RowText {
@@ -411,7 +411,7 @@ Item {
                                         objectName: "openFile"
                                         visible: (call.modelData.path ?? "").length > 0
                                         text: qsTr("Open")
-                                        onClicked: root.fileActivated(call.modelData.path, "files")
+                                        onClicked: root.fileActivated(call.modelData.path, "files", row.rowId)
                                     }
                                     RowText {
                                         visible: text.length > 0

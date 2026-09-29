@@ -13,8 +13,8 @@ namespace {
 
 // The entity kinds the timeline reads; the stream's others (nodes, provider
 // sessions, ...) are left out. Plans and the user's messages are kept for the
-// composer (turnChanged), checkpoints for reverting (checkpointOf); they draw
-// no rows.
+// composer (turnChanged), checkpoints for the diff panel (checkpointsChanged)
+// and a reply's revert (checkpointOf); they draw no rows.
 const QSet<QString> kKinds{QStringLiteral("turn-item"),       QStringLiteral("run"),  QStringLiteral("run-attempt"),
                            QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message"),
                            QStringLiteral("checkpoint")};
@@ -190,17 +190,20 @@ void TimelineModel::snapshot(int part, const QJsonArray& rows, bool done) {
   sortItems();
   restructure({}, true);
   emit turnChanged();
+  emit checkpointsChanged();
 }
 
 void TimelineModel::events(const QJsonArray& events) {
   QSet<QString> changed;
   bool structural = false;
   m_turnTouched = false;
+  m_checkpointsTouched = false;
   for (const QJsonValue& value : events) {
     const QJsonArray event = value.toArray();
     structural |= apply(event.at(1).toString(), event.at(2).toString(), event.at(3).toObject(), changed);
   }
   if (m_turnTouched) emit turnChanged();
+  if (m_checkpointsTouched) emit checkpointsChanged();
   if (structural) {
     restructure(changed, false);
     return;
@@ -220,6 +223,7 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   const bool existed = current != byKind.cend();
   const std::optional<QJsonObject> next = patched(existed ? *current : QJsonObject(), patch);
   if (kind == QLatin1String("checkpoint")) {
+    m_checkpointsTouched = true;
     if (next) {
       byKind.insert(id, *next);
     } else {
@@ -587,11 +591,14 @@ QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   const auto checkpoints = m_entities.value(QStringLiteral("checkpoint"));
   for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
     if (text(*it, QLatin1String("runId")) != runId || text(*it, QLatin1String("status")) != QLatin1String("ready")) continue;
-    // The turn's number among the runs still shown.
-    const int ordinal = run.value(QLatin1String("ordinal")).toInt();
-    int turn = 0;
-    for (const QJsonObject& other : m_entities.value(QStringLiteral("run"))) {
-      if (other.value(QLatin1String("ordinal")).toInt() <= ordinal && text(other, QLatin1String("status")) != QLatin1String("rolled_back")) ++turn;
+    // The node's turn number (the diff panel's), else the turn's number among
+    // the runs still shown.
+    int turn = it->value(QLatin1String("appRunOrdinal")).toInt();
+    if (turn <= 0) {
+      const int ordinal = run.value(QLatin1String("ordinal")).toInt();
+      for (const QJsonObject& other : m_entities.value(QStringLiteral("run"))) {
+        if (other.value(QLatin1String("ordinal")).toInt() <= ordinal && text(other, QLatin1String("status")) != QLatin1String("rolled_back")) ++turn;
+      }
     }
     return {{QStringLiteral("checkpointId"), it.key()},
             {QStringLiteral("scopeId"), text(*it, QLatin1String("scopeId"))},

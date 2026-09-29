@@ -57,15 +57,15 @@ Feature: The desktop shell draws the thread in the window's centre
       Then <result>
 
       Examples:
-        | link                     | result                                          |
-        | src/cart.ts#L12          | "src/cart.ts" opens in the right panel's files  |
-        | file:///work/shop/a.ts   | "/work/shop/a.ts" opens in the right panel's files |
-        | https://example.com/docs | nothing opens in the right panel                |
+        | link                     | result                                                       |
+        | src/cart.ts#L12          | "src/cart.ts" opens in the right panel's files at line 12    |
+        | file:///work/shop/a.ts:7 | "/work/shop/a.ts" opens in the right panel's files at line 7 |
+        | https://example.com/docs | nothing opens in the right panel                             |
 
     @desktop
     Scenario: A file a turn changed opens in the right panel
       When the user opens "src/cart.ts" from a reply's changed files
-      Then "src/cart.ts" opens in the right panel's diff
+      Then "src/cart.ts" opens in the right panel's diff of that reply's turn
       When the user opens the file a tool call changed
       Then that file opens in the right panel's files
 

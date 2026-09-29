@@ -9,7 +9,7 @@ import HalC2.Shell
 // sending it says why and offers Retry.
 //
 // Web links open in the system browser; file links and files the agent
-// changed open in the right panel (`panel.open`). A reply's Revert asks
+// changed open in the right panel (`panel.open`, RightPanelController). A reply's Revert asks
 // first, then rewinds through Threads.revert. "Jump to latest" is also the
 // `timeline.jumpToLatest` command.
 Item {
@@ -40,17 +40,30 @@ Item {
             return;
         }
         let path = link.replace(/^file:\/\//i, "");
-        // "src/cart.ts#L12" and "src/cart.ts:12:3" name the file.
+        // "src/cart.ts#L12" and "src/cart.ts:12:3" name the file and its line.
+        const line = /#L(\d+)/.exec(path) ?? /:(\d+)(:\d+)?$/.exec(path);
         path = decodeURIComponent(path.replace(/#.*$/, "").replace(/(:\d+)+$/, ""));
-        if (path.length > 0)
-            openFile(path, "files");
+        if (path.length === 0)
+            return;
+        const options = {
+            tab: "files",
+            path: path
+        };
+        if (line)
+            options.line = Number(line[1]);
+        Shell.dispatch("panel.open", options);
     }
 
-    function openFile(path, tab) {
-        Shell.dispatch("panel.open", {
+    // A reply's changed file opens on that reply's turn in the diff.
+    function openFile(path, tab, rowId) {
+        const options = {
             tab: tab,
             path: path
-        });
+        };
+        const turn = tab === "diff" && view.model ? view.model.checkpointOf(rowId).turn : undefined;
+        if (turn !== undefined)
+            options.turn = turn;
+        Shell.dispatch("panel.open", options);
     }
 
     function askRevert(rowId) {
@@ -90,7 +103,7 @@ Item {
         model: view.model
         showStatus: false
         onLinkActivated: link => view.openLink(link)
-        onFileActivated: (path, tab) => view.openFile(path, tab)
+        onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
         onRevertRequested: rowId => view.askRevert(rowId)
     }
 

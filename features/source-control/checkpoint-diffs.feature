@@ -7,6 +7,10 @@
 #   apps/tui/src/components/ChatView.tsx (diff scopes)
 #   apps/tui/src/components/DiffViewer.tsx
 #   apps/tui/src/connection.ts (getTurnDiff, getFullThreadDiff)
+#   apps/desktop-qt/src/native/ThreadDiff.cpp (turn picker, loading, retry)
+#   apps/desktop-qt/src/native/DiffModel.cpp (collapsed large files, split view)
+#   apps/desktop-qt/qml/HalC2/Bricks/DiffPanel.qml
+#   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 
 Feature: What each turn changed
   Every finished turn leaves a hidden checkpoint of the checkout, so the user can see what
@@ -69,8 +73,44 @@ Feature: What each turn changed
     When the user opens the diff of turn 2
     Then turn 2's changes are shown
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Picking a turn's diff from the thread
     When the user opens the diff of the latest turn
     Then the changes of turn 3 are shown
     And the user can switch to any earlier turn or to all changes
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A turn's diff that cannot be loaded can be asked for again
+    Given the node cannot read the checkpoints of "Tax work"
+    When the user opens the diff of the latest turn
+    Then the user is told the diff could not be loaded
+    When the node can read the checkpoints again
+    And the user asks for the diff again
+    Then the changes of turn 3 are shown
+
+  @desktop
+  Scenario: A large file's changes start collapsed and can be expanded
+    Given turn 3 changed 5000 lines of "src/rates.ts"
+    When the user opens the diff of the latest turn
+    Then "src/rates.ts" is listed collapsed
+    When the user expands "src/rates.ts" in the diff
+    Then the 5000 lines of "src/rates.ts" are shown
+    When the user collapses "src/rates.ts" in the diff
+    Then "src/rates.ts" is listed collapsed
+
+  @desktop
+  Scenario: Every file of a diff can be collapsed and expanded at once
+    When the user opens the diff of the latest turn
+    And the user collapses every file in the diff
+    Then only the files' headers are shown
+    When the user expands every file in the diff
+    Then every file's lines are shown
+
+  @desktop
+  Scenario: A diff can be shown side by side or as one column
+    Given turn 3 rewrote a line of "src/cart.ts"
+    When the user opens the diff of the latest turn
+    And the user shows the diff side by side
+    Then the removed and added line of "src/cart.ts" are shown side by side
+    When the user shows the diff as one column
+    Then the removed and added line of "src/cart.ts" are shown one above the other

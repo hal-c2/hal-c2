@@ -97,12 +97,14 @@ bool ThreadStore::revert(const QString& threadKey, const QString& rowId, bool re
   if (m_reverting.contains(threadKey)) return true;
   auto* toasts = NativeShell::of(this)->controller<ToastController>();
   const auto thread = m_store->thread(threadKey);
+  const int turn = checkpoint.value(QStringLiteral("turn")).toInt();
+  // Titled as the diff panel's revert (ThreadDiff) is.
+  const QString failed = QStringLiteral("Could not revert to turn %1").arg(turn);
   if (!thread || !m_client->isReady() || !m_store->threadOnline(threadKey)) {
-    toasts->error(QStringLiteral("Failed to revert thread state."), QStringLiteral("The thread's node cannot be reached."));
+    toasts->error(failed, QStringLiteral("The thread's node cannot be reached."));
     return true;
   }
   m_reverting.insert(threadKey);
-  const int turn = checkpoint.value(QStringLiteral("turn")).toInt();
   m_client->dispatchCommand(thread->environmentId,
                             {
                                 {QStringLiteral("type"), QStringLiteral("checkpoint.rollback")},
@@ -111,10 +113,10 @@ bool ThreadStore::revert(const QString& threadKey, const QString& rowId, bool re
                                 {QStringLiteral("scopeId"), checkpoint.value(QStringLiteral("scopeId")).toString()},
                                 {QStringLiteral("restoreFiles"), restoreFiles},
                             },
-                            [this, threadKey, turn, toasts](const QJsonValue&, const std::optional<QString>& error) {
+                            [this, threadKey, turn, failed, toasts](const QJsonValue&, const std::optional<QString>& error) {
                               m_reverting.remove(threadKey);
                               if (error) {
-                                toasts->error(QStringLiteral("Failed to revert thread state."), *error);
+                                toasts->error(failed, *error);
                               } else {
                                 toasts->show(QStringLiteral("success"), QStringLiteral("Reverted to turn %1.").arg(turn));
                               }

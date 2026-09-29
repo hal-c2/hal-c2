@@ -8,7 +8,9 @@
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Edit from here, Rewinding conversation)
 #   apps/tui/src/timeline.ts (revertableCheckpoints)
 #   apps/tui/src/components/ChatView.tsx (Revert to checkpoint, Reverted to turn N)
-#   apps/desktop-qt/src/native/ThreadStore.cpp (revert), apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (asks first)
+#   apps/desktop-qt/src/native/ThreadDiff.cpp (requestRevert, confirmRevert, cancelRevert)
+#   apps/desktop-qt/qml/HalC2/Bricks/DiffPanel.qml (revert dialog)
+#   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 
 Feature: Checkpoints and rewinding
   Every finished turn leaves a checkpoint of the workspace. The user can rewind the
@@ -25,7 +27,7 @@ Feature: Checkpoints and rewinding
     And the user's staged changes are left as they were
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario: The user reverts the thread to an earlier turn
     When the user reverts the thread to the checkpoint after turn 1
     Then turns 2 and 3 are removed from the conversation
@@ -66,6 +68,20 @@ Feature: Checkpoints and rewinding
   Scenario: Rolling back to a checkpoint asks first because it cannot be undone
     When the user rolls back to a checkpoint
     Then the user is asked to confirm that the rollback cannot be undone
+
+  @desktop
+  Scenario: Cancelling a revert leaves the thread as it was
+    When the user starts reverting to the checkpoint after turn 1
+    And the user cancels the revert
+    Then no rollback is sent
+    And turns 1 to 3 are still shown
+
+  @desktop
+  Scenario: A revert the node refuses says why
+    Given the node refuses rollbacks with "Interrupt the current turn before rewinding."
+    When the user reverts the thread to the checkpoint after turn 1
+    Then the user sees an "error" toast "Could not revert to turn 1" saying "Interrupt the current turn before rewinding."
+    And turns 1 to 3 are still shown
 
   @node
   Scenario Outline: A rewind that cannot happen says why

@@ -217,12 +217,14 @@ Item {
                     tag: "a project path",
                     link: "src/cart.ts#L12",
                     path: "src/cart.ts",
+                    line: 12,
                     external: ""
                 },
                 {
                     tag: "a file url",
-                    link: "file:///work/shop/a.ts",
+                    link: "file:///work/shop/a.ts:7:3",
                     path: "/work/shop/a.ts",
+                    line: 7,
                     external: ""
                 },
                 {
@@ -244,6 +246,7 @@ Item {
                 compare(opened.length, 1);
                 compare(opened[0].payload.tab, "files");
                 compare(opened[0].payload.path, data.path);
+                compare(opened[0].payload.line, data.line);
             } else {
                 compare(opened.length, 0, "nothing opens in the right panel");
             }
@@ -258,6 +261,7 @@ Item {
             compare(opened.length, 1);
             compare(opened[0].payload.tab, "diff");
             compare(opened[0].payload.path, "src/cart.ts");
+            compare(opened[0].payload.turn, 1, "on the reply's turn");
             mouseClick(findNamed(timeline.itemAtIndex(2), "openFile"));
             opened = dispatched("panel.open");
             compare(opened.length, 2);

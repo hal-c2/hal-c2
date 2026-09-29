@@ -3,7 +3,7 @@
 #   apps/tui/src/components/ChatView.tsx (Reverted to turn N.)
 #   apps/desktop-qt/src/native/TimelineModel.cpp (checkpointOf, copy)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
-#   apps/web/src/components/ChatView.tsx (Failed to revert thread state.)
+#   apps/desktop-qt/src/native/ThreadDiff.cpp (the diff panel's revert, whose toasts these match)
 #   Shared domain: timeline/*.feature owns what the thread shows; this file owns the Qt shell's
 #   rewind and retry paths. centre-view.feature owns what the centre brick shows.
 
@@ -18,18 +18,18 @@ Feature: The desktop shell rewinds and retries a thread
 
     @desktop
     Scenario: Reverting can keep the files as they are
-      Given a thread in "shop" with three finished turns
+      Given a thread in "shop" whose three turns each left a checkpoint
       When the user rewinds the conversation to turn 1 and keeps the files
-      Then turns 2 and 3 are removed from the conversation
+      Then the replies of turns 2 and 3 are gone
       And the node is asked to leave the files as they are
       And the user is told "Reverted to turn 1."
 
     @desktop
     Scenario: A revert the node refuses says why and keeps the turns
-      Given a thread in "shop" with three finished turns
+      Given a thread in "shop" whose three turns each left a checkpoint
       And the node refuses rewinds with "Interrupt the current turn before rewinding."
-      When the user reverts the thread to the checkpoint after turn 1
-      Then the user sees an "error" toast "Failed to revert thread state." saying "Interrupt the current turn before rewinding."
+      When the user reverts to turn 1 from its reply
+      Then the user sees an "error" toast "Could not revert to turn 1" saying "Interrupt the current turn before rewinding."
       And the conversation still has its three turns
 
     @desktop

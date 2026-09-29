@@ -98,7 +98,7 @@ bool revert(World& world, int turn, bool restoreFiles) {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  step(QStringLiteral("a thread in %1 with three finished turns").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("a thread in %1 whose three turns each left a checkpoint").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtThread(world, c[0]);
     for (int n = 1; n <= 3; ++n) finishTurn(world, n);
     rollBackOnCommand(world);
@@ -126,24 +126,17 @@ const Steps steps([] {
   });
 
   // Rewinding.
-  step(QStringLiteral("the user reverts the thread to the checkpoint after turn (\\d+)"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the user reverts to turn (\\d+) from its reply"), [](World& world, const Captures& c, const Table&) {
     expect(revert(world, c[0].toInt(), true), QStringLiteral("turn %1 offers no checkpoint; %2").arg(c[0], describe(timeline(world))));
   });
   step(QStringLiteral("the user rewinds the conversation to turn (\\d+) and keeps the files"), [](World& world, const Captures& c, const Table&) {
     expect(revert(world, c[0].toInt(), false), QStringLiteral("turn %1 offers no checkpoint; %2").arg(c[0], describe(timeline(world))));
   });
-  step(QStringLiteral("turns 2 and 3 are removed from the conversation"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the replies of turns 2 and 3 are gone"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
     world.waitFor([&] { return !shows(model, QStringLiteral("Turn 2 is done.")) && !shows(model, QStringLiteral("Turn 3 is done.")); },
                   [&] { return describe(model); });
     expect(shows(model, QStringLiteral("Turn 1 is done.")), QStringLiteral("turn 1 is gone too; %1").arg(describe(model)));
-  });
-  step(QStringLiteral("the workspace files match the end of turn (\\d+)"), [](World& world, const Captures& c, const Table&) {
-    const QJsonObject command = lastRollback(world);
-    expect(command.value(QLatin1String("checkpointId")) == world.node.part<FakeTurns>().checkpoints.value(c[0].toInt() - 1) &&
-               command.value(QLatin1String("scopeId")) == QLatin1String("scope-1") && command.value(QLatin1String("restoreFiles")).toBool() &&
-               command.value(QLatin1String("threadId")) == world.node.part<FakeStreams>().thread,
-           QStringLiteral("the node was asked %1").arg(show(command.toVariantMap())));
   });
   step(QStringLiteral("the node is asked to leave the files as they are"), [](World& world, const Captures&, const Table&) {
     const QJsonObject command = lastRollback(world);

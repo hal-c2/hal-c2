@@ -196,7 +196,6 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/theme-editor.feature"),
     QStringLiteral("settings/general.feature"),
     QStringLiteral("timeline/approvals-and-questions.feature"),
-    QStringLiteral("timeline/checkpoints.feature:The user reverts the thread to an earlier turn"),
     QStringLiteral("composer/question-answers.feature:A question can be dismissed*"),
     QStringLiteral("composer/question-answers.feature:A proposed plan is implemented*"),
     QStringLiteral("composer/queue-and-steer.feature:The follow-up setting decides*"),
@@ -243,6 +242,15 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/keybinding-settings.feature:Removing a custom binding"),
     QStringLiteral("navigation/keybinding-settings.feature:Adding a binding for a command"),
     QStringLiteral("navigation/keybinding-settings.feature:Save failures are reported*"),
+    QStringLiteral("source-control/checkpoint-diffs.feature"),
+    QStringLiteral("timeline/checkpoints.feature"),
+    QStringLiteral("files/file-explorer.feature"),
+    QStringLiteral("files/file-viewer-and-editing.feature"),
+    QStringLiteral("navigation/layout.feature:Opening and closing the right panel"),
+    QStringLiteral("navigation/layout.feature:Switching between right panel tabs"),
+    QStringLiteral("navigation/layout.feature:Closing a right panel tab"),
+    QStringLiteral("navigation/layout.feature:Adding a tab to the right panel*"),
+    QStringLiteral("navigation/layout.feature:A tab kind that the thread cannot show*"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

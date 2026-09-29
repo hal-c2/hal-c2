@@ -59,6 +59,8 @@ private slots:
     // A thread route shows the native centre, which reads this.
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Threads.qml")),
                              "HalC2.Shell", 1, 0, "Threads");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Panel.qml")),
+                             "HalC2.Shell", 1, 0, "Panel");
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
@@ -193,10 +195,10 @@ private slots:
       content->forceActiveFocus();
       QTRY_VERIFY(content->hasActiveFocus());
       auto panel = QJsonDocument::fromJson(R"({
-        "isOpen":true,"surfaces":[],"activeSurfaceId":null,"embedPath":"",
+        "isOpen":true,"tabs":[],"activeId":"","embedPath":"",
         "canAdd":{"diff":true,"files":true,"terminal":true,"pullRequest":false}
       })").toVariant().toMap();
-      bridge.publish("rightPanel", panel);
+      bridge.publish("panel", panel);
       QTRY_VERIFY(inspector->isVisible());
       QTRY_VERIFY(inspector->width() > 0);
       QTRY_COMPARE(inspector->mapToScene(QPointF(inspector->width(), 0)).x(), qreal(window->width()));
@@ -221,13 +223,13 @@ private slots:
       }
       QTRY_VERIFY(content->width() >= 300);
       panel["isOpen"] = false;
-      bridge.publish("rightPanel", panel);
+      bridge.publish("panel", panel);
       QTRY_VERIFY(!inspector->isVisible());
       QTRY_VERIFY(content->isEnabled());
       QTRY_VERIFY(content->hasActiveFocus());
       QTRY_COMPARE(content->width(), beforeInspector);
       if (!sidebarOverlay) QVERIFY(navigation->isVisible());
-      bridge.publish("rightPanel", QVariant());
+      bridge.publish("panel", QVariant());
       bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}});
       if (sidebarOverlay) {
         QTRY_VERIFY(navigation->isVisible());
@@ -328,9 +330,10 @@ private slots:
     QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
     source.write("import QtQuick\nimport HalC2.Bricks\nShellWindow { width: 600; height: 400; RightPanel { anchors.fill: parent } }");
     source.close();
-    bridge.publish("rightPanel", QJsonDocument::fromJson(R"({
-      "isOpen": true, "activeSurfaceId": "diff", "embedPath": "/test",
-      "surfaces": [{"id": "diff", "title": "Diff"}, {"id": "files", "title": "Files"}],
+    bridge.publish("panel", QJsonDocument::fromJson(R"({
+      "isOpen": true, "activeId": "diff", "embedPath": "/test",
+      "tabs": [{"id": "diff", "kind": "diff", "title": "Diff", "native": true},
+               {"id": "files", "kind": "files", "title": "Files", "native": true}],
       "canAdd": {"diff": true, "files": true, "terminal": true, "pullRequest": false}
     })").toVariant());
     runtime->reload();
@@ -357,7 +360,7 @@ private slots:
     QCOMPARE(actions.size(), 2);
     QCOMPARE(actions.last().at(0).toString(), QString("rightPanel.close"));
     QCOMPARE(actions.last().at(1).toMap().value("id").toString(), QString("files"));
-    bridge.publish("rightPanel", QVariant());
+    bridge.publish("panel", QVariant());
   }
 
   void terminalDrawerTakesAndReturnsTheKeyboard() {

@@ -156,8 +156,8 @@ Feature: Keybindings
         | commandPalette.toggle | mod+k       | aligned | forwarded as a keybinding press           |
         | terminal.toggle       | mod+j       | aligned | the shell toggles the terminal drawer     |
         | sidebar.toggle        | mod+b       | aligned | the shell toggles the sidebar             |
-        | rightPanel.toggle     | mod+alt+b   | aligned | forwarded as a keybinding press           |
-        | diff.toggle           | mod+d       | aligned | forwarded as a keybinding press           |
+        | rightPanel.toggle     | mod+alt+b   | aligned | the shell toggles the right panel         |
+        | diff.toggle           | mod+d       | aligned | the shell toggles the Diff tab            |
         | navigation.back       | mod+[       | aligned | the shell goes back                       |
         | navigation.forward    | mod+]       | aligned | forwarded as a keybinding press           |
         | thread.previous       | mod+shift+[ | aligned | the shell opens the sidebar's previous    |
