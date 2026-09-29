@@ -183,6 +183,15 @@ const Steps steps([] {
     world.connect();
     world.sync();
   });
+  step(QStringLiteral("the environment also has the Azure DevOps project %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = QStringLiteral("azure-web");
+    const QJsonObject row{{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + id},
+                          {QStringLiteral("scripts"), QJsonArray()},
+                          {QStringLiteral("repositoryIdentity"), QJsonObject{{QStringLiteral("canonicalKey"), c[0]}}}};
+    world.node.projects.insert(id, row);
+    world.node.sendRow(id, row, QStringLiteral("project"));
+    world.sync();
+  });
   step(QStringLiteral("the thread %1 has no linked pull request").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAt(world, c[0]);
     expect(model(world).count() == 0, describe(world));
@@ -256,6 +265,10 @@ const Steps steps([] {
                command.value(QLatin1String("repository")) == QLatin1String("acme/shop") &&
                command.value(QLatin1String("url")) == QStringLiteral("https://github.com/acme/shop/pull/") + c[1],
            show(command.toVariantMap()));
+  });
+  step(QStringLiteral("%1 lists pull request (\\d+) of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForRow(world, c[1].toInt(), true);
+    expect(keyOf(world, c[1].toInt()).endsWith(QStringLiteral("/%1#%2").arg(c[2], c[1])) && model(world).problem().isEmpty(), describe(world));
   });
   step(QStringLiteral("%1 no longer lists pull request (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForRow(world, c[1].toInt(), false);
