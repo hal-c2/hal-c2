@@ -85,6 +85,15 @@ Rectangle {
                 }
             } else if (action === "composer.control.open") {
                 composer.openControl(payload.command);
+            } else if (action === "composer.queue.editLast" && composer.ready && input.activeFocus) {
+                // From the start of the draft the key reaches the queue;
+                // anywhere else it moves there first, as the web's does.
+                if (input.cursorPosition > 0) {
+                    input.cursorPosition = 0;
+                    return;
+                }
+                composer.flushText();
+                Shell.dispatch("composer.queue.edit", {});
             }
         }
     }
@@ -386,6 +395,32 @@ Rectangle {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 spacing: 0
+
+                // A queued message open for editing: sending saves it.
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 10
+                    Layout.topMargin: 8
+                    visible: composer.ready && (composer.model.editingQueuedRunId ?? null) !== null
+                    spacing: 6
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Editing a queued message")
+                        color: composer.muted
+                        font.pixelSize: 12
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                    }
+
+                    ShellButton {
+                        objectName: "queuedEditCancel"
+                        implicitHeight: 24
+                        subtle: true
+                        text: qsTr("Cancel")
+                        onClicked: Shell.dispatch("composer.queue.edit.cancel")
+                    }
+                }
 
                 // Attached images and terminal selections living on the draft.
                 Flow {

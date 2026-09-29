@@ -223,8 +223,19 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
   if (action == QLatin1String("composer.queue.remove")) {
     return queueCommand(QStringLiteral("queued-run.cancel"), map.value(QStringLiteral("runId")).toString());
   }
+  if (action == QLatin1String("composer.queue.edit")) {
+    return editQueued(target, map.value(QStringLiteral("runId")).toString());
+  }
+  if (action == QLatin1String("composer.queue.edit.cancel")) {
+    if (m_queuedEdit && m_queuedEdit->thread == target) endQueuedEdit();
+    return true;
+  }
   if (action == QLatin1String("composer.queue.steer")) {
-    return queueCommand(QStringLiteral("queued-message.promote-to-steer"), map.value(QStringLiteral("runId")).toString());
+    // Without a run, the first queued one (the steer key).
+    QString runId = map.value(QStringLiteral("runId")).toString();
+    const QVariantList queue = turnState().value(QStringLiteral("queue")).toList();
+    if (runId.isEmpty() && !queue.isEmpty()) runId = queue.constFirst().toMap().value(QStringLiteral("runId")).toString();
+    return queueCommand(QStringLiteral("queued-message.promote-to-steer"), runId);
   }
   return false;
 }
@@ -267,6 +278,7 @@ bool ComposerController::submit(const QVariantMap& payload) {
   // The submit is the brick's newest edit, so it takes the cleared (or
   // restored) text as the answer to it.
   setText(target, text, int(text.size()), payload.value(QStringLiteral("edit")));
+  if (m_queuedEdit && m_queuedEdit->thread == target) return saveQueuedEdit(target, text);
   if (slashMode(target, text)) return true;
   if (!m_draftId.isEmpty()) return submitDraft(target, payload);
   const bool hasImages = !m_drafts.value(target).attachments.isEmpty();
@@ -670,6 +682,77 @@ bool ComposerController::queueCommand(const QString& type, const QString& runId)
   return true;
 }
 
+bool ComposerController::editQueued(const QString& target, QString runId) {
+  if (target.isEmpty() || !m_draftId.isEmpty() || (m_queuedEdit && m_queuedEdit->saving)) return true;
+  const QVariantList queue = turnState().value(QStringLiteral("queue")).toList();
+  if (queue.isEmpty()) return true;
+  if (runId.isEmpty()) runId = queue.constLast().toMap().value(QStringLiteral("runId")).toString();
+  const auto entry = std::find_if(queue.cbegin(), queue.cend(), [&](const QVariant& item) {
+    return item.toMap().value(QStringLiteral("runId")) == runId;
+  });
+  if (entry == queue.cend()) return true;
+  const QString text = entry->toMap().value(QStringLiteral("text")).toString();
+  // Moving to another queued message keeps the draft set aside for the first.
+  if (!m_queuedEdit || m_queuedEdit->thread != target) {
+    m_queuedEdit = QueuedEdit{target, {}, {}, draft(target), m_drafts.value(target).cursor};
+  }
+  m_queuedEdit->runId = runId;
+  m_queuedEdit->original = text;
+  setText(target, text, int(text.size()));
+  return true;
+}
+
+bool ComposerController::saveQueuedEdit(const QString& target, const QString& text) {
+  const auto thread = m_store->thread(target);
+  if (!thread || m_queuedEdit->saving || text.trimmed().isEmpty()) return true;
+  m_queuedEdit->saving = true;
+  const QString runId = m_queuedEdit->runId;
+  const QJsonObject command{{QStringLiteral("type"), QStringLiteral("queued-run.edit")},
+                            {QStringLiteral("threadId"), thread->id},
+                            {QStringLiteral("runId"), runId},
+                            {QStringLiteral("text"), text.trimmed()}};
+  m_client->dispatchCommand(thread->environmentId, command,
+                            [this, runId](const QJsonValue&, const std::optional<QString>& error) {
+                              if (!m_queuedEdit || m_queuedEdit->runId != runId) return;
+                              m_queuedEdit->saving = false;
+                              if (error) {
+                                toast(QStringLiteral("Could not save the edited queued message."), *error);
+                                publish();
+                                return;
+                              }
+                              endQueuedEdit();
+                            });
+  publish();
+  return true;
+}
+
+void ComposerController::endQueuedEdit(bool keepEdit) {
+  if (!m_queuedEdit) return;
+  const QueuedEdit edit = *std::exchange(m_queuedEdit, std::nullopt);
+  if (keepEdit) {
+    save();
+    publish();
+    return;
+  }
+  setText(edit.thread, edit.saved, edit.savedCursor);
+}
+
+void ComposerController::recoverQueuedEdit(const QVariantMap& turn) {
+  if (!m_queuedEdit || m_queuedEdit->saving || m_queuedEdit->thread != m_thread || !m_timeline) return;
+  const QVariantList queue = turn.value(QStringLiteral("queue")).toList();
+  const bool queued = std::any_of(queue.cbegin(), queue.cend(), [this](const QVariant& item) {
+    return item.toMap().value(QStringLiteral("runId")) == m_queuedEdit->runId;
+  });
+  if (queued) return;
+  const bool dirty = draft(m_queuedEdit->thread) != m_queuedEdit->original;
+  const bool keep = dirty && m_queuedEdit->saved.trimmed().isEmpty();
+  endQueuedEdit(keep);
+  if (!dirty) return;
+  NativeShell::of(this)->controller<ToastController>()->show(
+      keep ? QStringLiteral("info") : QStringLiteral("warning"), QStringLiteral("Queued message is no longer queued"),
+      keep ? QStringLiteral("Your unsaved edit was kept in the composer.") : QStringLiteral("Your unsaved edit was discarded."));
+}
+
 QString ComposerController::openThread() const {
   return NativeShell::of(this)->controller<NavigationController>()->threadKey();
 }
@@ -714,6 +797,8 @@ void ComposerController::follow() {
   const QString draftId = openDraft();
   m_thread = draftId.isEmpty() ? thread : draftId;
   m_draftId = draftId;
+  // Leaving the thread leaves its edit, as cancelling would.
+  if (m_queuedEdit && m_queuedEdit->thread != m_thread) endQueuedEdit();
   TimelineModel* timeline = thread.isEmpty() ? nullptr : NativeShell::of(this)->controller<ThreadStore>()->timeline(thread);
   if (timeline != m_timeline) {
     disconnect(m_timelineConnection);
@@ -726,6 +811,11 @@ void ComposerController::follow() {
 void ComposerController::publish() {
   if (!m_active) return;
   const QVariantMap state = turnState();
+  if (m_queuedEdit) {
+    recoverQueuedEdit(state);
+    // Ending the edit published everything already.
+    if (!m_queuedEdit) return;
+  }
   if (state != m_published) {
     m_published = state;
     m_bridge->publish(QStringLiteral("turn"), state);
@@ -1195,6 +1285,9 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},
       {QStringLiteral("interactionMode"), interactionModeOf(target)},
       {QStringLiteral("showInteractionModeToggle"), planOn},
+      {QStringLiteral("editingQueuedRunId"), m_queuedEdit && m_queuedEdit->thread == target
+                                                 ? QVariant(m_queuedEdit->runId)
+                                                 : QVariant::fromValue(nullptr)},
   };
 }
 
@@ -1258,8 +1351,10 @@ void ComposerController::save() const {
   QJsonObject targets;
   for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
     const Draft& kept = it.value();
+    // An edited queued message is not the thread's draft.
+    const QString text = m_queuedEdit && m_queuedEdit->thread == it.key() ? m_queuedEdit->saved : kept.text;
     QJsonObject entry;
-    if (!kept.text.isEmpty()) entry.insert(QStringLiteral("text"), kept.text);
+    if (!text.isEmpty()) entry.insert(QStringLiteral("text"), text);
     if (kept.modelSelection) entry.insert(QStringLiteral("modelSelection"), *kept.modelSelection);
     if (!kept.runtimeMode.isEmpty()) entry.insert(QStringLiteral("runtimeMode"), kept.runtimeMode);
     if (!kept.interactionMode.isEmpty()) entry.insert(QStringLiteral("interactionMode"), kept.interactionMode);

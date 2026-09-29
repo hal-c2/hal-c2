@@ -351,6 +351,8 @@ export const ShellComposerState = Schema.Struct({
   runtimeModes: Schema.Array(ShellComposerRuntimeMode),
   interactionMode: Schema.Literals(["default", "plan"]),
   showInteractionModeToggle: Schema.Boolean,
+  /** The queued run whose message the composer is editing; sending saves it. */
+  editingQueuedRunId: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type ShellComposerState = typeof ShellComposerState.Type;
 

@@ -98,6 +98,11 @@ void KeybindingController::registerCommands() {
   add(QStringLiteral("sidebar.toggle"), [this] { m_bridge->dispatch(QStringLiteral("sidebar.toggle")); });
   // The route thread's running turn stops, as the composer's stop button does.
   add(QStringLiteral("thread.stop"), [this] { m_bridge->dispatch(QStringLiteral("composer.interrupt")); });
+  // The route thread's first queued message steers the running turn.
+  add(QStringLiteral("thread.steerQueuedMessage"), [this] { m_bridge->dispatch(QStringLiteral("composer.queue.steer")); });
+  // The composer brick edits the last queued message when its caret is at
+  // the start, and moves the caret there otherwise.
+  add(QStringLiteral("thread.editQueuedMessage"), [this] { m_bridge->sendToPage(QStringLiteral("composer.queue.editLast")); });
   // The composer brick opens its own pickers.
   add(QStringLiteral("modelPicker.toggle"), [this] { m_bridge->sendToPage(QStringLiteral("composer.modelPicker.toggle")); });
   for (const QString& command : {QStringLiteral("composer.effort"), QStringLiteral("composer.mode"),

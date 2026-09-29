@@ -595,6 +595,13 @@ without sending; `$` the provider's skills; `@` asks the node's workspace
 search (`WorkspaceFiles`, the Files tab's) for the route's checkout. Selecting
 sends the item id back and the controller applies the replacement.
 
+Editing a queued message (the queue row's Edit, or the edit key with the
+caret at the start of the draft) swaps its text into the thread's composer
+and sets the thread's draft aside, so the set-aside draft is what is saved to
+disk; a send saves the edit with `queued-run.edit` (text only, so its images
+stay as they were) and gives the draft back. The web keeps the edit under its
+own draft target instead; the swap keeps every composer path on one target.
+
 Prompt history (`composer.history.step`) and terminal contexts are not the
 controller's yet: it drops the step, publishes no terminal contexts, and a
 terminal selection's `composer.terminalContext.add` goes nowhere.
@@ -877,7 +884,8 @@ command are dropped) and evaluates `when` against the shell's own context:
 terminal and composer focus, the drawer, `isDesktop`. Commands the shell can
 run itself sit in a `CommandRegistry` (`Keybindings.commands`): new thread
 through `thread.new`, back, the sidebar, the terminal drawer, next, previous
-and numbered threads in the sidebar's order, the composer's pickers and stop.
+and numbered threads in the sidebar's order, the composer's pickers and stop,
+and steering with or editing a queued message.
 A brick adds its own with `Keybindings.commands.add(command, title, callback,
 owner)`; `KeybindingController::kAppearanceCycle` names the one a native
 appearance setting should register. Its rows (`{command, title, shortcut}`)

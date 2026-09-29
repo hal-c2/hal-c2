@@ -68,7 +68,16 @@ class TimelineModel;
 // composer.approval.respond {requestId, decision},
 // composer.question.answer {requestId, answers}, composer.question.dismiss
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
-// composer.queue.steer {runId}.
+// composer.queue.steer {runId?} (the first queued without one),
+// composer.queue.edit {runId?} (the last queued without one),
+// composer.queue.edit.cancel.
+//
+// Editing a queued message puts its text in the thread's composer
+// (`composer.editingQueuedRunId`) and sets the thread's own draft aside; a
+// send saves the edit (`queued-run.edit`, text only) and cancelling gives the
+// draft back. A run that leaves the queue mid-edit ends it: a changed edit
+// stays in the composer when the set-aside draft was empty, and is dropped
+// with a toast otherwise.
 class ComposerController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -136,6 +145,12 @@ private:
   bool attach(const QVariantList& files);
   bool respond(const QString& requestId, const QJsonObject& fields, const QString& failure);
   bool queueCommand(const QString& type, const QString& runId);
+  bool editQueued(const QString& target, QString runId);
+  bool saveQueuedEdit(const QString& target, const QString& text);
+  // Gives the set-aside draft back; `keepEdit` leaves the edit's text instead.
+  void endQueuedEdit(bool keepEdit = false);
+  // Ends an edit whose run is no longer queued.
+  void recoverQueuedEdit(const QVariantMap& turn);
 
   // The thread the window shows (the shell's route), or empty.
   QString openThread() const;
@@ -216,4 +231,15 @@ private:
   };
   PathSearch m_paths;
   int m_nextAttachment = 1;
+  // The queued message the route thread's composer is editing, and the
+  // thread's draft set aside for it.
+  struct QueuedEdit {
+    QString thread;
+    QString runId;
+    QString original;
+    QString saved;
+    int savedCursor = 0;
+    bool saving = false;
+  };
+  std::optional<QueuedEdit> m_queuedEdit;
 };

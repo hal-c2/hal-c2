@@ -190,6 +190,9 @@ Item {
             mouseClick(findChild(requests, "queueRemove-run-2"));
             compare(lastAction().action, "composer.queue.remove");
             compare(lastAction().payload.runId, "run-2");
+            mouseClick(findChild(requests, "queueEdit-run-3"));
+            compare(lastAction().action, "composer.queue.edit");
+            compare(lastAction().payload.runId, "run-3");
         }
 
         function test_composerSendsImagesWithoutText() {

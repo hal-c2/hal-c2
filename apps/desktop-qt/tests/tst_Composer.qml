@@ -291,5 +291,33 @@ Item {
             Shell.publishComposerText("", 0, Shell.dispatchedActions[2].payload.edit);
             compare(input.text, "");
         }
+
+        // The edit-queued key reaches the queue from the start of the draft
+        // and moves the caret there from anywhere else.
+        function test_editQueuedKeyFromTheStartOfTheDraft() {
+            let composer = createTemporaryObject(composerComponent, root);
+            let input = findChild(composer, "input");
+            input.forceActiveFocus();
+            input.text = "draft";
+            input.cursorPosition = 3;
+            Shell.actionRequested("composer.queue.editLast", undefined);
+            compare(input.cursorPosition, 0);
+            verify(!Shell.dispatchedActions.some(entry => entry.action === "composer.queue.edit"));
+            Shell.actionRequested("composer.queue.editLast", undefined);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "composer.queue.edit");
+        }
+
+        function test_editingAQueuedMessageCanBeCancelled() {
+            let composer = createTemporaryObject(composerComponent, root);
+            let cancel = findChild(composer, "queuedEditCancel");
+            verify(!cancel.visible);
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, { editingQueuedRunId: "run-2" })
+            });
+            waitForRendering(composer);
+            verify(cancel.visible);
+            mouseClick(cancel);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "composer.queue.edit.cancel");
+        }
     }
 }
