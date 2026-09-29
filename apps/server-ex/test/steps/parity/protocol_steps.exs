@@ -724,6 +724,12 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   # --- preparing a shape -------------------------------------------------------------
 
+  # A shape named by environment is its node form with the environment in place of the node.
+  defp prepare(context, type, "environment") do
+    {map, context} = prepare(context, type, "node")
+    {map |> Map.delete("node") |> Map.put("environment", context.node.environment), context}
+  end
+
   defp prepare(context, type, form) do
     f = context.fixtures
     node = %{"node" => Atom.to_string(node())}
@@ -743,16 +749,11 @@ defmodule HalC2.Steps.Parity.Shapes do
         {%{}, context}
 
       "stream" ->
-        if form == "environment",
-          do: {%{"environment" => context.node.environment, "stream" => f.thread}, context},
-          else: {Map.put(node, "stream", f.thread), context}
+        {Map.put(node, "stream", f.thread), context}
 
       "config" ->
         Enum.each([HalC2.EnvironmentThemes, HalC2.UsageLimitSources], &Node.ensure/1)
-
-        if form == "environment",
-          do: {%{"environment" => context.node.environment}, context},
-          else: {node, context}
+        {node, context}
 
       "terminal" ->
         World.open_terminal(f.thread, f.root)

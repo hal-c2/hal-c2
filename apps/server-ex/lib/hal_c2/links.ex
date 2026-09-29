@@ -3,8 +3,10 @@ defmodule HalC2.Links do
   Environments this node reaches without clustering with them: other nodes the user
   paired this one with. A link keeps the access token its pairing gave and one
   websocket (`HalC2.Links.Connection`) that forwards client RPCs and subscriptions,
-  so a client that only talks to this node reaches the linked environment too
-  (`HalC2.Web.Socket`).
+  so a client that only talks to this node reaches the linked environment and the
+  other members of its cluster too (`HalC2.Web.Socket`). `route/1` says where an
+  environment id is served: this node, a cluster member, or a link. The other side
+  checks the link token's scopes; this node widens nothing.
 
   Links persist in the `environment-links` secret. Subscribers get
   `{:hal_c2_links, links}` with the whole list (`list/0`) whenever a link is added,
@@ -83,23 +85,66 @@ defmodule HalC2.Links do
   @spec remove(String.t()) :: :ok | {:error, String.t()}
   def remove(environment_id), do: GenServer.call(__MODULE__, {:remove, environment_id})
 
-  @doc "Runs a client RPC on a linked environment, as `HalC2.Rpc.handle/2` answers."
+  @doc """
+  Where a client's shape or RPC for `environment_id` is served: `{:node, node}` on this
+  node or the cluster member serving it, `:link` through the link to it or to a cluster
+  it is a member of (`rpc/4`, `watch/4`), else `:unknown`. A linked cluster's members
+  are known from its descriptor when the link connects and from any of its shells the
+  link passes on; the linked node routes to them itself.
+  """
+  @spec route(String.t()) :: {:node, node} | :link | :unknown
+  def route(environment_id) do
+    cond do
+      # Even if the node became distributed (and changed its name) after the shell
+      # recorded it.
+      environment_id == HalC2.Environment.id() -> {:node, node()}
+      node = cluster_node(environment_id) -> {:node, node}
+      connection(environment_id) -> :link
+      true -> :unknown
+    end
+  end
+
+  defp cluster_node(environment_id) do
+    Enum.find_value(HalC2.Shell.environments(), fn {node, descriptor} ->
+      if descriptor["environmentId"] == environment_id, do: node
+    end)
+  end
+
+  @doc """
+  Runs a client RPC on a linked environment, as `HalC2.Rpc.handle/2` answers, or fails
+  at once with `unreachable/2`'s error while its link is down.
+  """
   @spec rpc(String.t(), String.t(), term, timeout) :: {:ok, term} | {:error, String.t() | map}
   def rpc(environment_id, method, payload, timeout) do
     case connection(environment_id) do
       nil -> {:error, "unknown environment"}
-      pid -> Connection.rpc(pid, method, payload, timeout)
+      pid -> Connection.rpc(pid, environment_id, method, payload, timeout)
     end
   end
+
+  @doc """
+  The error a request for `environment_id` gets while its link is down: `reason` is
+  `"unreachable"`, or `"refused"` when the environment no longer accepts the link's
+  token. `message` says so for a person.
+  """
+  @spec unreachable(String.t(), String.t(), String.t()) :: map
+  def unreachable(environment_id, reason, message),
+    do: %{
+      "_tag" => "EnvironmentUnreachableError",
+      "environmentId" => environment_id,
+      "reason" => reason,
+      "message" => message
+    }
 
   @doc """
   Subscribes `pid` to `shape` (a protocol 3 shape naming the environment) on a
   linked environment, from `offset` for a stream. `pid` receives
   `{:hal_c2_link, ref, frame}` for each of the subscription's frames; the frame's `id`
-  is the link's, not the client's.
+  is the link's, not the client's. While the link is down after failing, it fails at
+  once as `rpc/4` does; while it first connects, the subscription waits for it.
   """
   @spec watch(String.t(), map, pid, non_neg_integer | nil) ::
-          {:ok, reference} | {:error, String.t()}
+          {:ok, reference} | {:error, String.t() | map}
   def watch(environment_id, shape, pid, offset \\ nil) do
     case connection(environment_id) do
       nil -> {:error, "unknown environment"}
@@ -165,9 +210,7 @@ defmodule HalC2.Links do
 
   # This node and its cluster are reached without a link.
   defp not_reachable(%{"environmentId" => id}) do
-    cluster = for {_node, d} <- HalC2.Shell.environments(), do: d["environmentId"]
-
-    if id == HalC2.Environment.id() or id in cluster,
+    if match?({:node, _}, route(id)),
       do: {:error, "this node already reaches that environment"},
       else: :ok
   end
