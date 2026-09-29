@@ -303,6 +303,27 @@ void SettingsController::reset(const QString& key) {
   if (const Row* row = rowOf(key)) set(key, row->fallback.toVariant());
 }
 
+void SettingsController::resetAll(const QStringList& keys) {
+  QJsonObject device = m_device;
+  QStringList node;
+  for (const QString& key : keys) {
+    const Row* row = rowOf(key);
+    if (!row) continue;
+    if (row->device) device.remove(key);
+    else node.append(key);
+  }
+  if (!setDeviceSettings(device)) toast(QStringLiteral("Settings not restored"), m_deviceError);
+  if (node.isEmpty()) return;
+  change(
+      [node](QJsonObject settings) {
+        for (const QString& key : node) settings.remove(key);
+        return settings;
+      },
+      [this](const std::optional<QString>& error) {
+        if (error) toast(QStringLiteral("Settings not restored"), *error);
+      });
+}
+
 void SettingsController::toast(const QString& title, const QString& reason) {
   // Toasts are built after this controller: looked up when needed.
   if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) toasts->error(title, reason);

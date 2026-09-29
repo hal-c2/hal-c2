@@ -12,7 +12,7 @@ Item {
         name: "SettingsNavTests"
         when: windowShown
         function init() { Shell.reset(); Shell.state = { route: { kind: "settings", section: "/settings/general" } }; }
-        function cleanup() { Shell.reset(); Keybindings.bindings = []; }
+        function cleanup() { Shell.reset(); Keybindings.bindings = []; Settings.clear(); Themes.clear(); }
         function test_keyboardNavigation() {
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
@@ -214,6 +214,56 @@ Item {
             keyClick(Qt.Key_Escape);
             compare(search.text, "");
             tryVerify(() => row(nav, 0) !== null && !row(nav, 0).isResult && row(nav, 0).Accessible.name === "General");
+        }
+    
+        // Restoring defaults (the web's useSettingsRestore).
+        function changeThemeAndTimeFormat() {
+            Settings.defaults = { timestampFormat: "locale" };
+            Settings.device = { timestampFormat: "24-hour" };
+            Themes.themeId = "grove";
+        }
+        function askToRestore(nav) {
+            const button = findChild(nav, "restoreDefaults");
+            verify(button.enabled, "something differs from its default");
+            mouseClick(button);
+            const dialog = findChild(nav, "restoreDialog");
+            tryVerify(() => dialog.opened);
+            return dialog;
+        }
+        function test_restoringDefaultsListsWhatWillChangeAndAsksFirst() {
+            changeThemeAndTimeFormat();
+            const nav = createTemporaryObject(component, root);
+            askToRestore(nav);
+            compare(findChild(nav, "restoreList").text, "This will reset: Theme, Time format.");
+            compare(Themes.themeId, "grove", "nothing changes before the user confirms");
+        }
+        function test_confirmingTheRestoreResetsTheListedSettings() {
+            changeThemeAndTimeFormat();
+            const nav = createTemporaryObject(component, root);
+            const dialog = askToRestore(nav);
+            mouseClick(findChild(dialog.contentItem, "confirm"));
+            compare(Themes.themeId, "");
+            compare(Settings.setting("timestampFormat"), "locale");
+            verify(!findChild(nav, "restoreDefaults").enabled, "nothing is left to restore");
+        }
+        function test_cancellingTheRestoreChangesNothing() {
+            changeThemeAndTimeFormat();
+            const nav = createTemporaryObject(component, root);
+            const dialog = askToRestore(nav);
+            mouseClick(findChild(dialog.contentItem, "cancel"));
+            tryVerify(() => !dialog.visible);
+            compare(Themes.themeId, "grove");
+            compare(Settings.setting("timestampFormat"), "24-hour");
+        }
+        function test_aThemeThatCannotBeRestoredKeepsEverything() {
+            changeThemeAndTimeFormat();
+            Themes.failSaves = true;
+            const nav = createTemporaryObject(component, root);
+            const dialog = askToRestore(nav);
+            mouseClick(findChild(dialog.contentItem, "confirm"));
+            compare(Themes.calls.map(call => call.name), ["restoreDefaults"]);
+            compare(Themes.themeId, "grove");
+            compare(Settings.setting("timestampFormat"), "24-hour", "the other settings wait for the theme");
         }
     }
 }

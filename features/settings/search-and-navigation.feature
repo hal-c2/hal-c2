@@ -16,6 +16,8 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsPage.qml (bringing a result into view)
 #   apps/desktop-qt/tests/tst_SettingsPages.qml
 #   apps/desktop-qt/tests/tst_ProjectSettings.qml (the Default model result)
+#   apps/desktop-qt/src/native/ThemeController.cpp, SettingsController.cpp (restoring defaults)
+#   apps/desktop-qt/tests/native/tst_ThemeResolution.cpp (a theme that cannot be restored)
 #   apps/desktop-qt/src/native/NavigationController.cpp (settings sections and back)
 #   apps/tui/src/components/SettingsView.tsx
 #   apps/tui/src/keymap.ts
@@ -181,25 +183,25 @@ Feature: Settings search and navigation
 
   Rule: Restoring defaults
 
-    @backlog @desktop
+    @desktop
     Scenario: Restoring defaults lists what will change and asks first
       Given the user has changed the theme and the time format
       When the user restores default settings
       Then the user is asked to confirm a reset of the theme and the time format
 
-    @backlog @desktop
+    @desktop
     Scenario: Confirming the restore resets the listed settings
       Given the user is asked to confirm restoring default settings
       When the user confirms
       Then the theme and the time format are back to their defaults
 
-    @backlog @desktop
+    @desktop
     Scenario: Cancelling the restore changes nothing
       Given the user is asked to confirm restoring default settings
       When the user cancels
       Then every setting keeps its value
 
-    @backlog @desktop
+    @desktop
     Scenario: A theme that cannot be restored rolls back
       Given saving the theme on this device fails
       When the user confirms restoring default settings

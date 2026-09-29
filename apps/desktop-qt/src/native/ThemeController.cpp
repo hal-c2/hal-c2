@@ -317,6 +317,12 @@ bool ThemeController::setMode(const QString& mode) {
   return save(device);
 }
 
+bool ThemeController::restoreDefaults() {
+  QJsonObject device = m_settings->deviceSettings();
+  for (const char* key : {"appearance", "theme", "themeHalves"}) device.remove(QLatin1String(key));
+  return save(device, QStringLiteral("Couldn’t restore theme settings"));
+}
+
 bool ThemeController::cycleAppearance() {
   const QString current = mode();
   const QString next = current == kSystem ? kLight : current == kLight ? kDark : kSystem;

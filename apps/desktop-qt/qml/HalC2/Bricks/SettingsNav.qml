@@ -3,6 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 import "js/settingsPages.js" as Pages
+import "js/settingsRows.js" as Rows
 
 // Settings navigation: sections, search, and a way back. The sections are
 // js/settingsPages.js, each listed once the state it needs is there. Picking
@@ -40,6 +41,29 @@ Rectangle {
 
     implicitWidth: 260
     color: Theme.palette.color("sidebar", "#0a0a0a")
+
+    // What restoring this device's defaults resets, by name: the theme choice,
+    // then each General and Appearance row off its default (the web's
+    // useSettingsRestore).
+    readonly property bool themeChanged: Themes.themeId !== "" || Themes.mode !== "system" || Object.keys(Themes.halves ?? {}).length > 0
+    readonly property var changedRows: {
+        // isDefault reads these; the binding follows them.
+        Settings.document;
+        Settings.device;
+        return Rows.changed(key => Settings.isDefault(key), Qt.platform.os);
+    }
+    readonly property var changedLabels: (Themes.themeId !== "" ? [qsTr("Theme")] : [])
+        .concat(Themes.mode !== "system" ? [qsTr("Follow system")] : [])
+        .concat(Object.keys(Themes.halves ?? {}).length > 0 ? [qsTr("Theme mix")] : [])
+        .concat(changedRows.map(row => row.title))
+
+    // Resets what `changedLabels` lists; a theme that cannot be restored
+    // keeps everything as it was.
+    function restoreDefaults() {
+        const keys = changedRows.map(row => row.key);
+        if (themeChanged && !Themes.restoreDefaults()) return;
+        if (keys.length > 0) Settings.resetAll(keys);
+    }
 
     // "/" starts a search while the keyboard is not in a text field.
     Shortcut {
@@ -88,6 +112,16 @@ Rectangle {
             Layout.bottomMargin: 6
             placeholderText: qsTr("Search settings")
             Keys.onEscapePressed: text = ""
+        }
+
+        ShellButton {
+            objectName: "restoreDefaults"
+            Layout.leftMargin: 10
+            Layout.bottomMargin: 6
+            subtle: true
+            enabled: nav.changedLabels.length > 0
+            text: qsTr("Restore device defaults")
+            onClicked: restoreDialog.open()
         }
 
         ListView {
@@ -166,6 +200,66 @@ Rectangle {
                 text: qsTr("No matching settings")
                 color: nav.muted
                 font.pixelSize: 12
+            }
+        }
+    }
+
+    Dialog {
+        id: restoreDialog
+        objectName: "restoreDialog"
+
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(440, (parent?.width ?? 472) - 32)
+        padding: 20
+        title: qsTr("Restore default settings?")
+        onAccepted: nav.restoreDefaults()
+
+        background: Rectangle {
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: Theme.palette.color("border", "#27272a")
+            radius: Math.min(Theme.radius, 16)
+        }
+        header: Label {
+            text: restoreDialog.title
+            padding: 20
+            bottomPadding: 4
+            font.pixelSize: 17
+            font.weight: Font.DemiBold
+            color: Theme.palette.color("text", "#e4e4e7")
+        }
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            Label {
+                objectName: "restoreList"
+                Layout.fillWidth: true
+                text: qsTr("This will reset: %1.").arg(nav.changedLabels.join(", "))
+                color: Theme.palette.color("textMuted", "#a1a1aa")
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Item { Layout.fillWidth: true }
+
+                ShellButton {
+                    objectName: "cancel"
+                    subtle: true
+                    text: qsTr("Cancel")
+                    onClicked: restoreDialog.reject()
+                }
+
+                ShellButton {
+                    objectName: "confirm"
+                    tint: Theme.palette.color("error", "#ef4444")
+                    text: qsTr("Restore defaults")
+                    onClicked: restoreDialog.accept()
+                }
             }
         }
     }
