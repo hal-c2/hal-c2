@@ -576,8 +576,10 @@ above the `Composer`; its answers are `composer.approval.respond`,
 `composer.question.answer`, `composer.question.dismiss`,
 `composer.plan.implement`, `composer.queue.remove` and `composer.queue.steer`.
 A draft route's turn only carries the draft's text, which `DraftController`
-keeps. Slash commands, and a draft's first send (it needs `thread.create` and
-workspace setup), still reach the page.
+keeps. A shell-kept draft's first send launches the thread itself
+(`orchestration.launchThread` with the draft's checkout, model and modes) and
+the window replaces the draft with the thread. Slash commands, background
+starts and drafts only the page has still reach the page.
 
 Actions: `composer.text.set {target, text, cursor?, edit?}` (debounced from the QML
 editor), `composer.submit {text?, intent?, edit?}` (text rides along so the send is
@@ -655,8 +657,7 @@ pills; the branch toolbar's contents (environment, checkout mode, branch
 picker, PR badge) are the context strip under the `Composer` brick.
 
 Three actions still open page UI and go on to it: `workspace.newThread`,
-`workspace.titleMenu {x, y}` and `workspace.openPullRequest`. A draft's first
-message is still the page's too, so a draft's checkout (mode, start from
+`workspace.titleMenu {x, y}` and `workspace.openPullRequest`. A draft's checkout (mode, start from
 origin, branch, worktree, the machine it runs on) is kept natively by draft
 id and the page is told each change: `workspace.envMode.set`,
 `.startFromOrigin.set` and `.environment.set` go on to it after they land, and
@@ -991,8 +992,7 @@ The embedded page is legacy and leaves the shell piece by piece. Every piece
 of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 `TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
 state from the page. The right panel's terminal tab and most settings pages
-are still HTML because they have not moved yet, not by design. The timeline
-has a native store and brick but the layouts still show the page's.
+are still HTML because they have not moved yet, not by design.
 
 A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client
@@ -1020,6 +1020,19 @@ entities but not the rows: row ids are stable, streamed text only emits
 `dataChanged` for its row, and structural changes are applied as inserts,
 moves and removes, so the `Timeline` brick keeps its scroll position. The
 active thread is the navigation route's.
+
+Which routes the shell draws in the window's centre is one list,
+`Bricks/js/centreViews.js`; `ShellWindow.nativeCentreOpen` and `pageOpen`
+follow it, and every layout puts a `CentreHost` beside the `WebSurface` the way
+it does `SettingsHost`. Thread and draft routes load `ThreadView`: the route's
+timeline, a quiet loading line, the draft's opening line with its project and
+checkout, and Retry (`Threads.reload`) for a thread whose node stopped sending
+it. Links in a reply open in the browser or, for a path, in the right panel
+(`panel.open {tab, path}`). A reply's Revert asks first, then
+`Threads.revert` sends `checkpoint.rollback` with the checkpoint
+`TimelineModel::checkpointOf` found for its run; the node marks the later runs
+`rolled_back` and the fold drops them. Jump to latest is also the
+`timeline.jumpToLatest` command.
 
 What the shell still lacks next to web and mobile is tracked as Gherkin, not
 prose. The repository's `features/` tree tags every scenario with the surface it
