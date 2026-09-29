@@ -18,6 +18,11 @@ namespace {
 struct FakeProviders {
   QHash<QString, QJsonObject> auth;  // each instance's ProviderAuthState
   QStringList starts, cancels, logouts;
+  QStringList methods;  // the sign-in method each start asked for, "" for the default
+  QList<QJsonObject> responses;  // provider.auth.respond payloads
+  QList<QJsonObject> completes;  // provider.auth.complete payloads
+  bool terminalGone = false;
+  QString credential;  // the credential the agent last asked for
   QList<FakeNode::Rpc> updates;
   QString updateRefusal;
   int followedBefore = 0;
@@ -61,6 +66,7 @@ const FakeNode::Extension extension([](FakeNode& node) {
   node.onRpc(QStringLiteral("provider.auth.start"), [&node](const FakeNode::Rpc& rpc) {
     const QString instanceId = rpc.payload.value(QLatin1String("instanceId")).toString();
     node.part<FakeProviders>().starts.append(instanceId);
+    node.part<FakeProviders>().methods.append(rpc.payload.value(QLatin1String("methodId")).toString());
     node.reply(rpc, QJsonObject{});
     sendAuth(node, instanceId,
              {{QStringLiteral("phase"), QStringLiteral("waiting")},
@@ -75,6 +81,20 @@ const FakeNode::Extension extension([](FakeNode& node) {
     node.part<FakeProviders>().cancels.append(rpc.payload.value(QLatin1String("flowId")).toString());
     node.reply(rpc, QJsonObject{});
     sendAuth(node, instanceId, {{QStringLiteral("phase"), QStringLiteral("cancelled")}});
+  });
+  node.onRpc(QStringLiteral("provider.auth.respond"), [&node](const FakeNode::Rpc& rpc) {
+    FakeProviders& fake = node.part<FakeProviders>();
+    const bool terminal = rpc.payload.value(QLatin1String("response")).toObject().value(QLatin1String("type")) == QLatin1String("terminal");
+    if (terminal && fake.terminalGone) {
+      node.refuse(rpc, QStringLiteral("No sign-in is waiting for that input."));
+      return;
+    }
+    fake.responses.append(rpc.payload);
+    node.reply(rpc, QJsonObject{});
+  });
+  node.onRpc(QStringLiteral("provider.auth.complete"), [&node](const FakeNode::Rpc& rpc) {
+    node.part<FakeProviders>().completes.append(rpc.payload);
+    node.reply(rpc, QJsonObject{});
   });
   node.onRpc(QStringLiteral("provider.auth.logout"), [&node](const FakeNode::Rpc& rpc) {
     node.part<FakeProviders>().logouts.append(rpc.payload.value(QLatin1String("instanceId")).toString());
@@ -158,6 +178,11 @@ QJsonObject provider(const QString& instanceId, const QString& driver, const QSt
 }
 
 // An ACP agent that signs in from HAL-C2.
+// A sign-in method named `name`, its id the name in kebab case.
+QJsonObject signInMethod(const QString& name) {
+  return {{QStringLiteral("id"), name.toLower().replace(QLatin1Char(' '), QLatin1Char('-'))}, {QStringLiteral("name"), name}};
+}
+
 QJsonObject gemini(const QString& authStatus) {
   QJsonObject auth{{QStringLiteral("status"), authStatus}};
   if (authStatus == QLatin1String("authenticated")) auth.insert(QStringLiteral("email"), QStringLiteral("sam@example.com"));
@@ -615,6 +640,125 @@ const Steps steps([] {
   step(QStringLiteral("the user is told why the sign-in failed: %1").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForEntry(world, QStringLiteral("Gemini"), [&](const QVariantMap& found) { return at(found, QStringLiteral("account.error")) == c[0]; },
                  QStringLiteral("to say ") + c[0]);
+  });
+  step(QStringLiteral("%1 offers the sign-in methods %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    openPanel(world);
+    fake(world).auth.insert(QStringLiteral("gemini"),
+                            authState(QStringLiteral("gemini"),
+                                      {{QStringLiteral("methods"), QJsonArray{signInMethod(c[1]), signInMethod(c[2])}}}));
+    offer(world, gemini(QStringLiteral("unauthenticated")));
+    waitForEntry(world, c[0], [](const QVariantMap& found) {
+      return at(found, QStringLiteral("account.canSignIn")).toBool() && at(found, QStringLiteral("account.methods")).toList().size() == 2;
+    }, QStringLiteral("to offer two sign-in methods"));
+  });
+  step(QStringLiteral("the user chooses %1 and signs in to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QString methodId;
+    for (const QVariant& method : at(entry(world, c[1]), QStringLiteral("account.methods")).toList()) {
+      if (method.toMap().value(QStringLiteral("name")) == c[0]) methodId = method.toMap().value(QStringLiteral("id")).toString();
+    }
+    expect(!methodId.isEmpty(), QStringLiteral("%1 to be offered; the panel is %2").arg(c[0], show(panel(world))));
+    act(world, QStringLiteral("signIn"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}, {QStringLiteral("methodId"), methodId}});
+  });
+  step(QStringLiteral("the sign-in starts with the method %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = signInMethod(c[0]).value(QLatin1String("id")).toString();
+    world.waitFor([&] { return fake(world).methods == QStringList{id}; },
+                  [&] { return QStringLiteral("a sign-in with %1; started with %2").arg(id, fake(world).methods.join(QStringLiteral(", "))); });
+  });
+  step(QStringLiteral("the agent's login terminal shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return at(found, QStringLiteral("account.canCancel")).toBool(); },
+                 QStringLiteral("to be signing in"));
+    sendAuth(world.node, QStringLiteral("gemini"),
+             {{QStringLiteral("phase"), QStringLiteral("waiting")},
+              {QStringLiteral("flowId"), QStringLiteral("flow-1")},
+              {QStringLiteral("interaction"), QJsonObject{{QStringLiteral("id"), QStringLiteral("terminal")},
+                                                          {QStringLiteral("type"), QStringLiteral("terminal")},
+                                                          {QStringLiteral("output"), c[0]},
+                                                          {QStringLiteral("outputOffset"), c[0].size()}}}});
+    waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return !at(found, QStringLiteral("account.terminal")).isNull(); },
+                 QStringLiteral("to show the login terminal"));
+  });
+  step(QStringLiteral("the user is asked to complete sign-in in a terminal showing %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForEntry(world, QStringLiteral("Gemini"), [&](const QVariantMap& found) {
+      return at(found, QStringLiteral("account.description")) == QLatin1String("Complete sign-in in the terminal below.") &&
+             at(found, QStringLiteral("account.terminal.output")) == c[0];
+    }, QStringLiteral("to show the login terminal"));
+  });
+  step(QStringLiteral("the environment no longer has that login terminal"), [](World& world, const Captures&, const Table&) {
+    fake(world).terminalGone = true;
+  });
+  step(QStringLiteral("the user types %1 in the sign-in terminal").arg(q), [](World& world, const Captures& c, const Table&) {
+    act(world, QStringLiteral("signInTerminal"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}, {QStringLiteral("data"), c[0]}});
+  });
+  step(QStringLiteral("%1 reaches the sign-in terminal on the environment").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QJsonObject& response : std::as_const(fake(world).responses)) {
+        const QJsonObject body = response.value(QLatin1String("response")).toObject();
+        if (response.value(QLatin1String("flowId")) == QLatin1String("flow-1") &&
+            response.value(QLatin1String("interactionId")) == QLatin1String("terminal") &&
+            body.value(QLatin1String("type")) == QLatin1String("terminal") && body.value(QLatin1String("data")) == c[0]) {
+          return true;
+        }
+      }
+      return false;
+    }, [&] { return QStringLiteral("%1 to reach the terminal; the environment has %2 responses").arg(c[0]).arg(fake(world).responses.size()); });
+  });
+  step(QStringLiteral("the agent asks for the credential %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return at(found, QStringLiteral("account.canCancel")).toBool(); },
+                 QStringLiteral("to be signing in"));
+    fake(world).credential = c[0];
+    sendAuth(world.node, QStringLiteral("gemini"),
+             {{QStringLiteral("phase"), QStringLiteral("waiting")},
+              {QStringLiteral("flowId"), QStringLiteral("flow-1")},
+              {QStringLiteral("interaction"),
+               QJsonObject{{QStringLiteral("id"), QStringLiteral("credentials-1")},
+                           {QStringLiteral("type"), QStringLiteral("credentials")},
+                           {QStringLiteral("fields"), QJsonArray{QJsonObject{{QStringLiteral("name"), c[0]},
+                                                                             {QStringLiteral("label"), QStringLiteral("API key")},
+                                                                             {QStringLiteral("secret"), true}}}}}}});
+  });
+  step(QStringLiteral("the user enters %1 for it and connects").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) {
+      return at(found, QStringLiteral("account.description")) == QLatin1String("Enter your credentials below.") &&
+             !at(found, QStringLiteral("account.credentials")).toList().isEmpty();
+    }, QStringLiteral("to ask for credentials"));
+    act(world, QStringLiteral("signInCredentials"),
+        {{QStringLiteral("instanceId"), QStringLiteral("gemini")}, {QStringLiteral("values"), QVariantMap{{fake(world).credential, c[0]}}}});
+  });
+  step(QStringLiteral("the environment receives %1 as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QJsonObject& response : std::as_const(fake(world).responses)) {
+        const QJsonObject body = response.value(QLatin1String("response")).toObject();
+        if (response.value(QLatin1String("interactionId")) == QLatin1String("credentials-1") &&
+            body.value(QLatin1String("type")) == QLatin1String("credentials") &&
+            body.value(QLatin1String("values")).toObject() == QJsonObject{{c[1], c[0]}}) {
+          return true;
+        }
+      }
+      return false;
+    }, [&] { return QStringLiteral("the credential to be sent; the environment has %1 responses").arg(fake(world).responses.size()); });
+  });
+  step(QStringLiteral("the sign-in returns to a local address"), [](World& world, const Captures&, const Table&) {
+    waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return at(found, QStringLiteral("account.canCancel")).toBool(); },
+                 QStringLiteral("to be signing in"));
+    sendAuth(world.node, QStringLiteral("gemini"),
+             {{QStringLiteral("phase"), QStringLiteral("waiting")},
+              {QStringLiteral("flowId"), QStringLiteral("flow-1")},
+              {QStringLiteral("interaction"), QJsonObject{{QStringLiteral("id"), QStringLiteral("browser-1")},
+                                                          {QStringLiteral("type"), QStringLiteral("browser")},
+                                                          {QStringLiteral("url"), kSignInUrl},
+                                                          {QStringLiteral("requiresConsent"), false},
+                                                          {QStringLiteral("acceptsCallback"), true}}}});
+    waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return at(found, QStringLiteral("account.acceptsCallback")).toBool(); },
+                 QStringLiteral("to accept a pasted address"));
+  });
+  step(QStringLiteral("the user pastes %1 as the final sign-in address").arg(q), [](World& world, const Captures& c, const Table&) {
+    act(world, QStringLiteral("signInCallback"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}, {QStringLiteral("url"), c[0]}});
+  });
+  step(QStringLiteral("the environment finishes the sign-in with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      return fake(world).completes.size() == 1 && fake(world).completes.first().value(QLatin1String("callbackUrl")) == c[0] &&
+             fake(world).completes.first().value(QLatin1String("flowId")) == QLatin1String("flow-1");
+    }, [&] { return QStringLiteral("the sign-in to be finished with %1; it was finished %2 times").arg(c[0]).arg(fake(world).completes.size()); });
   });
   step(QStringLiteral("the user signs out of %1 and declines").arg(q), [](World& world, const Captures& c, const Table&) {
     dispatch(world, QStringLiteral("signOut"), c[0]);

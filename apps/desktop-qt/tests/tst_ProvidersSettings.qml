@@ -145,5 +145,24 @@ Item {
             mouseClick(findChild(card, "delete"));
             compare(Shell.dispatchedActions[1].action, "providerSettings.delete");
         }
+    
+        // A sign-in that asks for credentials sends what the user entered.
+        function test_credentials_are_sent_on_connect() {
+            const account = { description: "Enter your credentials below.", canSignIn: false, signInLabel: "Sign in", canCancel: true,
+                              canSignOut: false, url: "", userCode: "", error: "", methods: [], terminal: null,
+                              credentials: [{ name: "GEMINI_API_KEY", label: "API key", secret: true }], acceptsCallback: false, docsUrl: "" };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ account: account })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const field = findChild(card, "credential_GEMINI_API_KEY");
+            verify(findChild(card, "credentials").visible);
+            compare(field.echoMode, TextInput.Password);
+            field.forceActiveFocus();
+            keyClick(Qt.Key_S);
+            keyClick(Qt.Key_K);
+            mouseClick(findChild(card, "connect"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.signInCredentials");
+            compare(Shell.dispatchedActions[0].payload.values.GEMINI_API_KEY, "sk");
+        }
     }
 }

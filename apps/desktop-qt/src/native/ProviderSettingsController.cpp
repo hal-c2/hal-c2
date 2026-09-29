@@ -271,8 +271,82 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
   } else if (entry.isEmpty()) {
     return true;
   } else if (action == QLatin1String("providerSettings.signIn")) {
-    call(instanceId, QStringLiteral("provider.auth.start"), {{QStringLiteral("instanceId"), instanceId}},
+    QJsonObject start{{QStringLiteral("instanceId"), instanceId}};
+    // A method the environment offers; otherwise the provider's default.
+    const QString methodId = input.value(QStringLiteral("methodId")).toString();
+    for (const QJsonValue& method : auth.value(QLatin1String("methods")).toArray()) {
+      if (!methodId.isEmpty() && method.toObject().value(QLatin1String("id")).toString() == methodId) {
+        start.insert(QStringLiteral("methodId"), methodId);
+      }
+    }
+    call(instanceId, QStringLiteral("provider.auth.start"), start, QStringLiteral("Provider sign-in failed. Try again."));
+  } else if (action == QLatin1String("providerSettings.signInTerminal")) {
+    // Keystrokes and sizes for the agent's login terminal, in order, at most
+    // 4096 characters a request (ProviderAuthenticationSection).
+    const QJsonObject interaction = auth.value(QLatin1String("interaction")).toObject();
+    const QString flowId = auth.value(QLatin1String("flowId")).toString();
+    if (interaction.value(QLatin1String("type")) != QLatin1String("terminal") || flowId.isEmpty()) return true;
+    const QString data = input.value(QStringLiteral("data")).toString();
+    QJsonObject response{{QStringLiteral("type"), QStringLiteral("terminal")}};
+    if (input.contains(QStringLiteral("columns"))) {
+      response.insert(QStringLiteral("size"), QJsonObject{{QStringLiteral("cols"), input.value(QStringLiteral("columns")).toInt()},
+                                                          {QStringLiteral("rows"), input.value(QStringLiteral("rows")).toInt()}});
+    }
+    for (qsizetype offset = 0; offset < std::max<qsizetype>(1, data.size()); offset += 4096) {
+      QJsonObject chunk = response;
+      chunk.insert(QStringLiteral("data"), data.mid(offset, 4096));
+      m_terminalQueue[instanceId].append(QJsonObject{{QStringLiteral("instanceId"), instanceId},
+                                                     {QStringLiteral("flowId"), flowId},
+                                                     {QStringLiteral("interactionId"), interaction.value(QLatin1String("id"))},
+                                                     {QStringLiteral("response"), chunk}});
+    }
+    sendTerminal(instanceId);
+  } else if (action == QLatin1String("providerSettings.signInCredentials")) {
+    const QJsonObject interaction = auth.value(QLatin1String("interaction")).toObject();
+    if (interaction.value(QLatin1String("type")) != QLatin1String("credentials")) return true;
+    QJsonObject values;
+    const QVariantMap given = input.value(QStringLiteral("values")).toMap();
+    for (const QJsonValue& field : interaction.value(QLatin1String("fields")).toArray()) {
+      const QString name = field.toObject().value(QLatin1String("name")).toString();
+      if (given.contains(name)) values.insert(name, given.value(name).toString());
+    }
+    call(instanceId, QStringLiteral("provider.auth.respond"),
+         {{QStringLiteral("instanceId"), instanceId},
+          {QStringLiteral("flowId"), auth.value(QLatin1String("flowId"))},
+          {QStringLiteral("interactionId"), interaction.value(QLatin1String("id"))},
+          {QStringLiteral("response"), QJsonObject{{QStringLiteral("type"), QStringLiteral("credentials")}, {QStringLiteral("values"), values}}}},
          QStringLiteral("Provider sign-in failed. Try again."));
+  } else if (action == QLatin1String("providerSettings.signInCallback")) {
+    // The final localhost address, pasted when its page did not load.
+    const QString url = input.value(QStringLiteral("url")).toString().trimmed();
+    const QString flowId = auth.value(QLatin1String("flowId")).toString();
+    if (url.isEmpty() || flowId.isEmpty()) return true;
+    call(instanceId, QStringLiteral("provider.auth.complete"),
+         {{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("flowId"), flowId}, {QStringLiteral("callbackUrl"), url}},
+         QStringLiteral("Provider sign-in failed. Try again."));
+  } else if (action == QLatin1String("providerSettings.copySignInLink")) {
+    const QJsonObject interaction = auth.value(QLatin1String("interaction")).toObject();
+    const QString type = interaction.value(QLatin1String("type")).toString();
+    const QString url = type == QLatin1String("browser") || type == QLatin1String("deviceCode")
+                            ? interaction.value(QLatin1String("url")).toString()
+                            : auth.value(QLatin1String("authorizationUrl")).toString();
+    if (url.isEmpty()) return true;
+    if (!m_writeClipboard(url)) {
+      m_authError.insert(instanceId, QStringLiteral("Could not copy the sign-in link."));
+    } else if (type == QLatin1String("browser") && interaction.value(QLatin1String("requiresConsent")).toBool()) {
+      // The link only works once the environment records consent.
+      call(instanceId, QStringLiteral("provider.auth.respond"),
+           {{QStringLiteral("instanceId"), instanceId},
+            {QStringLiteral("flowId"), auth.value(QLatin1String("flowId"))},
+            {QStringLiteral("interactionId"), interaction.value(QLatin1String("id"))},
+            {QStringLiteral("response"), QJsonObject{{QStringLiteral("type"), QStringLiteral("browser")}, {QStringLiteral("action"), QStringLiteral("accept")}}}},
+           QStringLiteral("Could not copy the sign-in link."));
+      return true;
+    }
+    publish();
+  } else if (action == QLatin1String("providerSettings.openDocs")) {
+    const QString url = entry.value(QLatin1String("setup")).toObject().value(QLatin1String("documentationUrl")).toString();
+    if (url.startsWith(QLatin1String("https://")) || url.startsWith(QLatin1String("http://"))) m_bridge->openExternal(QUrl(url));
   } else if (action == QLatin1String("providerSettings.cancelSignIn")) {
     const QString flowId = auth.value(QLatin1String("flowId")).toString();
     if (!flowId.isEmpty()) {
@@ -395,6 +469,7 @@ void ProviderSettingsController::unfollow() {
   m_authState.clear();
   m_authError.clear();
   m_busy.clear();
+  m_terminalQueue.clear();
   m_wizard.reset();
   m_variables.clear();
 }
@@ -509,6 +584,26 @@ void ProviderSettingsController::call(const QString& instanceId, const QString& 
                  });
 }
 
+void ProviderSettingsController::sendTerminal(const QString& instanceId) {
+  if (m_terminalSending.contains(instanceId) || m_followed.isEmpty()) return;
+  QList<QJsonObject>& queue = m_terminalQueue[instanceId];
+  if (queue.isEmpty()) return;
+  m_terminalSending.insert(instanceId);
+  const QString environmentId = m_followed;
+  m_client->call(environmentId, QStringLiteral("provider.auth.respond"), queue.takeFirst(),
+                 [this, instanceId, environmentId](const QJsonValue&, const std::optional<QString>& error) {
+                   m_terminalSending.remove(instanceId);
+                   if (m_followed != environmentId) return;
+                   if (error) {
+                     m_terminalQueue.remove(instanceId);
+                     m_authError.insert(instanceId, QStringLiteral("The provider sign-in terminal is no longer available."));
+                     publish();
+                     return;
+                   }
+                   sendTerminal(instanceId);
+                 });
+}
+
 QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const {
   const QString instanceId = provider.value(QLatin1String("instanceId")).toString();
   const QString driver = provider.value(QLatin1String("driver")).toString();
@@ -544,7 +639,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   };
   configuration(result, instanceId, driver);
   if (!signsIn(provider)) return result;
-  // ProviderAuthenticationSection, without the terminal and credential prompts.
+  // ProviderAuthenticationSection.
   const bool served = !m_store->nodeServing(m_followed).isEmpty();
   const bool known = m_authState.contains(instanceId);
   const QJsonObject state = m_authState.value(instanceId);
@@ -568,9 +663,9 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   } else if (active) {
     description = phase == QLatin1String("starting")    ? QStringLiteral("Starting sign-in…")
                   : phase == QLatin1String("verifying") ? QStringLiteral("Checking your account…")
-                  : interactionType == QLatin1String("terminal") || interactionType == QLatin1String("credentials")
-                      ? QStringLiteral("This sign-in asks for input the desktop cannot show yet. Finish it from another client.")
-                      : QStringLiteral("Finish signing in in your browser.");
+                  : interactionType == QLatin1String("terminal")    ? QStringLiteral("Complete sign-in in the terminal below.")
+                  : interactionType == QLatin1String("credentials") ? QStringLiteral("Enter your credentials below.")
+                                                                    : QStringLiteral("Finish signing in in your browser.");
   } else if (signedIn) {
     description = QStringLiteral("Signed in.");
   } else if (discovering) {
@@ -586,6 +681,32 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   const QString url = interactionType == QLatin1String("browser") || interactionType == QLatin1String("deviceCode")
                           ? interaction.value(QLatin1String("url")).toString()
                           : state.value(QLatin1String("authorizationUrl")).toString();
+  // The methods to choose from, when there is a choice.
+  QVariantList methods;
+  const QJsonArray offered = state.value(QLatin1String("methods")).toArray();
+  if (served && !active && offered.size() > 1) {
+    for (const QJsonValue& method : offered) {
+      methods.append(QVariantMap{{QStringLiteral("id"), method.toObject().value(QLatin1String("id")).toString()},
+                                 {QStringLiteral("name"), method.toObject().value(QLatin1String("name")).toString()}});
+    }
+  }
+  // The agent's login terminal: its latest output and how far it has come.
+  QVariant terminal = null();
+  if (served && active && interactionType == QLatin1String("terminal")) {
+    terminal = QVariantMap{{QStringLiteral("key"), state.value(QLatin1String("flowId")).toString() + QLatin1Char(':') +
+                                                      interaction.value(QLatin1String("id")).toString()},
+                           {QStringLiteral("output"), interaction.value(QLatin1String("output")).toString()},
+                           {QStringLiteral("offset"), interaction.value(QLatin1String("outputOffset")).toDouble(
+                                                          double(interaction.value(QLatin1String("output")).toString().size()))}};
+  }
+  QVariantList credentials;
+  if (served && active && interactionType == QLatin1String("credentials")) {
+    for (const QJsonValue& field : interaction.value(QLatin1String("fields")).toArray()) {
+      credentials.append(QVariantMap{{QStringLiteral("name"), field.toObject().value(QLatin1String("name")).toString()},
+                                     {QStringLiteral("label"), field.toObject().value(QLatin1String("label")).toString()},
+                                     {QStringLiteral("secret"), field.toObject().value(QLatin1String("secret")).toBool()}});
+    }
+  }
   QString error = m_authError.value(instanceId);
   if (error.isEmpty() && phase == QLatin1String("failed")) error = state.value(QLatin1String("message")).toString();
   result.insert(QStringLiteral("account"),
@@ -606,6 +727,14 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                                                      ? interaction.value(QLatin1String("userCode")).toString()
                                                      : QString()},
                     {QStringLiteral("error"), error},
+                    {QStringLiteral("methods"), methods},
+                    {QStringLiteral("terminal"), terminal},
+                    {QStringLiteral("credentials"), credentials},
+                    {QStringLiteral("acceptsCallback"), served && active && !url.isEmpty() &&
+                                                            (interactionType == QLatin1String("browser")
+                                                                 ? interaction.value(QLatin1String("acceptsCallback")).toBool()
+                                                                 : interaction.isEmpty())},
+                    {QStringLiteral("docsUrl"), externalSetup ? setup.value(QLatin1String("documentationUrl")).toString() : QString()},
                 });
   return result;
 }

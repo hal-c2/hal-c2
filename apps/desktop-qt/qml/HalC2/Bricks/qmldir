@@ -64,3 +64,4 @@ HomePage 1.0 HomePage.qml
 UsagePage 1.0 UsagePage.qml
 ProvidersSettings 1.0 ProvidersSettings.qml
 ArchivedThreads 1.0 ArchivedThreads.qml
+ProviderAuthTerminal 1.0 ProviderAuthTerminal.qml

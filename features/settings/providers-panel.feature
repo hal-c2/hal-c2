@@ -289,6 +289,46 @@ Feature: Providers settings panel
       When the user shows the providers of "Build box"
       Then the user is told to sign in from a client paired with "Build box"
 
+    @desktop
+    Scenario: Choosing how to sign in
+      Given "Gemini" offers the sign-in methods "Google" and "API key"
+      When the user chooses "API key" and signs in to "Gemini"
+      Then the sign-in starts with the method "API key"
+
+    @desktop
+    Scenario: Signing in through the agent's login terminal
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      And the user signs in to "Gemini"
+      When the agent's login terminal shows "Press enter to continue"
+      Then the user is asked to complete sign-in in a terminal showing "Press enter to continue"
+      When the user types "y" in the sign-in terminal
+      Then "y" reaches the sign-in terminal on the environment
+
+    @desktop
+    Scenario: A login terminal that has gone says so
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      And the user signs in to "Gemini"
+      And the agent's login terminal shows "Press enter to continue"
+      And the environment no longer has that login terminal
+      When the user types "y" in the sign-in terminal
+      Then the user is told why the sign-in failed: "The provider sign-in terminal is no longer available."
+
+    @desktop
+    Scenario: Signing in with credentials
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      And the user signs in to "Gemini"
+      When the agent asks for the credential "GEMINI_API_KEY"
+      And the user enters "sk-test" for it and connects
+      Then the environment receives "sk-test" as "GEMINI_API_KEY"
+
+    @desktop
+    Scenario: Pasting the final sign-in address when its page does not load
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      And the user signs in to "Gemini"
+      And the sign-in returns to a local address
+      When the user pastes "http://localhost:1455/callback?code=abc" as the final sign-in address
+      Then the environment finishes the sign-in with "http://localhost:1455/callback?code=abc"
+
   # Node behaviour of provider updates and version advisories is owned by settings/updates.feature
   # and providers/provider-setup.feature; this rule holds what the panel adds.
   Rule: Updates

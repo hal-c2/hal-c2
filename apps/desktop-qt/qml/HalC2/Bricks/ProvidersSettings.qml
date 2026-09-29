@@ -497,7 +497,7 @@ Rectangle {
 
                 Note {
                     visible: !!(card.account && card.account.userCode)
-                    text: card.account ? qsTr("Code: %1").arg(card.account.userCode) : ""
+                    text: card.account ? qsTr("Enter code %1 in your browser.").arg(card.account.userCode) : ""
                     color: page.foreground
                 }
 
@@ -510,12 +510,25 @@ Rectangle {
                 RowLayout {
                     spacing: 8
 
+                    ShellComboBox {
+                        id: method
+
+                        objectName: "signInMethod"
+                        readonly property var methods: card.account && card.account.methods ? card.account.methods : []
+                        visible: methods.length > 1
+                        outline: true
+                        model: [{ id: "", name: qsTr("Provider default") }].concat(methods)
+                        textRole: "name"
+                        valueRole: "id"
+                        Accessible.name: qsTr("Sign-in method")
+                    }
+
                     ShellButton {
                         objectName: "signIn"
                         visible: card.account !== null && !card.account.canCancel
                         enabled: card.account !== null && card.account.canSignIn
                         text: card.account ? card.account.signInLabel : ""
-                        onClicked: page.act("signIn", card.provider)
+                        onClicked: page.act("signIn", card.provider, method.currentValue ? { methodId: method.currentValue } : {})
                     }
 
                     ShellButton {
@@ -523,6 +536,22 @@ Rectangle {
                         primary: true
                         text: qsTr("Open sign-in page")
                         onClicked: page.act("openSignIn", card.provider)
+                    }
+
+                    ShellButton {
+                        visible: !!(card.account && card.account.url)
+                        subtle: true
+                        iconName: "copy"
+                        Accessible.name: qsTr("Copy sign-in link")
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Copy sign-in link")
+                        onClicked: page.act("copySignInLink", card.provider)
+                    }
+
+                    ShellButton {
+                        visible: !!(card.account && card.account.docsUrl)
+                        text: qsTr("Open docs")
+                        onClicked: page.act("openDocs", card.provider)
                     }
 
                     ShellButton {
@@ -537,6 +566,104 @@ Rectangle {
                         subtle: true
                         text: qsTr("Sign out")
                         onClicked: page.act("signOut", card.provider)
+                    }
+                }
+
+                // The agent's login terminal, while a sign-in runs in one.
+                Loader {
+                    Layout.fillWidth: true
+                    active: !!(card.account && card.account.terminal)
+                    visible: active
+                    source: active ? "ProviderAuthTerminal.qml" : ""
+                    onLoaded: {
+                        item.instanceId = Qt.binding(() => card.provider.instanceId);
+                        item.terminal = Qt.binding(() => card.account ? card.account.terminal : null);
+                    }
+                }
+
+                // The credentials the agent asks for.
+                ColumnLayout {
+                    id: credentials
+
+                    objectName: "credentials"
+                    readonly property var fields: card.account && card.account.credentials ? card.account.credentials : []
+                    property var values: ({})
+                    Layout.fillWidth: true
+                    visible: fields.length > 0
+                    spacing: 4
+
+                    Repeater {
+                        model: credentials.fields
+
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Label {
+                                text: modelData.label || modelData.name
+                                color: page.foreground
+                                font.pixelSize: 12
+                            }
+
+                            ShellTextField {
+                                objectName: "credential_" + modelData.name
+                                Layout.fillWidth: true
+                                echoMode: modelData.secret ? TextInput.Password : TextInput.Normal
+                                maximumLength: 16384
+                                Accessible.name: modelData.label || modelData.name
+                                onTextEdited: credentials.values[modelData.name] = text
+                                onAccepted: connect.clicked()
+                            }
+                        }
+                    }
+
+                    ShellButton {
+                        id: connect
+
+                        objectName: "connect"
+                        text: qsTr("Connect")
+                        onClicked: {
+                            page.act("signInCredentials", card.provider, { values: credentials.values });
+                            credentials.values = {};
+                        }
+                    }
+                }
+
+                // The final localhost address, when its page does not load.
+                ColumnLayout {
+                    objectName: "callback"
+                    Layout.fillWidth: true
+                    visible: !!(card.account && card.account.acceptsCallback)
+                    spacing: 4
+
+                    Note {
+                        text: qsTr("If the final localhost page does not load, paste its full URL here.")
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        ShellTextField {
+                            id: callbackUrl
+
+                            Layout.fillWidth: true
+                            maximumLength: 16384
+                            Accessible.name: qsTr("Final sign-in address")
+                            onAccepted: continueButton.clicked()
+                        }
+
+                        ShellButton {
+                            id: continueButton
+
+                            enabled: callbackUrl.text.trim().length > 0
+                            text: qsTr("Continue")
+                            onClicked: {
+                                page.act("signInCallback", card.provider, { url: callbackUrl.text });
+                                callbackUrl.text = "";
+                            }
+                        }
                     }
                 }
             }

@@ -35,7 +35,10 @@ class ShellStore;
 // enabled, installed, status, headline, detail, email, models [{slug, name}],
 // advisory {title, detail, updateCommand, targetVersion, strong} | null,
 // canUpdate, updating, account: null | {description, canSignIn, signInLabel,
-// canCancel, canSignOut, url, userCode, error}, and how it is configured
+// canCancel, canSignOut, url, userCode, error, methods [{id, name}] (a
+// choice), terminal: null | {key, output, offset} (the agent's login
+// terminal), credentials [{name, label, secret}], acceptsCallback (a pasted
+// final address finishes it), docsUrl}, and how it is configured
 // (ProviderSettingsInstances.cpp): custom, resettable, label, accentColor,
 // placeholder, fields, secrets, variables, pending}], health: null |
 // {seconds, defaultSeconds, step} (the background provider health check
@@ -44,7 +47,10 @@ class ShellStore;
 // Actions: `providerSettings.environment {id}`, `.refresh`, `.enable
 // {instanceId, enabled}`, `.signIn {instanceId}`, `.cancelSignIn
 // {instanceId}`, `.openSignIn {instanceId}`, `.signOut {instanceId}` (asks
-// first), `.update {instanceId}`, `.copyUpdateCommand {instanceId}`,
+// first), `.signIn {instanceId, methodId}`, `.signInTerminal {instanceId,
+// data, columns, rows}`, `.signInCredentials {instanceId, values}`,
+// `.signInCallback {instanceId, url}`, `.copySignInLink {instanceId}`,
+// `.openDocs {instanceId}`, `.update {instanceId}`, `.copyUpdateCommand {instanceId}`,
 // `.healthInterval {seconds}` (0 turns it off), `.resetHealthInterval`, and
 // the instance actions ProviderSettingsInstances.cpp lists.
 class ProviderSettingsController : public QObject, public NativeController {
@@ -83,6 +89,7 @@ private:
   QVariant wizard() const;
   QVariant health() const;
   void call(const QString& instanceId, const QString& method, const QJsonObject& payload, const QString& failure);
+  void sendTerminal(const QString& instanceId);
   void publish();
   QVariantMap entry(const QJsonObject& provider) const;
 
@@ -105,6 +112,9 @@ private:
   // Why the last sign-in call failed, by instance.
   QHash<QString, QString> m_authError;
   QSet<QString> m_busy;
+  // Input for each login terminal, sent one request at a time.
+  QHash<QString, QList<QJsonObject>> m_terminalQueue;
+  QSet<QString> m_terminalSending;
   QSet<QString> m_updating;
   // The add-provider wizard while it shows: the chosen driver, what was
   // entered for each driver (label, accentColor, instanceId when typed) and
