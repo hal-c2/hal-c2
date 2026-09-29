@@ -155,6 +155,13 @@ Feature: Providers settings panel
       Then the new instance is named "Gemini CLI" and runs "gemini-cli"
 
     @desktop
+    Scenario: An agent prepared after its wizard was closed does not fill a new one
+      Given the user chose "gemini-cli" from the ACP Registry and it is still being prepared
+      When the user closes the wizard and opens it again
+      And the agent finishes preparing
+      Then the new wizard still asks which agent to add
+
+    @desktop
     Scenario: The registry step needs an agent or a manual setup
       When the user moves on without choosing an agent
       Then the user is asked to select an ACP or configure one manually
@@ -294,6 +301,14 @@ Feature: Providers settings panel
       When the sign-in fails with "The browser was closed."
       Then the user is told why the sign-in failed: "The browser was closed."
       And the user can retry signing in to "Gemini"
+
+    @desktop
+    Scenario: A sign-in answered after switching environments and back does not free a newer one
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      And the user signs in to "Gemini" while the environment is slow to answer
+      When the user switches to another environment and back and signs in to "Gemini" again
+      And the first sign-in is answered
+      Then the second sign-in is still waiting on the environment
 
     @desktop
     Scenario: Declining to sign out keeps the account signed in

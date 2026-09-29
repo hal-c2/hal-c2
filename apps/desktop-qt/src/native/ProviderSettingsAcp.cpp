@@ -69,10 +69,11 @@ void ProviderSettingsController::acpCall(const QString& instanceId, const QStrin
   acp.busy = busy;
   publish();
   const QString environmentId = m_followed;
+  const quint64 following = m_following;
   m_client->call(environmentId, method, payload,
-                 [this, instanceId, environmentId, failure, done](const QJsonValue& result, const std::optional<QString>& error) {
-                   // The answer may come after the user moved on.
-                   if (m_followed != environmentId) return;
+                 [this, instanceId, following, failure, done](const QJsonValue& result, const std::optional<QString>& error) {
+                   // The answer may come after the user moved on, and back.
+                   if (m_following != following) return;
                    m_acp[instanceId].busy.clear();
                    if (error) toast(this, QStringLiteral("error"), failure, *error);
                    else done(result.toObject());

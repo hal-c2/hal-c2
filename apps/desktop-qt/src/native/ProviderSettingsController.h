@@ -125,6 +125,9 @@ private:
   // The followed environment, its settings and the providers its `config`
   // shape brought.
   QString m_followed;
+  // Which following an answer belongs to: a new one with each unfollow, so
+  // an answer from before a switch away and back is dropped.
+  quint64 m_following = 0;
   EnvironmentSettings* m_scope;
   std::optional<QJsonArray> m_providers;
   // Each signing-in provider's `providerAuth` shape and its last state.
@@ -155,6 +158,7 @@ private:
   };
   QHash<QString, Acp> m_acp;
   struct Wizard {
+    int id = 0;  // a new one with each wizard opened
     QString driver = QStringLiteral("codex");
     QHash<QString, QJsonObject> identity;
     QHash<QString, QJsonObject> config;
@@ -171,6 +175,7 @@ private:
     bool manual = false;
   };
   std::optional<Wizard> m_wizard;
+  int m_wizards = 0;
   // Variable rows being edited that cannot be saved yet (a blank or invalid
   // name), by instance.
   QHash<QString, QJsonArray> m_variables;

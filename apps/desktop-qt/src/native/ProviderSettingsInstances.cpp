@@ -199,6 +199,7 @@ bool ProviderSettingsController::handleInstance(const QString& action, const QVa
     if (action == QLatin1String("providerSettings.wizardOpen")) {
       if (m_followed.isEmpty()) return true;
       m_wizard = Wizard{};
+      m_wizard->id = ++m_wizards;
       // An empty query lists the registry's compatible agents.
       searchRegistry(QString());
     } else if (!m_wizard || m_wizard->saving) {
@@ -266,9 +267,10 @@ bool ProviderSettingsController::handleInstance(const QString& action, const QVa
         if (!accent.isEmpty()) instance.insert(QStringLiteral("accentColor"), accent);
         if (!m_wizard->config.value(driver).isEmpty()) instance.insert(QStringLiteral("config"), m_wizard->config.value(driver));
         m_wizard->saving = true;
+        const int wizard = m_wizard->id;
         save([id, instance](QJsonObject settings, const QString&) { return ProviderInstances::with(settings, id, instance); },
-             [this, id, driverLabel](bool saved) {
-               if (!m_wizard) return;
+             [this, id, driverLabel, wizard](bool saved) {
+               if (!m_wizard || m_wizard->id != wizard) return;
                if (saved) {
                  m_wizard.reset();
                  toast(this, QStringLiteral("success"), QStringLiteral("Provider instance added"),

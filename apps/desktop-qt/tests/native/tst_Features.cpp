@@ -282,6 +282,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/providers-panel.feature:Signing in finishes*"),
     QStringLiteral("settings/providers-panel.feature:A sign-in in progress*"),
     QStringLiteral("settings/providers-panel.feature:Choosing how to sign in"),
+    QStringLiteral("settings/providers-panel.feature:A sign-in answered after switching*"),
+    QStringLiteral("settings/providers-panel.feature:An agent prepared after its wizard*"),
     QStringLiteral("settings/providers-panel.feature:Signing in through the agent*"),
     QStringLiteral("settings/providers-panel.feature:A login terminal that has gone*"),
     QStringLiteral("settings/providers-panel.feature:Signing in with credentials"),

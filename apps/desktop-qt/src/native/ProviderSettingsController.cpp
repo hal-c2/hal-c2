@@ -417,6 +417,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     if (type == QLatin1String("browser") && interaction.value(QLatin1String("requiresConsent")).toBool()) {
       // The environment records consent before its provider's page opens here.
       const QString environmentId = m_followed;
+      const quint64 following = m_following;
       m_busy.insert(instanceId);
       publish();
       m_client->call(environmentId, QStringLiteral("provider.auth.respond"),
@@ -425,7 +426,9 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
                                  {QStringLiteral("interactionId"), interaction.value(QLatin1String("id"))},
                                  {QStringLiteral("response"), QJsonObject{{QStringLiteral("type"), QStringLiteral("browser")},
                                                                           {QStringLiteral("action"), QStringLiteral("accept")}}}},
-                     [this, instanceId, url](const QJsonValue&, const std::optional<QString>& error) {
+                     [this, instanceId, url, following](const QJsonValue&, const std::optional<QString>& error) {
+                       // The answer may come after the user moved on.
+                       if (m_following != following) return;
                        m_busy.remove(instanceId);
                        if (error) m_authError.insert(instanceId, *error);
                        else m_bridge->openExternal(QUrl(url));
@@ -521,6 +524,7 @@ void ProviderSettingsController::follow(const QString& environmentId) {
 void ProviderSettingsController::unfollow() {
   m_scope->setTargets({});
   m_followed.clear();
+  ++m_following;
   m_providers.reset();
   for (const int id : std::as_const(m_auth)) m_client->unsubscribe(id);
   m_auth.clear();
@@ -530,6 +534,8 @@ void ProviderSettingsController::unfollow() {
   m_terminalQueue.clear();
   m_wizard.reset();
   m_variables.clear();
+  m_modelDraft.clear();
+  m_modelError.clear();
   m_acp.clear();
 }
 
@@ -634,9 +640,10 @@ void ProviderSettingsController::call(const QString& instanceId, const QString& 
   m_authError.remove(instanceId);
   publish();
   const QString environmentId = m_followed;
+  const quint64 following = m_following;
   m_client->call(environmentId, method, payload,
-                 [this, instanceId, environmentId, failure](const QJsonValue&, const std::optional<QString>& error) {
-                   if (m_followed != environmentId) return;
+                 [this, instanceId, following, failure](const QJsonValue&, const std::optional<QString>& error) {
+                   if (m_following != following) return;
                    m_busy.remove(instanceId);
                    if (error) m_authError.insert(instanceId, error->isEmpty() ? failure : *error);
                    publish();

@@ -63,11 +63,11 @@ void ProviderSettingsController::searchRegistry(const QString& query) {
   m_wizard->searching = true;
   m_wizard->registryError.clear();
   const int generation = ++m_wizard->generation;
-  const QString environmentId = m_followed;
-  m_client->call(environmentId, QStringLiteral("server.searchAcpRegistry"), QJsonObject{{QStringLiteral("query"), m_wizard->query}},
-                 [this, generation, environmentId](const QJsonValue& result, const std::optional<QString>& error) {
+  const int wizard = m_wizard->id;
+  m_client->call(m_followed, QStringLiteral("server.searchAcpRegistry"), QJsonObject{{QStringLiteral("query"), m_wizard->query}},
+                 [this, generation, wizard](const QJsonValue& result, const std::optional<QString>& error) {
                    // A later search, or a wizard since closed, owns the answer.
-                   if (!m_wizard || m_wizard->generation != generation || m_followed != environmentId) return;
+                   if (!m_wizard || m_wizard->id != wizard || m_wizard->generation != generation) return;
                    m_wizard->searching = false;
                    if (error) {
                      m_wizard->registryError = error->isEmpty() ? QStringLiteral("The ACP Registry could not be searched.") : *error;
@@ -101,10 +101,11 @@ bool ProviderSettingsController::handleRegistry(const QString& action, const QVa
     if (agent.isEmpty() || m_followed.isEmpty() || configured(shownSettings().value_or(QJsonObject{}), agentId)) return true;
     m_wizard->preparing = agentId;
     m_wizard->registryError.clear();
-    const QString environmentId = m_followed;
-    m_client->call(environmentId, QStringLiteral("server.prepareAcpRegistryAgent"), QJsonObject{{QStringLiteral("agentId"), agentId}},
-                   [this, agent, environmentId](const QJsonValue& result, const std::optional<QString>& error) {
-                     if (!m_wizard || m_followed != environmentId) return;
+    const int wizard = m_wizard->id;
+    m_client->call(m_followed, QStringLiteral("server.prepareAcpRegistryAgent"), QJsonObject{{QStringLiteral("agentId"), agentId}},
+                   [this, agent, wizard](const QJsonValue& result, const std::optional<QString>& error) {
+                     // A wizard closed (or reopened) since has moved on.
+                     if (!m_wizard || m_wizard->id != wizard) return;
                      m_wizard->preparing.clear();
                      if (error) {
                        m_wizard->registryError = error->isEmpty() ? QStringLiteral("The ACP could not be prepared.") : *error;

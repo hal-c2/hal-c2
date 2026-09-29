@@ -39,6 +39,9 @@ struct FakeProviders {
   QJsonArray acpSessions, acpProviders;
   QList<QJsonObject> acpImports, acpSets;
   QStringList acpDeletes, acpDisables, acpLogouts;
+  // Calls the scenario answers itself, one at a time, while held.
+  bool holdPrepares = false, holdStarts = false;
+  QList<FakeNode::Rpc> heldPrepares, heldStarts;
 };
 
 
@@ -91,6 +94,10 @@ const FakeNode::Extension extension([](FakeNode& node) {
     const QString instanceId = rpc.payload.value(QLatin1String("instanceId")).toString();
     node.part<FakeProviders>().starts.append(instanceId);
     node.part<FakeProviders>().methods.append(rpc.payload.value(QLatin1String("methodId")).toString());
+    if (node.part<FakeProviders>().holdStarts) {
+      node.part<FakeProviders>().heldStarts.append(rpc);
+      return;
+    }
     node.reply(rpc, QJsonObject{});
     sendAuth(node, instanceId,
              {{QStringLiteral("phase"), QStringLiteral("waiting")},
@@ -142,6 +149,10 @@ const FakeNode::Extension extension([](FakeNode& node) {
   node.onRpc(QStringLiteral("server.prepareAcpRegistryAgent"), [&node](const FakeNode::Rpc& rpc) {
     const QString agentId = rpc.payload.value(QLatin1String("agentId")).toString();
     node.part<FakeProviders>().prepares.append(agentId);
+    if (node.part<FakeProviders>().holdPrepares) {
+      node.part<FakeProviders>().heldPrepares.append(rpc);
+      return;
+    }
     node.reply(rpc, QJsonObject{{QStringLiteral("agentId"), agentId},
                                 {QStringLiteral("version"), QStringLiteral("1.2.3")},
                                 {QStringLiteral("distribution"), QStringLiteral("npx")},
@@ -831,6 +842,30 @@ const Steps steps([] {
   step(QStringLiteral("the user signs in to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     dispatch(world, QStringLiteral("signIn"), c[0]);
   });
+  // A sign-in answered after the user switched environments and back.
+  step(QStringLiteral("the user signs in to %1 while the environment is slow to answer").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world).holdStarts = true;
+    dispatch(world, QStringLiteral("signIn"), c[0]);
+    world.waitFor([&] { return fake(world).heldStarts.size() == 1; }, QStringLiteral("the sign-in to be started"));
+  });
+  step(QStringLiteral("the user switches to another environment and back and signs in to %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
+    linkEnvironment(world, QStringLiteral("Studio"), QJsonArray{});
+    showEnvironment(world, QStringLiteral("Studio"));
+    showEnvironment(world, world.node.environmentId);
+    waitForEntry(world, c[0], [](const QVariantMap& found) { return at(found, QStringLiteral("account.canSignIn")).toBool(); },
+                 QStringLiteral("to offer signing in again"));
+    dispatch(world, QStringLiteral("signIn"), c[0]);
+    world.waitFor([&] { return fake(world).heldStarts.size() == 2; }, QStringLiteral("the second sign-in to be started"));
+  });
+  step(QStringLiteral("the first sign-in is answered"), [](World& world, const Captures&, const Table&) {
+    world.node.reply(fake(world).heldStarts.takeFirst(), QJsonObject{});
+    world.sync();
+  });
+  step(QStringLiteral("the second sign-in is still waiting on the environment"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap found = entry(world, QStringLiteral("Gemini"));
+    expect(!at(found, QStringLiteral("account.canSignIn")).toBool(),
+           QStringLiteral("the second sign-in to stay busy; Gemini is %1").arg(show(found)));
+  });
   step(QStringLiteral("the user is asked to finish signing in in the browser"), [](World& world, const Captures&, const Table&) {
     waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) {
       return at(found, QStringLiteral("account.description")) == QLatin1String("Finish signing in in your browser.") &&
@@ -1366,6 +1401,33 @@ const Steps registrySteps([] {
     expect(fake(world).prepares == QStringList{c[0]}, QStringLiteral("%1 to be prepared; prepared %2").arg(c[0], fake(world).prepares.join(QStringLiteral(", "))));
     fake(world).suggestedId = wizard(world).value(QStringLiteral("instanceId")).toString();
     act(world, QStringLiteral("wizardSubmit"));
+  });
+  // A prepare answered after the wizard that asked for it was closed.
+  step(QStringLiteral("the user chose %1 from the ACP Registry and it is still being prepared").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world).holdPrepares = true;
+    searchRegistry(world, QString());
+    act(world, QStringLiteral("registryAdd"), {{QStringLiteral("agentId"), c[0]}});
+    world.waitFor([&] { return fake(world).heldPrepares.size() == 1; }, QStringLiteral("the agent to be prepared"));
+  });
+  step(QStringLiteral("the user closes the wizard and opens it again"), [](World& world, const Captures&, const Table&) {
+    act(world, QStringLiteral("wizardClose"));
+    world.waitFor([&] { return wizard(world).isEmpty(); }, [&] { return QStringLiteral("the wizard to close; it is %1").arg(show(wizard(world))); });
+    searchRegistry(world, QString());
+  });
+  step(QStringLiteral("the agent finishes preparing"), [](World& world, const Captures&, const Table&) {
+    const FakeNode::Rpc rpc = fake(world).heldPrepares.takeFirst();
+    const QString agentId = rpc.payload.value(QLatin1String("agentId")).toString();
+    world.node.reply(rpc, QJsonObject{{QStringLiteral("agentId"), agentId},
+                                      {QStringLiteral("version"), QStringLiteral("1.2.3")},
+                                      {QStringLiteral("distribution"), QStringLiteral("npx")},
+                                      {QStringLiteral("prepared"), true}});
+    world.sync();
+  });
+  step(QStringLiteral("the new wizard still asks which agent to add"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap shown = wizard(world);
+    expect(shown.value(QStringLiteral("step")) == 0 && registry(world).value(QStringLiteral("selected")).toMap().isEmpty() &&
+               !registry(world).value(QStringLiteral("busy")).toBool() && shown.value(QStringLiteral("driver")) != QLatin1String("acpRegistry"),
+           QStringLiteral("the new wizard to be untouched; it is %1").arg(show(shown)));
   });
   step(QStringLiteral("the new instance is named %1 and runs %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString id = fake(world).suggestedId;
