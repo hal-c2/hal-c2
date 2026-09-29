@@ -1062,17 +1062,18 @@ for the same chord wins, as it does over Electron's menu.
   terminal still gets Ctrl+K. The web's defaults bind `mod+d` to
   `terminal.split` in a terminal, so off macOS a terminal loses Ctrl+D (EOF)
   unless the user rebinds it.
-- From native chrome, a native command or script runs in the shell, and any
-  other bound key goes to the page as `keybinding.press {key, ctrlKey,
-metaKey, shiftKey, altKey}`. The page replays it on `document.body`, so the
-  page's own commands resolve with no editor or terminal focus.
+- From native chrome (a focused composer included), only a sequence that
+  resolves to a native command or script is a window shortcut; any other
+  key stays with the focused control. No key goes to the page as
+  `keybinding.press`.
 - Unmodified keys are never window shortcuts; they belong to whichever
   control has focus.
 
 Secondary documents (the right panel) forward a keydown they did not consume
 as `keybinding.press` when the chord resolves to the same command with and
 without the embed's focus (`shellKeybindingPressToForward`). The controller
-intercepts that dispatch and runs the command if it is native.
+claims that dispatch and runs the command if it is native; the primary page
+never sees it.
 
 Mod+Q is not a shortcut. `QuitController` (shared, one per process) filters
 the application's key events before any window or page sees them and ports

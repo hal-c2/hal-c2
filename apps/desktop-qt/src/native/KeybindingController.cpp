@@ -96,8 +96,8 @@ void KeybindingController::activate() {
   followRules();
 }
 
-// The commands the shell has natively. Everything else in the keymap is still
-// the page's.
+// The commands the shell has natively. A command no one registers (the
+// preview's, composer.stash, composer.previousWorktree) does nothing.
 void KeybindingController::registerCommands() {
   auto* shell = NativeShell::of(this);
   auto* navigation = shell->controller<NavigationController>();
@@ -105,6 +105,7 @@ void KeybindingController::registerCommands() {
     m_commands.add(command, keybindings::commandLabel(command), std::move(run));
   };
   add(QStringLiteral("navigation.back"), [navigation] { navigation->back(); });
+  add(QStringLiteral("navigation.forward"), [navigation] { navigation->forward(); });
   add(QStringLiteral("thread.previous"), [this] { traverse(false); });
   add(QStringLiteral("thread.next"), [this] { traverse(true); });
   for (int n = 1; n <= 9; ++n) {
@@ -230,21 +231,7 @@ bool KeybindingController::press(const QString& sequence, const QVariantMap& foc
                        QVariantMap{{QStringLiteral("scriptId"), command.mid(7, command.size() - 11)}});
     return true;
   }
-  // The page's command: with the chrome focused it has not seen the key, so
-  // it gets it to resolve in its own context.
-  if (flag(focus, "page") || flag(focus, "terminal")) return false;
-  const qsizetype index = m_sequences.indexOf(sequence);
-  if (index < 0) return false;
-  const keybindings::Shortcut& shortcut = m_bindings.at(index).shortcut;
-  m_bridge->sendToPage(QStringLiteral("keybinding.press"),
-                       QVariantMap{
-                           {QStringLiteral("key"), shortcut.key},
-                           {QStringLiteral("ctrlKey"), shortcut.ctrl || (shortcut.mod && !m_mac)},
-                           {QStringLiteral("metaKey"), shortcut.meta || (shortcut.mod && m_mac)},
-                           {QStringLiteral("shiftKey"), shortcut.shift},
-                           {QStringLiteral("altKey"), shortcut.alt},
-                       });
-  return true;
+  return false;
 }
 
 bool KeybindingController::handle(const QString& action, const QVariant& payload) {
@@ -259,14 +246,17 @@ bool KeybindingController::handle(const QString& action, const QVariant& payload
   shortcut.meta = !m_mac && meta;
   shortcut.shift = press.value(QStringLiteral("shiftKey")).toBool();
   shortcut.alt = press.value(QStringLiteral("altKey")).toBool();
-  // The embed checked the command is the same without its focus.
-  const QString command = resolve(keybindings::sequence(shortcut, m_mac));
-  return m_commands.run(command);
+  // The embed checked the command is the same without its focus. A key the
+  // shell has no command for stops here; the primary page is not handed it.
+  m_commands.run(resolve(keybindings::sequence(shortcut, m_mac)));
+  return true;
 }
 
-// One entry per sequence; the page and terminal flags say whether the key is
-// the shell's even with that focus.
+// One entry per sequence; the chrome, page and terminal flags say whether the
+// key is the shell's with that focus. The chrome's covers a focused composer.
 void KeybindingController::refreshShortcuts() {
+  const QVariantMap chrome;
+  const QVariantMap composer{{QStringLiteral("composer"), true}, {QStringLiteral("editable"), true}};
   const QVariantMap page{{QStringLiteral("page"), true}};
   const QVariantMap terminal{{QStringLiteral("terminal"), true}};
   const auto native = [this](const QString& command) { return m_commands.contains(command) || isScriptRun(command); };
@@ -277,6 +267,7 @@ void KeybindingController::refreshShortcuts() {
     seen.insert(sequence);
     shortcuts.append(QVariantMap{
         {QStringLiteral("sequence"), sequence},
+        {QStringLiteral("chrome"), native(resolve(sequence, chrome)) || native(resolve(sequence, composer))},
         {QStringLiteral("page"), native(resolve(sequence, page))},
         {QStringLiteral("terminal"), native(resolve(sequence, terminal))},
     });
