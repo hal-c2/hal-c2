@@ -82,6 +82,14 @@ Feature: Device panel
       Then the tab "iPhone 17" shows the device's screen
 
     @desktop
+    Scenario: Video the desktop cannot decode is an error, not endless reconnecting
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the device sends video the desktop cannot decode
+      When the user shows the "iPhone 17" tab
+      Then the tab says "The device's video could not be decoded. Reconnect to try again."
+      And the tab asked for the device's video 3 times
+
+    @desktop
     Scenario: A stream that ends connects again
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab

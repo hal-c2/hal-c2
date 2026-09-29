@@ -103,6 +103,8 @@ void DeviceDecoder::drain() {
     QImage newest;
     QSize source;
     bool failed = false;
+    // No decoder to decode with: nothing later will do better.
+    QString unusable;
     bool decoded = false;
     for (const Unit& unit : batch) {
       if (unit.epoch != epoch) continue;
@@ -117,9 +119,12 @@ void DeviceDecoder::drain() {
         decoded = false;
         continue;
       }
-      if (m_openEpoch != epoch && !open(avcc)) {
-        failed = true;
-        break;
+      if (m_openEpoch != epoch) {
+        unusable = open(avcc);
+        if (!unusable.isEmpty()) {
+          failed = true;
+          break;
+        }
       }
       m_openEpoch = epoch;
       av_packet_unref(m_packet);
@@ -159,17 +164,19 @@ void DeviceDecoder::drain() {
         m_notified = true;
       }
     }
-    if (failed) emit broken();
+    if (!unusable.isEmpty()) emit unsupported(unusable);
+    else if (failed) emit broken();
     if (notify) emit frameReady();
   }
 }
 
-bool DeviceDecoder::open(const QByteArray& avcc) {
+QString DeviceDecoder::open(const QByteArray& avcc) {
   close();
   const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-  if (!codec) return false;
+  if (!codec) return QStringLiteral("This FFmpeg has no H.264 decoder.");
+  const QString failed = QStringLiteral("The H.264 decoder did not start.");
   m_context = avcodec_alloc_context3(codec);
-  if (!m_context) return false;
+  if (!m_context) return failed;
   // A live screen: no reordering delay, and slice threads (frame threads
   // hold pictures back one per thread).
   m_context->flags |= AV_CODEC_FLAG_LOW_DELAY;
@@ -177,15 +184,15 @@ bool DeviceDecoder::open(const QByteArray& avcc) {
   m_context->thread_count = 0;
   if (!avcc.isEmpty()) {
     m_context->extradata = static_cast<uint8_t*>(av_mallocz(size_t(avcc.size()) + AV_INPUT_BUFFER_PADDING_SIZE));
-    if (!m_context->extradata) return false;
+    if (!m_context->extradata) return failed;
     std::memcpy(m_context->extradata, avcc.constData(), size_t(avcc.size()));
     m_context->extradata_size = int(avcc.size());
   }
-  if (avcodec_open2(m_context, codec, nullptr) < 0) return false;
+  if (avcodec_open2(m_context, codec, nullptr) < 0) return failed;
   m_packet = av_packet_alloc();
   m_picture = av_frame_alloc();
   m_last = av_frame_alloc();
-  return m_packet && m_picture && m_last;
+  return m_packet && m_picture && m_last ? QString() : failed;
 }
 
 void DeviceDecoder::close() {

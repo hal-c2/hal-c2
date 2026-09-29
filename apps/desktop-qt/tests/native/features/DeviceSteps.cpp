@@ -79,8 +79,9 @@ QByteArray u16(quint16 value) {
   return bytes;
 }
 
-// serve-sim's stream.avcc body: the avcC record, then every picture.
-QByteArray iosVideo() {
+// serve-sim's stream.avcc body: the avcC record, then every picture. A
+// `broken` record is one no decoder starts from.
+QByteArray iosVideo(bool broken = false) {
   const Fixture& f = fixture();
   const auto envelope = [](char tag, const QByteArray& payload) { return u32(quint32(payload.size() + 1)) + tag + payload; };
   QByteArray avcc;
@@ -91,6 +92,7 @@ QByteArray iosVideo() {
   avcc += u16(quint16(f.sps.size())) + f.sps;
   avcc += char(1);
   avcc += u16(quint16(f.pps.size())) + f.pps;
+  if (broken) avcc.truncate(4);
   QByteArray body = envelope(1, avcc);
   for (qsizetype n = 0; n < f.slices.size(); ++n)
     body += envelope(f.keys[n] ? 2 : 3, u32(quint32(f.slices[n].size())) + f.slices[n]);
@@ -125,6 +127,8 @@ struct FakeHub {
   int refuse = 0;
   // The device has sent no picture yet.
   bool silent = false;
+  // Its video is not one the desktop can decode.
+  bool undecodable = false;
   // Every request that reached the proxy: "<target> <authorization>".
   QStringList requests;
   std::unique_ptr<QWebSocketServer> sockets;
@@ -312,7 +316,7 @@ const FakeNode::Extension proxy([](FakeNode& node) {
     if (path.endsWith(QLatin1String("/stream.avcc"))) {
       socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n");
       hub.videos.append(socket);
-      if (!hub.silent) socket->write(iosVideo());
+      if (!hub.silent) socket->write(iosVideo(hub.undecodable));
       return;
     }
     respond(socket, 404);
@@ -524,6 +528,13 @@ const Steps steps([] {
   });
   step(QStringLiteral("the device sends no picture yet"), [](World& world, const Captures&, const Table&) {
     fakeHub(world).silent = true;
+  });
+  step(QStringLiteral("the device sends video the desktop cannot decode"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).undecodable = true;
+  });
+  step(QStringLiteral("the tab asked for the device's video (\\d+) times"), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(videoRequests(world) == c[0].toInt(), describe(world));
   });
   step(QStringLiteral("the device starts sending pictures"), [](World& world, const Captures&, const Table&) {
     FakeHub& hub = fakeHub(world);

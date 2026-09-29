@@ -35,7 +35,8 @@ class QWebSocket;
 // status: idle (no target, or not shown), connecting, streaming (a picture
 // arrived), or error with `detail` (reconnect() starts again). A dropped
 // connection retries after a second; no picture within the first-frame
-// timeout, an AVCC body that stops, or a refused credential is an error.
+// timeout, an AVCC body that stops, a refused credential, a decoder that
+// cannot start, or video it refuses three times running is an error.
 class DeviceStream : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString status READ status NOTIFY statusChanged)
@@ -133,6 +134,8 @@ private:
   QTimer m_videoRetry;
   QTimer m_inputRetry;
   bool m_streaming = false;
+  // Decoder refusals since the last picture.
+  int m_decodeFailures = 0;
 
   QString m_status = QStringLiteral("idle");
   QString m_detail;

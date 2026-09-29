@@ -52,6 +52,8 @@ signals:
   void frameReady();
   // A unit the decoder could not take: the stream should start over from a keyframe.
   void broken();
+  // No H.264 decoder could start (`why`): retrying will not help.
+  void unsupported(const QString& why);
 
 private:
   struct Unit {
@@ -64,7 +66,8 @@ private:
 
   // On the worker thread.
   void drain();
-  bool open(const QByteArray& avcc);
+  // Empty, or why no decoder started.
+  QString open(const QByteArray& avcc);
   void close();
   QImage convert(AVFrame* picture, const QSize& limit);
 

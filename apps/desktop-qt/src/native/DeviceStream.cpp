@@ -18,6 +18,9 @@ namespace {
 constexpr int kRetryMs = 1000;
 constexpr int kFirstFrameMs = 15000;
 constexpr int kPrimeMs = 2000;
+// Units the decoder refuses in a row, each time from a fresh keyframe, before
+// the stream gives up: the video is not one it can decode.
+constexpr int kMaxDecodeFailures = 3;
 
 constexpr quint32 kSemuMagic = 0x53454d55;
 constexpr int kSemuHeader = 16;
@@ -155,7 +158,15 @@ DeviceStream::DeviceStream(NodeClient* client, QObject* parent)
   connect(&m_videoRetry, &QTimer::timeout, this, &DeviceStream::readIosVideo);
   connect(&m_inputRetry, &QTimer::timeout, this, [this] { ios() ? primeIos() : connectAndroid(); });
   connect(&m_decoder, &DeviceDecoder::frameReady, this, &DeviceStream::onFrame);
-  connect(&m_decoder, &DeviceDecoder::broken, this, &DeviceStream::recover);
+  connect(&m_decoder, &DeviceDecoder::broken, this, [this] {
+    if (!m_running) return;
+    if (++m_decodeFailures >= kMaxDecodeFailures)
+      return fail(QStringLiteral("The device's video could not be decoded. Reconnect to try again."));
+    recover();
+  });
+  connect(&m_decoder, &DeviceDecoder::unsupported, this, [this](const QString& why) {
+    fail(QStringLiteral("Cannot decode the device's video. %1").arg(why));
+  });
 }
 
 DeviceStream::~DeviceStream() {
@@ -218,6 +229,7 @@ void DeviceStream::start() {
     return;
   }
   m_running = true;
+  m_decodeFailures = 0;
   connecting();
   if (ios()) {
     primeIos();
@@ -288,13 +300,15 @@ void DeviceStream::onFrame() {
       setScreen(size.width(), size.height(),
                 size.width() > size.height() ? QStringLiteral("landscape_left") : QStringLiteral("portrait"));
   }
+  m_decodeFailures = 0;
   if (m_streaming) return;
   m_streaming = true;
   m_firstFrame.stop();
   setStatus(QStringLiteral("streaming"));
 }
 
-// The decoder fell behind or choked: start over from a keyframe.
+// The decoder fell behind or choked: start over from a keyframe, on iOS by
+// reading the body again after the retry delay.
 void DeviceStream::recover() {
   if (!m_running) return;
   if (ios()) {
@@ -304,9 +318,10 @@ void DeviceStream::recover() {
       reply->abort();
       reply->deleteLater();
     }
+    m_readStall.stop();
     m_decoder.reset();
     connecting(QStringLiteral("Video decoder restarted."));
-    readIosVideo();
+    retry(m_videoRetry);
   } else {
     m_decoder.reset();
     m_awaitingKeyframe = true;
