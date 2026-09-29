@@ -13,6 +13,7 @@
 #   apps/desktop-qt/src/native/NativeShell.cpp (window.new, per-window state)
 #   apps/desktop-qt/tests/tst_ShellWindow.qml (a window's title and minimum size, the zoomed body, a menu at the pointer)
 #   apps/desktop-qt/src/native/LayoutController.cpp (the app zoom)
+#   apps/desktop-qt/src/native/QuitController.cpp (the quit shortcut; Quit is the palette's app.quit)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (frameless drag and maximize)
 #   apps/desktop-qt/tests/tst_WindowControls.qml (the header asks the system to move the window)
 #   apps/desktop-qt/src/ThemeStore.cpp (the theme's window frame and opacity)
@@ -158,38 +159,38 @@ Feature: Windows, zoom and quitting
 
   Rule: Quitting and the application menu
 
-    @backlog @desktop
+    @desktop
     Scenario: Holding the quit shortcut quits
       Given the quit shortcut is set to Hold
       When the user holds mod+Q for 1.2 seconds
       Then the app quits
 
-    @backlog @desktop
+    @desktop
     Scenario: Pressing the quit shortcut twice quits
       Given the quit shortcut is set to Hold
       When the user presses mod+Q twice within 500 milliseconds
       Then the app quits
 
-    @backlog @desktop
+    @desktop
     Scenario: A single quick press does not quit
       Given the quit shortcut is set to Hold
       When the user presses mod+Q once
       Then the app keeps running
       And the user is told to hold the shortcut or press twice to quit
 
-    @backlog @desktop
+    @desktop
     Scenario: Double press mode asks for a second press
       Given the quit shortcut is set to Double press
       When the user presses mod+Q once
       Then the user is told to press the shortcut again to quit
 
-    @backlog @desktop
+    @desktop
     Scenario: Direct mode quits on one press
       Given the quit shortcut is set to Direct
       When the user presses mod+Q
       Then the app quits
 
-    @backlog @desktop
+    @desktop
     Scenario: Quit from the application menu is immediate
       Given the quit shortcut is set to Hold
       When the user chooses Quit from the application menu

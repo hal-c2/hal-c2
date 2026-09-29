@@ -8,7 +8,11 @@
 
 #include "ComposerController.h"
 #include "Harness.h"
+#include "Keymap.h"
+#include "KeybindingController.h"
 #include "LayoutController.h"
+#include "QuitController.h"
+#include "SettingsController.h"
 #include "NavigationController.h"
 #include "Stream.h"
 #include "World.h"
@@ -86,6 +90,56 @@ const QString kDraft = QStringLiteral("Carry on from the other window");
 // The zoom factor `window` draws its content at (LayoutController's `layout`).
 double zoomOf(NativeWindow* window) {
   return at(window->bridge()->state()->value(QStringLiteral("layout")), QStringLiteral("zoom")).toDouble();
+}
+
+void ensureConnected(World& world) {
+  if (world.shellSubscriptions() > 0) return;
+  world.connect();
+  world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+}
+
+// The quit shortcut, timed on a clock the steps move.
+struct QuitState {
+  qint64 now = 1000;
+  int quits = 0;
+  bool hooked = false;
+};
+
+QuitState& quitting(World& world) {
+  QuitState& state = world.node.part<QuitState>();
+  if (!state.hooked) {
+    state.hooked = true;
+    auto* controller = world.native().shared<QuitController>();
+    controller->setClock([&state] { return state.now; });
+    QObject::connect(controller, &QuitController::quitRequested, controller, [&state] { ++state.quits; });
+  }
+  return state;
+}
+
+void quitKey(World& world, QEvent::Type type, bool autoRepeat = false) {
+  sendKey(world, type, Qt::Key_Q, Qt::ControlModifier, autoRepeat);
+}
+
+// mod goes down, then Q; `heldMs` later (auto-repeating meanwhile, as a held
+// key does after half a second) Q comes up, then mod.
+void pressQuit(World& world, qint64 heldMs, bool releaseMod = true) {
+  QuitState& state = quitting(world);
+  sendKey(world, QEvent::KeyPress, Qt::Key_Control, Qt::ControlModifier);
+  quitKey(world, QEvent::KeyPress);
+  const qint64 start = state.now;
+  for (qint64 at = 500; at <= heldMs; at += 33) {
+    state.now = start + at;
+    quitKey(world, QEvent::KeyPress, true);
+  }
+  state.now = start + heldMs;
+  quitKey(world, QEvent::KeyRelease);
+  if (releaseMod) sendKey(world, QEvent::KeyRelease, Qt::Key_Control, Qt::NoModifier);
+  world.sync();
+}
+
+QString quitHint(World& world) {
+  world.sync();
+  return at(world.state(QStringLiteral("quitHint")), QStringLiteral("message")).toString();
 }
 
 const Steps steps([] {
@@ -183,10 +237,7 @@ const Steps steps([] {
 
   // The app's zoom (the application menu's mod+=, mod++, mod+-, mod+0).
   step(QStringLiteral("the app is zoomed in"), [](World& world, const Captures&, const Table&) {
-    if (world.shellSubscriptions() == 0) {
-      world.connect();
-      world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
-    }
+    ensureConnected(world);
     world.native().controller<LayoutController>()->setZoomLevel(1);
     world.sync();
     expect(zoomOf(world.native().main()) > 1, QStringLiteral("the app is at %1").arg(zoomOf(world.native().main())));
@@ -201,6 +252,45 @@ const Steps steps([] {
     world.sync();
     expect(zoomOf(world.native().main()) > 1 && qFuzzyCompare(zoomOf(second(world)), zoomOf(world.native().main())),
            QStringLiteral("the first window is at %1, the second at %2").arg(zoomOf(world.native().main())).arg(zoomOf(second(world))));
+  });
+
+  // Quitting (QuitController, `confirmQuit`).
+  step(QStringLiteral("the quit shortcut is set to (Hold|Double press|Direct)"), [](World& world, const Captures& c, const Table&) {
+    const QString mode = c[0] == u"Hold" ? QStringLiteral("hold") : c[0] == u"Direct" ? QStringLiteral("direct") : QStringLiteral("double-click");
+    world.native().controller<SettingsController>()->set(QStringLiteral("confirmQuit"), mode);
+    quitting(world);
+  });
+  step(QStringLiteral("the user holds mod\\+Q for 1.2 seconds"), [](World& world, const Captures&, const Table&) {
+    pressQuit(world, QuitController::kHoldMs + 40);
+  });
+  step(QStringLiteral("the user presses mod\\+Q twice within 500 milliseconds"), [](World& world, const Captures&, const Table&) {
+    pressQuit(world, 80, false);
+    quitting(world).now += 220;
+    pressQuit(world, 80);
+  });
+  step(QStringLiteral("the user presses mod\\+Q once"), [](World& world, const Captures&, const Table&) {
+    pressQuit(world, 80);
+  });
+  step(QStringLiteral("the user chooses Quit from the application menu"), [](World& world, const Captures&, const Table&) {
+    ensureConnected(world);
+    quitting(world);
+    // The desktop's menu of commands is the palette; macOS's own Quit is Qt's.
+    expect(world.native().controller<KeybindingController>()->commands()->run(QuitController::kQuit),
+           QStringLiteral("there is no Quit command"));
+  });
+  step(QStringLiteral("the app quits"), [](World& world, const Captures&, const Table&) {
+    expect(quitting(world).quits == 1, QStringLiteral("the app was asked to quit %1 times").arg(quitting(world).quits));
+  });
+  step(QStringLiteral("the app keeps running"), [](World& world, const Captures&, const Table&) {
+    expect(quitting(world).quits == 0, QStringLiteral("the app was asked to quit"));
+  });
+  step(QStringLiteral("the user is told to hold the shortcut or press twice to quit"), [](World& world, const Captures&, const Table&) {
+    const QString hint = quitHint(world);
+    expect(hint == u"Hold Ctrl+Q or press twice to quit", QStringLiteral("the hint says \"%1\"").arg(hint));
+  });
+  step(QStringLiteral("the user is told to press the shortcut again to quit"), [](World& world, const Captures&, const Table&) {
+    const QString hint = quitHint(world);
+    expect(hint == u"Press Ctrl+Q again to quit", QStringLiteral("the hint says \"%1\"").arg(hint));
   });
 });
 

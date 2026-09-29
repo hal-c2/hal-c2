@@ -9,6 +9,7 @@
 #include <QQuickWebEngineProfile>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QWindow>
 #include <QtLogging>
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 
@@ -18,6 +19,7 @@
 #include "LocalTranscriber.h"
 #include "NativeNotifications.h"
 #include "NativeShell.h"
+#include "QuitController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
@@ -225,6 +227,14 @@ int main(int argc, char* argv[]) {
   });
   QObject::connect(&notifications, &NativeNotifications::activated, alerts, [alerts, &bridge](const QString& key) {
     if (alerts->openThread(key)) bridge.windowCommand(QStringLiteral("raise"));
+  });
+
+  // mod+Q, guarded as `confirmQuit` says; a finished hold hides the windows
+  // while the key is let go.
+  auto* quitting = native.controller<QuitController>();
+  QObject::connect(quitting, &QuitController::quitRequested, &app, &QCoreApplication::quit, Qt::QueuedConnection);
+  QObject::connect(quitting, &QuitController::concealRequested, &app, [] {
+    for (QWindow* window : QGuiApplication::topLevelWindows()) window->hide();
   });
 
   BackendProcess::Options backendOptions;

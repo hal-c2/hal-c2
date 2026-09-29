@@ -105,6 +105,30 @@ Window {
         }
     }
 
+    // The quit shortcut's hint (QuitController): hold, or press again.
+    Rectangle {
+        readonly property var hint: Shell.state.quitHint ?? null
+
+        objectName: "quitHint"
+        visible: hint !== null
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: Math.round(root.height * 0.22)
+        width: quitHintText.implicitWidth + 64
+        height: quitHintText.implicitHeight + 32
+        radius: height / 2
+        color: Qt.rgba(0.25, 0.25, 0.25, 0.95)
+
+        Text {
+            id: quitHintText
+
+            anchors.centerIn: parent
+            text: parent.hint ? parent.hint.message : ""
+            color: "white"
+            font.pixelSize: 24
+            font.bold: true
+        }
+    }
+
     ShellErrorOverlay {
         anchors.fill: parent
     }
