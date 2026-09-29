@@ -98,7 +98,7 @@ Feature: Streaming the agent's reply
     When the user shows less
     Then the message returns to its preview
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user copies an assistant reply
     Given the agent has answered
     When the user copies the reply

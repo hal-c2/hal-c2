@@ -50,7 +50,7 @@ public:
     // How a user message reached the agent, when not as a new turn.
     MarkerRole,
     // A work group's calls on screen: [{id, type, label, detail, command,
-    // status, statusLabel, exitCode}].
+    // status, statusLabel, exitCode, path (a changed file's)}].
     EntriesRole,
     // A work group's calls behind "+N previous tool calls", a fold's rows.
     HiddenCountRole,
@@ -88,6 +88,11 @@ public:
   // Opens or closes a fold ("fold:<runId>") or a work group ("work:<itemId>").
   Q_INVOKABLE void toggle(const QString& rowId);
   Q_INVOKABLE int indexOf(const QString& rowId) const;
+  // The checkpoint an agent reply's settled turn left, to revert the thread
+  // to: {checkpointId, scopeId, turn} (turn counts from 1), or empty.
+  Q_INVOKABLE QVariantMap checkpointOf(const QString& rowId) const;
+  // Puts a message's markdown on the clipboard; false for any other row.
+  Q_INVOKABLE bool copy(const QString& rowId) const;
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;

@@ -1,5 +1,7 @@
 #include "TimelineModel.h"
 
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QRegularExpression>
 
 #include <algorithm>
@@ -10,10 +12,12 @@
 namespace {
 
 // The entity kinds the timeline reads; the stream's others (nodes, provider
-// sessions, checkpoints, ...) are left out. Plans and the user's messages are
-// kept for the composer (turnChanged) and draw no rows.
+// sessions, ...) are left out. Plans and the user's messages are kept for the
+// composer (turnChanged), checkpoints for reverting (checkpointOf); they draw
+// no rows.
 const QSet<QString> kKinds{QStringLiteral("turn-item"),       QStringLiteral("run"),  QStringLiteral("run-attempt"),
-                           QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message")};
+                           QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message"),
+                           QStringLiteral("checkpoint")};
 // Turn items the composer's turn state reads (requests).
 const QSet<QString> kTurnItems{QStringLiteral("approval_request"), QStringLiteral("user_input_request")};
 // Turn item fields that move, regroup or refold rows. Anything else (text,
@@ -215,6 +219,14 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   const auto current = byKind.constFind(id);
   const bool existed = current != byKind.cend();
   const std::optional<QJsonObject> next = patched(existed ? *current : QJsonObject(), patch);
+  if (kind == QLatin1String("checkpoint")) {
+    if (next) {
+      byKind.insert(id, *next);
+    } else {
+      byKind.remove(id);
+    }
+    return false;
+  }
   if (kind == QLatin1String("plan") || kind == QLatin1String("message")) {
     // The agent's streamed replies are the turn items'; only the user's
     // messages (a queued run's text) are kept.
@@ -555,6 +567,39 @@ int TimelineModel::indexOf(const QString& rowId) const {
   return -1;
 }
 
+bool TimelineModel::copy(const QString& rowId) const {
+  const int at = indexOf(rowId);
+  if (at < 0 || m_rows.at(at).kind != QLatin1String("message")) return false;
+  QGuiApplication::clipboard()->setText(data(index(at), TextRole).toString());
+  return true;
+}
+
+QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
+  const int at = indexOf(rowId);
+  if (at < 0) return {};
+  const Row& row = m_rows.at(at);
+  if (row.kind != QLatin1String("message") || row.items.isEmpty()) return {};
+  const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.constFirst());
+  if (text(item, QLatin1String("type")) != QLatin1String("assistant_message")) return {};
+  const QString runId = text(item, QLatin1String("runId"));
+  const QJsonObject run = entity(QStringLiteral("run"), runId);
+  if (!kSettled.contains(text(run, QLatin1String("status")))) return {};
+  const auto checkpoints = m_entities.value(QStringLiteral("checkpoint"));
+  for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
+    if (text(*it, QLatin1String("runId")) != runId || text(*it, QLatin1String("status")) != QLatin1String("ready")) continue;
+    // The turn's number among the runs still shown.
+    const int ordinal = run.value(QLatin1String("ordinal")).toInt();
+    int turn = 0;
+    for (const QJsonObject& other : m_entities.value(QStringLiteral("run"))) {
+      if (other.value(QLatin1String("ordinal")).toInt() <= ordinal && text(other, QLatin1String("status")) != QLatin1String("rolled_back")) ++turn;
+    }
+    return {{QStringLiteral("checkpointId"), it.key()},
+            {QStringLiteral("scopeId"), text(*it, QLatin1String("scopeId"))},
+            {QStringLiteral("turn"), turn}};
+  }
+  return {};
+}
+
 // --- Rows --------------------------------------------------------------------------
 
 int TimelineModel::rowCount(const QModelIndex& parent) const {
@@ -596,6 +641,7 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
     if (exitCode.isDouble()) entry.insert(QStringLiteral("exitCode"), exitCode.toInt());
   } else if (type == QLatin1String("file_change")) {
     label = QStringLiteral("Changed %1").arg(text(item, QLatin1String("fileName")));
+    entry.insert(QStringLiteral("path"), text(item, QLatin1String("fileName")));
     detail = QStringLiteral("+%1 -%2").arg(item.value(QLatin1String("additions")).toInt()).arg(item.value(QLatin1String("deletions")).toInt());
   } else if (type == QLatin1String("file_search")) {
     label = QStringLiteral("Searched files");

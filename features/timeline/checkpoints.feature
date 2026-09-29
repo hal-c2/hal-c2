@@ -8,6 +8,7 @@
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Edit from here, Rewinding conversation)
 #   apps/tui/src/timeline.ts (revertableCheckpoints)
 #   apps/tui/src/components/ChatView.tsx (Revert to checkpoint, Reverted to turn N)
+#   apps/desktop-qt/src/native/ThreadStore.cpp (revert), apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (asks first)
 
 Feature: Checkpoints and rewinding
   Every finished turn leaves a checkpoint of the workspace. The user can rewind the
@@ -24,7 +25,7 @@ Feature: Checkpoints and rewinding
     And the user's staged changes are left as they were
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
-  @desktop @tui @backlog
+  @desktop @tui @backlog-tui
   Scenario: The user reverts the thread to an earlier turn
     When the user reverts the thread to the checkpoint after turn 1
     Then turns 2 and 3 are removed from the conversation
@@ -61,7 +62,7 @@ Feature: Checkpoints and rewinding
     And the user cancels
     Then the conversation and the workspace are unchanged
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Rolling back to a checkpoint asks first because it cannot be undone
     When the user rolls back to a checkpoint
     Then the user is asked to confirm that the rollback cannot be undone

@@ -196,6 +196,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/theme-editor.feature"),
     QStringLiteral("settings/general.feature"),
     QStringLiteral("timeline/approvals-and-questions.feature"),
+    QStringLiteral("timeline/checkpoints.feature:The user reverts the thread to an earlier turn"),
     QStringLiteral("composer/question-answers.feature:A question can be dismissed*"),
     QStringLiteral("composer/question-answers.feature:A proposed plan is implemented*"),
     QStringLiteral("composer/queue-and-steer.feature:The follow-up setting decides*"),
