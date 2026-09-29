@@ -11,6 +11,7 @@
 #   apps/server/src/provider/makeManagedServerProvider.ts (re-probe on settings change, disabled providers)
 #   apps/server/src/usage/cliproxyApi.ts (per-account read failures, account listing failure)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (config shape with usageLimitsCommand)
+#   apps/desktop-qt/src/native/UsageController.cpp (limits, one account per driver and email)
 
 Feature: Subscription limits
   Provider plugins that can read a subscription's remaining allowance report it as
@@ -171,7 +172,7 @@ Feature: Subscription limits
     When the node checks limits
     Then OpenCode's limits are reported as not available
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The same account on two environments counts once
     Given the same Codex account is signed in on two environments and reported by a hub
     When the user opens Limits

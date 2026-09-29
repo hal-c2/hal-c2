@@ -202,6 +202,12 @@ const FakeNode::Extension extension([](FakeNode& node) {
       const QJsonObject instance = instances.value(id).toObject();
       for (const QString key : {QStringLiteral("displayName"), QStringLiteral("accentColor")}) {
         const QString value = instance.value(key).toString().trimmed();
+        // No provider lists an accent of its own, so a cleared one goes.
+        if (value.isEmpty() && key == QLatin1String("accentColor") && !instance.isEmpty() && entry.contains(key)) {
+          entry.remove(key);
+          providers.replace(i, entry);
+          changed = true;
+        }
         if (value.isEmpty() || entry.value(key) == value) continue;
         entry.insert(key, value);
         providers.replace(i, entry);

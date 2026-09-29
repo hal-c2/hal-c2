@@ -121,7 +121,10 @@ const FakeNode::Extension extension([](FakeNode& node) {
   });
   node.onRpc(QStringLiteral("server.refreshProviders"), [&node](const FakeNode::Rpc& rpc) {
     ++node.part<FakeUsage>().limitChecks;
-    node.reply(rpc, QJsonObject{{QStringLiteral("providers"), fakeConfig(node).config.value(QLatin1String("providers"))}});
+    // Each environment re-reads its own providers.
+    const FakeConfig& config = fakeConfig(node);
+    const QJsonObject& own = config.elsewhere.contains(rpc.environment) ? config.elsewhere[rpc.environment] : config.config;
+    node.reply(rpc, QJsonObject{{QStringLiteral("providers"), own.value(QLatin1String("providers"))}});
   });
 });
 
@@ -486,6 +489,63 @@ const Steps steps([] {
     world.waitFor([&] { return credit(world).value(QStringLiteral("available")).toInt() == 1; },
                   [&] { return QStringLiteral("one credit banked; the credits are %1").arg(show(credit(world))); });
     expect(fake(world).redeemed.isEmpty(), QStringLiteral("no credit to be spent"));
+  });
+
+  // providers/usage-limits.feature: the desktop half.
+  step(QStringLiteral("a connected environment with Codex and Claude signed in with subscriptions"), [](World& world, const Captures&, const Table&) {
+    ensureConnected(world);
+    const QDateTime now = world.now();
+    const QJsonObject limits{{QStringLiteral("checkedAt"), now.toUTC().toString(Qt::ISODateWithMs)},
+                             {QStringLiteral("windows"), QJsonArray{limitsWindow(QStringLiteral("5-hour"), 40, now.addSecs(3600))}}};
+    QJsonObject claude = codex(QStringLiteral("claudeAgent"), QStringLiteral("Claude"), QStringLiteral("sam@example.com"), limits);
+    claude.insert(QStringLiteral("driver"), QStringLiteral("claudeAgent"));
+    setProviders(world, {codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits), claude});
+  });
+  step(QStringLiteral("the same Codex account is signed in on two environments and reported by a hub"), [](World& world, const Captures&, const Table&) {
+    const QDateTime now = world.now();
+    const auto limits = [&](double used, int minutesAgo) {
+      return QJsonObject{{QStringLiteral("checkedAt"), now.addSecs(-60 * minutesAgo).toUTC().toString(Qt::ISODateWithMs)},
+                         {QStringLiteral("windows"), QJsonArray{limitsWindow(QStringLiteral("5-hour"), used, now.addSecs(3600)),
+                                                                QJsonObject{{QStringLiteral("id"), QStringLiteral("weekly")},
+                                                                            {QStringLiteral("kind"), QStringLiteral("weekly")},
+                                                                            {QStringLiteral("label"), QStringLiteral("Weekly")},
+                                                                            {QStringLiteral("usedPercent"), used / 2},
+                                                                            {QStringLiteral("resetsAt"), now.addDays(3).toUTC().toString(Qt::ISODateWithMs)},
+                                                                            {QStringLiteral("windowDurationMins"), 10080}}}}};
+    };
+    setProviders(world, {codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits(40, 3))});
+    fakeConfig(world.node).elsewhere.insert(
+        QStringLiteral("Studio"),
+        QJsonObject{{QStringLiteral("providers"),
+                     QJsonArray{codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits(60, 1))}}});
+    world.node.link(QStringLiteral("Studio"));
+    // The hub's read is the oldest, the other environment's the freshest.
+    QJsonObject account = hubAccount(world, QStringLiteral("sam@example.com"), false);
+    QJsonObject read = account.value(QLatin1String("usageLimits")).toObject();
+    read.insert(QStringLiteral("checkedAt"), now.addSecs(-5 * 60).toUTC().toString(Qt::ISODateWithMs));
+    account.insert(QStringLiteral("usageLimits"), read);
+    setHub(world, QStringLiteral("Team hub"), {account});
+  });
+  step(QStringLiteral("the user opens Limits"), [](World& world, const Captures&, const Table&) {
+    showUsage(world, QStringLiteral("limits"));
+  });
+  step(QStringLiteral("that account is counted once in each window"), [](World& world, const Captures&, const Table&) {
+    const auto pool = [&] {
+      for (const QVariant& found : at(usage(world), QStringLiteral("limits.pools")).toList()) {
+        if (found.toMap().value(QStringLiteral("driver")) == QLatin1String("codex")) return found.toMap();
+      }
+      return QVariantMap();
+    };
+    // The other environment's read, the freshest, shows once both have reported.
+    world.waitFor([&] {
+      const QVariantList windows = pool().value(QStringLiteral("windows")).toList();
+      return windows.size() == 2 && windows[0].toMap().value(QStringLiteral("remainingPercent")).toInt() == 40;
+    }, [&] { return QStringLiteral("the freshest read's two Codex windows; the page is %1").arg(show(usage(world))); });
+    world.sync();
+    for (const QVariant& window : pool().value(QStringLiteral("windows")).toList()) {
+      expect(window.toMap().value(QStringLiteral("accounts")).toList().size() == 1,
+             QStringLiteral("one account in %1; the pool is %2").arg(window.toMap().value(QStringLiteral("label")).toString(), show(pool())));
+    }
   });
 
   // Usage-limit sources (hubs).

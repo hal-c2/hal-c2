@@ -13,6 +13,7 @@
 #   packages/contracts/src/providerInstance.ts (ProviderInstanceMutation, availability)
 #   packages/contracts/src/settings.ts (provider instance settings, environment variables, binaryPath)
 #   packages/contracts/src/rpc.ts (server.refreshProviders)
+#   apps/desktop-qt/src/native/ProviderSettingsInstances.cpp (rename, accent), ComposerModel.cpp (the picker's name and colour)
 
 @node
 Feature: Provider instances
@@ -72,13 +73,13 @@ Feature: Provider instances
       | 9lives          | Instance ID must start with a letter and use only letters, digits, '-', or '_'. |
       | codex           | An instance named 'codex' already exists.                                 |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-node
   Scenario: An instance can be renamed and given an accent colour
     Given the instance "claudeAgent_work"
     When the user renames it to "Work Claude" and picks a green accent
     Then the model picker shows "Work Claude" in green
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-node
   Scenario: Clearing the accent colour goes back to the default
     Given the instance "claudeAgent_work" has a green accent
     When the user clears the accent colour

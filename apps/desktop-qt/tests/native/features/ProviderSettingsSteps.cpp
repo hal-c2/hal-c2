@@ -375,6 +375,13 @@ QJsonObject savedInstance(World& world, const QString& instanceId) {
   return fakeConfig(world.node).settings.value(QLatin1String("providerInstances")).toObject().value(instanceId).toObject();
 }
 
+QVariantMap pickerInstance(World& world, const QString& instanceId) {
+  for (const QVariant& shown : world.state(QStringLiteral("modelPicker")).toMap().value(QStringLiteral("instances")).toList()) {
+    if (shown.toMap().value(QStringLiteral("instanceId")) == instanceId) return shown.toMap();
+  }
+  return {};
+}
+
 QVariantMap wizard(World& world) {
   return panel(world).value(QStringLiteral("wizard")).toMap();
 }
@@ -719,6 +726,36 @@ const Steps steps([] {
     };
     waitForEntry(world, c[0], [&](const QVariantMap& found) { return found.value(QStringLiteral("label")) == c[0] && listed() == c[0]; },
                  QStringLiteral("to be listed under its new name"));
+  });
+  // An instance's name and accent colour, as the model picker shows them.
+  step(QStringLiteral("the instance %1( has a green accent)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == QLatin1String("claudeAgent_work"), QStringLiteral("only claudeAgent_work is seeded, not %1").arg(c[0]));
+    seedWork(world, QStringLiteral("Claude Work"));
+    if (c[1].isEmpty()) return;
+    act(world, QStringLiteral("accent"), {{QStringLiteral("instanceId"), c[0]}, {QStringLiteral("color"), QStringLiteral("#22c55e")}});
+    world.waitFor([&] { return savedInstance(world, c[0]).value(QLatin1String("accentColor")) == QLatin1String("#22c55e"); },
+                  [&] { return QStringLiteral("the accent to be saved; the instance is %1").arg(show(savedInstance(world, c[0]).toVariantMap())); });
+  });
+  step(QStringLiteral("the user renames it to %1 and picks a green accent").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = fake(world).instanceId;
+    act(world, QStringLiteral("rename"), {{QStringLiteral("instanceId"), id}, {QStringLiteral("name"), c[0]}});
+    act(world, QStringLiteral("accent"), {{QStringLiteral("instanceId"), id}, {QStringLiteral("color"), QStringLiteral("#22c55e")}});
+  });
+  step(QStringLiteral("the user clears the accent colour"), [](World& world, const Captures&, const Table&) {
+    act(world, QStringLiteral("accent"), {{QStringLiteral("instanceId"), fake(world).instanceId}, {QStringLiteral("color"), QString()}});
+  });
+  step(QStringLiteral("the model picker shows %1 in green").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const QVariantMap shown = pickerInstance(world, fake(world).instanceId);
+      return shown.value(QStringLiteral("displayName")) == c[0] && shown.value(QStringLiteral("accentColor")) == QLatin1String("#22c55e");
+    }, [&] { return QStringLiteral("%1 in green; the picker lists %2").arg(c[0], show(world.state(QStringLiteral("modelPicker")))); });
+  });
+  step(QStringLiteral("the instance uses the default colour"), [](World& world, const Captures&, const Table&) {
+    const QString id = fake(world).instanceId;
+    world.waitFor([&] {
+      return !savedInstance(world, id).contains(QLatin1String("accentColor")) && !pickerInstance(world, id).isEmpty() &&
+             pickerInstance(world, id).value(QStringLiteral("accentColor")).isNull();
+    }, [&] { return QStringLiteral("no accent; the instance is %1, the picker lists %2").arg(show(savedInstance(world, id).toVariantMap()), show(world.state(QStringLiteral("modelPicker")))); });
   });
   step(QStringLiteral("the user adds the environment variable %1 and marks it sensitive").arg(q), [](World& world, const Captures& c, const Table&) {
     seedWork(world, QStringLiteral("Claude Work"));
