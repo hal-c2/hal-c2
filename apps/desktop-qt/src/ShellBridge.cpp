@@ -14,7 +14,7 @@ namespace {
 // page's until the shell's first snapshot, then SidebarController's.
 constexpr const char* kStateKeys[] = {
     "backendError", "composer", "contextMenu", "git",   "keybindings", "layout",
-    "notifications", "settings", "sidebar", "theme",     "workspace",
+    "notifications", "sidebar", "theme",     "workspace",
     "modelPicker", "native",
 };
 

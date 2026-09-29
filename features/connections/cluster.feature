@@ -309,7 +309,7 @@ Feature: Clustering one person's machines
     When the user opens Cluster in the desktop's settings
     And the user picks the settings section "/settings/general"
     Then the cluster page closes
-    And the action "settings.navigate" reaches the page
+    And the window shows the settings section "/settings/general"
 
   @backlog @shared
   Scenario: A member that joins later appears in the client without pairing again

@@ -15,82 +15,82 @@ Feature: Projects settings panel
     Given the user has the project "shop" with checkouts on "laptop" and "server"
     And both environments are connected
 
-  @backlog @desktop
+  @desktop
   Scenario: The panel asks the user to pick a project first
     When the user opens the Projects settings without a project picked
     Then the user is asked to choose a project to manage its name, icon, checkouts and actions
 
-  @backlog @desktop
+  @desktop
   Scenario: The panel explains how to add a first project
     Given the user has no projects
     When the user opens the Projects settings
     Then the user is told to add a project from the sidebar to configure it here
 
-  @backlog @desktop
+  @desktop
   Scenario: A project removed elsewhere is reported as no longer available
     Given the user is managing "shop" in settings
     When "shop" is removed on another device
     Then the user is told this project is no longer available
 
-  @backlog @desktop
+  @desktop
   Scenario: A checkout that disappears is reported as no longer available
     Given the user is managing the "server" checkout of "shop"
     When that checkout is removed on another device
     Then the user is told this checkout is no longer available in the selected project and environment
 
-  @backlog @desktop
+  @desktop
   Scenario: The panel keeps following the project when grouping changes
     Given the user is managing "shop" in settings
     When the user changes how projects are grouped
     Then the panel still shows "shop"
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Renaming a project renames every checkout
     When the user renames "shop" to "Shop web" in settings
     Then "Shop web" is shown for the checkouts on "laptop" and "server"
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A project name cannot be empty
     When the user clears the name of "shop" in settings
     Then the user is told the project title cannot be empty
     And the name stays "shop"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Renaming with a disconnected checkout asks the user to reconnect
     Given "server" is disconnected
     When the user renames "shop" to "Shop web" in settings
     Then the user is told to connect "server" and try again
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A rename that fails on one environment names that environment
     Given renaming fails on "server"
     When the user renames "shop" to "Shop web" in settings
     Then the user is told the rename failed on "server"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The icon of a project is chosen and reset from the panel
     When the user chooses the emoji "🛒" as the icon of "shop" in settings
     Then "shop" shows "🛒" on every checkout
     When the user sets the icon of "shop" back to automatic
     Then "shop" shows its automatic icon
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The panel lists every checkout with where it lives
     When the user manages "shop" in settings
     Then the checkouts on "laptop" and "server" are listed with their folders
 
-  @backlog @desktop
+  @desktop
   Scenario: Removing one checkout keeps the others
     When the user removes the "server" checkout of "shop" and confirms
     Then "shop" is listed only on "laptop"
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Removing a project everywhere removes every checkout
     When the user removes "shop" everywhere and confirms
     Then "shop" is no longer listed on "laptop" or "server"
     And no files are deleted on either machine
 
-  @backlog @desktop
+  @desktop
   Scenario: The removal confirmation names what will be cleared
     Given the "laptop" checkout of "shop" has 3 threads
     When the user asks to remove the "laptop" checkout of "shop"
@@ -108,7 +108,7 @@ Feature: Projects settings panel
     When the user cancels the removal in settings
     Then "shop" is still listed
 
-  @backlog @desktop
+  @desktop
   Scenario: The panel points to other project settings
     When the user manages "shop" in settings
     Then the user is told to keep the project picked while browsing other pages to find more of its settings

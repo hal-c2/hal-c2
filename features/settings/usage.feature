@@ -11,6 +11,12 @@
 #   apps/web/src/components/usage/UsagePage.tsx
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
 #   apps/desktop-qt/src/native/UsageController.cpp, apps/desktop-qt/qml/HalC2/Bricks/UsagePage.qml
+#   apps/desktop-qt/tests/tst_UsagePage.qml (backing out of a reset credit, not yet a scenario)
+#   apps/web/src/components/usage/UsageLimits.tsx (reset credits)
+#   apps/web/src/components/usage/usageBreakdown.ts, apps/web/src/components/usage/UsageProviderChart.tsx (model and day breakdown, stacked chart)
+#   apps/web/src/components/usage/UsagePriceOverrides.tsx, apps/web/src/components/usage/usagePriceTable.ts (model prices dialog)
+#   apps/web/src/components/usage/usagePagePreferences.ts (environment subset)
+#   apps/web/src/components/usage/UsageLimitsPooled.tsx (account chips)
 #   packages/shared/src/usageMerge.ts, packages/shared/src/usageLimits.ts
 
 Feature: Usage and limits
@@ -92,6 +98,15 @@ Feature: Usage and limits
       Given the user saved a price for "my-model" of 1 USD input and 4 USD output per million tokens
       When a client asks for the usage summary
       Then "my-model" costs are estimated at those rates
+
+    # The model prices dialog: its finer points are the backlog scenarios below.
+    @desktop @backlog-desktop
+    Scenario: The user sets a model's price from Usage
+      Given the user views cost for the past 7 days
+      When the user opens model prices
+      Then each model lists its input, output and cache rates and where they come from
+      When the user sets a custom input and output rate for one model
+      Then that model's cost uses the custom rates
 
     @backlog @shared
     Scenario: A custom price with no cache rates uses the input rate
@@ -181,6 +196,35 @@ Feature: Usage and limits
       Then the usage of "server" is shown
       And the usage of this environment is not counted
 
+    # The web's breakdown, chart and environment choices the desktop's Usage page does not draw yet.
+    @desktop @backlog-desktop
+    Scenario: Usage breaks cost down by model and by day
+      Given the user views cost for the past 7 days
+      When the user breaks usage down by model
+      Then each model lists its tokens and estimated cost, largest first
+      When the user breaks usage down by day
+      Then each day lists its tokens and estimated cost
+
+    @desktop @backlog-desktop
+    Scenario: The usage chart stacks each provider and reads out a day on hover
+      Given Codex and Claude both have usage in the past 7 days
+      When the user views cost for the past 7 days
+      Then each day's bar stacks Codex and Claude in their own colours
+      When the user hovers a day
+      Then that day's cost for each provider is read out
+
+    @desktop @backlog-desktop
+    Scenario: Each model shows its share of the cost
+      Given the user views cost for the past 7 days
+      Then each model shows what percentage of the total cost it makes up
+
+    @desktop @backlog-desktop
+    Scenario: The user chooses several environments to add up
+      Given "laptop", "server" and this environment have usage
+      When the user chooses "laptop" and "server" only
+      Then usage adds up "laptop" and "server"
+      And the usage of this environment is not counted
+
   Rule: Limits
 
     @node
@@ -218,6 +262,13 @@ Feature: Usage and limits
       Then Codex shows one 5-hour number made up of both accounts
       And the account that resets soonest comes first
 
+    @desktop @backlog-desktop
+    Scenario: Each account in Limits is told apart by its chip
+      Given two Codex accounts
+      When the user views limits
+      Then each account shows its initials in a colour of its own, the same on every visit
+      And an account signed in on a provider instance shows that instance's badge instead
+
     @shared @backlog-mobile @backlog-tui
     Scenario: Opening limits checks them at most every five minutes
       Given limits were checked two minutes ago
@@ -251,3 +302,35 @@ Feature: Usage and limits
 
     # Grok, Cursor and OpenCode Go limits, and the /usage-limits composer command, are in
     # providers/usage-limits.feature.
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: A banked reset credit is spent once the user confirms
+      Given Codex has a reset credit banked
+      When the user views limits
+      Then limits show 1 reset credit banked for Codex
+      When the user uses the reset credit and confirms
+      Then the user is told "Reset applied. Your windows have cleared."
+      And the credit is spent on the Codex instance
+      And limits show 0 reset credits banked for Codex
+
+    # The confirmation is UsagePage.qml's own dialog (tst_UsagePage.qml); no feature runner
+    # drives it yet.
+    @backlog @shared
+    Scenario: The user backs out of spending a reset credit
+      Given Codex has a reset credit banked
+      When the user starts to use the reset credit but cancels
+      Then the credit is still banked
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario Outline: A reset credit that cannot be used says why
+      Given Codex has a reset credit banked
+      And <situation>
+      When the user uses the reset credit and confirms
+      Then the user is told "<message>"
+
+      Examples:
+        | situation                                 | message                           |
+        | no rate-limit window is in use            | Nothing to reset right now.       |
+        | the account has no credit left            | No reset credit left.             |
+        | the credit was redeemed on another device | That credit was already redeemed. |
+

@@ -149,6 +149,13 @@ Feature: Linking a node to environments outside its cluster
     When a client of the node commits it with a git action on "beast"
     Then "beast" refuses the git action saying orchestration:operate is required
 
+  # So a client can show what it may only view there as read-only.
+  @node
+  Scenario: A link lists what its pairing grants on the other side
+    Given the node is linked to "beast" with only orchestration:read
+    When a client of the node asks for the shell
+    Then its link to "beast" lists orchestration:read as its only scope
+
   @node
   Scenario: A client needs the same scope for a linked environment as for its own node
     Given the node is linked to "beast"
@@ -273,7 +280,7 @@ Feature: Linking a node to environments outside its cluster
     Given the node is linked to "beast"
     And a thread that lives on "beast"
     When a client of the node asks for the shell
-    Then its links carry only their environment, origin and whether they are online
+    Then its links carry only their environment, origin, granted scopes and whether they are online
     And the node does not follow the shell of "beast"
 
   @node

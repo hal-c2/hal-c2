@@ -61,6 +61,12 @@ const Steps steps([] {
                             QVariantMap{{QStringLiteral("requestId"), at(menu, QStringLiteral("requestId"))}, {QStringLiteral("id"), id}});
   };
   step(QStringLiteral("the user picks %1").arg(q), [choose](World& world, const Captures& c, const Table&) {
+    // In the Project settings, the default workspace looked at
+    // (settings/project-defaults.feature).
+    if (at(world.state(QStringLiteral("projectSettings")), QStringLiteral("open")).toBool()) {
+      world.bridge().dispatch(QStringLiteral("projectSettings.workspace"), QVariantMap{{QStringLiteral("value"), c[0]}});
+      return;
+    }
     world.sync();  // a menu can open on the node's answer
     // From an open command palette (a file found by name): its entry of that
     // title or path.

@@ -12,18 +12,13 @@
 
 #include <algorithm>
 
+#include "FakeProjects.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
 #include "World.h"
 
 namespace {
-
-// What the fake node's projects.mutate saw, and the error it answers with.
-struct FakeProjects {
-  QList<QJsonObject> mutations;
-  QString refusal;
-};
 
 const QString kAt = QStringLiteral("2026-09-23T09:00:00Z");
 
@@ -42,7 +37,43 @@ const FakeNode::Extension projects([](FakeNode& node) {
     }
     const QString type = rpc.payload.value(QLatin1String("type")).toString();
     const QString id = rpc.payload.value(QLatin1String("projectId")).toString();
-    if (type == QLatin1String("project.create")) {
+    const QString environment = rpc.environment.isEmpty() ? node.environmentId : rpc.environment;
+    if (fake.refusedOn.contains(environment)) {
+      node.refuse(rpc, fake.refusedOn.value(environment));
+      return;
+    }
+    // A linked environment's projects are its link rows.
+    if (environment != node.environmentId) {
+      const QJsonArray entry = node.linkedRows.value(environment).value(id);
+      if (entry.isEmpty() || (type != QLatin1String("project.update") && type != QLatin1String("project.delete"))) {
+        node.refuse(rpc, type + QStringLiteral(" of ") + id + QStringLiteral(" is not supported"));
+        return;
+      }
+      QJsonObject row = entry.at(2).toObject();
+      if (type == QLatin1String("project.delete")) {
+        row = deleted();
+      } else {
+        for (auto it = rpc.payload.begin(); it != rpc.payload.end(); ++it) {
+          if (it.key() != QLatin1String("type") && it.key() != QLatin1String("projectId")) row.insert(it.key(), it.value());
+        }
+      }
+      node.reply(rpc, QJsonObject());
+      node.sendLinkRow(environment, id, row, QStringLiteral("project"));
+      return;
+    }
+    if (type == QLatin1String("project.update")) {
+      if (!node.projects.contains(id)) {
+        node.refuse(rpc, QStringLiteral("unknown project ") + id);
+        return;
+      }
+      QJsonObject row = node.projects.value(id);
+      for (auto it = rpc.payload.begin(); it != rpc.payload.end(); ++it) {
+        if (it.key() != QLatin1String("type") && it.key() != QLatin1String("projectId")) row.insert(it.key(), it.value());
+      }
+      node.projects.insert(id, row);
+      node.reply(rpc, row);
+      node.sendRow(id, row, QStringLiteral("project"));
+    } else if (type == QLatin1String("project.create")) {
       const QString root = rpc.payload.value(QLatin1String("workspaceRoot")).toString();
       const QJsonObject row{
           {QStringLiteral("id"), id},

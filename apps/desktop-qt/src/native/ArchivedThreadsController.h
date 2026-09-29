@@ -13,7 +13,8 @@ class ShellBridge;
 class ShellStore;
 
 // The Archive settings section ("/settings/archived"), which the shell owns:
-// every archived thread the connected environments hold, grouped by project,
+// every archived thread the connected environments hold (or the settings
+// scope's environments and project hold), grouped by project,
 // with a way back (unarchive) and a way out (delete) for each (the web's
 // ArchivedThreadsPanel).
 //

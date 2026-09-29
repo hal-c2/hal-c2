@@ -2,6 +2,7 @@
 // device's, then the node's; halves over the chosen theme; the standard look
 // when nothing matches; and the colours every theme is drawn in.
 
+#include <QDir>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QTemporaryDir>
@@ -149,6 +150,39 @@ private slots:
           {QStringLiteral("appearance"), QStringLiteral("light")}});
     QCOMPARE(themes()->appearance(), QStringLiteral("dark"));
     QCOMPARE(canvas(), QStringLiteral("#050505"));
+  }
+
+  // settings/search-and-navigation.feature: restoring defaults puts the whole
+  // theme choice back at once, or, when it cannot be saved, none of it.
+  void restoringDefaultsIsAllOrNothing() {
+    const QString locked = m_dir.filePath(QStringLiteral("locked"));
+    QVERIFY(QDir().mkpath(locked));
+    settings()->setDevicePath(locked + QStringLiteral("/preferences.json"));
+    save({{QStringLiteral("theme"), QStringLiteral("grove")},
+          {QStringLiteral("appearance"), QStringLiteral("dark")},
+          {QStringLiteral("themeHalves"), QJsonObject{{QStringLiteral("light"), QStringLiteral("grove")}}},
+          {QStringLiteral("timestampFormat"), QStringLiteral("24-hour")}});
+    // A directory that cannot be written to keeps the preferences unsaved.
+    QFile::setPermissions(locked, QFileDevice::ReadOwner | QFileDevice::ExeOwner);
+    const bool restored = themes()->restoreDefaults();
+    QFile::setPermissions(locked, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    QVERIFY(!restored);
+    QCOMPARE(themes()->themeId(), QStringLiteral("grove"));
+    QCOMPARE(themes()->mode(), QStringLiteral("dark"));
+    QVERIFY(!themes()->halves().isEmpty());
+    const QVariantList toasts = m_bridge->state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
+    QVERIFY(std::any_of(toasts.begin(), toasts.end(), [](const QVariant& toast) {
+      return toast.toMap().value(QStringLiteral("title")) == QStringLiteral("Couldn’t restore theme settings");
+    }));
+    QVERIFY(themes()->restoreDefaults());
+    QCOMPARE(themes()->themeId(), QString());
+    QCOMPARE(themes()->mode(), QStringLiteral("system"));
+    QVERIFY(themes()->halves().isEmpty());
+    QCOMPARE(settings()->deviceSettings().value(QLatin1String("timestampFormat")), QJsonValue(QStringLiteral("24-hour")));
+    // The rows go back together, in this device's store here.
+    settings()->resetAll({QStringLiteral("timestampFormat"), QStringLiteral("unknown")});
+    QVERIFY(settings()->isDefault(QStringLiteral("timestampFormat")));
+    QVERIFY(!settings()->deviceSettings().contains(QLatin1String("timestampFormat")));
   }
 };
 

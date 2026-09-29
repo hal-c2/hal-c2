@@ -150,6 +150,17 @@ function visible(rows, platform) {
     });
 }
 
+// The General and Appearance rows restoring defaults resets: each one off its
+// default (`isDefault(key)`), once, as {key, title}.
+function changed(isDefault, platform) {
+    var seen = {};
+    return visible(general.concat(appearance), platform).filter(function (row) {
+        if (row.key === undefined || seen[row.key] || isDefault(row.key)) return false;
+        seen[row.key] = true;
+        return true;
+    });
+}
+
 // Project grouping is a switch: off is "separate", and turning it back on
 // restores the mode used before (`last`), else the default.
 function groupingOn(mode) {

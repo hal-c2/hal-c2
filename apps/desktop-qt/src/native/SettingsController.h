@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 
 #include <functional>
@@ -105,6 +106,9 @@ public:
   Q_INVOKABLE bool onDevice(const QString& key) const;
   Q_INVOKABLE void set(const QString& key, const QVariant& value);
   Q_INVOKABLE void reset(const QString& key);
+  // Resets rows together: one save of this device's and one of the node's
+  // (restoring defaults).
+  Q_INVOKABLE void resetAll(const QStringList& keys);
 
   // What `config.themes` delivers; tests set it.
   void setThemes(const QJsonArray& themes);

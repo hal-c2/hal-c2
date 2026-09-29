@@ -644,10 +644,11 @@ defmodule HalC2.Steps.Parity.Shapes do
 
         assert length(rows) == length(HalC2.Shell.rows())
 
-        # With links, each link also carries its environment's nodes and rows.
+        # With links, each link also carries its environment's nodes and rows. A link
+        # paired since scopes were kept also lists them.
         link_keys = if form == "links", do: ~w(environment nodes online origin rows)
         link_keys = link_keys || ~w(environment online origin)
-        for link <- frame["links"], do: assert(Enum.sort(Map.keys(link)) == link_keys)
+        for link <- frame["links"], do: assert(Enum.sort(Map.keys(link) -- ["scopes"]) == link_keys)
 
       {"stream", [first | _] = frames} ->
         assert first["part"] == 0

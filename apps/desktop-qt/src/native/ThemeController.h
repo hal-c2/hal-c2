@@ -77,6 +77,9 @@ public:
   // The appearance shortcut (appearance.cycle): system, light, dark and round
   // again, saying where it landed.
   Q_INVOKABLE bool cycleAppearance();
+  // Back to the standard look following the system, in one save: on failure
+  // the whole choice stays as it was.
+  Q_INVOKABLE bool restoreDefaults();
 
   // This device's own themes. A draft is what the editor starts from:
   // {id, label, appearance, colors} with every role of `id` drawn in its

@@ -50,17 +50,19 @@ Item {
             compare(Pages.brickFor("/settings/connections"), "ConnectionsSettings");
             compare(Pages.brickFor("/settings/keybindings"), "KeybindingsSettings");
             compare(Pages.brickFor("/settings/providers"), "ProvidersSettings");
-            compare(Pages.brickFor("/settings/storage"), "", "the page still renders Storage");
+            compare(Pages.brickFor("/settings/source-control"), "SourceControlSettings");
+            compare(Pages.brickFor("/settings/integrations"), "IntegrationsSettings");
+            compare(Pages.brickFor("/settings/snap-shot"), "", "the page still renders SnapShots");
             compare(Pages.brickFor("/settings/nowhere"), "");
         }
 
-        function test_navListsNativePagesAlwaysAndThePagesWhileListed() {
+        function test_navListsSectionsOnceTheirStateIsThere() {
             const labels = rows => rows.map(section => section.label);
-            compare(labels(Pages.navRows([], {})), ["General", "Appearance", "Keybindings"]);
-            compare(labels(Pages.navRows([{ to: "/settings/storage" }], { cluster: {}, providerSettings: {} })), ["General", "Appearance", "Keybindings", "Providers", "Storage", "Cluster"]);
+            compare(labels(Pages.navRows({})), ["General", "Appearance", "Keybindings", "SnapShots"]);
+            compare(labels(Pages.navRows({ cluster: {}, providerSettings: {} })), ["General", "Appearance", "Keybindings", "SnapShots", "Providers", "Cluster"]);
         }
 
-        function test_searchFindsNativeSectionsAndDropsThePagesResultsInThem() {
+        function test_searchFindsSectionsAndTheirSettings() {
             compare(Pages.searchRows("theme", {}).map(section => section.label), ["Theme", "Appearance"]);
             compare(Pages.searchRows("theme", {})[0].targetId, "themes");
             compare(Pages.searchRows("delete confirmation", {})[0].targetId, "settingsRow:confirmThreadDelete");
@@ -69,8 +71,6 @@ Item {
             compare(Pages.searchRows("pairing", {}).length, 0, "Connections waits for its state");
             compare(Pages.searchRows("pairing", { connections: {} })[0].label, "Connections");
             compare(Pages.searchRows("sign out", { providerSettings: {} })[0].label, "Providers");
-            const kept = Pages.pageResults([{ to: "/settings/appearance" }, { to: "/settings/storage" }, { to: "/settings/providers" }]);
-            compare(kept.map(result => result.to), ["/settings/storage"]);
         }
 
         function test_projectGroupingRestoresTheModeUsedBefore() {
@@ -144,7 +144,7 @@ Item {
             verify(!!host);
             tryCompare(host, "status", Loader.Ready);
             compare(host.item.objectName, "generalSettings");
-            host.section = "/settings/storage";
+            host.section = "/settings/snap-shot";
             verify(!host.active, "the page's section loads nothing");
         }
 

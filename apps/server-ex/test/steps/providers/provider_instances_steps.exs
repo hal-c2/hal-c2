@@ -80,6 +80,80 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
     ctx
   end
 
+  # A Claude instance with `name` sealed in the node's secrets.
+  defp add_sensitive(context, name) do
+    ctx =
+      context
+      |> Acp.ready()
+      |> Acp.write_settings(fn settings ->
+        Map.put_new(settings, "providerInstances", %{})
+        |> put_in(["providerInstances", "claude_work"], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "environment" => [%{"name" => name, "value" => "secret-#{name}", "sensitive" => true}]
+        })
+      end)
+
+    ctx |> Map.put(:variable, name) |> Map.put(:instance, "claude_work")
+  end
+
+  step "the user adds the sensitive variable {string} to a Claude instance",
+       %{args: [name]} = context do
+    add_sensitive(context, name)
+  end
+
+  step "the value is stored in the node's secrets", context do
+    assert HalC2.ProviderSecrets.value(context.instance, context.variable) ==
+             "secret-#{context.variable}"
+
+    context
+  end
+
+  step "clients only see that a value is set", context do
+    {%{"settings" => settings}, ctx} = Node.World.call!(context, "hal-c2.readSettings", %{})
+
+    assert [variable] = get_in(settings, ["providerInstances", ctx.instance, "environment"])
+    assert variable["name"] == ctx.variable
+    assert variable["valueRedacted"] == true
+    assert variable["value"] == ""
+    refute inspect(settings) =~ "secret-#{ctx.variable}"
+    ctx
+  end
+
+  step "the Claude instance keeps {string} as a stored secret", %{args: [name]} = context do
+    ctx = add_sensitive(context, name)
+    assert HalC2.ProviderSecrets.value(ctx.instance, name) == "secret-#{name}"
+    ctx
+  end
+
+  step "a client saves it renamed to {string} without a new value", %{args: [name]} = context do
+    id = context.instance
+
+    context
+    |> Acp.write_settings(fn settings ->
+      update_in(settings, ["providerInstances", id, "environment"], fn [variable] ->
+        [%{variable | "name" => name}]
+      end)
+    end)
+    |> Map.put(:renamed, name)
+  end
+
+  step "clients see {string} with no value set", %{args: [name]} = context do
+    {%{"settings" => settings}, ctx} = Node.World.call!(context, "hal-c2.readSettings", %{})
+
+    assert [variable] = get_in(settings, ["providerInstances", ctx.instance, "environment"])
+    assert variable["name"] == name
+    assert variable["value"] == ""
+    refute Map.has_key?(variable, "valueRedacted")
+    ctx
+  end
+
+  step "the secret of {string} is forgotten", %{args: [name]} = context do
+    assert HalC2.ProviderSecrets.value(context.instance, name) == ""
+    assert HalC2.ProviderSecrets.value(context.instance, context.renamed) == ""
+    context
+  end
+
   # --- text generation fallback ----------------------------------------------------
 
   step "Grok is picked for thread titles", context do

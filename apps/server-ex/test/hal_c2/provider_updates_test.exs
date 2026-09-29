@@ -54,4 +54,25 @@ defmodule HalC2.ProviderUpdatesTest do
     assert %{"canUpdate" => false, "updateCommand" => nil, "status" => "unknown"} =
              HalC2.ProviderUpdates.advisory("codex", path, "unknown")
   end
+
+  test "only a global npm install can pin a version", %{tmp_dir: dir} do
+    npm = install(dir, "lib/node_modules/@openai/codex/bin/codex.js", "bin/codex")
+    assert HalC2.ProviderUpdates.advisory("codex", npm, "0.1.0")["canInstallVersion"]
+
+    brew = install(dir, "Cellar/codex/0.1.0/bin/codex", "brew/codex")
+    refute HalC2.ProviderUpdates.advisory("codex", brew, "0.1.0")["canInstallVersion"]
+  end
+
+  test "a version to install must be a plain release", %{tmp_dir: dir} do
+    path = install(dir, "lib/node_modules/@openai/codex/bin/codex.js", "bin/codex")
+    File.chmod!(path, 0o755)
+    Application.put_env(:hal_c2, :codex_command, [path])
+    on_exit(fn -> Application.delete_env(:hal_c2, :codex_command) end)
+
+    assert {:error, %{"reason" => "This installation cannot install v1.0.0; rm -rf /."}} =
+             HalC2.ProviderUpdates.update(%{
+               "provider" => "codex",
+               "targetVersion" => "1.0.0; rm -rf /"
+             })
+  end
 end

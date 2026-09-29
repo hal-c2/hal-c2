@@ -103,6 +103,8 @@ public:
 
   QString name = QStringLiteral("node-a");
   QString environmentId = QStringLiteral("env-a");
+  // The node's environment's label, when it has one ("This machine" otherwise).
+  QString label;
   QMap<QString, QJsonObject> threads;
   QMap<QString, QJsonObject> projects;
   QList<QUrl> connections;
@@ -131,6 +133,8 @@ public:
   // why a link is down ("unreachable", "refused"; absent while it is online).
   QStringList linked;
   QHash<QString, QString> linkProblems;
+  // What each link's pairing granted, listed as its `scopes`; none listed when unset.
+  QHash<QString, QStringList> linkScopes;
   // Each linked environment's label, when it is not its id.
   QHash<QString, QString> linkLabels;
 

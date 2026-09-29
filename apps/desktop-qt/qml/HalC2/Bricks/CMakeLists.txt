@@ -67,6 +67,7 @@ qt_add_qml_module(hal_c2_bricks
     ThreadView.qml
     js/centreViews.js
     js/panelTabs.js
+    js/scheduledTasks.js
     RevertDialog.qml
     TerminalSplits.qml
     TerminalPanel.qml
@@ -77,7 +78,17 @@ qt_add_qml_module(hal_c2_bricks
     CommandPalette.qml
     PullRequestsPage.qml HomePage.qml UsagePage.qml
     ProvidersSettings.qml
+    ProviderAuthTerminal.qml
+    ProviderCustomModels.qml
+    ProviderAcpSessions.qml
     ArchivedThreads.qml
+    ScheduledTaskEditor.qml
+    ScheduledTasksSettings.qml
+    SourceControlSettings.qml
+    IntegrationsSettings.qml
+    SettingsScopeSentence.qml
+    StorageSettings.qml
+    ProjectSettings.qml
   RESOURCES
     qmldir
     js/shell-connect.js

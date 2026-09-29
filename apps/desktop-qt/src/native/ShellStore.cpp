@@ -74,6 +74,23 @@ bool ShellStore::reaches(const QString& environmentId) const {
   return m_linked.contains(environmentId) || servesEnvironment(environmentId);
 }
 
+bool ShellStore::mayOperate(const QString& environmentId) const {
+  if (servesEnvironment(environmentId)) return true;
+  // The link to it, or to the cluster it is a member of.
+  QString via = m_linked.contains(environmentId) ? environmentId : QString();
+  for (const Node& node : m_nodes) {
+    if (via.isEmpty() && node.environmentId == environmentId) via = node.link;
+  }
+  for (const QJsonValue& value : m_links) {
+    const QJsonObject link = value.toObject();
+    if (link.value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString() != via) continue;
+    // A link paired before the node kept scopes lists none; the other side still checks.
+    const QJsonValue scopes = link.value(QLatin1String("scopes"));
+    return !scopes.isArray() || scopes.toArray().contains(QStringLiteral("orchestration:operate"));
+  }
+  return true;
+}
+
 // The whole list of links: a link that left takes its nodes and rows with it.
 // A snapshot's links carry their nodes and rows; `shell.links` does not, and
 // leaves the rows of the links it keeps as they are.

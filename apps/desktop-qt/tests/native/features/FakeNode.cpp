@@ -98,10 +98,10 @@ void FakeNode::sendSnapshot() {
            {QStringLiteral("node"), name},
            {QStringLiteral("online"), true},
            {QStringLiteral("environment"),
-            QJsonObject{
-                {QStringLiteral("environmentId"), environmentId},
-                {QStringLiteral("capabilities"), capabilities},
-            }},
+            label.isEmpty() ? QJsonObject{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}}
+                            : QJsonObject{{QStringLiteral("environmentId"), environmentId},
+                                          {QStringLiteral("label"), label},
+                                          {QStringLiteral("capabilities"), capabilities}}},
        }}},
       {QStringLiteral("rows"), rows},
       {QStringLiteral("links"), links()},
@@ -207,6 +207,7 @@ QJsonArray FakeNode::links() const {
     });
     QJsonObject link = result.last().toObject();
     if (linkProblems.contains(environment)) link.insert(QStringLiteral("problem"), linkProblems.value(environment));
+    if (linkScopes.contains(environment)) link.insert(QStringLiteral("scopes"), QJsonArray::fromStringList(linkScopes.value(environment)));
     result.replace(result.size() - 1, link);
   }
   return result;

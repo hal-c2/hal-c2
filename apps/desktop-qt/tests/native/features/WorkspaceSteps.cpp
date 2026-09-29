@@ -13,6 +13,12 @@
 #include "World.h"
 #include "WorkspaceController.h"
 
+// ProviderSettingsSteps.cpp
+void renameProviderInstance(World& world, const QString& from, const QString& to);
+
+// ArchivedThreadsSteps.cpp
+bool archiveListsOnly(World& world, const QString& title);
+
 namespace {
 
 const QString kThread = QStringLiteral("t1");
@@ -276,6 +282,11 @@ const Steps steps([] {
 
   // Titles.
   step(QStringLiteral("the user renames %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The same words rename a provider instance in the Providers settings.
+    if (at(world.state(QStringLiteral("providerSettings")), QStringLiteral("open")).toBool()) {
+      renameProviderInstance(world, c[0], c[1]);
+      return;
+    }
     expect(workspace(world).value(QStringLiteral("threadTitle")) == c[0], QStringLiteral("the header shows %1").arg(show(workspace(world))));
     dispatch(world, QStringLiteral("workspace.rename"), {{QStringLiteral("title"), c[1]}});
   });
@@ -337,6 +348,11 @@ const Steps steps([] {
   step(QStringLiteral("the user searches the branch list for %1").arg(q), search);
   step(QStringLiteral("the user searched the branch list for %1").arg(q), search);
   step(QStringLiteral("only %1 is listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("open")).toBool()) {
+      world.waitFor([&] { return archiveListsOnly(world, c[0]); },
+                    [&] { return QStringLiteral("only %1 archived; the archive is %2").arg(c[0], show(world.state(QStringLiteral("archivedThreads")))); });
+      return;
+    }
     expect(branchNames(world) == QStringList{c[0]}, QStringLiteral("the list is %1").arg(branchNames(world).join(QStringLiteral(", "))));
   });
   step(QStringLiteral("no ref matches"), [](World& world, const Captures&, const Table&) {
@@ -590,3 +606,9 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// The project's checkout with these branches, `current` checked out and the
+// default, for other step files (ScheduledTasksSteps.cpp).
+void seedBranches(World& world, const QString& project, const QStringList& branches, const QString& current) {
+  gitRepo(world, project, branches, current, current);
+}

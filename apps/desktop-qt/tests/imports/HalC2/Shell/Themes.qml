@@ -12,6 +12,8 @@ QtObject {
     property var available: []
     property var roles: ["canvas", "accent"]
     property var calls: []
+    // restoreDefaults fails, as a device that cannot save does.
+    property bool failSaves: false
 
     function record(name, args) {
         calls = calls.concat([{ name: name, args: args }]);
@@ -44,7 +46,16 @@ QtObject {
     function removeCustom(id) {
         return record("removeCustom", [id]);
     }
+    function restoreDefaults() {
+        record("restoreDefaults", []);
+        if (failSaves) return false;
+        mode = "system";
+        themeId = "";
+        halves = {};
+        return true;
+    }
     function clear() {
+        failSaves = false;
         mode = "system";
         themeId = "";
         halves = {};

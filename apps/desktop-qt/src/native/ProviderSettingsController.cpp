@@ -1,19 +1,24 @@
 #include "ProviderSettingsController.h"
 
 #include <QClipboard>
+#include <QDateTime>
+#include <QPointer>
 #include <QGuiApplication>
 #include <QRegularExpression>
 #include <QUrl>
 
 #include <algorithm>
+#include <cmath>
 
 #include "CommandRegistry.h"
+#include "EnvironmentSettings.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
+#include "ProviderDrivers.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -25,7 +30,62 @@ const NativeControllerRegistrar<ProviderSettingsController> registrar(QStringLit
 
 const QString kKey = QStringLiteral("providerSettings");
 const QString kRegistry = QStringLiteral("acpRegistry");
-constexpr int kStaleRetries = 3;
+const QString kHealthKey = QStringLiteral("providerHealthRefreshInterval");
+
+// A hub's settings key, stable per hub (AddUsageLimitSourceDialog's
+// sourceIdFromUrl): its host with dots and dashes kept, anything else folded
+// to a dash.
+QString hubId(const QString& url) {
+  QString host = QUrl(url, QUrl::StrictMode).authority();
+  if (host.isEmpty()) host = url;
+  QString slug = host.toLower();
+  slug.replace(QRegularExpression(QStringLiteral("[^a-z0-9.-]+")), QStringLiteral("-"));
+  slug.remove(QRegularExpression(QStringLiteral("^-+|-+$")));
+  return QStringLiteral("cliproxy-") + (slug.isEmpty() ? QStringLiteral("hub") : slug);
+}
+
+// The node's background activity presets' provider health intervals
+// (HalC2.BackgroundPolicy), in seconds.
+int presetHealthSeconds(const QString& profile) {
+  if (profile == QLatin1String("performance")) return 60;
+  if (profile == QLatin1String("battery-saver")) return 900;
+  return 300;
+}
+
+// The preset a `backgroundActivity` builds on: its profile, or for a custom
+// one the profile it started from.
+QString baseProfile(const QJsonObject& activity) {
+  const QString profile = activity.value(QLatin1String("profile")).toString();
+  const QString base = profile == QLatin1String("custom") ? activity.value(QLatin1String("baseProfile")).toString() : profile;
+  return base == QLatin1String("performance") || base == QLatin1String("battery-saver") ? base : QStringLiteral("balanced");
+}
+
+// The provider health interval the node uses, in seconds (BackgroundPolicy.settings).
+int healthSeconds(const QJsonObject& settings) {
+  const QJsonObject activity = settings.value(QLatin1String("backgroundActivity")).toObject();
+  const QJsonObject overrides = activity.value(QLatin1String("overrides")).toObject();
+  if (activity.value(QLatin1String("profile")) == QLatin1String("custom") && overrides.value(kHealthKey).isDouble()) {
+    return int(overrides.value(kHealthKey).toDouble() / 1000);
+  }
+  return presetHealthSeconds(baseProfile(activity));
+}
+
+// `settings` with the health interval overridden (`seconds`) or back to its
+// preset (none), as the web's backgroundActivityOverrideSettings: a custom
+// profile on the current base, keeping the overrides a custom profile had.
+QJsonObject withHealthSeconds(QJsonObject settings, std::optional<int> seconds) {
+  const QJsonObject activity = settings.value(QLatin1String("backgroundActivity")).toObject();
+  QJsonObject overrides = activity.value(QLatin1String("profile")) == QLatin1String("custom")
+                              ? activity.value(QLatin1String("overrides")).toObject()
+                              : QJsonObject{};
+  if (seconds) overrides.insert(kHealthKey, qint64(*seconds) * 1000);
+  else overrides.remove(kHealthKey);
+  settings.insert(QStringLiteral("backgroundActivity"), QJsonObject{{QStringLiteral("schemaVersion"), 1},
+                                                                    {QStringLiteral("profile"), QStringLiteral("custom")},
+                                                                    {QStringLiteral("baseProfile"), baseProfile(activity)},
+                                                                    {QStringLiteral("overrides"), overrides}});
+  return settings;
+}
 
 QVariant null() {
   return QVariant::fromValue(nullptr);
@@ -136,6 +196,18 @@ bool updatable(const QJsonObject& provider) {
          version.value(QLatin1String("canUpdate")).toBool() && version.value(QLatin1String("updateCommand")).isString();
 }
 
+// The recommended version the environment can install in place of the one
+// it has (ProviderSettingsPanel onInstallRecommended), or empty.
+QString installable(const QJsonObject& provider) {
+  const QJsonObject compatibility = provider.value(QLatin1String("compatibilityAdvisory")).toObject();
+  const QString target = text(compatibility.value(QLatin1String("recommendedVersion")));
+  if (target.isEmpty() || text(compatibility.value(QLatin1String("message"))).isEmpty() ||
+      !provider.value(QLatin1String("versionAdvisory")).toObject().value(QLatin1String("canInstallVersion")).toBool()) {
+    return {};
+  }
+  return advisory(provider).toMap().value(QStringLiteral("targetVersion")).toString() == target ? target : QString();
+}
+
 // Whether the web offers the provider's Account section.
 bool signsIn(const QJsonObject& provider) {
   return provider.value(QLatin1String("setup")).toObject().value(QLatin1String("canAuthenticate")).toBool() ||
@@ -146,7 +218,21 @@ bool signsIn(const QJsonObject& provider) {
 
 ProviderSettingsController::ProviderSettingsController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
                                                        QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
+    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_scope(new EnvironmentSettings(client, this)) {
+  connect(m_scope, &EnvironmentSettings::frame, this, [this](const QString&, const QJsonObject& frame) {
+    const QString type = frame.value(QLatin1String("t")).toString();
+    if (type == QLatin1String("config")) {
+      m_providers = frame.value(QLatin1String("config")).toObject().value(QLatin1String("providers")).toArray();
+    } else if (type == QLatin1String("config.providers")) {
+      m_providers = frame.value(QLatin1String("providers")).toArray();
+    } else {
+      return;
+    }
+    followAuth();
+    followRuntime();
+    publish();
+  });
+  connect(m_scope, &EnvironmentSettings::changed, this, &ProviderSettingsController::publish);
   m_writeClipboard = [](const QString& value) {
     QClipboard* clipboard = QGuiApplication::clipboard();
     if (!clipboard) return false;
@@ -181,6 +267,11 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
   const QString instanceId = input.value(QStringLiteral("instanceId")).toString();
   const QJsonObject entry = provider(instanceId);
   const QJsonObject auth = m_authState.value(instanceId);
+  // An environment this session may only view takes no changes, only a
+  // different environment, docs and copying its update command.
+  static const QSet<QString> viewing{QStringLiteral("providerSettings.environment"), QStringLiteral("providerSettings.openDocs"),
+                                     QStringLiteral("providerSettings.copyUpdateCommand")};
+  if (!viewing.contains(action) && !m_followed.isEmpty() && !m_store->mayOperate(m_followed)) return true;
   if (action == QLatin1String("providerSettings.environment")) {
     m_environment = input.value(QStringLiteral("id")).toString();
     update();
@@ -198,13 +289,119 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
                      }
                      publish();
                    });
-  } else if (entry.isEmpty()) {
+  } else if (action == QLatin1String("providerSettings.healthInterval")) {
+    const int seconds = std::max(0, int(std::lround(input.value(QStringLiteral("seconds")).toDouble())));
+    save([seconds](QJsonObject settings, const QString&) { return withHealthSeconds(settings, seconds); });
+  } else if (action == QLatin1String("providerSettings.resetHealthInterval")) {
+    save([](QJsonObject settings, const QString&) { return withHealthSeconds(settings, std::nullopt); });
+  } else if (action == QLatin1String("providerSettings.addHub")) {
+    const QString url = input.value(QStringLiteral("url")).toString().trimmed();
+    const QString key = input.value(QStringLiteral("key")).toString().trimmed();
+    const QString name = input.value(QStringLiteral("label")).toString().trimmed();
+    if (url.isEmpty() || key.isEmpty()) return true;
+    // The node moves the key to its secret store; settings keep a marker.
+    QJsonObject hub{{QStringLiteral("kind"), QStringLiteral("cliproxy")}, {QStringLiteral("url"), url},
+                    {QStringLiteral("managementKey"), key}, {QStringLiteral("enabled"), true}};
+    if (!name.isEmpty()) hub.insert(QStringLiteral("label"), name);
+    const QString id = hubId(url);
+    save([id, hub](QJsonObject settings, const QString&) {
+      QJsonObject hubs = settings.value(QLatin1String("usageLimitSources")).toObject();
+      hubs.insert(id, hub);
+      settings.insert(QStringLiteral("usageLimitSources"), hubs);
+      return settings;
+    });
+  } else if (action == QLatin1String("providerSettings.removeHub")) {
+    const QString id = input.value(QStringLiteral("id")).toString();
+    save([id](QJsonObject settings, const QString&) {
+      QJsonObject hubs = settings.value(QLatin1String("usageLimitSources")).toObject();
+      hubs.remove(id);
+      settings.insert(QStringLiteral("usageLimitSources"), hubs);
+      return settings;
+    });
+  } else if (handleInstance(action, input) || handleRegistry(action, input) || handleAcp(action, input) || handleRuntime(action, input)) {
     return true;
   } else if (action == QLatin1String("providerSettings.enable")) {
-    setEnabled(instanceId, input.value(QStringLiteral("enabled")).toBool());
+    // Also an instance the environment has yet to list.
+    if (!driverOf(instanceId).isEmpty()) setEnabled(instanceId, input.value(QStringLiteral("enabled")).toBool());
+  } else if (entry.isEmpty()) {
+    return true;
   } else if (action == QLatin1String("providerSettings.signIn")) {
-    call(instanceId, QStringLiteral("provider.auth.start"), {{QStringLiteral("instanceId"), instanceId}},
+    QJsonObject start{{QStringLiteral("instanceId"), instanceId}};
+    // A method the environment offers; otherwise the provider's default.
+    const QString methodId = input.value(QStringLiteral("methodId")).toString();
+    for (const QJsonValue& method : auth.value(QLatin1String("methods")).toArray()) {
+      if (!methodId.isEmpty() && method.toObject().value(QLatin1String("id")).toString() == methodId) {
+        start.insert(QStringLiteral("methodId"), methodId);
+      }
+    }
+    call(instanceId, QStringLiteral("provider.auth.start"), start, QStringLiteral("Provider sign-in failed. Try again."));
+  } else if (action == QLatin1String("providerSettings.signInTerminal")) {
+    // Keystrokes and sizes for the agent's login terminal, in order, at most
+    // 4096 characters a request (ProviderAuthenticationSection).
+    const QJsonObject interaction = auth.value(QLatin1String("interaction")).toObject();
+    const QString flowId = auth.value(QLatin1String("flowId")).toString();
+    if (interaction.value(QLatin1String("type")) != QLatin1String("terminal") || flowId.isEmpty()) return true;
+    const QString data = input.value(QStringLiteral("data")).toString();
+    QJsonObject response{{QStringLiteral("type"), QStringLiteral("terminal")}};
+    if (input.contains(QStringLiteral("columns"))) {
+      response.insert(QStringLiteral("size"), QJsonObject{{QStringLiteral("cols"), input.value(QStringLiteral("columns")).toInt()},
+                                                          {QStringLiteral("rows"), input.value(QStringLiteral("rows")).toInt()}});
+    }
+    for (qsizetype offset = 0; offset < std::max<qsizetype>(1, data.size()); offset += 4096) {
+      QJsonObject chunk = response;
+      chunk.insert(QStringLiteral("data"), data.mid(offset, 4096));
+      m_terminalQueue[instanceId].append(QJsonObject{{QStringLiteral("instanceId"), instanceId},
+                                                     {QStringLiteral("flowId"), flowId},
+                                                     {QStringLiteral("interactionId"), interaction.value(QLatin1String("id"))},
+                                                     {QStringLiteral("response"), chunk}});
+    }
+    sendTerminal(instanceId);
+  } else if (action == QLatin1String("providerSettings.signInCredentials")) {
+    const QJsonObject interaction = auth.value(QLatin1String("interaction")).toObject();
+    if (interaction.value(QLatin1String("type")) != QLatin1String("credentials")) return true;
+    QJsonObject values;
+    const QVariantMap given = input.value(QStringLiteral("values")).toMap();
+    for (const QJsonValue& field : interaction.value(QLatin1String("fields")).toArray()) {
+      const QString name = field.toObject().value(QLatin1String("name")).toString();
+      if (given.contains(name)) values.insert(name, given.value(name).toString());
+    }
+    call(instanceId, QStringLiteral("provider.auth.respond"),
+         {{QStringLiteral("instanceId"), instanceId},
+          {QStringLiteral("flowId"), auth.value(QLatin1String("flowId"))},
+          {QStringLiteral("interactionId"), interaction.value(QLatin1String("id"))},
+          {QStringLiteral("response"), QJsonObject{{QStringLiteral("type"), QStringLiteral("credentials")}, {QStringLiteral("values"), values}}}},
          QStringLiteral("Provider sign-in failed. Try again."));
+  } else if (action == QLatin1String("providerSettings.signInCallback")) {
+    // The final localhost address, pasted when its page did not load.
+    const QString url = input.value(QStringLiteral("url")).toString().trimmed();
+    const QString flowId = auth.value(QLatin1String("flowId")).toString();
+    if (url.isEmpty() || flowId.isEmpty()) return true;
+    call(instanceId, QStringLiteral("provider.auth.complete"),
+         {{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("flowId"), flowId}, {QStringLiteral("callbackUrl"), url}},
+         QStringLiteral("Provider sign-in failed. Try again."));
+  } else if (action == QLatin1String("providerSettings.copySignInLink")) {
+    const QJsonObject interaction = auth.value(QLatin1String("interaction")).toObject();
+    const QString type = interaction.value(QLatin1String("type")).toString();
+    const QString url = type == QLatin1String("browser") || type == QLatin1String("deviceCode")
+                            ? interaction.value(QLatin1String("url")).toString()
+                            : auth.value(QLatin1String("authorizationUrl")).toString();
+    if (url.isEmpty()) return true;
+    if (!m_writeClipboard(url)) {
+      m_authError.insert(instanceId, QStringLiteral("Could not copy the sign-in link."));
+    } else if (type == QLatin1String("browser") && interaction.value(QLatin1String("requiresConsent")).toBool()) {
+      // The link only works once the environment records consent.
+      call(instanceId, QStringLiteral("provider.auth.respond"),
+           {{QStringLiteral("instanceId"), instanceId},
+            {QStringLiteral("flowId"), auth.value(QLatin1String("flowId"))},
+            {QStringLiteral("interactionId"), interaction.value(QLatin1String("id"))},
+            {QStringLiteral("response"), QJsonObject{{QStringLiteral("type"), QStringLiteral("browser")}, {QStringLiteral("action"), QStringLiteral("accept")}}}},
+           QStringLiteral("Could not copy the sign-in link."));
+      return true;
+    }
+    publish();
+  } else if (action == QLatin1String("providerSettings.openDocs")) {
+    const QString url = entry.value(QLatin1String("setup")).toObject().value(QLatin1String("documentationUrl")).toString();
+    if (url.startsWith(QLatin1String("https://")) || url.startsWith(QLatin1String("http://"))) m_bridge->openExternal(QUrl(url));
   } else if (action == QLatin1String("providerSettings.cancelSignIn")) {
     const QString flowId = auth.value(QLatin1String("flowId")).toString();
     if (!flowId.isEmpty()) {
@@ -222,6 +419,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     if (type == QLatin1String("browser") && interaction.value(QLatin1String("requiresConsent")).toBool()) {
       // The environment records consent before its provider's page opens here.
       const QString environmentId = m_followed;
+      const quint64 following = m_following;
       m_busy.insert(instanceId);
       publish();
       m_client->call(environmentId, QStringLiteral("provider.auth.respond"),
@@ -230,7 +428,9 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
                                  {QStringLiteral("interactionId"), interaction.value(QLatin1String("id"))},
                                  {QStringLiteral("response"), QJsonObject{{QStringLiteral("type"), QStringLiteral("browser")},
                                                                           {QStringLiteral("action"), QStringLiteral("accept")}}}},
-                     [this, instanceId, url](const QJsonValue&, const std::optional<QString>& error) {
+                     [this, instanceId, url, following](const QJsonValue&, const std::optional<QString>& error) {
+                       // The answer may come after the user moved on.
+                       if (m_following != following) return;
                        m_busy.remove(instanceId);
                        if (error) m_authError.insert(instanceId, *error);
                        else m_bridge->openExternal(QUrl(url));
@@ -239,6 +439,27 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     } else {
       m_bridge->openExternal(QUrl(url));
     }
+  } else if (action == QLatin1String("providerSettings.continueUrlAuth")) {
+    // A sign-in page the agent asked for outside a sign-in: it opens here and
+    // the environment tells the agent it was opened.
+    const QJsonObject pending = entry.value(QLatin1String("auth")).toObject().value(QLatin1String("action")).toObject();
+    const QString url = pending.value(QLatin1String("url")).toString();
+    const QString elicitationId = pending.value(QLatin1String("elicitationId")).toString();
+    if (elicitationId.isEmpty() || !(url.startsWith(QLatin1String("https://")) || url.startsWith(QLatin1String("http://")))) return true;
+    m_bridge->openExternal(QUrl(url));
+    m_client->call(m_followed, QStringLiteral("server.acceptAcpRegistryUrlAuth"),
+                   QJsonObject{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("elicitationId"), elicitationId}},
+                   [this](const QJsonValue& result, const std::optional<QString>& error) {
+                     auto* toasts = NativeShell::of(this)->controller<ToastController>();
+                     if (!toasts) return;
+                     if (error) {
+                       toasts->error(QStringLiteral("Could not continue authentication"),
+                                     error->isEmpty() ? QStringLiteral("The authentication request expired.") : *error);
+                     } else if (!result.toObject().value(QLatin1String("accepted")).toBool()) {
+                       toasts->show(QStringLiteral("warning"), QStringLiteral("Authentication request expired"),
+                                    QStringLiteral("Refresh the provider and start the authentication flow again."));
+                     }
+                   });
   } else if (action == QLatin1String("providerSettings.signOut")) {
     auto* menu = NativeShell::of(this)->controller<MenuController>();
     if (!menu) return true;
@@ -254,13 +475,18 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
                     call(instanceId, QStringLiteral("provider.auth.logout"), {{QStringLiteral("instanceId"), instanceId}},
                          QStringLiteral("Could not sign out."));
                   });
-  } else if (action == QLatin1String("providerSettings.update")) {
-    if (m_updating.contains(instanceId) || !updatable(entry)) return true;
+  } else if (action == QLatin1String("providerSettings.update") || action == QLatin1String("providerSettings.install")) {
+    // `.install` puts the recommended version in place of the latest.
+    const bool install = action == QLatin1String("providerSettings.install");
+    const QString target = install ? installable(entry) : QString();
+    if (m_updating.contains(instanceId) || (install ? target.isEmpty() : !updatable(entry))) return true;
     const QString driver = entry.value(QLatin1String("driver")).toString();
     const QString name = text(entry.value(QLatin1String("displayName"))).isEmpty() ? driver : text(entry.value(QLatin1String("displayName")));
+    QJsonObject request{{QStringLiteral("provider"), driver}, {QStringLiteral("instanceId"), instanceId}};
+    if (install) request.insert(QStringLiteral("targetVersion"), target);
     m_updating.insert(instanceId);
     publish();
-    m_client->call(m_followed, QStringLiteral("server.updateProvider"), QJsonObject{{QStringLiteral("provider"), driver}, {QStringLiteral("instanceId"), instanceId}},
+    m_client->call(m_followed, QStringLiteral("server.updateProvider"), request,
                    [this, instanceId, name](const QJsonValue&, const std::optional<QString>& error) {
                      m_updating.remove(instanceId);
                      if (error) {
@@ -311,36 +537,31 @@ void ProviderSettingsController::update() {
 void ProviderSettingsController::follow(const QString& environmentId) {
   if (m_followed == environmentId) {
     followAuth();
+    followRuntime();
     return;
   }
   unfollow();
   m_followed = environmentId;
-  m_config = m_client->subscribe(
-      {{QStringLiteral("type"), QStringLiteral("config")}, {QStringLiteral("environment"), environmentId}},
-      [this](const QJsonObject& frame) {
-        const QString type = frame.value(QLatin1String("t")).toString();
-        if (type == QLatin1String("config")) {
-          m_providers = frame.value(QLatin1String("config")).toObject().value(QLatin1String("providers")).toArray();
-        } else if (type == QLatin1String("config.providers")) {
-          m_providers = frame.value(QLatin1String("providers")).toArray();
-        } else {
-          return;
-        }
-        followAuth();
-        publish();
-      });
+  m_scope->setTargets({environmentId});
 }
 
 void ProviderSettingsController::unfollow() {
-  if (m_config >= 0) m_client->unsubscribe(m_config);
-  m_config = -1;
+  m_scope->setTargets({});
   m_followed.clear();
+  ++m_following;
   m_providers.reset();
   for (const int id : std::as_const(m_auth)) m_client->unsubscribe(id);
   m_auth.clear();
+  unfollowRuntime();
   m_authState.clear();
   m_authError.clear();
   m_busy.clear();
+  m_terminalQueue.clear();
+  m_wizard.reset();
+  m_variables.clear();
+  m_modelDraft.clear();
+  m_modelError.clear();
+  m_acp.clear();
 }
 
 // Follows the sign-in of each provider that signs in from HAL-C2; the shape
@@ -401,8 +622,8 @@ QJsonObject ProviderSettingsController::provider(const QString& instanceId) cons
 // Turns an instance on or off where the node reads it: its providerInstances
 // entry when it has one, and a built-in driver's `providers` entry.
 void ProviderSettingsController::setEnabled(const QString& instanceId, bool enabled) {
-  const QString driver = provider(instanceId).value(QLatin1String("driver")).toString();
-  editSettings(m_followed, [instanceId, driver, enabled](QJsonObject settings) {
+  const QString driver = driverOf(instanceId);
+  save([instanceId, driver, enabled](QJsonObject settings, const QString&) {
     QJsonObject instances = settings.value(QLatin1String("providerInstances")).toObject();
     if (instances.contains(instanceId)) {
       QJsonObject instance = instances.value(instanceId).toObject();
@@ -418,39 +639,23 @@ void ProviderSettingsController::setEnabled(const QString& instanceId, bool enab
       settings.insert(QStringLiteral("providers"), providers);
     }
     return settings;
-  }, kStaleRetries);
+  });
 }
 
-// Reads the environment's settings document, edits it and writes it back at
-// the version read; another client's save first means reading again.
-void ProviderSettingsController::editSettings(const QString& environmentId, std::function<QJsonObject(QJsonObject)> edit,
-                                              int retries) {
-  const auto fail = [this](const QString& error) {
-    if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) {
-      toasts->error(QStringLiteral("Could not save provider settings"), error);
+void ProviderSettingsController::save(const std::function<QJsonObject(QJsonObject, const QString&)>& edit,
+                                      const std::function<void(bool)>& done, const QString& failure) {
+  const QPointer<ProviderSettingsController> self(this);
+  m_scope->change(edit, [self, done, failure](const QHash<QString, QString>& failed, int) {
+    if (!self) return;
+    if (!failed.isEmpty()) {
+      if (auto* toasts = NativeShell::of(self)->controller<ToastController>()) {
+        const QString why = failed.cbegin().value();
+        toasts->error(failure.isEmpty() ? QStringLiteral("Could not save provider settings") : failure,
+                      why.isEmpty() ? QStringLiteral("The settings update failed.") : why);
+      }
     }
-  };
-  m_client->call(environmentId, QStringLiteral("hal-c2.readSettings"), QJsonObject{},
-                 [this, environmentId, edit, retries, fail](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (error) {
-                     fail(*error);
-                     return;
-                   }
-                   const QJsonObject read = result.toObject();
-                   const QJsonObject settings = read.value(QLatin1String("settings")).toObject();
-                   const QJsonObject next = edit(settings);
-                   if (next == settings) return;
-                   m_client->call(environmentId, QStringLiteral("hal-c2.writeSettings"),
-                                  QJsonObject{{QStringLiteral("settings"), next}, {QStringLiteral("version"), read.value(QLatin1String("version"))}},
-                                  [this, environmentId, edit, retries, fail](const QJsonValue& answer, const std::optional<QString>& error) {
-                                    if (!error) return;
-                                    if (answer.toObject().value(QLatin1String("_tag")) == QLatin1String("StaleSettings") && retries > 0) {
-                                      editSettings(environmentId, edit, retries - 1);
-                                    } else {
-                                      fail(*error);
-                                    }
-                                  });
-                 });
+    if (done) done(failed.isEmpty());
+  });
 }
 
 void ProviderSettingsController::call(const QString& instanceId, const QString& method, const QJsonObject& payload,
@@ -460,12 +665,33 @@ void ProviderSettingsController::call(const QString& instanceId, const QString& 
   m_authError.remove(instanceId);
   publish();
   const QString environmentId = m_followed;
+  const quint64 following = m_following;
   m_client->call(environmentId, method, payload,
-                 [this, instanceId, environmentId, failure](const QJsonValue&, const std::optional<QString>& error) {
-                   if (m_followed != environmentId) return;
+                 [this, instanceId, following, failure](const QJsonValue&, const std::optional<QString>& error) {
+                   if (m_following != following) return;
                    m_busy.remove(instanceId);
                    if (error) m_authError.insert(instanceId, error->isEmpty() ? failure : *error);
                    publish();
+                 });
+}
+
+void ProviderSettingsController::sendTerminal(const QString& instanceId) {
+  if (m_terminalSending.contains(instanceId) || m_followed.isEmpty()) return;
+  QList<QJsonObject>& queue = m_terminalQueue[instanceId];
+  if (queue.isEmpty()) return;
+  m_terminalSending.insert(instanceId);
+  const QString environmentId = m_followed;
+  m_client->call(environmentId, QStringLiteral("provider.auth.respond"), queue.takeFirst(),
+                 [this, instanceId, environmentId](const QJsonValue&, const std::optional<QString>& error) {
+                   m_terminalSending.remove(instanceId);
+                   if (m_followed != environmentId) return;
+                   if (error) {
+                     m_terminalQueue.remove(instanceId);
+                     m_authError.insert(instanceId, QStringLiteral("The provider sign-in terminal is no longer available."));
+                     publish();
+                     return;
+                   }
+                   sendTerminal(instanceId);
                  });
 }
 
@@ -484,10 +710,11 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   const bool updating = m_updating.contains(instanceId) || updateStatus == QLatin1String("queued") ||
                         updateStatus == QLatin1String("running");
   const QString name = text(provider.value(QLatin1String("displayName")));
+  const ProviderDrivers::Driver* meta = ProviderDrivers::find(driver);
   QVariantMap result{
       {QStringLiteral("instanceId"), instanceId},
       {QStringLiteral("driver"), driver},
-      {QStringLiteral("name"), name.isEmpty() ? driver : name},
+      {QStringLiteral("name"), !name.isEmpty() ? name : meta ? meta->label : driver},
       {QStringLiteral("version"), versionLabel(text(provider.value(QLatin1String("version"))))},
       {QStringLiteral("enabled"), provider.value(QLatin1String("enabled")).toBool()},
       {QStringLiteral("installed"), provider.value(QLatin1String("installed")).toBool()},
@@ -498,11 +725,21 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
       {QStringLiteral("models"), models},
       {QStringLiteral("advisory"), advice},
       {QStringLiteral("canUpdate"), updatable(provider)},
+      {QStringLiteral("installLabel"), installable(provider).isEmpty() ? QString() : QStringLiteral("Install ") + versionLabel(installable(provider))},
       {QStringLiteral("updating"), updating},
       {QStringLiteral("account"), null()},
   };
+  configuration(result, instanceId, driver);
+  result.insert(QStringLiteral("acp"), acp(provider));
+  result.insert(QStringLiteral("runtime"), runtime(provider));
+  // A sign-in page the agent is waiting on (server.acceptAcpRegistryUrlAuth).
+  const QJsonObject urlAuth = auth.value(QLatin1String("action")).toObject();
+  result.insert(QStringLiteral("urlAuth"), urlAuth.value(QLatin1String("elicitationId")).toString().isEmpty()
+                                               ? null()
+                                               : QVariant(QVariantMap{{QStringLiteral("message"), urlAuth.value(QLatin1String("message")).toString()},
+                                                                      {QStringLiteral("url"), urlAuth.value(QLatin1String("url")).toString()}}));
   if (!signsIn(provider)) return result;
-  // ProviderAuthenticationSection, without the terminal and credential prompts.
+  // ProviderAuthenticationSection.
   const bool served = !m_store->nodeServing(m_followed).isEmpty();
   const bool known = m_authState.contains(instanceId);
   const QJsonObject state = m_authState.value(instanceId);
@@ -520,15 +757,23 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                              ((setup.contains(QLatin1String("canAuthenticate")) && !setup.value(QLatin1String("canAuthenticate")).toBool()) ||
                               (registry && state.value(QLatin1String("methods")).isArray() &&
                                state.value(QLatin1String("methods")).toArray().isEmpty()));
+  // The node refuses a browser sign-in while Cursor carries its own API key.
+  const QVariantList secrets = result.value(QStringLiteral("secrets")).toList();
+  const bool apiKey = driver == QLatin1String("cursor") && std::any_of(secrets.cbegin(), secrets.cend(), [](const QVariant& secret) {
+    return secret.toMap().value(QStringLiteral("name")) == QLatin1String("CURSOR_API_KEY") &&
+           secret.toMap().value(QStringLiteral("stored")).toBool();
+  });
   QString description;
   if (!served) {
     description = QStringLiteral("Sign in from a client paired with %1.").arg(label(m_followed));
+  } else if (apiKey && !active) {
+    description = QStringLiteral("Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.");
   } else if (active) {
     description = phase == QLatin1String("starting")    ? QStringLiteral("Starting sign-in…")
                   : phase == QLatin1String("verifying") ? QStringLiteral("Checking your account…")
-                  : interactionType == QLatin1String("terminal") || interactionType == QLatin1String("credentials")
-                      ? QStringLiteral("This sign-in asks for input the desktop cannot show yet. Finish it from another client.")
-                      : QStringLiteral("Finish signing in in your browser.");
+                  : interactionType == QLatin1String("terminal")    ? QStringLiteral("Complete sign-in in the terminal below.")
+                  : interactionType == QLatin1String("credentials") ? QStringLiteral("Enter your credentials below.")
+                                                                    : QStringLiteral("Finish signing in in your browser.");
   } else if (signedIn) {
     description = QStringLiteral("Signed in.");
   } else if (discovering) {
@@ -544,12 +789,38 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   const QString url = interactionType == QLatin1String("browser") || interactionType == QLatin1String("deviceCode")
                           ? interaction.value(QLatin1String("url")).toString()
                           : state.value(QLatin1String("authorizationUrl")).toString();
+  // The methods to choose from, when there is a choice.
+  QVariantList methods;
+  const QJsonArray offered = state.value(QLatin1String("methods")).toArray();
+  if (served && !active && offered.size() > 1) {
+    for (const QJsonValue& method : offered) {
+      methods.append(QVariantMap{{QStringLiteral("id"), method.toObject().value(QLatin1String("id")).toString()},
+                                 {QStringLiteral("name"), method.toObject().value(QLatin1String("name")).toString()}});
+    }
+  }
+  // The agent's login terminal: its latest output and how far it has come.
+  QVariant terminal = null();
+  if (served && active && interactionType == QLatin1String("terminal")) {
+    terminal = QVariantMap{{QStringLiteral("key"), state.value(QLatin1String("flowId")).toString() + QLatin1Char(':') +
+                                                      interaction.value(QLatin1String("id")).toString()},
+                           {QStringLiteral("output"), interaction.value(QLatin1String("output")).toString()},
+                           {QStringLiteral("offset"), interaction.value(QLatin1String("outputOffset")).toDouble(
+                                                          double(interaction.value(QLatin1String("output")).toString().size()))}};
+  }
+  QVariantList credentials;
+  if (served && active && interactionType == QLatin1String("credentials")) {
+    for (const QJsonValue& field : interaction.value(QLatin1String("fields")).toArray()) {
+      credentials.append(QVariantMap{{QStringLiteral("name"), field.toObject().value(QLatin1String("name")).toString()},
+                                     {QStringLiteral("label"), field.toObject().value(QLatin1String("label")).toString()},
+                                     {QStringLiteral("secret"), field.toObject().value(QLatin1String("secret")).toBool()}});
+    }
+  }
   QString error = m_authError.value(instanceId);
   if (error.isEmpty() && phase == QLatin1String("failed")) error = state.value(QLatin1String("message")).toString();
   result.insert(QStringLiteral("account"),
                 QVariantMap{
                     {QStringLiteral("description"), description},
-                    {QStringLiteral("canSignIn"), served && known && !busy && !active && !discovering && !externalSetup &&
+                    {QStringLiteral("canSignIn"), served && known && !busy && !active && !discovering && !externalSetup && !apiKey &&
                                                       setup.value(QLatin1String("canAuthenticate")).toBool(true) &&
                                                       provider.value(QLatin1String("enabled")).toBool() &&
                                                       provider.value(QLatin1String("installed")).toBool()},
@@ -564,8 +835,48 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                                                      ? interaction.value(QLatin1String("userCode")).toString()
                                                      : QString()},
                     {QStringLiteral("error"), error},
+                    {QStringLiteral("methods"), methods},
+                    {QStringLiteral("terminal"), terminal},
+                    {QStringLiteral("credentials"), credentials},
+                    {QStringLiteral("acceptsCallback"), served && active && !url.isEmpty() &&
+                                                            (interactionType == QLatin1String("browser")
+                                                                 ? interaction.value(QLatin1String("acceptsCallback")).toBool()
+                                                                 : interaction.isEmpty())},
+                    {QStringLiteral("docsUrl"), externalSetup ? setup.value(QLatin1String("documentationUrl")).toString() : QString()},
                 });
   return result;
+}
+
+// The provider health check row: the interval the node uses and its preset.
+QVariant ProviderSettingsController::health() const {
+  const std::optional<QJsonObject> settings = m_followed.isEmpty() ? std::nullopt : m_scope->settings(m_followed);
+  if (!m_open || !settings) return null();
+  const int seconds = healthSeconds(*settings);
+  const int preset = presetHealthSeconds(baseProfile((*settings).value(QLatin1String("backgroundActivity")).toObject()));
+  return QVariantMap{{QStringLiteral("seconds"), seconds}, {QStringLiteral("defaultSeconds"), preset}, {QStringLiteral("step"), 30}};
+}
+
+// The environment's usage-limit hubs, named by their label or else the
+// host the node names them by.
+QVariant ProviderSettingsController::hubs() const {
+  const std::optional<QJsonObject> settings = m_followed.isEmpty() ? std::nullopt : m_scope->settings(m_followed);
+  if (!m_open || !settings) return null();
+  QVariantList hubs;
+  const QJsonObject sources = (*settings).value(QLatin1String("usageLimitSources")).toObject();
+  for (auto it = sources.begin(); it != sources.end(); ++it) {
+    const QJsonObject hub = it.value().toObject();
+    const QString url = hub.value(QLatin1String("url")).toString();
+    QString name = hub.value(QLatin1String("label")).toString().trimmed();
+    if (name.isEmpty()) name = QUrl(url).authority();
+    if (name.isEmpty()) name = url;
+    QStringList description{QStringLiteral("CLI Proxy")};
+    if (!hub.value(QLatin1String("enabled")).toBool(true)) description.append(QStringLiteral("Disabled"));
+    if (name != url) description.append(url);
+    hubs.append(QVariantMap{{QStringLiteral("id"), it.key()},
+                            {QStringLiteral("label"), name},
+                            {QStringLiteral("description"), description.join(QStringLiteral(" · "))}});
+  }
+  return hubs;
 }
 
 void ProviderSettingsController::publish() {
@@ -608,9 +919,19 @@ void ProviderSettingsController::publish() {
     title = QStringLiteral("No providers");
     description = QStringLiteral("%1 reports no providers.").arg(label(environmentId));
   }
+  const bool readOnly = !environmentId.isEmpty() && !m_store->mayOperate(environmentId);
   QVariantList providers;
   if (m_open && m_providers && status == QLatin1String("ready")) {
     for (const QJsonValue& value : *m_providers) providers.append(entry(value.toObject()));
+    providers.append(pendingEntries());
+  }
+  // When the environment last checked its providers: the latest of their checks.
+  QDateTime checked;
+  if (m_providers && status == QLatin1String("ready")) {
+    for (const QJsonValue& value : *m_providers) {
+      const QDateTime at = QDateTime::fromString(value.toObject().value(QLatin1String("checkedAt")).toString(), Qt::ISODateWithMs);
+      if (at.isValid() && (!checked.isValid() || at > checked)) checked = at;
+    }
   }
   m_bridge->publish(kKey, QVariantMap{
                               {QStringLiteral("open"), m_open},
@@ -620,6 +941,15 @@ void ProviderSettingsController::publish() {
                               {QStringLiteral("title"), title},
                               {QStringLiteral("description"), description},
                               {QStringLiteral("refreshing"), m_refreshing > 0},
+                              {QStringLiteral("checkedAt"), checked.isValid() ? checked.toUTC().toString(Qt::ISODateWithMs) : QString()},
+                              {QStringLiteral("readOnly"), readOnly},
+                              {QStringLiteral("readOnlyDescription"),
+                               readOnly ? QStringLiteral("This session can view %1's providers but can't change their settings.")
+                                              .arg(label(environmentId))
+                                        : QString()},
                               {QStringLiteral("providers"), providers},
+                              {QStringLiteral("health"), health()},
+                              {QStringLiteral("hubs"), hubs()},
+                              {QStringLiteral("wizard"), wizard()},
                           });
 }

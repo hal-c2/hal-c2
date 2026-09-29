@@ -56,6 +56,9 @@ Rectangle {
                 }
             }
 
+            // A picked project or environment narrows the list to its threads.
+            SettingsScopeSentence {}
+
             // Why nothing is listed.
             ColumnLayout {
                 objectName: "placeholder"

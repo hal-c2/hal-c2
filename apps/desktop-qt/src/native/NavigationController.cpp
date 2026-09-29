@@ -181,8 +181,8 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   } else if (action == QLatin1String("connections.close")) {
     if (m_route == Route::settings(kConnectionsSection)) back();
   } else if (action == QLatin1String("settings.navigate") || action == QLatin1String("settings.openResult")) {
-    // The page moves between its own sections (and scrolls to a result); the
-    // route only learns where it went.
+    // The shell's own pages open natively; any other section is the page's,
+    // which follows the route there.
     const QString to = map.value(QStringLiteral("to")).toString();
     const QString target = action == QLatin1String("settings.openResult")
                                ? map.value(QStringLiteral("targetId")).toString()
@@ -194,11 +194,9 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
       return true;
     }
     if (m_route.kind == QLatin1String("settings") && to.startsWith(QLatin1String("/settings/"))) {
-      m_pageRoute = Route::settings(to);
-      go(Route::settings(to), true, false);
+      go(Route::settings(to), true, true);
       reveal(target);
     }
-    return false;
   } else {
     return false;
   }

@@ -94,6 +94,11 @@ Feature: Models
     Then "my-model" is offered in the model picker for Claude
     And it is saved on the environment
 
+  # The desktop saves an instance's settings in its providerInstances entry, Claude's own too.
+  Scenario: A custom model saved on Claude's own instance is offered
+    When the user adds the custom model "my-model" to Claude's own instance
+    Then "my-model" is offered in the model picker for Claude
+
   @backlog
   Scenario Outline: Custom model ids are checked
     When the user adds the custom model "<slug>" to Claude
@@ -108,6 +113,11 @@ Feature: Models
   Scenario: A custom model can have its own options
     When the user gives the custom model "my-model" a reasoning choice of low or high with high as default
     Then the composer offers low and high for "my-model" with high selected
+
+  Scenario: A Codex custom model without options of its own takes Codex's options
+    Given Codex's models offer reasoning levels
+    When the user adds the custom model "my-model" to Codex
+    Then "my-model" offers the same options as Codex's own models
 
   @backlog
   Scenario: A custom model's options can be copied from a built-in model

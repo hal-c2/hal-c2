@@ -37,6 +37,16 @@ QtObject {
     function reset(key) {
         set(key, defaults[key]);
     }
+    function resetAll(keys) {
+        const nextDevice = Object.assign({}, device);
+        const nextDocument = Object.assign({}, document);
+        for (const key of keys) {
+            delete nextDevice[key];
+            delete nextDocument[key];
+        }
+        device = nextDevice;
+        document = nextDocument;
+    }
     function clear() {
         ready = true;
         device = {};

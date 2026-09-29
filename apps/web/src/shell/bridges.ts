@@ -4,7 +4,6 @@
 export { ShellEmbedRouteBridge } from "./ShellEmbedRouteBridge";
 export { ShellGitBridge } from "./ShellGitBridge";
 export { ShellLayoutBridge } from "./ShellLayoutBridge";
-export { ShellSettingsBridge } from "./ShellSettingsBridge";
 export { ShellThemeBridge } from "./ShellThemeBridge";
 export { ShellToastBridge } from "./ShellToastBridge";
 export { ShellWorkspaceBridge } from "./ShellWorkspaceBridge";

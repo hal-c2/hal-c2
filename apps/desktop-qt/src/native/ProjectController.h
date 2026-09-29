@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 
 #include <optional>
@@ -26,9 +27,11 @@ class ShellStore;
 //
 // `project.remove {projectKey}` (`<environmentId>:<projectId>`, or a logical
 // project's key for its representative) asks first: it publishes
-// `projectRemoval` {projectKey, title, threadCount, workspaceRoot} until
-// `project.remove.confirm` deletes the project with its threads and drafts or
-// `project.remove.cancel` keeps it.
+// `projectRemoval` {projectKey, title, kind (project | checkout), count (the
+// entries removed), threadCount, workspaceRoot and environment (one entry's,
+// else "")} until `project.remove.confirm` deletes the projects with their
+// threads and drafts or `project.remove.cancel` keeps them. Settings asks
+// about several of a logical project's checkouts at once (askToRemove).
 class ProjectController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -40,24 +43,35 @@ public:
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
 
+  // Asks before removing the projects `keys` (`<environmentId>:<projectId>`)
+  // as one `kind` ("project" or "checkout") called `title`.
+  void askToRemove(const QStringList& keys, const QString& kind, const QString& title);
   // Adds the folder at `path` on `environmentId` as a project, or opens the
   // project already there.
   void addFolder(const QString& environmentId, const QString& path);
 
 private:
+  struct Removal {
+    QStringList keys;
+    QString kind;
+    QString title;
+  };
+
   void openFolder(const QString& path);
   // Opens the project's latest thread still in play, else its draft.
   void openProject(const QString& environmentId, const QString& projectId);
   void askToRemove(const QString& projectKey);
   void confirmRemoval();
+  // Deletes the first of `keys`, then the rest; a failure stops there.
+  void remove(QStringList keys, const QString& title);
   void publish();
 
   ShellBridge* m_bridge;
   NodeClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
-  // The `<environmentId>:<projectId>` waiting for the user's answer.
-  std::optional<QString> m_removal;
+  // The projects waiting for the user's answer.
+  std::optional<Removal> m_removal;
   // A project the node created whose row has not reached the shell yet; its
   // draft opens when the row does.
   std::optional<std::pair<QString, QString>> m_created;

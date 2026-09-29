@@ -15,6 +15,9 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/js/settingsPages.js (the native search)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsPage.qml (bringing a result into view)
 #   apps/desktop-qt/tests/tst_SettingsPages.qml
+#   apps/desktop-qt/tests/tst_ProjectSettings.qml (the Default model result)
+#   apps/desktop-qt/src/native/ThemeController.cpp, SettingsController.cpp (restoring defaults)
+#   apps/desktop-qt/tests/native/tst_ThemeResolution.cpp (a theme that cannot be restored)
 #   apps/desktop-qt/src/native/NavigationController.cpp (settings sections and back)
 #   apps/tui/src/components/SettingsView.tsx
 #   apps/tui/src/keymap.ts
@@ -130,13 +133,15 @@ Feature: Settings search and navigation
       Then the search is empty
       And the list of sections is shown again
 
-    @backlog @desktop
+    # tst_SettingsPages.qml and tst_SettingsNav.qml check the next ones in QML, but no
+    # feature runner drives the settings page yet.
+    @desktop @backlog-desktop
     Scenario: The slash key starts a settings search
       Given the keyboard is not in a text field
       When the user presses "/"
       Then the settings search has keyboard focus
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Results are ranked by how well the title matches
       When the user searches settings for "<query>"
       Then the first result is "<first>"
@@ -146,6 +151,7 @@ Feature: Settings search and navigation
         | model  | Default model  |
         | mod+b  | Sidebar: Toggle |
 
+    # Tailscale HTTPS is not a native Connections setting yet.
     @backlog @desktop
     Scenario: Every word of the search must match
       When the user searches settings for "tailscale https"
@@ -163,6 +169,7 @@ Feature: Settings search and navigation
         | the machine is not running Windows         | wsl         | WSL backend       |
         | the user is editing all projects           | project     | Project overview  |
 
+    # Load balancing is not on the native Connections page yet (settings/load-balancing.feature).
     @backlog @desktop
     Scenario: A search result inside a folded section opens the fold
       Given the "Load balancing" group on the Connections page is folded
@@ -170,8 +177,7 @@ Feature: Settings search and navigation
       Then the "Load balancing" group is open
       And the page brings the setting into view
 
-    # The desktop scrolls back to a result opened again (tst_SettingsPages), but has no Default model setting yet.
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: Opening the same result again scrolls back to it
       Given the user opened the search result "Default model" and scrolled away
       When the user opens the search result "Default model" again
@@ -179,25 +185,27 @@ Feature: Settings search and navigation
 
   Rule: Restoring defaults
 
-    @backlog @desktop
+    # SettingsNav.qml asks and resets (tst_SettingsNav.qml, tst_ThemeResolution.cpp), but no
+    # feature runner drives the settings page yet.
+    @desktop @backlog-desktop
     Scenario: Restoring defaults lists what will change and asks first
       Given the user has changed the theme and the time format
       When the user restores default settings
       Then the user is asked to confirm a reset of the theme and the time format
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: Confirming the restore resets the listed settings
       Given the user is asked to confirm restoring default settings
       When the user confirms
       Then the theme and the time format are back to their defaults
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: Cancelling the restore changes nothing
       Given the user is asked to confirm restoring default settings
       When the user cancels
       Then every setting keeps its value
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: A theme that cannot be restored rolls back
       Given saving the theme on this device fails
       When the user confirms restoring default settings

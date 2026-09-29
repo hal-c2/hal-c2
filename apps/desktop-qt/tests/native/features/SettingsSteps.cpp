@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QSet>
 
 #include <optional>
 
@@ -36,6 +37,64 @@ void sendConfig(FakeNode& node, const QString& environment, const QJsonObject& f
   }
 }
 
+// A linked environment keeps its own settings document.
+bool ownsDocument(const FakeConfig& fake, const QString& environment) {
+  return fake.documents.contains(environment) || fake.elsewhere.contains(environment);
+}
+
+// The document as HalC2.ProviderSecrets.seal keeps it: each sensitive
+// provider variable's value moved to the secret store, a redacted one kept
+// when a secret is stored under its name, and the secrets of variables gone.
+QJsonObject sealed(FakeConfig& fake, QJsonObject settings) {
+  QJsonObject instances = settings.value(QLatin1String("providerInstances")).toObject();
+  for (auto it = instances.begin(); it != instances.end(); ++it) {
+    QJsonObject instance = it.value().toObject();
+    QJsonArray environment = instance.value(QLatin1String("environment")).toArray();
+    QSet<QString> kept;
+    for (qsizetype i = 0; i < environment.size(); ++i) {
+      QJsonObject variable = environment.at(i).toObject();
+      if (!variable.value(QLatin1String("sensitive")).toBool()) continue;
+      const QString key = it.key() + QLatin1Char('/') + variable.value(QLatin1String("name")).toString();
+      const QString value = variable.value(QLatin1String("value")).toString();
+      kept.insert(key);
+      if (variable.value(QLatin1String("valueRedacted")).toBool() && fake.secrets.contains(key)) {
+        variable.insert(QStringLiteral("value"), QString());
+      } else if (!value.isEmpty()) {
+        fake.secrets.insert(key, value);
+        variable.insert(QStringLiteral("value"), QString());
+        variable.insert(QStringLiteral("valueRedacted"), true);
+      } else {
+        fake.secrets.remove(key);
+        variable.remove(QStringLiteral("valueRedacted"));
+      }
+      environment.replace(i, variable);
+    }
+    for (const QString& secret : fake.secrets.keys()) {
+      if (secret.startsWith(it.key() + QLatin1Char('/')) && !kept.contains(secret)) fake.secrets.remove(secret);
+    }
+    if (!environment.isEmpty()) instance.insert(QStringLiteral("environment"), environment);
+    it.value() = instance;
+  }
+  if (settings.contains(QLatin1String("providerInstances"))) settings.insert(QStringLiteral("providerInstances"), instances);
+  // As HalC2.UsageLimitSources.seal_keys: a hub's management key moves to the
+  // secret store, the marker stays, and a dropped hub's key is deleted.
+  QJsonObject hubs = settings.value(QLatin1String("usageLimitSources")).toObject();
+  const QString marker = QStringLiteral("••••••");
+  for (auto it = hubs.begin(); it != hubs.end(); ++it) {
+    QJsonObject hub = it.value().toObject();
+    const QString key = hub.value(QLatin1String("managementKey")).toString();
+    if (key.isEmpty() || key == marker) continue;
+    fake.secrets.insert(QStringLiteral("hub/") + it.key(), key);
+    hub.insert(QStringLiteral("managementKey"), marker);
+    it.value() = hub;
+  }
+  for (const QString& secret : fake.secrets.keys()) {
+    if (secret.startsWith(QLatin1String("hub/")) && !hubs.contains(secret.mid(4))) fake.secrets.remove(secret);
+  }
+  if (settings.contains(QLatin1String("usageLimitSources"))) settings.insert(QStringLiteral("usageLimitSources"), hubs);
+  return settings;
+}
+
 const FakeNode::Extension extension([](FakeNode& node) {
   node.onShape(QStringLiteral("config"), [&node](int id, const QJsonObject& shape) {
     const QString environment = shape.value(QLatin1String("environment")).toString();
@@ -48,15 +107,27 @@ const FakeNode::Extension extension([](FakeNode& node) {
                  {QStringLiteral("id"), id},
                  {QStringLiteral("node"), node.name},
                  {QStringLiteral("config"), config}});
-    } else if (fake.elsewhere.contains(environment)) {
-      node.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), fake.elsewhere.value(environment)}});
+    } else if (fake.elsewhere.contains(environment) || fake.documents.contains(environment)) {
+      QJsonObject config = fake.elsewhere.value(environment);
+      config.insert(QStringLiteral("settings"), fake.documents.value(environment).settings);
+      node.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), config}});
     }
     node.send({{QStringLiteral("t"), QStringLiteral("config.themes")},
                {QStringLiteral("id"), id},
                {QStringLiteral("themes"), fake.themes.value(environment)}});
+    if (fake.sources.contains(environment)) {
+      node.send({{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")},
+                 {QStringLiteral("id"), id},
+                 {QStringLiteral("sources"), fake.sources.value(environment)}});
+    }
   });
   node.onRpc(QStringLiteral("hal-c2.readSettings"), [&node](const FakeNode::Rpc& rpc) {
     FakeConfig& fake = fakeConfig(node);
+    if (ownsDocument(fake, rpc.environment)) {
+      const FakeConfig::Document& document = fake.documents.value(rpc.environment);
+      node.reply(rpc, QJsonObject{{QStringLiteral("settings"), document.settings}, {QStringLiteral("version"), document.version}});
+      return;
+    }
     if (fake.holdReads) return;
     node.reply(rpc, QJsonObject{{QStringLiteral("settings"), fake.settings}, {QStringLiteral("version"), fake.version}});
     if (fake.editOnRead) {
@@ -65,6 +136,20 @@ const FakeNode::Extension extension([](FakeNode& node) {
   });
   node.onRpc(QStringLiteral("hal-c2.writeSettings"), [&node](const FakeNode::Rpc& rpc) {
     FakeConfig& fake = fakeConfig(node);
+    if (ownsDocument(fake, rpc.environment)) {
+      FakeConfig::Document& document = fake.documents[rpc.environment];
+      if (!document.refuseWrites.isEmpty()) {
+        node.refuse(rpc, document.refuseWrites);
+      } else if (rpc.payload.value(QLatin1String("version")).toInt(-1) != document.version) {
+        node.refuse(rpc, QStringLiteral("settings changed"), {{QStringLiteral("_tag"), QStringLiteral("StaleSettings")}});
+      } else {
+        document.settings = rpc.payload.value(QLatin1String("settings")).toObject();
+        document.version++;
+        node.reply(rpc, QJsonObject{{QStringLiteral("version"), document.version}});
+        sendConfig(node, rpc.environment, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), document.settings}});
+      }
+      return;
+    }
     fake.writes.append(rpc.payload);
     if (!fake.refuseWrites.isEmpty()) {
       fake.saved.append(false);
@@ -79,19 +164,55 @@ const FakeNode::Extension extension([](FakeNode& node) {
       return;
     }
     fake.saved.append(true);
-    fake.settings = rpc.payload.value(QLatin1String("settings")).toObject();
+    const QJsonObject before = fake.settings.value(QLatin1String("providerInstances")).toObject();
+    fake.settings = sealed(fake, rpc.payload.value(QLatin1String("settings")).toObject());
     fake.version++;
     node.reply(rpc, QJsonObject{{QStringLiteral("version"), fake.version}});
     sendConfig(node, node.environmentId,
                {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
+    // A dropped hub's accounts leave what the node publishes.
+    if (fake.sources.contains(node.environmentId)) {
+      const QJsonObject hubs = fake.settings.value(QLatin1String("usageLimitSources")).toObject();
+      QJsonArray kept;
+      for (const QJsonValue& source : fake.sources.value(node.environmentId)) {
+        if (hubs.contains(source.toObject().value(QLatin1String("id")).toString())) kept.append(source);
+      }
+      if (kept.size() != fake.sources.value(node.environmentId).size()) {
+        fake.sources.insert(node.environmentId, kept);
+        sendConfig(node, node.environmentId, {{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")}, {QStringLiteral("sources"), kept}});
+      }
+    }
     // As HalC2.Settings provider_enabled? reads it: an instance's own entry
-    // first, then its driver's.
+    // first, then its driver's; an added instance that was removed is no
+    // longer listed, and one's name and colour show as HalC2.Environment
+    // lists them.
     QJsonArray providers = fake.config.value(QLatin1String("providers")).toArray();
+    const QJsonObject instances = fake.settings.value(QLatin1String("providerInstances")).toObject();
     bool changed = false;
+    for (qsizetype i = providers.size() - 1; i >= 0; --i) {
+      const QString id = providers.at(i).toObject().value(QLatin1String("instanceId")).toString();
+      if (before.contains(id) && !instances.contains(id) && id != providers.at(i).toObject().value(QLatin1String("driver")).toString()) {
+        providers.removeAt(i);
+        changed = true;
+      }
+    }
     for (qsizetype i = 0; i < providers.size(); ++i) {
       QJsonObject entry = providers.at(i).toObject();
       const QString id = entry.value(QLatin1String("instanceId")).toString();
-      const QJsonObject instance = fake.settings.value(QLatin1String("providerInstances")).toObject().value(id).toObject();
+      const QJsonObject instance = instances.value(id).toObject();
+      for (const QString key : {QStringLiteral("displayName"), QStringLiteral("accentColor")}) {
+        const QString value = instance.value(key).toString().trimmed();
+        // No provider lists an accent of its own, so a cleared one goes.
+        if (value.isEmpty() && key == QLatin1String("accentColor") && !instance.isEmpty() && entry.contains(key)) {
+          entry.remove(key);
+          providers.replace(i, entry);
+          changed = true;
+        }
+        if (value.isEmpty() || entry.value(key) == value) continue;
+        entry.insert(key, value);
+        providers.replace(i, entry);
+        changed = true;
+      }
       const QJsonValue enabled = instance.contains(QLatin1String("enabled"))
                                      ? instance.value(QLatin1String("enabled"))
                                      : fake.settings.value(QLatin1String("providers")).toObject().value(id).toObject().value(QLatin1String("enabled"));
@@ -296,6 +417,21 @@ void saveElsewhere(FakeNode& node, const QString& key, const QJsonValue& value, 
   if (quietly) return;
   sendConfig(node, node.environmentId,
              {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
+}
+
+void saveOn(FakeNode& node, const QString& environment, const QString& key, const QJsonValue& value) {
+  if (environment.isEmpty() || environment == node.environmentId) {
+    saveElsewhere(node, key, value);
+    return;
+  }
+  FakeConfig::Document& document = documentOf(node, environment);
+  document.settings.insert(key, value);
+  document.version++;
+  sendConfig(node, environment, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), document.settings}});
+}
+
+FakeConfig::Document& documentOf(FakeNode& node, const QString& environment) {
+  return fakeConfig(node).documents[environment];
 }
 
 void publishProviders(FakeNode& node, const QJsonArray& providers) {

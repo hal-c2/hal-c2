@@ -102,6 +102,27 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
+  # `server.updateProvider` with a `targetVersion`; the reply is `context.reply`.
+  step "the user installs Codex {string}", %{args: [version]} = context do
+    {reply, context} =
+      World.call(context, "server.updateProvider", %{
+        "provider" => "codex",
+        "targetVersion" => version
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "Codex is installed at {string} through npm", %{args: [version]} = context do
+    assert {:ok, %{"providers" => providers}} = context.reply
+
+    assert %{"version" => ^version, "updateState" => %{"status" => "succeeded"}} =
+             codex(providers)
+
+    assert File.read!(Path.join(context.fakes.dir, "npm.args")) =~ "@openai/codex@#{version}"
+    context
+  end
+
   # --- approvals and questions ---------------------------------------------------------
 
   step "the thread runs Codex with approval required", context do

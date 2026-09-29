@@ -86,5 +86,49 @@ Item {
             const page = createTemporaryObject(usageComponent, root);
             verify(!findChild(page, "usageRefresh").enabled);
         }
+        function creditsPage(credit) {
+            Shell.state = { usage: root.usage({ metric: "limits", summary: null, limits: { notices: [], pools: [{
+                driver: "codex", label: "Codex",
+                windows: [{ key: "session:five-hour", label: "5-hour", remainingPercent: 60, resetsAt: "",
+                            accounts: [{ name: "Codex", usedPercent: 40, resetsAt: "" }] }],
+                credits: [Object.assign({ key: "codex:sam@example.com", name: "Codex", available: 1,
+                                          nextExpiresAt: "", busy: false, status: "" }, credit)] }] } }) };
+            return createTemporaryObject(usageComponent, root);
+        }
+
+        // A reset credit is spent only after the user confirms.
+        function test_a_reset_credit_is_spent_after_confirming() {
+            const page = creditsPage({});
+            const row = findChild(page, "usageCredits_codex:sam@example.com");
+            verify(row.visible);
+            mouseClick(findChild(row, "useReset"));
+            const dialog = findChild(page, "resetDialog");
+            tryCompare(dialog, "opened", true);
+            compare(Shell.dispatchedActions.length, 0, "nothing is spent before confirming");
+            mouseClick(findChild(dialog.contentItem, "confirm"));
+            compare(Shell.dispatchedActions[0].action, "usage.resetCredit");
+            compare(Shell.dispatchedActions[0].payload.key, "codex:sam@example.com");
+        }
+
+        // The user backs out of spending a reset credit.
+        function test_backing_out_keeps_the_credit() {
+            const page = creditsPage({});
+            mouseClick(findChild(findChild(page, "usageCredits_codex:sam@example.com"), "useReset"));
+            const dialog = findChild(page, "resetDialog");
+            tryCompare(dialog, "opened", true);
+            mouseClick(findChild(dialog.contentItem, "cancel"));
+            tryCompare(dialog, "visible", false);
+            compare(Shell.dispatchedActions.length, 0);
+        }
+
+        function test_the_credits_say_how_many_are_banked_and_what_came_of_a_spend() {
+            const expires = new Date(Date.now() + (27 * 24 + 23) * 3600000 + 30000).toISOString();
+            let page = creditsPage({ available: 2, nextExpiresAt: expires });
+            compare(page.credits({ available: 2, nextExpiresAt: expires }), "2 reset credits banked · next expires in 27d 23h");
+            page = creditsPage({ available: 0, status: "No reset credit left." });
+            const row = findChild(page, "usageCredits_codex:sam@example.com");
+            verify(!findChild(row, "useReset").visible, "nothing is left to spend");
+            compare(findChild(row, "resetStatus").text, "No reset credit left.");
+        }
     }
 }

@@ -117,29 +117,28 @@ defmodule HalC2.Acp do
 
     case override || instance(instance) do
       [_ | _] = command ->
-        {_driver, entry} = instance(instance) || {nil, %{}}
-        {:ok, command, instance_env(entry)}
+        {:ok, command, instance_env(instance)}
 
       {@registry, entry} ->
         with {:ok, command, env} <- HalC2.Acp.Catalog.command(entry["config"] || %{}),
-             do: {:ok, command, env ++ instance_env(entry)}
+             do: {:ok, command, env ++ instance_env(instance)}
 
-      {"cursor", entry} ->
+      {"cursor", _entry} ->
         credentials = cursor_credentials(instance)
         {node, node_env} = node_command()
 
         {:ok, [node, cursor_script(), "--mode", runtime_mode || "approval-required"],
-         [{"HAL_C2_CURSOR_CREDENTIALS", credentials} | node_env ++ instance_env(entry)]}
+         [{"HAL_C2_CURSOR_CREDENTIALS", credentials} | node_env ++ instance_env(instance)]}
 
       {"pi", entry} ->
-        {:ok, [binary("pi", entry, "pi"), "--mode", "rpc"], instance_env(entry)}
+        {:ok, [binary("pi", entry, "pi"), "--mode", "rpc"], instance_env(instance)}
 
       {"antigravity", _entry} ->
         HalC2.Acp.Antigravity.command(instance)
 
       {driver, entry} ->
         binary = binary(driver, entry, @agents[driver].binary)
-        {:ok, [binary | args(driver, runtime_mode)], instance_env(entry)}
+        {:ok, [binary | args(driver, runtime_mode)], instance_env(instance)}
 
       nil ->
         {:error, "unknown ACP agent #{instance}"}
@@ -174,19 +173,15 @@ defmodule HalC2.Acp do
     end
   end
 
-  @doc "The variables set on an instance in settings, as `{name, value}` pairs."
+  @doc """
+  The variables set on an instance in settings, such as an API key, as `{name, value}`
+  pairs; sensitive ones come from the secret store (`HalC2.ProviderSecrets`).
+  """
   def instance_env(id) when is_binary(id) do
     case instance(id) do
-      {_driver, entry} -> instance_env(entry)
+      {_driver, entry} -> HalC2.ProviderSecrets.environment(id, entry)
       nil -> []
     end
-  end
-
-  # Variables set on the instance in settings, such as an API key.
-  def instance_env(entry) do
-    for %{"name" => name, "value" => value} <- entry["environment"] || [],
-        is_binary(name) and is_binary(value),
-        do: {name, value}
   end
 
   defp args("opencode", _mode), do: ["acp"]
@@ -288,9 +283,9 @@ defmodule HalC2.Acp do
   # Cursor tells a refused sign-in from a missing one, as the Node server does.
   defp signed_out_message(id) do
     case instance(id) do
-      {"cursor", entry} ->
+      {"cursor", _entry} ->
         cond do
-          api_key?(entry) ->
+          api_key?(id) ->
             "Cursor SDK authentication failed. Check CURSOR_API_KEY."
 
           File.exists?(cursor_credentials(id)) ->
@@ -311,8 +306,8 @@ defmodule HalC2.Acp do
   @doc "Why an instance cannot start a browser sign-in, or nil."
   def sign_in_refusal(id) do
     case instance(id) do
-      {"cursor", entry} ->
-        if api_key?(entry),
+      {"cursor", _entry} ->
+        if api_key?(id),
           do:
             "Remove CURSOR_API_KEY from this provider's environment before using browser sign-in."
 
@@ -321,9 +316,9 @@ defmodule HalC2.Acp do
     end
   end
 
-  defp api_key?(entry),
+  defp api_key?(id),
     do:
-      Enum.any?(instance_env(entry), fn {k, v} ->
+      Enum.any?(instance_env(id), fn {k, v} ->
         k == "CURSOR_API_KEY" and String.trim(v) != ""
       end)
 
@@ -664,7 +659,7 @@ defmodule HalC2.Acp do
 
   # --- per-driver fields --------------------------------------------------------
 
-  defp driver_fields(entry, "grok", id, instance) do
+  defp driver_fields(entry, "grok", id, _instance) do
     meta = :persistent_term.get({__MODULE__, id, :meta}, nil) || %{}
 
     entry
@@ -674,7 +669,7 @@ defmodule HalC2.Acp do
       "slashCommands" => grok_commands(meta["availableCommands"])
     })
     |> Map.update!("models", &grok_reasoning(&1, get_in(meta, ["modelState", "availableModels"])))
-    |> Map.update!("auth", &grok_auth(&1, instance))
+    |> Map.update!("auth", &grok_auth(&1, id))
   end
 
   defp driver_fields(entry, "opencode", id, instance) do
@@ -809,9 +804,9 @@ defmodule HalC2.Acp do
   end
 
   # An API key set on the instance signs Grok in; otherwise its own login does.
-  defp grok_auth(auth, instance) do
+  defp grok_auth(auth, id) do
     key =
-      Enum.find_value(instance_env(instance), fn {name, value} ->
+      Enum.find_value(instance_env(id), fn {name, value} ->
         name == "XAI_API_KEY" and String.trim(value) != ""
       end)
 
@@ -1042,14 +1037,16 @@ defmodule HalC2.Acp do
     :ok
   end
 
-  # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name"}`) follow
-  # the agent's own, skipping any the agent already offers.
+  # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name",
+  # "capabilities"}`) follow the agent's own, skipping any the agent already offers.
+  # One without options of its own takes the agent's, which its models share.
   defp custom_models(models, instance) do
     known = MapSet.new(models, & &1["slug"])
+    shared = Enum.find_value(models, &(is_map(&1["capabilities"]) && &1["capabilities"]))
 
     custom =
       for entry <- get_in(instance, ["config", "customModels"]) || [],
-          {slug, name} = custom_model(entry),
+          {slug, name, capabilities} = custom_model(entry),
           is_binary(slug) and slug != "" and not MapSet.member?(known, slug),
           uniq: true,
           do: %{
@@ -1057,18 +1054,20 @@ defmodule HalC2.Acp do
             "name" => name,
             "isCustom" => true,
             "isDefault" => false,
-            "capabilities" => nil
+            "capabilities" => capabilities || shared
           }
 
     models ++ custom
   end
 
-  defp custom_model(slug) when is_binary(slug), do: {String.trim(slug), String.trim(slug)}
+  defp custom_model(slug) when is_binary(slug), do: {String.trim(slug), String.trim(slug), nil}
 
-  defp custom_model(%{"slug" => slug} = model) when is_binary(slug),
-    do: {String.trim(slug), model["name"] || String.trim(slug)}
+  defp custom_model(%{"slug" => slug} = model) when is_binary(slug) do
+    capabilities = if is_map(model["capabilities"]), do: model["capabilities"]
+    {String.trim(slug), model["name"] || String.trim(slug), capabilities}
+  end
 
-  defp custom_model(_), do: {nil, nil}
+  defp custom_model(_), do: {nil, nil, nil}
 
   @doc "The models a session's `model` config option lists, as provider models."
   def session_models(session), do: models(session)

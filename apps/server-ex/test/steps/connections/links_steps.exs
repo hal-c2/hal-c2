@@ -386,10 +386,20 @@ defmodule HalC2.Steps.Connections.Links do
     context |> World.put_client(client) |> Map.put(:shell_frame, frame)
   end
 
-  step "its links carry only their environment, origin and whether they are online", context do
+  step "its links carry only their environment, origin, granted scopes and whether they are online",
+       context do
     assert [link] = context.shell_frame["links"]
-    assert Enum.sort(Map.keys(link)) == ~w(environment online origin)
+    assert Enum.sort(Map.keys(link)) == ~w(environment online origin scopes)
     assert context.shell_frame["links"] == HalC2.Links.list()
+    context
+  end
+
+  step "its link to {string} lists orchestration:read as its only scope",
+       %{args: [label]} = context do
+    id = environment(context, label)
+    assert [link] = context.shell_frame["links"]
+    assert link["environment"]["environmentId"] == id
+    assert link["scopes"] == ["orchestration:read"]
     context
   end
 

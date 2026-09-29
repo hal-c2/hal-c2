@@ -31,8 +31,8 @@ defmodule HalC2.Links do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc """
-  Every link as `%{"environment" => descriptor, "origin", "online"}`, plus
-  `"problem"` while it is offline for a known reason: `"unreachable"`, or `"refused"`
+  Every link as `%{"environment" => descriptor, "origin", "online"}`, plus the
+  `"scopes"` its pairing granted on the other side, and `"problem"` while it is offline for a known reason: `"unreachable"`, or `"refused"`
   when the environment no longer accepts its token (pair it again).
   """
   @spec list() :: [map]
@@ -74,8 +74,14 @@ defmodule HalC2.Links do
     with {:ok, origin, token} <- parse(pairing_url),
          {:ok, descriptor} <- fetch_descriptor(origin),
          :ok <- not_reachable(descriptor),
-         {:ok, access} <- exchange(origin, token) do
-      link = %{"origin" => origin, "token" => access, "environment" => descriptor}
+         {:ok, access, scopes} <- exchange(origin, token) do
+      link = %{
+        "origin" => origin,
+        "token" => access,
+        "scopes" => scopes,
+        "environment" => descriptor
+      }
+
       :ok = GenServer.call(__MODULE__, {:put, link})
       {:ok, descriptor}
     end
@@ -226,8 +232,12 @@ defmodule HalC2.Links do
       })
 
     case http(:post, origin <> "/oauth/token", [], {"application/x-www-form-urlencoded", form}) do
-      {:ok, 200, %{"access_token" => access}} -> {:ok, access}
-      {:ok, _, _} -> {:error, "the pairing link is invalid or expired"}
+      {:ok, 200, %{"access_token" => access} = grant} ->
+        {:ok, access, String.split(grant["scope"] || "", " ", trim: true)}
+
+      {:ok, _, _} ->
+        {:error, "the pairing link is invalid or expired"}
+
       {:error, reason} -> {:error, "cannot reach #{origin}: #{inspect(reason)}"}
     end
   end
@@ -433,6 +443,11 @@ defmodule HalC2.Links do
         "origin" => link["origin"],
         "online" => online
       }
+
+      # What the pairing granted on the other side, so a client can show an environment
+      # it may only view as read-only. Links paired before this was kept carry none.
+      listed =
+        if is_list(link["scopes"]), do: Map.put(listed, "scopes", link["scopes"]), else: listed
 
       case state.problems[id] do
         problem when is_binary(problem) and not online -> Map.put(listed, "problem", problem)

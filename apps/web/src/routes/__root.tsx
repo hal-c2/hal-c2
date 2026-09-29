@@ -49,12 +49,7 @@ import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
-import {
-  ShellSettingsBridge,
-  ShellThemeBridge,
-  ShellToastBridge,
-  HalC2ShellBridge,
-} from "../shell/lazy";
+import { ShellThemeBridge, ShellToastBridge, HalC2ShellBridge } from "../shell/lazy";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -263,7 +258,6 @@ function RootRouteView() {
           ) : null}
           {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
           {isHalC2Shell ? <HalC2ShellBridge /> : null}
-          {isHalC2Shell ? <ShellSettingsBridge /> : null}
           {isHalC2Shell ? <ShellThemeBridge /> : null}
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
           {appShell}

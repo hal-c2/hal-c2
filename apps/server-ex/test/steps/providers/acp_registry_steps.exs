@@ -952,6 +952,39 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     )
   end
 
+  step "the user adds the custom model {string} with a reasoning choice of low or high",
+       %{args: [slug]} = context do
+    options = [%{"id" => "low", "label" => "Low"}, %{"id" => "high", "label" => "High"}]
+
+    model = %{
+      "slug" => slug,
+      "capabilities" => %{
+        "optionDescriptors" => [
+          %{"id" => "effort", "label" => "Reasoning", "type" => "select", "options" => options}
+        ]
+      }
+    }
+
+    Acp.write_settings(
+      context,
+      &update_in(&1, ["providerInstances", "acme"], fn instance ->
+        config = instance["config"] || %{}
+        Map.put(instance, "config", Map.put(config, "customModels", [model]))
+      end),
+      "ops"
+    )
+  end
+
+  step "{string} is offered with low and high reasoning", %{args: [slug]} = context do
+    {entry, ctx} =
+      await_acme(context, fn entry -> Enum.any?(entry["models"], &(&1["slug"] == slug)) end)
+
+    model = Enum.find(entry["models"], &(&1["slug"] == slug))
+    assert [descriptor] = model["capabilities"]["optionDescriptors"]
+    assert Enum.map(descriptor["options"], & &1["id"]) == ["low", "high"]
+    ctx
+  end
+
   step "{string} reports a new model while a session runs", %{args: [_]} = context do
     ctx = acme(context)
     # Probed first, so the picker already holds the agent's starting models.
