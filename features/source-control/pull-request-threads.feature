@@ -149,19 +149,28 @@ Feature: Threads that work on or link pull requests
     When the user links that pull request from the mention
     Then "Tax work" lists pull request 42
 
-  # The node and the web accept a URL from any repository on a host a project of
-  # the environment reads (LinkPullRequestDialog), so "other/repo" on GitHub
-  # links beside "acme/shop"; the desktop follows them. A host no project reads
-  # is refused, below.
-  @backlog @desktop @mobile
-  Scenario: A pull request from a repository no project can read
+  # Links are decided by host, as the web's usePullRequestLinking and
+  # findProjectOnChangeRequestHost do: any project on a host lends the node its
+  # credentials there, so a repository nobody has checked out still links.
+  @desktop @mobile @backlog-mobile
+  Scenario: A pull request from another repository on a host a project reads
     When the user links "https://github.com/other/repo/pull/1"
-    Then the user is told no project in this environment can read "github.com/other/repo"
+    Then "Tax work" lists pull request 1 of "other/repo"
 
   @desktop @mobile @backlog-mobile
   Scenario: A pull request on a host no project can read
     When the user links "https://gitlab.com/other/repo/-/merge_requests/1"
     Then the user is told no project in this environment can read "gitlab.com/other/repo"
+
+  # Azure DevOps reads use the checkout's organization and project, not the
+  # host's credentials, so there it takes a project of that repository.
+  @desktop @mobile @backlog-mobile
+  Scenario: An Azure DevOps pull request needs a project of its own repository
+    Given the environment also has the Azure DevOps project "dev.azure.com/acme/shop/_git/web"
+    When the user links "https://dev.azure.com/acme/shop/_git/api/pullrequest/1"
+    Then the user is told no project in this environment can read "dev.azure.com/acme/shop/_git/api"
+    When the user links "https://dev.azure.com/acme/shop/_git/web/pullrequest/1"
+    Then "Tax work" lists pull request 1 of "acme/shop/_git/web"
 
   @desktop @mobile @backlog-mobile
   Scenario: A pull request the node does not link says why

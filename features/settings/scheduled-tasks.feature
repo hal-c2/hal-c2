@@ -137,7 +137,7 @@ Feature: Scheduled tasks
     Scenario: The user creates a task with the defaults
       When the user starts a new task
       Then it starts in a new worktree from "main" fetched from origin
-      And it runs at 09:00 every day with full access
+      And it runs at 09:00 on weekdays with full access
       And its model is the project's default model
 
     @shared @backlog-mobile @backlog-tui
