@@ -5,7 +5,8 @@
 #   apps/desktop-qt/src/native/ConnectionsController.cpp (linking from the desktop's Connections settings)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the desktop's shell with its links' rows)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (rpc and shapes by environment, shell links)
-#   apps/server-ex/lib/hal_c2/web/protocol.ex (stream and terminal shapes by environment, shell.links)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (routed shapes by environment, shell.links)
+#   apps/server-ex/lib/hal_c2/links.ex route/1 (this node, a cluster member, or a link)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.linkEnvironment, hal-c2.unlinkEnvironment, hal-c2.environmentLinks)
 #   Shared domain: cluster.feature holds machines that join one cluster; pairing.feature holds
 #   the pairing links a link is made from.
@@ -63,6 +64,87 @@ Feature: Linking a node to environments outside its cluster
     And the thread on "beast" changed since
     When the client follows that thread again from the offset it last saw
     Then it receives only the change it missed, then goes live
+
+  # Shapes and RPCs named by environment go where HalC2.Links.route/1 says: this node, a
+  # cluster member, or a link. Which shapes may be named so is recorded in
+  # parity/protocol.feature.
+  @node
+  Scenario: A client follows a linked environment's git status through its node
+    Given the node is linked to "beast"
+    And a git checkout on "beast"
+    When a client of the node follows the status of that checkout on "beast"
+    Then it receives the checkout's status from "beast"
+    And a change in that checkout on "beast" reaches the client
+
+  @node
+  Scenario: A client runs a git action on a linked environment through its node
+    Given the node is linked to "beast"
+    And a git checkout on "beast" with a file that is not committed
+    When a client of the node commits it with a git action on "beast"
+    Then the client sees the git action start and finish
+    And the commit is in the checkout on "beast"
+
+  @node
+  Scenario: A client follows a linked environment's config through its node
+    Given the node is linked to "beast"
+    When a client of the node asks for the config of "beast"
+    Then it receives the config of "beast" with its providers and editors
+
+  @node
+  Scenario Outline: A client calls <method> on a linked environment through its node
+    Given the node is linked to "beast"
+    And a git checkout on "beast"
+    When a client of the node calls <method> on that checkout on "beast"
+    Then it receives <answer> from "beast"
+
+    Examples:
+      | method               | answer                    |
+      | vcs.listRefs         | the checkout's branches   |
+      | projects.listEntries | the checkout's files      |
+      | projects.readFile    | the file's contents       |
+
+  # "beast-2" stands for a member of the cluster of "beast" that this test cannot run: it
+  # is listed on "beast" and never answers, so "beast" saying that its node is
+  # unavailable shows that the request reached "beast" and was routed there.
+  @node
+  Scenario: A client reaches another node of a linked cluster through the link
+    Given "beast" has a cluster member "beast-2"
+    And the node is linked to "beast"
+    When a client of the node calls "beast-2"
+    Then "beast" answers that the node of "beast-2" is unavailable
+    And a client of the node that follows the status of a checkout on "beast-2" is told the same
+
+  @node
+  Scenario: A member that joins a linked cluster is reached once its shell lists it
+    Given the node is linked to "beast"
+    And a client of the node follows the shell with its links' rows
+    When "beast" gains a cluster member "beast-2"
+    And the client sees "beast-2" under the link to "beast"
+    And a client of the node calls "beast-2"
+    Then "beast" answers that the node of "beast-2" is unavailable
+
+  @node
+  Scenario: A request for a linked environment that is down fails at once
+    Given the node is linked to "beast"
+    When "beast" stops
+    And the node lists "beast" as a linked environment that is unreachable
+    Then a client of the node calling "beast" is told "beast" is unreachable
+    And a client of the node that follows the status of a checkout on "beast" is told "beast" is unreachable
+
+  # The node checks its own client's scopes, and the linked environment checks the link's.
+  @node
+  Scenario: A link reaches only what its pairing grants on the other side
+    Given the node is linked to "beast" with only orchestration:read
+    And a git checkout on "beast" with a file that is not committed
+    When a client of the node commits it with a git action on "beast"
+    Then "beast" refuses the git action saying orchestration:operate is required
+
+  @node
+  Scenario: A client needs the same scope for a linked environment as for its own node
+    Given the node is linked to "beast"
+    And a device paired with the node with only orchestration:read
+    When the device starts a git action on "beast"
+    Then the node refuses the device saying orchestration:operate is required
 
   @node
   Scenario: A link survives the node restarting
