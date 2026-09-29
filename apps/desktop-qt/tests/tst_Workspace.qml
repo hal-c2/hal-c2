@@ -24,6 +24,7 @@ Item {
             Shell.reset();
         }
 
+        // Scenario: The thread title uses the room it has (features/navigation/layout.feature)
         function test_titleUsesAvailableSpace_data() {
             return [
                 {

@@ -32,6 +32,7 @@ Item {
         name: "SidebarThreadRowTests"
         when: windowShown
 
+        // Scenario: The age keeps up while nothing changes (features/threads/unread-and-status.feature)
         function test_relativeAgeRefreshesWhileIdle() {
             let row = createTemporaryObject(rowComponent, root);
             verify(!!row, "Component exists");

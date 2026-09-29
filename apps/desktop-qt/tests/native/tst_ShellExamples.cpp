@@ -325,6 +325,7 @@ private slots:
     }
   }
 
+  // Scenario: A right panel tab is activated from the keyboard (features/navigation/focus.feature)
   void panelTabsSupportKeyboardActivationAndClose() {
     QFile source(directory.filePath("shell.qml"));
     QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
@@ -363,6 +364,7 @@ private slots:
     bridge.publish("panel", QVariant());
   }
 
+  // Scenario: Explicitly opening a terminal focuses it (features/navigation/focus.feature)
   void terminalDrawerTakesAndReturnsTheKeyboard() {
     QFile source(directory.filePath("shell.qml"));
     QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));

@@ -599,6 +599,7 @@ Item {
             tryCompare(picker.popup, "visible", false);
         }
 
+        // Scenario: A notification's action runs it (features/timeline/notifications.feature)
         function test_given_a_toast_with_an_action_when_the_action_is_clicked_then_the_page_runs_that_action() {
             Shell.state = {
                 notifications: {
@@ -631,6 +632,7 @@ Item {
             compare(lastDispatch().payload.actionId, "restart");
         }
 
+        // Scenario: Dismissing the last notification hides the notifications (features/timeline/notifications.feature)
         function test_given_a_toast_when_dismiss_is_clicked_then_the_page_dismisses_it() {
             Shell.state = {
                 notifications: {

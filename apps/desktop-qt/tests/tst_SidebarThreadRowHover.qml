@@ -45,6 +45,7 @@ Item {
             Theme.colors = {};
         }
 
+        // Scenario: Pointing at a row does not flash it (features/threads/unread-and-status.feature)
         function test_lightHoverNeverFlashesGray() {
             Theme.colors = {
                 sidebarRowHover: "#fff7f4"
@@ -63,6 +64,7 @@ Item {
             verify(darkest >= 0.98);
         }
 
+        // Scenario: Moving across a row's actions keeps the row highlighted (features/threads/unread-and-status.feature)
         function test_hoverAcrossActions() {
             let row = createTemporaryObject(rowComponent, root);
             verify(!!row, "Component exists");
