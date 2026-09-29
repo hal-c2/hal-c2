@@ -456,7 +456,7 @@ Rectangle {
             spacing: 12
             Label {
                 Layout.fillWidth: true
-                text: qsTr("The conversation after turn %1 is discarded. Reverting the files too puts the workspace back as it was after that turn.").arg(confirm.turn)
+                text: qsTr("The conversation after turn %1 is discarded. Reverting the files too puts the workspace back as it was after that turn. This cannot be undone.").arg(confirm.turn)
                 color: root.foreground
                 font.pixelSize: 13
                 wrapMode: Text.Wrap
