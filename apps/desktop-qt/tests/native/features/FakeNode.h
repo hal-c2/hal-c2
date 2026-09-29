@@ -9,6 +9,7 @@
 #include <QPointer>
 #include <QSet>
 #include <QStringList>
+#include <QTcpServer>
 #include <QUrl>
 #include <QWebSocket>
 #include <QWebSocketServer>
@@ -49,6 +50,9 @@ public:
   // or the connection drops.
   using ShapeHandler = std::function<void(int id, const QJsonObject& shape)>;
 
+  // A `POST` to the node's HTTP API: `respond(status, body)` answers it.
+  using HttpHandler = std::function<void(const QJsonObject& body, std::function<void(int status, const QJsonObject& answer)> respond)>;
+
   struct Extension {
     explicit Extension(void (*extend)(FakeNode& node));
   };
@@ -61,6 +65,8 @@ public:
   // call); an exact match wins.
   void onRpc(const QString& method, RpcHandler handler);
   void onShape(const QString& type, ShapeHandler handler);
+  // `path` is exact ("/api/pull-requests/diff"); an unknown one is a 404.
+  void onHttp(const QString& path, HttpHandler handler) { m_httpHandlers.insert(path, std::move(handler)); }
 
   void send(const QJsonObject& frame);
   // Whether the call came on the connection still open.
@@ -153,10 +159,13 @@ public:
   void drop() {
     if (m_socket) m_socket->close();
   }
-  void stopAccepting() { m_server.close(); }
+  void stopAccepting() { m_tcp.close(); }
 
 private:
   void accept();
+  // A new connection: an HTTP `POST` is answered here, anything else is the socket's.
+  void route(QTcpSocket* socket);
+  void answerHttp(QTcpSocket* socket, const QByteArray& request);
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
   QJsonArray links() const;
@@ -164,7 +173,10 @@ private:
   QJsonObject unreachable(const QString& environment) const;
   void sendLinkFrame(const QString& type, const QString& environment, QJsonObject frame);
 
+  // Listens for both: the socket's handshakes go on to m_server.
+  QTcpServer m_tcp;
   QWebSocketServer m_server;
+  QHash<QString, HttpHandler> m_httpHandlers;
   quint16 m_port = 0;
   QPointer<QWebSocket> m_socket;
   int m_shellSubscription = -1;

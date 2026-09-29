@@ -1,8 +1,10 @@
 #include "FakeNode.h"
 
 #include <QJsonDocument>
+#include <QTcpSocket>
 #include <QtLogging>
 
+#include <memory>
 #include <utility>
 
 namespace {
@@ -19,8 +21,11 @@ FakeNode::Extension::Extension(void (*extend)(FakeNode& node)) {
 }
 
 FakeNode::FakeNode() : m_server(QStringLiteral("fake-node"), QWebSocketServer::NonSecureMode) {
-  if (!m_server.listen(QHostAddress::LocalHost)) qFatal("fake node cannot listen");
-  m_port = m_server.serverPort();
+  if (!m_tcp.listen(QHostAddress::LocalHost)) qFatal("fake node cannot listen");
+  m_port = m_tcp.serverPort();
+  QObject::connect(&m_tcp, &QTcpServer::pendingConnectionAvailable, this, [this] {
+    while (QTcpSocket* socket = m_tcp.nextPendingConnection()) route(socket);
+  });
   QObject::connect(&m_server, &QWebSocketServer::newConnection, this, [this] { accept(); });
 
   onShape(QStringLiteral("shell"), [this](int id, const QJsonObject& shape) {
@@ -226,6 +231,56 @@ void FakeNode::sendRows(const QString& node, const QJsonArray& rows) {
       {QStringLiteral("node"), node},
       {QStringLiteral("rows"), rows},
   });
+}
+
+void FakeNode::route(QTcpSocket* socket) {
+  socket->setParent(this);
+  auto request = std::make_shared<QByteArray>();
+  auto routed = std::make_shared<QMetaObject::Connection>();
+  const auto read = [this, socket, request, routed] {
+    if (request->isEmpty() && socket->bytesAvailable() < 5) return;
+    if (request->isEmpty() && !socket->peek(5).startsWith("POST ")) {
+      QObject::disconnect(*routed);
+      m_server.handleConnection(socket);
+      return;
+    }
+    request->append(socket->readAll());
+    const qsizetype headersEnd = request->indexOf("\r\n\r\n");
+    if (headersEnd < 0) return;
+    qsizetype length = 0;
+    for (const QByteArray& line : request->left(headersEnd).split('\n')) {
+      if (line.toLower().startsWith("content-length:")) length = line.mid(15).trimmed().toLongLong();
+    }
+    if (request->size() < headersEnd + 4 + length) return;
+    QObject::disconnect(*routed);
+    answerHttp(socket, *request);
+  };
+  *routed = QObject::connect(socket, &QTcpSocket::readyRead, this, read);
+  read();
+}
+
+void FakeNode::answerHttp(QTcpSocket* socket, const QByteArray& request) {
+  const qsizetype headersEnd = request.indexOf("\r\n\r\n");
+  const QString path = QString::fromUtf8(request.left(request.indexOf('\r')).split(' ').value(1)).section(QLatin1Char('?'), 0, 0);
+  const QJsonObject body = QJsonDocument::fromJson(request.mid(headersEnd + 4)).object();
+  QPointer<QTcpSocket> connection = socket;
+  const auto respond = [connection](int status, const QJsonObject& answer) {
+    if (!connection) return;
+    const QByteArray json = QJsonDocument(answer).toJson(QJsonDocument::Compact);
+    connection->write(QStringLiteral("HTTP/1.1 %1 %2\r\nContent-Type: application/json\r\nContent-Length: %3\r\nConnection: close\r\n\r\n")
+                          .arg(status)
+                          .arg(status < 300 ? QStringLiteral("OK") : QStringLiteral("Error"))
+                          .arg(json.size())
+                          .toUtf8() +
+                      json);
+    connection->disconnectFromHost();
+  };
+  const auto handler = m_httpHandlers.constFind(path);
+  if (handler == m_httpHandlers.constEnd()) {
+    respond(404, {{QStringLiteral("_tag"), QStringLiteral("NotFound")}});
+    return;
+  }
+  (*handler)(body, respond);
 }
 
 void FakeNode::accept() {
