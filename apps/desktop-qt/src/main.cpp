@@ -239,7 +239,8 @@ int main(int argc, char* argv[]) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
   }
   // Attach mode: the host starts no node; it pairs the shell (and the app) with
-  // the linked node, or hands back any other URL unchanged.
+  // the linked node; any other URL comes back without a node, which BackendProcess
+  // reports as not a node.
   if (parser.isSet(urlOption)) {
     backendOptions.hostArguments.prepend(
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));

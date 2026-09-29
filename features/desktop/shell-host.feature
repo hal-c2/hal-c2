@@ -124,10 +124,17 @@ Feature: The desktop app runs its own node
       When the user starts the desktop app with a pairing link that node has spent or never issued
       Then the desktop app says the pairing link is invalid or expired
 
-    @desktop
+    # The shell works through its own client of the node, so it has nothing to open for an
+    # address that is not one.
+    @dropped
     Scenario: An address that is not a node is loaded as it is
       When the user starts the desktop app with the address of a web app
       Then that address is loaded unchanged
+
+    @desktop
+    Scenario: An address that is not a node is refused
+      When the user starts the desktop app with the address of a web app
+      Then the desktop app says that address is not a HAL-C2 node
 
     @desktop
     Scenario: Attaching to a node that is not running
