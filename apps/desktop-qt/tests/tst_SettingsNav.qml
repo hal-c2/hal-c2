@@ -95,13 +95,29 @@ Item {
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
             tryVerify(() => findChild(nav, "settingsRow2") !== null, 1000, "Connections is listed");
-            verify(!findChild(nav, "settingsRow3"), "the page's own Connections section is not");
+            compare(findChild(nav, "settingsRow3").Accessible.name, "Keybindings");
+            verify(!findChild(nav, "settingsRow4"), "the page's own Connections section is not");
             let row = findChild(nav, "settingsRow2");
             compare(row.Accessible.name, "Connections");
             verify(row.current, "Connections is current");
             row.forceActiveFocus();
             keyClick(Qt.Key_Return);
             compare(Shell.dispatchedActions[0].action, "connections.open");
+        }
+        function test_keybindingsRowTakesThePageSectionsPlace() {
+            let settings = Shell.state.settings;
+            settings.sections = settings.sections.concat([{ to: "/settings/keybindings", label: "Keybindings" }]);
+            Shell.state = { settings: settings, route: { kind: "settings", section: "/settings/keybindings" } };
+            let nav = createTemporaryObject(component, root);
+            verify(!!nav, "Component exists");
+            tryVerify(() => findChild(nav, "settingsRow2") !== null, 1000, "Keybindings is listed");
+            verify(!findChild(nav, "settingsRow3"), "the page's own Keybindings section is not");
+            let row = findChild(nav, "settingsRow2");
+            compare(row.Accessible.name, "Keybindings");
+            verify(row.current, "Keybindings is current");
+            row.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(Shell.dispatchedActions[0].action, "keybindings.open");
         }
         function test_keyboardSearchResult() {
             publish("theme");

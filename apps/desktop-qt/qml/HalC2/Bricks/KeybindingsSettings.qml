@@ -30,7 +30,7 @@ Rectangle {
 
     // Searching starts from its shortcut while the page shows.
     Shortcut {
-        sequence: StandardKey.Find
+        sequences: [StandardKey.Find]
         enabled: page.visible
         onActivated: search.forceActiveFocus()
     }

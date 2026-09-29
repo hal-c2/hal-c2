@@ -2,6 +2,10 @@
 #   docs/user/keybindings.md (Settings → Keybindings)
 #   apps/web/src/components/settings/KeybindingsSettings.tsx
 #   apps/web/src/components/settings/KeybindingsSettings.logic.ts
+#   apps/desktop-qt/qml/HalC2/Bricks/KeybindingsSettings.qml (the desktop's native page)
+#   apps/desktop-qt/src/native/KeybindingController.cpp (its rows, recorder and saves)
+#   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the rows and saves against a fake node)
+#   apps/desktop-qt/tests/tst_KeybindingsSettings.qml (runs what the page shows and how its fields take keys)
 
 Feature: Keybindings settings
   Settings → Keybindings lists every command with its shortcut and condition, and lets the
@@ -12,16 +16,16 @@ Feature: Keybindings settings
 
   Rule: Browsing
 
-    @backlog @desktop
+    @desktop
     Scenario: Every command is listed with where its binding comes from
       Then each command is listed in order with its shortcut and condition
       And each binding is marked Default, Custom or Project
 
-    @backlog @desktop
+    @desktop
     Scenario: The panel shows how many bindings there are
       Then the number of bindings is shown
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Searching filters bindings
       When the user searches keybindings for "<query>"
       Then only bindings whose <field> matches are listed
@@ -34,17 +38,17 @@ Feature: Keybindings settings
         | terminalFocus  | condition |
         | Custom         | source    |
 
-    @backlog @desktop
+    @desktop
     Scenario: Searching starts from its shortcut
       When the user presses mod+f
       Then the keybinding search has focus
 
-    @backlog @desktop
+    @desktop
     Scenario: Nothing matches the search
       When the user searches keybindings for "qqqq"
       Then the panel says "No keybindings match your search."
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Commands have readable names
       Then "<command>" is labelled "<label>"
 
@@ -55,34 +59,34 @@ Feature: Keybindings settings
         | thread.steerQueuedMessage | Queue: Send First Queued Message as Steer|
         | thread.editQueuedMessage  | Queue: Edit Last Queued Message          |
         | thread.copyReference      | Pull Request: Copy Link or Thread ID     |
-        | script.test.run           | Run Script: test                         |
+        | script.test.run           | Run Script: Test                         |
 
   Rule: Recording a shortcut
 
-    @backlog @desktop
+    @desktop
     Scenario: Recording a new shortcut rebinds the command
       When the user records mod+shift+y for "diff.toggle"
       Then "diff.toggle" is bound to mod+shift+y
       And the binding is marked Custom
 
-    @backlog @desktop
+    @desktop
     Scenario: The recorder waits for a shortcut
       When the user starts recording a shortcut for "diff.toggle"
       Then the user is prompted "Press shortcut"
 
-    @backlog @desktop
+    @desktop
     Scenario: Escape cancels recording
       Given the user is recording a shortcut for "diff.toggle"
       When the user presses Escape
       Then "diff.toggle" keeps its previous shortcut
 
-    @backlog @desktop
+    @desktop
     Scenario: A shortcut needs a modifier
       Given the user is recording a shortcut for "diff.toggle"
       When the user presses Y alone
       Then nothing is recorded
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Recorded modifiers follow the platform
       Given the user is on <platform>
       When the user records <pressed> plus Y
@@ -97,7 +101,7 @@ Feature: Keybindings settings
 
   Rule: Conditions and conflicts
 
-    @backlog @desktop
+    @desktop
     Scenario: A binding with no condition applies always
       When the user clears every condition on a binding
       Then the binding's condition reads "Always"
@@ -107,17 +111,17 @@ Feature: Keybindings settings
       When the user adds the condition "terminalFocus", negates it, and groups it with "previewOpen"
       Then the binding's condition is "!terminalFocus && previewOpen"
 
-    @backlog @desktop
+    @desktop
     Scenario: A malformed condition is explained
       When the user types the condition "terminalFocus &&"
       Then the user is told "Use variables with !, &&, ||, and parentheses."
 
-    @backlog @desktop
+    @desktop
     Scenario: An unknown condition variable is flagged
       When the user types the condition "sidebarFocus"
       Then "sidebarFocus" is flagged as unknown
 
-    @backlog @desktop
+    @desktop
     Scenario: Conflicting bindings are called out
       When the user records mod+k for "diff.toggle"
       Then the binding says it conflicts with "commandPalette.toggle"
@@ -125,29 +129,29 @@ Feature: Keybindings settings
 
   Rule: Reset, remove and add
 
-    @backlog @desktop
+    @desktop
     Scenario: Resetting a custom binding restores the default
       Given "diff.toggle" was rebound to mod+shift+y
       When the user resets "diff.toggle" to its default
       Then "diff.toggle" is bound to mod+d again
       And the binding is marked Default
 
-    @backlog @desktop
+    @desktop
     Scenario: Default bindings cannot be removed, only rebound
       Then no default binding offers to be removed
 
-    @backlog @desktop
+    @desktop
     Scenario: Removing a custom binding
       Given a custom binding mod+alt+r for "script.test.run"
       When the user removes that binding
       Then "script.test.run" has no shortcut
 
-    @backlog @desktop
+    @desktop
     Scenario: Adding a binding for a command
       When the user adds a keybinding for "thread.stop" with mod+shift+.
       Then "thread.stop" is bound to mod+shift+.
 
-    @backlog @desktop
+    @desktop
     Scenario: Adding a binding can be cancelled
       Given the user started adding a keybinding
       When the user cancels
@@ -161,7 +165,7 @@ Feature: Keybindings settings
       When the user rebinds "diff.toggle"
       Then both environments store the new binding
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Save failures are reported
       Given the environment will reject keybinding changes
       When the user <action> a binding
