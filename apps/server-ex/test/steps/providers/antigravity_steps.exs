@@ -746,9 +746,11 @@ defmodule HalC2.Steps.Providers.Antigravity do
     assert {:ok, %{executable: exe, source: "managed"}} = Antigravity.resolve(nil)
     assert [_one] = File.ls!(Antigravity.versions_dir())
 
+    # The Background's own instance is enabled too, and may have started.
     homes =
       for %{"argv" => _, "env" => env} <- FakeAcp.starts(context),
           env["ANTIGRAVITY_HARNESS_PATH"] == Path.join(Path.dirname(exe), "localharness_external"),
+          env["GEMINI_HOME"] != Antigravity.profile(@instance),
           uniq: true,
           do: env["GEMINI_HOME"]
 
