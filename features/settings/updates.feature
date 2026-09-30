@@ -9,6 +9,9 @@
 #   apps/web/src/components/desktopUpdate.logic.ts
 #   apps/web/src/components/desktopUpdate.toast.tsx
 #   apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts
+#   apps/web/src/components/ProviderUpdatePrimaryNotification.tsx (the launch offer)
+#   apps/desktop-qt/src/native/ProviderUpdateNotice.cpp (the desktop's launch offer)
+#   apps/desktop-qt/tests/native/features/ProviderSettingsSteps.cpp (runs the @desktop scenarios against a fake node)
 #   apps/desktop/src/updates/DesktopUpdates.ts
 #   apps/desktop/src/updates/updateChannels.ts
 #   apps/desktop-qt/parity/features.backlog.test.ts (app-updates)
@@ -142,6 +145,45 @@ Feature: Updating the server, the desktop app and providers
       Given the user turned off provider update checks
       When the node would check provider versions
       Then no version check is made
+
+    @desktop
+    Scenario: At launch an outdated provider is offered its update
+      Given "Codex" is behind its latest release
+      When the desktop shell is connected to its node
+      Then the user sees a "warning" toast "Update Available: Codex v0.51.0" saying "Install the update now or review provider settings."
+      And the toast "Update Available: Codex v0.51.0" offers "Update" and "Settings"
+
+    @desktop
+    Scenario: At launch the offered update runs and reports it finished
+      Given "Codex" is behind its latest release
+      And the desktop shell is connected to its node
+      When the user chooses "Update" on the toast "Update Available: Codex v0.51.0"
+      And the update finishes
+      And the node reports "Codex" updated
+      Then the user sees a "success" toast "Provider updated" saying "New sessions will use the updated provider."
+
+    @desktop
+    Scenario: At launch an offered update that is refused says why
+      Given "Codex" is behind its latest release
+      And updating "Codex" fails with "npm is not installed"
+      And the desktop shell is connected to its node
+      When the user chooses "Update" on the toast "Update Available: Codex v0.51.0"
+      Then the user sees an "error" toast "Provider update failed" saying "npm is not installed"
+
+    @desktop
+    Scenario: At launch the update offer leads to the provider settings
+      Given "Codex" is behind its latest release
+      And the desktop shell is connected to its node
+      When the user chooses "Settings" on the toast "Update Available: Codex v0.51.0"
+      Then the Providers settings open
+
+    @desktop
+    Scenario: At launch a closed update offer stays closed for that version
+      Given "Codex" is behind its latest release
+      And the desktop shell is connected to its node
+      When the user dismisses the toast "Update Available: Codex v0.51.0"
+      And the user restarts the app
+      Then the user sees no toast
 
     @backlog @shared
     Scenario: Provider updates on several machines report each machine

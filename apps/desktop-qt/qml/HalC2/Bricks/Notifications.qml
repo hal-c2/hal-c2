@@ -3,13 +3,13 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// The page's toasts, rendered natively (Shell.state.notifications). Place it
-// over the window; the page keeps timing and dismissal semantics.
+// Toasts, newest first (Shell.state.toasts, NativeShell's ToastController).
+// Place it over the window; the controller keeps their timing, and dismiss and
+// action clicks go back to it by id.
 Item {
     id: host
 
-    readonly property var model: Shell.state.notifications ?? null
-    readonly property var items: model ? model.items : []
+    readonly property var items: Shell.state.toasts ? Shell.state.toasts.items : []
     property int cardWidth: 340
 
     implicitWidth: cardWidth
@@ -57,7 +57,7 @@ Item {
                     id: slide
                 }
 
-                // Slide in from the edge, like the page's own toasts.
+                // Slide in from the edge, like the web app's toasts.
                 ParallelAnimation {
                     running: true
 

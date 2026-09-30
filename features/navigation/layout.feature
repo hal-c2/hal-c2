@@ -1,10 +1,21 @@
 # Sources:
 #   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
+#   apps/desktop-qt/src/native/LayoutController.cpp (sidebar.toggle, remembered on the device)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (header strip: run action, open in editor, git actions)
-#   apps/web/src/shell/ShellWorkspaceBridge.tsx (workspace.runScript, workspace.openInEditor)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (workspace.runScript, workspace.openInEditor)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/ThreadDetailsPanel.qml (threadPanel.toggle)
+#   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd; the Pull requests and Previews tabs)
+#   apps/desktop-qt/tests/native/features/PanelSteps.cpp
+#   apps/desktop-qt/tests/native/features/HeaderSteps.cpp (the header brick laid out offscreen)
+#   apps/desktop-qt/tests/native/features/TerminalSteps.cpp (terminal drawer, right panel terminal tabs)
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalPanel.qml
+#   apps/desktop-qt/src/native/TerminalController.cpp (terminal.toggle, panel groups)
 #   apps/desktop-qt/tests/tst_Workspace.qml
+#   apps/desktop-qt/tests/tst_RightPanel.qml (native bodies kept while hidden)
+#   apps/desktop-qt/tests/native/tst_ShellExamples.cpp, tst_ShellRuntime.cpp (DefaultShell, user shells)
+#   apps/desktop-qt/tests/native/features/LayoutSteps.cpp
 #   apps/web/src/components/AppSidebarLayout.tsx (sidebar width)
 #   apps/web/src/components/threadSidebarWidth.ts
 #   apps/web/src/components/preview/RightPanelResizeHandle.tsx
@@ -34,6 +45,20 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the sidebar is hidden
       When the user asks to show the sidebar
       Then the sidebar is shown
+
+    @desktop
+    Scenario: The sidebar shortcut hides and shows the sidebar
+      Given the sidebar is shown
+      When the user presses the sidebar shortcut
+      Then the sidebar is hidden
+      When the user presses the sidebar shortcut
+      Then the sidebar is shown
+
+    @desktop
+    Scenario: A hidden sidebar stays hidden after a restart
+      Given the sidebar is hidden
+      When the desktop quits and starts again
+      Then the sidebar is hidden
 
     @desktop
     Scenario: Settings replace the thread list with the settings sections
@@ -71,7 +96,11 @@ Feature: Layout: sidebar, header, right panel and drawer
     Scenario: The header names the project and thread
       Then the header shows the project name and the thread title
 
-    @desktop
+    # The web never says "No thread": with no thread open it lands on a draft, and its header
+    # belongs to the thread. The desktop now lands on a draft like the web
+    # (navigation/landing.feature, navigation/header.feature: Leaving the thread lands on a new
+    # draft in the most recent project).
+    @dropped @desktop
     Scenario: The header says when there is no thread
       Given no thread is open
       Then the header says "No thread"
@@ -167,8 +196,10 @@ Feature: Layout: sidebar, header, right panel and drawer
         | kind         |
         | diff         |
         | files        |
+        | agents       |
         | terminal     |
         | pull request |
+        | previews     |
 
     @desktop
     Scenario: A tab kind that the thread cannot show is not offered
@@ -193,13 +224,13 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user closes the right panel
       Then the right panel stops updating until it is opened again
 
-    @backlog @desktop
+    @desktop
     Scenario: Resizing the right panel
       Given the right panel is open
       When the user drags the right panel's edge
       Then the right panel takes the new width
 
-    @backlog @desktop
+    @desktop
     Scenario: Maximizing the right panel
       Given the right panel is open
       When the user toggles the right panel to fill the window
@@ -207,10 +238,34 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user toggles it again
       Then the thread is shown beside the right panel
 
-    @backlog @desktop
+    @desktop
+    Scenario: The right panel's tabs and width survive a restart
+      Given the right panel has "Diff" and "Files" tabs
+      And the user switches to "Files"
+      And the user drags the right panel's edge
+      When the desktop quits and starts again
+      And the user is looking at a thread
+      Then the "Files" tab is active
+      And the right panel takes the new width
+
+    @desktop
     Scenario: Toggling the thread details panel
       When the user toggles the thread details panel
       Then the thread details panel is shown
+
+    @desktop
+    Scenario: Hiding the thread details panel
+      Given the thread details panel is shown
+      When the user toggles the thread details panel
+      Then the thread details panel is hidden
+
+    @desktop
+    Scenario: The thread details panel leads to the thread it was forked from
+      Given the thread was forked from "Planning"
+      And the thread details panel is shown
+      Then the thread details panel names "Planning" as the thread it was forked from
+      When the user opens the related thread "Planning"
+      Then the thread "Planning" is open
 
   Rule: Terminal drawer
 

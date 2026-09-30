@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// A select in the page's clothes: the composer's ghost pickers by default
+// A select in the web app's clothes: the composer's ghost pickers by default
 // (icon, muted label, chevron), `outline: true` for a bordered field.
 ComboBox {
     id: control
@@ -90,6 +90,10 @@ ComboBox {
     }
 
     popup: Popup {
+        // Placed through the zoomed body: scaled about that corner, it draws
+        // as the combo's child would.
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
         y: control.height + 4
         width: Math.max(control.width, 160)
         implicitHeight: Math.min(contentItem.implicitHeight + 8, 320)

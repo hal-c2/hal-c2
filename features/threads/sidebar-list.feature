@@ -2,6 +2,8 @@
 #   docs/user/thread-sidebar.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
+#   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order, offline rows)
+#   apps/desktop-qt/src/native/LayoutController.cpp (hiding the thread list)
 #   apps/web/src/components/Sidebar.tsx
 #   apps/web/src/components/Sidebar.logic.ts
 #   apps/web/src/hooks/useSidebarProjectGroups.ts
@@ -30,7 +32,7 @@ Feature: The thread list
     When the user looks at the thread list
     Then "Beta" is listed above "Alpha"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Settled threads are listed by when they settled
     Given "Alpha" settled after "Beta"
     When the user looks at the settled section
@@ -140,19 +142,19 @@ Feature: The thread list
       | the environment has no projects       | No projects yet      |
       | the scoped project has no threads     | No threads yet       |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Projects are ordered by recent use unless arranged by hand
     Given the user last wrote in "docs" after "shop"
     When the user looks at the projects
     Then "docs" is listed above "shop"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Projects with the same name on two environments stay separate
     Given the environments "home" and "work" both have a project "shop"
     When the user looks at the projects
     Then "shop" is listed once for each environment
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Threads started by other agents are not listed
     Given the agent in "Alpha" started a helper agent thread
     When the user looks at the thread list
@@ -169,7 +171,7 @@ Feature: The thread list
     When the client reconnects
     Then both threads are listed without reloading the whole list
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Threads on an offline environment are still listed
     Given the environment "work" is offline
     When the user looks at the thread list

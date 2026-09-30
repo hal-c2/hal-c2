@@ -12,6 +12,14 @@
 #   docs/user/appearance.md (Settings → Appearance, Settings → Keybindings)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/js/settingsPages.js (the native search)
+#   apps/desktop-qt/qml/HalC2/Bricks/SettingsPage.qml (bringing a result into view)
+#   apps/desktop-qt/tests/tst_SettingsPages.qml
+#   apps/desktop-qt/tests/tst_ProjectSettings.qml (the Default model result)
+#   apps/desktop-qt/src/native/ThemeController.cpp, SettingsController.cpp (restoring defaults)
+#   apps/desktop-qt/tests/native/tst_ThemeResolution.cpp (a theme that cannot be restored)
+#   apps/desktop-qt/src/native/NavigationController.cpp (settings sections and back)
+#   apps/desktop-qt/src/native/DraftController.cpp (back to nowhere lands on a draft)
 #   apps/tui/src/components/SettingsView.tsx
 #   apps/tui/src/keymap.ts
 
@@ -41,6 +49,20 @@ Feature: Settings search and navigation
       Given the user opened settings from a thread
       When the user goes back
       Then the thread is shown again
+
+    @desktop
+    Scenario: Moving between sections is one step back
+      Given the user opened settings from a thread
+      When the user picks the settings section "/settings/providers"
+      Then the window shows the settings section "/settings/providers"
+      When the user goes back from settings
+      Then that thread is shown
+
+    @desktop
+    Scenario: Back with nowhere to return to lands on a new thread
+      When the user goes back from settings
+      Then the window shows a new draft in "shop"
+      And the user can not go back
 
     @backlog @desktop
     Scenario Outline: The page names where the user is
@@ -87,7 +109,8 @@ Feature: Settings search and navigation
 
   Rule: Searching settings
 
-    @desktop
+    # The desktop finds the settings of its native pages; Network access is not one yet.
+    @desktop @backlog-desktop
     Scenario: Search results show each setting with its section
       When the user searches settings for "network"
       Then "Network access" is listed under "Connections"
@@ -111,13 +134,15 @@ Feature: Settings search and navigation
       Then the search is empty
       And the list of sections is shown again
 
-    @backlog @desktop
+    # tst_SettingsPages.qml and tst_SettingsNav.qml check the next ones in QML, but no
+    # feature runner drives the settings page yet.
+    @desktop @backlog-desktop
     Scenario: The slash key starts a settings search
       Given the keyboard is not in a text field
       When the user presses "/"
       Then the settings search has keyboard focus
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Results are ranked by how well the title matches
       When the user searches settings for "<query>"
       Then the first result is "<first>"
@@ -127,6 +152,7 @@ Feature: Settings search and navigation
         | model  | Default model  |
         | mod+b  | Sidebar: Toggle |
 
+    # Tailscale HTTPS is not a native Connections setting yet.
     @backlog @desktop
     Scenario: Every word of the search must match
       When the user searches settings for "tailscale https"
@@ -144,6 +170,7 @@ Feature: Settings search and navigation
         | the machine is not running Windows         | wsl         | WSL backend       |
         | the user is editing all projects           | project     | Project overview  |
 
+    # Load balancing is not on the native Connections page yet (settings/load-balancing.feature).
     @backlog @desktop
     Scenario: A search result inside a folded section opens the fold
       Given the "Load balancing" group on the Connections page is folded
@@ -151,7 +178,7 @@ Feature: Settings search and navigation
       Then the "Load balancing" group is open
       And the page brings the setting into view
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: Opening the same result again scrolls back to it
       Given the user opened the search result "Default model" and scrolled away
       When the user opens the search result "Default model" again
@@ -159,25 +186,27 @@ Feature: Settings search and navigation
 
   Rule: Restoring defaults
 
-    @backlog @desktop
+    # SettingsNav.qml asks and resets (tst_SettingsNav.qml, tst_ThemeResolution.cpp), but no
+    # feature runner drives the settings page yet.
+    @desktop @backlog-desktop
     Scenario: Restoring defaults lists what will change and asks first
       Given the user has changed the theme and the time format
       When the user restores default settings
       Then the user is asked to confirm a reset of the theme and the time format
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: Confirming the restore resets the listed settings
       Given the user is asked to confirm restoring default settings
       When the user confirms
       Then the theme and the time format are back to their defaults
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: Cancelling the restore changes nothing
       Given the user is asked to confirm restoring default settings
       When the user cancels
       Then every setting keeps its value
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: A theme that cannot be restored rolls back
       Given saving the theme on this device fails
       When the user confirms restoring default settings

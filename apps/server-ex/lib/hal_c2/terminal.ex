@@ -35,7 +35,9 @@ defmodule HalC2.Terminal do
 
   @doc "`terminal.open`: starts the shell unless it is already running; returns its snapshot."
   def open(%{"threadId" => _, "terminalId" => _, "cwd" => cwd} = input) do
-    with :ok <- check_cwd(cwd), do: call(ensure(input), {:open, input})
+    with :ok <- check_cwd(cwd),
+         {:ok, input} <- provider_env(input),
+         do: call(ensure(input), {:open, input})
   end
 
   @doc """
@@ -49,10 +51,12 @@ defmodule HalC2.Terminal do
         {:error, lookup_error(thread_id, terminal_id)}
 
       {nil, cwd} ->
-        with :ok <- check_cwd(cwd), do: call(ensure(input), {:attach, input, subscriber})
+        with :ok <- check_cwd(cwd),
+             {:ok, input} <- provider_env(input),
+             do: call(ensure(input), {:attach, input, subscriber})
 
       {pid, _} ->
-        call(pid, {:attach, input, subscriber})
+        with {:ok, input} <- provider_env(input), do: call(pid, {:attach, input, subscriber})
     end
   end
 
@@ -71,7 +75,9 @@ defmodule HalC2.Terminal do
 
   @doc "`terminal.restart`: a fresh shell with the given launch context and empty scrollback."
   def restart(%{"cwd" => cwd} = input) do
-    with :ok <- check_cwd(cwd), do: call(ensure(input), {:restart, input})
+    with :ok <- check_cwd(cwd),
+         {:ok, input} <- provider_env(input),
+         do: call(ensure(input), {:restart, input})
   end
 
   @doc "`terminal.close`: one terminal, or every terminal of the thread without a `terminalId`."
@@ -177,6 +183,47 @@ defmodule HalC2.Terminal do
     :exit, {:normal, _} ->
       {:ok, nil}
   end
+
+  # A `providerInstanceId` runs the shell as that provider does: the instance's
+  # variables over the client's env, and its home as CODEX_HOME or
+  # CLAUDE_CONFIG_DIR. The snapshot never carries env, so secrets stay here.
+  defp provider_env(%{"providerInstanceId" => id} = input) when is_binary(id) do
+    settings = HalC2.Settings.settings()
+    instance = get_in(settings, ["providerInstances", id])
+    driver = (instance || %{})["driver"] || id
+
+    if instance == nil and driver not in ~w(codex claudeAgent) and not HalC2.Acp.agent?(id) do
+      {:error,
+       %{
+         "_tag" => "TerminalProviderInstanceNotFoundError",
+         "providerInstanceId" => id,
+         "message" => "Provider instance is not available: #{id}"
+       }}
+    else
+      config =
+        if instance,
+          do: instance["config"] || %{},
+          else: get_in(settings, ["providers", id]) || %{}
+
+      env =
+        (input["env"] || %{})
+        |> Map.merge(HalC2.Settings.instance_env(id))
+        |> Map.new(fn
+          {key, value} when key in ~w(CODEX_HOME CLAUDE_CONFIG_DIR) -> {key, Path.expand(value)}
+          pair -> pair
+        end)
+        |> put_home(driver, String.trim(config["homePath"] || ""))
+
+      {:ok, input |> Map.delete("providerInstanceId") |> Map.put("env", env)}
+    end
+  end
+
+  defp provider_env(input), do: {:ok, input}
+
+  defp put_home(env, _driver, ""), do: env
+  defp put_home(env, "codex", home), do: Map.put(env, "CODEX_HOME", Path.expand(home))
+  defp put_home(env, "claudeAgent", home), do: Map.put(env, "CLAUDE_CONFIG_DIR", Path.expand(home))
+  defp put_home(env, _driver, _home), do: env
 
   defp check_cwd(cwd) do
     case File.stat(cwd) do

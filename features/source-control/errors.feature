@@ -96,7 +96,8 @@ Feature: When source control goes wrong
     When the user commits from the terminal client
     Then the user sees that the commit phase failed and the hook printed "lint failed"
 
-  @desktop
+  # Delivered natively (GitController keeps a failure's toast until it is dismissed); no desktop test yet.
+  @desktop @backlog-desktop
   Scenario: A failed git action stays on screen until dismissed
     Given the push will be rejected by the remote
     When the user pushes

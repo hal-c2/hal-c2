@@ -11,8 +11,8 @@ cp examples/glass/*.* ~/.config/hal-c2/shell/
 
 | Example     | Idea                                                                                                                                                                                                                                                                                                                                                    |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `minimal`   | The default layout with the title bar moved to the bottom, on the web app's own dark palette (`theme.json` here is the page's default theme, so it is the one to copy when a rice should start from stock colours).                                                                                                                                     |
-| `dashboard` | Rosé light theme, an icon rail that also carries settings, and a Dashboard button that pulls a widget drawer over the page: today, the month, the open workspace, thread meters, and the agent, with a cat at play (a Lottie animation; needs the Qt Lottie module, `qt6-lottie` on Arch, and shows the agent's initial without it).                    |
+| `minimal`   | The default layout with the title bar moved to the bottom, on the web app's own dark palette (`theme.json` here is the default theme, so it is the one to copy when a rice should start from stock colours).                                                                                                                                            |
+| `dashboard` | Rosé light theme, an icon rail that also carries settings, and a Dashboard button that pulls a widget drawer over the centre: today, the month, the open workspace, thread meters, and the agent, with a cat at play (a Lottie animation; needs the Qt Lottie module, `qt6-lottie` on Arch, and shows the agent's initial without it).                  |
 | `glass`     | The shape of a Mac app: one rounded window with a hairline edge, traffic lights, a translucent sidebar for the compositor to blur behind, and a unified toolbar over an opaque content column.                                                                                                                                                          |
 | `terminal`  | Status line with the wordmark, a prompt mark, counts and the model; mono type, sharp corners. Made for a tiling desktop such as Omarchy, with flags at the top of `shell.qml` for a clock, window buttons and a chip of the palette's sixteen colours. Its `theme.json` is Tokyo Night as `vp run theme:qt` writes it from a terminal in those colours. |
 
@@ -46,22 +46,31 @@ macOS 26 uses `NSGlassEffectView`; older systems use `NSVisualEffectView`.
 Reduce Transparency uses an opaque backing and the standard material. The
 variant opts in through `window.liquidGlass` alongside `transparent` and `blur`.
 `window.followSystemAppearance` selects the matching `variants.light` or
-`variants.dark` colors when the system appearance changes, including while running.
+`variants.dark` colors when the app's appearance changes, including while running.
+The app's appearance follows the system unless light or dark is pinned.
 The original `glass` keeps its existing blur. The native controls are macOS-only,
 so use `glass` on other platforms.
 
 What you can reach from `shell.qml`: `ShellWindow` as the root (window
-colour, opacity and frame from the theme, `sidebarCollapsed`,
-`settingsActive` and `clusterOpen`, the error overlay and the page's window
+colour, opacity and frame from the theme, `sidebarCollapsed`, `route`,
+`settingsActive` and `settingsSection`, the error overlay and the window
 commands built in), the bricks (`TitleBar`, `Sidebar`, `SettingsNav`,
-`ClusterSettings`, `Workspace`, `GitActions`, `WebSurface`, `Composer`,
+`SettingsHost`, `CentreHost`, `Workspace`, `GitActions`, `Composer`,
 `RightPanel`, `TerminalDrawer`, `Notifications`), the themed controls (`ShellCard`, `ShellButton`,
 `ShellComboBox`, `ShellTextField`, `ShellMenu`, `ShellMenuItem`, `ShellIcon`,
 `WindowControls`), and the `HalC2.Shell` singletons: `Shell.state.<key>` for
-everything the shell and the page publish, `Shell.dispatch(action, payload)` to act,
+everything the shell publishes, `Shell.dispatch(action, payload)` to act,
 `Theme.palette.color(role, fallback)` / `Theme.radius` / `Theme.fontUi` /
-`Theme.fontMono`, and `Runtime.reload()`. Place `ClusterSettings` where the
-page would be while `clusterOpen`, as the examples do.
+`Theme.fontMono`, and `Runtime.reload()`. The centre of the window is a
+`CentreHost` showing `route.kind` and, while `settingsActive`, a
+`SettingsHost` showing `settingsSection` in its place with the composer
+hidden, as the examples do.
+
+Shells written for older builds placed a `WebSurface` (or reached the
+built-in layout's `webView`) for the embedded web page. That page is gone:
+put a `CentreHost` and a `SettingsHost` where the `WebSurface` was, bind
+`visible` to `!settingsActive` and `settingsActive`, and use
+`DefaultShell.centreView` in place of `webView`.
 
 A broken `shell.qml` never locks you out: the built-in shell takes over with
 the error shown in an overlay.

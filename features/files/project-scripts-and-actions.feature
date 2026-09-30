@@ -9,6 +9,8 @@
 #   apps/tui/src/features.backlog.test.ts (project-scripts)
 #   packages/contracts/src/project.ts (ProjectScript, ProjectScriptIcon)
 #   packages/contracts/src/rpc.ts (projects.mutate, hal-c2.upsertKeybinding, hal-c2.removeKeybinding)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (the header's action menu, the action run last)
+#   apps/desktop-qt/src/native/TerminalController.cpp (runs an action in the thread's drawer)
 
 Feature: Project actions
   An action is a named command for a project, such as starting the dev server or running
@@ -20,7 +22,7 @@ Feature: Project actions
 
   Rule: Running actions
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-tui
     Scenario: Running an action types its command into a terminal for the thread's workspace
       Given the user is looking at a thread in "shop" on a worktree
       When the user runs the action "Dev"
@@ -33,14 +35,14 @@ Feature: Project actions
       When the user runs "Dev" from the thread's details
       Then "bun dev" runs in a terminal for the thread's workspace
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-tui
     Scenario: Running an action while the terminal is busy opens a new terminal
       Given the thread's terminal is running a command
       When the user runs the action "Dev"
       Then "bun dev" runs in a new terminal
       And the busy terminal keeps running
 
-    @backlog @desktop
+    @desktop
     Scenario: The action the user ran last is offered first
       Given "shop" also has the action "Test"
       When the user runs the action "Test"
@@ -52,7 +54,7 @@ Feature: Project actions
       When the user presses "mod+shift+d" in a thread of "shop"
       Then "bun dev" runs in the thread's terminal
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-tui
     Scenario: A failure to start an action is reported
       Given terminals cannot be opened for the thread
       When the user runs the action "Dev"

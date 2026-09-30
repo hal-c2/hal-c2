@@ -14,12 +14,9 @@ function lazyBridge<P extends object>(pick: (bridges: Bridges) => ComponentType<
   };
 }
 
-export const ShellComposerBridge = lazyBridge((b) => b.ShellComposerBridge);
 export const ShellEmbedRouteBridge = lazyBridge((b) => b.ShellEmbedRouteBridge);
 export const ShellGitBridge = lazyBridge((b) => b.ShellGitBridge);
 export const ShellLayoutBridge = lazyBridge((b) => b.ShellLayoutBridge);
-export const ShellRightPanelBridge = lazyBridge((b) => b.ShellRightPanelBridge);
-export const ShellSettingsBridge = lazyBridge((b) => b.ShellSettingsBridge);
 export const ShellThemeBridge = lazyBridge((b) => b.ShellThemeBridge);
 export const ShellToastBridge = lazyBridge((b) => b.ShellToastBridge);
 export const ShellWorkspaceBridge = lazyBridge((b) => b.ShellWorkspaceBridge);

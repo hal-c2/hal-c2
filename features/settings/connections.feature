@@ -1,5 +1,6 @@
 # Sources:
 #   apps/web/src/components/settings/ConnectionsSettings.tsx
+#   apps/desktop-qt/src/native/ConnectionsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ConnectionsSettings.qml
 #   apps/web/src/components/settings/ConnectionsSettings.logic.ts
 #   apps/web/src/components/settings/pairingUrls.ts
 #   apps/web/src/components/settings/EnvironmentRow.tsx
@@ -136,24 +137,24 @@ Feature: Connections settings
 
   Rule: Authorized clients
 
-    @backlog @desktop
+    @desktop
     Scenario: Creating a pairing link with chosen permissions
       When the user creates a pairing link labelled "Phone" allowed to view the environment and operate tasks
       Then a pairing link labelled "Phone" is listed with those permissions and its expiry
 
-    @backlog @desktop
+    @desktop
     Scenario: A pairing link needs at least one permission
       When the user tries to create a pairing link with no permissions
       Then the user is told to select at least one permission
       And no link is created
 
-    @backlog @desktop
+    @desktop
     Scenario: A pairing link that cannot be created is reported
       Given the server refuses to create pairing links
       When the user creates a pairing link
       Then the user is told the pairing URL could not be created
 
-    @backlog @desktop
+    @desktop
     Scenario: Copying a pairing link or its code
       Given a pairing link is listed
       When the user copies the link
@@ -174,34 +175,40 @@ Feature: Connections settings
       When the user chooses this machine's loopback address
       Then no QR code is offered
 
-    @backlog @desktop
+    @desktop
     Scenario: Revoking a pairing link stops it from pairing
       Given a pairing link is listed
       When the user revokes it
       Then the link is no longer listed
       And a device can no longer pair with it
 
-    @backlog @desktop
+    @desktop
     Scenario: Revoking a connected client signs it out
       Given the client "Phone" is connected
       When the user revokes "Phone"
       Then "Phone" is signed out and no longer listed
 
-    @backlog @desktop
+    @desktop
     Scenario: Revoking every other client keeps the current one
       Given three clients are listed including this one
       When the user revokes the others
       Then only this client is listed
       And the user is told 2 clients were revoked
 
-    @backlog @desktop
+    @desktop
     Scenario: Nothing is paired yet
       Given there are no pairing links or client sessions
       Then the user is told there are no pairing links or client sessions
 
+    @desktop
+    Scenario: A session without administrative access cannot manage who reaches this machine
+      Given the user's session may not manage this machine's access
+      Then the user is told administrative access is required
+      And no pairing links or clients are listed
+
   Rule: Other environments
 
-    @backlog @desktop
+    @desktop
     Scenario: Adding an environment from a pairing link
       When the user adds an environment with a host and pairing code
       Then the environment is connected and listed
@@ -213,11 +220,30 @@ Feature: Connections settings
       When the user adds an environment over SSH to "devbox"
       Then HAL-C2 starts on "devbox" and it is listed as an environment
 
-    @backlog @desktop
+    @desktop
     Scenario: An environment that cannot be added is reported
       Given the host does not answer
       When the user adds an environment with that host
       Then the user is told the backend could not be added
+
+    @desktop
+    Scenario: A pairing link that was already used cannot add an environment
+      Given a pairing link from "Build box" that was already used
+      When the user adds an environment with that link
+      Then the user is told to ask for a fresh pairing link
+      And no environment is added
+
+    @desktop
+    Scenario: An environment that revoked this machine asks to be paired again
+      Given "Build box" is linked and has revoked this machine's access
+      Then its row reads "Access refused: pair it again"
+      When the user adds "Build box" again from a fresh pairing link
+      Then its row reads "Connected"
+
+    @desktop
+    Scenario: An environment that stops answering is shown offline
+      Given "Build box" is linked and stops answering
+      Then its row reads "Offline"
 
     @backlog @desktop
     Scenario Outline: Each environment says how it is connected
@@ -254,13 +280,13 @@ Feature: Connections settings
       When the user switches it back on
       Then this device connects to "Build box" again
 
-    @backlog @desktop
+    @desktop
     Scenario: Removing an environment forgets it on this device
       When the user removes "Build box" from this device and confirms
       Then its pairing, credentials and cached threads are forgotten here
       And "Build box" is no longer listed
 
-    @backlog @desktop
+    @desktop
     Scenario: Cancelling removal keeps the environment
       When the user starts removing "Build box" and cancels
       Then "Build box" is still listed

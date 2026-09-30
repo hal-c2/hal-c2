@@ -1,11 +1,12 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
 
-// The thread sidebar, rendered from the view model the web app publishes
+// The thread sidebar, rendered from the view model the native shell publishes
 // under Shell.state.sidebar (see packages/contracts/src/shell.ts). Every
-// click is dispatched back to the page; nothing here talks to the server.
+// click is dispatched as a shell action; nothing here talks to the server.
 Rectangle {
     id: sidebar
 
@@ -15,7 +16,7 @@ Rectangle {
     // rail, say) turns these off so the brick is just the thread list.
     property bool showScope: true
     property bool showFooter: true
-    // The brand band ("HAL-C2" plus the collapse toggle) is what the page
+    // The brand band ("HAL-C2" plus the collapse toggle) is what the web app
     // shows above its sidebar; a rice with its own title bar leaves it off.
     // When frameless it doubles as the window's drag handle.
     property bool showBrand: false
@@ -213,9 +214,10 @@ Rectangle {
                     iconSize: 16
                     iconTint: Qt.alpha(sidebar.muted, 0.8)
                     tint: sidebar.foreground
+                    objectName: "search"
                     text: qsTr("Search")
                     font.pixelSize: 14
-                    onClicked: Shell.dispatch("palette.open")
+                    onClicked: PaletteModel.show()
 
                     background: Rectangle {
                         radius: 8
@@ -305,8 +307,24 @@ Rectangle {
                     iconName: "folder-plus"
                     iconSize: 16
                     iconTint: sidebar.iconColor
+                    objectName: "addProject"
                     Accessible.name: qsTr("Add project")
-                    onClicked: Shell.dispatch("project.add")
+                    // A local folder is picked here; without local folders the command palette asks.
+                    onClicked: Shell.localFolderImportEnabled && (sidebar.model?.localEnvironmentId ?? null) !== null ? addProjectDialog.open() : Shell.dispatch("project.add")
+                }
+
+                FolderDialog {
+                    id: addProjectDialog
+                    objectName: "addProjectDialog"
+                    title: qsTr("Add a project folder")
+                    onAccepted: {
+                        const path = Shell.localDirectoryPath(selectedFolder);
+                        if (path.length > 0) {
+                            Shell.dispatch("project.add", {
+                                path: path
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -378,10 +396,18 @@ Rectangle {
             function menuAtCursor() {
                 const row = sidebar.rows[cursorIndex];
                 const item = itemAtIndex(cursorIndex);
-                if (!row || !item || row.kind === "header" || row.kind === "draft") {
+                if (!row || !item || row.kind === "header") {
                     return;
                 }
                 const p = item.mapToItem(null, item.width / 2, item.height / 2);
+                if (row.kind === "draft") {
+                    Shell.dispatch("draft.menu", {
+                        draftId: row.item.draftId,
+                        x: p.x,
+                        y: p.y
+                    });
+                    return;
+                }
                 Shell.dispatch("thread.menu", {
                     key: row.item.key,
                     x: p.x,
@@ -452,6 +478,7 @@ Rectangle {
 
                 // Collapsible section header with a hairline (settled) or tint (snoozed).
                 Item {
+                    objectName: entry.kind === "header" ? "header:" + entry.modelData.key : ""
                     anchors.fill: parent
                     visible: entry.kind === "header"
 
@@ -503,6 +530,7 @@ Rectangle {
                         }
 
                         Text {
+                            objectName: "headerCount"
                             visible: entry.kind === "header" && !entry.modelData.open
                             text: entry.kind === "header" ? entry.modelData.count : ""
                             color: Qt.alpha(sidebar.muted, 0.5)
@@ -581,7 +609,13 @@ Rectangle {
                             }
                         }
                         onMenuRequested: (windowX, windowY) => {
-                            if (entry.kind !== "draft") {
+                            if (entry.kind === "draft") {
+                                Shell.dispatch("draft.menu", {
+                                    draftId: entry.modelData.item.draftId,
+                                    x: windowX,
+                                    y: windowY
+                                });
+                            } else {
                                 Shell.dispatch("thread.menu", {
                                     key: entry.modelData.item.key,
                                     x: windowX,
@@ -611,6 +645,7 @@ Rectangle {
             }
 
             Text {
+                objectName: "emptyText"
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: 24
                 visible: list.count === 0

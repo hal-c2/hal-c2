@@ -2,29 +2,25 @@
 /**
  * Desktop host for the Qt shell.
  *
- * Spawned by hal-c2-qt (see src/BackendProcess.cpp). Serves the built web app
- * from a loopback port (webBundle.ts), starts the desktop app's own Elixir node
- * (elixirNode.ts), and announces a `/pair` URL that pairs the app with that node
- * and opens it. With `--attach=<url>` it starts no node: a node pairing link
- * opens the app paired with that node, any other URL is announced unchanged.
+ * Spawned by hal-c2-qt (see src/BackendProcess.cpp). Starts the desktop app's
+ * own Elixir node (elixirNode.ts) and announces where the shell's client
+ * connects. With `--attach=<url>` it starts no node and pairs the shell with the
+ * node a pairing link names instead.
  *
- * Arguments: `--base-dir=<HAL-C2 home>` (the node's home and the app's port key),
- * `--attach=<url>`.
+ * Arguments: `--base-dir=<HAL-C2 home>` (the node's home), `--attach=<url>`.
  *
  * Protocol (stdout, newline-delimited JSON):
- *   {"type":"ready","url":"http://...","node":{"origin","token"}}
- *                                          load this URL; `node` (only for the node the
- *                                          host started) is where the shell's own client
- *                                          connects, with the node's access token
- *   {"type":"error","message":"..."}       fatal, the host is exiting
- *   {"type":"exit","code":n}               the node ended on its own
+ *   {"type":"ready","node":{"origin","token"}}  where the shell's own client
+ *                                               connects, and its bearer
+ *   {"type":"error","message":"..."}            fatal, the host is exiting
+ *   {"type":"exit","code":n}                    the node ended on its own
  * stdin closing means the shell is gone: stop the node and exit.
  */
-import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import {
+  exchangePairingToken,
   fetchDescriptor,
   findLocalNodeToken,
   nodeDataDir,
@@ -36,8 +32,7 @@ import {
   type RunningNode,
 } from "./elixirNode.ts";
 import { HostError } from "./hostError.ts";
-import { appPairingUrl, readPairingLink } from "./pairingUrl.ts";
-import { resolveWebBundle, serveWebBundle, webPort, type WebServer } from "./webBundle.ts";
+import { readPairingLink } from "./pairingUrl.ts";
 
 interface NodeAccess {
   readonly origin: string;
@@ -45,7 +40,7 @@ interface NodeAccess {
 }
 
 type HostMessage =
-  | { readonly type: "ready"; readonly url: string; readonly node?: NodeAccess }
+  | { readonly type: "ready"; readonly node: NodeAccess }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "exit"; readonly code: number | null; readonly signal: string | null };
 
@@ -86,7 +81,6 @@ function parseArgs(argv: ReadonlyArray<string>): HostArgs {
 
 const hostDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 let node: RunningNode | undefined;
-let web: WebServer | undefined;
 let stopping = false;
 
 async function stop(code: number): Promise<never> {
@@ -99,30 +93,13 @@ async function stop(code: number): Promise<never> {
       new Promise((resolve) => setTimeout(resolve, NODE_STOP_GRACE_MS)),
     ]);
   }
-  await web?.close();
   process.exit(code);
 }
 
-async function serveApp(home: string | undefined): Promise<WebServer> {
-  const root = resolveWebBundle(hostDir, process.env);
-  web = await serveWebBundle({ root, port: webPort(process.env, home) });
-  return web;
-}
-
-interface Launched {
-  readonly url: string;
-  readonly node?: NodeAccess;
-}
-
-async function standalone(home: string | undefined): Promise<Launched> {
-  const app = await serveApp(home);
+async function standalone(home: string | undefined): Promise<NodeAccess> {
   const port = await nodePort(process.env);
   const launch = resolveNodeLaunch(hostDir, process.env);
-  // Exchangeable for a day with admin scopes (HalC2.Auth); a new one each start
-  // replaces the previous desktop session, and the app upserts the environment
-  // by id, so a relaunch pairs the same environment again.
-  const token = NodeCrypto.randomBytes(32).toString("base64url");
-  const started = startNode({ launch, port, home, token, env: process.env });
+  const started = startNode({ launch, port, home, env: process.env });
   node = started;
   await waitForNode(started, NODE_START_TIMEOUT_MS);
   void started.exited.then(({ code, signal }) => {
@@ -130,40 +107,43 @@ async function standalone(home: string | undefined): Promise<Launched> {
     emit({ type: "exit", code, signal });
     process.exit(code ?? 1);
   });
-  const url = appPairingUrl(app.origin, started.origin, token);
-  // Exchanging the bootstrap token again would replace the page's session
-  // (HalC2.Auth), so the shell's client uses the node's own token instead.
-  const access = readAccessToken(nodeDataDir({ launch, home, env: process.env }));
-  return access === undefined ? { url } : { url, node: { origin: started.origin, token: access } };
+  const token = readAccessToken(nodeDataDir({ launch, home, env: process.env }));
+  if (token === undefined) {
+    throw new HostError("The node started but wrote no access token for the desktop app.");
+  }
+  return { origin: started.origin, token };
 }
 
-async function attach(url: string, home: string | undefined): Promise<Launched> {
+function notANode(address: string): HostError {
+  return new HostError(
+    `${address} is not a HAL-C2 node. Start the desktop app with a node's pairing link to attach to it.`,
+  );
+}
+
+async function attach(url: string, home: string | undefined): Promise<NodeAccess> {
   const link = readPairingLink(url);
-  if (link === undefined) return { url };
+  if (link === undefined) throw notANode(url);
   const descriptor = await fetchDescriptor(link.origin).catch((error: unknown) => {
     const reason = error instanceof Error && error.cause instanceof Error ? error.cause : error;
     throw new HostError(
       `Cannot reach the node at ${link.origin}: ${reason instanceof Error ? reason.message : String(reason)}`,
     );
   });
-  // Anything that is not a protocol-3 node (a web dev server, a legacy
-  // server that serves its own app) is loaded as it is.
-  if (descriptor === undefined) return { url };
-  const app = await serveApp(home);
-  const page =
-    link.token === undefined
-      ? `${app.origin}/`
-      : appPairingUrl(app.origin, link.origin, link.token);
-  // A node on this machine lets the shell's own client in with its access
-  // token; a remote one leaves every RPC with the page.
-  const token = findLocalNodeToken({ origin: link.origin, home, env: process.env });
-  if (token === undefined) {
-    // Without it the native sidebar, composer and terminal drawer stay off.
-    process.stderr.write(
-      `no node on this machine records ${link.origin} as its origin; the shell's native client stays off\n`,
+  if (descriptor === undefined) throw notANode(link.origin);
+  // A node on this machine lets the shell in with its own access token.
+  const local = findLocalNodeToken({ origin: link.origin, home, env: process.env });
+  if (local !== undefined) return { origin: link.origin, token: local };
+  // Any other node pairs the shell with the link's token, which is single use.
+  if (link.token === undefined) {
+    throw new HostError(
+      `The link to ${link.origin} has no pairing token, and no node on this machine records that origin.`,
     );
   }
-  return token === undefined ? { url: page } : { url: page, node: { origin: link.origin, token } };
+  const token = await exchangePairingToken(link.origin, link.token).catch(() => undefined);
+  if (token === undefined) {
+    throw new HostError(`The pairing link for ${link.origin} is invalid or expired.`);
+  }
+  return { origin: link.origin, token };
 }
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
@@ -176,11 +156,11 @@ process.stdin.resume();
 
 try {
   const args = parseArgs(process.argv.slice(2));
-  const launched =
+  const access =
     args.attach === undefined
       ? await standalone(args.baseDir)
       : await attach(args.attach, args.baseDir);
-  if (!stopping) emit({ type: "ready", ...launched });
+  if (!stopping) emit({ type: "ready", node: access });
 } catch (error) {
   if (!stopping) {
     emit({

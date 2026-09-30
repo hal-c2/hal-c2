@@ -41,19 +41,28 @@ defmodule HalC2.ProviderUpdates do
       "latestVersion" => latest,
       "updateCommand" => update && Enum.join(update, " "),
       "canUpdate" => update != nil,
+      "canInstallVersion" => targeted(update, "0.0.0") != nil,
       "checkedAt" => checked_at(driver),
       "message" => nil
     }
   end
 
-  @doc "`server.updateProvider`: runs the provider's updater, then reports providers again."
-  def update(%{"provider" => driver}) do
+  @doc """
+  `server.updateProvider`: runs the provider's updater, then reports providers again.
+  A `targetVersion` installs that exact release instead of the latest, which only
+  npm installs can do (`canInstallVersion`).
+  """
+  def update(%{"provider" => driver} = input) do
+    target = input["targetVersion"]
+
     with {:path, path} when is_binary(path) <- {:path, executable(driver)},
-         {:command, [_ | _] = command} <- {:command, update_command(driver, path)} do
-      locked(lock_key(command), driver, fn -> run(driver) end)
+         {:command, [_ | _] = command} <- {:command, update_command(driver, path)},
+         {:target, true} <- {:target, target == nil or targeted(command, target) != nil} do
+      locked(lock_key(command), driver, fn -> run(driver, target) end)
     else
       {:path, _} -> error(driver, "#{@names[driver] || driver} is not installed on this machine.")
       {:command, _} -> error(driver, "This installation cannot be updated from here.")
+      {:target, _} -> error(driver, "This installation cannot install v#{target}.")
     end
   rescue
     exception -> failed(driver, nil, Exception.message(exception))
@@ -87,7 +96,7 @@ defmodule HalC2.ProviderUpdates do
   defp lock_key([_npm, "install", "-g", "--prefix", prefix | _]), do: "npm-global:" <> prefix
   defp lock_key([path | _]), do: "self:" <> path
 
-  defp run(driver) do
+  defp run(driver, target) do
     started = HalC2.Orchestration.Entities.now()
     put_state(driver, "running", started, "Updating provider.")
     offered = :persistent_term.get({__MODULE__, driver, :offered}, nil)
@@ -99,11 +108,11 @@ defmodule HalC2.ProviderUpdates do
         failed(driver, started, "Provider installation changed. Refresh and try again.")
 
       true ->
-        [program | args] = command
+        [program | args] = if target, do: targeted(command, target), else: command
 
         case System.cmd(program, args, stderr_to_stdout: true) do
           {output, 0} ->
-            verify(driver, started, output)
+            verify(driver, started, output, target)
 
           {output, _} ->
             failed(driver, started, output |> String.trim() |> String.slice(-500, 500))
@@ -111,8 +120,9 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
-  # "Succeeded" needs the provider to be installed and no longer behind.
-  defp verify(driver, started, output) do
+  # "Succeeded" needs the provider to be installed and no longer behind, or at the
+  # version that was asked for.
+  defp verify(driver, started, output, target) do
     forget_version(driver)
     entry = Enum.find(HalC2.Environment.providers(), &(&1["driver"] == driver))
 
@@ -122,7 +132,10 @@ defmodule HalC2.ProviderUpdates do
           {"unchanged",
            "Update command completed, but HAL-C2 could not verify the provider version."}
 
-        entry["versionAdvisory"]["status"] == "behind_latest" ->
+        target != nil and entry["version"] != target ->
+          {"unchanged", "Install completed, but the provider does not report v#{target}."}
+
+        target == nil and entry["versionAdvisory"]["status"] == "behind_latest" ->
           {"unchanged",
            "Update command completed, but HAL-C2 still detects an outdated provider version."}
 
@@ -201,6 +214,15 @@ defmodule HalC2.ProviderUpdates do
         nil
     end
   end
+
+  # The npm install of `command` pinned to `version`, or nil when the installer
+  # cannot pin one (Homebrew and self-updaters only reach the latest).
+  defp targeted([_npm, "install", "-g", "--prefix", _prefix, package] = command, version) do
+    if Regex.match?(~r/^\d+\.\d+\.\d+$/, version),
+      do: List.replace_at(command, 5, String.replace_suffix(package, "@latest", "@" <> version))
+  end
+
+  defp targeted(_command, _version), do: nil
 
   defp first_segment(rest), do: rest |> String.split("/") |> hd()
 

@@ -4,6 +4,12 @@ defmodule HalC2.Rpc do
   Run on the node that owns the environment (`HalC2.Web.Socket` routes them).
   """
 
+  # Methods that answer for the calling session (`handle/3`).
+  @session_methods ~w(hal-c2.clients hal-c2.revokeClient hal-c2.revokeOtherClients)
+
+  @doc "Methods the socket runs with its session, through `handle/3`."
+  def session_methods, do: @session_methods
+
   @doc """
   Handles one RPC. An error is a message, or a map with a `"message"` plus the
   contract error's `"_tag"` and fields, which the client decodes.
@@ -59,6 +65,20 @@ defmodule HalC2.Rpc do
     do: HalC2.ThreadMove.destinations(id)
 
   def handle("hal-c2.locateThread", %{"threadId" => id}), do: HalC2.ThreadMove.locate(id)
+
+  # Settings → Connections over the socket: the twins of `/api/auth/pairing-token` and
+  # `/api/auth/pairing-links*`, with the HTTP routes' bodies and replies.
+  def handle("hal-c2.createPairingLink", input),
+    do: HalC2.Auth.create_pairing_link(Map.take(input, ~w(label scopes)))
+
+  def handle("hal-c2.pairingLinks", _input), do: {:ok, HalC2.Auth.pairing_links()}
+
+  def handle("hal-c2.revokePairingLink", %{"id" => id}),
+    do: {:ok, %{"revoked" => HalC2.Auth.revoke_pairing_link(id)}}
+
+  def handle("hal-c2.revokePairingLink", _input), do: {:error, "a pairing link id is required"}
+
+  def handle(method, payload) when method in @session_methods, do: handle(method, payload, nil)
 
   def handle("server.updateServer", input), do: HalC2.Upgrade.update(input)
 
@@ -207,16 +227,6 @@ defmodule HalC2.Rpc do
   def handle("hal-c2.linkEnvironment", %{"pairingUrl" => url}) when is_binary(url),
     do: HalC2.Links.add(url)
 
-  def handle("hal-c2.linkEnvironment", %{"origin" => origin, "token" => token})
-      when is_binary(origin) and is_binary(token),
-      do: HalC2.Links.borrow(origin, token)
-
-  def handle("hal-c2.unlinkEnvironment", %{"environmentId" => id, "borrowed" => true})
-      when is_binary(id) do
-    :ok = HalC2.Links.give_back(id)
-    {:ok, nil}
-  end
-
   def handle("hal-c2.unlinkEnvironment", %{"environmentId" => id}) when is_binary(id) do
     with :ok <- HalC2.Links.remove(id), do: {:ok, nil}
   end
@@ -237,6 +247,32 @@ defmodule HalC2.Rpc do
   end
 
   def handle(method, _payload), do: {:error, "#{method} is not served by this node yet"}
+
+  @doc """
+  Handles one of `session_methods/0` for `session`, the caller's session id (`nil` for
+  the node's own token, which is no paired client): the twins of `/api/auth/clients*`.
+  """
+  @spec handle(String.t(), term, String.t() | nil) :: {:ok, term} | {:error, map}
+  def handle("hal-c2.clients", _input, session),
+    do: {:ok, for(c <- HalC2.Auth.clients(), do: %{c | "current" => c["sessionId"] == session})}
+
+  def handle("hal-c2.revokeClient", %{"sessionId" => id}, session) when id == session,
+    do:
+      {:error,
+       %{
+         "_tag" => "EnvironmentOperationForbiddenError",
+         "code" => "operation_forbidden",
+         "reason" => "current_session_revoke_not_allowed",
+         "message" => "the current session cannot be revoked"
+       }}
+
+  def handle("hal-c2.revokeClient", %{"sessionId" => id}, _session),
+    do: {:ok, %{"revoked" => HalC2.Auth.revoke_client(id)}}
+
+  def handle("hal-c2.revokeOtherClients", _input, session),
+    do: {:ok, %{"revokedCount" => HalC2.Auth.revoke_other_clients(session)}}
+
+  def handle("hal-c2.revokeClient", _input, _session), do: {:error, "a sessionId is required"}
 
   defp cluster({:ok, _} = ok), do: ok
 
@@ -277,6 +313,13 @@ defmodule HalC2.Rpc do
   # A link hands this node's clients whatever its pairing grants on the other side.
   def required_scope("hal-c2." <> m) when m in ~w(linkEnvironment unlinkEnvironment),
     do: "access:write"
+
+  # The access list, as `/api/auth/*` guards it.
+  def required_scope("hal-c2." <> m) when m in ~w(pairingLinks clients), do: "access:read"
+
+  def required_scope("hal-c2." <> m)
+      when m in ~w(createPairingLink revokePairingLink revokeClient revokeOtherClients),
+      do: "access:write"
 
   def required_scope("cloud.getRelayClientStatus"), do: "relay:read"
   def required_scope("cloud." <> _), do: "relay:write"

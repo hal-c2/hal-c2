@@ -2,7 +2,8 @@
 #   docs/user/project-settings.md (Project category, removal)
 #   apps/server-ex/lib/hal_c2/projects.ex (project.update, project.delete, auto_pull)
 #   apps/web/src/components/settings/ProjectsSettings.tsx (removal)
-#   apps/web/src/shell/HalC2ShellBridge.tsx (project.remove)
+#   apps/desktop-qt/src/native/ProjectController.cpp (project.remove, the confirmation, projects.mutate)
+#   apps/desktop-qt/qml/HalC2/Bricks/ProjectRemovalDialog.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/FolderExplorer.qml (Remove from HAL-C2)
 #   apps/tui/src/features.backlog.test.ts (project-lifecycle)
 #   packages/contracts/src/project.ts (project.update, project.delete, autoPull)
@@ -34,33 +35,46 @@ Feature: Removing and updating projects
     When a client renames an unknown project
     Then the node answers "unknown project"
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Removing a project asks for confirmation and explains what is lost
     Given "shop" has 4 threads
     When the user asks to remove "shop"
     Then the user is told 4 threads and their conversation history will be cleared
     And the user is told the files on disk are kept
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Confirming removal clears the project and its drafts
     Given "shop" has an unsent draft
     When the user confirms removing "shop"
     Then "shop" is no longer listed for "laptop"
     And the draft for "shop" is gone
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Cancelling removal keeps the project
     When the user asks to remove "shop"
     And the user cancels
     Then "shop" is still listed for "laptop"
 
-  @backlog @desktop
+  @desktop
+  Scenario: A confirmation for a project that goes away closes
+    Given the user asks to remove "shop"
+    When the node removes the project "shop"
+    Then the removal confirmation is closed
+
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  Scenario: A removal the environment refuses keeps the project and says why
+    Given the environment refuses to change projects with "Project shop is busy."
+    When the user confirms removing "shop"
+    Then the user sees an "error" toast "Failed to remove project" saying "Project shop is busy."
+    And "shop" is still listed for "laptop"
+
+  @desktop
   Scenario: Removing the project the user is looking at returns home
     Given the user is looking at a thread in "shop"
     When the user confirms removing "shop" everywhere
     Then the user is taken home
 
-  @backlog @desktop
+  @desktop
   Scenario: Removing a registered folder from the folder explorer asks through project settings
     Given the folder explorer shows "/home/sam/shop"
     When the user removes "/home/sam/shop" from HAL-C2

@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { canCreateProjectInEnvironment } from "@hal-c2/client-runtime/operations/projects";
 import {
   parseScopedThreadKey,
   scopeProjectRef,
@@ -7,22 +6,21 @@ import {
   scopedProjectKey,
   scopedThreadKey,
 } from "@hal-c2/client-runtime/environment";
-import type { EnvironmentId } from "@hal-c2/contracts";
-import type {
-  ShellNativeState,
-  ShellSidebarDraft,
-  ShellSidebarState,
-} from "@hal-c2/contracts/shell";
+import { EnvironmentId, ProjectId, ThreadId } from "@hal-c2/contracts";
+import { ClientSettingsPatch } from "@hal-c2/contracts/settings";
+import type { ShellRoute, ShellRouteDraftThread } from "@hal-c2/contracts/shell";
 import { useParams, useRouter } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { partitionSidebarThreads, resolveAdjacentThreadId } from "../components/Sidebar.logic";
 import { openCommandPalette } from "../commandPaletteBus";
-import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { isHalC2ShellEmbed } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
-import { useClientSettings } from "../hooks/useSettings";
+import { persistClientSettingsPatch } from "../hooks/useSettings";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 import {
@@ -31,55 +29,34 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { requestShellRename } from "./shellRenameRequest";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { useThreadShells } from "../state/entities";
-import { usePrimaryEnvironment } from "../state/environments";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
-import { useUiStateStore } from "../uiStateStore";
 import { buildShellKeybindings } from "./shellKeybindings";
-import {
-  buildLogicalProjectKeyMap,
-  buildShellSidebarInput,
-  buildShellSidebarState,
-} from "./shellSidebarState";
+import { sameShellRoute, shellRouteFromPath } from "./shellRoute";
+import { isSettingsPath } from "./shellSettingsState";
 import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
-import { useShellDesktopNotifications } from "./useShellDesktopNotifications";
-import { useShellEnvironmentAccess } from "./useShellEnvironmentAccess";
 import { useShellThreadRowActions } from "./useShellThreadRowActions";
-import { resolveShellLocalEnvironmentId } from "./shellLocalProjects";
-import { requestShellProjectRemoval } from "./shellProjectRemovalRequest";
+
+const decodeClientSettingsPatch = Schema.decodeUnknownOption(ClientSettingsPatch);
 
 /**
- * Feeds the native shell (window.halC2Shell) the sidebar view model and turns
- * its actions into navigation. Mounted only when hosted by the shell; the
- * HTML sidebar hides itself in that case (AppSidebarLayout). Everything here
- * is derived with the same logic the HTML sidebar uses, so the two never
- * disagree about rows, order, or status. Once the shell's own node
- * connection takes the sidebar over (`shell.native`), this publishes only
- * `sidebarInput` and the shell sends the row actions itself.
+ * Turns the native shell's (window.halC2Shell) actions into navigation.
+ * Mounted only when hosted by the shell; the HTML sidebar hides itself in that
+ * case (AppSidebarLayout). The shell builds its sidebar, projects and drafts
+ * from its own node connection; the page follows the route it is given and
+ * reports where its own links take it.
  */
 export function HalC2ShellBridge() {
   const router = useRouter();
-  const primaryEnvironment = usePrimaryEnvironment();
-  const localEnvironmentId = resolveShellLocalEnvironmentId({
-    primaryEnvironmentId: primaryEnvironment?.environmentId ?? null,
-    connected: canCreateProjectInEnvironment(primaryEnvironment?.connection.phase),
-    hostname: window.location.hostname,
-  });
   const threads = useThreadShells();
-  useShellDesktopNotifications(threads);
-  useShellEnvironmentAccess();
   const { projectGroups } = useSidebarProjectGroups(threads);
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const nowMinute = useNowMinute();
-  const lastVisitedAtByKey = useUiStateStore((store) => store.threadLastVisitedAtById);
   const handleNewThread = useNewThreadHandler();
-  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
-  const [native, setNative] = useState<ShellNativeState | null>(null);
   const [scopeProjectKey, setScopeProjectKey] = useState<string | null>(null);
   const routeTarget = useParams({
     strict: false,
@@ -137,9 +114,6 @@ export function HalC2ShellBridge() {
     });
     // Only re-open for a new request, not for hook identity churn.
   }, [menuTarget?.seq]);
-  const draftSessions = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
-  const draftContents = useComposerDraftStore((store) => store.draftsByThreadKey);
-
   const scopedGroup = useMemo(
     () =>
       scopeProjectKey === null
@@ -174,102 +148,6 @@ export function HalC2ShellBridge() {
     [capabilitiesFor, nowMinute, scopedProjectKeys, threads],
   );
   const rowActions = useShellThreadRowActions({ partition, activeThreadKey });
-
-  const threadCountByLogicalKey = useMemo(() => {
-    const logicalKeyByPhysicalKey = buildLogicalProjectKeyMap(projectGroups);
-    const counts = new Map<string, number>();
-    for (const thread of threads) {
-      if (thread.archivedAt !== null) continue;
-      const key = logicalKeyByPhysicalKey.get(
-        scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
-      );
-      if (key === undefined) continue;
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    return counts;
-  }, [projectGroups, threads]);
-
-  const allDrafts = useMemo((): ReadonlyArray<ShellSidebarDraft> => {
-    const logicalKeyByPhysicalKey = buildLogicalProjectKeyMap(projectGroups);
-    const result: ShellSidebarDraft[] = [];
-    for (const [draftId, session] of Object.entries(draftSessions)) {
-      if (session.promotedTo != null) continue;
-      if (!composerDraftHasUserContent(draftContents[draftId])) continue;
-      const physicalKey = scopedProjectKey(
-        scopeProjectRef(session.environmentId, session.projectId),
-      );
-      result.push({
-        draftId,
-        projectKey: logicalKeyByPhysicalKey.get(physicalKey) ?? physicalKey,
-        label: "Draft",
-      });
-    }
-    return result;
-  }, [draftContents, draftSessions, projectGroups]);
-  const drafts = useMemo(
-    () =>
-      scopeProjectKey === null
-        ? allDrafts
-        : allDrafts.filter((draft) => draft.projectKey === scopeProjectKey),
-    [allDrafts, scopeProjectKey],
-  );
-  const activeDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
-
-  const sidebarInput = useMemo(
-    () =>
-      buildShellSidebarInput({
-        projectGroups,
-        localEnvironmentId,
-        drafts: allDrafts,
-        activeThreadKey,
-        activeDraftId,
-        timestampFormat,
-        scopeProjectKey,
-      }),
-    [
-      activeDraftId,
-      activeThreadKey,
-      allDrafts,
-      localEnvironmentId,
-      projectGroups,
-      scopeProjectKey,
-      timestampFormat,
-    ],
-  );
-  useShellPublish("sidebarInput", sidebarInput);
-
-  const state = useMemo(
-    (): ShellSidebarState | undefined =>
-      native?.sidebar
-        ? undefined
-        : buildShellSidebarState({
-            localEnvironmentId,
-            projectGroups,
-            scopeProjectKey,
-            partition,
-            capabilitiesFor,
-            threadCountByLogicalKey,
-            lastVisitedAtByKey,
-            drafts,
-            activeThreadKey,
-            activeDraftId,
-          }),
-    [
-      activeDraftId,
-      activeThreadKey,
-      capabilitiesFor,
-      drafts,
-      lastVisitedAtByKey,
-      localEnvironmentId,
-      native?.sidebar,
-      partition,
-      projectGroups,
-      scopeProjectKey,
-      threadCountByLogicalKey,
-    ],
-  );
-
-  useShellPublish("sidebar", state);
 
   const shellKeybindings = useMemo(
     () => buildShellKeybindings(keybindings, navigator.platform),
@@ -321,8 +199,118 @@ export function HalC2ShellBridge() {
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [activeThreadKey, keybindings, orderedThreadKeys, router]);
 
+  const newThreadIn = (projectKey: string | undefined) => {
+    const group =
+      projectKey === undefined
+        ? projectGroups[0]
+        : projectGroups.find((item) => item.projectKey === projectKey);
+    if (group === undefined) {
+      // A stale key (project removed, environment gone) must not land
+      // the thread in whichever project sorts first.
+      if (projectKey === undefined) openCommandPalette({ open: "add-project" });
+      return;
+    }
+    void handleNewThread(scopeProjectRef(group.environmentId, group.id));
+  };
+
+  // The shell owns the route once it has its node (`route.follow`); the page
+  // reports where its own links and redirects take it (`route.open`), except
+  // to the route it was just told to show.
+  const shownRouteRef = useRef<ShellRoute | null>(null);
+  useEffect(() => {
+    if (isHalC2ShellEmbed) return;
+    return router.history.subscribe(({ location, action }) => {
+      const route = shellRouteFromPath(location.pathname);
+      if (route === null) return;
+      if (shownRouteRef.current !== null && sameShellRoute(route, shownRouteRef.current)) return;
+      shownRouteRef.current = route;
+      // A draft of the page's own carries the thread it will become, so the
+      // shell keeps it as one of its drafts.
+      const session =
+        route.draftId === null
+          ? null
+          : useComposerDraftStore.getState().getDraftSession(DraftId.make(route.draftId));
+      void window.halC2Shell?.dispatch("route.open", {
+        ...route,
+        ...(session
+          ? {
+              environmentId: session.environmentId,
+              projectId: session.projectId,
+              threadId: session.threadId,
+            }
+          : {}),
+        replace: action.type === "REPLACE",
+      });
+    });
+  }, [router]);
+  const followRoute = (route: ShellRoute & ShellRouteDraftThread) => {
+    // Pairing and onboarding finish before the page shows anything else.
+    if (isHalC2ShellEmbed || shellRouteFromPath(router.state.location.pathname) === null) return;
+    shownRouteRef.current = route;
+    switch (route.kind) {
+      case "home":
+        void router.navigate({ to: "/" });
+        return;
+      case "thread": {
+        const threadRef = route.threadKey === null ? null : parseScopedThreadKey(route.threadKey);
+        if (threadRef === null) return;
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+        return;
+      }
+      case "draft": {
+        if (route.draftId === null) return;
+        const draftId = DraftId.make(route.draftId);
+        // The shell's draft opens as the page's composer draft for the same thread.
+        const store = useComposerDraftStore.getState();
+        if (
+          route.environmentId !== undefined &&
+          route.projectId !== undefined &&
+          route.threadId !== undefined &&
+          store.getDraftSession(draftId)?.threadId !== route.threadId
+        ) {
+          store.setProjectDraftThreadId(
+            scopeProjectRef(
+              EnvironmentId.make(route.environmentId),
+              ProjectId.make(route.projectId),
+            ),
+            draftId,
+            { threadId: ThreadId.make(route.threadId) },
+          );
+        }
+        void router.navigate({ to: "/draft/$draftId", params: { draftId } });
+        return;
+      }
+      case "settings":
+        void router.navigate({
+          to: route.section !== null && isSettingsPath(route.section) ? route.section : "/settings",
+        });
+        return;
+      case "pullRequests":
+        void router.navigate({
+          to: "/pull-requests",
+          search: { involvement: "all", state: "open" },
+        });
+        return;
+      case "usage":
+        void router.navigate({ to: "/usage" });
+        return;
+    }
+  };
+
   useShellActions((action) => {
     switch (action.type) {
+      case "route.follow":
+        followRoute(action);
+        return;
+      case "clientSettings.follow": {
+        // The shell keeps this device's client settings; the page follows them.
+        const patch = decodeClientSettingsPatch(action.settings);
+        if (Option.isSome(patch)) void persistClientSettingsPatch(patch.value);
+        return;
+      }
       case "thread.open": {
         const threadRef = parseScopedThreadKey(action.key);
         if (threadRef === null) return;
@@ -338,20 +326,9 @@ export function HalC2ShellBridge() {
           params: { draftId: DraftId.make(action.draftId) },
         });
         return;
-      case "thread.new": {
-        const group =
-          action.projectKey === undefined
-            ? projectGroups[0]
-            : projectGroups.find((item) => item.projectKey === action.projectKey);
-        if (group === undefined) {
-          // A stale key (project removed, environment gone) must not land
-          // the thread in whichever project sorts first.
-          if (action.projectKey === undefined) openCommandPalette({ open: "add-project" });
-          return;
-        }
-        void handleNewThread(scopeProjectRef(group.environmentId, group.id));
+      case "thread.new":
+        newThreadIn(action.projectKey);
         return;
-      }
       case "sidebar.scope":
         setScopeProjectKey(action.projectKey);
         return;
@@ -402,21 +379,6 @@ export function HalC2ShellBridge() {
       case "project.add":
         openCommandPalette({ open: "add-project" });
         return;
-      case "project.remove": {
-        const project = sidebarInput.localProjects.find((entry) => entry.key === action.projectKey);
-        if (!project || localEnvironmentId === null) return;
-        const cancel = requestShellProjectRemoval(project.key);
-        void router
-          .navigate({
-            to: "/settings/projects",
-            search: { project: project.logicalProjectKey, machine: localEnvironmentId },
-          })
-          .catch(cancel);
-        return;
-      }
-      case "palette.open":
-        openCommandPalette({});
-        return;
       case "settings.open":
         void router.navigate({ to: "/settings" });
         return;
@@ -429,44 +391,7 @@ export function HalC2ShellBridge() {
       case "usage.open":
         void router.navigate({ to: "/usage" });
         return;
-      case "shell.native":
-        setNative((prev) =>
-          prev?.sidebar === action.sidebar && prev.composer === action.composer
-            ? prev
-            : { sidebar: action.sidebar, composer: action.composer },
-        );
-        return;
-      case "toast.show": {
-        const button = action.action;
-        toastManager.add(
-          stackedThreadToast({
-            type: action.toastType,
-            title: action.title,
-            ...(action.description !== undefined ? { description: action.description } : {}),
-            ...(action.timeout !== undefined ? { timeout: action.timeout } : {}),
-            ...(button !== undefined
-              ? {
-                  actionProps: {
-                    children: button.label,
-                    onClick: () =>
-                      void window.halC2Shell?.dispatch(
-                        button.dispatch.type,
-                        button.dispatch.payload,
-                      ),
-                  },
-                }
-              : {}),
-          }),
-        );
-        return;
-      }
     }
   });
-  // Declared after the action subscription so the answer finds it: a page
-  // (re)loaded after the shell took over learns so here.
-  useEffect(() => {
-    void window.halC2Shell?.dispatch("shell.native.query");
-  }, []);
-
   return null;
 }

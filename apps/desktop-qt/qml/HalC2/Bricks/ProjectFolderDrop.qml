@@ -1,8 +1,9 @@
 import QtQuick
 import HalC2.Shell
 
-// Overlay a shell with this opt-in drop target. Project registration is owned
-// by the page; this component only resolves a directory on the client machine.
+// Overlay a shell with this opt-in drop target. Project registration is
+// ProjectController's (project.add); this component only resolves a directory
+// on the client machine.
 DropArea {
     id: root
     property string directoryPath: ""

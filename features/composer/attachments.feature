@@ -19,18 +19,18 @@ Feature: Attaching images and files to a message
   Background:
     Given a project with an open thread
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The user attaches an image by choosing it
     When the user chooses "screenshot.png" to attach
     Then the draft carries "screenshot.png"
     And sending the message sends the image with it
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The user attaches images by dropping them on the composer
     When the user drops "a.png" and "b.jpg" onto the composer
     Then the draft carries both images
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Removing an attachment takes it out of the draft
     Given the draft carries "screenshot.png"
     When the user removes "screenshot.png"

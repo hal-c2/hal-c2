@@ -3,7 +3,6 @@ import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtime
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { useUpdateClientSettings } from "~/hooks/useSettings";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { filterComposerPullRequestMatches } from "@hal-c2/shared/composerPullRequestMatches";
@@ -187,10 +186,7 @@ import {
   type TerminalContextSelection,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
-import {
-  collectComposerContextReferences,
-  replaceComposerContextReferences,
-} from "@hal-c2/shared/composerContextReferences";
+import { replaceComposerContextReferences } from "@hal-c2/shared/composerContextReferences";
 import {
   getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
@@ -1083,7 +1079,6 @@ import {
 import { proposedPlanTitle } from "../../proposedPlan";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import { isHalC2Shell } from "../../env";
-import { ShellComposerBridge } from "../../shell/lazy";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -1133,11 +1128,6 @@ import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
-const shellRuntimeModes = runtimeModes.map((mode) => ({
-  value: mode,
-  label: runtimeModeConfig[mode].label,
-  description: runtimeModeConfig[mode].description,
-}));
 const extendReplacementRangeForTrailingSpace = (
   text: string,
   rangeEnd: number,
@@ -1527,8 +1517,6 @@ export interface ChatComposerProps {
   isConnecting: boolean;
   isSendBusy: boolean;
   isRevertingCheckpoint?: boolean;
-  /** ChatView's half of whether the Qt shell may send a plain turn itself. */
-  shellNativeSendAllowed?: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
@@ -1701,7 +1689,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isConnecting,
     isSendBusy,
     isRevertingCheckpoint = false,
-    shellNativeSendAllowed = false,
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
     environmentUnavailable,
@@ -2281,11 +2268,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     return out;
   }, [providerInstanceEntries, selectedInstanceId, selectedModelForPicker, settings]);
-  const updateClientSettings = useUpdateClientSettings();
-  const onShellFavoritesChange = useCallback(
-    (favorites: UnifiedSettings["favorites"]) => updateClientSettings({ favorites }),
-    [updateClientSettings],
-  );
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByInstance.get(selectedInstanceId) ?? [];
     return currentOptions.some((option) => option.slug === selectedModelForPicker)
@@ -6495,24 +6477,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               ? DISCONNECTED_COMPOSER_PLACEHOLDER
               : "Ask anything, @tag files/folders, $use skills, or / for commands";
   // Hosted by the Qt shell, the prompt editor and footer are native bricks
-  // (ShellComposerBridge feeds them). The editor stays for approval and
+  // (ComposerController owns them). The editor stays for approval and
   // user-input flows, which type their answers through it.
   const shellHosted = isHalC2Shell;
   const hideEditorForShell =
     shellHosted && !isComposerApprovalState && pendingUserInputs.length === 0;
-  // The shell's editor works on the raw prompt (mentions written out), so its
-  // caret is an expanded cursor; ChatComposer tracks the collapsed one.
-  const onShellCursorChange = useCallback(
-    (expandedCursor: number) => {
-      const text = promptRef.current;
-      setComposerCursor(collapseExpandedComposerCursor(text, expandedCursor));
-      setComposerTrigger(detectComposerTrigger(text, expandedCursor));
-    },
-    [promptRef, setComposerTrigger],
-  );
-  const dismissShellComposerTrigger = useCallback(() => {
-    dismissComposerTrigger(composerTrigger);
-  }, [composerTrigger, dismissComposerTrigger]);
   // With the editor and footer native, the frame only earns its space when a
   // banner, attachment, context or validation message is visible.
   const hasShoulderTab = showTasksTab || (!isComposerApprovalState && stashQueue.length > 0);
@@ -7403,120 +7372,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
-
-            {shellHosted ? (
-              <ShellComposerBridge
-                target={composerDraftTarget}
-                routeKind={routeKind}
-                prompt={prompt}
-                promptRef={promptRef}
-                setPrompt={setPrompt}
-                composerCursor={composerCursor}
-                triggerKind={composerTrigger?.kind ?? null}
-                suggestions={composerMenuItems}
-                suggestionsEmptyText={composerTrigger ? composerMenuEmptyState : null}
-                onCursorChange={onShellCursorChange}
-                onSelectSuggestion={onSelectComposerItem}
-                onDismissSuggestions={dismissShellComposerTrigger}
-                onStepPromptHistory={stepPromptHistory}
-                onAttachFiles={(files) => {
-                  void addComposerAttachments(files);
-                }}
-                onAddTerminalContext={(selection) => {
-                  composerRef.current?.addTerminalContext(selection);
-                }}
-                attachments={standaloneComposerImages}
-                terminalContexts={composerTerminalContexts}
-                onRemoveAttachment={removeComposerImage}
-                onRemoveTerminalContext={(id) => {
-                  // A terminal context lives as an inline reference in the prompt;
-                  // dropping the reference is what removes the context, through the
-                  // same path an editor deletion takes.
-                  const context = composerTerminalContexts.find((candidate) => candidate.id === id);
-                  if (!context) return;
-                  const { contextId } = terminalContextReference(context);
-                  const nextPrompt = replaceComposerContextReferences(
-                    promptRef.current,
-                    (occurrence) => (occurrence.contextId === contextId ? "" : occurrence.source),
-                  );
-                  const nextCursor = clampCollapsedComposerCursor(nextPrompt, composerCursor);
-                  onPromptChange(
-                    nextPrompt,
-                    nextCursor,
-                    expandCollapsedComposerCursor(nextPrompt, nextCursor),
-                    false,
-                    collectComposerContextReferences(nextPrompt).map((entry) => entry.contextId),
-                  );
-                }}
-                placeholder={composerPlaceholder}
-                editorDisabled={
-                  isConnecting ||
-                  isComposerApprovalState ||
-                  projectSelectionRequired ||
-                  isChoiceOnlyPendingQuestion ||
-                  activePendingIsResponding
-                }
-                hasSendableContent={composerSendState.hasSendableContent}
-                sendDisabledReason={sendDisabledReason}
-                phase={phase}
-                followUpBehavior={settings.followUpBehavior}
-                sendShortcut={settings.sendShortcut}
-                isSendBusy={isSendBusy}
-                isConnecting={isConnecting}
-                environmentUnavailable={environmentUnavailable !== null}
-                noProviderAvailable={noProviderAvailable}
-                projectSelectionRequired={projectSelectionRequired}
-                pendingApprovalCount={pendingApprovals.length}
-                pendingUserInputCount={pendingUserInputs.length}
-                showPlanFollowUpPrompt={showPlanFollowUpPrompt}
-                selectedInstanceId={selectedInstanceId}
-                selectedProvider={selectedProvider}
-                selectedModel={selectedModel}
-                selectedProviderModels={selectedProviderModels}
-                instanceEntries={providerInstanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                modelOptions={composerModelOptions?.[selectedInstanceId]}
-                planModeEnabled={settings.planModeEnabled}
-                getModelDisabledReason={getModelDisabledReason}
-                onProviderModelSelect={onProviderModelSelect}
-                favorites={settings.favorites}
-                onFavoritesChange={onShellFavoritesChange}
-                lockedProvider={lockedProvider}
-                lockedContinuationGroupKey={lockedContinuationGroupKey ?? null}
-                keybindings={keybindings}
-                runtimeMode={runtimeMode}
-                runtimeModes={shellRuntimeModes}
-                interactionMode={interactionMode}
-                showInteractionModeToggle={planModeUiEnabled}
-                onRuntimeModeChange={handleRuntimeModeChange}
-                onInteractionModeChange={handleInteractionModeChange}
-                onSend={(event, intent) => submitComposer(event, undefined, intent)}
-                onInterrupt={onInterrupt}
-                nativeSendAllowed={
-                  shellNativeSendAllowed &&
-                  routeKind === "server" &&
-                  phase !== "running" &&
-                  !isConnecting &&
-                  !isSendBusy &&
-                  environmentUnavailable === null &&
-                  !noProviderAvailable &&
-                  sendDisabledReason === null &&
-                  multipleModelSelections === null &&
-                  pendingApprovals.length === 0 &&
-                  pendingUserInputs.length === 0 &&
-                  !activePendingProgress &&
-                  !showPlanFollowUpPrompt &&
-                  composerImages.length === 0 &&
-                  composerFiles.length === 0 &&
-                  composerTerminalContexts.length === 0 &&
-                  composerPreviewAnnotations.length === 0 &&
-                  composerReviewComments.length === 0 &&
-                  composerThreadContexts.length === 0
-                }
-                promptEffort={selectedPromptEffort}
-                modelSelection={selectedModelSelection}
-              />
-            ) : null}
 
             {/* Bottom toolbar */}
             {isComposerCollapsedMobile || isComposerApprovalState || shellHosted ? null : (

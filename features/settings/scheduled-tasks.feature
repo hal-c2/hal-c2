@@ -7,6 +7,10 @@
 #   packages/contracts/src/rpc.ts (scheduledTasks.list, scheduledTasks.upsert, scheduledTasks.delete, scheduledTasks.setEnabled, scheduledTasks.runNow, scheduledTasks.subscribe)
 #   apps/web/src/components/settings/ScheduledTasksSettings.tsx
 #   apps/web/src/components/settings/scheduledTasksSettings.logic.ts
+#   apps/web/src/components/WorktreeBaseBranchPicker.tsx
+#   apps/desktop-qt/src/native/ScheduledTasksController.cpp
+#   apps/desktop-qt/qml/HalC2/Bricks/ScheduledTaskEditor.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/js/scheduledTasks.js
 
 Feature: Scheduled tasks
   A scheduled task sends a saved prompt to a project on a timer, either at
@@ -129,14 +133,14 @@ Feature: Scheduled tasks
 
   Rule: The scheduled tasks settings
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: The user creates a task with the defaults
       When the user starts a new task
       Then it starts in a new worktree from "main" fetched from origin
-      And it runs at 09:00 every day with full access
+      And it runs at 09:00 on weekdays with full access
       And its model is the project's default model
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario Outline: A task runs in the workspace the user chose
       When the user creates a task that uses <workspace>
       Then each run works in <place>
@@ -147,7 +151,7 @@ Feature: Scheduled tasks
         | the project checkout       | the project root               |
         | a specific checkout        | the chosen checkout path       |
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario Outline: An incomplete task cannot be saved
       When the user saves a task <problem>
       Then the user is told "<message>"
@@ -159,31 +163,70 @@ Feature: Scheduled tasks
         | that uses a specific checkout with no path  | Checkout path is required                |
         | on an environment that is disconnected      | Reconnect this environment before saving |
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Each task shows when it runs next and how it last went
       Given a paused task and a task that failed its last run
       When the user opens scheduled tasks
       Then the paused task says it is paused
       And the failed task shows its last error
+      And the failed task is badged "Failed"
+      And each task shows its prompt
 
-    @backlog @shared
+    # The web said "No environments available" with none paired. A QML client shows settings only
+    # once its node has synced, so its own environment is always there.
+    @dropped @shared
+    Scenario: With no environment there are no tasks to manage
+      When the user opens scheduled tasks with no environment
+      Then the user is told no environments are available
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: The base branch is picked from the project's branches
+      Given the project "api" has the branches "main, release/2.0, feature/login"
+      When the user starts a new task and types "rel" as its base branch
+      Then the base branches offered are "release/2.0"
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: The last weekday of a task cannot be turned off
+      Given a new task that runs only on Wednesday
+      When the user turns Wednesday off and saves it
+      Then the task still runs on Wednesday
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: Editing a task with a sub-minute interval says saving raises it
+      Given a task saved by an older version that runs every 10 seconds
+      When the user edits it
+      Then the editor says saving raises the interval to a minute
+      And saving it runs every minute
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: An open editor says when its task was deleted elsewhere
+      Given a task "Check Sentry"
+      When the user edits the task and another client deletes it
+      Then the editor says the task no longer exists
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: A slow save does not close a task opened after it
+      When the user saves a task and starts another before the save is answered
+      Then the first task is saved and the new task stays open
+
+    @shared @backlog-mobile @backlog-tui
     Scenario: The list follows the settings scope
       Given tasks in projects "api" and "web"
       When the user views scheduled tasks for project "api"
       Then only the tasks for "api" are listed
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: The user deletes a task
       Given a task "Check Sentry"
       When the user deletes the task
       Then it no longer runs and is no longer listed
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: A link to a task that is gone says so
       When the user follows a link to a task that was deleted
       Then the user is told the task is unavailable
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Scheduled tasks on a disconnected environment offer to reconnect
       Given the environment "laptop" is disconnected
       When the user opens scheduled tasks for "laptop"

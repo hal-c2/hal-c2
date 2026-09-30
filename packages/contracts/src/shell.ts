@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import { ModelSelection } from "./modelSelection.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { TimestampFormat } from "./settings.ts";
 
@@ -103,15 +102,40 @@ export type ShellSidebarState = typeof ShellSidebarState.Type;
 
 /**
  * Published under the `native` key, and sent to the page as `shell.native`,
- * once the shell's own node connection has its first snapshot: the page
- * stops publishing `sidebar` (the shell builds it from `sidebarInput`) and
- * the shell sends row actions and plain turns to the node itself.
+ * once the shell's own node connection has its first snapshot: the shell
+ * builds the sidebar and sends row actions and plain turns to the node itself.
  */
 export const ShellNativeState = Schema.Struct({
   sidebar: Schema.Boolean,
   composer: Schema.Boolean,
 });
 export type ShellNativeState = typeof ShellNativeState.Type;
+
+/**
+ * Where the desktop window is, owned by the shell (published as `route`, with
+ * a title and whether back goes anywhere). The page follows it
+ * (`route.follow`) and reports its own navigation (`route.open`). `section` is
+ * a settings path; the shell's own settings pages have paths the page lacks.
+ */
+export const ShellRoute = Schema.Struct({
+  kind: Schema.Literals(["home", "thread", "draft", "settings", "pullRequests", "usage"]),
+  threadKey: Schema.NullOr(Schema.String),
+  draftId: Schema.NullOr(Schema.String),
+  projectKey: Schema.NullOr(Schema.String),
+  section: Schema.NullOr(Schema.String),
+});
+export type ShellRoute = typeof ShellRoute.Type;
+
+/**
+ * Beside a draft route: the thread the draft will become. The shell's draft
+ * and the page's composer draft share it, whichever side started the draft.
+ */
+export const ShellRouteDraftThread = Schema.Struct({
+  environmentId: Schema.optional(Schema.String),
+  projectId: Schema.optional(Schema.String),
+  threadId: Schema.optional(Schema.String),
+});
+export type ShellRouteDraftThread = typeof ShellRouteDraftThread.Type;
 
 /**
  * Published under the `sidebarInput` key: what only the page knows that the
@@ -268,22 +292,6 @@ const ShellComposerEdit = Schema.Struct({
 
 export const ShellComposerSubmitIntent = Schema.Literals(["foreground", "background", "alternate"]);
 
-/**
- * A send the shell may make itself: the page checked the prompt is plain
- * (text only, one model, nothing attached, nothing pending) and did the
- * formatting its own send would.
- */
-export const ShellComposerNativeSend = Schema.Struct({
-  /** The raw prompt this was computed for; a submit with other text goes to the page. */
-  prompt: Schema.String,
-  text: Schema.String,
-  titleSeed: Schema.String,
-  modelSelection: ModelSelection,
-  runtimeMode: RuntimeMode,
-  interactionMode: Schema.Literals(["default", "plan"]),
-});
-export type ShellComposerNativeSend = typeof ShellComposerNativeSend.Type;
-
 /** Published under the `composer` key while a thread or draft route is open. */
 export const ShellComposerState = Schema.Struct({
   /** `<environmentId>:<threadId>` or a draft id; null between routes. */
@@ -335,50 +343,10 @@ export const ShellComposerState = Schema.Struct({
   runtimeModes: Schema.Array(ShellComposerRuntimeMode),
   interactionMode: Schema.Literals(["default", "plan"]),
   showInteractionModeToggle: Schema.Boolean,
-  /** Null whenever the prompt needs the page's send pipeline. */
-  nativeSend: Schema.optional(Schema.NullOr(ShellComposerNativeSend)),
+  /** The queued run whose message the composer is editing; sending saves it. */
+  editingQueuedRunId: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type ShellComposerState = typeof ShellComposerState.Type;
-
-export const ShellRightPanelKind = Schema.Literals([
-  "diff",
-  "files",
-  "file",
-  "preview",
-  "terminal",
-  "pull-request",
-  "pull-requests",
-  "device",
-  "source-control",
-]);
-export type ShellRightPanelKind = typeof ShellRightPanelKind.Type;
-
-export const ShellRightPanelSurface = Schema.Struct({
-  id: Schema.String,
-  kind: ShellRightPanelKind,
-  title: Schema.String,
-});
-export type ShellRightPanelSurface = typeof ShellRightPanelSurface.Type;
-
-/**
- * Published under the `rightPanel` key while a thread route is open. The
- * panel's content stays HTML: the shell loads `embedPath` (same origin as the
- * page, same session) in a second web view; this state only drives the tabs.
- */
-export const ShellRightPanelState = Schema.Struct({
-  threadKey: Schema.String,
-  isOpen: Schema.Boolean,
-  activeSurfaceId: Schema.NullOr(Schema.String),
-  surfaces: Schema.Array(ShellRightPanelSurface),
-  canAdd: Schema.Struct({
-    diff: Schema.Boolean,
-    files: Schema.Boolean,
-    terminal: Schema.Boolean,
-    pullRequest: Schema.Boolean,
-  }),
-  embedPath: Schema.String,
-});
-export type ShellRightPanelState = typeof ShellRightPanelState.Type;
 
 export const ShellWorkspaceEnvMode = Schema.Literals(["local", "worktree"]);
 export type ShellWorkspaceEnvMode = typeof ShellWorkspaceEnvMode.Type;
@@ -596,6 +564,12 @@ export const ShellGitState = Schema.Struct({
       featureBranchLabel: Schema.String,
     }),
   ),
+  /** Why git is unavailable for a checkout the node cannot reach (a linked thread's). */
+  unavailableReason: Schema.optional(Schema.String),
+  /** Set while the publish-repository dialog is open. */
+  publishing: Schema.optional(
+    Schema.NullOr(Schema.Struct({ busy: Schema.Boolean, error: Schema.NullOr(Schema.String) })),
+  ),
 });
 export type ShellGitState = typeof ShellGitState.Type;
 
@@ -670,8 +644,39 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("project.remove"), projectKey: Schema.String }),
   Schema.Struct({ type: Schema.Literal("project.folder.open"), path: Schema.String }),
   Schema.Struct({ type: Schema.Literal("settings.open") }),
+  /** Page → shell: the shell owns the theme; the page's shortcut and pickers ask it. */
+  Schema.Struct({ type: Schema.Literal("appearance.cycle") }),
+  Schema.Struct({
+    type: Schema.Literal("theme.mode"),
+    mode: Schema.Literals(["system", "light", "dark"]),
+  }),
+  /** An empty id is the standard look. */
+  Schema.Struct({ type: Schema.Literal("theme.choose"), id: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("theme.chooseHalf"),
+    appearance: Schema.Literals(["light", "dark"]),
+    id: Schema.String,
+  }),
+  /** Shell → page: this device's client settings, which the page follows. */
+  Schema.Struct({
+    type: Schema.Literal("clientSettings.follow"),
+    settings: Schema.Record(Schema.String, Schema.Unknown),
+  }),
   Schema.Struct({ type: Schema.Literal("pullRequests.open") }),
   Schema.Struct({ type: Schema.Literal("usage.open") }),
+  /** Shell → page: show this route (the shell owns where the window is). */
+  Schema.Struct({
+    type: Schema.Literal("route.follow"),
+    ...ShellRoute.fields,
+    ...ShellRouteDraftThread.fields,
+  }),
+  /** Page → shell: the page's own links or redirects moved it here. */
+  Schema.Struct({
+    type: Schema.Literal("route.open"),
+    ...ShellRoute.fields,
+    ...ShellRouteDraftThread.fields,
+    replace: Schema.Boolean,
+  }),
   Schema.Struct({ type: Schema.Literal("palette.open") }),
   Schema.Struct({
     type: Schema.Literal("composer.text.set"),
@@ -737,15 +742,8 @@ export const ShellAction = Schema.Union([
     type: Schema.Literal("composer.interactionMode.set"),
     mode: Schema.Literals(["default", "plan"]),
   }),
-  Schema.Struct({ type: Schema.Literal("rightPanel.toggle") }),
   Schema.Struct({ type: Schema.Literal("terminal.toggle") }),
   Schema.Struct({ type: Schema.Literal("terminal.resize"), height: Schema.Number }),
-  Schema.Struct({ type: Schema.Literal("rightPanel.activate"), id: Schema.String }),
-  Schema.Struct({ type: Schema.Literal("rightPanel.close"), id: Schema.String }),
-  Schema.Struct({
-    type: Schema.Literal("rightPanel.add"),
-    kind: Schema.Literals(["diff", "files", "terminal", "pull-request"]),
-  }),
   Schema.Struct({ type: Schema.Literal("workspace.newThread") }),
   Schema.Struct({
     type: Schema.Literal("workspace.openInEditor"),
@@ -789,6 +787,16 @@ export const ShellAction = Schema.Union([
     y: Schema.Number,
   }),
   Schema.Struct({ type: Schema.Literal("workspace.rename"), title: Schema.String }),
+  /** The thread list asks the header to start editing that thread's title. */
+  Schema.Struct({ type: Schema.Literal("workspace.rename.begin"), threadKey: Schema.String }),
+  /** A native shell changed a draft's checkout; the page keeps its draft in step. */
+  Schema.Struct({
+    type: Schema.Literal("workspace.checkout.follow"),
+    draftId: Schema.String,
+    branch: Schema.NullOr(Schema.String),
+    worktreePath: Schema.NullOr(Schema.String),
+    envMode: ShellWorkspaceEnvMode,
+  }),
   Schema.Struct({ type: Schema.Literal("git.quick") }),
   Schema.Struct({
     type: Schema.Literal("git.menu"),
@@ -797,6 +805,13 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("git.init") }),
   Schema.Struct({ type: Schema.Literal("git.publish") }),
   Schema.Struct({ type: Schema.Literal("git.refresh") }),
+  Schema.Struct({
+    type: Schema.Literal("git.publish.submit"),
+    provider: Schema.Literals(["github", "gitlab"]),
+    repository: Schema.String,
+    visibility: Schema.Literals(["private", "public"]),
+  }),
+  Schema.Struct({ type: Schema.Literal("git.publish.cancel") }),
   Schema.Struct({
     type: Schema.Literal("git.commit"),
     message: Schema.String,
@@ -823,27 +838,13 @@ export const ShellAction = Schema.Union([
     sidebar: Schema.Boolean,
     composer: Schema.Boolean,
   }),
-  /** Shell → page: show a toast; its action button dispatches a shell action back. */
-  Schema.Struct({
-    type: Schema.Literal("toast.show"),
-    toastType: Schema.Literals(["error", "success", "info", "warning"]),
-    title: Schema.String,
-    description: Schema.optional(Schema.String),
-    timeout: Schema.optional(Schema.Number),
-    action: Schema.optional(
-      Schema.Struct({
-        label: Schema.String,
-        dispatch: Schema.Struct({ type: Schema.String, payload: Schema.Unknown }),
-      }),
-    ),
-  }),
 ]);
 export type ShellAction = typeof ShellAction.Type;
 
 /** `window.halC2Shell`, injected by the shell before any page script runs. */
 export interface HalC2Shell {
   readonly protocolVersion: number;
-  /** Which web surface this document is in (`"primary"`, `"rightPanel"`, …). */
+  /** Which web surface this document is in (`"primary"`, `"shell"`, …). */
   readonly surfaceId: string;
   readonly ready: Promise<unknown>;
   publish(key: string, value: unknown): Promise<void>;

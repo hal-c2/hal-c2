@@ -1,9 +1,9 @@
 // Gherkin runner for the terminal client: `bun run features` (bun test).
 //
 // Picks scenarios tagged @tui or @shared from the repo's features/, minus
-// @dropped; @backlog is skipped unless TUI_INCLUDE_BACKLOG=1. Choose files with
-// TUI_FEATURES="tui/layout.feature tui/launch.feature" (globs relative to
-// features/, default "tui/**"). Steps live in support/steps/ and steps/
+// @dropped; @backlog and @backlog-tui are skipped unless TUI_INCLUDE_BACKLOG=1.
+// Choose files with TUI_FEATURES="tui/layout.feature tui/launch.feature" (globs
+// relative to features/, default "tui/**"). Steps live in support/steps/ and steps/
 // (`*.steps.ts`); see steps.ts for how they are written.
 import { describe, test } from "bun:test";
 import { Glob } from "bun";
@@ -75,6 +75,9 @@ function snippet(text: string): string {
 
 const isSelected = (tags: ReadonlyArray<string>) =>
   (tags.includes("@tui") || tags.includes("@shared")) && !tags.includes("@dropped");
+
+const isBacklog = (tags: ReadonlyArray<string>) =>
+  tags.includes("@backlog") || tags.includes("@backlog-tui");
 
 async function runPickle(
   uri: string,
@@ -148,7 +151,7 @@ for (const uri of featureFiles(selectedPatterns())) {
       seen.set(pickle.name, count);
       const name = count > 1 ? `${pickle.name} (${count})` : pickle.name;
       const run = () => runPickle(uri, pickle, locations);
-      if (tags.includes("@backlog") && !includeBacklog) test.skip(name, run);
+      if (isBacklog(tags) && !includeBacklog) test.skip(name, run);
       else test(name, run, SCENARIO_TIMEOUT_MS);
     }
   });

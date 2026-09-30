@@ -4,6 +4,8 @@
 #   apps/web/src/components/settings/SettingsPanels.tsx (AppearanceSettingsPanel: interface, motion, fonts)
 #   apps/web/src/components/CommandPalette.logic.ts (appearance.cycle, change theme)
 #   packages/shared/src/keybindings.ts (theme.select, appearance.cycle)
+#   apps/desktop-qt/src/native/ThemeController.cpp (the desktop's appearance, following the system, clearing a choice)
+#   apps/desktop-qt/src/native/LayoutController.cpp (panels snap)
 #   Settings panel: Settings → Appearance
 
 Feature: Appearance
@@ -15,7 +17,7 @@ Feature: Appearance
 
   Rule: Light, dark and system
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Choosing an appearance mode
       When the user chooses the <mode> appearance
       Then the app is drawn <result>
@@ -26,13 +28,13 @@ Feature: Appearance
         | Light  | light                                   |
         | Dark   | dark                                    |
 
-    @backlog @desktop
+    @desktop
     Scenario: System appearance follows the operating system as it changes
       Given the user chose the System appearance
       When the operating system switches to dark
       Then the app is drawn dark
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The appearance shortcut cycles through the modes
       Given the appearance is <from>
       When the user presses the appearance shortcut
@@ -59,7 +61,7 @@ Feature: Appearance
 
   Rule: Themes
 
-    @backlog @desktop
+    @desktop
     Scenario: Choosing a theme
       When the user chooses the "Nord" theme in Settings → Appearance
       Then the app uses "Nord"
@@ -70,7 +72,7 @@ Feature: Appearance
       Then the theme picker opens over the thread
       And the current theme is marked "Current"
 
-    @backlog @desktop
+    @desktop
     Scenario: Different themes for light and dark
       When the user picks "Solarized" for light and "Nord" for dark
       And the appearance is Light
@@ -78,18 +80,32 @@ Feature: Appearance
       When the appearance becomes Dark
       Then the app uses "Nord"
 
-    @backlog @desktop
+    @desktop
     Scenario: A theme with only one appearance fills only that half
       Given "Midnight" only has a dark palette
       When the user chooses "Midnight"
       Then "Midnight" is the dark theme
       And the light theme is unchanged
 
-    @backlog @desktop
+    @desktop
     Scenario: A theme choice that cannot be saved is reported
       Given the theme choice cannot be saved
       When the user chooses a theme
       Then the user is told "Couldn't save theme selection"
+
+    @desktop
+    Scenario: Clearing the theme choice returns to the standard theme
+      Given the theme choice is "grove"
+      When the theme choice is cleared
+      Then the app uses the standard theme
+
+    @desktop
+    Scenario: Clearing one appearance's theme returns it to the theme choice
+      Given the theme choice is "iris"
+      And the theme choice is "ocean" for dark
+      When the dark theme choice is cleared
+      And the appearance choice becomes Dark
+      Then the app uses "iris"
 
   Rule: Interface
 
@@ -137,7 +153,7 @@ Feature: Appearance
       When the user sends the first message in a new thread
       Then branch and worktree controls are hidden
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: An appearance setting can be put back to its default
       Given the user changed <setting>
       When the user resets <setting>
@@ -194,7 +210,7 @@ Feature: Appearance
         | code      | JetBrains Mono | 13   | code blocks and diffs                     |
         | terminal  | JetBrains Mono | 12   | the terminal                              |
 
-    @backlog @desktop
+    @desktop
     Scenario: A font preference can be reset to the system font
       Given the user set the interface font to "Inter"
       When the user resets the interface font

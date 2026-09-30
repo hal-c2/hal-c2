@@ -24,6 +24,7 @@ Item {
             Shell.reset();
         }
 
+        // Scenario: The thread title uses the room it has (features/navigation/layout.feature)
         function test_titleUsesAvailableSpace_data() {
             return [
                 {
@@ -62,6 +63,37 @@ Item {
             tryCompare(label, "truncated", true);
             workspace.width = 1100;
             tryCompare(label, "truncated", false);
+        }
+        // Scenario: A narrow header drops action labels (features/navigation/layout.feature)
+        function test_narrowHeaderDropsActionLabels() {
+            Shell.state = {
+                workspace: {
+                    projectTitle: qsTr("Project"),
+                    threadTitle: qsTr("Thread"),
+                    isDraft: false,
+                    renameRequestId: 0,
+                    scripts: [{ id: "test", name: "Test", icon: "play" }],
+                    preferredScriptId: null,
+                    editors: [{ id: "zed", label: "Zed" }],
+                    preferredEditorId: "zed"
+                }
+            };
+            let workspace = createTemporaryObject(workspaceComponent, root);
+            verify(!!workspace, "Component exists");
+            let run = findChild(findChild(workspace, "runActionButton"), "splitAction");
+            let open = findChild(findChild(workspace, "openEditorButton"), "splitAction");
+            verify(!!run && !!open, "Header actions exist");
+            compare(run.text, "Run Test");
+            compare(open.text, "Open");
+            workspace.width = 719;
+            tryCompare(run, "text", "");
+            compare(open.text, "");
+            // They keep their names for assistive technology.
+            compare(run.Accessible.name, "Run Test");
+            compare(open.Accessible.name, "Open");
+            workspace.width = 720;
+            tryCompare(run, "text", "Run Test");
+            compare(open.text, "Open");
         }
     }
 }

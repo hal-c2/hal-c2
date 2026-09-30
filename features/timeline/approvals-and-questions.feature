@@ -12,6 +12,7 @@
 #   apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx
 #   apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx
 #   apps/tui/src/approvals.ts (stale versus transient respond failure)
+#   apps/desktop-qt/src/native/ComposerController.cpp (answers sent once, failed answers)
 #   apps/tui/src/components/ChatView.tsx (approve, decline, cycle pending approvals)
 #   apps/tui/src/components/ComposerPendingUserInputPanel.tsx
 #
@@ -26,7 +27,7 @@ Feature: Approvals and agent questions
     And the user is looking at a thread in "shop" whose agent is working
 
   # TUI: approve and decline are implemented in apps/tui/src/components/ChatView.tsx
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: The user answers an approval request
     Given the agent asks to run "rm -rf dist"
     When the user chooses to <decision>
@@ -58,7 +59,7 @@ Feature: Approvals and agent questions
     And the agent asks to run "npm test" again
     Then the command runs without asking
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A request says what kind of permission it wants
     When the agent requests <kind>
     Then the request is titled "<title>"
@@ -71,7 +72,7 @@ Feature: Approvals and agent questions
       | access for an app       | App access approval     |
       | a permission for an app | App permission approval |
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A provider's warning is shown with the option it applies to
     Given the provider warns that an option may follow injected instructions
     When the user reviews the approval
@@ -87,14 +88,14 @@ Feature: Approvals and agent questions
     When the user moves back
     Then the user sees "1/3"
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A request whose agent is gone cannot be answered
     Given the provider process stopped while an approval was pending
     Then the approval cannot be answered
     And the user is told "Provider process is gone — interrupt or restart the run to respond."
 
   # TUI: implemented in apps/tui/src/approvals.ts
-  @desktop @tui @backlog
+  @desktop @tui @backlog-tui
   Scenario Outline: A failed answer is kept or closed depending on why it failed
     Given the user approved a pending request
     When sending the answer fails because <reason>
@@ -105,8 +106,25 @@ Feature: Approvals and agent questions
       | the request was already resolved    | closed                                  |
       | the connection dropped for a moment | still open so the user can answer again |
 
+  @desktop
+  Scenario: An answer waiting on the node is not sent twice
+    Given the agent asks to run "npm test"
+    And the node holds its answers
+    When the user approves it
+    Then the approval shows it is being answered
+    When the user approves it
+    Then the node receives one answer
+
+  @desktop
+  Scenario: A failed answer is reported and can be sent again
+    Given the agent asks to run "npm test"
+    And the node refuses "runtime-request.respond" with "connection closed"
+    When the user approves it
+    Then the user sees an "error" toast "Failed to submit approval decision." saying "connection closed"
+    And the approval is still open so the user can answer again
+
   # TUI: implemented in apps/tui/src/components/ComposerPendingUserInputPanel.tsx
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: The user answers the agent's question
     Given the agent asks "Which database?" with the options "Postgres", "SQLite" and "MySQL"
     And the question allows <choices>
@@ -118,7 +136,7 @@ Feature: Approvals and agent questions
       | one answer      | "SQLite"               | "SQLite"               |
       | several answers | "Postgres" and "MySQL" | "Postgres" and "MySQL" |
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user writes their own answer
     Given the agent asks "Which database?" with three options
     When the user answers "DuckDB, in memory"
@@ -131,7 +149,7 @@ Feature: Approvals and agent questions
     Then the question is closed as dismissed
     And the agent is not given an answer
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A question stays answerable after its turn ends
     Given the agent asked a question that can be answered by message
     When the turn ends before the user answers

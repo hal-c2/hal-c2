@@ -17,6 +17,8 @@ Feature: Integrations settings
     Given the user has opened the Integrations settings
 
   Rule: Browser defaults belong to this device
+    # The Qt desktop embeds no browser (previews open in the user's own), so
+    # these wait for one there.
 
     @backlog @desktop
     Scenario Outline: A browser default applies to new browser tabs
@@ -117,28 +119,44 @@ Feature: Integrations settings
       When the user updates the device hub tool
       Then the update fails with a device tool error
 
-    @backlog @desktop
+    @desktop
+    Scenario: Turning off the device hub also turns off agent device access
+      Given the device hub is on
+      And agent device access is on
+      When the user turns off the device hub
+      Then the device hub is stored as off
+      And agent device access is stored as off
+
+    # What agents may then do is the node's: connections/device-hub.feature
+    # (Agent device access needs every prerequisite).
+    @desktop
     Scenario: Agent device access can be granted and taken away
       Given the device hub is on
       When the user turns on agent device access
-      Then agents started from then on can use the device tools
+      Then agent device access is stored as on and shown as on
       When the user turns off agent device access
-      Then agents started from then on cannot use the device tools
+      Then agent device access is stored as off and shown as off
 
-    @backlog @desktop
+    @desktop
     Scenario: Device settings change on every selected environment
       Given the user is editing settings across all environments
       And saving on "Build box" fails
       When the user turns on the device hub
       Then the user is told device settings were not saved on all environments and could not update "Build box"
 
-    @backlog @desktop
+    @desktop
+    Scenario: Leaving the page during a device tool check keeps the switches usable
+      Given the device tools are still being checked
+      When the user leaves the Integrations settings and comes back
+      Then the device hub can be changed again
+
+    @desktop
     Scenario: A failed tool update explains what to check
       Given the device hub tool update fails
       When the user updates the device hub tool
       Then the user is told to check this host's network connection and try again
 
-    @backlog @desktop
+    @desktop
     Scenario: Several environments show one environment's device status at a time
       Given the user is editing settings across "Laptop" and "Build box"
       When the user looks at simulator support

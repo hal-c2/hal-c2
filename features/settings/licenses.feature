@@ -10,7 +10,7 @@ Feature: Open source licenses
 
   Rule: Finding the notices
 
-    @backlog @desktop
+    @desktop
     Scenario: The licenses page opens from General settings
       Given the user has opened the General settings
       When the user views the open source licenses
@@ -23,18 +23,18 @@ Feature: Open source licenses
       When the user opens About HAL-C2 and then Open source licenses
       Then the list of third-party notices is shown
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Each notice names its version, license and where it is used
       Given the user has opened the open source licenses
       Then each entry shows its version when known, its license identifier and the parts of HAL-C2 that use it
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Opening an entry shows its full notice text
       Given the user has opened the open source licenses
       When the user opens the entry "react"
       Then the complete notice text for "react" is shown
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Searching narrows the notices
       Given the user has opened the open source licenses
       When the user searches the licenses for "<query>"
@@ -47,24 +47,24 @@ Feature: Open source licenses
         | MIT      | license         |
         | mobile   | app component   |
 
-    @backlog @desktop
+    @desktop
     Scenario: A search with no match says so
       Given the user has opened the open source licenses
       When the user searches the licenses for "zzzz"
       Then the user is told no licenses match that search
 
-    @backlog @desktop
+    @desktop
     Scenario: Optional device tools are listed though they are not bundled
       Given the user has opened the open source licenses
       Then the device tools HAL-C2 installs on demand are listed
 
-    @backlog @desktop
+    @desktop
     Scenario: Notices load without an environment
       Given no environment is connected
       When the user opens the open source licenses
       Then the list of third-party notices is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: Notices that fail to load can be retried
       Given the license list cannot be loaded
       When the user opens the open source licenses

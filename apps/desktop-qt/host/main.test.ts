@@ -65,7 +65,7 @@ const server = http.createServer((req, res) => {
     req.on("data", (chunk) => (body += chunk));
     req.on("end", () => {
       const params = new URLSearchParams(body);
-      const ok = params.get("subject_token") === bootstrap.desktopBootstrapToken;
+      const ok = params.get("subject_token") === "pairing-token";
       res.statusCode = ok ? 200 : 400;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify(ok ? { access_token: "access", token_type: "Bearer", scope: "admin" } : { error: "invalid_grant" }));
@@ -116,7 +116,6 @@ interface NodeRecord {
     readonly port: number;
     readonly host: string;
     readonly halC2Home?: string;
-    readonly desktopBootstrapToken: string;
   };
 }
 
@@ -125,14 +124,6 @@ function readRecord(release: string): NodeRecord | undefined {
   return NodeFS.existsSync(file)
     ? (JSON.parse(NodeFS.readFileSync(file, "utf8")) as NodeRecord)
     : undefined;
-}
-
-function webBundle(): string {
-  const dir = temporaryDirectory();
-  NodeFS.mkdirSync(NodePath.join(dir, "assets"));
-  NodeFS.writeFileSync(NodePath.join(dir, "index.html"), "<!doctype html><title>HAL-C2</title>");
-  NodeFS.writeFileSync(NodePath.join(dir, "assets/app.js"), "console.log('app')");
-  return dir;
 }
 
 async function freePort(): Promise<number> {
@@ -156,11 +147,7 @@ async function occupy(port = 0): Promise<number | undefined> {
 }
 
 type HostMessage =
-  | {
-      readonly type: "ready";
-      readonly url: string;
-      readonly node?: { readonly origin: string; readonly token: string };
-    }
+  | { readonly type: "ready"; readonly node: { readonly origin: string; readonly token: string } }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "exit"; readonly code: number | null };
 
@@ -180,14 +167,12 @@ function startHost(input: {
       // oxlint-disable-next-line hal-c2/no-global-process-runtime -- The host inherits the test's PATH.
       ...process.env,
       HAL_C2_NODE_PORT: undefined,
-      HAL_C2_WEB_PORT: undefined,
       HAL_C2_HOME: undefined,
       HAL_C2_NODE_HOME: undefined,
       // Never the user's own data or state directory.
       XDG_DATA_HOME: temporaryDirectory(),
       XDG_STATE_HOME: temporaryDirectory(),
       HAL_C2_NODE_RELEASE: undefined,
-      HAL_C2_WEB_DIST: undefined,
       ...input.env,
     },
   });
@@ -210,33 +195,17 @@ function startHost(input: {
   };
 }
 
-async function readyMessage(host: Host) {
+/** Where the host told the shell's own client to connect. */
+async function ready(host: Host) {
   const message = await host.message;
   if (message.type !== "ready") throw new Error(`expected ready, got ${JSON.stringify(message)}`);
-  return message;
-}
-
-async function ready(host: Host): Promise<URL> {
-  return new URL((await readyMessage(host)).url);
+  return message.node;
 }
 
 async function errorMessage(host: Host): Promise<string> {
   const message = await host.message;
   if (message.type !== "error") throw new Error(`expected error, got ${JSON.stringify(message)}`);
   return message.message;
-}
-
-async function exchange(nodeOrigin: string, token: string): Promise<number> {
-  const response = await fetch(new URL("/oauth/token", nodeOrigin), {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-      subject_token_type: "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
-      subject_token: token,
-    }),
-  });
-  return response.status;
 }
 
 /** A standalone launch against a fake release on free ports. */
@@ -252,20 +221,11 @@ async function standalone(
     args: options.home === undefined ? [] : [`--base-dir=${options.home}`],
     env: {
       HAL_C2_NODE_RELEASE: release,
-      HAL_C2_WEB_DIST: webBundle(),
       HAL_C2_NODE_PORT: String(await freePort()),
-      HAL_C2_WEB_PORT: String(await freePort()),
       ...options.env,
     },
   });
-  return { host, release, url: await ready(host) };
-}
-
-function pairingTarget(url: URL) {
-  return {
-    node: url.searchParams.get("host") ?? "",
-    token: new URLSearchParams(url.hash.slice(1)).get("token") ?? "",
-  };
+  return { host, release, node: await ready(host) };
 }
 
 async function descriptorOf(origin: string): Promise<{ environmentId: string }> {
@@ -283,9 +243,7 @@ async function runningNode() {
     stdio: ["pipe", "pipe", "inherit"],
   });
   cleanups.push(() => child.kill("SIGKILL"));
-  child.stdin.end(
-    `${JSON.stringify({ port, host: "127.0.0.1", desktopBootstrapToken: "pairing-token" })}\n`,
-  );
+  child.stdin.end(`${JSON.stringify({ port, host: "127.0.0.1" })}\n`);
   await new Promise((resolve) =>
     NodeReadline.createInterface({ input: child.stdout }).once("line", resolve),
   );
@@ -312,7 +270,7 @@ function writeRuntimeRecord(stateDir: string, origin: string): void {
 }
 
 describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own node", () => {
-  describe("Starting the desktop app starts its node and opens the app paired", () => {
+  describe("Starting the desktop app starts its node and connects to it", () => {
     it("Starting the desktop app starts a node with the desktop's HAL-C2 home", async () => {
       const home = temporaryDirectory();
       const { release, host } = await standalone({ home });
@@ -320,65 +278,23 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
 
       expect(record?.bootstrap.halC2Home).toBe(home);
       expect(record?.bootstrapStdin).toBe("1");
-      const token = record?.bootstrap.desktopBootstrapToken ?? "";
-      expect(token.length).toBeGreaterThan(20);
       expect(record?.argv).toEqual(["start"]);
-      expect(record?.environment.some((value) => value.includes(token))).toBe(false);
-      await host.quit();
-    });
-
-    it("The app opens paired with the desktop's node", async () => {
-      const { release, url, host } = await standalone();
-      const record = readRecord(release);
-      const target = pairingTarget(url);
-
-      expect(url.pathname).toBe("/pair");
-      expect(url.searchParams.get("auto")).toBe("1");
-      expect(target.node).toBe(`http://127.0.0.1:${record?.bootstrap.port}`);
-      expect(target.token).toBe(record?.bootstrap.desktopBootstrapToken);
-      expect(await exchange(target.node, target.token)).toBe(200);
       await host.quit();
     });
 
     it("The desktop's own client is given the node and its access token", async () => {
       const home = temporaryDirectory();
-      const release = fakeRelease();
-      const host = startHost({
-        args: [`--base-dir=${home}`],
-        env: {
-          HAL_C2_NODE_RELEASE: release,
-          HAL_C2_WEB_DIST: webBundle(),
-          HAL_C2_NODE_PORT: String(await freePort()),
-          HAL_C2_WEB_PORT: String(await freePort()),
-        },
-      });
-      const message = await readyMessage(host);
+      const { release, host, node } = await standalone({ home });
       const record = readRecord(release);
       const accessToken = NodeFS.readFileSync(
         NodePath.join(home, "data/elixir/access-token"),
         "utf8",
       ).trim();
 
-      expect(message.node).toEqual({
+      expect(node).toEqual({
         origin: `http://127.0.0.1:${record?.bootstrap.port}`,
         token: accessToken,
       });
-      expect(message.node?.token).not.toBe(record?.bootstrap.desktopBootstrapToken);
-      await host.quit();
-    });
-
-    it("The app is served from this machine, not by the node", async () => {
-      const { url, host } = await standalone();
-
-      expect(url.hostname).toBe("127.0.0.1");
-      expect(url.origin).not.toBe(pairingTarget(url).node);
-      const route = await fetch(new URL("/settings/connections", url));
-      expect(await route.text()).toContain("<title>HAL-C2</title>");
-      const asset = await fetch(new URL("/assets/app.js", url));
-      expect(asset.headers.get("content-type")).toContain("text/javascript");
-      expect((await fetch(new URL("/assets/missing.js", url))).status).toBe(404);
-      const escape = await fetch(new URL("/..%2f..%2f..%2fetc%2fpasswd", url));
-      expect(await escape.text()).toContain("<title>HAL-C2</title>");
       await host.quit();
     });
 
@@ -439,32 +355,18 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
     });
   });
 
-  describe("Starting again reuses the paired environment", () => {
-    it("The app keeps its address across restarts", async () => {
-      const home = temporaryDirectory();
-      const first = await standalone({ home, env: { HAL_C2_WEB_PORT: "" } });
-      await first.host.quit();
-      const second = await standalone({ home, env: { HAL_C2_WEB_PORT: "" } });
-
-      expect(second.url.origin).toBe(first.url.origin);
-      await second.host.quit();
-    });
-
-    it("Restarting the desktop app pairs the same environment again", async () => {
+  describe("Starting again reuses the environment", () => {
+    it("Restarting the desktop app connects to the same environment again", async () => {
       const home = temporaryDirectory();
       const first = await standalone({ home });
-      const firstTarget = pairingTarget(first.url);
-      const firstEnvironment = await descriptorOf(firstTarget.node);
+      const firstEnvironment = await descriptorOf(first.node.origin);
       await first.host.quit();
 
       const second = await standalone({ home });
-      const secondTarget = pairingTarget(second.url);
 
-      expect(secondTarget.token).not.toBe(firstTarget.token);
-      expect((await descriptorOf(secondTarget.node)).environmentId).toBe(
+      expect((await descriptorOf(second.node.origin)).environmentId).toBe(
         firstEnvironment.environmentId,
       );
-      expect(await exchange(secondTarget.node, secondTarget.token)).toBe(200);
       await second.host.quit();
     });
   });
@@ -475,18 +377,10 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       const ownRelease = fakeRelease();
       const host = startHost({
         args: [`--attach=${node.origin}/?token=pairing-token`],
-        env: {
-          HAL_C2_NODE_RELEASE: ownRelease,
-          HAL_C2_WEB_DIST: webBundle(),
-          HAL_C2_WEB_PORT: String(await freePort()),
-        },
+        env: { HAL_C2_NODE_RELEASE: ownRelease },
       });
-      const url = await ready(host);
-      const target = pairingTarget(url);
 
-      expect(url.pathname).toBe("/pair");
-      expect(target).toEqual({ node: node.origin, token: "pairing-token" });
-      expect(await exchange(target.node, target.token)).toBe(200);
+      expect(await ready(host)).toEqual({ origin: node.origin, token: "access" });
       expect(readRecord(ownRelease)).toBeUndefined();
       await host.quit();
     });
@@ -501,22 +395,14 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       NodeFS.writeFileSync(NodePath.join(nodeDirs.data, "access-token"), "local-node-token\n");
       const host = startHost({
         args: [`--attach=${node.origin}/?token=pairing-token`],
-        env: {
-          XDG_DATA_HOME: data,
-          XDG_STATE_HOME: state,
-          HAL_C2_WEB_DIST: webBundle(),
-          HAL_C2_WEB_PORT: String(await freePort()),
-        },
+        env: { XDG_DATA_HOME: data, XDG_STATE_HOME: state },
       });
 
-      expect((await readyMessage(host)).node).toEqual({
-        origin: node.origin,
-        token: "local-node-token",
-      });
+      expect(await ready(host)).toEqual({ origin: node.origin, token: "local-node-token" });
       await host.quit();
     });
 
-    it("An attached desktop leaves a node it has no files for to the app", async () => {
+    it("An attached desktop's own client pairs with a node it has no files for", async () => {
       const node = await runningNode();
       const data = temporaryDirectory();
       const state = temporaryDirectory();
@@ -524,31 +410,38 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       writeRuntimeRecord(nodeDirs.state, `http://127.0.0.1:${await freePort()}`);
       NodeFS.writeFileSync(NodePath.join(nodeDirs.data, "access-token"), "other-node-token\n");
       const host = startHost({
-        args: [`--attach=${node.origin}/?token=pairing-token`],
-        env: {
-          XDG_DATA_HOME: data,
-          XDG_STATE_HOME: state,
-          HAL_C2_WEB_DIST: webBundle(),
-          HAL_C2_WEB_PORT: String(await freePort()),
-        },
+        args: [`--attach=${node.origin}/#token=pairing-token`],
+        env: { XDG_DATA_HOME: data, XDG_STATE_HOME: state },
       });
 
-      expect((await readyMessage(host)).node).toBeUndefined();
+      expect(await ready(host)).toEqual({ origin: node.origin, token: "access" });
       await host.quit();
     });
 
-    it("An address that is not a node is loaded as it is", async () => {
+    it("Attaching with a pairing link the node refuses", async () => {
+      const node = await runningNode();
+      const host = startHost({ args: [`--attach=${node.origin}/?token=spent`] });
+
+      expect(await errorMessage(host)).toBe(
+        `The pairing link for ${node.origin} is invalid or expired.`,
+      );
+      expect(await host.exited).toBe(1);
+    });
+
+    it("An address that is not a node is refused", async () => {
       const server = NodeHttp.createServer((_request, response) => {
         response.writeHead(404).end();
       });
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       cleanups.push(() => server.close());
       const { port } = server.address() as NodeNet.AddressInfo;
-      const address = `http://127.0.0.1:${port}/some/page?x=1`;
-      const host = startHost({ args: [`--attach=${address}`] });
+      const host = startHost({ args: [`--attach=http://127.0.0.1:${port}/some/page?x=1`] });
 
-      expect((await ready(host)).href).toBe(address);
-      await host.quit();
+      expect(await errorMessage(host)).toBe(
+        `http://127.0.0.1:${port} is not a HAL-C2 node. ` +
+          "Start the desktop app with a node's pairing link to attach to it.",
+      );
+      expect(await host.exited).toBe(1);
     });
 
     it("Attaching to a node that is not running", async () => {
@@ -564,20 +457,16 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
 
   describe("Quitting the desktop app stops the node it started", () => {
     it("Quitting the desktop app stops its node", async () => {
-      const { release, host, url } = await standalone();
-      const node = pairingTarget(url).node;
+      const { release, host, node } = await standalone();
 
       expect(await host.quit()).toBe(0);
       expect(NodeFS.existsSync(NodePath.join(release, "stopped"))).toBe(true);
-      await expect(descriptorOf(node)).rejects.toThrow();
+      await expect(descriptorOf(node.origin)).rejects.toThrow();
     });
 
     it("Quitting an attached desktop app leaves the node running", async () => {
       const node = await runningNode();
-      const host = startHost({
-        args: [`--attach=${node.origin}/?token=pairing-token`],
-        env: { HAL_C2_WEB_DIST: webBundle(), HAL_C2_WEB_PORT: String(await freePort()) },
-      });
+      const host = startHost({ args: [`--attach=${node.origin}/?token=pairing-token`] });
       await ready(host);
 
       expect(await host.quit()).toBe(0);
@@ -587,26 +476,11 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
   });
 
   describe("Start-up failures say what went wrong", () => {
-    it("The app bundle is missing", async () => {
-      const release = fakeRelease();
-      const host = startHost({
-        env: { HAL_C2_NODE_RELEASE: release, HAL_C2_WEB_DIST: temporaryDirectory() },
-      });
-
-      const message = await errorMessage(host);
-      expect(message).toContain("The app bundle is missing");
-      expect(message).toContain("vp run --filter @hal-c2/web build");
-      expect(await host.exited).toBe(1);
-      expect(readRecord(release)).toBeUndefined();
-    });
-
     it("The node fails to start", async () => {
       const host = startHost({
         env: {
           HAL_C2_NODE_RELEASE: fakeRelease(),
-          HAL_C2_WEB_DIST: webBundle(),
           HAL_C2_NODE_PORT: String(await freePort()),
-          HAL_C2_WEB_PORT: String(await freePort()),
           FAKE_NODE_FAIL: "3",
         },
       });
@@ -617,27 +491,19 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       expect(await host.exited).toBe(1);
     });
 
-    for (const setting of ["HAL_C2_NODE_PORT", "HAL_C2_WEB_PORT"]) {
-      it(`A port the desktop app was told to use is taken (${setting})`, async () => {
-        const release = fakeRelease();
-        const taken = await occupy();
-        const host = startHost({
-          env: {
-            HAL_C2_NODE_RELEASE: release,
-            HAL_C2_WEB_DIST: webBundle(),
-            HAL_C2_NODE_PORT: String(await freePort()),
-            HAL_C2_WEB_PORT: String(await freePort()),
-            [setting]: String(taken),
-          },
-        });
-
-        const message = await errorMessage(host);
-        expect(message).toContain(`Port ${taken}`);
-        expect(message).toContain("in use");
-        expect(message).toContain(setting);
-        expect(await host.exited).toBe(1);
-        expect(readRecord(release)).toBeUndefined();
+    it("The node's port the desktop app was told to use is taken", async () => {
+      const release = fakeRelease();
+      const taken = await occupy();
+      const host = startHost({
+        env: { HAL_C2_NODE_RELEASE: release, HAL_C2_NODE_PORT: String(taken) },
       });
-    }
+
+      const message = await errorMessage(host);
+      expect(message).toContain(`Port ${taken}`);
+      expect(message).toContain("in use");
+      expect(message).toContain("HAL_C2_NODE_PORT");
+      expect(await host.exited).toBe(1);
+      expect(readRecord(release)).toBeUndefined();
+    });
   });
 });

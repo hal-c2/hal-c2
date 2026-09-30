@@ -4,10 +4,9 @@ import HalC2.Shell
 import "../qml/HalC2/Bricks"
 
 // The desktop's model-and-mode scenarios (features/composer/model-and-mode.feature)
-// for the native picker, one test per scenario by name. The page's
-// catalogue goes in as Shell.state.modelPicker; what the user chose comes
-// out as the action the picker dispatches, which the page turns into the
-// next turn's model.
+// for the native picker, one test per scenario by name. The catalogue goes
+// in as Shell.state.modelPicker; what the user chose comes out as the action
+// the picker dispatches, which the shell turns into the next turn's model.
 Item {
     id: root
     width: 900
@@ -21,8 +20,8 @@ Item {
         }
     }
 
-    // The page's side of the model picker keybinding: the window shortcut
-    // reaches the page, which asks the native picker to toggle.
+    // The shell's side of the model picker keybinding: the window shortcut
+    // asks the native picker to toggle.
     Shortcut {
         sequence: "Ctrl+Shift+M"
         context: Qt.WindowShortcut
@@ -71,6 +70,9 @@ Item {
                 models: models
             }, overrides ?? {});
         }
+
+        // The Control key, which Qt calls Meta on macOS.
+        readonly property int ctrl: Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier
 
         function chord(key, shift) {
             return {
@@ -143,7 +145,7 @@ Item {
         }
 
         // "a provider that is turned off in settings is not listed" is the
-        // page's filter (apps/web/src/shell/shellComposerState.test.ts).
+        // shell's filter, before the catalogue reaches the picker.
         function test_models_are_grouped_by_provider() {
             const work = instance("codexWork", "codex", "Codex Work", [model("gpt-5.5", "GPT-5.5")], {
                 showBadge: true
@@ -236,9 +238,9 @@ Item {
             mouseClick(button);
             compare(picker.view, "codex");
             // The provider shortcuts skip it as well.
-            keyClick(Qt.Key_Down, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Down, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "claudeAgent");
-            keyClick(Qt.Key_Down, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Down, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "favorites");
             compare(selections().filter(entry => entry.startsWith("cursor:")).length, 0);
         }
@@ -255,10 +257,10 @@ Item {
         function test_the_user_moves_between_providers_with_the_keyboard() {
             const picker = createPicker([codex(), claude()]);
             openPicker(picker);
-            keyClick(Qt.Key_Down, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Down, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "claudeAgent");
             compare(listed(picker), ["opus", "sonnet", "haiku"]);
-            keyClick(Qt.Key_Up, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Up, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "codex");
             // Shift+Tab reaches the rail, and the arrows move along it.
             keyClick(Qt.Key_Backtab, Qt.ShiftModifier);
@@ -273,7 +275,7 @@ Item {
             const picker = createPicker([codex(), claude()]);
             openPicker(picker);
             compare(picker.rows[1].jumpIndex, 1);
-            keyClick(Qt.Key_2, Qt.ControlModifier);
+            keyClick(Qt.Key_2, ctrl);
             tryCompare(picker.popup, "visible", false);
             compare(selections(), ["codex:gpt-5.5"]);
         }

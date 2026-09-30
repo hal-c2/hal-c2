@@ -2,6 +2,7 @@
 #   apps/server-ex/lib/hal_c2/auth.ex (pairing tokens, sessions, tickets, desktop bootstrap, access stream)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, /api/auth/*, with_scope)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (authAccess shape, current session)
+#   apps/server-ex/lib/hal_c2/rpc.ex (the hal-c2.* socket twins of /api/auth/*)
 #   apps/server-ex/lib/hal_c2/web.ex (the node's access token)
 #   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex
 #   apps/server-ex/test/hal_c2/scenarios_test.exs (access scenarios)
@@ -123,6 +124,59 @@ Feature: Node authentication and scopes
       | access:read  | list authorized clients           |
       | access:write | revoke a client                   |
       | access:write | revoke every other client         |
+
+  # The socket twins of /api/auth/*, for clients that hold a socket and no bearer.
+  @node
+  Scenario Outline: Access management over the socket needs the same scope
+    Given a device paired with standard scopes
+    When it calls <method> on the node
+    Then only that call fails saying <scope> is required
+    And the rest of its socket keeps working
+
+    Examples:
+      | method                    | scope        |
+      | hal-c2.createPairingLink  | access:write |
+      | hal-c2.pairingLinks       | access:read  |
+      | hal-c2.revokePairingLink  | access:write |
+      | hal-c2.clients            | access:read  |
+      | hal-c2.revokeClient       | access:write |
+      | hal-c2.revokeOtherClients | access:write |
+
+  @node
+  Scenario: An administrator manages pairing links over the socket
+    Given an administrator's socket
+    When it creates a pairing link labelled "Tablet" through hal-c2.createPairingLink
+    Then hal-c2.pairingLinks lists the link without its credential
+    When it revokes the link through hal-c2.revokePairingLink
+    Then hal-c2.pairingLinks no longer lists it
+    And the revoked link no longer pairs
+
+  @node
+  Scenario: An administrator manages paired clients over the socket
+    Given an administrator's socket
+    And two other paired clients
+    Then hal-c2.clients marks the administrator's own session as current
+    And hal-c2.revokeClient refuses the administrator's own session
+    When it revokes one of the others through hal-c2.revokeClient
+    And it revokes every other client through hal-c2.revokeOtherClients
+    Then hal-c2.clients lists only the administrator's session
+
+  # A session lives on the node that paired it; on another member the caller has none, so
+  # every session there would count as "other".
+  @node
+  Scenario Outline: Paired clients are managed only on the node the caller's session lives on
+    Given an administrator's socket
+    And two other paired clients
+    And another member of the node's cluster
+    When the administrator calls <method> on that member
+    Then the call is refused because the caller's session lives on another node
+    And no client was revoked
+
+    Examples:
+      | method                    |
+      | hal-c2.clients            |
+      | hal-c2.revokeClient       |
+      | hal-c2.revokeOtherClients |
 
   @node
   Scenario: Access requests without a bearer are refused as missing credentials

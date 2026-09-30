@@ -1,6 +1,7 @@
 # Sources:
 #   apps/web/src/components/threadActionMenu.logic.ts (Archive thread, Delete)
-#   apps/web/src/hooks/useThreadActions.ts
+#   apps/web/src/hooks/useThreadActions.ts (archiveThread and deleteThread: where the open thread's window goes)
+#   apps/web/src/components/Sidebar.logic.ts (getFallbackThreadIdAfterDelete)
 #   apps/web/src/components/Sidebar.tsx (confirm archive, confirm delete, orphaned worktree prompt, navigation after delete)
 #   apps/tui/src/commands.ts (Archive thread, Unarchive thread, Delete thread)
 #   apps/tui/src/components/ThreadOverlays.tsx (delete confirmation)
@@ -8,6 +9,9 @@
 #   packages/contracts/src/rpc.ts (getArchivedShellSnapshot, subscribeArchivedShell)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (archive, unarchive, delete, getArchivedShellSnapshot)
 #   apps/web/src/components/settings/SettingsPanels.tsx (ArchivedThreadsPanel: loading, empty, error, per-project groups)
+#   apps/desktop-qt/src/native/ArchivedThreadsController.cpp (the desktop's Archive section)
+#   apps/desktop-qt/src/native/SidebarController.cpp (park: where the window goes)
+#   apps/desktop-qt/src/native/SidebarModel.cpp (fallbackAfterDelete)
 
 Feature: Archiving and deleting threads
   Archiving hides a thread and can be undone. Deleting clears its history for good, and
@@ -29,7 +33,7 @@ Feature: Archiving and deleting threads
     Then "Old spike" is back in the thread list
     And the status line reads "Unarchived."
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Archiving and unarchiving from the desktop and phone
     When the user archives "Old spike"
     And the user restores "Old spike" from the archived threads
@@ -41,7 +45,7 @@ Feature: Archiving and deleting threads
     When the user opens the thread's menu
     Then archiving is unavailable
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Archiving waits for the agent on the desktop and phone
     Given the agent is working in "Old spike"
     When the user opens the thread menu
@@ -73,11 +77,18 @@ Feature: Archiving and deleting threads
     When a client asks for the archived threads
     Then "Old spike" is in the answer
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Archiving asks first when the user wants confirmation
     Given the user asked to confirm before archiving
     When the user archives "Old spike"
     Then the user is asked "Archive thread 'Old spike'?"
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Archiving the open thread opens a new thread in its project
+    Given the user is viewing "Old spike"
+    And "Newer work" is the top remaining thread in "shop"
+    When the user archives "Old spike"
+    Then a draft thread opens in "shop"
 
   @backlog @desktop @mobile
   Scenario: Archiving the open thread when the next thread cannot be opened
@@ -104,7 +115,7 @@ Feature: Archiving and deleting threads
     When the user cancels
     Then "Old spike" is still in the thread list
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Deleting from the desktop and phone asks when the user wants confirmation
     Given the user asked to confirm before deleting
     When the user deletes "Old spike"
@@ -143,12 +154,26 @@ Feature: Archiving and deleting threads
     Then "Old spike" is deleted
     And the user is told "Failed to delete worktree"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Deleting the open thread opens the next thread in the project
     Given the user is viewing "Old spike"
     And "Newer work" is the top remaining thread in "shop"
     When the user deletes "Old spike"
     Then "Newer work" opens
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Deleting the open thread opens the latest thread left in its project
+    Given "Newer work" is the top remaining thread in "shop"
+    And "Oldest" is an older thread in "shop"
+    And the user is viewing "Newer work"
+    When the user deletes "Newer work"
+    Then "Old spike" opens
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Deleting the open thread, the last in its project, lands on a new thread
+    Given the user is viewing "Old spike"
+    When the user deletes "Old spike"
+    Then a draft thread opens in "shop"
 
   @backlog @desktop
   Scenario: Deleting several threads at once
@@ -164,7 +189,7 @@ Feature: Archiving and deleting threads
     Then "Old spike" is kept
     And the user is told the delete failed
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The archived threads list says where it stands
     Given <situation>
     When the user opens the archived threads
@@ -176,19 +201,25 @@ Feature: Archiving and deleting threads
       | no thread has been archived              | No archived threads             |
       | the archived threads cannot be loaded    | Could not load archived threads |
 
-  @backlog @desktop
+  @desktop
   Scenario: Archived threads are grouped by project
     Given "Old spike" in "shop" and "Try vite" in "docs" are archived
     When the user opens the archived threads
     Then "Old spike" is listed under "shop" and "Try vite" under "docs"
 
-  @backlog @desktop
+  @desktop
+  Scenario: Deleting an archived thread takes it out of the archive
+    Given "Old spike" is archived
+    When the user deletes "Old spike" from the archived threads
+    Then "Old spike" is no longer in the archived threads
+
+  @desktop
   Scenario: Archived threads for one project show only that project's threads
     Given "Old spike" in "shop" and "Try vite" in "docs" are archived
     When the user opens the archived threads from the settings of "shop"
     Then only "Old spike" is listed
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: An archived thread action that fails says why
     Given "Old spike" is archived
     When the user tries to <action> "Old spike" and the environment refuses

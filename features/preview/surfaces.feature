@@ -7,6 +7,9 @@
 #   apps/server-ex/lib/hal_c2/rpc.ex (preview.open, navigate, reportStatus, resize, refresh, close, list)
 #   apps/server-ex/test/hal_c2/preview_test.exs
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (add menu has no browser entry)
+#   apps/desktop-qt/src/native/ThreadPreviews.cpp (the right panel's Previews tab)
+#   apps/desktop-qt/qml/HalC2/Bricks/PreviewsPanel.qml
+#   apps/desktop-qt/tests/native/features/PreviewSteps.cpp
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview)
 #   apps/tui/src/features.backlog.test.ts (preview-surface)
 #   apps/desktop/src/preview/Manager.ts (webview host, zoom, mute, popups)
@@ -178,25 +181,31 @@ Feature: In-app preview browser
 
   Rule: The desktop shows the page beside the thread
 
-    @backlog @desktop
+    # The desktop embeds no browser: drawing the page needs QtWebEngine or
+    # QtWebView, which on Linux is WebEngine underneath and has no input, zoom or
+    # popup control. Until one is chosen the Previews tab lists
+    # the thread's browser tabs and opens them in the user's browser, and the
+    # scenarios that draw the page wait (@backlog-desktop).
+
+    @desktop @backlog-desktop
     Scenario: The user opens a local dev server in a browser tab beside the thread
       Given the thread's dev server is listening locally
       When the user opens the preview
       Then the page opens in a browser tab beside the thread instead of a desktop-only notice
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: The user adds a browser tab from the side panel
       Given the side panel is open
       When the user opens the side panel's add menu
       Then it offers a browser tab next to diff, files, terminal and pull request
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: A new browser tab offers local servers and recent pages
       Given the thread's project has a dev server running and recently visited pages
       When the user opens a new browser tab
       Then the tab suggests the running servers, configured preview addresses and up to 10 recent pages
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario Outline: An unreachable page explains the failure in plain words
       Given a browser tab whose page fails with <code>
       Then the tab says "This site can't be reached" and "<explanation>"
@@ -211,13 +220,13 @@ Feature: In-app preview browser
         | ERR_CERT_AUTHORITY_INVALID  | Certificate authority is not trusted   |
         | ERR_TOO_MANY_REDIRECTS      | Too many redirects                     |
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: The user reloads a page after the dev server restarts
       Given a browser tab showing the thread's dev server
       When the agent restarts the dev server and the user reloads the tab
       Then the page reloads without the user leaving the thread
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario Outline: The user zooms a page through the preset steps
       Given a browser tab at <from> zoom
       When the user zooms <direction>
@@ -231,58 +240,76 @@ Feature: In-app preview browser
         | 25%  | out       | 25%  |
         | 150% | reset     | 100% |
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: The user previews the page at a device size
       Given a browser tab that fills its space
       When the user picks the "Pixel 7" device size
       Then the page renders at that device's size
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: A device size that times out is undone
       Given the user picks a device size for a tab
       When the node does not confirm the resize in time
       Then the tab returns to its previous size unless a newer size was chosen
 
-    @backlog @desktop
+    @desktop
     Scenario: A closed browser tab stays closed while the close is in flight
       When the user closes a browser tab
       Then the tab disappears at once, even if an older update about it arrives
 
-    @backlog @desktop
+    @desktop
     Scenario: A browser tab whose close fails comes back
       Given the node refuses to close a browser tab
       When the user closes the tab
       Then the tab returns as it was
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: The user floats a preview over the conversation
       Given a browser tab the agent is using
       When the user floats the preview
       Then a small player shows the page above the composer at the page's aspect ratio
       And it never covers the composer
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: The user mutes a tab that plays sound
       Given a browser tab playing audio
       When the user mutes the tab
       Then the tab stays silent until the user unmutes it
       And the tab still shows that its page is playing sound
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: A sign-in popup opens in its own window
       Given a page in a browser tab starts a sign-in flow in a popup
       Then the popup opens as a real window that can report back to the page
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: A link that targets a new window stays in the tab
       When the user follows a link on the page that targets a new window
       Then the page loads in the same browser tab
 
-    @backlog @desktop
+    @desktop @backlog-desktop
     Scenario: A popup cannot open further popups
       Given a sign-in popup opened by a page in a browser tab
       When the popup tries to open another popup
       Then the second popup is refused
+
+    @desktop
+    Scenario: The desktop lists the thread's browser tabs to open in the browser
+      Given the thread has browser tabs at "http://localhost:5173" and "http://localhost:6006"
+      When the user shows the thread's previews
+      Then "http://localhost:5173" and "http://localhost:6006" are listed
+      When the user opens "http://localhost:5173" from the previews
+      Then the browser opens "http://localhost:5173"
+
+    @desktop
+    Scenario: The desktop's list of browser tabs follows the node
+      Given the user is showing the thread's previews
+      When the agent opens a browser tab at "http://localhost:5173"
+      Then "http://localhost:5173" is listed
+      When the page at "http://localhost:5173" fails to load
+      Then the previews say "http://localhost:5173" failed to load
+      When the tab at "http://localhost:5173" is closed on the node
+      Then no browser tabs are listed
 
     @backlog @tui
     Scenario: The terminal client lists preview addresses without an embedded browser

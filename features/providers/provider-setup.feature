@@ -9,6 +9,7 @@
 #   apps/web/src/components/settings/ProviderSetupSection.tsx
 #   apps/mobile/src/features/settings/SettingsProviderAccountsRouteScreen.tsx
 #   packages/contracts/src/providerSetup.ts (ProviderAuthState, ProviderInstallState, ProviderSetupError)
+#   apps/desktop-qt/src/native/ProviderSettingsController.cpp (the desktop's sign-out and email)
 #   packages/contracts/src/rpc.ts (provider.install.start, provider.install.cancel, provider.install.remove, provider.install.subscribe, server.updateProvider)
 
 @node
@@ -29,6 +30,11 @@ Feature: Provider setup, updates and sign-in
     Given Codex was installed with Homebrew and is outdated
     When the user updates Codex
     Then Codex is updated through Homebrew
+
+  Scenario: Only npm installs can install a chosen version
+    Given Codex was installed with Homebrew and is outdated
+    When the user installs Codex "0.1.5"
+    Then the user is told this installation cannot install "v0.1.5"
 
   # Neither server invents a command for an installation it cannot prove it owns
   # (provider_updates.ex update_command/2, providerMaintenance.ts manual-only);
@@ -131,14 +137,14 @@ Feature: Provider setup, updates and sign-in
     When the user sends a response from the mobile app
     Then the response reaches the sign-in terminal on the node
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-node
   Scenario: Signing out asks for confirmation and keeps history
     Given the user is signed in to an ACP agent
     When the user signs out and confirms
     Then running threads sharing that sign-in stop
     And thread history is kept
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-node
   Scenario: The signed-in email is hidden until the user reveals it
     Given a provider is signed in as "me@example.com"
     When the user opens the provider

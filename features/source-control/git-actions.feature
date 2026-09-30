@@ -6,6 +6,9 @@
 #   apps/web/src/shell/ShellGitBridge.tsx
 #   packages/contracts/src/shell.ts (ShellGitState, git.quick, git.menu, git.refresh, git.publish)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml
+#   apps/desktop-qt/src/native/GitController.cpp (the desktop's recommended action and menu, results, init)
+#   apps/server-ex/lib/hal_c2/vcs.ex (vcs.init)
+#   apps/server-ex/lib/hal_c2/links.ex (the error while a link is down)
 #   apps/tui/src/gitActions.logic.ts (resolveGitQuickAction, buildGitMenuItems, buildGitPanelActions)
 #   apps/tui/src/components/RightPanel.tsx
 
@@ -107,7 +110,7 @@ Feature: Recommended git action and the git menu
     When the user opens the git menu
     Then the menu reflects the checkout as it is now
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: The actions use the host's own name for a pull request
     Given the project's primary remote is on <host>
     When the user opens the git menu
@@ -123,3 +126,77 @@ Feature: Recommended git action and the git menu
     Given the checkout has uncommitted changes on a feature branch with a remote
     When the user runs the recommended git action from the phone
     Then the changes are committed, pushed and a pull request is opened
+
+  @desktop
+  Scenario: A new pull request can be viewed from its result
+    Given the checkout has uncommitted changes on a feature branch with a remote
+    When the user runs the recommended action
+    And the user chooses "View PR" on the toast "Created PR #42"
+    Then the browser opens "https://github.com/acme/shop/pull/42"
+
+  @desktop
+  Scenario: An action with nothing to do says why
+    Given the checkout is up to date with nothing to do
+    When the user runs the recommended action
+    Then the user sees an "info" toast "Commit" saying "Branch is up to date. No action needed."
+
+  @desktop
+  Scenario: Initializing Git
+    Given the checkout is not a repository
+    And the git actions offer to initialize Git
+    When the user initializes Git
+    Then the checkout is a repository
+
+  @desktop
+  Scenario: A refused initialization is reported
+    Given the checkout is not a repository
+    And the node refuses to initialize Git with "Permission denied"
+    When the user initializes Git
+    Then the user sees an "error" toast "Git initialization failed" saying "Permission denied"
+
+  @desktop
+  Scenario: A link that is down says why its git actions cannot run
+    Given the node is linked to "env-c"
+    And "env-c" has the thread "t7" titled "Deploy" in "shop" on the branch "feature/tax"
+    And "env-c" becomes unreachable
+    When the user goes to "env-c:t7"
+    Then the git actions say "env-c cannot be reached."
+    When "env-c" is reachable again
+    Then the git actions are available again
+
+  Rule: Publishing a repository without a remote
+
+    Background:
+      Given the checkout has commits and no remote
+
+    @desktop
+    Scenario: Publishing pushes the branch to the new repository
+      When the user runs the recommended action
+      Then the publish dialog is open
+      When the user publishes "acme/shop" as a private GitHub repository
+      Then the node published "acme/shop" to "origin" as private on github
+      And the publish dialog is closed
+      And the user sees a "success" toast "Published acme/shop" saying "Pushed feature/tax to origin."
+      When the user chooses "Open repository" on the toast "Published acme/shop"
+      Then the browser opens "https://github.com/acme/shop"
+
+    @desktop
+    Scenario: A refused publish keeps the dialog open with the reason
+      Given the node refuses to publish with "Repository already exists"
+      When the user runs the recommended action
+      And the user publishes "acme/shop" as a public GitHub repository
+      Then the publish dialog says "Repository already exists"
+
+    @desktop
+    Scenario: A repository name needs its owner
+      When the user runs the recommended action
+      And the user publishes "shop" as a private GitHub repository
+      Then the publish dialog says "Name the repository as owner/name."
+      And nothing is published
+
+    @desktop
+    Scenario: Cancelling the dialog publishes nothing
+      When the user runs the recommended action
+      And the user cancels publishing
+      Then the publish dialog is closed
+      And nothing is published

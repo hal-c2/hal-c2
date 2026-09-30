@@ -45,28 +45,29 @@ private slots:
 
   void theNodeTheHostStartedReachesTheShellsOwnClient() {
     BackendProcess backend(host(
-        "echo '{\"type\":\"ready\",\"url\":\"http://127.0.0.1:5/pair\",\"node\":{\"origin\":\"http://127.0.0.1:6\",\"token\":\"secret\"}}'\n"
+        "echo '{\"type\":\"ready\",\"node\":{\"origin\":\"http://127.0.0.1:6\",\"token\":\"secret\"}}'\n"
         "sleep 5\n"));
-    QSignalSpy node(&backend, &BackendProcess::nodeAvailable);
     QSignalSpy ready(&backend, &BackendProcess::ready);
     backend.start();
     QTRY_COMPARE(ready.size(), 1);
-    QCOMPARE(node.size(), 1);
-    QCOMPARE(node.first().at(0).toUrl(), QUrl(QStringLiteral("http://127.0.0.1:6")));
-    QCOMPARE(node.first().at(1).toString(), QStringLiteral("secret"));
+    QCOMPARE(ready.first().at(0).toUrl(), QUrl(QStringLiteral("http://127.0.0.1:6")));
+    QCOMPARE(ready.first().at(1).toString(), QStringLiteral("secret"));
     backend.stop();
   }
 
-  void anAttachedHostGivesTheShellNoNode() {
+  void aReadyLineWithoutANodeFails() {
     BackendProcess backend(host(
-        "echo '{\"type\":\"ready\",\"url\":\"http://127.0.0.1:5/\"}'\n"
+        "echo '{\"type\":\"ready\"}'\n"
         "sleep 5\n"));
-    QSignalSpy node(&backend, &BackendProcess::nodeAvailable);
     QSignalSpy ready(&backend, &BackendProcess::ready);
+    QSignalSpy failed(&backend, &BackendProcess::failed);
     backend.start();
-    QTRY_COMPARE(ready.size(), 1);
-    QCOMPARE(node.size(), 0);
+    QTRY_COMPARE(failed.size(), 1);
+    QCOMPARE(failed.first().first().toString(),
+             QStringLiteral("Desktop host announced no node to connect to."));
+    QCOMPARE(ready.size(), 0);
     backend.stop();
+    QCOMPARE(failed.size(), 1);
   }
 
   void aHostThatExitsSilentlySaysSo() {

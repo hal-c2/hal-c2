@@ -2,16 +2,15 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// Shows the page's pending context menu (Shell.state.contextMenu) when it
-// targets this host's surface, and reports the choice back. One instance
-// lives in each WebSurface (page coordinates) and one in the shell root
-// (window coordinates, surfaceId "shell").
+// Shows MenuController's pending context menu when it targets this host's
+// surface, in window coordinates (one host per window), and reports the
+// choice back.
 Item {
     id: host
 
     required property string surfaceId
 
-    readonly property var request: Shell.state.contextMenu ?? null
+    readonly property var request: Shell.state.menu ?? null
     readonly property bool mine: request !== null && request.surfaceId === surfaceId
     property string shownRequestId: ""
 
@@ -47,14 +46,15 @@ Item {
             return;
         }
         const requestId = host.request.requestId;
-        Shell.dispatch("contextMenu.select", {
+        Shell.dispatch("menu.select", {
             requestId: requestId,
             id: id
         });
     }
 
     onRequestChanged: {
-        if (!mine) {
+        // Not `mine`: its binding may not have seen this request yet.
+        if (request === null || request.surfaceId !== surfaceId) {
             if (menu.visible) {
                 menu.close();
             }
@@ -71,6 +71,7 @@ Item {
     ShellMenu {
         id: menu
 
+        objectName: "contextMenu"
         property bool chosen: false
 
         onClosed: {
@@ -86,8 +87,10 @@ Item {
                 required property var modelData
 
                 text: modelData.label
-                enabled: modelData.disabled !== true && modelData.header !== true
+                enabled: modelData.disabled !== true && modelData.enabled !== false && modelData.header !== true
                 destructive: modelData.destructive === true
+                current: modelData.checked === true
+                iconName: modelData.icon ?? ""
                 font.bold: modelData.header === true
                 onTriggered: {
                     menu.chosen = true;

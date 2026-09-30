@@ -20,13 +20,13 @@ import {
   environmentOptionLabel,
   findActiveEnvironmentOption,
 } from "../components/BranchToolbar.logic";
-import { type DraftId } from "../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { resolveAndPersistPreferredEditor, usePreferredEditor } from "../editorPreferences";
 import { useRenameThread } from "../hooks/useRenameThread";
 import { useThreadBranchSelection } from "../hooks/useThreadBranchSelection";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { subscribeShellRenameRequests } from "./shellRenameRequest";
-import { buildEmbedPath } from "./shellRightPanelState";
+import { buildTerminalEmbedPath } from "./shellEmbedPath";
 import { shellEnvironment } from "../state/shell";
 import { buildShellWorkspaceState } from "./shellWorkspaceState";
 
@@ -139,10 +139,9 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         terminalOpen: props.terminalOpen,
         terminalHeight: props.terminalHeight,
         terminalFocusRequestId: props.terminalFocusRequestId,
-        terminalEmbedPath: buildEmbedPath(
+        terminalEmbedPath: buildTerminalEmbedPath(
           props.threadRef.environmentId,
           props.threadRef.threadId,
-          "terminal",
         ),
         availableEditors: props.availableEditors,
         preferredEditorId,
@@ -176,6 +175,8 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
       refs,
     ],
   );
+
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
 
   useShellPublish("workspace", state);
 
@@ -225,6 +226,15 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         return;
       case "workspace.rename":
         renameThread(action.title);
+        return;
+      case "workspace.checkout.follow":
+        if (props.draftId !== undefined && props.draftId === action.draftId) {
+          setDraftThreadContext(props.draftId, {
+            branch: action.branch,
+            worktreePath: action.worktreePath,
+            envMode: action.envMode,
+          });
+        }
         return;
       case "workspace.branch.search":
         setBranchQuery(action.query);

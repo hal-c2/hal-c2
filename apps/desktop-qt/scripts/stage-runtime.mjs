@@ -1,10 +1,11 @@
 /**
  * Stages what the packaged hal-c2-qt runs next to the binary:
  *   host/*.ts       the desktop host (Node built-ins only, no dependencies)
- *   web/            the built web app (apps/web/dist, or HAL_C2_WEB_DIST)
  *   hal-c2-node/    the Elixir node release (apps/server-ex/_build/prod/rel/hal_c2,
  *                   or HAL_C2_NODE_RELEASE); the host runs its bin/hal_c2
  *   bin/node        the Node that runs the host and the node's JavaScript sidecars
+ *   licenses/       Node's LICENSE, and the third-party notices the licenses page
+ *                   reads (third-party-licenses.ts)
  *
  * Usage: node stage-runtime.mjs <destination>
  */
@@ -13,6 +14,8 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+
+import { writeDesktopLicenseManifest } from "./third-party-licenses.ts";
 
 const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const repoRoot = NodePath.resolve(scriptDir, "../../..");
@@ -26,9 +29,6 @@ if (destinationArg === undefined) {
 
 const destination = NodePath.resolve(destinationArg);
 const hostDir = NodePath.join(repoRoot, "apps/desktop-qt/host");
-const webDist = NodePath.resolve(
-  process.env.HAL_C2_WEB_DIST?.trim() || NodePath.join(repoRoot, "apps/web/dist"),
-);
 const nodeRelease = NodePath.resolve(
   process.env.HAL_C2_NODE_RELEASE?.trim() ||
     NodePath.join(repoRoot, "apps/server-ex/_build/prod/rel/hal_c2"),
@@ -40,10 +40,6 @@ const nodeExecutableName = hostPlatform === "win32" ? "node.exe" : "node";
 function requireFile(path, hint) {
   if (!NodeFS.existsSync(path)) throw new Error(`${path} is missing. ${hint}`);
 }
-requireFile(
-  NodePath.join(webDist, "index.html"),
-  "Build it with `vp run --filter @hal-c2/web build`.",
-);
 requireFile(
   NodePath.join(nodeRelease, "bin/hal_c2"),
   "Build it in apps/server-ex with `MIX_ENV=prod mix release`.",
@@ -64,7 +60,6 @@ await Promise.all([
   ...hostModules.map((name) =>
     NodeFSP.copyFile(NodePath.join(hostDir, name), NodePath.join(destination, "host", name)),
   ),
-  NodeFSP.cp(webDist, NodePath.join(destination, "web"), { recursive: true }),
   NodeFSP.cp(nodeRelease, NodePath.join(destination, "hal-c2-node"), {
     recursive: true,
     verbatimSymlinks: true,
@@ -72,6 +67,10 @@ await Promise.all([
   NodeFSP.copyFile(process.execPath, NodePath.join(destination, "bin", nodeExecutableName)),
   NodeFSP.copyFile(nodeLicense, NodePath.join(destination, "licenses/node/LICENSE")),
 ]);
+await writeDesktopLicenseManifest(
+  NodePath.join(destination, "licenses/third-party-licenses.json"),
+  false,
+);
 if (hostPlatform !== "win32") {
   await NodeFSP.chmod(NodePath.join(destination, "bin", nodeExecutableName), 0o755);
 }

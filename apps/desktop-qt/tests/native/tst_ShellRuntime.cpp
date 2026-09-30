@@ -3,28 +3,19 @@
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQmlContext>
-#include <QSignalSpy>
 #include <QStyleHints>
-#include <QQuickWebEngineProfile>
 #include <QTemporaryDir>
 #include <QTest>
-#include <QtWebEngineQuick>
-#include <QWebEnginePage>
-#include <QWebEngineProfile>
 
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "ThemeStore.h"
-#include "WebProfile.h"
 
 class ShellRuntimeTest : public QObject {
   Q_OBJECT
 
-signals:
-  void scriptFinished(const QVariant& result);
-
 private slots:
-  void systemAppearanceUpdatesQmlAndWebWithoutReloading() {
+  void appAppearanceUpdatesQmlWithoutReloading() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     QFile file(directory.filePath("theme.json"));
@@ -44,37 +35,19 @@ private slots:
     component.setData("import QtQuick\nRectangle { color: Theme.palette.color(\"canvas\", \"#111111\") }", QUrl());
     QScopedPointer<QObject> item(component.create());
     QVERIFY2(item, qPrintable(component.errorString()));
-    QWebEngineProfile profile;
-    QWebEnginePage page(&profile);
-    QSignalSpy loaded(&page, &QWebEnginePage::loadFinished);
-    page.setHtml("<!doctype html><html><body>System appearance</body></html>");
-    QTRY_VERIFY(!loaded.isEmpty());
-    connect(&theme, &ThemeStore::themeChanged, &page, [&] { page.runJavaScript(theme.injectionScript()); });
-    for (auto scheme : {Qt::ColorScheme::Dark, Qt::ColorScheme::Light, Qt::ColorScheme::Dark}) {
-      // Deliver the platform notification without changing the user's OS preferences.
-      QGuiApplication::styleHints()->colorSchemeChanged(scheme);
-      const bool dark = scheme == Qt::ColorScheme::Dark;
+    for (const bool dark : {true, false, true}) {
+      // The app's appearance, as ThemeController resolves it.
+      theme.applyBaseTheme(QVariantMap{{"id", "hal-c2"}, {"appearance", dark ? "dark" : "light"}});
       QCOMPARE(theme.appearance(), dark ? QString("dark") : QString("light"));
       QCOMPARE(item->property("color").value<QColor>(), QColor(dark ? "#1c1c1e" : "#fafafa"));
       QCOMPARE(theme.colors().contains("darkOnly"), dark);
-      QSignalSpy evaluated(this, &ShellRuntimeTest::scriptFinished);
-      page.runJavaScript(theme.injectionScript() + R"(;
-        ({dark: document.documentElement.classList.contains('dark'),
-          canvas: document.documentElement.style.getPropertyValue('--app-theme-canvas')})
-      )", [this](const QVariant& value) { emit scriptFinished(value); });
-      QTRY_COMPARE(evaluated.count(), 1);
-      const auto result = evaluated.first().first().toMap();
-      QCOMPARE(result.value("dark").toBool(), dark);
-      QCOMPARE(result.value("canvas").toString(), dark ? QString("#1c1c1e") : QString("#fafafa"));
     }
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
     file.write("{\"id\":\"fixed\",\"appearance\":\"light\",\"colors\":{\"canvas\":\"#ffffff\"}}");
     file.close();
     theme.reload();
     QVERIFY(!theme.followsSystemAppearance());
-    QSignalSpy changed(&theme, &ThemeStore::themeChanged);
-    QGuiApplication::styleHints()->colorSchemeChanged(Qt::ColorScheme::Dark);
-    QCOMPARE(changed.count(), 0);
+    theme.applyBaseTheme(QVariantMap{{"id", "hal-c2"}, {"appearance", "dark"}, {"colors", QVariantMap{{"text", "#eeeeee"}}}});
     QCOMPARE(theme.appearance(), QString("light"));
     QCOMPARE(item->property("color").value<QColor>(), QColor("#ffffff"));
     QVERIFY(file.remove());
@@ -107,7 +80,7 @@ private slots:
     QVERIFY(!theme.windowLiquidGlass());
   }
 
-  void qmlPaletteFollowsPublishedPageTheme() {
+  void qmlPaletteFollowsTheBaseTheme() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     ThemeStore theme(directory.path());
@@ -118,10 +91,10 @@ private slots:
     QScopedPointer<QObject> item(component.create());
     QVERIFY2(item, qPrintable(component.errorString()));
     QCOMPARE(item->property("color").value<QColor>(), QColor("#111111"));
-    theme.applyPageTheme(QVariantMap{{"appearance", "light"}, {"colors", QVariantMap{{"canvas", "#ffffff"}}}});
+    theme.applyBaseTheme(QVariantMap{{"appearance", "light"}, {"colors", QVariantMap{{"canvas", "#ffffff"}}}});
     QCOMPARE(theme.color("canvas", Qt::black), QColor("#ffffff"));
     QCOMPARE(item->property("color").value<QColor>(), QColor("#ffffff"));
-    theme.applyPageTheme(QVariantMap{{"appearance", "dark"}, {"colors", QVariantMap{{"canvas", "#0c2238cc"}}}});
+    theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"colors", QVariantMap{{"canvas", "#0c2238cc"}}}});
     QCOMPARE(item->property("color").value<QColor>(), QColor(12, 34, 56, 204));
     QFile overrideFile(directory.filePath("theme.json"));
     QVERIFY(overrideFile.open(QIODevice::WriteOnly));
@@ -140,19 +113,12 @@ private slots:
     ShellBridge bridge;
     const auto url = QUrl::fromLocalFile(directory.path());
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
-    bridge.setPageUrl(QUrl("https://remote.example/thread"));
+    bridge.setNodeOrigin(QUrl("https://remote.example"));
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
-    bridge.setPageUrl(QUrl("http://127.0.0.1:6182/thread"));
+    bridge.setNodeOrigin(QUrl("http://127.0.0.1:6182"));
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
-    QSignalSpy dispatched(&bridge, &ShellBridge::actionRequested);
-    const QVariantMap request{{QStringLiteral("path"), directory.path()}};
-    bridge.dispatch(QStringLiteral("project.folder.open"), request);
-    QCOMPARE(dispatched.count(), 0);
     bridge.setLocalFolderImportEnabled(true);
     QCOMPARE(bridge.localDirectoryPath(url), QFileInfo(directory.path()).canonicalFilePath());
-    bridge.dispatch(QStringLiteral("project.folder.open"), request);
-    QCOMPARE(dispatched.count(), 1);
-    QCOMPARE(dispatched.first().at(1).toMap().value(QStringLiteral("path")).toString(), QFileInfo(directory.path()).canonicalFilePath());
     QVERIFY(bridge.localDirectoryPath(QUrl("https://example.com/folder")).isEmpty());
     QVERIFY(bridge.localDirectoryPath(QUrl("file://server/share")).isEmpty());
     QVERIFY(bridge.localDirectoryPath(QUrl::fromLocalFile(directory.filePath("missing"))).isEmpty());
@@ -160,39 +126,9 @@ private slots:
     QVERIFY(file.open(QIODevice::WriteOnly));
     file.close();
     QVERIFY(bridge.localDirectoryPath(QUrl::fromLocalFile(file.fileName())).isEmpty());
-    bridge.setPageUrl(QUrl("https://remote.example/thread"));
+    // A node on another machine: its folders are not this machine's.
+    bridge.setNodeOrigin(QUrl("https://remote.example"));
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
-    bridge.dispatch(QStringLiteral("project.folder.open"), request);
-    QCOMPARE(dispatched.count(), 1);
-  }
-
-  void projectRemovalRequiresExplicitLocalAccess() {
-    ShellBridge bridge;
-    QSignalSpy actions(&bridge, &ShellBridge::actionRequested);
-    const QVariantMap request{{QStringLiteral("projectKey"), QStringLiteral("local:project")}};
-    bridge.dispatch(QStringLiteral("project.remove"), request);
-    QCOMPARE(actions.count(), 0);
-    bridge.setLocalFolderImportEnabled(true);
-    bridge.dispatch(QStringLiteral("project.remove"), request);
-    QCOMPARE(actions.count(), 1);
-    QCOMPARE(actions.first().at(1).toMap(), request);
-  }
-
-  void appPermissionsRequireMatchingHttpOrigin() {
-    ShellBridge bridge;
-    bridge.setPageUrl(QUrl("https://EXAMPLE.com/thread?id=1"));
-    QVERIFY(bridge.isAppOrigin(QUrl("https://example.com:443/")));
-    QVERIFY(!bridge.isAppOrigin(QUrl("http://example.com/")));
-    QVERIFY(!bridge.isAppOrigin(QUrl("https://example.com:8443/")));
-    QVERIFY(!bridge.isAppOrigin(QUrl("https://example.com.evil.test/")));
-    QVERIFY(!bridge.isAppOrigin(QUrl("https://example.com@evil.test/")));
-    bridge.setPageUrl(QUrl("http://127.0.0.1:6182/thread"));
-    QVERIFY(bridge.isAppOrigin(QUrl("http://127.0.0.1:6182/")));
-    QVERIFY(!bridge.isAppOrigin(QUrl("http://127.0.0.1:6183/")));
-    bridge.setPageUrl(QUrl("file:///tmp/shell.html"));
-    QVERIFY(!bridge.isAppOrigin(bridge.pageUrl()));
-    bridge.setPageUrl(QUrl());
-    QVERIFY(!bridge.isAppOrigin(QUrl()));
   }
 
   void themeRecoversAfterReadFailureWithoutAcceptingInvalidJson() {
@@ -223,109 +159,10 @@ private slots:
     QCOMPARE(theme.color("canvas", Qt::black), QColor("#123456"));
   }
 
-  void legacyThemeRemovalRestoresDocumentState() {
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    QFile file(directory.filePath("theme.json"));
-    const QByteArray source = "{\"id\":\"shell-night\",\"appearance\":\"dark\",\"colors\":{\"canvas\":\"#123456\",\"chrome\":\"#234567\"}}";
-    QVERIFY(file.open(QIODevice::WriteOnly));
-    file.write(source);
-    file.close();
-    ThemeStore theme(directory.path());
-    QWebEngineProfile profile;
-    QWebEnginePage page(&profile);
-    QSignalSpy loaded(&page, &QWebEnginePage::loadFinished);
-    page.setHtml("<!doctype html><html><body>Legacy theme test</body></html>");
-    QVERIFY(loaded.wait());
-    const auto evaluate = [&](const QString& script) {
-      QSignalSpy completed(this, &ShellRuntimeTest::scriptFinished);
-      page.runJavaScript(script, [this](const QVariant& result) { emit scriptFinished(result); });
-      if (completed.isEmpty() && !completed.wait()) return QVariant();
-      return completed.first().first();
-    };
-    evaluate(R"(
-      const root = document.documentElement;
-      root.dataset.themeId = 'page';
-      root.dataset.themeSelected = 'false';
-      root.classList.add('unrelated');
-      root.style.setProperty('background-color', 'rgb(12, 34, 56)', 'important');
-      root.style.setProperty('--app-theme-canvas', '#654321', 'important');
-      window.snapshot = () => JSON.stringify([
-        root.getAttribute('data-theme-id'), root.getAttribute('data-theme-selected'),
-        root.className, root.style.getPropertyValue('background-color'),
-        root.style.getPropertyPriority('background-color'),
-        root.style.getPropertyValue('--app-theme-canvas'),
-        root.style.getPropertyPriority('--app-theme-canvas')
-      ]);
-    )");
-    const auto original = evaluate("snapshot()");
-    evaluate(theme.injectionScript());
-    QVERIFY(evaluate("snapshot()") != original);
-    evaluate(theme.injectionScript());
-    QVERIFY(file.remove());
-    theme.reload();
-    evaluate(theme.injectionScript());
-    QCOMPARE(evaluate("snapshot()"), original);
-    QCOMPARE(evaluate("window.__halC2ShellTheme.observer === null").toBool(), true);
-    QCOMPARE(evaluate("document.documentElement.style.getPropertyValue('--app-theme-chrome')").toString(), QString());
-
-    evaluate("document.documentElement.removeAttribute('data-theme-id'); document.documentElement.removeAttribute('data-theme-selected');");
-    const auto withoutAttributes = evaluate("snapshot()");
-    QVERIFY(file.open(QIODevice::WriteOnly));
-    file.write(source);
-    file.close();
-    theme.reload();
-    evaluate(theme.injectionScript());
-    QVERIFY(file.remove());
-    theme.reload();
-    evaluate(theme.injectionScript());
-    QCOMPARE(evaluate("snapshot()"), withoutAttributes);
-  }
-
-  void themeBootstrapHandsOffWithoutRewritingThePage() {
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    QFile file(directory.filePath("theme.json"));
-    QVERIFY(file.open(QIODevice::WriteOnly));
-    file.write("{\"id\":\"shell-night\",\"appearance\":\"dark\",\"colors\":{\"canvas\":\"#123456\"}}");
-    file.close();
-    ThemeStore theme(directory.path());
-    QWebEngineProfile profile;
-    QWebEnginePage page(&profile);
-    QSignalSpy loaded(&page, &QWebEnginePage::loadFinished);
-    page.setHtml("<!doctype html><html><body>Theme test</body></html>");
-    QVERIFY(loaded.wait());
-    QVERIFY(loaded.first().first().toBool());
-    const auto evaluate = [&](const QString& source) {
-      QSignalSpy completed(this, &ShellRuntimeTest::scriptFinished);
-      page.runJavaScript(source, [this](const QVariant& result) { emit scriptFinished(result); });
-      if (completed.isEmpty() && !completed.wait()) return QVariant();
-      return completed.first().first();
-    };
-    evaluate(theme.injectionScript());
-    QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("shell-night"));
-    // Unclaimed/older pages still recover when their own palette overwrites the bootstrap.
-    evaluate("document.documentElement.dataset.themeId = 'page';");
-    QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("shell-night"));
-    evaluate(R"(
-      window.__halC2ShellTheme.observer.disconnect();
-      window.__halC2ShellTheme.observer = null;
-      window.__halC2ShellTheme.applyOverride = value => { window.deliveredTheme = value; };
-      document.documentElement.dataset.themeId = 'page-owned';
-    )");
-    evaluate(theme.injectionScript());
-    QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString("shell-night"));
-    QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("page-owned"));
-    QCOMPARE(evaluate("window.__halC2ShellTheme.observer === null").toBool(), true);
-    const QString beforePublication = theme.injectionScript();
-    theme.applyPageTheme(QVariantMap{{"appearance", "light"}, {"colors", QVariantMap{{"canvas", "#ffffff"}}}});
-    QCOMPARE(theme.injectionScript(), beforePublication);
-    QVERIFY(file.remove());
-    theme.reload();
-    evaluate(theme.injectionScript());
-    QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString());
-  }
-
+  // Scenario: A user's own shell layout replaces the default, A broken shell
+  // layout falls back to the default, A shell layout change applies without
+  // restarting (features/navigation/layout.feature). That the fallback's
+  // error is on screen is tst_ShellExamples::brokenShellFallsBackAndSaysWhy.
   void reloadKeepsSingletonsAndRecoversFromInvalidSource() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -350,7 +187,6 @@ Window {
   property string prompt: Shell.state.composer.text
   property real radiusValue: Theme.radius
   property string configValue: Runtime.configDir
-  property string profileName: WebProfile.storageName
 }
 )";
     };
@@ -359,10 +195,12 @@ Window {
     ShellBridge bridge;
     bridge.publish("composer", QVariantMap{{"text", "Retained draft"}});
     ThemeStore theme(config);
-    WebProfile webProfile(directory.filePath("web"));
-    qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", webProfile.profile());
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Terminals.qml")),
                              "HalC2.Shell", 1, 0, "Terminals");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Keybindings.qml")),
+                             "HalC2.Shell", 1, 0, "Keybindings");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Panel.qml")),
+                             "HalC2.Shell", 1, 0, "Panel");
     ShellRuntime runtime({config, sources}, &bridge, &theme);
     const auto window = []() -> QQuickWindow* {
       QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -377,7 +215,6 @@ Window {
       QCOMPARE(root->property("prompt").toString(), QString("Retained draft"));
       QCOMPARE(root->property("radiusValue").toReal(), theme.radius());
       QCOMPARE(root->property("configValue").toString(), config);
-      QCOMPARE(root->property("profileName").toString(), webProfile.profile()->storageName());
     };
     runtime.start();
     verifySingletons(window());
@@ -411,6 +248,7 @@ Window {
     QVERIFY(runtime.usingUserShell());
     QVERIFY(runtime.lastError().isEmpty());
 
+    // Saving the file is enough: the runtime watches it.
     QVERIFY(writeSource(shellPath, source(6)));
     QTRY_COMPARE(runtime.generation(), 6);
     verifySingletons(window());
@@ -438,7 +276,6 @@ Window {
 };
 
 int main(int argc, char** argv) {
-  QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
   useSoftwareRenderingWithoutDisplay();
   ShellRuntimeTest test;

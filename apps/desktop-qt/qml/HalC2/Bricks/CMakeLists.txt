@@ -8,9 +8,8 @@ qt_add_qml_module(hal_c2_bricks
   NO_GENERATE_QMLDIR
   NO_PLUGIN_OPTIONAL
   QML_FILES
-    AppView.qml
-    AppWindow.qml
     ClusterSettings.qml
+    ConnectionsSettings.qml
     Composer.qml
     ModelPicker.qml
     ProviderIcon.qml
@@ -38,16 +37,64 @@ qt_add_qml_module(hal_c2_bricks
     Sidebar.qml
     SidebarThreadRow.qml
     HalC2Wordmark.qml
+    KeybindingsSettings.qml
     TerminalDrawer.qml
     TitleBar.qml
-    WebSurface.qml
     WindowControls.qml
     Workspace.qml
+    Timeline.qml
+    SettingsHost.qml
+    SettingsPage.qml
+    SettingsRow.qml
+    GeneralSettings.qml
+    AppearanceSettings.qml
+    ThemeEditor.qml
+    TurnRequests.qml
+    ProjectRemovalDialog.qml
+    ConfirmDialog.qml
+    DiffPanel.qml
+    FilesPanel.qml
+    AgentsPanel.qml
     js/lucide.js
     js/modelPicker.js
     js/providerIcons.js
+    js/settingsPages.js
+    js/settingsRows.js
+    CentreHost.qml
+    ThreadView.qml
+    js/centreViews.js
+    js/panelTabs.js
+    js/scheduledTasks.js
+    RevertDialog.qml
+    TerminalSplits.qml
+    TerminalPanel.qml
+    PullRequestsPanel.qml
+    PullRequestReviewPanel.qml
+    PreviewsPanel.qml
+    ThreadDetailsPanel.qml
+    CommandPalette.qml
+    PullRequestsPage.qml HomePage.qml UsagePage.qml
+    ProvidersSettings.qml
+    ProviderAuthTerminal.qml
+    ProviderCustomModels.qml
+    ProviderAcpSessions.qml
+    ArchivedThreads.qml
+    ScheduledTaskEditor.qml
+    ScheduledTasksSettings.qml
+    SourceControlSettings.qml
+    IntegrationsSettings.qml
+    SettingsScopeSentence.qml
+    StorageSettings.qml
+    ProjectSettings.qml
+    DevicePanel.qml
+    OpenSourceLicenses.qml
+    DiagnosticsSettings.qml
+    WelcomeWizard.qml
+    OnboardingTerminal.qml
+    SnapShotSettings.qml
+    Markdown.qml
+    js/markdown.js
   RESOURCES
     qmldir
-    js/shell-connect.js
     icons/antigravity.png
 )

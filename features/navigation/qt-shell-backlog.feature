@@ -39,7 +39,8 @@ Feature: Desktop shell gaps
       When the user looks at what can be added to the right panel
       Then pull request list and connected devices are offered next to diff, files, terminal and pull request
 
-    @backlog @desktop
+    # The Device tab's whole behaviour is preview/devices.feature.
+    @desktop
     Scenario: A device tab streams a device screen
       Given a simulator is booted
       When the user adds a device tab for it
@@ -129,15 +130,13 @@ Feature: Desktop shell gaps
 
   Rule: Known shell keyboard bugs
 
-    # The page resolves mod+1…9 for the shell today (apps/web/src/shell/HalC2ShellBridge.tsx);
-    # this passes once the native sidebar owns the order.
-    @backlog @desktop
+    @desktop
     Scenario: Thread number shortcuts work in the native desktop shell
       Given the thread list shows at least three threads
       When the user presses mod+3
       Then the third thread opens
 
-    @backlog @desktop
+    @desktop
     Scenario: The previous worktree shortcut works in the native composer
       Given the native composer has keyboard focus
       When the user presses mod+shift+l

@@ -65,7 +65,7 @@ defmodule HalC2.MixProject do
     run!("npm", ~w(install --omit=dev --no-audit --no-fund --no-bin-links), target)
 
     run!(
-      Path.join(root, "node_modules/.bin/esbuild"),
+      Path.join(package, "node_modules/.bin/esbuild"),
       ~w(src/main.ts --bundle --platform=node --format=esm --external:@cursor/sdk) ++
         ["--outfile=#{target}/main.mjs"],
       package
@@ -77,7 +77,7 @@ defmodule HalC2.MixProject do
   # `mix features [--backlog] [glob ...] [-- mix test args]` runs the repo's `@node`
   # Gherkin scenarios (`features/`) and nothing else. Globs are relative to `features/`
   # and default to every file; `--backlog` (or INCLUDE_BACKLOG=1) also runs the
-  # `@backlog` ones. See test/support/features.ex.
+  # `@backlog` and `@backlog-node` ones. See test/support/features.ex.
   defp features(args) do
     {ours, rest} = Enum.split_while(args, &(&1 != "--"))
     {flags, globs} = Enum.split_with(ours, &(&1 == "--backlog"))

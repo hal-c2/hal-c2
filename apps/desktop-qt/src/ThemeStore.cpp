@@ -5,7 +5,6 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QGuiApplication>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -14,39 +13,17 @@
 
 namespace {
 
-// Role names are camelCase in the file and become `--app-theme-<kebab>` on
-// the page, mirroring APP_THEME_VARIABLES in apps/web/src/themePalette.ts.
+// Role names are camelCase in the file, as APP_THEME_VARIABLES in
+// apps/web/src/themePalette.ts names them.
 bool isRoleName(const QString& name) {
   static const QRegularExpression pattern(QStringLiteral("^[a-z][a-zA-Z0-9]*$"));
   return pattern.match(name).hasMatch();
 }
 
-QString cssVariableForRole(const QString& role) {
-  if (role == QStringLiteral("terminalSelection")) {
-    return QStringLiteral("--app-theme-terminal-selection-background");
-  }
-  QString kebab;
-  for (const QChar ch : role) {
-    if (ch.isUpper()) {
-      kebab += QLatin1Char('-');
-      kebab += ch.toLower();
-    } else {
-      kebab += ch;
-    }
-  }
-  return QStringLiteral("--app-theme-") + kebab;
-}
-
-// Values land in inline styles; keep them to what a colour token can be.
+// Keep values to what a colour token can be.
 bool isSafeColorValue(const QString& value) {
   static const QRegularExpression pattern(QStringLiteral("^[a-zA-Z0-9#(),.%/ -]+$"));
   return !value.isEmpty() && value.size() < 128 && pattern.match(value).hasMatch();
-}
-
-QString jsLiteral(const QJsonValue& value) {
-  return QString::fromUtf8(QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact))
-      .mid(1)
-      .chopped(1);
 }
 
 void mergeColors(QVariantMap& into, const QJsonObject& colors) {
@@ -74,13 +51,6 @@ ThemeStore::ThemeStore(const QString& configDir, QObject* parent)
     watch();
     scheduleReload();
   });
-  connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
-          [this](Qt::ColorScheme scheme) {
-    if (!m_followsSystemAppearance) return;
-    const QString previous = m_appearance;
-    resolveColors(scheme);
-    if (m_appearance != previous) emit themeChanged();
-  });
   applyDefaults();
   watch();
   reload();
@@ -104,7 +74,7 @@ void ThemeStore::applyDefaults() {
   m_id.clear();
   m_name.clear();
   m_appearance.clear();
-  m_baseColors = {};
+  m_fileColors = {};
   m_variants = {};
   m_followsSystemAppearance = false;
   m_colors.clear();
@@ -158,9 +128,9 @@ void ThemeStore::reload() {
                      ? QStringLiteral("light")
                      : QStringLiteral("dark");
 
-  m_baseColors = root.value(QStringLiteral("colors")).toObject();
+  m_fileColors = root.value(QStringLiteral("colors")).toObject();
   m_variants = root.value(QStringLiteral("variants")).toObject();
-  // Shell-only extras; the page keeps its own font and radius preferences.
+  // Shell-only extras over the base theme's radius and fonts.
   m_radius = root.value(QStringLiteral("radius")).toString();
   const QJsonObject fonts = root.value(QStringLiteral("fonts")).toObject();
   m_fontUi = fonts.value(QStringLiteral("ui")).toString();
@@ -168,7 +138,7 @@ void ThemeStore::reload() {
 
   const QJsonObject window = root.value(QStringLiteral("window")).toObject();
   m_followsSystemAppearance = window.value(QStringLiteral("followSystemAppearance")).toBool(false);
-  resolveColors(QGuiApplication::styleHints()->colorScheme());
+  resolveColors();
   m_windowOpacity = qBound(0.1, window.value(QStringLiteral("opacity")).toDouble(1.0), 1.0);
   m_windowTransparent = window.value(QStringLiteral("transparent")).toBool(false);
   m_windowBlur = window.value(QStringLiteral("blur")).toBool(false);
@@ -178,116 +148,18 @@ void ThemeStore::reload() {
   emit themeChanged();
 }
 
-void ThemeStore::resolveColors(Qt::ColorScheme colorScheme) {
-  if (m_followsSystemAppearance && colorScheme != Qt::ColorScheme::Unknown) {
-    m_appearance = colorScheme == Qt::ColorScheme::Light ? QStringLiteral("light")
-                                                       : QStringLiteral("dark");
+void ThemeStore::resolveColors() {
+  // Following, the file's variants track the app's appearance: the system's
+  // unless the user pinned one (ThemeController).
+  if (m_followsSystemAppearance) {
+    const bool dark = m_baseAppearance.isEmpty()
+                          ? QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark
+                          : m_baseAppearance == QStringLiteral("dark");
+    m_appearance = dark ? QStringLiteral("dark") : QStringLiteral("light");
   }
   m_colors.clear();
-  mergeColors(m_colors, m_baseColors);
+  mergeColors(m_colors, m_fileColors);
   mergeColors(m_colors, m_variants.value(m_appearance).toObject());
-}
-
-QString ThemeStore::injectionScript() const {
-  // Applies the theme the same way the web app applies its own
-  // (applyThemeColorPreview in themePalette.ts): `data-theme-id` on <html>
-  // plus inline `--app-theme-*` variables. It runs as a user script at
-  // document creation so the first paint is already in the shell's colours,
-  // and again on theme changes. Once the page claims the bootstrap mailbox,
-  // subsequent injections deliver the override to its theme module. Older
-  // pages retain the observer fallback. An empty theme removes the override.
-  QJsonObject vars;
-  for (auto it = m_colors.cbegin(); it != m_colors.cend(); ++it) {
-    vars.insert(cssVariableForRole(it.key()), it.value().toString());
-  }
-  // The boot splash in index.html paints `--boot-*` until React mounts.
-  const auto boot = [&](const char* variable, const char* role) {
-    const QString value = m_colors.value(QLatin1String(role)).toString();
-    if (!value.isEmpty()) {
-      vars.insert(QLatin1String(variable), value);
-    }
-  };
-  boot("--boot-background", "canvas");
-  boot("--boot-foreground", "text");
-  boot("--boot-accent", "accent");
-  const QJsonObject theme{
-      {QStringLiteral("id"), m_loaded ? m_id : QString()},
-      {QStringLiteral("dark"), m_appearance != QStringLiteral("light")},
-      {QStringLiteral("vars"), vars},
-  };
-  return QStringLiteral(
-             "(() => {"
-             "  const theme = %1;"
-             "  const run = () => {"
-             "    const root = document.documentElement;"
-             "    const state = (window.__halC2ShellTheme ||= {});"
-             "    if (state.observer) { state.observer.disconnect(); state.observer = null; }"
-             "    state.override = theme;"
-             "    if (state.applyOverride) { state.applyOverride(theme); return; }"
-             "    const restoreBackground = () => {"
-             "      if (state.original) root.style.setProperty('background-color', state.original.background, state.original.backgroundPriority);"
-             "      state.chromeApplied = false;"
-             "    };"
-             "    const restoreVariable = name => {"
-             "      const previous = state.originalVars?.[name];"
-             "      if (previous) root.style.setProperty(name, previous.value, previous.priority);"
-             "      else root.style.removeProperty(name);"
-             "      if (state.originalVars) delete state.originalVars[name];"
-             "    };"
-             "    if (!theme.id) {"
-             "      for (const name of state.applied || []) restoreVariable(name);"
-             "      state.applied = [];"
-             "      if (state.original) {"
-             "        for (const [name, value] of Object.entries(state.original.attributes)) {"
-             "          if (value === null) root.removeAttribute(name); else root.setAttribute(name, value);"
-             "        }"
-             "        root.classList.toggle('dark', state.original.dark);"
-             "        restoreBackground();"
-             "        delete state.original;"
-             "      }"
-             "      return;"
-             "    }"
-             "    state.original ||= {"
-             "      attributes: {'data-theme-id': root.getAttribute('data-theme-id'), 'data-theme-selected': root.getAttribute('data-theme-selected')},"
-             "      dark: root.classList.contains('dark'),"
-             "      background: root.style.getPropertyValue('background-color'),"
-             "      backgroundPriority: root.style.getPropertyPriority('background-color')"
-             "    };"
-             "    state.originalVars ||= {};"
-             "    for (const name of Object.keys(theme.vars)) {"
-             "      state.originalVars[name] ||= {value: root.style.getPropertyValue(name), priority: root.style.getPropertyPriority(name)};"
-             "    }"
-             "    const chrome = theme.vars['--app-theme-chrome'] || '';"
-             "    const probe = document.createElement('div');"
-             "    probe.style.backgroundColor = chrome;"
-             "    const chromeCss = probe.style.backgroundColor;"
-             "    if (!chromeCss && state.chromeApplied) restoreBackground();"
-             "    const stale = () =>"
-             "      root.dataset.themeId !== theme.id ||"
-             "      root.classList.contains('dark') !== theme.dark ||"
-             "      (chromeCss && root.style.backgroundColor !== chromeCss) ||"
-             "      Object.entries(theme.vars).some(([name, value]) => root.style.getPropertyValue(name) !== value);"
-             "    const apply = () => {"
-             "      root.dataset.themeId = theme.id;"
-             "      root.dataset.themeSelected = 'true';"
-             "      root.classList.toggle('dark', theme.dark);"
-             "      for (const [name, value] of Object.entries(theme.vars)) root.style.setProperty(name, value);"
-             "      if (chromeCss) { root.style.backgroundColor = chromeCss; state.chromeApplied = true; }"
-             "    };"
-             "    for (const name of state.applied || []) if (!(name in theme.vars)) restoreVariable(name);"
-             "    state.applied = Object.keys(theme.vars);"
-             "    apply();"
-             "    state.observer = new MutationObserver(() => {"
-             "      if (stale()) apply();"
-             "    });"
-             "    state.observer.observe(root, { attributes: true, attributeFilter: ['data-theme-id', 'class', 'style'] });"
-             "  };"
-             "  if (document.documentElement) run();"
-             "  else new MutationObserver((_, observer) => {"
-             "    if (document.documentElement) { observer.disconnect(); run(); }"
-             "  }).observe(document, { childList: true });"
-             "})();")
-      .arg(jsLiteral(theme));
 }
 
 namespace {
@@ -311,7 +183,7 @@ QColor parseCssColor(const QString& value) {
 }  // namespace
 
 QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
-  for (const QVariantMap* source : {&m_colors, &m_pageColors}) {
+  for (const QVariantMap* source : {&m_colors, &m_baseColors}) {
     const auto value = source->value(role).toString();
     if (value.isEmpty()) {
       continue;
@@ -326,7 +198,7 @@ QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
 
 namespace {
 
-// The page publishes CSS font-family lists; QML wants one family and falls
+// The node's theme carries CSS font-family lists; QML wants one family and falls
 // back on its own, so take the first installed non-generic entry, or the
 // first non-generic one when nothing in the list is installed.
 QString firstFontFamily(const QString& list) {
@@ -357,6 +229,10 @@ QString firstFontFamily(const QString& list) {
 
 }  // namespace
 
+QColor ThemeStore::link() const {
+  return QColor(appearance() == QStringLiteral("light") ? QStringLiteral("#1d4ed8") : QStringLiteral("#60a5fa"));
+}
+
 qreal ThemeStore::radius() const {
   if (!m_radius.isEmpty()) {
     // Accept "8", "8px" or "0.5rem" (16px root).
@@ -373,26 +249,28 @@ qreal ThemeStore::radius() const {
       return parsed;
     }
   }
-  return m_pageRadius;
+  return m_baseRadius;
 }
 
 QString ThemeStore::fontUi() const {
-  return m_fontUi.isEmpty() ? firstFontFamily(m_pageFontUi) : firstFontFamily(m_fontUi);
+  return m_fontUi.isEmpty() ? firstFontFamily(m_baseFontUi) : firstFontFamily(m_fontUi);
 }
 
 QString ThemeStore::fontMono() const {
-  return m_fontMono.isEmpty() ? firstFontFamily(m_pageFontMono) : firstFontFamily(m_fontMono);
+  return m_fontMono.isEmpty() ? firstFontFamily(m_baseFontMono) : firstFontFamily(m_fontMono);
 }
 
-void ThemeStore::applyPageTheme(const QVariant& theme) {
+void ThemeStore::applyBaseTheme(const QVariant& theme) {
   const QVariantMap map = theme.toMap();
-  if (map.isEmpty()) {
+  if (map.isEmpty() || map == m_baseTheme) {
     return;
   }
-  m_pageColors = map.value(QStringLiteral("colors")).toMap();
-  m_pageAppearance = map.value(QStringLiteral("appearance")).toString();
-  m_pageRadius = map.value(QStringLiteral("radius"), 8).toDouble();
-  m_pageFontUi = map.value(QStringLiteral("fontUi")).toString();
-  m_pageFontMono = map.value(QStringLiteral("fontMono")).toString();
+  m_baseTheme = map;
+  m_baseColors = map.value(QStringLiteral("colors")).toMap();
+  m_baseAppearance = map.value(QStringLiteral("appearance")).toString();
+  m_baseRadius = map.value(QStringLiteral("radius"), 8).toDouble();
+  m_baseFontUi = map.value(QStringLiteral("fontUi")).toString();
+  m_baseFontMono = map.value(QStringLiteral("fontMono")).toString();
+  if (m_loaded) resolveColors();
   emit themeChanged();
 }

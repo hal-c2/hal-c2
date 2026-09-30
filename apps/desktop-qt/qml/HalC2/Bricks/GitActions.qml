@@ -3,14 +3,16 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// The git pill: quick action + menu, with the commit and
-// default-branch dialogs rendered here from Shell.state.git. Progress and
-// results are the page's toasts, shown by Notifications.
+// The git pill: quick action + menu, with the commit, default-branch and
+// publish dialogs rendered here from Shell.state.git (GitController).
+// Progress and results are toasts, shown by Notifications.
 RowLayout {
     id: git
 
     readonly property var model: Shell.state.git ?? null
     readonly property bool ready: model !== null && model.available
+    // Why a checkout the node cannot reach (a linked thread's) has no git actions.
+    readonly property string unavailableReason: model !== null && !model.available ? (model.unavailableReason ?? "") : ""
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
 
@@ -18,7 +20,7 @@ RowLayout {
     property bool compact: false
 
     spacing: 0
-    visible: ready
+    visible: ready || unavailableReason !== ""
 
     readonly property string quickIcon: {
         if (!ready) {
@@ -34,6 +36,21 @@ RowLayout {
         default:
             return model.quickAction.label.toLowerCase().indexOf("push") >= 0 ? "cloud-upload" : "git-commit-horizontal";
         }
+    }
+
+    Text {
+        objectName: "gitUnavailable"
+        visible: git.unavailableReason !== ""
+        text: git.compact ? qsTr("No git") : qsTr("Git unavailable")
+        color: git.muted
+        font.pixelSize: 12
+
+        HoverHandler {
+            id: unavailableHover
+        }
+
+        ToolTip.visible: unavailableHover.hovered
+        ToolTip.text: git.unavailableReason
     }
 
     ShellButton {
@@ -146,8 +163,10 @@ RowLayout {
         }
 
         parent: Overlay.overlay
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
+        x: Math.round((parent.width - width * scale) / 2)
+        y: Math.round((parent.height - height * scale) / 2)
         width: 520
         modal: true
         padding: 16
@@ -298,8 +317,10 @@ RowLayout {
         readonly property var pending: git.ready ? git.model.pendingDefaultBranch : null
 
         parent: Overlay.overlay
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
+        x: Math.round((parent.width - width * scale) / 2)
+        y: Math.round((parent.height - height * scale) / 2)
         width: 460
         modal: true
         padding: 16
@@ -360,6 +381,156 @@ RowLayout {
                     text: confirmDialog.pending ? confirmDialog.pending.continueLabel : ""
                     onClicked: Shell.dispatch("git.defaultBranch", {
                         choice: "continue"
+                    })
+                }
+            }
+        }
+    }
+    // ---- Publish repository ------------------------------------------
+    Popup {
+        id: publishDialog
+        objectName: "publishDialog"
+
+        // Open while GitController has the dialog open; Escape and Cancel tell it.
+        readonly property var form: git.ready ? (git.model.publishing ?? null) : null
+
+        onFormChanged: {
+            if (form !== null && !opened) {
+                open();
+            } else if (form === null && opened) {
+                close();
+            }
+        }
+
+        parent: Overlay.overlay
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
+        x: Math.round((parent.width - width * scale) / 2)
+        y: Math.round((parent.height - height * scale) / 2)
+        width: 460
+        modal: true
+        padding: 16
+        closePolicy: Popup.CloseOnEscape
+        onClosed: {
+            if (form !== null) {
+                Shell.dispatch("git.publish.cancel");
+            }
+        }
+        onOpened: repository.text = ""
+
+        background: Rectangle {
+            radius: Theme.radius
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: Theme.palette.color("border", "#27272a")
+            border.width: 1
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            Text {
+                text: qsTr("Publish repository")
+                color: git.foreground
+                font.pixelSize: 15
+                font.bold: true
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Create the repository on its host, add it as a remote and push this branch.")
+                color: git.muted
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                ComboBox {
+                    id: provider
+
+                    popup.scale: publishDialog.scale
+                    popup.transformOrigin: Item.TopLeft
+                    textRole: "label"
+                    valueRole: "value"
+                    model: [
+                        {
+                            value: "github",
+                            label: "GitHub"
+                        },
+                        {
+                            value: "gitlab",
+                            label: "GitLab"
+                        }
+                    ]
+                }
+
+                ComboBox {
+                    id: visibility
+
+                    popup.scale: publishDialog.scale
+                    popup.transformOrigin: Item.TopLeft
+                    textRole: "label"
+                    valueRole: "value"
+                    model: [
+                        {
+                            value: "private",
+                            label: qsTr("Private")
+                        },
+                        {
+                            value: "public",
+                            label: qsTr("Public")
+                        }
+                    ]
+                }
+            }
+
+            TextField {
+                id: repository
+
+                Layout.fillWidth: true
+                placeholderText: qsTr("owner/repository")
+                placeholderTextColor: git.muted
+                color: git.foreground
+                font.pixelSize: 13
+                enabled: !(publishDialog.form?.busy ?? false)
+                onAccepted: publishButton.clicked()
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: text !== ""
+                text: publishDialog.form?.error ?? ""
+                color: Theme.palette.color("error", "#ef4444")
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                ShellButton {
+                    text: qsTr("Cancel")
+                    enabled: !(publishDialog.form?.busy ?? false)
+                    onClicked: publishDialog.close()
+                }
+
+                ShellButton {
+                    id: publishButton
+
+                    primary: true
+                    text: publishDialog.form?.busy ? qsTr("Publishing…") : qsTr("Publish")
+                    enabled: !(publishDialog.form?.busy ?? false) && repository.text.trim() !== ""
+                    onClicked: Shell.dispatch("git.publish.submit", {
+                        provider: provider.currentValue,
+                        visibility: visibility.currentValue,
+                        repository: repository.text.trim()
                     })
                 }
             }

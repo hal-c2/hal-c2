@@ -18,21 +18,21 @@ Feature: Drafting and sending a message
     Given a project with an open thread
     And the thread's provider is ready
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Enter sends the message
     Given the user has typed "Fix the failing test"
     When the user presses Enter
     Then the message "Fix the failing test" is sent to the agent
     And the composer is empty
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Shift+Enter starts a new line instead of sending
     Given the user has typed "first line"
     When the user presses Shift+Enter and types "second line"
     Then the draft holds two lines
     And nothing has been sent
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: The send shortcut setting decides what Enter does
     Given the send shortcut setting is "<setting>"
     And the user has typed <draft>
@@ -55,27 +55,27 @@ Feature: Drafting and sending a message
     When the user presses Enter
     Then a new line is added to the draft
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: mod+alt+Enter starts a new thread in the background
     Given the user is writing the first message of a new thread
     When the user presses mod+alt+Enter
     Then a new thread starts with that message in the background
     And no window shortcut takes the key instead
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The draft stays until the send is confirmed
     Given the user has typed "keep me"
     When the user sends the message
     Then the draft still reads "keep me" until the thread confirms the send
     And the draft clears once the send is confirmed
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Switching threads before the draft syncs does not leak text into the new thread
     Given the user has just typed "for thread A" in thread A
     When the user switches to thread B before the draft is saved
     Then thread B's draft does not contain "for thread A"
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: Each thread keeps its own draft
     Given the user has typed "draft for A" in thread A
     When the user switches to thread B and back to thread A
@@ -96,7 +96,7 @@ Feature: Drafting and sending a message
     Then the message is not sent
     And the user is told the prompt is 10 characters over the limit and to shorten or split it
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: Sending while disconnected keeps the draft
     Given the environment is disconnected
     And the user has typed "are you there"
@@ -104,21 +104,21 @@ Feature: Drafting and sending a message
     Then the user is told the message was not sent because they are not connected
     And the draft still reads "are you there"
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: A send the node rejects restores the draft
     Given the user has typed "do the thing"
     When the user sends it and the node rejects the message
     Then the user sees why the send failed
     And the draft reads "do the thing" again
 
-  @tui
+  @desktop @tui
   Scenario: The first message of a new thread creates the thread and starts its turn
     Given the user is starting a new thread in the project
     When the user sends "Set up the linter"
     Then a thread titled from "Set up the linter" is created
     And its first turn starts with that message
 
-  @backlog @desktop
+  @desktop
   Scenario: A background prompt starts a thread without leaving the composer
     Given the user is writing the first message of a new thread
     When the user sends it in the background
@@ -126,7 +126,7 @@ Feature: Drafting and sending a message
     And the user is told it started in the background with a way to open it
     And the composer is ready for another prompt
 
-  @backlog @desktop
+  @desktop
   Scenario: A background prompt that fails can be restored
     Given the user sent "refactor utils" in the background
     When the background thread fails to start

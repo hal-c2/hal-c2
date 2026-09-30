@@ -22,19 +22,19 @@ Feature: Pinning and arranging threads
     When the user looks at the thread list
     Then "Gamma" is listed in the pinned section above "Alpha" and "Beta"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Pinning a thread
     When the user pins "Beta"
     Then "Beta" moves to the pinned section
     And every connected device shows "Beta" as pinned
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Unpinning a thread
     Given "Beta" is pinned
     When the user unpins "Beta"
     Then "Beta" returns to its place among the active threads
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Unpinning asks first when the user wants confirmation
     Given "Beta" is pinned
     And the user asked to confirm before unpinning
@@ -42,7 +42,7 @@ Feature: Pinning and arranging threads
     Then the user is asked "Unpin thread 'Beta'? This will move the thread out of your pinned section."
     And "Beta" stays pinned until the user confirms
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: Undoing a thread change
     Given the user just <changed> "Beta"
     When the user undoes the change within five seconds
@@ -55,7 +55,7 @@ Feature: Pinning and arranging threads
       | snoozed  |
       | archived |
 
-  @backlog @desktop
+  @desktop
   Scenario: Undo reopens an archived thread the user was viewing
     Given the user is viewing "Beta"
     And the user just archived "Beta"
@@ -70,7 +70,7 @@ Feature: Pinning and arranging threads
     Then the text edit is undone
     And "Beta" stays unpinned
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The undo offer expires
     Given the user just unpinned "Beta"
     When five seconds pass

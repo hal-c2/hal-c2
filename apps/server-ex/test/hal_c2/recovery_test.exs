@@ -59,4 +59,78 @@ defmodule HalC2.Orchestration.RecoveryTest do
     # Settled threads are left alone.
     assert Recovery.settle("t1") == {0, nil}
   end
+
+  test "background work left running after its turn is ended at boot" do
+    :ok = HalC2.Shell.subscribe(self())
+    at = "2026-09-23T10:00:00.000Z"
+
+    {:ok, _} =
+      HalC2.Streams.commit("t2", :thread, [
+        {"thread", "t2",
+         %{"s" => %{"id" => "t2", "title" => "Quiet", "createdAt" => at, "updatedAt" => at}}},
+        {"run", "r1",
+         %{"s" => %{"id" => "r1", "ordinal" => 1, "status" => "completed", "completedAt" => at}}},
+        {"subagent", "s1",
+         %{"s" => %{"id" => "s1", "origin" => "provider_native", "status" => "running"}}},
+        {"turn-item", "i1",
+         %{
+           "s" => %{
+             "id" => "i1",
+             "type" => "subagent",
+             "runId" => "r1",
+             "status" => "running",
+             "ordinal" => 0,
+             "nativeItemRef" => %{"nativeId" => "agent-1"}
+           }
+         }}
+      ])
+
+    assert_receive {:hal_c2_shell,
+                    {:rows, _, [{"t2", {"thread", %{"pendingBackgroundTasks" => [_]}}}]}},
+                   1_000
+
+    assert Recovery.run() == ["t2"]
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t2"))
+    assert %{"status" => "interrupted"} = StreamState.get(state, "subagent")["s1"]
+    assert %{"status" => "interrupted"} = StreamState.get(state, "turn-item")["i1"]
+    assert %{"status" => "completed"} = StreamState.get(state, "run")["r1"]
+    assert {"thread", %{"pendingBackgroundTasks" => []}} = HalC2.Shell.row(node(), "t2")
+  end
+
+  test "a delegated task is left running at boot, as it settles with its own thread" do
+    :ok = HalC2.Shell.subscribe(self())
+    at = "2026-09-23T10:00:00.000Z"
+
+    {:ok, _} =
+      HalC2.Streams.commit("t3", :thread, [
+        {"thread", "t3",
+         %{"s" => %{"id" => "t3", "title" => "Parent", "createdAt" => at, "updatedAt" => at}}},
+        {"run", "r1",
+         %{"s" => %{"id" => "r1", "ordinal" => 1, "status" => "completed", "completedAt" => at}}},
+        {"subagent", "s1",
+         %{"s" => %{"id" => "s1", "origin" => "app_owned", "status" => "running"}}},
+        {"node", "s1", %{"s" => %{"id" => "s1", "kind" => "subagent", "status" => "running"}}},
+        {"turn-item", "i1",
+         %{
+           "s" => %{
+             "id" => "i1",
+             "type" => "subagent",
+             "runId" => "r1",
+             "nodeId" => "s1",
+             "status" => "running",
+             "ordinal" => 0
+           }
+         }}
+      ])
+
+    assert_receive {:hal_c2_shell,
+                    {:rows, _, [{"t3", {"thread", %{"pendingBackgroundTasks" => [_]}}}]}},
+                   1_000
+
+    assert Recovery.run() == []
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t3"))
+    assert %{"status" => "running"} = StreamState.get(state, "subagent")["s1"]
+    assert %{"status" => "running"} = StreamState.get(state, "node")["s1"]
+    assert %{"status" => "running"} = StreamState.get(state, "turn-item")["i1"]
+  end
 end

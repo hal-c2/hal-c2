@@ -14,6 +14,10 @@
 #   apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx
 #   apps/web/src/components/pullRequest/pullRequestLinkContextMenu.ts
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (open pull request)
+#   apps/desktop-qt/src/native/ThreadPullRequests.cpp (the right panel's Pull requests tab)
+#   apps/desktop-qt/qml/HalC2/Bricks/PullRequestsPanel.qml
+#   apps/desktop-qt/tests/native/features/PullRequestSteps.cpp
+#   apps/web/src/components/pullRequest/ThreadPullRequestsPanel.tsx
 #   apps/tui/src/features.backlog.test.ts (pull request checkout)
 
 Feature: Threads that work on or link pull requests
@@ -81,19 +85,19 @@ Feature: Threads that work on or link pull requests
     When the user pastes "https://github.com/acme/shop/pull/42" to start a pull request thread
     Then the user sees the pull request's title and branches before choosing local or worktree
 
-  @node
+  @node @desktop
   Scenario: Linking a pull request to a thread
     Given the thread "Tax work" has no linked pull request
     When the user links pull request 42 to "Tax work"
     Then "Tax work" lists pull request 42 with its current state
 
-  @node
+  @node @desktop
   Scenario: Unlinking a pull request from a thread
     Given pull request 42 is linked to "Tax work"
     When the user unlinks pull request 42
     Then "Tax work" no longer lists pull request 42
 
-  @node
+  @node @desktop
   Scenario: A thread links several pull requests across repositories
     When the user links "acme/shop" pull request 42 and "acme/api" pull request 7 to "Tax work"
     Then "Tax work" lists both pull requests
@@ -121,7 +125,7 @@ Feature: Threads that work on or link pull requests
     When the thread's pull requests are checked again
     Then "Tax work" shows pull request 44
 
-  @node
+  @node @desktop
   Scenario: Linked pull requests stay current
     Given pull request 42 is linked to "Tax work"
     When a review is submitted on pull request 42 on GitHub
@@ -145,12 +149,61 @@ Feature: Threads that work on or link pull requests
     When the user links that pull request from the mention
     Then "Tax work" lists pull request 42
 
-  @backlog @desktop @mobile
-  Scenario: A pull request from a repository no project can read
+  # Links are decided by host, as the web's usePullRequestLinking and
+  # findProjectOnChangeRequestHost do: any project on a host lends the node its
+  # credentials there, so a repository nobody has checked out still links.
+  @desktop @mobile @backlog-mobile
+  Scenario: A pull request from another repository on a host a project reads
     When the user links "https://github.com/other/repo/pull/1"
-    Then the user is told no project in this environment can read "github.com/other/repo"
+    Then "Tax work" lists pull request 1 of "other/repo"
 
-  @desktop
+  @desktop @mobile @backlog-mobile
+  Scenario: A pull request on a host no project can read
+    When the user links "https://gitlab.com/other/repo/-/merge_requests/1"
+    Then the user is told no project in this environment can read "gitlab.com/other/repo"
+
+  # Azure DevOps reads use the checkout's organization and project, not the
+  # host's credentials, so there it takes a project of that repository.
+  @desktop @mobile @backlog-mobile
+  Scenario: An Azure DevOps pull request needs a project of its own repository
+    Given the environment also has the Azure DevOps project "dev.azure.com/acme/shop/_git/web"
+    When the user links "https://dev.azure.com/acme/shop/_git/api/pullrequest/1"
+    Then the user is told no project in this environment can read "dev.azure.com/acme/shop/_git/api"
+    When the user links "https://dev.azure.com/acme/shop/_git/web/pullrequest/1"
+    Then "Tax work" lists pull request 1 of "acme/shop/_git/web"
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A pull request the node does not link says why
+    Given the thread "Tax work" has no linked pull request
+    And the node refuses to link pull requests to "Tax work"
+    When the user links pull request 42 to "Tax work"
+    Then the user is told pull request 42 could not be linked
+    And "Tax work" lists no pull requests
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Opening a linked pull request in the browser
+    Given pull request 42 is linked to "Tax work"
+    When the user opens pull request 42 from "Tax work"
+    Then the browser opens "https://github.com/acme/shop/pull/42"
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Refreshing the linked pull requests reads them from the host again
+    Given pull request 42 is linked to "Tax work"
+    And a review is submitted on pull request 42 on GitHub
+    When the user refreshes the pull requests of "Tax work"
+    Then pull request 42 is read from GitHub again
+    And "Tax work" shows the new review state
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Linked pull requests of an unreachable environment stay as last synced
+    Given pull request 42 is linked to "Tax work"
+    When the environment of "Tax work" becomes unreachable
+    Then "Tax work" still lists pull request 42
+    And the user cannot link, unlink or refresh pull requests
+    When the environment of "Tax work" is reachable again
+    Then the user can link, unlink and refresh pull requests
+
+  @desktop @backlog-desktop
   Scenario: Opening the thread's pull request from the composer
     Given pull request 42 is the branch's pull request of "Tax work"
     When the user opens the pull request from the thread

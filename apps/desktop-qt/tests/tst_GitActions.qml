@@ -21,6 +21,25 @@ Item {
             } };
         }
         function cleanup() { Shell.reset(); }
+        // The first item under `item` whose text is `text`.
+        function withText(item, text) {
+            if (item.text === text) return item;
+            for (const child of item.children) {
+                const found = withText(child, text);
+                if (found) return found;
+            }
+            return null;
+        }
+        function openCommitDialog() {
+            let git = createTemporaryObject(component, root);
+            verify(!!git, "Component exists");
+            let dialog = findChild(git, "commitDialog");
+            verify(!!dialog, "Object exists");
+            dialog.open();
+            tryCompare(dialog, "opened", true);
+            return dialog;
+        }
+        // Scenario: Leaving every file out disables committing (features/source-control/commit-and-generated-messages.feature)
         function test_emptySelectionDisablesBothCommitActions() {
             let git = createTemporaryObject(component, root);
             verify(!!git, "Component exists");
@@ -43,6 +62,23 @@ Item {
             mouseClick(commit);
             tryCompare(Shell, "dispatchCount", 1);
             tryCompare(Shell.dispatchedActions[0], "action", "git.commit");
+        }
+        // Scenario: Cancelling the commit leaves everything as it was (features/source-control/commit-and-generated-messages.feature)
+        function test_cancellingTheCommitSendsNothing() {
+            let dialog = openCommitDialog();
+            let cancel = withText(dialog.contentItem, "Cancel");
+            verify(!!cancel, "Cancel exists");
+            mouseClick(cancel);
+            tryCompare(dialog, "opened", false);
+            compare(Shell.dispatchCount, 0);
+        }
+        // Scenario: Committing on the default branch carries a warning (features/source-control/commit-and-generated-messages.feature)
+        function test_commitOnTheDefaultBranchWarns() {
+            Shell.state = { git: Object.assign({}, Shell.state.git, { isDefaultRef: true, branch: "main" }) };
+            let dialog = openCommitDialog();
+            let warning = withText(dialog.contentItem, "Warning: committing on the default branch main");
+            verify(!!warning, "the warning exists");
+            verify(warning.visible, "the warning is shown");
         }
     }
 }

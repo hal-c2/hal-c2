@@ -23,7 +23,6 @@ class FolderExplorerTest : public QObject {
 private slots:
   void initTestCase() {
     QVERIFY(directory.isValid());
-    bridge.setPageUrl(QUrl("http://localhost:6183"));
     bridge.setLocalFolderImportEnabled(true);
     bridge.publish("sidebar", QVariantMap{{"localEnvironmentId", "local"}, {"localProjects", QVariantList{}}});
     theme = std::make_unique<ThemeStore>(directory.path());

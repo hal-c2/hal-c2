@@ -5,8 +5,14 @@ attachment carries the app name and window title, and when available the app ico
 accessibility data (its controls, text, and their positions in the image). Agents can use that data
 to reason about the screenshot.
 
-SnapShots are off by default and available in the desktop app on macOS, Windows, and Linux with
-Wayland. X11 sessions are not supported.
+SnapShots are off by default. Where they work depends on the desktop app you run:
+
+- The Qt desktop app captures only on Linux with Wayland so far, always through the desktop's
+  screenshot portal (see [Other Wayland desktops](#linux-desktops)), with the capture sound as its
+  only cue. It does not capture on macOS or Windows yet.
+- The older Electron desktop app captures on macOS, Windows, and Linux with Wayland.
+
+X11 sessions are not supported.
 
 ## Turning it on
 
