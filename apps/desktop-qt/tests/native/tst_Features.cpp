@@ -548,6 +548,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/integrations.feature"),
     QStringLiteral("settings/projects.feature"),
     QStringLiteral("settings/project-defaults.feature"),
+    QStringLiteral("settings/licenses.feature"),
+    QStringLiteral("settings/diagnostics.feature"),
     QStringLiteral("settings/updates.feature:At launch*"),
     QStringLiteral("settings/snap-shot.feature"),
     QStringLiteral("source-control/snap-shot.feature"),

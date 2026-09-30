@@ -207,8 +207,7 @@ keybindings::Context KeybindingController::context(const QVariantMap& focus) con
       {QStringLiteral("composerFocus"), flag(focus, "composer")},
       {QStringLiteral("editableFocus"), flag(focus, "editable")},
       {QStringLiteral("terminalOpen"), m_terminalOpen},
-      {QStringLiteral("draftThreadRoute"),
-       routeKind == QLatin1String("draft") || routeKind == QLatin1String("newThread")},
+      {QStringLiteral("draftThreadRoute"), routeKind == QLatin1String("draft")},
       {QStringLiteral("isDesktop"), true},
       {QStringLiteral("isWeb"), false},
   };

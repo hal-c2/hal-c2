@@ -7,6 +7,7 @@
     "build:qt": "node scripts/dev-qt.mjs --configure-only",
     "build:qt:release": "node scripts/dev-qt.mjs --configure-only --release",
     "dev": "node scripts/dev-qt.mjs",
+    "licenses": "node scripts/third-party-licenses.ts licenses/third-party-licenses.json --offline",
     "test": "vp test run --passWithNoTests",
     "test:qml": "node scripts/test-qml.mjs",
     "theme:terminal": "node scripts/theme-from-terminal.mjs",

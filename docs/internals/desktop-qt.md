@@ -807,9 +807,15 @@ and moving one to QML is giving its line a brick, the state key it
 `requires` before it is listed, and the words and rows search finds it by.
 `SettingsHost` loads the brick for `ShellWindow.settingsSection`, and layouts
 put it where the page would be while `ShellWindow.nativeSettingsOpen`.
-`NavigationController::isNative` lists the routes the page is never told
-about; General and Appearance are native bricks but still `route.follow` the
-(hidden) page, which draws with some of their preferences.
+`NavigationController::isNative`, the routes the page is never told about,
+reads the same file (compiled in as `:/hal-c2/settings/settingsPages.js`), so
+a section with a brick is native to both, except those marked `page` (General
+and Appearance), which still `route.follow` the hidden page because it draws
+with some of their preferences; `settings.navigate` opens any section from
+anywhere. A section `under` another (Diagnostics and Open
+source licenses, under General, as on the web) is left out of the nav, reached
+by a `link` row of its parent, and keeps the parent marked
+(`settingsPages.current`).
 
 Search is the shell's too. `settingsPages.searchRows` matches sections by
 label and keywords, and a section's settings (its `settingsRows.js` rows and
@@ -905,13 +911,12 @@ any route.
 
 `NavigationController` owns where the window is once the shell has its node:
 `route` is `{kind, threadKey, draftId, projectKey, section, title,
-canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `newThread`,
-`settings`, `pullRequests`, `usage` (the `ShellRoute` contract plus
+canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `settings`,
+`pullRequests`, `usage` (the `ShellRoute` contract plus
 `title`, `canGoBack` and the settings search's target). `ShellWindow` titles the window from `title` and derives
 `settingsActive` and `settingsSection` from it; the sidebar's active row and the
-composer's target thread come from it too. It keeps a back stack (home and a
-new thread are passed through, and moving between settings sections is one
-step) and writes the last route to `shell-route.json` in the shell's state
+composer's target thread come from it too. It keeps a back stack (home is
+passed through, and moving between settings sections is one step) and writes the last route to `shell-route.json` in the shell's state
 directory; the next launch reopens it unless the thread was deleted or the
 user clicked somewhere in the page before the node answered.
 

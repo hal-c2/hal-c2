@@ -100,6 +100,7 @@ const BUNDLE_LABELS: Readonly<Record<string, string>> = {
   android: "Android",
   assets: "Assets",
   desktop: "Desktop",
+  "desktop-qt": "Qt desktop",
   "device-tools": "Device tools",
   ios: "iOS",
   mobile: "Mobile",

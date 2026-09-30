@@ -95,11 +95,70 @@
       ]
     },
     {
-      "bundles": ["android", "assets", "mobile", "web"],
+      "bundles": ["android", "assets", "desktop-qt", "mobile", "web"],
       "license": "MIT",
       "name": "libghostty-vt",
       "noticeFile": "native/libghostty-vt/LICENSE",
       "sourceUrl": "https://github.com/ghostty-org/ghostty"
+    },
+    {
+      "bundles": ["desktop-qt"],
+      "license": "LGPL-3.0-only",
+      "name": "Qt",
+      "sourceUrl": "https://www.qt.io/download-open-source",
+      "generatedNotices": [
+        {
+          "licenseId": "LGPL-3.0-only",
+          "preamble": [
+            "The desktop app links dynamically against Qt 6 (Qt Core, Gui, Network, Quick, QML, WebSockets, WebChannel and WebEngine), used under the GNU Lesser General Public License version 3. Its source is available from https://download.qt.io/official_releases/qt/ and can be replaced with a compatible build.\n\nQt WebEngine includes Chromium, whose third-party notices ship with Qt WebEngine."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop-qt"],
+      "license": "Apache-2.0",
+      "name": "Erlang/OTP",
+      "sourceUrl": "https://github.com/erlang/otp",
+      "generatedNotices": [
+        {
+          "licenseId": "Apache-2.0",
+          "copyrights": ["Copyright Ericsson AB 1996-2025. All Rights Reserved."],
+          "preamble": [
+            "The desktop app runs the HAL-C2 node on the Erlang/OTP runtime bundled with it."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop-qt"],
+      "license": "Apache-2.0",
+      "name": "Elixir",
+      "sourceUrl": "https://github.com/elixir-lang/elixir",
+      "generatedNotices": [
+        {
+          "licenseId": "Apache-2.0",
+          "copyrights": ["Copyright (c) 2012 Plataformatec", "Copyright (c) 2021 The Elixir Team"],
+          "preamble": [
+            "The HAL-C2 node bundled with the desktop app is built with Elixir and ships its standard library."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop-qt"],
+      "license": "MIT",
+      "name": "Node.js",
+      "sourceUrl": "https://github.com/nodejs/node",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright Node.js contributors. All rights reserved."],
+          "preamble": [
+            "The desktop app bundles the Node.js runtime. Node.js also includes third-party components under their own licenses; the complete Node.js LICENSE file ships beside the app as licenses/node/LICENSE."
+          ]
+        }
+      ]
     },
     {
       "bundles": ["assets", "web"],

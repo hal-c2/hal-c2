@@ -4,7 +4,9 @@
 # publish through. A new file there is picked up on the next build, no list to
 # edit.
 #
-# themes.json, generated from packages/shared, is compiled in as a resource.
+# themes.json, generated from packages/shared, is compiled in as a resource,
+# and so are the settings sections (js/settingsPages.js), which the QML and
+# NavigationController both read.
 #
 # A Device tab's H.264 screen is decoded with FFmpeg's libavcodec (and
 # scaled with libswscale): QtMultimedia's player paces and buffers by
@@ -33,6 +35,10 @@ function(hal_c2_add_native_library webchannel_script_url)
   # The built-in palettes (scripts/gen-themes.mjs), as :/hal-c2/themes.json.
   qt_add_resources(hal_c2_native hal_c2_native_themes PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
                    FILES "${_hal_c2_src}/native/themes.json")
+  # :/hal-c2/settings/settingsPages.js and what it imports.
+  set(_hal_c2_js "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../qml/HalC2/Bricks/js")
+  qt_add_resources(hal_c2_native hal_c2_native_settings PREFIX "/hal-c2/settings" BASE "${_hal_c2_js}"
+                   FILES "${_hal_c2_js}/settingsPages.js" "${_hal_c2_js}/settingsRows.js")
   # Snap Shot's capture sounds, as :/hal-c2/sounds/*.oga.
   qt_add_resources(hal_c2_native hal_c2_native_sounds PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
                    FILES "${_hal_c2_src}/native/sounds/snap-shot-click.oga" "${_hal_c2_src}/native/sounds/snap-shot-whoosh.oga")

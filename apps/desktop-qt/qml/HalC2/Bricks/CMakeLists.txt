@@ -90,6 +90,8 @@ qt_add_qml_module(hal_c2_bricks
     StorageSettings.qml
     ProjectSettings.qml
     DevicePanel.qml
+    OpenSourceLicenses.qml
+    DiagnosticsSettings.qml
     WelcomeWizard.qml
     OnboardingTerminal.qml
     SnapShotSettings.qml

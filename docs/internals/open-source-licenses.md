@@ -9,8 +9,13 @@ License notices are generated independently for the client that ships them:
   over-the-air JavaScript bundle. Mobile loads and decodes that module only when a license screen
   opens, so the notice text does not occupy memory during ordinary app startup. It does not need a
   network request.
+- The Qt desktop stages `licenses/third-party-licenses.json` beside its runtime
+  (`apps/desktop-qt/scripts/stage-runtime.mjs`, or `vp run --filter @hal-c2/desktop-qt licenses` for
+  a dev build). It holds the web page it still embeds plus the `desktop-qt` custom notices: Qt, the
+  Erlang/OTP and Elixir runtime of the node, and the Node.js it ships. `LicensesController` reads it
+  when the page opens.
 
-Neither path depends on the connected environment or an RPC.
+No path depends on the connected environment or an RPC.
 
 ## What the build collects
 

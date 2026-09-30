@@ -7,14 +7,20 @@
 // back to. Moving a section to QML is giving its line a brick.
 //
 //   action     dispatched instead of settings.navigate (the page never shows it)
+//   page       the hidden page still follows it, drawing with its preferences
+//   under      the section it opens from, which stays current; it is not listed itself
 //   requires   shell state the section needs before it is listed
 //   keywords   what the native search matches, beside the label
 //   rows       the page's settingsRows.js rows, each found by its title and description
 //   settings   other settings on the page the search finds: {title, targetId, keywords}
 var sections = [
-    { to: "/settings/general", label: "General", brick: "GeneralSettings", rows: Rows.general,
+    { to: "/settings/general", label: "General", brick: "GeneralSettings", page: true, rows: Rows.general,
       keywords: "project grouping auto-resume snooze limited threads auto-settle merged inactive notifications time format response streaming whitespace diff layout proactive panels skills slash rich text composer collapse send shortcut follow-up provider update checks continue restarts origin worktree add project unpin archive delete confirmation quit text generation model legacy plan context window sidebar" },
-    { to: "/settings/appearance", label: "Appearance", brick: "AppearanceSettings", rows: Rows.appearance,
+    { to: "/settings/diagnostics", label: "Diagnostics", brick: "DiagnosticsSettings", under: "/settings/general",
+      keywords: "diagnostics processes cpu memory kill signal sigint sigkill resource history traces spans failures logs folder" },
+    { to: "/settings/open-source-licenses", label: "Open source licenses", brick: "OpenSourceLicenses", under: "/settings/general",
+      keywords: "open source licenses licences notices third party attribution dependencies" },
+    { to: "/settings/appearance", label: "Appearance", brick: "AppearanceSettings", page: true, rows: Rows.appearance,
       settings: [{ title: "Theme", targetId: "themes", keywords: "theme themes light dark system color scheme mode" }],
       keywords: "appearance theme themes light dark system color scheme contrast glass opacity environment identification diff colors composer context panel animations font size family smoothing word wrap custom editor" },
     { to: "/settings/projects", label: "Project", brick: "ProjectSettings", requires: "projectSettings",
@@ -63,18 +69,29 @@ function find(section) {
     return null;
 }
 
+// The section the navigation marks for `section`: the one it opens from, if any.
+function current(section) {
+    var found = find(section);
+    return found !== null && found.under ? found.under : resolve(section);
+}
+
 // The native brick for a section, or "" when the page renders it.
 function brickFor(section) {
     var found = find(section);
     return found !== null && found.brick ? found.brick : "";
 }
 
-// The navigation rows: every section, the ones that need shell state once it
-// is there. `state` is the shell's state.
-function navRows(state) {
+// The sections there are: the ones that need shell state once it is there.
+// `state` is the shell's state.
+function available(state) {
     return sections.filter(function (section) {
         return !section.requires || (state[section.requires] !== undefined && state[section.requires] !== null);
     });
+}
+
+// The navigation rows: the sections there are, less those opened from another.
+function navRows(state) {
+    return available(state).filter(function (section) { return !section.under; });
 }
 
 // How well a title matches `query`, as the web ranks settings: the whole
@@ -104,11 +121,11 @@ function searchRows(query, state, bindings) {
         if (!words.every(function (word) { return text.indexOf(word) >= 0; })) return;
         found.push({ row: row, rank: rank(title, query, words, others), secondary: secondary, index: found.length });
     };
-    navRows(state).forEach(function (section) {
+    available(state).forEach(function (section) {
         add(section, section.label, section.keywords || "", false);
         // Rows this platform does not show are not found.
-        var settings = Rows.visible(section.rows || [], Qt.platform.os).filter(function (row) { return row.key !== undefined; }).map(function (row) {
-            return { title: row.title, targetId: "settingsRow:" + row.key, keywords: row.description || "" };
+        var settings = Rows.visible(section.rows || [], Qt.platform.os).filter(function (row) { return row.key !== undefined || row.link !== undefined; }).map(function (row) {
+            return { title: row.title, targetId: "settingsRow:" + (row.key ?? row.id), keywords: row.description || "" };
         }).concat(section.settings || []);
         settings.forEach(function (setting) {
             add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title, setting.keywords, false);

@@ -7,6 +7,8 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QQmlComponent>
+#include <QQmlEngine>
 #include <QSaveFile>
 
 #include "DraftController.h"
@@ -24,21 +26,46 @@ const NativeControllerRegistrar<NavigationController> registrar(QStringLiteral("
 constexpr qsizetype kBackStackLimit = 50;
 
 const QStringList kKinds{
-    QStringLiteral("home"),     QStringLiteral("thread"),       QStringLiteral("draft"), QStringLiteral("newThread"),
-    QStringLiteral("settings"), QStringLiteral("pullRequests"), QStringLiteral("usage"),
+    QStringLiteral("home"),         QStringLiteral("thread"), QStringLiteral("draft"), QStringLiteral("settings"),
+    QStringLiteral("pullRequests"), QStringLiteral("usage"),
 };
 
 QVariant nullable(const QString& value) {
   return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value);
 }
 
-// Home and a new thread are on the way somewhere: the page lands in a draft
-// from either, and back should not return to the landing.
+// Home is on the way somewhere: the window lands in a draft from it, and back
+// should not return to the landing.
 bool passesThrough(const NavigationController::Route& route) {
-  return route.kind == QLatin1String("home") || route.kind == QLatin1String("newThread");
+  return route.kind == QLatin1String("home");
 }
 
 }  // namespace
+
+const QStringList& NavigationController::nativeSettingsSections() {
+  static const QStringList sections = [] {
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(R"(import QtQml
+import "qrc:/hal-c2/settings/settingsPages.js" as Pages
+QtObject { property var paths: Pages.sections.filter(s => s.brick && !s.page).map(s => s.to) })",
+                      QUrl(QStringLiteral("qrc:/hal-c2/settings/NativeSections.qml")));
+    std::unique_ptr<QObject> object(component.create());
+    if (!object) qFatal("js/settingsPages.js: %s", qPrintable(component.errorString()));
+    return object->property("paths").toStringList();
+  }();
+  return sections;
+}
+
+bool NavigationController::isNative(const Route& route) {
+  if (route.kind == QLatin1String("pullRequests") || route.kind == QLatin1String("usage")) return true;
+  if (route.kind != QLatin1String("settings")) return false;
+  // As js/settingsPages.js resolves it: bare /settings is General.
+  const QString section =
+      route.section.isEmpty() || route.section == QLatin1String("/settings") ? QStringLiteral("/settings/general")
+                                                                            : route.section;
+  return nativeSettingsSections().contains(section);
+}
 
 std::optional<NavigationController::Route> NavigationController::Route::fromVariant(const QVariant& value) {
   const QVariantMap map = value.toMap();
@@ -52,7 +79,6 @@ std::optional<NavigationController::Route> NavigationController::Route::fromVari
   Route clean = of(route.kind);
   if (route.kind == QLatin1String("thread")) clean.threadKey = route.threadKey;
   if (route.kind == QLatin1String("draft")) clean.draftId = route.draftId;
-  if (route.kind == QLatin1String("newThread")) clean.projectKey = route.projectKey;
   if (route.kind == QLatin1String("settings")) clean.section = route.section;
   return clean;
 }
@@ -198,22 +224,15 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   } else if (action == QLatin1String("connections.close")) {
     if (m_route == Route::settings(kConnectionsSection)) back();
   } else if (action == QLatin1String("settings.navigate") || action == QLatin1String("settings.openResult")) {
-    // The shell's own pages open natively; any other section is the page's,
-    // which follows the route there.
+    // Any settings section, from anywhere; the page follows to the ones
+    // without a native brick. Within settings it is one step back.
     const QString to = map.value(QStringLiteral("to")).toString();
     const QString target = action == QLatin1String("settings.openResult")
                                ? map.value(QStringLiteral("targetId")).toString()
                                : QString();
-    // A link to one of the shell's own pages opens it instead.
-    if (isNative(Route::settings(to))) {
-      open(Route::settings(to));
-      reveal(target);
-      return true;
-    }
-    if (m_route.kind == QLatin1String("settings") && to.startsWith(QLatin1String("/settings/"))) {
-      go(Route::settings(to), true, true);
-      reveal(target);
-    }
+    if (to != QLatin1String("/settings") && !to.startsWith(QLatin1String("/settings/"))) return true;
+    open(Route::settings(to));
+    reveal(target);
   } else {
     return false;
   }
@@ -284,7 +303,7 @@ void NavigationController::publish() {
   QString title;
   if (m_route.kind == QLatin1String("thread")) {
     if (const auto thread = m_store->thread(m_route.threadKey)) title = thread->title;
-  } else if (m_route.kind == QLatin1String("draft") || m_route.kind == QLatin1String("newThread")) {
+  } else if (m_route.kind == QLatin1String("draft")) {
     title = QStringLiteral("New thread");
   } else if (m_route.kind == QLatin1String("settings")) {
     title = QStringLiteral("Settings");
@@ -309,8 +328,7 @@ void NavigationController::reveal(const QString& target) {
 }
 
 void NavigationController::save() const {
-  // A new thread is on its way to a draft; the draft is what to come back to.
-  if (m_storePath.isEmpty() || m_route.kind == QLatin1String("newThread")) return;
+  if (m_storePath.isEmpty()) return;
   QDir().mkpath(QFileInfo(m_storePath).absolutePath());
   QSaveFile file(m_storePath);
   if (!file.open(QIODevice::WriteOnly)) return;

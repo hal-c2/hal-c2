@@ -31,8 +31,8 @@ bool isWatchedSource(const QFileInfo& info) {
 ShellRuntime::ShellRuntime(Options options, ShellBridge* bridge, ThemeStore* theme, QObject* parent)
     : QObject(parent), m_options(std::move(options)), m_bridge(bridge), m_theme(theme) {
   // One runtime per window, each with its own engine; an engine's singletons
-  // are its runtime's (the engine's parent) for its entire lifetime. Reload
-  // replaces only the root objects.
+  // are the bridge and theme it names (halC2Bridge, halC2Theme) for its entire
+  // lifetime. Reload replaces only the root objects.
   static const bool registered = [] {
     const auto runtimeOf = [](QQmlEngine* engine) { return qobject_cast<ShellRuntime*>(engine->parent()); };
     const auto owned = [](QObject* object) {
@@ -40,12 +40,10 @@ ShellRuntime::ShellRuntime(Options options, ShellBridge* bridge, ThemeStore* the
       return object;
     };
     qmlRegisterSingletonType<ShellBridge>("HalC2.Shell", 1, 0, "Shell", [=](QQmlEngine* engine, QJSEngine*) {
-      auto* runtime = runtimeOf(engine);
-      return static_cast<ShellBridge*>(owned(runtime ? runtime->m_bridge : nullptr));
+      return static_cast<ShellBridge*>(owned(qvariant_cast<ShellBridge*>(engine->property("halC2Bridge"))));
     });
     qmlRegisterSingletonType<ThemeStore>("HalC2.Shell", 1, 0, "Theme", [=](QQmlEngine* engine, QJSEngine*) {
-      auto* runtime = runtimeOf(engine);
-      return static_cast<ThemeStore*>(owned(runtime ? runtime->m_theme : nullptr));
+      return static_cast<ThemeStore*>(owned(qvariant_cast<ThemeStore*>(engine->property("halC2Theme"))));
     });
     qmlRegisterSingletonType<ShellRuntime>("HalC2.Shell", 1, 0, "Runtime", [=](QQmlEngine* engine, QJSEngine*) {
       return static_cast<ShellRuntime*>(owned(runtimeOf(engine)));
@@ -59,6 +57,7 @@ ShellRuntime::ShellRuntime(Options options, ShellBridge* bridge, ThemeStore* the
   m_engine = new QQmlApplicationEngine(this);
   // Which window's controllers its HalC2.Shell singletons are (NativeShell).
   m_engine->setProperty("halC2Bridge", QVariant::fromValue(static_cast<QObject*>(m_bridge)));
+  m_engine->setProperty("halC2Theme", QVariant::fromValue(static_cast<QObject*>(m_theme)));
   connect(m_engine, &QQmlEngine::warnings, this, [](const QList<QQmlError>& warnings) {
     for (const auto& warning : warnings) {
       qWarning().noquote() << "[qml]" << warning.toString();

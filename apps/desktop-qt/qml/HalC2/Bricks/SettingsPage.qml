@@ -85,7 +85,7 @@ Rectangle {
                     required property var modelData
 
                     Layout.fillWidth: true
-                    sourceComponent: modelData.section !== undefined ? heading : settingRow
+                    sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : settingRow
 
                     Component {
                         id: heading
@@ -105,6 +105,42 @@ Rectangle {
                                 Layout.fillWidth: true
                                 implicitHeight: 1
                                 color: page.line
+                            }
+                        }
+                    }
+
+                    // A row that opens another section (settings.navigate).
+                    Component {
+                        id: linkRow
+
+                        RowLayout {
+                            objectName: "settingsRow:" + entry.modelData.id
+                            spacing: 12
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                Label {
+                                    text: entry.modelData.title
+                                    color: page.foreground
+                                    font.pixelSize: 13
+                                    font.weight: Font.Medium
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: entry.modelData.description ?? ""
+                                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+
+                            ShellButton {
+                                objectName: "open"
+                                text: entry.modelData.button
+                                onClicked: Shell.dispatch("settings.navigate", { to: entry.modelData.link })
                             }
                         }
                     }

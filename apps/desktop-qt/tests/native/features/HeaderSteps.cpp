@@ -38,8 +38,6 @@ Title layOutTitle(World& world) {
 }
 
 const Steps steps([] {
-  // Before any ShellRuntime (World::showWindows) registers its own: the first
-  // registration of a singleton is the one QML uses.
   Brick::registerSingletons();
   step(QStringLiteral("a long thread title"), [](World& world, const Captures&, const Table&) {
     // The thread the background looks at, renamed.

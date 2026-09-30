@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "DraftController.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "NativeShell.h"
@@ -649,7 +650,11 @@ bool CommandPaletteController::openEntry(const Entry& entry) {
           latestAt = at;
         }
       }
-      navigation->open(latest ? Route::thread(latest->key()) : Route::newThread(entry.id));
+      if (latest) {
+        navigation->open(Route::thread(latest->key()));
+      } else {
+        shell->controller<DraftController>()->startIn(*group);
+      }
       return true;
     }
     case Kind::Setting:

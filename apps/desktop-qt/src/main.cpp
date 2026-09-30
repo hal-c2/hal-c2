@@ -1,5 +1,6 @@
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QGuiApplication>
 #include <QIcon>
@@ -15,6 +16,7 @@
 
 #include "AlertController.h"
 #include "BackendProcess.h"
+#include "LicensesController.h"
 #include "LocalFolderModel.h"
 #include "LocalTranscriber.h"
 #include "NativeNotifications.h"
@@ -233,6 +235,10 @@ int main(int argc, char* argv[]) {
   BackendProcess::Options backendOptions;
   backendOptions.nodeExecutable = parser.value(nodeOption);
   backendOptions.hostEntry = parser.value(hostEntryOption);
+  // Staged beside the host (scripts/stage-runtime.mjs), or `vp run licenses`'s
+  // apps/desktop-qt/licenses/ in a dev build.
+  LicensesController::setManifestPath(
+      QFileInfo(backendOptions.hostEntry).dir().absoluteFilePath(QStringLiteral("../licenses/third-party-licenses.json")));
   backendOptions.hostArguments = parser.positionalArguments();
   // Without a root the node resolves the same XDG directories itself.
   if (!storage.root.isEmpty()) {
