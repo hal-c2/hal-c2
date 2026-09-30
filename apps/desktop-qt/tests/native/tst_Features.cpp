@@ -183,6 +183,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/tool-calls.feature"),
     QStringLiteral("timeline/runs-and-queue.feature"),
     QStringLiteral("timeline/plans-and-subagents.feature"),
+    QStringLiteral("timeline/markdown.feature"),
+    QStringLiteral("timeline/scrolling-and-links.feature:A bare web address*"),
     QStringLiteral("navigation/environment-themes.feature"),
     QStringLiteral("navigation/windows.feature:The window title follows*"),
     QStringLiteral("navigation/windows.feature:A second window works on its own"),
