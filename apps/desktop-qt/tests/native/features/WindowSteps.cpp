@@ -158,6 +158,13 @@ void pressQuit(World& world, qint64 heldMs, bool releaseMod = true) {
   world.sync();
 }
 
+// The quit shortcut as the platform's menus name it.
+#ifdef Q_OS_MACOS
+const QString kQuitKeys = QStringLiteral("⌘Q");
+#else
+const QString kQuitKeys = QStringLiteral("Ctrl+Q");
+#endif
+
 QString quitHint(World& world) {
   world.sync();
   return at(world.state(QStringLiteral("quitHint")), QStringLiteral("message")).toString();
@@ -466,11 +473,11 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user is told to hold the shortcut or press twice to quit"), [](World& world, const Captures&, const Table&) {
     const QString hint = quitHint(world);
-    expect(hint == u"Hold Ctrl+Q or press twice to quit", QStringLiteral("the hint says \"%1\"").arg(hint));
+    expect(hint == QStringLiteral("Hold %1 or press twice to quit").arg(kQuitKeys), QStringLiteral("the hint says \"%1\"").arg(hint));
   });
   step(QStringLiteral("the user is told to press the shortcut again to quit"), [](World& world, const Captures&, const Table&) {
     const QString hint = quitHint(world);
-    expect(hint == u"Press Ctrl+Q again to quit", QStringLiteral("the hint says \"%1\"").arg(hint));
+    expect(hint == QStringLiteral("Press %1 again to quit").arg(kQuitKeys), QStringLiteral("the hint says \"%1\"").arg(hint));
   });
 });
 

@@ -11,6 +11,7 @@
 #include "ComposerController.h"
 #include "DraftController.h"
 #include "Harness.h"
+#include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
@@ -162,6 +163,8 @@ void resetDesktop(World& world, const QProcessEnvironment& env = environment(QSt
   // The shell's controllers start once the node has answered.
   world.connect();
   world.sync();
+  // Snap Shot is Linux's, so its shortcuts are too, whatever runs the tests.
+  world.native().controller<KeybindingController>()->setMac(false);
 }
 
 // A thread of "shop", open in the window.

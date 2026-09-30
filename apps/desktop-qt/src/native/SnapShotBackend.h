@@ -81,7 +81,8 @@ public:
   };
   static Platform detect(const QProcessEnvironment& env, bool onLinux);
 
-  // Tests stand in for the process environment and the portal.
+  // Tests stand in for the process environment (a Linux desktop's, on any
+  // platform) and the portal.
   using PortalFactory = std::function<SnapShotBackend*(const Platform&, QObject* parent)>;
   static void setEnvironment(const std::optional<QProcessEnvironment>& env);
   static void setPortalFactory(PortalFactory factory);
