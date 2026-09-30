@@ -134,7 +134,10 @@ Item {
             const contentY = list.contentY;
             const before = list.contentHeight;
             grow();
-            tryVerify(() => list.contentHeight > before);
+            // How far a wheel notch scrolls is the platform's: a reply still laid
+            // out grows the content, one scrolled out of the buffer changes nothing.
+            if (list.itemAtIndex(rows.count - 1))
+                tryVerify(() => list.contentHeight > before);
             wait(0);
             compare(list.contentY, contentY, "the view stays on the message being read");
             verify(findChild(timeline, "jumpToLatest").visible, "the user is offered a way to scroll to the end");

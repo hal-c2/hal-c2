@@ -96,7 +96,9 @@ Item {
             verify(!!input, "Object exists");
             input.forceActiveFocus();
             input.text = "Start a side thread";
-            keyClick(Qt.Key_Return, Qt.ControlModifier | Qt.AltModifier);
+            // The Control key, which Qt calls Meta on macOS.
+            const ctrl = Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier;
+            keyClick(Qt.Key_Return, ctrl | Qt.AltModifier);
             let sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
             compare(sent.action, "composer.submit");
             compare(sent.payload.intent, "background");
@@ -118,7 +120,7 @@ Item {
             input.cursorPosition = input.text.length;
             keyClick(Qt.Key_Return);
             verify(Shell.dispatchedActions.slice(count).every(entry => entry.action !== "composer.submit"));
-            keyClick(Qt.Key_Return, Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier);
+            keyClick(Qt.Key_Return, ctrl);
             sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
             compare(sent.action, "composer.submit");
             compare(sent.payload.intent, "alternate");

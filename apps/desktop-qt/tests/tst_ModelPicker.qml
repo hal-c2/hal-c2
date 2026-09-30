@@ -71,6 +71,9 @@ Item {
             }, overrides ?? {});
         }
 
+        // The Control key, which Qt calls Meta on macOS.
+        readonly property int ctrl: Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier
+
         function chord(key, shift) {
             return {
                 key: key,
@@ -235,9 +238,9 @@ Item {
             mouseClick(button);
             compare(picker.view, "codex");
             // The provider shortcuts skip it as well.
-            keyClick(Qt.Key_Down, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Down, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "claudeAgent");
-            keyClick(Qt.Key_Down, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Down, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "favorites");
             compare(selections().filter(entry => entry.startsWith("cursor:")).length, 0);
         }
@@ -254,10 +257,10 @@ Item {
         function test_the_user_moves_between_providers_with_the_keyboard() {
             const picker = createPicker([codex(), claude()]);
             openPicker(picker);
-            keyClick(Qt.Key_Down, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Down, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "claudeAgent");
             compare(listed(picker), ["opus", "sonnet", "haiku"]);
-            keyClick(Qt.Key_Up, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Up, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "codex");
             // Shift+Tab reaches the rail, and the arrows move along it.
             keyClick(Qt.Key_Backtab, Qt.ShiftModifier);
@@ -272,7 +275,7 @@ Item {
             const picker = createPicker([codex(), claude()]);
             openPicker(picker);
             compare(picker.rows[1].jumpIndex, 1);
-            keyClick(Qt.Key_2, Qt.ControlModifier);
+            keyClick(Qt.Key_2, ctrl);
             tryCompare(picker.popup, "visible", false);
             compare(selections(), ["codex:gpt-5.5"]);
         }

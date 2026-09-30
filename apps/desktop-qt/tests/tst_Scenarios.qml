@@ -396,6 +396,9 @@ Item {
             }, overrides ?? {});
         }
 
+        // The Control key, which Qt calls Meta on macOS.
+        readonly property int ctrl: Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier
+
         function chord(key, shift) {
             return {
                 key: key,
@@ -582,7 +585,7 @@ Item {
             togglePicker(picker, true);
             compare(picker.view, "codex");
             tryCompare(inPicker(picker, "modelPickerSearch"), "activeFocus", true);
-            keyClick(Qt.Key_Down, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Down, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "claudeAgent");
             compare(listed(picker), ["claudeAgent:opus", "claudeAgent:sonnet", "claudeAgent:haiku"]);
         }
@@ -592,7 +595,7 @@ Item {
             togglePicker(picker, true);
             tryCompare(inPicker(picker, "modelPickerSearch"), "activeFocus", true);
             const second = listed(picker)[1];
-            keyClick(Qt.Key_2, Qt.ControlModifier);
+            keyClick(Qt.Key_2, ctrl);
             tryCompare(Shell, "dispatchCount", 1);
             compare(lastDispatch().action, "composer.model.select");
             compare(lastDispatch().payload.instanceId + ":" + lastDispatch().payload.model, second);
