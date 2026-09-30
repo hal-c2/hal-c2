@@ -98,6 +98,18 @@ QString launchTitle(const QString& text, const QString& firstImage) {
   return seed.size() > 50 ? seed.left(50) + QStringLiteral("...") : seed;
 }
 
+// What stands for the kept images: an image never changes in place, so its
+// target and id do.
+QString imagesSignature(const QJsonObject& targets) {
+  QStringList signature;
+  for (auto it = targets.begin(); it != targets.end(); ++it) {
+    for (const QJsonValue& image : it.value().toArray()) {
+      signature.append(it.key() + u'/' + image.toObject().value(QLatin1String("id")).toString());
+    }
+  }
+  return signature.join(u'\n');
+}
+
 QString newId() {
   return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }
@@ -214,7 +226,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (target.isEmpty()) return true;
     QList<Attachment>& attachments = m_drafts[target].attachments;
     const QString id = map.value(QStringLiteral("id")).toString();
-    if (attachments.removeIf([&](const Attachment& attachment) { return attachment.id == id; }) > 0) publish();
+    if (attachments.removeIf([&](const Attachment& attachment) { return attachment.id == id; }) > 0) {
+      save();
+      publish();
+    }
     return true;
   }
   if (action == QLatin1String("composer.approval.respond")) {
@@ -478,11 +493,13 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   }
   QJsonArray images;
   for (const Attachment& attachment : attachments) {
-    images.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("image")},
-                              {QStringLiteral("name"), attachment.name},
-                              {QStringLiteral("mimeType"), attachment.mimeType},
-                              {QStringLiteral("sizeBytes"), attachment.sizeBytes},
-                              {QStringLiteral("dataUrl"), attachment.dataUrl}});
+    QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
+                      {QStringLiteral("name"), attachment.name},
+                      {QStringLiteral("mimeType"), attachment.mimeType},
+                      {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                      {QStringLiteral("dataUrl"), attachment.dataUrl}};
+    if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+    images.append(image);
   }
   QJsonObject message = input.value(QLatin1String("initialMessage")).toObject();
   m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
@@ -612,11 +629,13 @@ void ComposerController::sendNext(const QString& target) {
   }
   QJsonArray images;
   for (const Attachment& attachment : send.attachments) {
-    images.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("image")},
-                              {QStringLiteral("name"), attachment.name},
-                              {QStringLiteral("mimeType"), attachment.mimeType},
-                              {QStringLiteral("sizeBytes"), attachment.sizeBytes},
-                              {QStringLiteral("dataUrl"), attachment.dataUrl}});
+    QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
+                      {QStringLiteral("name"), attachment.name},
+                      {QStringLiteral("mimeType"), attachment.mimeType},
+                      {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                      {QStringLiteral("dataUrl"), attachment.dataUrl}};
+    if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+    images.append(image);
   }
   QJsonObject message = send.commands.constLast();
   m_client->call(this, send.environmentId, QStringLiteral("assets.persistChatAttachments"),
@@ -657,12 +676,35 @@ bool ComposerController::attach(const QVariantList& files) {
     const QVariantMap file = value.toMap();
     const QString base64 = file.value(QStringLiteral("base64")).toString();
     const QString mimeType = file.value(QStringLiteral("mimeType")).toString();
-    attachments.append({QStringLiteral("attachment-%1").arg(m_nextAttachment++), file.value(QStringLiteral("name")).toString(),
+    attachments.append({newId(), file.value(QStringLiteral("name")).toString(),
                         mimeType, QByteArray::fromBase64(base64.toLatin1()).size(),
                         QStringLiteral("data:%1;base64,%2").arg(mimeType, base64)});
   }
+  save();
   publish();
   return true;
+}
+
+void ComposerController::attachImage(const QString& target, const QString& name, const QString& mimeType,
+                                     const QByteArray& bytes, const QJsonObject& source) {
+  if (target.isEmpty()) return;
+  m_drafts[target].attachments.append({newId(), name, mimeType, bytes.size(),
+                                       QStringLiteral("data:%1;base64,%2").arg(mimeType, QString::fromLatin1(bytes.toBase64())),
+                                       source});
+  save();
+  publish();
+}
+
+QVariantList ComposerController::attachments(const QString& target) const {
+  QVariantList list;
+  for (const Attachment& attachment : m_drafts.value(target).attachments) {
+    list.append(QVariantMap{{QStringLiteral("id"), attachment.id},
+                            {QStringLiteral("name"), attachment.name},
+                            {QStringLiteral("mimeType"), attachment.mimeType},
+                            {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                            {QStringLiteral("source"), attachment.source.toVariantMap()}});
+  }
+  return list;
 }
 
 // apps/web/src/lib/terminalContext.ts normalizeTerminalContextSelection: the
@@ -1452,7 +1494,7 @@ QVariantMap ComposerController::pickerState() const {
 // --- Keeping drafts ---------------------------------------------------------------
 
 // Each target's text and choices, as {targets: {<target>: {text, modelSelection,
-// runtimeMode, interactionMode}}}; images are not kept.
+// runtimeMode, interactionMode}}}, and their images beside them (imagesPath).
 void ComposerController::setStorePath(const QString& path) {
   m_kept.path = path;
   QFile file(path);
@@ -1469,7 +1511,32 @@ void ComposerController::setStorePath(const QString& path) {
     kept.runtimeMode = entry.value(QLatin1String("runtimeMode")).toString();
     kept.interactionMode = entry.value(QLatin1String("interactionMode")).toString();
   }
+  QFile images(imagesPath());
+  if (images.open(QIODevice::ReadOnly)) {
+    const QByteArray data = images.readAll();
+    const QJsonObject kept = QJsonDocument::fromJson(data).object().value(QLatin1String("targets")).toObject();
+    for (auto it = kept.begin(); it != kept.end(); ++it) {
+      QList<Attachment>& attachments = m_drafts[it.key()].attachments;
+      for (const QJsonValue& value : it.value().toArray()) {
+        const QJsonObject image = value.toObject();
+        const QString dataUrl = image.value(QLatin1String("dataUrl")).toString();
+        if (!dataUrl.startsWith(QLatin1String("data:image/"))) continue;
+        attachments.append({image.value(QLatin1String("id")).toString(), image.value(QLatin1String("name")).toString(),
+                            image.value(QLatin1String("mimeType")).toString(),
+                            qint64(image.value(QLatin1String("sizeBytes")).toDouble()), dataUrl,
+                            image.value(QLatin1String("source")).toObject()});
+      }
+    }
+    m_kept.images = imagesSignature(kept);
+  }
   publish();
+}
+
+QString ComposerController::imagesPath() const {
+  if (m_kept.path.isEmpty()) return {};
+  QString path = m_kept.path;
+  if (path.endsWith(QLatin1String(".json"))) path.chop(5);
+  return path + QStringLiteral("-images.json");
 }
 
 void ComposerController::spread() const {
@@ -1495,6 +1562,32 @@ void ComposerController::save() const {
     if (!entry.isEmpty()) targets.insert(it.key(), entry);
   }
   QFile file(m_kept.path);
-  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-  file.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), targets}}).toJson(QJsonDocument::Compact));
+  if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    file.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), targets}}).toJson(QJsonDocument::Compact));
+  }
+  // The drafts' images, apart: rewritten only when they change.
+  QJsonObject images;
+  for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
+    QJsonArray list;
+    for (const Attachment& attachment : it.value().attachments) {
+      QJsonObject image{{QStringLiteral("id"), attachment.id},
+                        {QStringLiteral("name"), attachment.name},
+                        {QStringLiteral("mimeType"), attachment.mimeType},
+                        {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                        {QStringLiteral("dataUrl"), attachment.dataUrl}};
+      if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+      list.append(image);
+    }
+    if (!list.isEmpty()) images.insert(it.key(), list);
+  }
+  const QString joined = imagesSignature(images);
+  if (joined == m_kept.images) return;
+  m_kept.images = joined;
+  QFile imagesFile(imagesPath());
+  if (images.isEmpty()) {
+    imagesFile.remove();
+    return;
+  }
+  if (!imagesFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+  imagesFile.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), images}}).toJson(QJsonDocument::Compact));
 }
