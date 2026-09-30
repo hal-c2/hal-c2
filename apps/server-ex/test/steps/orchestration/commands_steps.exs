@@ -156,6 +156,33 @@ defmodule HalC2.Steps.Orchestration.Commands do
     context
   end
 
+  step "a client dispatched a command to {string} with command id {string}",
+       %{args: [thread, id]} = context do
+    command = %{"type" => "thread.pin", "commandId" => id}
+    context = answer(context, Map.put(command, "threadId", World.thread_id(context, thread)))
+    assert {:ok, _} = context.reply
+    Map.put(context, :command, command)
+  end
+
+  step "a client dispatches a command with id {string} to {string}",
+       %{args: [id, thread]} = context do
+    assert context.command["commandId"] == id
+    context = World.create_thread(context, thread, "demo")
+    context = Map.put(context, :before, World.thread(context, thread))
+    answer(context, Map.put(context.command, "threadId", World.thread_id(context, thread)))
+  end
+
+  step "the command is rejected", context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "cannot be replayed"
+    context
+  end
+
+  step "nothing about {string} changes", %{args: [thread]} = context do
+    assert World.thread(context, thread) == context.before
+    context
+  end
+
   # Pinning a thread that does not exist yet is refused; once it exists the same
   # command would pass, so a second refusal shows the first outcome was kept.
   step "a command with id {string} was rejected", %{args: [id]} = context do

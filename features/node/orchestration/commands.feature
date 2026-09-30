@@ -50,7 +50,7 @@ Feature: How the engine accepts commands
     Then no second message or run is created
     And the answer is the sequence of the first dispatch
 
-  @node @backlog
+  @node
   Scenario: A command id cannot be replayed on another thread
     Given a client dispatched a command to "t1" with command id "c3"
     When a client dispatches a command with id "c3" to "t2"
