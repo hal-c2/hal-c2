@@ -136,7 +136,7 @@ Feature: Plans and subagents
     When the user opens the parent thread
     Then the parent thread is shown
 
-  @node @shared @backlog
+  @node @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A message from another agent says which thread it came from
     Given a subagent sent a message to its parent
     When the user reads the message in the parent thread

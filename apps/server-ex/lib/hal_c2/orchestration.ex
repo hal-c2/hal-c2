@@ -1369,10 +1369,11 @@ defmodule HalC2.Orchestration do
 
   defp edit_claims(_thread_id, command), do: {:ok, command}
 
-  # A message's inline context records (`HalC2.ComposerContext`) travel with its text.
-  # A message's composer context, and the scheduled task that sent it, if any.
+  # What a message and its timeline item both carry: its composer context records
+  # (`HalC2.ComposerContext`), the scheduled task that sent it, and the thread whose
+  # agent sent it (MCP), so a client can name and open that thread.
   defp with_context(entity, source) do
-    entity = Map.merge(entity, Map.take(source, ["scheduledTaskId"]))
+    entity = Map.merge(entity, Map.take(source, ["scheduledTaskId", "senderThreadId"]))
 
     case source do
       %{"context" => %{} = context} -> Map.put(entity, "context", context)
@@ -1380,12 +1381,12 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # A message's composer context, the thread whose agent sent it (MCP), and, for a
-  # delegated task's result, which task it delivers (`HalC2.Orchestration.Delegation`).
+  # A message's `with_context/2` fields and, for a delegated task's result, which task
+  # it delivers (`HalC2.Orchestration.Delegation`).
   defp with_message_fields(message, command) do
     message
     |> with_context(command)
-    |> Map.merge(Map.take(command, ["senderThreadId", "delegatedCompletion", "providerWake"]))
+    |> Map.merge(Map.take(command, ["delegatedCompletion", "providerWake"]))
   end
 
   # Uploads claimed into the thread, with the context records that name them.
