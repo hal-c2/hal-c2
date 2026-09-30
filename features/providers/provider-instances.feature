@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/internals/providers.md (route by instance, unknown drivers keep their configuration)
 #   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?)
 #   apps/server-ex/lib/hal_c2/provider_secrets.ex (sensitive variables in the secret store)
@@ -189,6 +190,17 @@ Feature: Provider instances
     Given the Grok instance has an empty binary path
     When a thread runs on that instance
     Then the "grok" executable found on the path is started
+
+  @backlog
+  Scenario Outline: A binary path in the user's home directory is expanded
+    Given the <provider> instance has the binary path "<path>"
+    When a thread runs on that instance
+    Then the executable in the user's home directory is started
+
+    Examples:
+      | provider | path             |
+      | Grok     | ~/bin/grok       |
+      | OpenCode | ~/bin/opencode   |
 
   # apps/server-ex starts Codex and Claude from fixed commands in its own configuration
   # (codex_command, claude_command) and ignores their binaryPath setting.

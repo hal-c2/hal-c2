@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-opencode.md
 #   docs/internals/providers.md (OpenCode server per thread, full-access replies once)
 #   apps/server-ex/lib/hal_c2/acp.ex (opencode acp, models split into subProvider)
@@ -170,3 +171,36 @@ Feature: OpenCode
   Scenario: A command OpenCode leaves running ends with its turn
     When OpenCode ends a turn with a command still running
     Then the command it left running ends with the turn
+
+  @backlog
+  Scenario: A current OpenCode server is accepted as ready
+    Given the node starts an OpenCode server of the supported version
+    When OpenCode reports that the server is ready
+    Then the first prompt is sent to it
+
+  @backlog
+  Scenario: An OpenCode event stream that ends fails the turn
+    Given an OpenCode turn is streaming
+    When the event stream ends unexpectedly
+    Then the turn fails
+    And the thread takes the next message
+
+  @backlog
+  Scenario: An idle report for an earlier prompt does not end a later run
+    Given two OpenCode prompts were sent close together
+    When OpenCode reports the first prompt idle
+    Then the second run is still working
+
+  @backlog
+  Scenario: Stopping an OpenCode run stops its descendant processes
+    Given an OpenCode run has descendant processes
+    When the user stops the run
+    Then the descendant processes are asked to stop
+    And the node reports any that could not be stopped
+
+  @backlog
+  Scenario: An OpenCode server whose owner crashed is stopped
+    Given an OpenCode server was started for a thread
+    When the provider process that owned it crashes
+    Then the OpenCode server is stopped
+    And no OpenCode process stays owned by the thread

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.fork, thread.merge_back, thread.created,
 #     context-transfer.created, context-transfer.updated, context-handoff.updated)
 #   apps/server-ex/lib/hal_c2/orchestration/fork.ex
@@ -64,6 +65,13 @@ Feature: Forking a thread and merging work back
   Scenario: Forking at a checkpoint uses that checkpoint's run
     When the user forks "t1" at the checkpoint of run 1 as "f1"
     Then "f1" forked from run 1
+
+  @node @backlog
+  Scenario: Forking from a run the provider finished before the node settled it
+    Given the provider finished run 3 of "t1" but the node has not settled it yet
+    When the user forks "t1" at run 3 as "f1"
+    Then "f1" forked from run 3
+    And "f1" has no queued message
 
   @node
   Scenario Outline: Forking is refused when there is nothing finished to fork from

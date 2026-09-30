@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-codex.md
 #   docs/internals/providers.md (Codex async questions, shadow homes, update ownership)
 #   apps/server-ex/lib/hal_c2/codex/provider.ex, apps/server-ex/lib/hal_c2/codex/thread_runtime.ex
@@ -98,15 +99,36 @@ Feature: Codex
     Then the task list shows each step and its status
     And the finished plan is shown as a proposed plan
 
+  @shared @backlog
+  Scenario: A plan Codex marked finished can still be implemented
+    Given Codex proposed a plan and marked it finished
+    Then the plan is offered for implementation
+    When the user implements the plan
+    Then a new run starts from that plan
+
   Scenario: Codex can use the HAL-C2 tools
     Given the project allows the HAL-C2 tools
     When a Codex turn starts
     Then Codex can call the HAL-C2 tools for this thread
 
+  @backlog
+  Scenario: Codex starts with the launch arguments configured for it
+    Given the Codex instance has launch arguments configured
+    When a Codex session starts
+    Then Codex is started with those arguments
+
   Scenario: Reverting a Codex turn rolls Codex back too
     Given a Codex thread with three turns
     When the user reverts to the end of the first turn
     Then Codex's own thread is rolled back to that point
+
+  @backlog
+  Scenario: Reverting a Codex turn works after Codex restarts
+    Given a Codex thread with three turns
+    And Codex's app-server restarted after the first turn
+    When the user reverts to the end of the first turn
+    Then Codex's own thread is rolled back to that point
+    And the revert is reported as complete
 
   Scenario: Forking a Codex thread forks Codex's thread
     Given a Codex thread with three turns

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-claude.md
 #   docs/internals/providers.md (Claude homes, update ownership)
 #   apps/server-ex/lib/hal_c2/claude/provider.ex, apps/server-ex/lib/hal_c2/claude/thread_runtime.ex, apps/server-ex/lib/hal_c2/claude/session.ex
@@ -186,6 +187,33 @@ Feature: Claude
   Scenario: Claude subagents appear as child work in the timeline
     When Claude starts a subagent
     Then the subagent's work is grouped under the step that started it
+
+  @backlog
+  Scenario: A resumed Claude subagent keeps its continuation in its own thread
+    Given Claude resumed a subagent after the node restarted
+    When the user opens the subagent's thread
+    Then the thread shows the message that resumed it
+    And the parent thread does not
+
+  @shared @backlog
+  Scenario: A Claude monitor shows as background work, not as a command
+    Given Claude starts a monitor in the thread
+    Then the thread lists the monitor as background work
+    And the monitor is not shown as a command
+
+  @backlog
+  Scenario: Claude continues from the compacted conversation after compaction
+    Given Claude compacted the conversation of a thread
+    When the user sends the next message
+    Then Claude continues from the compacted conversation
+    And the context meter keeps the usage Claude reported after compaction
+
+  @backlog
+  Scenario: Claude can ask a question while planning
+    Given the thread is in plan mode on Claude
+    When Claude asks the user a question
+    Then the question is shown
+    And the plan stays pending until the user answers
 
   Scenario: Claude skills and slash commands are offered in the composer
     Given Claude reports the skill "review" and the command "/init"

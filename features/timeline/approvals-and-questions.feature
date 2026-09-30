@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/permission-modes.md
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, thread.user-input.dismiss, approval_request, user_input_request)
 #   packages/contracts/src/providerPolicy.ts (ProviderApprovalDecision)
@@ -58,6 +59,13 @@ Feature: Approvals and agent questions
     When the user always allows "npm test" for this session
     And the agent asks to run "npm test" again
     Then the command runs without asking
+
+  @plugin-claude @node @backlog
+  Scenario: A released Claude session forgets its approvals
+    Given the user always allowed "npm test" for this session on Claude
+    When the Claude session is released and a new session starts
+    And the agent asks to run "npm test"
+    Then the user is asked again
 
   @shared @backlog-mobile @backlog-tui
   Scenario Outline: A request says what kind of permission it wants

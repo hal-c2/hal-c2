@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.model-selection.set, thread.model-selection-updated,
 #     provider.switch, thread.provider-switched, context-handoff.updated, provider-thread.updated,
 #     provider-session.updated)
@@ -23,6 +24,13 @@ Feature: Changing model and provider mid-thread
     And a thread-model-selection-updated event is recorded
     And the next run continues the same provider conversation
 
+  @node @shared @backlog
+  Scenario: Context occupancy survives a model change
+    Given "t1" has used 80 percent of its provider context
+    When the user changes "t1" to another model on the same provider
+    Then the next run reports the context occupancy from before the change
+    And the meter does not reset to zero until the provider reports new usage
+
   @node
   Scenario: Switching provider records the new instance
     When the user switches "t1" to "claudeAgent" with model "claude-x"
@@ -41,6 +49,13 @@ Feature: Changing model and provider mid-thread
     When a run starts a new provider thread for "t1"
     Then the transcript has a user line and an assistant line for each finished run
     And it is wrapped as conversation history ahead of the message
+
+  @node @backlog
+  Scenario: A failed turn's context goes with the conversation
+    Given "t1" has a failed turn whose provider context is still usable
+    When the user switches "t1" to "claudeAgent" and sends a message
+    Then the provider receives the context of the failed turn
+    And the failed turn stays in the history of "t1"
 
   @node
   Scenario: A long transcript keeps its newest part

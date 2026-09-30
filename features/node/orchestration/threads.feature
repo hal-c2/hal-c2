@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.create, thread.created, thread.metadata.update,
 #     thread.metadata-updated, thread.archive, thread.archived, thread.unarchive, thread.unarchived,
 #     thread.delete, thread.deleted, thread.removed, thread.visit, thread.visited, thread.mark-unread,

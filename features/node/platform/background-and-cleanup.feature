@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/background_policy.ex (presets, leases, run_scope_work?)
 #   apps/server-ex/lib/hal_c2/vcs/watch.ex (automatic git fetch and status under the policy)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits.ex, usage_limit_sources.ex (provider health refresh)

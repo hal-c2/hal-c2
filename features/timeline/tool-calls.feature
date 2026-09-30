@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/activity-log.md
 #   packages/client-runtime/src/halC2ToolSummary.test.ts (summary counting rules)
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Tool calls group, Tool call failed, tool statuses, workEntryIconName)
@@ -88,6 +89,18 @@ Feature: Tool calls and file changes
       | searched the web   | globe          |
       | called an MCP tool | wrench         |
       | asked for approval | message-circle |
+
+  @node @shared @backlog
+  Scenario Outline: An ACP agent's read, search and fetch tools keep their meaning
+    Given an ACP agent's tool call is of kind "<provider kind>"
+    When the node projects the call
+    Then the timeline shows it as <timeline kind>
+
+    Examples:
+      | provider kind | timeline kind |
+      | read          | a file read   |
+      | search        | a file search |
+      | fetch         | a web search  |
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
   @shared @backlog-mobile @backlog-tui

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (protocol 3 frames)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (subscriptions, buffering, resync, state migration)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/ws upgrade)
@@ -197,6 +198,13 @@ Feature: The protocol 3 WebSocket
     When a client tries to connect
     Then it is blocked before opening a socket
     And it says which side to update
+
+  @shared @backlog
+  Scenario: A client skips an event type it does not know
+    Given a connected client does not recognize an event type the node publishes
+    When the node publishes an event of that type
+    Then the client skips the event
+    And it keeps its connection and processes the later events it knows
 
   @node
   Scenario: A client with a newer protocol than the node is refused with an update message

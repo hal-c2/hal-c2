@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/thread-sidebar.md (Snoozing, Custom snooze, Limited threads, Wake now)
 #   packages/client-runtime/src/state/threadSettled.ts (snooze presets, wake labels, canSnooze, raised hand)
 #   apps/web/src/components/CustomSnoozeDialog.tsx
@@ -129,6 +130,13 @@ Feature: Snoozing threads
     Given the agent is working in "Refactor cart"
     When the user snoozes "Refactor cart" until tomorrow
     Then "Refactor cart" is snoozed
+
+  @node @desktop @mobile @backlog
+  Scenario: A late failure from an earlier run does not wake a snoozed thread
+    Given "Refactor cart" is snoozed until tomorrow
+    When a run that started before the snooze reports a failure
+    Then "Refactor cart" stays snoozed
+    And it is not marked as woke
 
   @backlog @desktop @mobile
   Scenario Outline: A snoozed thread wakes early when it needs the user

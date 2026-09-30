@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/preview_automation.ex (host registration, routing, timeouts, current tab, error messages)
 #   apps/server-ex/lib/hal_c2/mcp/preview.ex (preview_* MCP tools, timed tools, snapshot bounds, screenshots, recordings, tool icon)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_preview_list, hal_c2_preview_close)

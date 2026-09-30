@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, message.updated, run.created,
 #     run.updated, run-attempt.created, run-attempt.updated, node.updated, turn-item.updated,
 #     provider-session.attached, provider-session.updated, provider-session.detach,
@@ -79,6 +80,13 @@ Feature: Runs and turns
     Given "t1" is in worktree "/work/x"
     When the user sends "Hi" to "t1"
     Then the turn runs in "/work/x"
+
+  @node @backlog
+  Scenario: A worktree that was removed is recreated before the turn starts
+    Given "t1" is in worktree "/work/x" and that folder no longer exists
+    When the user sends "Hi" to "t1"
+    Then the worktree is recreated from the branch of "t1"
+    And only then does the turn start
 
   @node
   Scenario: A run works in the project root when the thread has no worktree
@@ -164,6 +172,27 @@ Feature: Runs and turns
     Given the provider process exits while "t1" starts a turn
     Then the run is failed with "The provider stopped while starting the turn."
     And "t1" can take its next message
+
+  @node @backlog
+  Scenario: Opening the provider session is retried before the run fails
+    Given opening the provider session fails the first time
+    When the user sends "Hi" to "t1"
+    Then the node opens the session again
+    And the run fails only once the retries are used up
+
+  @node @shared @backlog
+  Scenario: A failed turn keeps the output it had already produced
+    Given the provider streamed part of its answer to "t1" and then failed
+    When the failure is recorded
+    Then the partial answer stays in the failed run
+    And the run is marked failed
+
+  @node @shared @backlog
+  Scenario: A provider retry is recorded as a retry
+    Given the provider retries a failed request during a turn of "t1"
+    When the retry is recorded
+    Then the turn's work log shows a provider retry
+    And no second user turn is created
 
   @node
   Scenario: The next queued message starts when a run ends

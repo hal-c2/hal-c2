@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-acp.md
 #   apps/server-ex/lib/hal_c2/acp.ex (acpRegistry driver, entries, probes, commandPath override)
 #   apps/server-ex/lib/hal_c2/acp/catalog.ex (search, prepare, uninstall, cache, checksums, runners)
@@ -171,6 +172,22 @@ Feature: ACP registry agents
   Scenario: Agent file and terminal requests are refused
     When "acme" asks the client to read a file or run a terminal
     Then the request is refused rather than left waiting
+
+  # Changes the scenario above once it lands: reads inside the workspace are served and
+  # only terminals stay refused.
+  @backlog
+  Scenario: An agent can read a workspace file while a write waits for approval
+    Given "acme" is waiting for approval to write a file
+    When "acme" asks the client to read a file in the workspace
+    Then the read is answered
+    And the write is still waiting for approval
+
+  @backlog
+  Scenario: A signed-out agent cannot start a session
+    Given "acme" requires sign-in and the user has not signed in
+    When a thread tries to start a session with "acme"
+    Then the thread fails with an authentication error
+    And no session with "acme" is created
 
   Scenario: Registry instances are not used for text generation
     When the user picks a provider for thread titles

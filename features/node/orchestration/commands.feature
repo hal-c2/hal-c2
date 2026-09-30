@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/orchestration.ex (orchestration.dispatchCommand, result sequence)
 #   apps/server-ex/lib/hal_c2/streams.ex (one writer per stream, transactions)
 #   apps/server/src/orchestration-v2/Orchestrator.ts, CommandReceiptStore.ts,
@@ -48,6 +49,13 @@ Feature: How the engine accepts commands
     When it dispatches the same command again with command id "c1" after a reconnect
     Then no second message or run is created
     And the answer is the sequence of the first dispatch
+
+  @node @backlog
+  Scenario: A command id cannot be replayed on another thread
+    Given a client dispatched a command to "t1" with command id "c3"
+    When a client dispatches a command with id "c3" to "t2"
+    Then the command is rejected
+    And nothing about "t2" changes
 
   @node
   Scenario: A rejected command id stays rejected

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (run.updated, run-attempt.updated, provider-turn.updated,
 #     node.updated, turn-item.updated, message.updated, runtime-request.updated,
 #     provider-thread.updated, provider-session.updated, queue.resume)
@@ -36,6 +37,13 @@ Feature: Recovering from restarts and releasing idle sessions
     And the answer stops streaming
     And the provider thread of "t1" is idle
 
+  @node @backlog
+  Scenario: A native subagent thread left running by a restart is settled
+    Given a native provider subagent thread of "t1" was running when the node stopped
+    When the node restarts
+    Then the subagent thread is settled or interrupted
+    And it is not left running
+
   @node
   Scenario: Recovery happens before clients are served
     Given thread "t1" had a running turn
@@ -47,6 +55,14 @@ Feature: Recovering from restarts and releasing idle sessions
     Given thread "t1" was idle and thread "t2" was running when the node stopped
     When the node restarts
     Then only "t2" is settled
+
+  @node @backlog
+  Scenario: A settled thread continues when a restart ended its background work
+    Given project "demo" continues threads after a server update
+    And thread "t1" finished its turn and left a command running in the background
+    When the node restarts
+    Then "t1" receives one continuation turn
+    And the continuation names the background command the restart ended
 
   @node
   Scenario: A cut-off thread continues after the restart when the project allows it

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/orchestration.ex (steerable?, driver_for, follow-up queueing)
 #   apps/server-ex/lib/hal_c2/orchestration/entities.ex (steers?), apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (steer)
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (native forks for codex/claudeAgent/pi/opencode, transcript otherwise, 60 000 character cap)
@@ -157,6 +158,20 @@ Feature: Provider capabilities
       | Grok        |
       | OpenCode    |
       | Antigravity |
+
+  @shared @backlog
+  Scenario: An ACP subagent's messages stay in its own thread
+    Given an ACP agent starts a native child session
+    When the child sends messages and a final summary
+    Then they appear in the child's thread
+    And the parent receives only the child's result
+
+  @shared @backlog
+  Scenario: An ACP edit carries its replaced lines
+    Given an ACP agent edits a file by giving the old text and the new text
+    When the user looks at the change
+    Then the diff shows the replaced lines
+    And the diff is not empty just because the agent sent no patch
 
   @backlog
   Scenario: A registry agent declares its capabilities through its plugin
