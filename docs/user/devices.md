@@ -43,7 +43,10 @@ The desktop app shows the screen with FFmpeg, which it does not include. If a
 Device tab says to install FFmpeg, install it on the machine running the
 desktop app, then choose **Reconnect**: `ffmpeg` on Debian, Ubuntu, Arch and
 Homebrew, or `ffmpeg-libs` from RPM Fusion on Fedora (Fedora's own
-`ffmpeg-free` may not decode H.264). The rest of the app works without it.
+`ffmpeg-free` may not decode H.264). The app needs the FFmpeg version it was
+built with, and the message names the library file it looks for, such as
+`libavcodec.so.61`. If your system ships a different version, install the
+package that provides that file. The rest of the app works without it.
 
 ## Tools
 

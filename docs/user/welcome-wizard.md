@@ -73,8 +73,8 @@ conversation so HAL-C2 does not remove user text. It reads one conversation at
 a time and skips files larger than 4 GiB. It ignores malformed records and skips
 unreadable or unparseable conversations.
 
-Each import attempt reads up to 100 conversation files and 4 GiB per project,
-with up to 100,000 input records. Run import again to continue a large batch.
+Each import attempt reads up to 100 conversation files per project. Run import
+again to continue a large batch.
 Completed conversations are not imported again. You can continue without the
 remaining history.
 

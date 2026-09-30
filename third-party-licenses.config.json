@@ -110,7 +110,7 @@
         {
           "licenseId": "LGPL-3.0-only",
           "preamble": [
-            "The desktop app links dynamically against Qt 6 (Qt Core, Gui, Network, Quick, QML, WebSockets, WebChannel and WebEngine), used under the GNU Lesser General Public License version 3. Its source is available from https://download.qt.io/official_releases/qt/ and can be replaced with a compatible build.\n\nQt WebEngine includes Chromium, whose third-party notices ship with Qt WebEngine."
+            "The desktop app links dynamically against Qt 6 (Qt Core, Gui, Network, Quick, QML, WebSockets and, on Linux, D-Bus), used under the GNU Lesser General Public License version 3. Its source is available from https://download.qt.io/official_releases/qt/ and can be replaced with a compatible build."
           ]
         }
       ]
