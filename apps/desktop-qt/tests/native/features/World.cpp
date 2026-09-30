@@ -39,6 +39,7 @@ void World::start() {
   m_native = std::make_unique<NativeShell>(m_bridge.get());
   m_native->client()->setRetryDelays({20});
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
+  m_native->controller<ThreadStore>()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
   m_native->setStoreDirs(m_home.filePath(QStringLiteral("state")), m_home.filePath(QStringLiteral("data")));
   // The shell runs its own local node, so local folders are its to open.
   m_bridge->setLocalFolderImportEnabled(true);

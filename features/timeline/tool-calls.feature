@@ -1,7 +1,7 @@
 # Sources:
 #   docs/user/activity-log.md
 #   packages/client-runtime/src/halC2ToolSummary.test.ts (summary counting rules)
-#   apps/web/src/components/chat/MessagesTimeline.tsx (Tool calls group, Tool call failed, tool statuses)
+#   apps/web/src/components/chat/MessagesTimeline.tsx (Tool calls group, Tool call failed, tool statuses, workEntryIconName)
 #   apps/web/src/components/chat/V2ItemInspector.tsx (call details, file changes, Open diff)
 #   apps/web/src/components/chat/ChangedFilesTree.tsx
 #   apps/web/src/components/DiffPanel.tsx
@@ -74,6 +74,20 @@ Feature: Tool calls and file changes
       | failed                   | Failed   |
       | was declined by the user | Declined |
       | was interrupted          | Stopped  |
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario Outline: A tool call's icon says what kind of work it was
+    Given the agent's most recent tool call <call>
+    Then the call is shown with the "<icon>" icon
+
+    Examples:
+      | call               | icon           |
+      | ran a command      | terminal       |
+      | changed a file     | square-pen     |
+      | searched the files | search         |
+      | searched the web   | globe          |
+      | called an MCP tool | wrench         |
+      | asked for approval | message-circle |
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
   @shared @backlog-mobile @backlog-tui

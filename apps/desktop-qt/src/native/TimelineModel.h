@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
+#include <QLocale>
 #include <QSet>
 #include <QStringList>
 #include <QVariant>
@@ -57,6 +58,20 @@ public:
     ExpandedRole,
     // The files an assistant reply's turn changed: [{path, additions, deletions}].
     FilesRole,
+    // When the row happened, as the web's formatDayAwareTimestamp reads it in
+    // the device's timestampFormat: "9:41 AM", "yesterday at 9:41 AM",
+    // "9/20 9:41 AM". A reply's once it has finished streaming; empty when
+    // the node sent no time.
+    TimeRole,
+    // The lucide icon of a marker, error or subagent row (a call's is its
+    // entry's `icon`), after the web's workEntryIconName.
+    IconRole,
+    // A user message's inputIntent: queued_turn, steer,
+    // promoted_queued_to_steer or empty.
+    IntentRole,
+    // Who sent a user message when not the user: "Sent by automation",
+    // "Sent by another agent", or empty.
+    AttributionRole,
   };
 
   // Calls shown per collapsed work group.
@@ -75,6 +90,13 @@ public:
   // "Working for 12s", from the clock; the brick asks once a second.
   Q_INVOKABLE QString workingLabel() const;
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  // The device's timestampFormat (locale, 12-hour, 24-hour) and the locale
+  // times are read in; a change redraws every row's time.
+  void setTimestampFormat(const QString& format);
+  void setLocale(const QLocale& locale);
+  // The long form of a row's time, or of one of its calls' (`entryId`), for
+  // its tooltip: "9:41 AM, 23rd September 2026".
+  Q_INVOKABLE QString timeTitle(const QString& rowId, const QString& entryId = {}) const;
 
   // A `snapshot` frame's part: part 0 starts over, `done` swaps it in.
   void snapshot(int part, const QJsonArray& rows, bool done);
@@ -124,6 +146,8 @@ private:
     QString label;
     int hidden = 0;
     bool expanded = false;
+    // A fold's: when its turn started.
+    QDateTime at;
 
     bool operator==(const Row&) const = default;
   };
@@ -141,6 +165,10 @@ private:
   void applyRows(const QList<Row>& rows, const QSet<QString>& changed, bool all);
   void updateWorking();
   QVariantMap entry(const QJsonObject& item) const;
+  // When a row or turn item happened, or invalid.
+  QDateTime rowTime(const Row& row) const;
+  QString stamp(const QDateTime& at) const;
+  void redrawTimes();
 
   QString m_threadKey;
   QString m_status = QStringLiteral("loading");
@@ -159,4 +187,6 @@ private:
   bool m_checkpointsTouched = false;
   bool m_agentsTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
+  QString m_timestampFormat = QStringLiteral("locale");
+  QLocale m_locale;
 };

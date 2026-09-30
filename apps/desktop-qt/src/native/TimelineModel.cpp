@@ -9,6 +9,8 @@
 #include <optional>
 #include <utility>
 
+#include "SidebarModel.h"
+
 namespace {
 
 // The entity kinds the timeline reads; the stream's others (nodes, provider
@@ -36,6 +38,74 @@ QString text(const QJsonObject& object, QLatin1StringView field) {
 
 QDateTime timeOf(const QJsonValue& value) {
   return QDateTime::fromString(value.toString(), Qt::ISODateWithMs);
+}
+
+// When a turn item happened: its start, else its last update (the web's
+// projectedItemCreatedAt).
+QDateTime itemTime(const QJsonObject& item) {
+  const QDateTime started = timeOf(item.value(QLatin1String("startedAt")));
+  return started.isValid() ? started : timeOf(item.value(QLatin1String("updatedAt")));
+}
+
+// The locale's numeric date, as Intl's {month: "numeric", day: "numeric"}
+// (and year: "numeric" with `withYear`): "9/20", "9/20/2025".
+QString numericDate(const QDate& date, bool withYear, const QLocale& locale) {
+  QString format = locale.dateFormat(QLocale::ShortFormat);
+  format.replace(QRegularExpression(QStringLiteral("d+")), QStringLiteral("d"));
+  format.replace(QRegularExpression(QStringLiteral("M+")), QStringLiteral("M"));
+  if (withYear) {
+    format.replace(QRegularExpression(QStringLiteral("y+")), QStringLiteral("yyyy"));
+  } else {
+    // The year and the separator joining it to the day or month.
+    static const QRegularExpression year(QStringLiteral("^y+[^dMy]*|[^dMy]*y+$|y+[^dMy]*"));
+    format.remove(year);
+  }
+  return locale.toString(date, format);
+}
+
+// apps/web/src/components/chat/MessagesTimeline.tsx workEntryIconName, for
+// the turn items the native timeline shows as calls and rows.
+QString iconOf(const QJsonObject& item) {
+  const QString type = text(item, QLatin1String("type"));
+  if (type == QLatin1String("command_execution")) return QStringLiteral("terminal");
+  if (type == QLatin1String("file_change")) return QStringLiteral("square-pen");
+  if (type == QLatin1String("file_search")) return QStringLiteral("search");
+  if (type == QLatin1String("web_search")) return QStringLiteral("globe");
+  if (type == QLatin1String("dynamic_tool")) return QStringLiteral("wrench");
+  if (type == QLatin1String("reasoning")) return QStringLiteral("brain");
+  if (type == QLatin1String("approval_request") || type == QLatin1String("user_input_request")) {
+    return QStringLiteral("message-circle");
+  }
+  if (type == QLatin1String("subagent")) return QStringLiteral("bot");
+  if (type == QLatin1String("error")) return QStringLiteral("circle-alert");
+  if (type == QLatin1String("notification")) {
+    return text(item, QLatin1String("outcome")) == QLatin1String("failed") ? QStringLiteral("circle-alert")
+                                                                            : QStringLiteral("zap");
+  }
+  // V2LifecycleRow's dividers and interrupt request.
+  if (type == QLatin1String("compaction")) return QStringLiteral("minus");
+  if (type == QLatin1String("fork")) return QStringLiteral("git-fork");
+  if (type == QLatin1String("handoff")) return QStringLiteral("arrow-right-left");
+  if (type == QLatin1String("thread_created")) return QStringLiteral("message-square");
+  if (type == QLatin1String("run_interrupt_request")) return QStringLiteral("square");
+  if (type == QLatin1String("run_interrupt_result")) return QStringLiteral("x");
+  // The info tone (todo lists, notices).
+  return QStringLiteral("check");
+}
+
+QString ordinalSuffix(int day) {
+  const int lastTwo = day % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return QStringLiteral("th");
+  switch (day % 10) {
+    case 1:
+      return QStringLiteral("st");
+    case 2:
+      return QStringLiteral("nd");
+    case 3:
+      return QStringLiteral("rd");
+    default:
+      return QStringLiteral("th");
+  }
 }
 
 // HalC2.Patch: `s` sets, `u` unsets, `a` appends to strings, `d` deletes
@@ -171,6 +241,69 @@ QString TimelineModel::workingLabel() const {
   if (!working()) return {};
   const qint64 seconds = std::max<qint64>(0, m_workingSince.secsTo(m_now()));
   return seconds < 1 ? QStringLiteral("Working") : QStringLiteral("Working for %1").arg(formatDuration(seconds * 1000));
+}
+
+void TimelineModel::setTimestampFormat(const QString& format) {
+  const QString next = format.isEmpty() ? QStringLiteral("locale") : format;
+  if (next == m_timestampFormat) return;
+  m_timestampFormat = next;
+  redrawTimes();
+}
+
+void TimelineModel::setLocale(const QLocale& locale) {
+  if (locale == m_locale) return;
+  m_locale = locale;
+  redrawTimes();
+}
+
+void TimelineModel::redrawTimes() {
+  if (m_rows.isEmpty()) return;
+  emit dataChanged(index(0), index(int(m_rows.size()) - 1), {TimeRole, EntriesRole});
+}
+
+QDateTime TimelineModel::rowTime(const Row& row) const {
+  if (row.kind == QLatin1String("fold")) return row.at;
+  if (row.kind == QLatin1String("work") || row.items.isEmpty()) return {};
+  const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.constFirst());
+  // A reply is stamped when it finished (the web's updatedAt), so not while it streams.
+  if (text(item, QLatin1String("type")) == QLatin1String("assistant_message")) {
+    if (item.value(QLatin1String("streaming")).toBool()) return {};
+    return timeOf(item.value(QLatin1String("updatedAt")));
+  }
+  return itemTime(item);
+}
+
+// apps/web/src/timestampFormat.ts formatDayAwareTimestamp: local calendar days.
+QString TimelineModel::stamp(const QDateTime& at) const {
+  if (!at.isValid()) return {};
+  const QDateTime local = at.toLocalTime();
+  const QDate today = m_now().toLocalTime().date();
+  const QString time = sidebar::timeOfDay(local, m_timestampFormat, m_locale);
+  const qint64 days = local.date().daysTo(today);
+  if (days <= 0) return time;
+  if (days == 1) return QStringLiteral("yesterday at ") + time;
+  return numericDate(local.date(), local.date().year() != today.year(), m_locale) + QLatin1Char(' ') + time;
+}
+
+// apps/web/src/timestampFormat.ts formatChatTimestampTooltip, English as the web's is.
+QString TimelineModel::timeTitle(const QString& rowId, const QString& entryId) const {
+  const int at = indexOf(rowId);
+  if (at < 0) return {};
+  const Row& row = m_rows.at(at);
+  QDateTime when;
+  if (entryId.isEmpty()) {
+    when = rowTime(row);
+  } else if (row.items.contains(entryId)) {
+    when = itemTime(entity(QStringLiteral("turn-item"), entryId));
+  }
+  if (!when.isValid()) return {};
+  const QDateTime local = when.toLocalTime();
+  const int day = local.date().day();
+  return QStringLiteral("%1, %2%3 %4 %5")
+      .arg(sidebar::timeOfDay(local, m_timestampFormat, m_locale))
+      .arg(day)
+      .arg(ordinalSuffix(day), QLocale(QLocale::English).monthName(local.date().month()))
+      .arg(local.date().year());
 }
 
 // --- The fold ------------------------------------------------------------------------
@@ -411,6 +544,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     QString label;
     int hidden = 0;
     bool open = false;
+    QDateTime at;
   };
   QHash<QString, Fold> foldAt;  // by the turn's first item
   QHash<QString, QString> folded;  // hidden item -> run
@@ -449,7 +583,9 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       label = elapsed ? QStringLiteral("Worked for %1").arg(formatDuration(*elapsed)) : QStringLiteral("Worked");
     }
     const bool open = m_expandedFolds.contains(runId);
-    foldAt.insert(turn.items.first(), {runId, label, int(hidden.size()), open});
+    // The web's turn fold reads the user's message's time, else its first item's.
+    const QDateTime at = turn.boundary.isValid() ? turn.boundary : itemTime(items.value(turn.items.first()));
+    foldAt.insert(turn.items.first(), {runId, label, int(hidden.size()), open, at});
     if (!open) {
       for (const QString& id : std::as_const(hidden)) folded.insert(id, runId);
     }
@@ -461,7 +597,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     const QString id = text(item, QLatin1String("id"));
     if (const auto fold = foldAt.constFind(id); fold != foldAt.cend()) {
       rows.append({QStringLiteral("fold:") + fold->runId, QStringLiteral("fold"), {}, {}, fold->label, fold->hidden,
-                   fold->open});
+                   fold->open, fold->at});
     }
     const Kind kind = classify(text(item, QLatin1String("type")));
     if (folded.contains(id) || kind == Kind::Checkpoint) {
@@ -630,7 +766,8 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {TextRole, "text"},        {StreamingRole, "streaming"}, {TitleRole, "title"},
       {StatusRole, "status"},    {StatusLabelRole, "statusLabel"}, {MarkerRole, "marker"},
       {EntriesRole, "entries"},  {HiddenCountRole, "hiddenCount"}, {ExpandedRole, "expanded"},
-      {FilesRole, "files"},
+      {FilesRole, "files"},      {TimeRole, "time"},         {IconRole, "icon"},
+      {IntentRole, "intent"},    {AttributionRole, "attribution"},
   };
 }
 
@@ -644,6 +781,8 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
       {QStringLiteral("type"), type},
       {QStringLiteral("status"), status},
       {QStringLiteral("statusLabel"), callStatusLabel(status)},
+      {QStringLiteral("icon"), iconOf(item)},
+      {QStringLiteral("time"), stamp(itemTime(item))},
   };
   QString label;
   QString detail;
@@ -719,6 +858,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     if (role == TitleRole) return row.label;
     if (role == HiddenCountRole) return row.hidden;
     if (role == ExpandedRole) return row.expanded;
+    if (role == TimeRole) return stamp(row.at);
     return {};
   }
   if (row.kind == QLatin1String("work")) {
@@ -746,6 +886,18 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       return status;
     case MarkerRole:
       return intentMarker(text(item, QLatin1String("inputIntent")));
+    case IntentRole:
+      return text(item, QLatin1String("inputIntent"));
+    case AttributionRole:
+      // apps/web/src/components/chat/MessagesTimeline.tsx UserMessageTimelineRow.
+      if (type != QLatin1String("user_message")) return QString();
+      if (!text(item, QLatin1String("scheduledTaskId")).isEmpty()) return QStringLiteral("Sent by automation");
+      if (text(item, QLatin1String("createdBy")) == QLatin1String("agent")) return QStringLiteral("Sent by another agent");
+      return QString();
+    case IconRole:
+      return row.kind == QLatin1String("message") || row.kind == QLatin1String("plan") ? QString() : iconOf(item);
+    case TimeRole:
+      return stamp(rowTime(row));
     case StatusLabelRole:
       return row.kind == QLatin1String("subagent") ? subagentStatusLabel(status) : QString();
     case TitleRole:

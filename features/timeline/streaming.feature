@@ -6,6 +6,7 @@
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Thinking, Thought, Working for, turn folds, Show full message)
 #   apps/web/src/components/chat/MessagesTimeline.logic.ts
 #   apps/web/src/components/chat/MessageCopyButton.tsx
+#   apps/web/src/timestampFormat.ts (formatDayAwareTimestamp, formatChatTimestampTooltip)
 #   apps/tui/src/timeline.ts (Worked for, You stopped after, running turn stays expanded)
 #   apps/tui/src/orchestrationV2Adapter.ts (Thinking)
 #   apps/tui/src/components/MessagesTimeline.tsx
@@ -104,6 +105,30 @@ Feature: Streaming the agent's reply
     Given the agent has answered
     When the user copies the reply
     Then the reply's markdown is on the clipboard
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario Outline: A message says when it was sent, in the time format the user chose
+    Given this device's "timestampFormat" is set to "<format>"
+    When the user sent a message today at 9:05 in the morning
+    Then the message is stamped "<stamp>"
+
+    Examples:
+      | format  | stamp   |
+      | locale  | 9:05 AM |
+      | 12-hour | 9:05 AM |
+      | 24-hour | 09:05   |
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario Outline: A message from an earlier day also says which day it was sent
+    When the user sent a message <when> at 9:05 in the morning
+    Then the message is stamped "<stamp>"
+    And its full time reads "<full>"
+
+    Examples:
+      | when                 | stamp                | full                              |
+      | yesterday            | yesterday at 9:05 AM | 9:05 AM, 22nd September 2026      |
+      | on September 20      | 9/20 9:05 AM         | 9:05 AM, 20th September 2026      |
+      | on December 30, 2025 | 12/30/2025 9:05 AM   | 9:05 AM, 30th December 2025       |
 
   @shared @backlog-mobile @backlog-tui
   Scenario: A reply that finishes while the connection is down is caught up
