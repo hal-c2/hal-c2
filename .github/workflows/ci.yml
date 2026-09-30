@@ -164,6 +164,11 @@ jobs:
       - name: Git identity for test repositories
         run: git config --global user.name CI && git config --global user.email ci@example.com
 
+      # The terminal scenarios open zsh, which the runner image lacks.
+      - name: Install zsh
+        if: matrix.dir == 'terminal'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
       - name: Scenarios
         env:
           HAL_C2_FEATURES: "${{ matrix.dir }}/**/*.feature"
