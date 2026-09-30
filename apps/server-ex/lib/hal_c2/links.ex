@@ -238,7 +238,8 @@ defmodule HalC2.Links do
       {:ok, _, _} ->
         {:error, "the pairing link is invalid or expired"}
 
-      {:error, reason} -> {:error, "cannot reach #{origin}: #{inspect(reason)}"}
+      {:error, reason} ->
+        {:error, "cannot reach #{origin}: #{inspect(reason)}"}
     end
   end
 
