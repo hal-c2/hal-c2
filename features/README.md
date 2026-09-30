@@ -69,8 +69,11 @@ Tags on a `Feature`, `Rule` or `Examples` table apply to everything under it.
 `@plugin-<id>` marks behaviour a plugin provides, for example `@plugin-claude`. The core must
 work with that plugin absent.
 
-`@priority-high` and `@priority-low` weight a `@backlog` scenario for `mise run features:pick`,
+`@priority-high` and `@priority-low` weight a backlog scenario for `mise run features:pick`,
 which picks random backlog scenarios to work on. Low priority still comes up, just less often.
+It takes a count, `@tag`s to require, `-@tag`s to exclude, and files or globs under `features/`:
+`mise run features:pick 8 @node -@plugin-antigravity 'providers/**'`. Requiring a surface keeps
+only work still missing on it, so `@desktop` draws `@backlog` and `@backlog-desktop` scenarios.
 
 ## Writing rules
 

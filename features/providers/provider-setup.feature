@@ -131,7 +131,7 @@ Feature: Provider setup, updates and sign-in
     When the user opens provider accounts on the mobile app
     Then only providers with in-app sign-in are listed, per device
 
-  @backlog @mobile
+  @mobile @backlog-mobile
   Scenario: Answering a terminal sign-in from the mobile app
     Given a terminal sign-in for an ACP agent is waiting for input
     When the user sends a response from the mobile app

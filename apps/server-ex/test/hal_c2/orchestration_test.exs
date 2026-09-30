@@ -174,6 +174,32 @@ defmodule HalC2.OrchestrationTest do
     refute Enum.any?(patches, &(get_in(&1, ["s", "text"]) == "Hello from codex"))
   end
 
+  test "a command id used for one parent thread is refused for another, even after a rejection" do
+    command = %{"type" => "delegated_task.unknown", "commandId" => "c-parent"}
+
+    first =
+      Orchestration.handle(
+        "orchestration.dispatchCommand",
+        Map.put(command, "parentThreadId", "p1")
+      )
+
+    assert {:error, "delegated_task.unknown is not supported" <> _} = first
+
+    assert Orchestration.handle(
+             "orchestration.dispatchCommand",
+             Map.put(command, "parentThreadId", "p1")
+           ) ==
+             first
+
+    assert {:error, message} =
+             Orchestration.handle(
+               "orchestration.dispatchCommand",
+               Map.put(command, "parentThreadId", "p2")
+             )
+
+    assert message =~ "already handled for thread p1"
+  end
+
   test "interrupt ends the running turn" do
     thread_id = launch("wait for me")
     _ = await_run(thread_id, "running")

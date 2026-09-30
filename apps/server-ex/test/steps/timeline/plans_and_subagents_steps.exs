@@ -124,11 +124,72 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     assert_result_runs(context, title, text)
   end
 
+  step "a subagent sent a message to its parent", context do
+    context = World.working_thread(context, World.current(context))
+    HalC2.Test.Node.ensure(HalC2.Mcp)
+    :ok = HalC2.Shell.subscribe(self())
+    # The subagent holds its run open on the gate, as the sender must be running.
+    %{"childThreadId" => child_id} =
+      delegate(context, %{"task" => "answer from gate"})["structuredContent"]
+
+    await(
+      child_id,
+      &Enum.any?(StreamState.list(&1, "run"), fn run -> run["status"] == "running" end)
+    )
+
+    # The node finds a calling thread by its sidebar row.
+    World.await_row(child_id, & &1)
+
+    text = "The cart totals are fixed."
+
+    %{"structuredContent" => %{"messageId" => message_id}} =
+      tool(child_id, "hal_c2_thread_send", %{
+        "threadId" => World.thread_id(context, World.current(context)),
+        "message" => text
+      })
+
+    World.open_gate(context, "answer", "done")
+    Map.merge(context, %{sender: child_id, sent: {message_id, text}})
+  end
+
+  step "the user reads the message in the parent thread", context do
+    {message_id, text} = context.sent
+    rows = read_thread(context, World.thread_id(context, World.current(context)))
+
+    assert [item] =
+             for(
+               ["turn-item", _, %{"type" => "user_message", "messageId" => ^message_id} = item] <-
+                 rows,
+               do: item
+             )
+
+    assert item["text"] == text
+    Map.put(context, :read, item)
+  end
+
+  step "it says which thread it came from", context do
+    assert context.read["senderThreadId"] == context.sender
+    assert context.read["createdBy"] == "agent"
+    context
+  end
+
+  step "the user can open that thread", context do
+    sender = context.read["senderThreadId"]
+
+    assert [%{"lineage" => %{"relationshipToParent" => "subagent"}}] =
+             for(["thread", ^sender, thread] <- read_thread(context, sender), do: thread)
+
+    context
+  end
+
   # Calls the node's MCP tool `delegate_task` as the current thread's provider. The
   # test process must have started `HalC2.Mcp` (`HalC2.Test.Node.ensure/1`).
-  defp delegate(context, arguments) do
-    parent_id = World.thread_id(context, World.current(context))
-    %{authorization: auth} = HalC2.Mcp.server(parent_id, "codex")
+  defp delegate(context, arguments),
+    do: tool(World.thread_id(context, World.current(context)), "delegate_task", arguments)
+
+  # Calls one of the node's MCP tools as the provider of `thread_id`.
+  defp tool(thread_id, name, arguments) do
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
 
     {200, %{"result" => result}} =
       HalC2.Mcp.handle(
@@ -137,7 +198,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
           "jsonrpc" => "2.0",
           "id" => 1,
           "method" => "tools/call",
-          "params" => %{"name" => "delegate_task", "arguments" => arguments}
+          "params" => %{"name" => name, "arguments" => arguments}
         })
       )
 
@@ -210,6 +271,24 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
            )
 
     context
+  end
+
+  # A thread as a client that opens it reads it: the snapshot of its stream.
+  defp read_thread(context, thread_id) do
+    shape = %{"type" => "stream", "node" => Atom.to_string(node()), "stream" => thread_id}
+
+    context.node
+    |> HalC2.Test.Node.connect()
+    |> HalC2.Test.Node.sub(1, shape)
+    |> snapshot([])
+  end
+
+  defp snapshot(client, rows) do
+    {frame, client} =
+      HalC2.Test.Node.await(client, &(&1["id"] == 1 and &1["t"] == "snapshot"), 5_000)
+
+    rows = rows ++ frame["rows"]
+    if frame["done"], do: rows, else: snapshot(client, rows)
   end
 
   defp await(id, fun) do

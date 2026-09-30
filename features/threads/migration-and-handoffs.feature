@@ -32,7 +32,7 @@ Feature: Carrying threads and context across servers and agents
     And the first version's database is not changed
     And starting again does not migrate it a second time
 
-  @backlog @node
+  @node
   Scenario Outline: What a migrated thread keeps
     Given the first version's thread "Legacy work" had <detail>
     When the thread is migrated
@@ -49,7 +49,7 @@ Feature: Carrying threads and context across servers and agents
       | its user and agent messages with timestamps |
       | its supported attachments                   |
 
-  @backlog @node
+  @node
   Scenario Outline: What a migrated thread leaves behind
     Given the first version's thread "Legacy work" had <detail>
     When the thread is migrated

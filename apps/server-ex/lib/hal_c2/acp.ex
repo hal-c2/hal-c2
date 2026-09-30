@@ -196,12 +196,19 @@ defmodule HalC2.Acp do
   defp args("grok", "auto"), do: ["--permission-mode", "auto", "agent", "stdio"]
   defp args("grok", _mode), do: ["agent", "stdio"]
 
+  # A path the user wrote as `~/bin/grok` names their home directory, as a shell would.
   defp binary(driver, entry, default) do
     [
       get_in(entry, ["config", "binaryPath"]),
       get_in(HalC2.Settings.settings(), ["providers", driver, "binaryPath"])
     ]
     |> Enum.find(default, &(is_binary(&1) and String.trim(&1) != ""))
+    |> String.trim()
+    |> case do
+      "~" -> HalC2.Paths.user_home()
+      "~/" <> rest -> Path.join(HalC2.Paths.user_home(), rest)
+      path -> path
+    end
   end
 
   @doc "Provider entries for the ACP instances on this node whose agent is available."

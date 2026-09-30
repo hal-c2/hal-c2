@@ -423,6 +423,62 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     context
   end
 
+  # The agent's terminal method runs `<agent> login`, which asks for a code (`ok`).
+  step "a terminal sign-in for an ACP agent is waiting for input", context do
+    terminal = [
+      %{"id" => "cli", "name" => "CLI login", "type" => "terminal", "args" => ["login"]}
+    ]
+
+    ctx = signed_out_grok(context, %{"methods" => terminal})
+    {_, ctx} = Acp.watch_auth(ctx, "grok")
+
+    {%{"flowId" => flow_id}, ctx} =
+      World.call!(ctx, "provider.auth.start", %{"instanceId" => "grok", "methodId" => "cli"})
+
+    {state, ctx} =
+      Acp.await_auth(ctx, "grok", fn state ->
+        waiting?(flow_id).(state) and state["interaction"]["type"] == "terminal" and
+          state["interaction"]["output"] =~ "Paste code"
+      end)
+
+    Map.put(ctx, :sign_in, state)
+  end
+
+  # The mobile app is another client of the node, answering over `provider.auth.respond`.
+  step "the user sends a response from the mobile app", context do
+    %{"flowId" => flow_id, "interaction" => interaction} = context.sign_in
+
+    {_, ctx} =
+      World.call!(
+        context,
+        "provider.auth.respond",
+        %{
+          "instanceId" => "grok",
+          "flowId" => flow_id,
+          "interactionId" => interaction["id"],
+          "response" => %{"type" => "terminal", "data" => "ok\n"}
+        },
+        "mobile"
+      )
+
+    ctx
+  end
+
+  step "the response reaches the sign-in terminal on the node", context do
+    flow_id = context.sign_in["flowId"]
+
+    {_, ctx} =
+      Acp.await_auth(context, "grok", fn state ->
+        state["flowId"] == flow_id and state["interaction"]["type"] == "terminal" and
+          state["interaction"]["output"] =~ "Signed in."
+      end)
+
+    {_, ctx} =
+      Acp.await_auth(ctx, "grok", &(&1["flowId"] == flow_id and &1["phase"] == "succeeded"))
+
+    ctx
+  end
+
   step "the user pastes a return address", context do
     {reply, ctx} =
       World.call(context, "provider.auth.complete", %{

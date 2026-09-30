@@ -191,7 +191,6 @@ Feature: Provider instances
     When a thread runs on that instance
     Then the "grok" executable found on the path is started
 
-  @backlog
   Scenario Outline: A binary path in the user's home directory is expanded
     Given the <provider> instance has the binary path "<path>"
     When a thread runs on that instance

@@ -16,6 +16,9 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
   # A feature's absolute path, inside the scenario's home.
   defp local(ctx, path), do: Path.join(ctx.node.home, path)
 
+  defp executable(ctx, "~" <> _ = path), do: Node.Host.path(ctx, path)
+  defp executable(ctx, path), do: local(ctx, path)
+
   defp thread_launches(ctx, name) do
     root = Enum.at(ctx.projects, 0) |> elem(1) |> Map.fetch!(:root)
     Enum.filter(Acp.launches(ctx, name), &(&1["cwd"] == root))
@@ -347,19 +350,21 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
 
   # --- binary paths ------------------------------------------------------------------------
 
+  # A path under `~` is kept as written: the node expands it against the scenario's `$HOME`.
   step ~r/^the (?<provider>Grok|OpenCode) instance has the binary path "(?<path>[^"]+)"$/,
        %{args: [provider, path]} = context do
     ctx = Acp.ready(context)
     driver = @drivers[provider]
-    Acp.wrapper(ctx, local(ctx, path), driver)
+    setting = if String.starts_with?(path, "~"), do: path, else: local(ctx, path)
+    Acp.wrapper(ctx, executable(ctx, path), driver)
 
     Acp.put_instance(driver, %{
       "driver" => driver,
       "enabled" => true,
-      "config" => %{"binaryPath" => local(ctx, path)}
+      "config" => %{"binaryPath" => setting}
     })
 
-    Map.put(ctx, :instance, driver)
+    Map.merge(ctx, %{instance: driver, binary_path: path})
   end
 
   step "a thread runs on that instance", context do
@@ -369,6 +374,12 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
   step "{string} is started for the thread", %{args: [path]} = context do
     assert [launch | _] = thread_launches(context, context.instance)
     assert launch["argv0"] == local(context, path)
+    context
+  end
+
+  step "the executable in the user's home directory is started", context do
+    assert [launch | _] = thread_launches(context, context.instance)
+    assert launch["argv0"] == Node.Host.path(context, context.binary_path)
     context
   end
 
