@@ -261,6 +261,7 @@ Rectangle {
                         text: (root.detail.body ?? "").length > 0 ? root.detail.body : qsTr("No description provided.")
                         color: (root.detail.body ?? "").length > 0 ? root.foreground : root.muted
                         font.pixelSize: 13
+                        linkColor: Theme.link
                         onLinkActivated: link => Qt.openUrlExternally(link)
                     }
                     Text {
@@ -428,6 +429,7 @@ Rectangle {
                             text: modelData.body
                             color: root.foreground
                             font.pixelSize: 12
+                            linkColor: Theme.link
                             onLinkActivated: link => Qt.openUrlExternally(link)
                         }
                     }

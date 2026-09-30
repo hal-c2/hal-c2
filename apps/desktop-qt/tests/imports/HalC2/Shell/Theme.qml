@@ -5,6 +5,7 @@ QtObject {
     id: theme
 
     readonly property QtObject palette: theme
+    readonly property color link: "#60a5fa"
     property real radius: 8
     readonly property string fontUi: ""
     readonly property string fontMono: ""

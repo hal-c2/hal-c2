@@ -25,6 +25,8 @@ class ThemeStore : public QObject {
   // Reading this notified receiver makes palette.color(...) reactive in QML.
   // A direct call to a C++ invokable does not record a binding dependency.
   Q_PROPERTY(QObject* palette READ palette NOTIFY themeChanged)
+  // What a link in prose reads in: the web's --info-foreground.
+  Q_PROPERTY(QColor link READ link NOTIFY themeChanged)
   Q_PROPERTY(qreal radius READ radius NOTIFY themeChanged)
   Q_PROPERTY(QString fontUi READ fontUi NOTIFY themeChanged)
   Q_PROPERTY(QString fontMono READ fontMono NOTIFY themeChanged)
@@ -46,6 +48,7 @@ public:
   QString appearance() const { return m_loaded ? m_appearance : m_baseAppearance; }
   QVariantMap colors() const { return m_colors; }
   QObject* palette() { return this; }
+  QColor link() const;
   qreal radius() const;
   QString fontUi() const;
   QString fontMono() const;

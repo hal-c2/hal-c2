@@ -229,6 +229,10 @@ QString firstFontFamily(const QString& list) {
 
 }  // namespace
 
+QColor ThemeStore::link() const {
+  return QColor(appearance() == QStringLiteral("light") ? QStringLiteral("#1d4ed8") : QStringLiteral("#60a5fa"));
+}
+
 qreal ThemeStore::radius() const {
   if (!m_radius.isEmpty()) {
     // Accept "8", "8px" or "0.5rem" (16px root).

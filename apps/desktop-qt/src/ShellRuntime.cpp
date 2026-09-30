@@ -7,6 +7,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QKeySequence>
+#include <QPalette>
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQmlError>
@@ -295,6 +296,13 @@ void ShellRuntime::applyWindowTheme() {
   if (auto* window = rootWindow()) {
     applyWindowBlur(window, m_theme->windowTransparent() && m_theme->windowBlur(),
                     m_theme->appearance() != QStringLiteral("light"), m_theme->windowLiquidGlass());
+  }
+  // Markdown takes its links' colour from the application's palette as it is
+  // parsed (the timeline's TextEdit has no linkColor of its own).
+  QPalette palette = QGuiApplication::palette();
+  if (palette.color(QPalette::Link) != m_theme->link()) {
+    palette.setColor(QPalette::Link, m_theme->link());
+    QGuiApplication::setPalette(palette);
   }
 }
 
