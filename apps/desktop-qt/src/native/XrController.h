@@ -12,7 +12,9 @@ class ShellBridge;
 // redraws every frame the glasses show, so it is only open while asked for.
 // What it shows is QML (ShellWindow.xrWorkspace, DefaultXrWorkspace).
 //
-// Publishes `xr`: {open}. Action and command `xr.toggle` opens or closes it;
+// Publishes `xr`: {open, recenter}. Action and command `xr.toggle` opens or
+// closes it; `xr.recenter` (mod+alt+r) turns it to face where the user looks,
+// by counting up `recenter`, which XrWorkspace follows;
 // `xr.failed` {message} is XrHost saying it could not start (no Qt Quick 3D
 // XR, no OpenXR runtime), which closes it and tells the user why.
 class XrController : public QObject, public NativeController {
@@ -26,11 +28,13 @@ public:
 
   bool isOpen() const { return m_open; }
   void setOpen(bool open);
+  void recenter();
 
 private:
   void publish();
 
   ShellBridge* m_bridge;
   bool m_open = false;
+  int m_recenter = 0;
   bool m_active = false;
 };

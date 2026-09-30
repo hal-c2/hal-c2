@@ -9,6 +9,10 @@
 
 namespace {
 
+int recenters(World& world) {
+  return world.state(QStringLiteral("xr")).toMap().value(QStringLiteral("recenter")).toInt();
+}
+
 bool open(World& world) {
   return world.state(QStringLiteral("xr")).toMap().value(QStringLiteral("open")).toBool();
 }
@@ -26,6 +30,12 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user toggles the XR workspace"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("xr.toggle"), {});
+  });
+  step(QStringLiteral("the XR workspace turns to face where the user is looking"), [](World& world, const Captures&, const Table&) {
+    expect(recenters(world) == 1, QStringLiteral("the window's xr is %1").arg(show(world.state(QStringLiteral("xr")))));
+  });
+  step(QStringLiteral("the XR workspace does not turn"), [](World& world, const Captures&, const Table&) {
+    expect(recenters(world) == 0, QStringLiteral("the window's xr is %1").arg(show(world.state(QStringLiteral("xr")))));
   });
   step(QStringLiteral("the XR workspace fails to start because %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("xr.failed"), QVariantMap{{QStringLiteral("message"), c[0]}});

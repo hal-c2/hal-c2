@@ -15,7 +15,8 @@ Rule rule(const QString& key, const QString& command, const QString& when = {}) 
   return {key, command, when.isEmpty() ? std::nullopt : std::optional<QString>(when)};
 }
 
-// DEFAULT_KEYBINDINGS in packages/shared/src/keybindings.ts, in its order.
+// DEFAULT_KEYBINDINGS in packages/shared/src/keybindings.ts, in its order, then
+// the desktop's own.
 QList<Rule> buildDefaults() {
   const QString notTerminal = QStringLiteral("!terminalFocus");
   const QString terminal = QStringLiteral("terminalFocus");
@@ -83,6 +84,8 @@ QList<Rule> buildDefaults() {
     rules.append(rule(QStringLiteral("mod+%1").arg(n), QStringLiteral("modelPicker.jump.%1").arg(n),
                       QStringLiteral("modelPickerOpen && isDesktop")));
   }
+  // The desktop's own, past the shared table: the XR workspace (XrController).
+  rules.append(rule(QStringLiteral("mod+alt+r"), QStringLiteral("xr.recenter")));
   return rules;
 }
 
@@ -324,7 +327,8 @@ const QStringList& commands() {
         QStringLiteral("composer.sendBackground"), QStringLiteral("composer.host"), QStringLiteral("composer.effort"),
         QStringLiteral("composer.mode"), QStringLiteral("composer.workspace"),
         QStringLiteral("composer.previousWorktree"), QStringLiteral("composer.branch"), QStringLiteral("chat.new"),
-        QStringLiteral("chat.newLocal"), QStringLiteral("editor.openFavorite"), QStringLiteral("modelPicker.toggle"),
+        QStringLiteral("chat.newLocal"), QStringLiteral("editor.openFavorite"), QStringLiteral("xr.toggle"),
+        QStringLiteral("xr.recenter"), QStringLiteral("modelPicker.toggle"),
         QStringLiteral("modelPicker.previousProvider"), QStringLiteral("modelPicker.nextProvider"),
     };
     for (int n = 1; n <= 9; ++n) list.append(QStringLiteral("modelPicker.jump.%1").arg(n));
@@ -455,6 +459,8 @@ QString commandLabel(const QString& command) {
       {QStringLiteral("thread.steerQueuedMessage"), QStringLiteral("Queue: Send First Queued Message as Steer")},
       {QStringLiteral("thread.editQueuedMessage"), QStringLiteral("Queue: Edit Last Queued Message")},
       {QStringLiteral("thread.copyReference"), QStringLiteral("Pull Request: Copy Link or Thread ID")},
+      {QStringLiteral("xr.toggle"), QStringLiteral("XR: Toggle Workspace")},
+      {QStringLiteral("xr.recenter"), QStringLiteral("XR: Recenter Workspace")},
   };
   if (const auto label = special.constFind(command); label != special.cend()) return *label;
   if (command.startsWith(QLatin1String("script.")) && command.endsWith(QLatin1String(".run"))) {

@@ -10,6 +10,7 @@ namespace {
 const NativeControllerRegistrar<XrController> registrar(QStringLiteral("xr"), {QStringLiteral("xr")});
 
 const QString kToggle = QStringLiteral("xr.toggle");
+const QString kRecenter = QStringLiteral("xr.recenter");
 const QString kFailed = QStringLiteral("xr.failed");
 
 }  // namespace
@@ -23,12 +24,17 @@ void XrController::activate() {
   m_active = true;
   if (auto* keys = NativeShell::of(this)->controller<KeybindingController>()) {
     keys->commands()->add(kToggle, tr("Toggle XR workspace"), [this] { setOpen(!m_open); });
+    keys->commands()->add(kRecenter, tr("Recenter XR workspace"), [this] { recenter(); });
   }
 }
 
 bool XrController::handle(const QString& action, const QVariant& payload) {
   if (action == kToggle) {
     setOpen(!m_open);
+    return true;
+  }
+  if (action == kRecenter) {
+    recenter();
     return true;
   }
   if (action == kFailed) {
@@ -47,6 +53,13 @@ void XrController::setOpen(bool open) {
   publish();
 }
 
+// Only an open workspace has a way to face.
+void XrController::recenter() {
+  if (!m_open) return;
+  ++m_recenter;
+  publish();
+}
+
 void XrController::publish() {
-  m_bridge->publish(QStringLiteral("xr"), QVariantMap{{QStringLiteral("open"), m_open}});
+  m_bridge->publish(QStringLiteral("xr"), QVariantMap{{QStringLiteral("open"), m_open}, {QStringLiteral("recenter"), m_recenter}});
 }

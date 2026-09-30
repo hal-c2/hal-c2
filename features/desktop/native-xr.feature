@@ -3,6 +3,8 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/XrHost.qml (starts and stops it)
 #   Shared domain: desktop/xr-workspace.feature owns what the workspace shows and how a rice
 #   lays it out; this file owns opening and closing it.
+#   apps/desktop-qt/src/native/Keybindings.cpp (mod+alt+r, the desktop's own default)
+#   packages/contracts/src/keybindings.ts (xr.toggle, xr.recenter)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 
 Feature: The desktop shows its window in XR glasses
@@ -37,3 +39,19 @@ Feature: The desktop shows its window in XR glasses
     Then the XR workspace is closed
     And the user sees an "error" toast "XR workspace unavailable" saying "No OpenXR runtime is installed"
 
+  @desktop
+  Scenario: The user recenters the XR workspace from the palette
+    Given the XR workspace is open
+    When the user runs "Recenter XR workspace" from the palette
+    Then the XR workspace turns to face where the user is looking
+
+  @desktop
+  Scenario: The user recenters the XR workspace with its shortcut
+    Given the XR workspace is open
+    When the user presses mod+alt+r
+    Then the XR workspace turns to face where the user is looking
+
+  @desktop
+  Scenario: Recentering does nothing while the XR workspace is closed
+    When the user runs "Recenter XR workspace" from the palette
+    Then the XR workspace does not turn

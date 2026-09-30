@@ -39,3 +39,9 @@ Feature: The XR workspace surrounds the user with the window's panels
   Scenario: A rice lays out its own workspace
     Given the user's shell places its own panels in the XR workspace
     Then the user sees the rice's panels instead of the stock ones
+
+  @desktop
+  Scenario: Recentering turns the workspace to face the user
+    Given the user has turned 30 degrees to the left
+    When the user recenters the XR workspace
+    Then the thread is in front of them again

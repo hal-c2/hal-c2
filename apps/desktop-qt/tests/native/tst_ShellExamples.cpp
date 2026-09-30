@@ -9,6 +9,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QVector3D>
 #include <memory>
 
 #include "ShellBridge.h"
@@ -792,6 +793,25 @@ private slots:
     QTRY_VERIFY(panel->property("filesShownElsewhere").toBool());
     closeXrWorkspace();
     QTRY_VERIFY(!panel->property("filesShownElsewhere").toBool());
+  }
+
+  void recenteringTurnsTheWorkspaceToFaceTheUser() {
+    if (!xrAvailable()) QSKIP("Qt Quick 3D XR is not installed");
+    QObject* workspace = openXrWorkspace();
+    QVERIFY(workspace);
+    QObject* origin = workspace->findChild<QObject*>("xrOrigin");
+    QVERIFY(origin);
+    auto* camera = origin->property("camera").value<QObject*>();
+    QVERIFY(camera);
+    // The user has turned 30 degrees to the left (the tracked head pose).
+    camera->setProperty("eulerRotation", QVector3D(0, 30, 0));
+    bridge.publish("xr", QVariantMap{{"open", true}, {"recenter", 1}});
+    QTRY_VERIFY(qAbs(origin->property("eulerRotation").value<QVector3D>().y() + 30) < 0.01);
+    // Facing the scene's -Z again, where the thread is.
+    const auto forward = camera->property("forward").value<QVector3D>();
+    QVERIFY2(qAbs(forward.x()) < 1e-3 && forward.z() < -0.99,
+             qPrintable(QStringLiteral("forward %1 %2 %3").arg(forward.x()).arg(forward.y()).arg(forward.z())));
+    closeXrWorkspace();
   }
 
   void aRiceLaysOutItsOwnWorkspace() {
