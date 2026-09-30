@@ -494,6 +494,14 @@ const Steps steps([] {
     const QString title = role(timeline(world), lastRowOf(world, QStringLiteral("plan")), TimelineModel::TitleRole).toString();
     expect(title == c[0], QStringLiteral("the plan card is titled \"%1\"").arg(title));
   });
+  step(QStringLiteral("the agent proposes a plan that opens with the heading %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    startRun(world);
+    addItem(world, QStringLiteral("proposed_plan"), {{QStringLiteral("markdown"), QStringLiteral("# %1\n\n## Summary\n\n- Add the line\n- Test it").arg(c[0])}});
+  });
+  step(QStringLiteral("the plan's text starts with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString body = role(timeline(world), lastRowOf(world, QStringLiteral("plan")), TimelineModel::TextRole).toString();
+    expect(body.startsWith(c[0]), QStringLiteral("the plan's text reads \"%1\"").arg(body));
+  });
   step(QStringLiteral("a plan without a heading is titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
     addItem(world, QStringLiteral("proposed_plan"), {{QStringLiteral("markdown"), QStringLiteral("Add the line, then test it.")}});
     const QString title = role(timeline(world), lastRowOf(world, QStringLiteral("plan")), TimelineModel::TitleRole).toString();

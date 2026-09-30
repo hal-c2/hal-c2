@@ -39,8 +39,8 @@ public:
     KindRole,
     // A message's: user or assistant.
     AuthorRole,
-    // A message's text, a plan's markdown, an error's message, a marker's or
-    // subagent's detail.
+    // A message's text, a plan's markdown under its title, an error's
+    // message, a marker's or subagent's detail.
     TextRole,
     StreamingRole,
     // A fold's, plan's, marker's or subagent's heading.

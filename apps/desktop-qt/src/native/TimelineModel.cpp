@@ -208,6 +208,27 @@ QString planTitle(const QString& markdown) {
   return title.isEmpty() ? QStringLiteral("Proposed plan") : title;
 }
 
+// apps/web/src/proposedPlan.ts stripDisplayedPlanMarkdown: the plan's
+// markdown without the heading it opens with (the card's title) or a
+// "Summary" heading after it.
+QString planBody(const QString& markdown) {
+  static const QRegularExpression heading(QStringLiteral("^\\s{0,3}#{1,6}\\s+(.+)$"));
+  QString trimmed = markdown;
+  while (!trimmed.isEmpty() && trimmed.back().isSpace()) trimmed.chop(1);
+  QStringList lines = trimmed.split(QRegularExpression(QStringLiteral("\\r?\\n")));
+  const auto dropBlank = [&lines] {
+    while (!lines.isEmpty() && lines.constFirst().trimmed().isEmpty()) lines.removeFirst();
+  };
+  if (!lines.isEmpty() && heading.match(lines.constFirst()).hasMatch()) lines.removeFirst();
+  dropBlank();
+  if (!lines.isEmpty() &&
+      heading.match(lines.constFirst()).captured(1).trimmed().compare(QLatin1String("summary"), Qt::CaseInsensitive) == 0) {
+    lines.removeFirst();
+    dropBlank();
+  }
+  return lines.join(QLatin1Char('\n'));
+}
+
 QString markerTitle(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
   if (type == QLatin1String("fork")) return QStringLiteral("Conversation fork");
@@ -910,7 +931,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       }
       return {};
     case TextRole:
-      if (row.kind == QLatin1String("plan")) return text(item, QLatin1String("markdown"));
+      if (row.kind == QLatin1String("plan")) return planBody(text(item, QLatin1String("markdown")));
       if (row.kind == QLatin1String("marker")) return markerDetail(item);
       if (row.kind == QLatin1String("error")) {
         return text(item.value(QLatin1String("failure")).toObject(), QLatin1String("message"));
