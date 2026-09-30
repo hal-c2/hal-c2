@@ -148,7 +148,7 @@ Feature: Runs and turns
 
   @node
   Scenario: Items still running when the turn ends are closed
-    Given "t1" has a running turn with a command still running
+    Given "t1" has a running turn with a web search still running
     When the provider completes the turn
     Then no turn item of the run is still running
 
