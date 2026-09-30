@@ -990,12 +990,19 @@ Rectangle {
                     iconName: contextStrip.envModeIcon
                     id: envModePicker
                     objectName: "envModePicker"
-                    model: [qsTr("Current checkout"), qsTr("New worktree")]
+                    // A draft can go back to the worktree the project worked in last.
+                    readonly property var previous: contextStrip.wsReady ? contextStrip.ws.previousWorktree ?? null : null
+                    model: previous ? [qsTr("Current checkout"), qsTr("New worktree"), previous.label] : [qsTr("Current checkout"), qsTr("New worktree")]
                     currentIndex: contextStrip.wsReady && contextStrip.ws.envMode === "worktree" ? 1 : 0
                     Accessible.name: qsTr("Checkout mode")
-                    onActivated: index => Shell.dispatch("workspace.envMode.set", {
-                            mode: index === 1 ? "worktree" : "local"
-                        })
+                    onActivated: index => {
+                        if (index === 2)
+                            Shell.dispatch("workspace.previousWorktree");
+                        else
+                            Shell.dispatch("workspace.envMode.set", {
+                                mode: index === 1 ? "worktree" : "local"
+                            });
+                    }
                 }
 
                 RowLayout {

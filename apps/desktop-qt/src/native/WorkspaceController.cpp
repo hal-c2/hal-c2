@@ -125,6 +125,9 @@ void WorkspaceController::activate() {
     const QString openFavorite = QStringLiteral("editor.openFavorite");
     keys->commands()->add(openFavorite, keybindings::commandLabel(openFavorite), [this] { openInEditor({}); });
     keys->commands()->setListed(openFavorite, false);
+    keys->commands()->add(QStringLiteral("composer.previousWorktree"),
+                          keybindings::commandLabel(QStringLiteral("composer.previousWorktree")),
+                          [this] { usePreviousWorktree(); });
   }
   refresh();
 }
@@ -500,6 +503,11 @@ QVariantMap WorkspaceController::build() const {
   const Checkout checkout = m_checkouts.value(place.draftId);
   const QString mode = envMode();
   const bool changeable = envModeChangeable();
+  QVariant previous = QVariant::fromValue(nullptr);
+  if (const std::optional<PreviousWorktree> seed = previousWorktree()) {
+    previous = QVariantMap{{QStringLiteral("label"), seed->branch ? QStringLiteral("Previous worktree (%1)").arg(*seed->branch)
+                                                                  : QStringLiteral("Previous worktree")}};
+  }
 
   // BranchToolbar.logic resolveBranchToolbarValue.
   const std::optional<QString> threadBranch = draft ? checkout.branch : optionalText(row, "branch");
@@ -589,7 +597,38 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("branchesLoading"), m_refsLoading},
       {QStringLiteral("branchSwitchPending"), m_switching},
       {QStringLiteral("branchChangeable"), !place.cwd().isEmpty()},
+      {QStringLiteral("previousWorktree"), previous},
   };
+}
+
+std::optional<WorkspaceController::PreviousWorktree> WorkspaceController::previousWorktree() const {
+  if (!m_place || m_place->draftId.isEmpty()) return std::nullopt;
+  std::optional<PreviousWorktree> latest;
+  qint64 latestAt = 0;
+  for (const sidebar::Thread& thread : m_store->threads()) {
+    if (thread.environmentId != m_place->environmentId || thread.projectId != m_place->projectId || thread.archivedAt) {
+      continue;
+    }
+    const QJsonObject row = m_store->threadRow(thread.key());
+    const QString worktreePath = text(row, "worktreePath");
+    const std::optional<qint64> updatedAt = sidebar::parseIso(thread.updatedAt);
+    if (worktreePath.isEmpty() || worktreePath == m_place->worktreePath || !updatedAt) continue;
+    if (!latest || *updatedAt > latestAt) {
+      latest = PreviousWorktree{optionalText(row, "branch"), worktreePath};
+      latestAt = *updatedAt;
+    }
+  }
+  return latest;
+}
+
+// BranchToolbar's usePreviousWorktree: the draft points at the existing
+// worktree, as picking a branch checked out there does, and the composer
+// takes the keyboard back.
+void WorkspaceController::usePreviousWorktree() {
+  const std::optional<PreviousWorktree> previous = previousWorktree();
+  if (!previous) return;
+  setThreadBranch(previous->branch, previous->worktreePath);
+  m_bridge->sendToPage(QStringLiteral("composer.focus"));
 }
 
 void WorkspaceController::publish() {
@@ -624,6 +663,10 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
   if (!m_place) return true;
   if (action == QLatin1String("workspace.openPullRequest")) {
     openPullRequest();
+    return true;
+  }
+  if (action == QLatin1String("workspace.previousWorktree")) {
+    usePreviousWorktree();
     return true;
   }
   if (action == QLatin1String("workspace.rename")) {

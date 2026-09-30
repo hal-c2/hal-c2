@@ -494,6 +494,53 @@ const Steps steps([] {
     fail(QStringLiteral("the header offers %1").arg(show(workspace(world).value(QStringLiteral("environments")))));
   });
 
+  // The previous worktree (composer.previousWorktree).
+  const auto finishedIn = [](World& world, const QString& branch) {
+    const QString project = world.node.projects.firstKey();
+    const QString worktree = root(project) + QStringLiteral("-worktrees/") + QString(branch).replace(QLatin1Char('/'), QLatin1Char('-'));
+    const QJsonObject row{{QStringLiteral("id"), QStringLiteral("t-done")}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), project},
+                          {QStringLiteral("branch"), branch}, {QStringLiteral("worktreePath"), worktree},
+                          {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T10:00:00Z")}};
+    world.node.threads.insert(QStringLiteral("t-done"), row);
+    world.node.sendRow(QStringLiteral("t-done"), row);
+    world.sync();
+    return worktree;
+  };
+  const auto draftCheckout = [](World& world) {
+    const QString draftId = world.native().controller<NavigationController>()->route().draftId;
+    return world.native().controller<WorkspaceController>()->checkout(draftId);
+  };
+  const auto usesPrevious = [draftCheckout](World& world, const QString& branch) {
+    world.waitFor([&] { return draftCheckout(world).worktreePath.has_value(); },
+                  [&] { return QStringLiteral("the draft to use the previous worktree; the header shows %1").arg(show(workspace(world))); });
+    const WorkspaceController::Checkout checkout = draftCheckout(world);
+    expect(checkout.branch == branch && checkout.envMode == QLatin1String("worktree") && checkout.worktreePath->endsWith(QString(branch).replace(QLatin1Char('/'), QLatin1Char('-'))),
+           QStringLiteral("the draft is on %1 at %2").arg(checkout.branch.value_or(QStringLiteral("no branch")), checkout.worktreePath.value_or(QString())));
+  };
+  step(QStringLiteral("the user just finished a thread in the worktree on %1").arg(q), [finishedIn](World& world, const Captures& c, const Table&) {
+    finishedIn(world, c[0]);
+  });
+  step(QStringLiteral("the user can pick the previous worktree on %1 for it").arg(q), [usesPrevious](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return workspace(world).value(QStringLiteral("previousWorktree")).toMap().value(QStringLiteral("label")).toString().contains(c[0]); },
+                  [&] { return QStringLiteral("the checkout picker to offer the previous worktree; the header shows %1").arg(show(workspace(world))); });
+    dispatch(world, QStringLiteral("workspace.previousWorktree"));
+    usesPrevious(world, c[0]);
+  });
+  step(QStringLiteral("the native composer has keyboard focus"), [finishedIn](World& world, const Captures&, const Table&) {
+    const QString project = QStringLiteral("shop");
+    world.node.projects.insert(project, {{QStringLiteral("id"), project}, {QStringLiteral("title"), project}, {QStringLiteral("workspaceRoot"), root(project)}, {QStringLiteral("scripts"), QJsonArray()}});
+    gitRepo(world, project, {QStringLiteral("main"), QStringLiteral("feature/tax")}, QStringLiteral("main"), QStringLiteral("main"));
+    world.connect();
+    finishedIn(world, QStringLiteral("feature/tax"));
+    world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(project)}});
+    world.waitFor([&] { return workspace(world).value(QStringLiteral("isDraft")).toBool(); },
+                  [&] { return QStringLiteral("the header to show the draft; it shows %1").arg(show(workspace(world))); });
+  });
+  step(QStringLiteral("the composer switches to the previous worktree"), [usesPrevious](World& world, const Captures&, const Table&) {
+    usesPrevious(world, QStringLiteral("feature/tax"));
+    expect(!world.actionsOf(QStringLiteral("composer.focus")).isEmpty(), QStringLiteral("the composer did not take the keyboard back: %1").arg(world.describePage()));
+  });
+
   // Editors.
   step(QStringLiteral("the environment has the editors %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     FakeConfig& fake = fakeConfig(world.node);
