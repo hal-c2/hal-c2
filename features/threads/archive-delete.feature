@@ -1,5 +1,4 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/2829 (upstream orchestrator behavior)
 #   apps/web/src/components/threadActionMenu.logic.ts (Archive thread, Delete)
 #   apps/web/src/hooks/useThreadActions.ts (archiveThread and deleteThread: where the open thread's window goes)
 #   apps/web/src/components/Sidebar.logic.ts (getFallbackThreadIdAfterDelete)
