@@ -85,10 +85,11 @@ jobs:
       - name: Test
         run: mix test
 
-  # The @node scenarios of features/, one top-level directory per job so a slow or
-  # hung directory stays visible. HAL_C2_FEATURES without `--only cucumber` keeps
-  # @backlog out (test_helper.exs); naming scenarios_test.exs keeps the unit suite,
-  # which the node job runs, out. Add a directory here when it gains @node scenarios.
+  # The @node scenarios of features/, one directory per job so a slow or hung
+  # directory stays visible; node/ is split in two to fit the time limit.
+  # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);
+  # naming scenarios_test.exs keeps the unit suite, which the node job runs, out.
+  # Add a directory here when it gains @node scenarios.
   node_scenarios:
     name: Node scenarios (${{ matrix.dir }})
     runs-on: ubuntu-24.04
@@ -101,7 +102,8 @@ jobs:
           - connections
           - files
           - navigation
-          - node
+          - node/orchestration
+          - node/platform
           - parity
           - plugins
           - preview
