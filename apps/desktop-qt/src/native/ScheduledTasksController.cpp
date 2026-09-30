@@ -430,7 +430,8 @@ private:
     const QString projectId = draft.value(QStringLiteral("projectId")).toString();
     const QString modelKey = draft.value(QStringLiteral("modelKey")).toString();
     const qsizetype colon = modelKey.indexOf(QLatin1Char(':'));
-    const bool knownProject = std::any_of(projects(environmentId).cbegin(), projects(environmentId).cend(), [&](const QVariant& project) {
+    const QVariantList choices = projects(environmentId);
+    const bool knownProject = std::any_of(choices.cbegin(), choices.cend(), [&](const QVariant& project) {
       return project.toMap().value(QStringLiteral("id")) == projectId;
     });
     if (title.isEmpty() || prompt.isEmpty() || !knownProject || colon <= 0 || colon == modelKey.size() - 1) {
