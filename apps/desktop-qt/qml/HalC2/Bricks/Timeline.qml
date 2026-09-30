@@ -91,21 +91,6 @@ Item {
         wrapMode: Text.Wrap
     }
 
-    component Markdown: TextEdit {
-        color: root.textColor
-        font.family: root.uiFamily
-        font.pixelSize: 14
-        textFormat: TextEdit.MarkdownText
-        wrapMode: TextEdit.Wrap
-        readOnly: true
-        selectByMouse: true
-        selectionColor: root.accentColor
-        onLinkActivated: link => root.linkActivated(link)
-        HoverHandler {
-            cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
-        }
-    }
-
     // A small text button under a message.
     component ActionLink: Text {
         id: action
@@ -278,6 +263,10 @@ Item {
                             y: 8
                             width: Math.min(implicitWidth, body.width * 0.85 - 24)
                             text: row.text ?? ""
+                            lineBreaks: true
+                            fitWidth: true
+                            textColor: root.textColor
+                            onLinkActivated: link => root.linkActivated(link)
                         }
                     }
                     Row {
@@ -303,6 +292,8 @@ Item {
                     Markdown {
                         width: parent.width
                         text: row.text ?? ""
+                        streaming: row.streaming ?? false
+                        onLinkActivated: link => root.linkActivated(link)
                     }
                     Column {
                         visible: root.list(row.files).length > 0
@@ -506,6 +497,7 @@ Item {
                         Markdown {
                             width: parent.width
                             text: row.text ?? ""
+                            onLinkActivated: link => root.linkActivated(link)
                         }
                     }
                 }

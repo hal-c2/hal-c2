@@ -92,6 +92,8 @@ qt_add_qml_module(hal_c2_bricks
     WelcomeWizard.qml
     OnboardingTerminal.qml
     SnapShotSettings.qml
+    Markdown.qml
+    js/markdown.js
   RESOURCES
     qmldir
     icons/antigravity.png

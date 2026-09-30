@@ -95,6 +95,12 @@ const ICONS = [
   "trash",
   "undo-2",
   "x",
+  "text-wrap",
+  "lightbulb",
+  "message-square-warning",
+  "triangle-alert",
+  "octagon-alert",
+  "file",
 ];
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));

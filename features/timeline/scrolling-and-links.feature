@@ -11,6 +11,8 @@
 #   apps/web/src/components/chat/AssistantCitationCommentEditor.tsx
 #   apps/tui/src/timelineLinks.ts (bare URLs become terminal hyperlinks)
 #   apps/tui/src/components/MessagesTimeline.tsx (windowing, earlier and newer entries, sticks to the bottom)
+#   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (bare web addresses become links outside code)
+#   apps/desktop-qt/tests/native/features/MarkdownSteps.cpp
 #   apps/server-ex/lib/hal_c2/web/socket.ex (thread stream subscriptions, merged bursts, resync from offset)
 
 Feature: Moving through a thread and following links
@@ -61,7 +63,7 @@ Feature: Moving through a thread and following links
     Then the third turn is shown
 
   # TUI: implemented in apps/tui/src/timelineLinks.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A bare web address in a message can be opened
     When the agent writes "see https://example.com/docs"
     Then "https://example.com/docs" can be opened as a link

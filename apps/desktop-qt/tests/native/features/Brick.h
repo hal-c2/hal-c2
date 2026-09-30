@@ -13,7 +13,7 @@
 class World;
 
 // A brick of qml/HalC2/Bricks loaded into an offscreen window over the
-// scenario's shell: its singletons (Shell, Theme, Terminals) are the world's.
+// scenario's shell: its singletons (Shell, Theme, Terminals, Settings) are the world's.
 // Steps drive it as the user would, with QTest's mouse and keys on the
 // window, and read back what it draws. A brick that outlives a step lives in
 // World::brick, which goes before the shell does.
