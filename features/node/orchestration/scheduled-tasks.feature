@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/scheduled_tasks.ex (scheduledTasks.list, scheduledTasks.upsert,
 #     scheduledTasks.delete, scheduledTasks.setEnabled, scheduledTasks.runNow, watchers)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (list_scheduled_tasks, schedule_task,
@@ -123,6 +124,14 @@ Feature: Scheduled tasks
   Scenario: Running now answers with the finished task
     When a client runs task "a" now
     Then the answer is task "a" after the run, with its outcome
+
+  # Scheduled runs aim the next run afresh; a manual run leaves the schedule alone.
+  @node @backlog
+  Scenario: Running a task now leaves its schedule alone
+    Given task "a" is due at 09:00 tomorrow
+    When a client runs task "a" now
+    Then one run starts immediately
+    And task "a" is still due at 09:00 tomorrow
 
   @node
   Scenario: A task cannot run twice at once

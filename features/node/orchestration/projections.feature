@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.updated, thread.removed, project.updated,
 #     project.removed, shell and thread projection schemas)
 #   packages/contracts/src/rpc.ts (orchestration.getThreadProjection, orchestration.subscribeShell,
@@ -73,6 +74,13 @@ Feature: What the engine projects for clients
     Given run 2 of "t1" is running and a background command from run 1 is still active
     Then the shell row of "t1" lists no background tasks
 
+  @node @backlog
+  Scenario: Background work stays with the run that started it
+    Given run 1 of "t1" started a background shell command
+    When run 2 of "t1" starts
+    Then the command stays attached to run 1
+    And its completion cannot finish run 2
+
   @node
   Scenario: A rolled-back latest run abandons its background work
     Given the latest run of "t1" was rolled back while a background command ran
@@ -145,6 +153,13 @@ Feature: What the engine projects for clients
     Then it receives the newest part of the history with a marker that older history exists
     And it can page older history on request
     And then it receives live events after the snapshot's sequence
+
+  @node @backlog
+  Scenario: A bounded page of history holds only visible turns
+    Given "t1" has hidden and visible earlier turns
+    When a client asks for a bounded page of the history of "t1"
+    Then the page holds only visible turns
+    And it ends at the true start of the history
 
   @node
   Scenario: Subscribing after a known sequence replays only what was missed

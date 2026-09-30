@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink,
 #     thread.pull-request-link.sync, thread.pull-request.sync, thread.pull-request-synced,
 #     thread.metadata.update linkedPullRequest)
@@ -45,6 +46,12 @@ Feature: Pull requests linked to a thread
   Scenario: Unlinking a pull request that is not linked changes nothing
     When a client unlinks pull request "acme/app#99" from "t1"
     Then no event is recorded
+
+  @node @backlog
+  Scenario: A settled thread whose pull request merged is not an active pull request thread
+    Given "t1" links pull request "acme/app#12" and settled after it merged
+    When the node refreshes pull request state
+    Then "t1" is not listed among the threads with an active pull request
 
   @node
   Scenario: Unlinking a stack layer leaves a tombstone so the sync does not add it back

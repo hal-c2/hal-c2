@@ -1,5 +1,5 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/2829 (upstream orchestrator behavior)
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (checkpoint.captured, checkpoint-scope.created,
 #     checkpoint.rollback, checkpoint.rollback-requested, run.updated, provider-thread.updated)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
@@ -179,6 +179,28 @@ Feature: Checkpoints, diffs and rewinding
     Given every run after run 1 of "t1" is already rolled back
     When the user rewinds "t1" to run 1
     Then the provider is not asked to drop any turns
+
+  @node @backlog
+  Scenario: Rewinding twice keeps the provider's history right
+    Given runs 1, 2 and 3 of "t1" completed and "t1" was rewound to run 2 and then to run 1
+    When the user sends "Again" to "t1"
+    Then the provider receives the history through run 1
+    And neither rolled-back run is replayed
+
+  @node @backlog
+  Scenario: A rewind whose restore fails ends with an error
+    Given runs 1 and 2 of "t1" completed with checkpoints
+    When the user rewinds "t1" to run 1 and restoring the files fails
+    Then the rewind ends with an error
+    And "t1" is not left waiting
+    And the checkpoint of run 1 is still the last valid checkpoint
+
+  @node @backlog
+  Scenario: Editing from a message after a stopped run starts from that message
+    Given run 2 of "t1" was stopped by the user after an assistant message
+    When the user edits from that message
+    Then the new turn starts from the checkpoint before that message
+    And the stopped run stays in the history
 
   @node @plugin-codex
   Scenario: A Codex rollback whose history is paginated is reported as a rollback failure

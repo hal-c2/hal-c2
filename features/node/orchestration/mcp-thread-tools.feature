@@ -1,5 +1,5 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/2829 (upstream orchestrator behavior)
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_thread_list, hal_c2_thread_read, hal_c2_thread_send,
 #     hal_c2_thread_wait, hal_c2_thread_interrupt, hal_c2_thread_search, hal_c2_environment_read,
 #     hal_c2_environment_preferences_update)
@@ -150,6 +150,13 @@ Feature: Agents working with threads through MCP tools
     Then a new thread is created by an agent through MCP with the caller's model and modes
     And its first turn starts with that message
 
+  @node @backlog
+  Scenario: An agent launches a thread in a new worktree on a named branch
+    When the agent of "caller" launches a thread in "demo" in a new worktree based on "feature/base" on branch "feature/demo"
+    Then a new thread exists in "demo"
+    And its worktree is based on "feature/base"
+    And its first run waits until the worktree is ready
+
   @node
   Scenario: A launched thread accepts only freshly uploaded attachments
     When the agent of "caller" launches a thread with an attachment that already belongs to "t2"
@@ -259,6 +266,13 @@ Feature: Agents working with threads through MCP tools
   Scenario: Reading a thread's configuration
     When the agent of "caller" reads the configuration of "t2"
     Then it receives the model selection, runtime mode and interaction mode of "t2"
+
+  @node @backlog
+  Scenario: Listing or reading a thread shows whether it can settle
+    Given thread "t2" has a settlement decision
+    When the agent of "caller" lists or reads "t2"
+    Then the response includes the settlement state of "t2"
+    And it says why "t2" can or cannot settle
 
   @node
   Scenario Outline: Organizing a thread

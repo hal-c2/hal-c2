@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (subagent.updated, delegated_task.request,
 #     delegated_task.wake-policy, delegated_task.completion-delivery.acknowledge,
 #     delegated_task.completion-delivery.dispose, notification.delivery.accept, node.updated,
@@ -95,6 +96,22 @@ Feature: Delegating tasks to subagents
     Then "parent" receives a system message carrying the delegated task result "Done"
     And the message runs after the caller's active turn
     And the task delivery is "delivered"
+
+  @node @backlog
+  Scenario: Each later completion wakes the caller again
+    Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
+    And "parent" was woken for the completion of "one"
+    When "two" and "three" complete afterwards
+    Then "parent" is woken again for them
+    And completions that arrive together may share one wake turn
+
+  @node @backlog
+  Scenario: A completion delivered twice wakes the caller once
+    Given the agent in "parent" delegated a task without waiting
+    When the subagent completes
+    And the same completion is delivered again after a reconnect
+    Then "parent" receives one wake turn
+    And the repeat is acknowledged without another wake
 
   @node
   Scenario: A waited-for task that finishes while the caller is busy is only acknowledged

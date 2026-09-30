@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch dispatchMode and deliveryIntent,
 #     queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer,
 #     queue.resume, run.updated, message.updated, turn-item.updated)
@@ -166,6 +167,13 @@ Feature: Queueing, steering and restarting
     When the user resumes the queue of "t1"
     Then no queued message is held
     And a run for "A" starts
+
+  @node @shared @backlog
+  Scenario: A usage limit keeps the queue as it was
+    Given "t1" has a running turn and queued messages "one" and "two"
+    When the provider stops "t1" because its usage limit was reached
+    Then "one" and "two" stay queued in their original order
+    And neither is discarded or sent early
 
   @node
   Scenario: A held queue does not start when a run ends

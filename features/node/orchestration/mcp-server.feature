@@ -1,5 +1,5 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/2829 (upstream orchestrator behavior)
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/mcp.ex (POST /mcp, per-thread bearer credentials, JSON-RPC methods)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (advertised tools, caller access rules, escalation checks)
 #   apps/server-ex/priv/mcp_tools.json, priv/mcp_instructions.md (exported from the Node server)
@@ -21,6 +21,13 @@ Feature: The HAL-C2 MCP server agents receive
     When a run of "caller" starts on "codex"
     Then the agent is given the "hal-c2" server with a bearer credential for "caller" on "codex"
     And asking again for "caller" on "codex" gives the same credential
+
+  @node @plugin-claude @backlog
+  Scenario: A renewed credential replaces the old one in a running Claude thread
+    Given the agent of a running Claude thread uses the "hal-c2" server
+    When the thread's credential is renewed
+    Then the agent keeps its tools with the new credential
+    And the old credential is refused from then on
 
   @node
   Scenario: Credentials differ per provider instance of a thread
