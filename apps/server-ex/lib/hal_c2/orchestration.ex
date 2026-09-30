@@ -111,11 +111,12 @@ defmodule HalC2.Orchestration do
   # A client's command id is answered once: repeating it, as a client retrying
   # after a reconnect does, returns the first outcome without deciding again (the
   # Node server's CommandReceiptStore). Receipts live in the store's meta table.
-  # A receipt only proves the command ran for its own thread, so the same id aimed
-  # at another thread is refused rather than answered with work done elsewhere.
+  # A receipt only answers for the thread the command acted on (its `threadId`, or the
+  # `parentThreadId` a delegated task or created-thread record belongs to), so the same
+  # id aimed at another thread is refused rather than answered with work done elsewhere.
   defp dispatch_once(%{"commandId" => id} = command) when is_binary(id) do
     key = "command-receipt:" <> id
-    thread_id = command["threadId"] || command["targetThreadId"]
+    thread_id = command["threadId"] || command["parentThreadId"] || command["targetThreadId"]
 
     case HalC2.Store.meta(HalC2.Store.path(), key) do
       nil ->
@@ -126,7 +127,10 @@ defmodule HalC2.Orchestration do
             HalC2.Store.put_meta(key, JSON.encode!(%{"ok" => result, "threadId" => thread_id}))
 
           {:error, message} when is_binary(message) ->
-            HalC2.Store.put_meta(key, JSON.encode!(%{"error" => message}))
+            HalC2.Store.put_meta(
+              key,
+              JSON.encode!(%{"error" => message, "threadId" => thread_id})
+            )
 
           _ ->
             :ok
@@ -136,12 +140,12 @@ defmodule HalC2.Orchestration do
 
       receipt ->
         case JSON.decode!(receipt) do
-          %{"error" => message} ->
-            {:error, message}
-
           %{"threadId" => handled} when handled != thread_id ->
             {:error,
              "Command #{id} was already handled for thread #{handled} and cannot be replayed for #{thread_id}."}
+
+          %{"error" => message} ->
+            {:error, message}
 
           %{"ok" => result} ->
             {:ok, result}
