@@ -141,10 +141,14 @@ Feature: What the engine projects for clients
     Given the latest event on "t1" happened at 10:00
     Then the shell row of "t1" was updated at 10:00
 
-  @node @backlog
+  # The node answers this with hal-c2.threadRows; orchestration.getThreadProjection itself
+  # is refused below (parity/rpc.feature).
+  @node
   Scenario: A client reads a thread's full projection with one request
+    Given "t1" has a finished run with a message, an item, a plan, a checkpoint and a pending request
     When a client asks for the projection of "t1"
     Then it receives the thread, its runs, items, messages, plans, checkpoints and requests
+    And it receives the sequence the projection is at
 
   @node @backlog
   Scenario: Subscribing to a thread sends a bounded snapshot and then live events

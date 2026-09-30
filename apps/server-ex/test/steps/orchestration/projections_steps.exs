@@ -534,6 +534,64 @@ defmodule HalC2.Steps.Orchestration.Projections do
       else: until_live(client, [frame | acc])
   end
 
+  # --- the full projection ------------------------------------------------------------
+
+  step "{string} has a finished run with a message, an item, a plan, a checkpoint and a pending request",
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    at = World.iso_from_now(0)
+    owned = %{"threadId" => id, "runId" => "run-1", "createdAt" => at, "updatedAt" => at}
+
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.add_message(thread, "user", "total the cart", at, %{"id" => "msg-1"})
+    |> World.add_item(thread, "item-1", "assistant_message", "run-1")
+    |> World.put_entity(thread, "plan", "plan-1", %{
+      "s" =>
+        Map.merge(owned, %{"id" => "plan-1", "kind" => "proposed_plan", "status" => "active"})
+    })
+    |> World.put_entity(thread, "checkpoint", "cp-1", %{
+      "s" => Map.merge(owned, %{"id" => "cp-1", "status" => "ready"})
+    })
+    |> World.put_entity(thread, "runtime-request", "request-1", %{
+      "s" => Map.merge(owned, %{"id" => "request-1", "kind" => "approval", "status" => "pending"})
+    })
+    |> Map.put(:thread, thread)
+  end
+
+  step "a client asks for the projection of {string}", %{args: [thread]} = context do
+    {reply, context} =
+      World.call!(context, "hal-c2.threadRows", %{"threadId" => World.thread_id(context, thread)})
+
+    Map.merge(context, %{thread: thread, projection: reply})
+  end
+
+  step "it receives the thread, its runs, items, messages, plans, checkpoints and requests",
+       context do
+    ids =
+      for [kind, id, _entity] <- context.projection["rows"], into: MapSet.new(), do: {kind, id}
+
+    for expected <- [
+          {"thread", World.thread_id(context, context.thread)},
+          {"run", "run-1"},
+          {"turn-item", "item-1"},
+          {"message", "msg-1"},
+          {"plan", "plan-1"},
+          {"checkpoint", "cp-1"},
+          {"runtime-request", "request-1"}
+        ],
+        do: assert(expected in ids, "#{inspect(expected)} is missing from the projection")
+
+    context
+  end
+
+  step "it receives the sequence the projection is at", context do
+    state = World.state(context, context.thread)
+    assert context.projection["offset"] == state.seq
+    assert context.projection["at"] == state.updated_at
+    context
+  end
+
   # --- refused methods -----------------------------------------------------------------
 
   step "a client calls {string}", %{args: [method]} = context do
