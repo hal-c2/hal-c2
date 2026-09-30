@@ -105,6 +105,11 @@ const ICONS = [
   "wrench",
   "x",
   "zap",
+  "text-wrap",
+  "lightbulb",
+  "message-square-warning",
+  "triangle-alert",
+  "octagon-alert",
 ];
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));

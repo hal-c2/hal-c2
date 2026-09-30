@@ -5,6 +5,7 @@
 #include <QTest>
 
 #include "Harness.h"
+#include "SettingsController.h"
 #include "TerminalController.h"
 #include "World.h"
 
@@ -33,6 +34,9 @@ void Brick::registerSingletons() {
     });
     qmlRegisterSingletonType<QObject>("HalC2.Shell", 1, 0, "Terminals", [](QQmlEngine*, QJSEngine* engine) {
       return owned(engine, current->native().controller<TerminalController>());
+    });
+    qmlRegisterSingletonType<QObject>("HalC2.Shell", 1, 0, "Settings", [](QQmlEngine*, QJSEngine* engine) {
+      return owned(engine, current->native().controller<SettingsController>());
     });
     return true;
   }();

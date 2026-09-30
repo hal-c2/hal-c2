@@ -289,6 +289,9 @@ Item {
             const copy = findNamed(question, "copyMessage");
             mouseMove(list, list.width / 2, list.height - 2);
             tryCompare(copy.parent, "opacity", 0, 2000, "Copy is hidden away from the pointer");
+            // The message's markdown is laid out.
+            const markdown = findWith(question, "segmentCount");
+            tryVerify(() => markdown.segmentCount > 0 && markdown.implicitHeight > 0 && question.height >= markdown.implicitHeight, 2000);
             const height = question.height;
             mouseMove(question, question.width / 2, 4);
             tryCompare(copy.parent, "opacity", 1, 2000, "Copy shows with the pointer over the message");
@@ -349,6 +352,19 @@ Item {
             verify(visibleIn(findIcon(item, "terminal")), "a command shows the terminal icon");
             verify(visibleIn(findIcon(item, "hammer")), "a call without an icon shows the hammer");
             verify(visibleIn(findText(item, "9:41 AM")), "a call shows its time");
+        }
+
+        function findWith(item, property) {
+            if (!item)
+                return null;
+            if (item[property] !== undefined)
+                return item;
+            for (let i = 0; i < item.children.length; ++i) {
+                const found = findWith(item.children[i], property);
+                if (found)
+                    return found;
+            }
+            return null;
         }
 
         // The shown icon of that name.

@@ -121,21 +121,6 @@ Item {
         wrapMode: Text.Wrap
     }
 
-    component Markdown: TextEdit {
-        color: root.textColor
-        font.family: root.uiFamily
-        font.pixelSize: 14
-        textFormat: TextEdit.MarkdownText
-        wrapMode: TextEdit.Wrap
-        readOnly: true
-        selectByMouse: true
-        selectionColor: root.accentColor
-        onLinkActivated: link => root.linkActivated(link)
-        HoverHandler {
-            cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
-        }
-    }
-
     // A small text button under a message.
     component ActionLink: Text {
         id: action
@@ -468,6 +453,10 @@ Item {
                             y: 12
                             width: Math.min(implicitWidth, body.width * 0.8 - 24)
                             text: row.text ?? ""
+                            lineBreaks: true
+                            fitWidth: true
+                            textColor: root.textColor
+                            onLinkActivated: link => root.linkActivated(link)
                         }
                     }
                     // A message that did not reach the agent says why.
@@ -513,6 +502,8 @@ Item {
                     Markdown {
                         width: parent.width - 8
                         text: row.text ?? ""
+                        streaming: row.streaming ?? false
+                        onLinkActivated: link => root.linkActivated(link)
                     }
                     // The files the reply's turn changed (ChangedFilesCard).
                     Item {
@@ -951,6 +942,7 @@ Item {
                         Markdown {
                             width: parent.width
                             text: row.text ?? ""
+                            onLinkActivated: link => root.linkActivated(link)
                         }
                     }
                 }
