@@ -225,8 +225,8 @@ private slots:
     }
   }
 
-  // Mirrors "A screenshot taken without a display shows the app's page" in
-  // features/desktop/shell-host.feature: --screenshot is a window grab.
+  // A page a WebSurface still shows is drawn in a window grab without a
+  // display (--screenshot; WebProfile's software rendering).
   void windowGrabWithoutDisplayShowsThePage() {
     QFile page(directory.filePath("grab.html"));
     QVERIFY(page.open(QIODevice::WriteOnly));

@@ -270,6 +270,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/toasts.feature"),
     QStringLiteral("preview/devices.feature"),
     QStringLiteral("navigation/qt-shell-backlog.feature:A device tab streams a device screen"),
+    QStringLiteral("desktop/shell-host.feature:A screenshot taken without a display shows the app's window"),
     QStringLiteral("navigation/qt-shell-backlog.feature:The previous worktree shortcut works in the native composer"),
     // The alerts themselves; the in-app card's own clicks are tst_Scenarios.qml's.
     QStringLiteral("timeline/notifications.feature:A thread that changes state*"),

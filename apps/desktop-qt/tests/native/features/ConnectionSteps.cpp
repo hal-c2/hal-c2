@@ -1,10 +1,15 @@
 // Connecting the shell to its node, who owns what once it has, and the
 // environments the node is linked to (features/desktop/native-connection.feature).
 
+#include <QGuiApplication>
+#include <QImage>
+#include <QQuickItem>
+#include <QSet>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QVariantList>
 
+#include "Brick.h"
 #include "Harness.h"
 #include "NativeShell.h"
 #include "World.h"
@@ -13,6 +18,10 @@ namespace {
 
 struct ScriptedRun {
   int started = 0;
+  // A scripted screenshot: whether the window had the node's rows when it
+  // was grabbed, and the grab.
+  bool snapshotIn = false;
+  QImage shot;
 };
 
 const Steps steps([] {
@@ -59,6 +68,38 @@ const Steps steps([] {
     world.waitFor([&] { return started > 0; }, QStringLiteral("the scripted run to start"));
     world.sync();
     expect(started == 1, QStringLiteral("it started %1 times").arg(started));
+  });
+  // A scripted screenshot (main.cpp --screenshot) grabs the native window on
+  // NativeShell::ready; with no project that window is the home page.
+  step(QStringLiteral("the desktop app runs without a display"), [](World&, const Captures&, const Table&) {
+    expect(QGuiApplication::platformName() == QLatin1String("offscreen"), QStringLiteral("the platform is %1").arg(QGuiApplication::platformName()));
+  });
+  step(QStringLiteral("the user starts the desktop app asking for a screenshot"), [](World& world, const Captures&, const Table&) {
+    ScriptedRun& run = world.node.part<ScriptedRun>();
+    QObject::connect(&world.native(), &NativeShell::ready, &world.native(), [&world, &run] {
+      ++run.started;
+      run.snapshotIn = world.state(QStringLiteral("sidebar")).isValid();
+      world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nHomePage {}\n", QSize(900, 700));
+      run.shot = world.brick->grab();
+    }, Qt::SingleShotConnection);
+    world.connect();
+    world.waitFor([&run] { return run.started > 0; }, QStringLiteral("the scripted run to start"));
+  });
+  step(QStringLiteral("the screenshot is taken once the node's first snapshot is in"), [](World& world, const Captures&, const Table&) {
+    const ScriptedRun& run = world.node.part<ScriptedRun>();
+    expect(run.started == 1 && run.snapshotIn, QStringLiteral("started %1 times, with the snapshot %2").arg(run.started).arg(run.snapshotIn));
+  });
+  step(QStringLiteral("the screenshot shows the app's native window, not an empty view"), [](World& world, const Captures&, const Table&) {
+    const QImage& shot = world.node.part<ScriptedRun>().shot;
+    expect(!shot.isNull(), QStringLiteral("nothing was grabbed"));
+    // Something was drawn over the background: the home page's title and action.
+    QSet<QRgb> colours;
+    for (int y = 0; y < shot.height() && colours.size() < 3; y += 4) {
+      for (int x = 0; x < shot.width() && colours.size() < 3; x += 4) colours.insert(shot.pixel(x, y));
+    }
+    expect(colours.size() >= 3, QStringLiteral("the screenshot is one flat colour"));
+    const QQuickItem* title = world.brick->item(QStringLiteral("homeTitle"));
+    expect(title->isVisible() && !title->property("text").toString().isEmpty(), QStringLiteral("the home page has no title"));
   });
   step(QStringLiteral("the node holds back its snapshot"), [](World& world, const Captures&, const Table&) {
     world.node.holdSnapshot = true;

@@ -3,7 +3,8 @@
 #   apps/desktop-qt/host/elixirNode.ts (the node's access token, found through its runtime record when attached)
 #   apps/desktop-qt/host/main.test.ts (these scenarios, by name, against a fake node)
 #   apps/desktop-qt/src/BackendProcess.cpp (host process, ready/error lines, stdin close on exit)
-#   apps/desktop-qt/src/main.cpp (--url attach mode, --home-dir, --screenshot scripted runs)
+#   apps/desktop-qt/src/main.cpp (--url attach mode, --home-dir, --screenshot scripted runs on NativeShell::ready)
+#   apps/desktop-qt/tests/native/features/ConnectionSteps.cpp (the scripted screenshot)
 #   apps/desktop-qt/src/WebProfile.cpp (software rendering for a run without a display)
 #   apps/server-ex/lib/hal_c2/desktop.ex (bootstrap line on standard input)
 #   apps/web/src/components/auth/PairingRouteSurface.tsx (hosted pairing route, auto=1)
@@ -178,10 +179,11 @@ Feature: The desktop app runs its own node
   Rule: A scripted screenshot shows what the user would see
 
     @desktop
-    Scenario: A screenshot taken without a display shows the app's page
+    Scenario: A screenshot taken without a display shows the app's window
       Given the desktop app runs without a display
       When the user starts the desktop app asking for a screenshot
-      Then the screenshot shows the app's page inside the window, not an empty view
+      Then the screenshot is taken once the node's first snapshot is in
+      And the screenshot shows the app's native window, not an empty view
 
     # Delivered natively (main.cpp --screenshot); no desktop test yet.
     @desktop @backlog-desktop
