@@ -39,4 +39,13 @@ function(hal_c2_add_native_library webchannel_script_url)
   set(_hal_c2_js "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../qml/HalC2/Bricks/js")
   qt_add_resources(hal_c2_native hal_c2_native_settings PREFIX "/hal-c2/settings" BASE "${_hal_c2_js}"
                    FILES "${_hal_c2_js}/settingsPages.js" "${_hal_c2_js}/settingsRows.js")
+  # Snap Shot's capture sounds, as :/hal-c2/sounds/*.oga.
+  qt_add_resources(hal_c2_native hal_c2_native_sounds PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
+                   FILES "${_hal_c2_src}/native/sounds/snap-shot-click.oga" "${_hal_c2_src}/native/sounds/snap-shot-whoosh.oga")
+  # Snap Shot's xdg-desktop-portal backend talks D-Bus (PortalSnapShot).
+  if(UNIX AND NOT APPLE)
+    find_package(Qt6 REQUIRED COMPONENTS DBus)
+    target_link_libraries(hal_c2_native PUBLIC Qt6::DBus)
+    target_compile_definitions(hal_c2_native PUBLIC HAL_C2_HAS_DBUS)
+  endif()
 endfunction()

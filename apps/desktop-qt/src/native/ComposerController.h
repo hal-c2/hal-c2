@@ -73,7 +73,15 @@ class TimelineModel;
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
 // composer.queue.steer {runId?} (the first queued without one),
 // composer.queue.edit {runId?} (the last queued without one),
-// composer.queue.edit.cancel.
+// composer.queue.edit.cancel, composer.stash, composer.stash.restore {id},
+// composer.stash.delete {id}, composer.stash.menu {open?} (toggles without).
+//
+// The stash (the web's promptStashStore) is this machine's, not a thread's:
+// the prompts set aside with composer.stash, newest first, at most 20, kept
+// with the drafts and the same in every window. Stashing an empty draft
+// brings back the only entry, or opens the list. Publishes `composerStash`:
+// {entries: [{id, snippet, createdAt}], open, shortcut}, `open` being this
+// window's.
 //
 // A terminal excerpt is a chip on the draft (`composer.terminalContexts`), as
 // the web's terminal context; a send appends an inline context link for each
@@ -109,6 +117,12 @@ public:
   // SidebarDraftRow): the text's first line, else how many attachments it
   // carries; nothing for an empty draft (composerDraftHasUserContent).
   std::optional<QString> draftPreview(const QString& target) const;
+  // An image (a snapshot) joins `target`'s draft: a thread key or a draft id.
+  // `source` rides with it to the node when set (ChatImageAttachment.source).
+  void attachImage(const QString& target, const QString& name, const QString& mimeType, const QByteArray& bytes,
+                   const QJsonObject& source = {});
+  // The draft's images: {id, name, mimeType, sizeBytes, source}.
+  QVariantList attachments(const QString& target) const;
 
 private:
   struct Attachment {
@@ -117,6 +131,7 @@ private:
     QString mimeType;
     qint64 sizeBytes = 0;
     QString dataUrl;
+    QJsonObject source;
   };
   // A terminal selection on the draft (apps/web/src/lib/terminalContext.ts).
   struct TerminalContext {
@@ -138,6 +153,14 @@ private:
     std::optional<QJsonObject> modelSelection;
     QString runtimeMode;
     QString interactionMode;
+    QList<Attachment> attachments;
+    QList<TerminalContext> terminalContexts;
+  };
+  // A prompt set aside (composer.stash), with what it carried.
+  struct StashEntry {
+    QString id;
+    QDateTime createdAt;
+    QString text;
     QList<Attachment> attachments;
     QList<TerminalContext> terminalContexts;
   };
@@ -176,6 +199,10 @@ private:
   // The message text with a context link per excerpt, and their records as
   // its `context`.
   static void withTerminalContexts(QJsonObject& message, const QList<TerminalContext>& contexts);
+  bool stash(const QString& target);
+  void restoreStash(const QString& target, const QString& id);
+  void setStashOpen(bool open);
+  QVariantMap stashState() const;
   bool respond(const QString& requestId, const QJsonObject& fields, const QString& failure);
   bool queueCommand(const QString& type, const QString& runId);
   bool editQueued(const QString& target, QString runId);
@@ -240,8 +267,15 @@ private:
   // What every window's composer keeps.
   struct Kept {
     QHash<QString, Draft> drafts;
+    // Newest first.
+    QList<StashEntry> stash;
     QString path;
+    // The images last written beside the drafts (imagesPath), so a keystroke
+    // does not rewrite them.
+    QString images;
   };
+  // Where the drafts' images are kept: shell-composer-images.json beside them.
+  QString imagesPath() const;
   Kept& m_kept;
   QHash<QString, Draft>& m_drafts;
   // Each thread's sends, the one in flight first: a thread sends one at a
@@ -260,6 +294,9 @@ private:
   QVariantMap m_published;
   QVariant m_publishedComposer;
   QVariantMap m_publishedPicker;
+  QVariantMap m_publishedStash;
+  // This window's stash list is open.
+  bool m_stashOpen = false;
   QList<composer::Instance> m_catalogue;
   // The @ search the menu shows: its target and query, and what came back.
   struct PathSearch {
@@ -270,7 +307,6 @@ private:
     int request = 0;
   };
   PathSearch m_paths;
-  int m_nextAttachment = 1;
   // The queued message the route thread's composer is editing, and the
   // thread's draft set aside for it.
   struct QueuedEdit {

@@ -86,6 +86,8 @@ public:
   void replace(const Route& route) { go(route, true, true); }
   // Back to where the user was before, or home.
   void back();
+  // To where back() left, if nothing was opened since.
+  void forward();
 
   // Where the last route is kept; restores it from there.
   void setStorePath(const QString& path);
@@ -111,6 +113,7 @@ private:
   ShellStore* m_store;
   Route m_route;
   QList<Route> m_backStack;
+  QList<Route> m_forwardStack;
   // What the page shows as far as the shell knows: the last route it was told
   // or reported. Unknown until the page first says so.
   std::optional<Route> m_pageRoute;

@@ -23,12 +23,14 @@
 #include <algorithm>
 
 #include "CommandPaletteController.h"
+#include "DraftController.h"
 #include "FakeConfig.h"
 #include "Harness.h"
 #include "Keymap.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "NavigationController.h"
+#include "RightPanelController.h"
 #include "TerminalController.h"
 #include "World.h"
 
@@ -228,7 +230,7 @@ void pressSequence(World& world, const QString& sequence) {
   const bool page = state.focus.value(QStringLiteral("page")).toBool();
   const bool enabled = terminal ? shortcut.value(QStringLiteral("terminal")).toBool()
                        : page   ? shortcut.value(QStringLiteral("page")).toBool()
-                                : true;
+                                : shortcut.value(QStringLiteral("chrome")).toBool();
   if (!enabled) {
     state.delivered = focusName(state.focus);
     return;
@@ -270,6 +272,14 @@ void press(World& world, const QString& key) {
   if (palette && palette->isOpen() && key == QLatin1String("Backspace") && palette->query().isEmpty()) {
     palette->leaveSubmenu();
     world.sync();
+    return;
+  }
+  // Settings, SnapShots' recorder takes every key while it records (SnapShotSettings.qml).
+  if (at(world.state(QStringLiteral("snapShot")), QStringLiteral("shortcut.recording")).toBool()) {
+    const QKeyCombination combination = QKeySequence(key)[0];
+    world.bridge().dispatch(QStringLiteral("snapShot.record.key"),
+                            QVariantMap{{QStringLiteral("key"), int(combination.key())},
+                                        {QStringLiteral("modifiers"), int(combination.keyboardModifiers().toInt())}});
     return;
   }
   const auto shortcut = keybindings::parseShortcut(key.toLower());
@@ -331,6 +341,32 @@ void showThread(World& world) {
   world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), QStringLiteral("env-a:t1")}});
   auto* terminals = world.native().controller<TerminalController>();
   world.waitFor([terminals] { return terminals->available(); }, QStringLiteral("the thread's terminal drawer"));
+}
+
+// Threads titled as given (ids "t" + title) in projects named by id, as the
+// node's snapshot has them when the shell connects.
+void addThreads(World& world, const QList<std::pair<QString, QString>>& threads) {
+  for (const auto& [title, project] : threads) {
+    world.node.projects.insert(project, {{QStringLiteral("id"), project},
+                                         {QStringLiteral("title"), project},
+                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + project},
+                                         {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")},
+                                         {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:00:00Z")},
+                                         {QStringLiteral("scripts"), QJsonArray()}});
+    world.node.threads.insert(QStringLiteral("t") + title, {{QStringLiteral("id"), QStringLiteral("t") + title},
+                                                           {QStringLiteral("projectId"), project},
+                                                           {QStringLiteral("title"), title},
+                                                           {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
+                                                           {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+  }
+  ensureShell(world);
+}
+
+void openThread(World& world, const QString& title) {
+  const QString key = world.node.environmentId + QStringLiteral(":t") + title;
+  world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
+  world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },
+                QStringLiteral("the window to show ") + key);
 }
 
 TerminalController* terminals(World& world) {
@@ -422,8 +458,54 @@ const Steps steps([] {
                   QStringLiteral("the thread's first terminal"));
     setFocus(world, {{QStringLiteral("terminal"), true}});
   });
+  // The desktop's preview is the right panel's Previews tab (preview.toggle).
+  step(QStringLiteral("the user is looking at a thread in the desktop app"), [](World& world, const Captures&, const Table&) {
+    showThread(world);
+    setFocus(world, {});
+  });
+  const auto previewShown = [](World& world) {
+    auto* panel = world.native().controller<RightPanelController>();
+    return panel->isOpen() && panel->activeTab() == QLatin1String("previews");
+  };
+  step(QStringLiteral("the preview is shown"), [previewShown](World& world, const Captures&, const Table&) {
+    expect(previewShown(world), QStringLiteral("%1; the panel is %2").arg(describePress(world), show(world.state(QStringLiteral("panel")))));
+  });
+  step(QStringLiteral("the preview is hidden"), [previewShown](World& world, const Captures&, const Table&) {
+    expect(!previewShown(world), QStringLiteral("%1; the panel is %2").arg(describePress(world), show(world.state(QStringLiteral("panel")))));
+  });
   step(QStringLiteral("the user is on (macOS|Linux|Windows)"), [](World& world, const Captures& c, const Table&) {
     setMac(world, c[0] == QLatin1String("macOS"));
+  });
+
+  // Threads of their own for the scenarios with no Background.
+  step(QStringLiteral("the user opened thread %1 and then thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    addThreads(world, {{c[0], QStringLiteral("p1")}, {c[1], QStringLiteral("p1")}});
+    openThread(world, c[0]);
+    openThread(world, c[1]);
+  });
+  step(QStringLiteral("the user has several projects"), [](World& world, const Captures&, const Table&) {
+    addThreads(world, {{QStringLiteral("One"), QStringLiteral("p1")}, {QStringLiteral("Two"), QStringLiteral("p2")}});
+    openThread(world, QStringLiteral("Two"));
+  });
+  step(QStringLiteral("the user goes forward"), [](World& world, const Captures&, const Table&) {
+    keymap(world)->commands()->run(QStringLiteral("navigation.forward"));
+    world.sync();
+  });
+  step(QStringLiteral("thread %1 is shown").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = world.node.environmentId + QStringLiteral(":t") + c[0];
+    world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },
+                  [&] { return QStringLiteral("%1; the window shows %2").arg(key, show(world.state(QStringLiteral("route")))); });
+  });
+  step(QStringLiteral("the user starts a new local thread"), [](World& world, const Captures&, const Table&) {
+    keymap(world)->commands()->run(QStringLiteral("chat.newLocal"));
+    world.sync();
+  });
+  step(QStringLiteral("a new thread starts in the current project without asking"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariant route = world.state(QStringLiteral("route"));
+    const auto draft = world.native().controller<DraftController>()->draft(at(route, QStringLiteral("draftId")).toString());
+    expect(draft && draft->projectId == QLatin1String("p2"), QStringLiteral("the window shows %1").arg(show(route)));
+    expect(!world.native().controller<CommandPaletteController>()->isOpen(), QStringLiteral("the command palette asked"));
   });
 
   // Pressing keys.
@@ -514,6 +596,9 @@ const Steps steps([] {
                                         {QStringLiteral("shiftKey"), shortcut->shift},
                                         {QStringLiteral("altKey"), shortcut->alt}});
     world.sync();
+  });
+  step(QStringLiteral("the page is not handed the key"), [](World& world, const Captures&, const Table&) {
+    expect(forwarded(world).isEmpty() && keys(world).delivered != QLatin1String("page"), describePress(world));
   });
   step(QStringLiteral("the page is handed the key once"), [](World& world, const Captures&, const Table&) {
     expect(forwarded(world).size() == 1 && keys(world).ran.isEmpty(), describePress(world));

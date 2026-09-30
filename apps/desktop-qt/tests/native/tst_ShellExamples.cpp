@@ -91,7 +91,7 @@ private slots:
   }
 
   // A thread or draft route shows the shell's own centre in the page's
-  // place (js/centreViews.js); any other route shows the page again.
+  // place (js/centreViews.js); a settings section with no brick shows the page again.
   void threadRoutesDrawTheCentre(QQuickWindow* window) {
     auto* page = findVisualItem(window->contentItem(), "HalC2WebSurface");
     QVERIFY(page);
@@ -109,7 +109,7 @@ private slots:
     QTRY_COMPARE(placeholder->property("text").toString(), QString("What should we build in Example project?"));
     QVERIFY(placeholder->isVisible());
     QVERIFY(!page->isVisible());
-    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/snap-shot"}});
+    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/nowhere"}});
     QTRY_VERIFY(page->isVisible());
     bridge.publish("route", QVariant());
     QTRY_VERIFY(page->isVisible());

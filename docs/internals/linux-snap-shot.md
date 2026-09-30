@@ -106,3 +106,10 @@ path can skip rebinding and leave callbacks behind on unregister, which is why
 
 GNOME 50 removed `Meta.is_wayland_compositor`. Shell internals change across majors; verify each
 version before adding it to `metadata.json`.
+
+## Qt desktop
+
+`apps/desktop-qt` has only the portal backend so far (`PortalSnapShot`, over QtDBus rather than
+`dbus-next`), on every Wayland desktop. Where Electron would pick a helper (GNOME, KDE, Hyprland,
+Niri) the Qt app uses the portal instead, so those desktops get the window picker unless their
+portal offers the active-window target. The helper backends are `@backlog-desktop`.

@@ -3,6 +3,7 @@
 #   docs/internals/composer-editors.md
 #   apps/desktop-qt/qml/HalC2/Bricks/ComposerVimKeys.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (editor actions, text insertion)
+#   apps/desktop-qt/src/native/ComposerController.cpp (stash)
 #   apps/desktop-qt/tests/tst_ComposerExtensions.qml
 #   apps/desktop-qt/tests/tst_ComposerActions.qml
 #   apps/tui/src/promptEditor.ts
@@ -93,7 +94,7 @@ Feature: Editing the draft
     When the user moves forward again
     Then the draft reads "second"
 
-  @backlog @desktop
+  @desktop
   Scenario: Stashing a prompt clears the composer and it can be restored
     Given the draft reads "half-finished idea"
     When the user stashes the prompt
@@ -101,6 +102,37 @@ Feature: Editing the draft
     When the user restores the stashed prompt
     Then the draft reads "half-finished idea"
 
+  @desktop
+  Scenario: Stashing an empty draft brings back the only stashed prompt
+    Given the draft reads "half-finished idea"
+    When the user stashes the prompt
+    And the user stashes the prompt again
+    Then the draft reads "half-finished idea"
+    And nothing is stashed
+
+  @desktop
+  Scenario: A restored prompt joins what the draft already holds
+    Given the user stashed "first idea"
+    And the user has typed "second thought"
+    When the user restores the stashed prompt
+    Then the draft reads "second thought" and then "first idea"
+
+  @desktop
+  Scenario: A stashed prompt can be deleted
+    Given the user stashed "first idea"
+    When the user deletes the stashed prompt
+    Then nothing is stashed
+    And the composer is empty
+
+  @desktop
+  Scenario: The stash keeps the 20 newest prompts
+    Given the user stashed 20 prompts
+    When the user stashes "one more"
+    Then the user sees a "warning" toast "Oldest stashed prompt discarded" saying "The stash holds 20 prompts; the oldest was removed to make room."
+    And 20 prompts are stashed, "one more" first
+
+  # The desktop uploads a draft's files only when it sends, so none can be
+  # uploading while the prompt is stashed.
   @backlog @desktop
   Scenario: A prompt cannot be stashed while its files are uploading
     Given the draft carries a file that is still uploading

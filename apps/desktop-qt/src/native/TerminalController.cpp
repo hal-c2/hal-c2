@@ -61,6 +61,7 @@ QJsonObject TerminalPlace::launchInput(const QString& terminalId) const {
       {QStringLiteral("env"), env},
   };
   if (!worktreePath.isEmpty()) input.insert(QStringLiteral("worktreePath"), worktreePath);
+  if (!providerInstanceId.isEmpty()) input.insert(QStringLiteral("providerInstanceId"), providerInstanceId);
   return input;
 }
 
@@ -100,6 +101,7 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
     m_client->unsubscribe(m_subscription);
     m_subscription = 0;
     note(frame.value(QLatin1String("reason")).toString());
+    emit failed(frame.value(QLatin1String("reason")).toString());
     return;
   }
   if (type != QLatin1String("terminal")) return;
@@ -111,6 +113,7 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
     if (!m_attached) {
       m_attached = true;
       flushWrites();
+      emit attached();
     }
     // The attach's size can be older than what the Terminal settled on since.
     if (m_wanted.isValid()) {

@@ -52,7 +52,7 @@ Item {
             compare(Pages.brickFor("/settings/providers"), "ProvidersSettings");
             compare(Pages.brickFor("/settings/source-control"), "SourceControlSettings");
             compare(Pages.brickFor("/settings/integrations"), "IntegrationsSettings");
-            compare(Pages.brickFor("/settings/snap-shot"), "", "the page still renders SnapShots");
+            compare(Pages.brickFor("/settings/snap-shot"), "SnapShotSettings");
             compare(Pages.brickFor("/settings/nowhere"), "");
         }
 
@@ -154,8 +154,8 @@ Item {
             verify(!!host);
             tryCompare(host, "status", Loader.Ready);
             compare(host.item.objectName, "generalSettings");
-            host.section = "/settings/snap-shot";
-            verify(!host.active, "the page's section loads nothing");
+            host.section = "/settings/nowhere";
+            verify(!host.active, "an unknown section loads nothing");
         }
 
         function test_aChangedRowOffersAReset() {

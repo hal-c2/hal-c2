@@ -15,6 +15,7 @@ const ICONS = [
   "archive-restore",
   "arrow-right-left",
   "arrow-up",
+  "bookmark",
   "bot",
   "chart-no-axes-column",
   "check",

@@ -5,12 +5,14 @@
 // what the node does with a setting is its own scenarios', so these check
 // what the section saves.
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 
 #include <functional>
 
 #include "FakeConfig.h"
+#include "FakeSourceControl.h"
 #include "FakeNode.h"
 #include "Harness.h"
 #include "NativeShell.h"
@@ -198,7 +200,11 @@ const Steps steps([] {
        [](World& world, const Captures&, const Table&) { open(world); });
 
   // source-control.feature
-  step(QStringLiteral("the panel loads"), [](World& world, const Captures&, const Table&) { scan(world); });
+  step(QStringLiteral("the panel loads"), [](World& world, const Captures&, const Table&) {
+    // Settings, SnapShots loads on its own, as it opens (SnapShotSteps).
+    if (at(world.state(QStringLiteral("route")), QStringLiteral("section")) == QLatin1String("/settings/snap-shot")) return;
+    scan(world);
+  });
   step(QStringLiteral("each version control and hosting tool is listed as available, missing or status unknown"),
        [](World& world, const Captures&, const Table&) {
          expect(listed(world, QStringLiteral("git")).value(QStringLiteral("available")).toBool(), QStringLiteral("Git to be available; %1").arg(show(found(world))));
@@ -453,3 +459,22 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void setSourceControlHost(FakeNode& node, const QString& kind, bool ready) {
+  static const QHash<QString, QPair<QString, QString>> known{
+      {QStringLiteral("github"), {QStringLiteral("GitHub"), QStringLiteral("gh")}},
+      {QStringLiteral("gitlab"), {QStringLiteral("GitLab"), QStringLiteral("glab")}},
+      {QStringLiteral("bitbucket"), {QStringLiteral("Bitbucket"), QString()}},
+  };
+  const auto [label, executable] = known.value(kind);
+  const QJsonObject entry = hostItem(kind, label, executable, ready, ready ? QStringLiteral("authenticated") : QStringLiteral("unknown"),
+                                     ready ? QStringLiteral("sam") : QString());
+  FakeSourceControl& fake = node.part<FakeSourceControl>();
+  for (QJsonObject& host : fake.hosts) {
+    if (host.value(QLatin1String("kind")) == kind) {
+      host = entry;
+      return;
+    }
+  }
+  fake.hosts.append(entry);
+}

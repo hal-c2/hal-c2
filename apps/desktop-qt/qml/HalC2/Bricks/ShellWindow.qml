@@ -70,14 +70,8 @@ Window {
     }
 
     ContextMenuHost {
-        surfaceId: "shell"
-    }
-
-    ContextMenuHost {
         objectName: "shellMenuHost"
         surfaceId: "shell"
-        stateKey: "menu"
-        selectAction: "menu.select"
     }
 
     ProjectRemovalDialog {}
@@ -129,16 +123,21 @@ Window {
         }
     }
 
+    // The first-run gate: covers the window until setup is done.
+    WelcomeWizard {
+        anchors.fill: parent
+    }
+
     ShellErrorOverlay {
         anchors.fill: parent
     }
 
     // One window shortcut per sequence the keymap (Keybindings) binds. A
     // command the shell runs natively fires whatever has focus, a focused page
-    // included, so the page never sees the key too. A page command stands
-    // down while the page is focused (it handles its own keydown) and reaches
-    // it through Keybindings.press otherwise. A focused terminal keeps every
-    // key except the shell's own terminal-context commands (Ctrl+J and co).
+    // included, so the page never sees the key too. A key with no native
+    // command in that focus stands down and stays with the focused control.
+    // A focused terminal keeps every key except the shell's own
+    // terminal-context commands (Ctrl+J and co).
     Instantiator {
         model: Keybindings.shortcuts
 
@@ -147,7 +146,7 @@ Window {
 
             sequence: modelData.sequence
             context: Qt.WindowShortcut
-            enabled: root.terminalFocused ? modelData.terminal : root.webFocused ? modelData.page : true
+            enabled: root.terminalFocused ? modelData.terminal : root.webFocused ? modelData.page : modelData.chrome
             onActivated: Keybindings.press(modelData.sequence, {
                 page: root.webFocused,
                 terminal: root.terminalFocused,

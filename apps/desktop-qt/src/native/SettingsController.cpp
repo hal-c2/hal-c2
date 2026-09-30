@@ -90,6 +90,14 @@ const QList<Row>& rows() {
       {"fontFamilyTerminal", true, QString()},
       {"fontSmoothing", true, true},
       {"wordWrap", true, true},
+      // SnapShots (SnapShotController).
+      {"snapShotEnabled", true, false},
+      {"snapShotIncludeAccessibility", true, true},
+      {"snapShotShortcut", true, QJsonObject{{QStringLiteral("kind"), QStringLiteral("both-shift-keys")}}},
+      {"snapShotPlaySound", true, true},
+      {"snapShotSound", true, QStringLiteral("soft-pop")},
+      {"snapShotFlash", true, true},
+      {"snapShotAnimations", true, true},
   };
   return list;
 }
@@ -145,6 +153,7 @@ void SettingsController::onConfig(const QJsonObject& frame) {
   } else if (type == QLatin1String("config.keybindings")) {
     m_config.insert(QStringLiteral("keybindingRules"), frame.value(QLatin1String("rules")));
     emit configChanged();
+    emit keybindingsPushed();
   } else if (type == QLatin1String("config.themes")) {
     setThemes(frame.value(QLatin1String("themes")).toArray());
   }
@@ -372,13 +381,16 @@ void SettingsController::setDevicePath(const QString& path) {
   }
   m_device = device;
   m_deviceError = error;
+  m_deviceUnreadable = !error.isEmpty();
   emit deviceChanged();
 }
 
 bool SettingsController::setDeviceSettings(const QJsonObject& device) {
   if (device == m_device) return true;
   QString error;
-  if (m_devicePath.isEmpty()) {
+  if (m_deviceUnreadable) {
+    error = QStringLiteral("Cannot read %1").arg(m_devicePath);
+  } else if (m_devicePath.isEmpty()) {
     error = QStringLiteral("This device has nowhere to keep its preferences.");
   } else {
     QDir().mkpath(QFileInfo(m_devicePath).absolutePath());

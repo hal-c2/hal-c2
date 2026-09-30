@@ -30,6 +30,8 @@ struct TerminalPlace {
   QString worktreePath;  // empty without a worktree
   QJsonObject env;
   QJsonArray scripts;
+  // A provider's setup terminal: the node runs it with that instance's env and home.
+  QString providerInstanceId;
 
   QJsonObject launchInput(const QString& terminalId) const;
 };
@@ -64,6 +66,10 @@ signals:
   void resized(QSize size);
   // The node closed the terminal (from this or another client).
   void closed();
+  // The first snapshot arrived: the shell is running.
+  void attached();
+  // The node refused to open the terminal.
+  void failed(const QString& reason);
 
 private:
   void onFrame(const QJsonObject& frame);

@@ -92,9 +92,15 @@ void BackendProcess::handleLine(const QByteArray& line) {
     const QJsonObject node = message.value(QStringLiteral("node")).toObject();
     const QUrl origin(node.value(QStringLiteral("origin")).toString());
     const QString token = node.value(QStringLiteral("token")).toString();
-    if (origin.isValid() && !origin.isEmpty() && !token.isEmpty()) {
-      emit nodeAvailable(origin, token);
+    // The shell runs on its own client, so an attached address that is not a
+    // node (the host hands it back without one) has nothing to open.
+    if (!origin.isValid() || origin.isEmpty() || token.isEmpty()) {
+      m_reportedError = true;
+      emit failed(QStringLiteral("%1 is not a HAL-C2 node. Start the desktop app with a node's pairing link to attach to it.")
+                      .arg(url.toDisplayString(QUrl::RemoveUserInfo | QUrl::RemoveQuery | QUrl::RemoveFragment)));
+      return;
     }
+    emit nodeAvailable(origin, token);
     emit ready(url);
   } else if (type == QStringLiteral("error")) {
     m_reportedError = true;

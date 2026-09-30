@@ -216,6 +216,8 @@ bool signsIn(const QJsonObject& provider) {
 
 }  // namespace
 
+QPair<QString, QString> providerSummary(const QJsonObject& provider) { return summary(provider); }
+
 ProviderSettingsController::ProviderSettingsController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
                                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_scope(new EnvironmentSettings(client, this)) {

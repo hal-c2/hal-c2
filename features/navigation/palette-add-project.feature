@@ -3,6 +3,10 @@
 #   apps/web/src/components/CommandPalette.logic.ts
 #   Command palette entries: action:add-project, action:add-project:wsl-folder
 #   apps/web/src/wslPaths.ts (WSL UNC paths mapped to the WSL environment's Linux path)
+#   packages/client-runtime/src/operations/projects.ts (getCloneDirectoryName, remote source readiness)
+#   apps/desktop-qt/src/native/ProjectController.cpp (Add project, Local folder, where browsing starts)
+#   apps/desktop-qt/src/native/ProjectCloneController.cpp (Git URL and repository sources, repository then destination)
+#   apps/desktop-qt/src/native/CommandPaletteController.cpp (browse, ask)
 
 Feature: Adding a project from the command palette
   The palette walks the user from an environment to a folder, a Git URL or a hosted
@@ -31,7 +35,7 @@ Feature: Adding a project from the command palette
     When that environment disconnects before the project is added
     Then the user is told "Environment unavailable"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A project can come from several sources
     When the user adds a project from <source>
     Then the project is added to the chosen environment
@@ -43,17 +47,23 @@ Feature: Adding a project from the command palette
       | a repository on GitHub         |
       | a repository on GitLab         |
 
-  @backlog @desktop
+  @desktop
   Scenario: A repository source that is not set up points to its settings
     Given GitLab is not connected
     When the user looks at repository sources while adding a project
     Then GitLab is marked "Setup Required"
     And choosing it opens the source control settings
 
-  @backlog @desktop
+  @desktop
   Scenario: Browsing starts in the home folder
     When the user adds a project from a local folder
     Then browsing starts at "~/"
+
+  @desktop
+  Scenario: A clone's destination starts in the add project base directory
+    Given the add project base directory is "~/code"
+    When the user adds a project from a Git URL
+    Then the destination offered is "~/code/shop"
 
   @backlog @desktop
   Scenario: A folder that does not exist yet can be created
@@ -67,13 +77,13 @@ Feature: Adding a project from the command palette
     When the user types a relative path while adding a project
     Then the palette says "Relative paths require an active project."
 
-  @backlog @desktop
+  @desktop
   Scenario: Cloning asks for a repository then a destination
     When the user adds a project from a Git URL
     Then the user is asked for the repository first
     And then for the destination folder
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Failures while adding a project are reported
     Given adding a project will fail at <stage>
     When the user adds the project
@@ -83,6 +93,10 @@ Feature: Adding a project from the command palette
       | stage                 | message                    |
       | the clone             | Clone failed               |
       | the repository lookup | Repository lookup failed   |
+
+    @backlog
+    Examples:
+      | stage                 | message                    |
       | registration          | Failed to add project      |
       | opening the project   | Failed to open project     |
       | opening the folder    | Failed to open folder      |

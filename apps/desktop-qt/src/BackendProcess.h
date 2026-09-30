@@ -26,8 +26,8 @@ public:
 
 signals:
   void ready(const QUrl& url);
-  // Emitted before `ready` for every node launch: where the shell's own client
-  // connects and its bearer. A URL that is not a node comes without it.
+  // Emitted before `ready`: where the shell's own client connects and its
+  // bearer. A host that announces a URL that is not a node fails instead.
   void nodeAvailable(const QUrl& origin, const QString& token);
   void failed(const QString& message);
 

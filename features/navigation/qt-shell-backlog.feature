@@ -138,7 +138,7 @@ Feature: Desktop shell gaps
       When the user presses mod+3
       Then the third thread opens
 
-    @backlog @desktop
+    @desktop
     Scenario: The previous worktree shortcut works in the native composer
       Given the native composer has keyboard focus
       When the user presses mod+shift+l

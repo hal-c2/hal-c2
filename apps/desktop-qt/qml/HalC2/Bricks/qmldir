@@ -77,3 +77,6 @@ ProjectSettings 1.0 ProjectSettings.qml
 DevicePanel 1.0 DevicePanel.qml
 OpenSourceLicenses 1.0 OpenSourceLicenses.qml
 DiagnosticsSettings 1.0 DiagnosticsSettings.qml
+WelcomeWizard 1.0 WelcomeWizard.qml
+OnboardingTerminal 1.0 OnboardingTerminal.qml
+SnapShotSettings 1.0 SnapShotSettings.qml

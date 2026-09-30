@@ -13,6 +13,9 @@
 #include "NativeController.h"
 
 class EnvironmentSettings;
+
+// getProviderSummary: the headline and detail under a provider's name.
+QPair<QString, QString> providerSummary(const QJsonObject& provider);
 class NodeClient;
 class ShellBridge;
 class ShellStore;

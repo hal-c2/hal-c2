@@ -25,7 +25,8 @@ class ShellStore;
 //
 // It takes every `workspace.*` action: `workspace.newThread` opens a draft
 // in the header's project (`thread.new`), `workspace.openPullRequest` the
-// checkout's pull request in the browser. `workspace.titleMenu` is
+// checkout's pull request in the browser, `workspace.previousWorktree` points
+// a draft at the worktree `previousWorktree` ({label} or null) offers. `workspace.titleMenu` is
 // ThreadMenuController's, which sees it first.
 //
 // A draft's checkout (mode, start from origin, branch, worktree, the machine
@@ -145,6 +146,16 @@ private:
   void selectBranch(const QString& name);
   void createBranch(const QString& name);
   void setThreadBranch(const std::optional<QString>& branch, const std::optional<QString>& worktreePath);
+  // BranchToolbar.logic resolvePreviousWorktreeSeed: for a draft, the
+  // worktree of the project's most recently updated unarchived thread that
+  // the draft does not already point at.
+  struct PreviousWorktree {
+    std::optional<QString> branch;
+    QString worktreePath;
+  };
+  std::optional<PreviousWorktree> previousWorktree() const;
+  // The draft moves into it (composer.previousWorktree).
+  void usePreviousWorktree();
   void updateCheckout(const std::function<void(Checkout&)>& edit);
   // Tells the page a draft's checkout, while it still sends the first message.
   void followCheckout(const QString& draftId);

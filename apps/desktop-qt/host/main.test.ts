@@ -577,7 +577,9 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       expect(await host.exited).toBe(1);
     });
 
-    it("An address that is not a node is loaded as it is", async () => {
+    // The host hands the address back without a node; BackendProcess refuses it
+    // (tst_BackendProcess).
+    it("An address that is not a node is refused", async () => {
       const server = NodeHttp.createServer((_request, response) => {
         response.writeHead(404).end();
       });
@@ -587,7 +589,10 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       const address = `http://127.0.0.1:${port}/some/page?x=1`;
       const host = startHost({ args: [`--attach=${address}`] });
 
-      expect((await ready(host)).href).toBe(address);
+      const message = await readyMessage(host);
+
+      expect(message.url).toBe(address);
+      expect(message.node).toBeUndefined();
       await host.quit();
     });
 

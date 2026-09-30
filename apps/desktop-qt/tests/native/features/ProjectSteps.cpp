@@ -12,6 +12,9 @@
 
 #include <algorithm>
 
+#include <QQuickItem>
+
+#include "Brick.h"
 #include "DraftController.h"
 #include "FakeProjects.h"
 #include "Harness.h"
@@ -268,6 +271,9 @@ const Steps steps([] {
   step(QStringLiteral("the shell may not open local folders"), [](World& world, const Captures&, const Table&) {
     world.bridge().setLocalFolderImportEnabled(false);
   });
+  step(QStringLiteral("the shell's node runs on another machine"), [](World& world, const Captures&, const Table&) {
+    world.bridge().setNodeOrigin(QUrl(QStringLiteral("https://node-b.example.ts.net")));
+  });
   step(QStringLiteral("the user asks to add a project without a folder"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap());
   });
@@ -295,6 +301,30 @@ const Steps steps([] {
   step(QStringLiteral("the thread list is scoped to the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
     if (projectEnvironments(world, c[0]).isEmpty()) addProject(world, c[0], c[0], QStringLiteral("/work/") + c[0]);
     world.bridge().dispatch(QStringLiteral("sidebar.scope"), QVariantMap{{QStringLiteral("projectKey"), world.projectKey(c[0])}});
+  });
+
+  step(QStringLiteral("%1 has no projects").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(world.node.environmentId == c[0] && projectNames(world).isEmpty(),
+           QStringLiteral("%1 lists the projects %2").arg(c[0], projectNames(world).join(QStringLiteral(", "))));
+  });
+
+  // Home as the window draws it (HomePage.qml), with nothing to open.
+  step(QStringLiteral("the user opens the app"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(at(world.state(QStringLiteral("route")), QStringLiteral("kind")) == QLatin1String("home"),
+           QStringLiteral("the route is %1").arg(show(world.state(QStringLiteral("route")))));
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nHomePage {}\n", QSize(900, 700));
+  });
+  step(QStringLiteral("the user is asked what they should work on"), [](World& world, const Captures&, const Table&) {
+    const QQuickItem* title = world.brick->item(QStringLiteral("homeTitle"));
+    const QString text = title->property("text").toString();
+    expect(title->isVisible() && text == QLatin1String("What should we work on?"), QStringLiteral("home says \"%1\"").arg(text));
+  });
+  step(QStringLiteral("the user is offered to add a project"), [](World& world, const Captures&, const Table&) {
+    const QQuickItem* action = world.brick->item(QStringLiteral("homeAction"));
+    const QString text = action->property("text").toString();
+    expect(action->isVisible() && text == QLatin1String("Add project"), QStringLiteral("home offers \"%1\"").arg(text));
   });
 
   // The user.

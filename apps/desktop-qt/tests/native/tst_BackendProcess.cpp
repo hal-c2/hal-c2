@@ -57,16 +57,23 @@ private slots:
     backend.stop();
   }
 
-  void anAttachedHostGivesTheShellNoNode() {
+  // features/desktop/shell-host.feature: An address that is not a node is refused.
+  void anAddressThatIsNotANodeIsRefused() {
     BackendProcess backend(host(
-        "echo '{\"type\":\"ready\",\"url\":\"http://127.0.0.1:5/\"}'\n"
+        "echo '{\"type\":\"ready\",\"url\":\"http://127.0.0.1:5/some/page?token=abc\"}'\n"
         "sleep 5\n"));
     QSignalSpy node(&backend, &BackendProcess::nodeAvailable);
     QSignalSpy ready(&backend, &BackendProcess::ready);
+    QSignalSpy failed(&backend, &BackendProcess::failed);
     backend.start();
-    QTRY_COMPARE(ready.size(), 1);
+    QTRY_COMPARE(failed.size(), 1);
+    QCOMPARE(failed.first().first().toString(),
+             QStringLiteral("http://127.0.0.1:5/some/page is not a HAL-C2 node. "
+                            "Start the desktop app with a node's pairing link to attach to it."));
     QCOMPARE(node.size(), 0);
+    QCOMPARE(ready.size(), 0);
     backend.stop();
+    QCOMPARE(failed.size(), 1);
   }
 
   void aHostThatExitsSilentlySaysSo() {

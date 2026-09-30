@@ -36,6 +36,13 @@ public:
   // `origin` is the node's http(s) origin; the token is its access token.
   void open(const QUrl& origin, const QString& token);
   void close();
+  // Drops the socket and connects again, as reloading the page does.
+  void reconnect() {
+    const QUrl origin = m_origin;
+    const QString token = m_token;
+    close();
+    open(origin, token);
+  }
   bool isReady() const { return m_ready; }
   // The http(s) origin the node was opened at.
   QUrl origin() const { return m_origin; }
