@@ -10,6 +10,7 @@ class ShellBridge;
 // The window's XR workspace: what the window shows, on panels in XR glasses
 // an OpenXR runtime drives (XrHost makes XrWorkspace while it is open). It
 // redraws every frame the glasses show, so it is only open while asked for.
+// What it shows is QML (ShellWindow.xrWorkspace, DefaultXrWorkspace).
 //
 // Publishes `xr`: {open}. Action and command `xr.toggle` opens or closes it;
 // `xr.failed` {message} is XrHost saying it could not start (no Qt Quick 3D

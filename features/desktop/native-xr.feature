@@ -1,7 +1,8 @@
 # Sources:
 #   apps/desktop-qt/src/native/XrController.cpp (the window's XR workspace)
 #   apps/desktop-qt/qml/HalC2/Bricks/XrHost.qml (starts and stops it)
-#   apps/desktop-qt/qml/HalC2/Bricks/XrWorkspace.qml (draws it)
+#   Shared domain: desktop/xr-workspace.feature owns what the workspace shows and how a rice
+#   lays it out; this file owns opening and closing it.
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 
 Feature: The desktop shows its window in XR glasses
@@ -36,9 +37,3 @@ Feature: The desktop shows its window in XR glasses
     Then the XR workspace is closed
     And the user sees an "error" toast "XR workspace unavailable" saying "No OpenXR runtime is installed"
 
-  @backlog-desktop
-  @desktop
-  Scenario: The XR workspace surrounds the user with the window's panels
-    Given the XR workspace is open
-    Then the user sees the thread in front of them
-    And the thread's terminal and the project's files beside it

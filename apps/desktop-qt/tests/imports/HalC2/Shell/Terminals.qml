@@ -3,7 +3,7 @@ import QtQuick
 
 // The native terminals' controller (TerminalController), as state a test sets
 // directly. `addTab` adds a terminal whose session records what the Terminal
-// writes and prints nothing; `options` places it in a split or panel group. The native layout tests register this
+// writes and the sizes it asks for, and prints nothing; `options` places it in a split or panel group. The native layout tests register this
 // file too (qmlRegisterSingletonType).
 QtObject {
     id: terminals
@@ -20,6 +20,7 @@ QtObject {
     property Component sessionComponent: Component {
         QtObject {
             property var written: []
+            property var resizes: []
 
             signal output(string data)
             signal replaced(string history)
@@ -31,6 +32,7 @@ QtObject {
                 written.push(data);
             }
             function resize(columns, rows) {
+                resizes.push([columns, rows]);
             }
         }
     }

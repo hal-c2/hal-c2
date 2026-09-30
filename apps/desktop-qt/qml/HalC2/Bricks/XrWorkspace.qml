@@ -3,18 +3,21 @@ import QtQuick3D
 import QtQuick3D.Xr
 import HalC2.Shell
 
-// The XR workspace XrHost makes: the window's centre (CentreHost) on a panel
-// in front of the user, in whatever glasses the OpenXR runtime drives. Only
-// the laptop takes input; the panel follows what the window shows.
+// The XR workspace's scene (XrHost makes one while it is open): the user at
+// the origin, see-through around the panels (XrPanel) a layout places. Black
+// is see-through on optical see-through glasses such as XREAL's.
+// DefaultXrWorkspace is the stock layout; a rice sets ShellWindow.xrWorkspace
+// to its own (it needs Qt Quick 3D XR):
+//
+//   xrWorkspace: Component {
+//       XrWorkspace {
+//           XrPanel { CentreHost { anchors.fill: parent; kind: root.route?.kind ?? "" } }
+//           XrPanel { elevation: -25; height: 45; XrTerminal { anchors.fill: parent } }
+//       }
+//   }
 XrView {
-    id: view
-
-    // The route to show (ShellWindow.route).
-    property var route: null
-
     xrOrigin: origin
     referenceSpace: XrView.ReferenceSpaceLocal
-    // Black is see-through on optical see-through glasses such as XREAL's.
     environment: SceneEnvironment {
         backgroundMode: SceneEnvironment.Color
         clearColor: "black"
@@ -23,20 +26,5 @@ XrView {
 
     XrOrigin {
         id: origin
-    }
-
-    // 1.2 m by 0.75 m, 1.5 m ahead at eye height (scene units are centimetres).
-    XrItem {
-        width: 120
-        height: 75
-        x: -width / 2
-        y: height / 2
-        z: -150
-        color: Theme.palette.color("chrome", "#0b0b0d")
-        contentItem: CentreHost {
-            width: 1280
-            height: 800
-            kind: view.route ? view.route.kind : ""
-        }
     }
 }

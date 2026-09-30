@@ -1,7 +1,7 @@
 // The window's XR workspace (XrController): opening and closing it, and
 // XrHost reporting that it could not start (desktop/native-xr.feature). That
 // XrHost makes and drops XrWorkspace as `xr` says needs Qt Quick 3D XR and an
-// OpenXR runtime, so it is checked on a machine with glasses, not here.
+// OpenXR runtime; tst_ShellExamples checks it where they are installed.
 
 #include "Harness.h"
 #include "World.h"

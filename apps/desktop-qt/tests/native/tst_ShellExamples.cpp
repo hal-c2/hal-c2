@@ -1,7 +1,9 @@
 #include <QFile>
+#include <QJSValue>
 #include <QJsonDocument>
 #include <QImage>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQuickItem>
 #include <QPointer>
 #include <QSignalSpy>
@@ -43,6 +45,49 @@ class ShellExamplesTest : public QObject {
 
   static QObject* terminalsOf(QQmlEngine* engine) {
     return engine->singletonInstance<QObject*>("HalC2.Shell", "Terminals");
+  }
+
+  // The XR workspace scenarios. XrHost makes the workspace from the shell's
+  // xrWorkspace (DefaultXrWorkspace unless the rice at `shell` sets one);
+  // offscreen there is no OpenXR session, but its panels are made all the same.
+  QPointer<QObject> xrHost;
+
+  static bool xrAvailable() {
+    QQmlEngine engine;
+    QQmlComponent probe(&engine);
+    probe.setData("import QtQuick3D.Xr\nXrOrigin {}", QUrl());
+    return probe.isReady();
+  }
+
+  QObject* openXrWorkspace(const QByteArray& shell = {}) {
+    const QString path = directory.filePath("shell.qml");
+    if (QFile::exists(path)) QFile::remove(path);
+    if (!shell.isEmpty()) {
+      QFile file(path);
+      if (!file.open(QIODevice::WriteOnly)) return nullptr;
+      file.write(shell);
+    }
+    runtime->reload();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    auto* window = engine ? qobject_cast<QQuickWindow*>(engine->rootObjects().last()) : nullptr;
+    xrHost = window ? window->findChild<QObject*>("xrHost") : nullptr;
+    if (!xrHost) return nullptr;
+    bridge.publish("xr", QVariantMap{{"open", true}});
+    return xrHost->property("workspace").value<QObject*>();
+  }
+
+  void closeXrWorkspace() {
+    bridge.publish("xr", QVariantMap{{"open", false}});
+    QFile::remove(directory.filePath("shell.qml"));
+  }
+
+  // The first item named `name` under any of `workspace`'s panels.
+  static QQuickItem* findInWorkspace(QObject* workspace, const QString& name) {
+    for (auto* item : workspace->findChildren<QQuickItem*>()) {
+      if (auto* found = findVisualItem(item, name)) return found;
+    }
+    return nullptr;
   }
 
 private slots:
@@ -683,6 +728,104 @@ private slots:
     QTRY_VERIFY(window->flags().testFlag(Qt::FramelessWindowHint) == theme->frameless());
   }
 
+  // desktop/xr-workspace.feature, by scenario (openXrWorkspace).
+  void theStockWorkspacePutsTheThreadInFrontOfTheUser() {
+    if (!xrAvailable()) QSKIP("Qt Quick 3D XR is not installed");
+    QObject* workspace = openXrWorkspace();
+    QVERIFY(workspace);
+    const auto place = [workspace](const char* name) {
+      QObject* panel = workspace->findChild<QObject*>(QString::fromLatin1(name));
+      return panel ? QPointF(panel->property("angle").toReal(), panel->property("elevation").toReal())
+                   : QPointF(qQNaN(), qQNaN());
+    };
+    QCOMPARE(place("xrThread"), QPointF(0, 0));
+    QVERIFY(place("xrThreads").x() > 0 && place("xrThreads").y() == 0);
+    QVERIFY(place("xrTerminal").x() == 0 && place("xrTerminal").y() < 0);
+    QVERIFY(place("xrFiles").x() < 0 && place("xrFiles").y() == 0);
+    closeXrWorkspace();
+    QTRY_VERIFY(xrHost->property("workspace").value<QObject*>() == nullptr);
+  }
+
+  void theWorkspacesTerminalFollowsTheThreadsWithoutTakingItOver() {
+    if (!xrAvailable()) QSKIP("Qt Quick 3D XR is not installed");
+    QVERIFY(openXrWorkspace());
+    closeXrWorkspace();
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QObject* terminals = terminalsOf(engine);
+    QVERIFY(terminals);
+    terminals->setProperty("available", true);
+    terminals->setProperty("activeGroup", "term-xr");
+    const QVariantMap current{{"current", true}};
+    QMetaObject::invokeMethod(terminals, "addTab", Q_ARG(QVariant, "term-xr"), Q_ARG(QVariant, "Terminal"),
+                              Q_ARG(QVariant, current));
+    QObject* workspace = openXrWorkspace();
+    QVERIFY(workspace);
+    QQuickItem* terminal = nullptr;
+    QTRY_VERIFY((terminal = findInWorkspace(workspace, "HalC2Terminal")) != nullptr);
+    auto* tabs = terminals->property("tabs").value<QObject*>();
+    QJSValue row;
+    QMetaObject::invokeMethod(tabs, "get", Q_RETURN_ARG(QJSValue, row), Q_ARG(int, 0));
+    QObject* session = row.property("session").toQObject();
+    QVERIFY(session);
+    const auto resizesBefore = session->property("resizes").toList().size();
+    QMetaObject::invokeMethod(session, "output", Q_ARG(QString, QStringLiteral("hello from the agent\r\n")));
+    const auto shows = [terminal](const QString& line) {
+      QString text;
+      QMetaObject::invokeMethod(terminal, "text", Q_RETURN_ARG(QString, text));
+      return text.contains(line);
+    };
+    QTRY_VERIFY(shows(QStringLiteral("hello from the agent")));
+    QCOMPARE(session->property("resizes").toList().size(), resizesBefore);
+    QVERIFY(session->property("written").toList().isEmpty());
+    QVERIFY(!terminal->hasActiveFocus());
+    closeXrWorkspace();
+    QMetaObject::invokeMethod(terminals, "reset");
+    terminals->setProperty("available", false);
+  }
+
+  void theProjectsFilesStayLoadedWhileTheWorkspaceShowsThem() {
+    if (!xrAvailable()) QSKIP("Qt Quick 3D XR is not installed");
+    QVERIFY(openXrWorkspace());
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QObject* panel = engine->singletonInstance<QObject*>("HalC2.Shell", "Panel");
+    QVERIFY(panel);
+    QTRY_VERIFY(panel->property("filesShownElsewhere").toBool());
+    closeXrWorkspace();
+    QTRY_VERIFY(!panel->property("filesShownElsewhere").toBool());
+  }
+
+  void aRiceLaysOutItsOwnWorkspace() {
+    if (!xrAvailable()) QSKIP("Qt Quick 3D XR is not installed");
+    QObject* workspace = openXrWorkspace(R"(import QtQuick
+import HalC2.Shell
+import HalC2.Bricks
+
+ShellWindow {
+    xrWorkspace: Component {
+        XrWorkspace {
+            XrPanel {
+                objectName: "ricePanel"
+                angle: 90
+
+                Rectangle {
+                    anchors.fill: parent
+                    color: "red"
+                }
+            }
+        }
+    }
+}
+)");
+    QVERIFY2(runtime->usingUserShell(), qPrintable(runtime->lastError()));
+    QVERIFY(workspace);
+    QObject* panel = workspace->findChild<QObject*>("ricePanel");
+    QVERIFY(panel);
+    QCOMPARE(panel->property("angle").toReal(), 90.0);
+    QVERIFY(!workspace->findChild<QObject*>("xrThread"));
+    closeXrWorkspace();
+    runtime->reload();
+  }
+
   void cleanupTestCase() {
     runtime.reset();
     theme.reset();
@@ -690,6 +833,8 @@ private slots:
 };
 
 int main(int argc, char** argv) {
+  // The XR workspace scenarios must never reach a developer's real glasses.
+  qunsetenv("XR_RUNTIME_JSON");
   QGuiApplication app(argc, argv);
   useSoftwareRenderingWithoutDisplay();
   ShellExamplesTest test;
