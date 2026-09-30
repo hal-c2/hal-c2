@@ -1021,8 +1021,10 @@ command are dropped) and evaluates `when` against the shell's own context:
 terminal and composer focus, the drawer, `isDesktop`. Commands the shell can
 run itself sit in a `CommandRegistry` (`Keybindings.commands`): new thread
 through `thread.new`, back, the sidebar, the terminal drawer, next, previous
-and numbered threads in the sidebar's order, the composer's pickers and stop,
-and steering with or editing a queued message.
+and numbered threads in the sidebar's order, the composer's pickers, stash,
+previous worktree and stop, the Previews tab (`preview.toggle`), and steering
+with or editing a queued message. A command no one registers (the in-app
+browser's `preview.*` keys) does nothing.
 A brick adds its own with `Keybindings.commands.add(command, title, callback,
 owner)`, and a controller from its `activate()`. The controller that owns a
 behaviour registers its command and keeps it current (title, description,
