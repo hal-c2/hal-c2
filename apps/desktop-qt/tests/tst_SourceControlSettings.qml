@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import QtTest
 import "../qml/HalC2/Bricks"
 import HalC2.Shell
@@ -16,6 +17,25 @@ Item {
         SourceControlSettings {
             width: 880
             height: 880
+        }
+    }
+
+    // The page as the shell hosts it (SettingsHost in the window's layout):
+    // loaded first, given its width after.
+    Component {
+        id: hostedComponent
+        RowLayout {
+            property alias page: loader.item
+
+            anchors.fill: parent
+
+            Loader {
+                id: loader
+
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                source: "../qml/HalC2/Bricks/SourceControlSettings.qml"
+            }
         }
     }
 
@@ -58,6 +78,25 @@ Item {
             compare(Shell.dispatchedActions[0].action, "sourceControlSettings.reveal");
             compare(Shell.dispatchedActions[0].payload.kind, "github");
             compare(Shell.dispatchedActions[0].payload.revealed, true);
+        }
+
+        // A tool that is missing says how to get it, at any length.
+        function test_a_long_summary_wraps_inside_the_page() {
+            const hint = "Not available on this server: Install the GitLab command-line tool (`glab`) from "
+                       + "https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`), "
+                       + "then sign in with `glab auth login` for each GitLab host this environment should reach.";
+            const gitlab = root.github({ kind: "gitlab", label: "GitLab", version: "", available: false, enabled: false,
+                                         authLabel: "", summary: hint, hasAccount: false });
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [root.github({}), gitlab] } }) };
+            const page = createTemporaryObject(hostedComponent, root).page;
+            waitForRendering(page);
+            const summary = findChild(findChild(page, "sourceControlTool:gitlab"), "summary");
+            verify(summary.lineCount > 1);
+            verify(summary.mapToItem(page, summary.width, 0).x <= page.width, "the summary stays on the page");
+            const control = findChild(findChild(page, "autoPull"), "control");
+            verify(control.mapToItem(page, control.width, 0).x <= page.width, "the page's controls stay on it");
         }
 
         function test_what_shows_instead_of_the_tools() {

@@ -159,10 +159,11 @@ SettingsPage {
             Layout.fillWidth: true
             spacing: 4
 
+            // Alone it takes the row and wraps; with an account it is one
+            // word ("Authenticated") and the account sits beside it.
             Caption {
                 objectName: "summary"
-                Layout.fillWidth: false
-                Layout.maximumWidth: tool.width
+                Layout.fillWidth: !tool.modelData.hasAccount
                 text: tool.modelData.summary
             }
 
@@ -183,7 +184,10 @@ SettingsPage {
                 onClicked: page.send("reveal", { kind: tool.modelData.kind, revealed: !tool.modelData.revealed })
             }
 
-            Item { Layout.fillWidth: true }
+            Item {
+                visible: tool.modelData.hasAccount
+                Layout.fillWidth: true
+            }
         }
 
         // Git's background fetch, an environment-wide timer.
