@@ -106,6 +106,7 @@ export default defineConfig({
       "apps/desktop-qt/qml/HalC2/Bricks/js/settingsRows.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/centreViews.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/scheduledTasks.js",
+      "apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js",
       // Exported Lottie animation, kept as the tool wrote it.
       "apps/desktop-qt/examples/dashboard/cat-playing.json",
       "apps/mobile/uniwind-types.d.ts",

@@ -77,3 +77,4 @@ DiagnosticsSettings 1.0 DiagnosticsSettings.qml
 WelcomeWizard 1.0 WelcomeWizard.qml
 OnboardingTerminal 1.0 OnboardingTerminal.qml
 SnapShotSettings 1.0 SnapShotSettings.qml
+Markdown 1.0 Markdown.qml
