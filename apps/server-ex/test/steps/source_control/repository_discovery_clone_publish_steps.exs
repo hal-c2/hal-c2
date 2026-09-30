@@ -84,6 +84,12 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   end
 
   step "the user asks which source control tools are available", context do
+    # Only the tools the scenario installed are found: a CLI the machine itself has
+    # (a CI runner's `az` takes seconds to start) would answer instead.
+    for exe <- ~w(jj gh glab az),
+        !(context[:cli] && File.exists?(Path.join(context.cli.bin, exe))),
+        do: World.put_app_env(:"#{exe}_command", "hal-c2-test-no-#{exe}")
+
     {result, context} = World.call!(context, "server.discoverSourceControl", %{})
     Map.put(context, :discovery, result)
   end

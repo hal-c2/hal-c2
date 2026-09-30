@@ -192,8 +192,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
     home = context.node.home
     Node.ensure(HalC2.Settings)
 
-    # Nothing reaches GitHub, the user's provider homes or the internet.
-    World.put_app_env(:gh_command, "hal-c2-test-no-gh")
+    # Nothing reaches a source control host, the user's provider homes or the
+    # internet.
+    for exe <- ~w(gh glab az), do: World.put_app_env(:"#{exe}_command", "hal-c2-test-no-#{exe}")
     World.put_app_env(:acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
     World.put_app_env(:agent_sessions_home, Path.join(home, "user"))
     World.put_app_env(:usage_rates_url, write!(home, "rates.json", "{}"))
