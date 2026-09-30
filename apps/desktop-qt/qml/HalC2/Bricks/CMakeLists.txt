@@ -90,6 +90,7 @@ qt_add_qml_module(hal_c2_bricks
     StorageSettings.qml
     ProjectSettings.qml
     DevicePanel.qml
+    SnapShotSettings.qml
   RESOURCES
     qmldir
     js/shell-connect.js
