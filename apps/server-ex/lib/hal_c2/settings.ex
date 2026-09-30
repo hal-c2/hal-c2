@@ -266,6 +266,8 @@ defmodule HalC2.Settings do
     {settings, keys_changed} = HalC2.UsageLimitSources.seal_keys(settings, state.settings)
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, state.settings)
     if write? or keys_changed or secrets_changed, do: write!(state.path, settings)
+    # Published before anything below reacts, so what it reads is the new settings.
+    publish(settings, state.version + 1)
 
     if keys_changed or settings["usageLimitSources"] != state.settings["usageLimitSources"],
       do: HalC2.UsageLimitSources.refresh_async()
@@ -281,7 +283,6 @@ defmodule HalC2.Settings do
     pi = &((get_in(&1, ["providers", "pi"]) || %{}) |> Map.take(["binaryPath", "launchArgs"]))
     if pi.(settings) != pi.(state.settings), do: HalC2.Acp.forget("pi")
 
-    publish(settings, state.version + 1)
     for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_settings, node(), settings})
 
     %{

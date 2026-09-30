@@ -40,6 +40,29 @@ defmodule HalC2.SettingsTest do
     :ok = :sys.resume(Settings)
   end
 
+  test "the usage-limit sources refresh a write asks for reads the written sources" do
+    test = self()
+
+    # Stands in for `HalC2.UsageLimitSources`: reads the settings as the refresh
+    # arrives, as the real one does when it handles it.
+    start_supervised!(
+      {Task,
+       fn ->
+         Process.register(self(), HalC2.UsageLimitSources)
+         send(test, :registered)
+
+         receive do
+           {:"$gen_cast", :refresh} -> send(test, {:read, Settings.settings()})
+         end
+       end}
+    )
+
+    assert_receive :registered
+    sources = %{"hub" => %{"kind" => "cliproxy", "url" => "http://hub"}}
+    assert {:ok, 1} = Settings.put(%{"usageLimitSources" => sources}, 0)
+    assert_receive {:read, %{"usageLimitSources" => ^sources}}
+  end
+
   test "a project's overrides apply over the environment's, except models on disabled providers" do
     settings = %{
       "enableAgentBrowserAccess" => true,
