@@ -1,0 +1,70 @@
+import QtQuick
+import Ghostty
+import HalC2.Shell
+
+// An agent's login terminal (the web's ProviderAuthTerminal): draws the
+// output the environment sends, `{output, offset}` where `offset` counts every
+// character the terminal has printed and `output` is the latest of them, and
+// sends keystrokes and sizes back through `providerSettings.signInTerminal`.
+//
+//   Loader { source: "ProviderAuthTerminal.qml"; onLoaded: item.instanceId = … }
+Rectangle {
+    id: root
+
+    property string instanceId: ""
+    property var terminal: null
+    // How far the Terminal has drawn, in the environment's count.
+    property real written: 0
+
+    function draw() {
+        if (!root.terminal)
+            return;
+        const output = root.terminal.output;
+        const delta = root.terminal.offset - root.written;
+        if (delta > 0 && delta <= output.length)
+            screen.write(output.slice(output.length - delta));
+        else if (delta !== 0) {
+            screen.reset();
+            screen.write(output);
+        }
+        root.written = root.terminal.offset;
+    }
+
+    objectName: "signInTerminal"
+    implicitHeight: 256
+    radius: 6
+    color: Theme.palette.color("canvas", "#09090b")
+    border.color: Theme.palette.color("border", "#27272a")
+    clip: true
+    Accessible.name: qsTr("Provider sign-in terminal")
+    onTerminalChanged: draw()
+
+    Terminal {
+        id: screen
+
+        anchors.fill: parent
+        anchors.margins: 1
+        padding: 6
+        focus: true
+        font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+        font.pixelSize: 12
+        backgroundColor: root.color
+        foregroundColor: Theme.palette.color("text", "#e4e4e7")
+        cursorColor: foregroundColor
+        selectionColor: Qt.alpha(Theme.palette.color("accent", "#2563eb"), 0.35)
+        onInput: data => Shell.dispatch("providerSettings.signInTerminal", {
+            instanceId: root.instanceId,
+            data: data
+        })
+        onResized: (columns, rows) => {
+            if (screen.width > 0 && screen.height > 0)
+                Shell.dispatch("providerSettings.signInTerminal", {
+                    instanceId: root.instanceId,
+                    data: "",
+                    columns: columns,
+                    rows: rows
+                });
+        }
+        Component.onCompleted: root.draw()
+    }
+}

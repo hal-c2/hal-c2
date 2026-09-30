@@ -514,6 +514,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         event.preventDefault();
         event.stopPropagation();
         if (event.repeat) return;
+        // The Qt shell owns the appearance: it cycles and tells the user.
+        if (window.halC2Shell) {
+          void window.halC2Shell.dispatch("appearance.cycle");
+          return;
+        }
         const nextMode =
           appearanceMode === "system" ? "light" : appearanceMode === "light" ? "dark" : "system";
         if (!setAppearanceMode(nextMode)) {

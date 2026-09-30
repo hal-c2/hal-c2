@@ -93,7 +93,13 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   step ~r/^the client subscribes to an? (?<shape>\w+) shape with (?<fields>.+)$/,
        %{args: [type, fields]} = context do
-    form = if fields == "environment", do: "environment", else: "node"
+    form =
+      cond do
+        "environment" in String.split(fields, ", ") -> "environment"
+        fields == "links" -> "links"
+        true -> "node"
+      end
+
     context = Shapes.subscribe(context, type, form)
     expected = if fields == "none", do: [], else: String.split(fields, ", ")
     assert Enum.sort(Map.keys(context.shape.map)) == Enum.sort(expected)
@@ -107,7 +113,7 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   step ~r/^later changes arrive as (?<text>.+)$/, %{args: [text]} = context do
     %{type: type, form: form} = context.shape
-    later = Shapes.later(type)
+    later = Shapes.later(type, form)
 
     if form == "environment",
       do: assert(text == "the same frames as the node form"),
@@ -142,7 +148,7 @@ defmodule HalC2.Steps.Parity.Protocol do
       nil -> World.put_client(context, World.client(context))
       # These frames are the subscription opening; the When subscribes.
       _ when frame in ~w(shell snapshot config) -> context
-      type -> Shapes.subscribe(context, type)
+      type -> Shapes.subscribe(context, type, Shapes.form_for(frame))
     end
   end
 
@@ -161,6 +167,9 @@ defmodule HalC2.Steps.Parity.Protocol do
     "a node's environment descriptor changes" => "shell.environment",
     "a node joins or leaves the cluster" => "shell.node",
     "the environments the node links to change" => "shell.links",
+    "a linked environment's projects or threads change" => "shell.linkRows",
+    "a linked environment's node descriptor changes" => "shell.linkEnvironment",
+    "a linked environment's node comes online or goes offline" => "shell.linkNode",
     "a stream subscription starts or falls too far behind" => "snapshot",
     "stream entities change" => "events",
     "a stream has caught up" => "live",
@@ -193,7 +202,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "the relay client install progresses" => "relayClientInstall"
   }
 
-  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one node change|a node's environment descriptor changes|a node joins or leaves the cluster|the environments the node links to change|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the node moves to another version in place|the node's settings change|the node's published themes change|the node's usage limit sources change|the node's keybinding rules change|the node's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
+  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one node change|a node's environment descriptor changes|a node joins or leaves the cluster|the environments the node links to change|a linked environment's projects or threads change|a linked environment's node descriptor changes|a linked environment's node comes online or goes offline|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the node moves to another version in place|the node's settings change|the node's published themes change|the node's usage limit sources change|the node's keybinding rules change|the node's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
        %{args: [text]} = context do
     frame = Map.fetch!(@whens, text)
 
@@ -242,6 +251,9 @@ defmodule HalC2.Steps.Parity.Protocol do
     "shell.environment" => ~w(id node environment),
     "shell.node" => ~w(id node online),
     "shell.links" => ~w(id links),
+    "shell.linkRows" => ~w(id link node rows),
+    "shell.linkEnvironment" => ~w(id link node environment),
+    "shell.linkNode" => ~w(id link node online),
     "snapshot" => ~w(id offset at part rows done),
     "events" => ~w(id offset events),
     "live" => ~w(id offset),
@@ -548,6 +560,13 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   def later(type), do: [type]
 
+  def later("shell", "links"), do: ~w(shell.linkRows shell.linkEnvironment shell.linkNode)
+  def later(type, _form), do: later(type)
+
+  @doc "The form of the shape a frame type needs: a linked environment's frames need links."
+  def form_for("shell.link" <> _), do: "links"
+  def form_for(_t), do: "node"
+
   @doc "Subscribes the default socket to `type` and collects its first frames."
   def subscribe(context, type, form \\ "node") do
     context = Fixtures.setup(context)
@@ -625,6 +644,12 @@ defmodule HalC2.Steps.Parity.Shapes do
 
         assert length(rows) == length(HalC2.Shell.rows())
 
+        # With links, each link also carries its environment's nodes and rows. A link
+        # paired since scopes were kept also lists them.
+        link_keys = if form == "links", do: ~w(environment nodes online origin rows)
+        link_keys = link_keys || ~w(environment online origin)
+        for link <- frame["links"], do: assert(Enum.sort(Map.keys(link) -- ["scopes"]) == link_keys)
+
       {"stream", [first | _] = frames} ->
         assert first["part"] == 0
         assert Enum.all?(frames, &(&1["t"] == "snapshot"))
@@ -700,6 +725,12 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   # --- preparing a shape -------------------------------------------------------------
 
+  # A shape named by environment is its node form with the environment in place of the node.
+  defp prepare(context, type, "environment") do
+    {map, context} = prepare(context, type, "node")
+    {map |> Map.delete("node") |> Map.put("environment", context.node.environment), context}
+  end
+
   defp prepare(context, type, form) do
     f = context.fixtures
     node = %{"node" => Atom.to_string(node())}
@@ -713,7 +744,7 @@ defmodule HalC2.Steps.Parity.Shapes do
           HalC2.Links
         ])
 
-        {%{}, context}
+        {if(form == "links", do: %{"links" => true}, else: %{}), context}
 
       "authAccess" ->
         {%{}, context}
@@ -723,10 +754,7 @@ defmodule HalC2.Steps.Parity.Shapes do
 
       "config" ->
         Enum.each([HalC2.EnvironmentThemes, HalC2.UsageLimitSources], &Node.ensure/1)
-
-        if form == "environment",
-          do: {%{"environment" => context.node.environment}, context},
-          else: {node, context}
+        {node, context}
 
       "terminal" ->
         World.open_terminal(f.thread, f.root)
@@ -820,16 +848,19 @@ defmodule HalC2.Steps.Parity.Shapes do
         await(context, t, id, &(&1["online"] == false))
 
       "shell.links" ->
-        # A loan of access to an environment nobody serves; taken back once the frame lands.
+        # A link to an environment nobody serves; removed once the frame lands.
         environment = %{"environmentId" => "env-linked", "label" => "Linked"}
         link = %{"origin" => "http://127.0.0.1:9", "token" => "t", "environment" => environment}
-        :ok = GenServer.call(HalC2.Links, {:put, Map.put(link, "borrowed", true)})
+        :ok = GenServer.call(HalC2.Links, {:put, link})
 
         result =
-          await(context, t, id, &match?([%{"origin" => "http://127.0.0.1:9"}], &1["links"]))
+          await(context, t, id, &match?([%{"origin" => "http://127.0.0.1:9"} | _], &1["links"]))
 
-        HalC2.Links.give_back("env-linked")
+        HalC2.Links.remove("env-linked")
         result
+
+      "shell.link" <> _ ->
+        linked_frame(context, t, id)
 
       "live" ->
         await(context, t, id)
@@ -1001,6 +1032,33 @@ defmodule HalC2.Steps.Parity.Shapes do
         {_, context} = await(context, "end", id, & &1, 5_000)
         {frame, context}
     end
+  end
+
+  # A link to an environment nobody serves, whose shell frames the test plays to the
+  # node's links as that environment would send them; removed once the frame lands.
+  defp linked_frame(context, t, id) do
+    environment = %{"environmentId" => "env-linked", "label" => "Linked"}
+    link = %{"origin" => "http://127.0.0.1:9", "token" => "t", "environment" => environment}
+    :ok = GenServer.call(HalC2.Links, {:put, link})
+    [ref] = for {ref, "env-linked"} <- :sys.get_state(HalC2.Links).following, do: ref
+
+    frame =
+      case t do
+        "shell.linkRows" ->
+          row = %{"id" => "th-linked", "title" => "Linked"}
+          %{"t" => "shell.rows", "node" => "beast@host", "rows" => [["th-linked", "thread", row]]}
+
+        "shell.linkEnvironment" ->
+          %{"t" => "shell.environment", "node" => "beast@host", "environment" => environment}
+
+        "shell.linkNode" ->
+          %{"t" => "shell.node", "node" => "beast@host", "online" => true}
+      end
+
+    send(HalC2.Links, {:hal_c2_link, ref, frame})
+    result = await(context, t, id, &(&1["link"] == "env-linked"))
+    :ok = HalC2.Links.remove("env-linked")
+    result
   end
 
   defp await(context, t, id, fun \\ fn _ -> true end, timeout \\ 3_000) do

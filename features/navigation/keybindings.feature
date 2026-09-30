@@ -3,7 +3,11 @@
 #   packages/contracts/src/keybindings.ts (every static command id and script.<id>.run)
 #   packages/shared/src/keybindings.ts (DEFAULT_KEYBINDINGS)
 #   apps/desktop-qt/parity/web-parity.test.ts (all 35 keymap rows)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts forwarded as keybinding.press)
+#   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop's keymap and its native commands)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
+#   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake node)
+#   apps/desktop-qt/src/native/TerminalController.cpp (terminal.split, terminal.splitVertical on the focused terminal)
+#   apps/web/src/components/Sidebar.tsx (thread.previous, thread.next and thread.jump follow the sidebar's order)
 #   apps/desktop-qt/qml/HalC2/Bricks/ModelPicker.qml (modelPicker.previousProvider, nextProvider and jump.1-9 while the picker is open)
 #   Keybinding ids: sidebar.toggle, navigation.back, navigation.forward, terminal.toggle,
 #   terminal.split, terminal.splitVertical, terminal.new, terminal.close, rightPanel.toggle,
@@ -31,14 +35,13 @@ Feature: Keybindings
       When the user presses <key>
       Then the command "<command>" runs
 
-      Examples: Forwarded by the desktop shell today
+      Examples: Run by the desktop shell or handed to the page
         | command                      | key                 | context                    | status  |
         | sidebar.toggle               | mod+b               | anywhere                   | aligned |
         | navigation.back              | mod+[               | outside a terminal         | aligned |
         | navigation.forward           | mod+]               | outside a terminal         | aligned |
         | terminal.toggle              | mod+j               | anywhere                   | aligned |
         | rightPanel.toggle            | mod+alt+b           | anywhere                   | aligned |
-        | terminal.split               | mod+d               | in a terminal              | aligned |
         | diff.toggle                  | mod+d               | outside a terminal         | aligned |
         | commandPalette.toggle        | mod+k               | outside a terminal         | aligned |
         | filePicker.toggle            | mod+p               | outside a terminal         | aligned |
@@ -64,48 +67,51 @@ Feature: Keybindings
         | modelPicker.jump.7           | mod+7               | with the model picker open | aligned |
         | modelPicker.jump.8           | mod+8               | with the model picker open | aligned |
         | modelPicker.jump.9           | mod+9               | with the model picker open | aligned |
+        | terminal.new                 | mod+n               | in a terminal              | aligned |
+        | terminal.close               | mod+w               | in a terminal              | aligned |
+        | terminal.split               | mod+d               | in a terminal              | aligned |
+        | terminal.splitVertical       | mod+shift+d         | in a terminal              | aligned |
+        | rightPanel.close             | mod+w               | outside a terminal         | aligned |
+        | pullRequest.copyNumber       | mod+shift+k         | outside a terminal         | aligned |
+        | appearance.cycle             | mod+alt+shift+a     | outside a terminal         | aligned |
+        | themeEditor.toggle           | mod+alt+shift+t     | anywhere                   | aligned |
+        | thread.steerQueuedMessage    | mod+shift+enter     | outside a terminal         | aligned |
+        | chat.new                     | mod+shift+o         | outside a terminal         | aligned |
+        | composer.host                | mod+shift+h         | outside a terminal         | aligned |
+        | composer.effort              | mod+shift+e         | outside a terminal         | aligned |
+        | composer.mode                | mod+shift+a         | outside a terminal         | aligned |
+        | composer.workspace           | mod+shift+x         | outside a terminal         | aligned |
+        | composer.branch              | mod+shift+g         | outside a terminal         | aligned |
+        | composer.stash               | mod+s               | outside a terminal         | aligned |
+        | composer.previousWorktree    | mod+shift+l         | outside a terminal         | aligned |
+        | preview.toggle               | mod+shift+j         | anywhere                   | aligned |
+        | thread.jump.1                | mod+1               | anywhere                   | aligned |
+        | thread.jump.2                | mod+2               | anywhere                   | aligned |
+        | thread.jump.3                | mod+3               | anywhere                   | aligned |
+        | thread.jump.4                | mod+4               | anywhere                   | aligned |
+        | thread.jump.5                | mod+5               | anywhere                   | aligned |
+        | thread.jump.6                | mod+6               | anywhere                   | aligned |
+        | thread.jump.7                | mod+7               | anywhere                   | aligned |
+        | thread.jump.8                | mod+8               | anywhere                   | aligned |
+        | thread.jump.9                | mod+9               | anywhere                   | aligned |
 
+      # preview.refresh, focusUrl and the zoom keys act on the in-app browser, which the
+      # desktop does not have yet.
       @backlog
       Examples: Not yet honoured by the native client
         | command                   | key             | context                           | status  |
-        | terminal.splitVertical    | mod+shift+d     | in a terminal                     | backlog |
-        | terminal.new              | mod+n           | in a terminal                     | backlog |
-        | terminal.close            | mod+w           | in a terminal                     | backlog |
-        | rightPanel.close          | mod+w           | outside a terminal                | backlog |
-        | pullRequest.copyNumber    | mod+shift+k     | outside a terminal                | backlog |
-        | preview.toggle            | mod+shift+j     | anywhere                          | backlog |
         | preview.refresh           | mod+r           | in the preview                    | backlog |
         | preview.focusUrl          | mod+l           | in the preview                    | backlog |
         | preview.zoomIn            | mod+=           | in the preview                    | backlog |
         | preview.zoomIn            | mod++           | in the preview                    | backlog |
         | preview.zoomOut           | mod+-           | in the preview                    | backlog |
         | preview.resetZoom         | mod+0           | in the preview                    | backlog |
-        | appearance.cycle          | mod+alt+shift+a | outside a terminal                | backlog |
-        | themeEditor.toggle        | mod+alt+shift+t | anywhere                          | backlog |
-        | composer.stash            | mod+s           | outside a terminal                | backlog |
-        | thread.steerQueuedMessage | mod+shift+enter | outside a terminal                | backlog |
         | thread.editQueuedMessage  | alt+arrowup     | in the composer                   | backlog |
         | composer.sendAlternate    | mod+enter       | in the composer while a turn runs | backlog |
         | composer.sendBackground   | mod+alt+enter   | in the composer of a new thread   | backlog |
-        | chat.new                  | mod+shift+o     | outside a terminal                | backlog |
-        | composer.host             | mod+shift+h     | outside a terminal                | backlog |
-        | composer.effort           | mod+shift+e     | outside a terminal                | backlog |
-        | composer.mode             | mod+shift+a     | outside a terminal                | backlog |
-        | composer.workspace        | mod+shift+x     | outside a terminal                | backlog |
-        | composer.branch           | mod+shift+g     | outside a terminal                | backlog |
-        | composer.previousWorktree | mod+shift+l     | outside a terminal                | backlog |
         | thread.undo               | mod+z           | outside text fields and terminals | backlog |
-        | thread.jump.1             | mod+1           | anywhere                          | backlog |
-        | thread.jump.2             | mod+2           | anywhere                          | backlog |
-        | thread.jump.3             | mod+3           | anywhere                          | backlog |
-        | thread.jump.4             | mod+4           | anywhere                          | backlog |
-        | thread.jump.5             | mod+5           | anywhere                          | backlog |
-        | thread.jump.6             | mod+6           | anywhere                          | backlog |
-        | thread.jump.7             | mod+7           | anywhere                          | backlog |
-        | thread.jump.8             | mod+8           | anywhere                          | backlog |
-        | thread.jump.9             | mod+9           | anywhere                          | backlog |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A command with no default binding can still be bound
       Given no custom keybindings
       Then "<command>" has no shortcut
@@ -120,14 +126,14 @@ Feature: Keybindings
         | rightPanel.toggleMaximized | mod+alt+m   |
         | script.test.run            | mod+alt+r   |
 
-    @backlog @desktop
+    @desktop
     Scenario: A binding outside its context does nothing
       Given the user is in a terminal
       When the user presses mod+k
       Then the command palette does not open
       And the terminal receives the key
 
-    @backlog @desktop
+    @desktop
     Scenario: The same key runs different commands in different contexts
       Given the user is in a terminal
       When the user presses mod+d
@@ -136,9 +142,9 @@ Feature: Keybindings
 
   Rule: The desktop shell honours the web keymap
 
-    The native desktop chrome registers each page shortcut as a window shortcut while the
-    page does not have focus, and hands the key to the page. Each row states whether that
-    works today.
+    The desktop shell runs every command it has itself, from a window shortcut. A key with
+    no native command in the current focus stays with the focused control; nothing is handed
+    to the page. Each row states whether that works today.
 
     @desktop
     Scenario Outline: A web shortcut works from the native chrome
@@ -147,44 +153,46 @@ Feature: Keybindings
       Then "<command>" behaves as it does in the web app
 
       Examples: aligned
-        | command               | key         | status  | note                                      |
-        | chat.new              | mod+n       | aligned | forwarded as a keybinding press           |
-        | chat.newLocal         | mod+shift+n | aligned | forwarded as a keybinding press           |
-        | commandPalette.toggle | mod+k       | aligned | forwarded as a keybinding press           |
-        | terminal.toggle       | mod+j       | aligned | also the header terminal toggle           |
-        | sidebar.toggle        | mod+b       | aligned | also the native sidebar toggles           |
-        | rightPanel.toggle     | mod+alt+b   | aligned | forwarded as a keybinding press           |
-        | diff.toggle           | mod+d       | aligned | forwarded as a keybinding press           |
-        | terminal.split        | mod+d       | aligned | handled by the terminal drawer's own page |
-        | navigation.back       | mod+[       | aligned | forwarded as a keybinding press           |
-        | navigation.forward    | mod+]       | aligned | forwarded as a keybinding press           |
-        | thread.previous       | mod+shift+[ | aligned | forwarded as a keybinding press           |
-        | thread.next           | mod+shift+] | aligned | forwarded as a keybinding press           |
-        | filePicker.toggle     | mod+p       | aligned | forwarded as a keybinding press           |
-        | projectSearch.toggle  | mod+shift+f | aligned | forwarded as a keybinding press           |
-        | theme.select          | mod+alt+a   | aligned | forwarded as a keybinding press           |
-        | modelPicker.toggle    | mod+shift+m | aligned | the page toggles the native model picker  |
-        | editor.openFavorite   | mod+o       | aligned | forwarded as a keybinding press           |
-        | thread.copyReference  | mod+shift+c | aligned | forwarded as a keybinding press           |
-        | thread.settle         | mod+shift+s | aligned | forwarded as a keybinding press           |
-        | thread.pin            | mod+shift+p | aligned | forwarded as a keybinding press           |
+        | command                   | key         | status  | note                                      |
+        | chat.new                  | mod+n       | aligned | the shell starts a new thread             |
+        | chat.newLocal             | mod+shift+n | aligned | the shell starts a new thread in place    |
+        | commandPalette.toggle     | mod+k       | aligned | the shell opens the command palette       |
+        | terminal.toggle           | mod+j       | aligned | the shell toggles the terminal drawer     |
+        | sidebar.toggle            | mod+b       | aligned | the shell toggles the sidebar             |
+        | rightPanel.toggle         | mod+alt+b   | aligned | the shell toggles the right panel         |
+        | diff.toggle               | mod+d       | aligned | the shell toggles the Diff tab            |
+        | navigation.back           | mod+[       | aligned | the shell goes back                       |
+        | navigation.forward        | mod+]       | aligned | the shell goes forward                    |
+        | thread.previous           | mod+shift+[ | aligned | the shell opens the sidebar's previous    |
+        | thread.next               | mod+shift+] | aligned | the shell opens the sidebar's next        |
+        | filePicker.toggle         | mod+p       | aligned | the shell opens the palette on files      |
+        | projectSearch.toggle      | mod+shift+f | aligned | the shell opens the palette's text search |
+        | theme.select              | mod+alt+a   | aligned | the shell opens the palette on themes     |
+        | modelPicker.toggle        | mod+shift+m | aligned | the shell toggles the composer's picker   |
+        | editor.openFavorite       | mod+o       | aligned | the shell opens the preferred editor      |
+        | thread.copyReference      | mod+shift+c | aligned | the shell copies the thread's reference   |
+        | thread.settle             | mod+shift+s | aligned | the shell settles the thread              |
+        | thread.pin                | mod+shift+p | aligned | the shell pins the thread                 |
+        | thread.jump.1             | mod+1       | aligned | the shell opens the sidebar's first       |
+        | thread.jump.9             | mod+9       | aligned | the shell opens the sidebar's ninth       |
+        | composer.effort           | mod+shift+e | aligned | the composer opens its effort picker      |
+        | composer.mode             | mod+shift+a | aligned | the composer opens its mode picker        |
+        | composer.host             | mod+shift+h | aligned | the composer opens its host picker        |
+        | composer.workspace        | mod+shift+x | aligned | the composer opens its workspace picker   |
+        | composer.branch           | mod+shift+g | aligned | the composer opens its branch picker      |
+        | composer.stash            | mod+s       | aligned | the composer stashes its prompt           |
+        | composer.previousWorktree | mod+shift+l | aligned | the draft takes the previous worktree     |
+        | preview.toggle            | mod+shift+j | aligned | the shell toggles the Previews tab        |
 
       @backlog
       Examples: backlog
         | command                   | key           | status  | note                                                  |
-        | thread.jump.1-9           | mod+1..9      | backlog | only bound when running in Electron                   |
+        | terminal.split            | mod+d         | backlog | only applies with terminal focus                      |
         | plan and build toggle     | shift+tab     | backlog | the native composer does not handle it                |
         | prompt history            | arrowup       | backlog | the native composer does not recall prompts           |
         | composer.sendAlternate    | mod+enter     | backlog | the window shortcut takes it and loses composer focus |
         | composer.sendBackground   | mod+alt+enter | backlog | the window shortcut takes it and loses composer focus |
         | thread.editQueuedMessage  | alt+arrowup   | backlog | only applies with composer focus                      |
-        | composer.effort           | mod+shift+e   | backlog | the page opens a toolbar it does not render           |
-        | composer.mode             | mod+shift+a   | backlog | the page opens a toolbar it does not render           |
-        | composer.host             | mod+shift+h   | backlog | the page opens a toolbar it does not render           |
-        | composer.workspace        | mod+shift+x   | backlog | the page opens a toolbar it does not render           |
-        | composer.branch           | mod+shift+g   | backlog | the page opens a toolbar it does not render           |
-        | composer.previousWorktree | mod+shift+l   | backlog | the page opens a toolbar it does not render           |
-        | preview.toggle            | mod+shift+j   | backlog | needs the in-app preview                              |
 
       @dropped
       Examples: n/a
@@ -192,10 +200,11 @@ Feature: Keybindings
         | modelPicker.previousProvider | mod+shift+arrowup   | n/a    | the native picker has its own arrow keys |
         | modelPicker.nextProvider     | mod+shift+arrowdown | n/a    | the native picker has its own arrow keys |
 
-    @desktop
+    # The desktop has no embedded page to hold focus.
+    @dropped @desktop
     Scenario: Window shortcuts stand down while the page has focus
       Given the page has keyboard focus
-      When the user presses mod+k
+      When the user presses mod+r
       Then the page handles the key itself
       And the desktop shell does not forward it a second time
 
@@ -207,7 +216,7 @@ Feature: Keybindings
 
   Rule: Platform modifiers
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: mod means the platform's primary modifier
       Given the user is on <platform>
       When the user presses <physical> and K
@@ -219,7 +228,7 @@ Feature: Keybindings
         | Linux    | Ctrl     |
         | Windows  | Ctrl     |
 
-    @backlog @desktop
+    @desktop
     Scenario: Ctrl stays Ctrl on macOS
       Given the user is on macOS
       And "chat.new" is bound to ctrl+n
@@ -254,7 +263,7 @@ Feature: Keybindings
       Then the composer's own undo runs
       And the thread stays settled
 
-    @backlog @desktop
+    @desktop
     Scenario: Back and forward move through visited threads like browser history
       Given the user opened thread "A" and then thread "B"
       When the user goes back
@@ -268,7 +277,7 @@ Feature: Keybindings
       When the user starts a new thread
       Then the user is asked to choose a project
 
-    @backlog @desktop
+    @desktop
     Scenario: A new local thread skips the project chooser
       Given the user has several projects
       When the user starts a new local thread
@@ -293,7 +302,7 @@ Feature: Keybindings
       Then the first queued message is sent as a steer
       And the second stays queued
 
-    @backlog @desktop
+    @desktop
     Scenario: The terminal shortcut shows and hides the thread's terminal
       Given the thread's terminal is hidden
       When the user presses mod+j
@@ -313,7 +322,7 @@ Feature: Keybindings
         | terminal.split         | a second terminal side by side  |
         | terminal.splitVertical | a second terminal stacked below |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Terminal shortcuts act on the focused terminal
       Given a terminal in the thread has keyboard focus
       When the user presses <key>
@@ -321,12 +330,13 @@ Feature: Keybindings
 
       Examples:
         | key         | result                                       |
-        | mod+d       | a second terminal opens side by side         |
-        | mod+shift+d | a second terminal opens stacked below        |
         | mod+n       | a new terminal opens instead of a new thread |
         | mod+w       | the focused terminal closes                  |
+        | mod+d       | a second terminal opens side by side         |
+        | mod+shift+d | a second terminal opens stacked below        |
 
-    @backlog @desktop
+    # The desktop's preview is the right panel's Previews tab.
+    @desktop
     Scenario: The preview shortcut shows and hides the preview
       Given the user is looking at a thread in the desktop app
       When the user presses mod+shift+j
@@ -341,6 +351,7 @@ Feature: Keybindings
       Then the user is told "Preview is desktop-only"
       And the user is told to open HAL-C2 in the desktop app to use it
 
+    # These need the in-app browser, which the desktop does not have yet.
     @backlog @desktop
     Scenario Outline: Preview shortcuts act on the focused preview
       Given the preview has keyboard focus at 100% zoom
@@ -355,9 +366,74 @@ Feature: Keybindings
         | mod+- | the page zooms out one step   |
         | mod+0 | the page returns to 100% zoom |
 
+    # These need the in-app browser, which the desktop does not have yet.
     @backlog @desktop
     Scenario: Preview shortcuts do nothing outside the preview
       Given the composer has keyboard focus
       When the user presses mod+l
       Then the preview's address is not focused
 
+  Rule: Shortcuts move between threads
+
+    Background:
+      Given the time is "2026-09-23T10:00:00Z"
+      And the desktop's node "node-a" serves the environment "env-a"
+      And the node has these threads:
+        | id | project | title  | createdAt            |
+        | t1 | p1      | First  | 2026-09-23T09:50:00Z |
+        | t2 | p1      | Second | 2026-09-23T09:40:00Z |
+        | t3 | p1      | Third  | 2026-09-23T09:30:00Z |
+      And the node has the project "p1" titled "proj-1"
+      And the desktop shell is connected to its node
+
+    @desktop
+    Scenario: The next and previous thread follow the sidebar
+      Given the user opens "env-a:t1" from the sidebar
+      When the user presses mod+shift+]
+      Then the window shows "env-a:t2"
+      When the user presses mod+shift+[
+      Then the window shows "env-a:t1"
+
+    @desktop
+    Scenario: There is no thread past either end of the sidebar
+      Given the user opens "env-a:t3" from the sidebar
+      When the user presses mod+shift+]
+      Then the window shows "env-a:t3"
+
+    @desktop
+    Scenario: A thread's number opens it
+      Given the user opens "env-a:t1" from the sidebar
+      When the user presses mod+3
+      Then the window shows "env-a:t3"
+
+    @desktop
+    Scenario: The next thread reaches a thread on an environment the node is linked to
+      Given the node is linked to "env-c"
+      And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
+      And the user opens "env-a:t3" from the sidebar
+      When the user presses mod+shift+]
+      Then the window shows "env-c:t7"
+      When the user presses mod+shift+[
+      Then the window shows "env-a:t3"
+
+    @desktop
+    Scenario: The new thread shortcut starts one in the project the window shows
+      Given the user opens "env-a:t2" from the sidebar
+      When the user presses mod+n
+      Then the window shows a new draft in "proj-1"
+
+    @desktop
+    Scenario: Opening a thread after going back leaves nothing to go forward to
+      Given the user opens "env-a:t1" from the sidebar
+      And the user opens "env-a:t2" from the sidebar
+      And the user presses mod+[
+      And the user opens "env-a:t3" from the sidebar
+      When the user presses mod+]
+      Then the window shows "env-a:t3"
+
+    @desktop
+    Scenario: The back shortcut returns where the user came from
+      Given the user opens "env-a:t1" from the sidebar
+      And the user opens "env-a:t2" from the sidebar
+      When the user presses mod+[
+      Then the window shows "env-a:t1"

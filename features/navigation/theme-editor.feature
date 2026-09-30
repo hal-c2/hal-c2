@@ -19,7 +19,7 @@ Feature: Custom themes
 
   Rule: Creating and editing
 
-    @backlog @desktop
+    @desktop
     Scenario: A new theme starts from the active theme
       Given the active theme is "Nord"
       When the user creates a theme
@@ -38,7 +38,7 @@ Feature: Custom themes
       Then colors are grouped as Foundation, Brand & content, Context and Status
       And the user can filter them by name
 
-    @backlog @desktop
+    @desktop
     Scenario: Saving an edited theme applies it
       Given the user changed colors in the theme editor
       When the user saves the changes
@@ -68,7 +68,7 @@ Feature: Custom themes
       When the user presses Escape
       Then nothing is picked
 
-    @backlog @desktop
+    @desktop
     Scenario: Duplicating a theme
       When the user duplicates "Nord"
       Then an editable copy of "Nord" is added
@@ -163,7 +163,7 @@ Feature: Custom themes
       When the user removes two selected variants
       Then only those two variants are gone
 
-    @backlog @desktop
+    @desktop
     Scenario: A removal that fails is reported
       Given the theme cannot be removed
       When the user removes it

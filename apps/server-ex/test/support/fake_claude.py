@@ -3,7 +3,10 @@
 # A message containing "wait" stays open until an interrupt control request; "approve"
 # asks permission for a command ("approve run: CMD" names it), "ask" asks a question
 # (AskUserQuestion), and "where are we" says which message the session resumed at
-# (--resume-session-at); "usage limit until EPOCH" stops on a usage limit. Rules a
+# (--resume-session-at); "usage limit until EPOCH" stops on a usage limit; "in the
+# background" starts a background subagent (task task-agent-N) and a background command
+# (task task-bash-N) and ends the turn while both run, their task_notification left to
+# the test. Rules a
 # permission answer adds for the session (updatedPermissions) let later matching
 # commands run without asking. Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
@@ -155,6 +158,23 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": True, "result": "You've hit your limit", "session_id": session})
         continue
     if "wait" in text:
+        continue
+    if "in the background" in text:
+        agent, bash = f"agent-{turn}", f"bash-{turn}"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+            "description": "Survey the repo", "prompt": "List what is in the repo", "subagent_type": "general-purpose", "run_in_background": True}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+              "description": "Survey the repo", "task_type": "local_agent", "prompt": "List what is in the repo", "is_backgrounded": True})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+              "content": [{"type": "text", "text": f"Async agent launched successfully.\nagentId: task-{agent}"}]}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "tool_use", "id": bash, "name": "Bash", "input": {
+            "command": "npm run build", "description": "Build", "run_in_background": True}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{bash}", "tool_use_id": bash,
+              "description": "Build", "task_type": "local_bash"})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": bash,
+              "content": f"Command running in background with ID: task-{bash}", "is_error": False}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Both are running"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "Both are running", "session_id": session})
         continue
     # FAKE_CLAUDE_SIGNED_OUT: a CLI with no login answers every message with an auth error.
     if os.environ.get("FAKE_CLAUDE_SIGNED_OUT"):

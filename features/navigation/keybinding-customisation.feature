@@ -3,6 +3,9 @@
 #   packages/contracts/src/keybindings.ts (limits, forward-compatible decoding, KeybindingsConfigParseError)
 #   packages/shared/src/keybindings.ts (when-expression evaluation)
 #   apps/server-ex/lib/hal_c2/keybindings.ex (server.upsertKeybinding, server.removeKeybinding)
+#   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop merges config.keybindings over its defaults, as the node changes them)
+#   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake node)
+#   apps/web/src/routes/__root.tsx (the "Keybindings updated" toast, KEYBINDINGS_SUCCESS_TOAST_COOLDOWN_MS)
 
 Feature: Customising keybindings
   Custom rules live in keybindings.json in the HAL-C2 home. Each rule names a key, a command and
@@ -62,19 +65,19 @@ Feature: Customising keybindings
 
   Rule: Clients merge custom rules with the defaults
 
-    @backlog @desktop
+    @desktop
     Scenario: Defaults are kept alongside custom rules
       Given keybindings.json only rebinds "chat.new"
       When the client starts
       Then every other command keeps its default shortcut
 
-    @backlog @desktop
+    @desktop
     Scenario: The last matching rule wins
       Given two rules bind mod+g, first to "composer.branch" and then to "diff.toggle"
       When the user presses mod+g
       Then "diff.toggle" runs
 
-    @backlog @desktop
+    @desktop
     Scenario: An invalid rule is ignored and the rest still apply
       Given keybindings.json has one valid rule and one with an unknown command
       When the client loads keybindings
@@ -88,12 +91,45 @@ Feature: Customising keybindings
       Then the default shortcuts apply
       And the user is told "Unable to parse keybindings config" with the file path
 
-    @backlog @desktop
+    @desktop
     Scenario: A project script can be bound
       Given the project has a script "test"
       And keybindings.json binds mod+alt+r to "script.test.run"
       When the user presses mod+alt+r
       Then the "test" script runs
+
+    @desktop
+    Scenario: A rule the node pushes applies at once
+      Given no custom keybindings
+      When the node adds the rule mod+alt+g for "diff.toggle"
+      And the user presses mod+alt+g
+      Then "diff.toggle" runs
+
+    @desktop
+    Scenario: A reload of the keybindings is confirmed
+      Given no custom keybindings
+      When the node adds the rule mod+alt+g for "diff.toggle"
+      Then the user sees a "success" toast "Keybindings updated" saying "Keybindings configuration reloaded successfully."
+
+    @desktop
+    Scenario: Reloads close together are confirmed once
+      Given no custom keybindings
+      When the node adds the rule mod+alt+g for "diff.toggle"
+      And the node adds the rule mod+alt+h for "diff.toggle"
+      Then the user sees the toast "Keybindings updated" once
+
+    @desktop
+    Scenario: Starting with custom keybindings is not announced
+      Given keybindings.json binds mod+alt+g to "diff.toggle"
+      When the client starts
+      Then the user sees no toast
+
+    @desktop
+    Scenario: A rule the node removes stops applying
+      Given "diff.toggle" is bound to mod+alt+g
+      When the node removes every custom rule
+      And the user presses mod+alt+g
+      Then "diff.toggle" does not run
 
     @node
     Scenario Outline: Rules beyond the limits are rejected
@@ -110,7 +146,7 @@ Feature: Customising keybindings
 
   Rule: Conditions
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A condition limits where a rule applies
       Given "diff.toggle" is bound to mod+g when "<condition>"
       And <state>
@@ -119,10 +155,16 @@ Feature: Customising keybindings
 
       Examples:
         | condition                         | state                                         | outcome  |
-        | terminalFocus                     | a terminal has focus                          | runs     |
         | terminalFocus                     | the composer has focus                        | does not run |
         | !terminalFocus                    | the composer has focus                        | runs     |
         | terminalOpen                      | the terminal is closed                        | does not run |
+        | isDesktop                         | the user is in the desktop app                | runs     |
+        | somethingUnknown                  | anything                                      | does not run |
+
+      @backlog
+      Examples: Not yet honoured by the native client
+        | condition                         | state                                         | outcome  |
+        | terminalFocus                     | a terminal has focus                          | runs     |
         | previewFocus                      | the preview has focus                         | runs     |
         | previewOpen                       | the preview is closed                         | does not run |
         | modelPickerOpen                   | the model picker is open                      | runs     |
@@ -130,7 +172,5 @@ Feature: Customising keybindings
         | composerFocus && turnRunning      | the composer has focus and no turn is running | does not run |
         | editableFocus                     | a text field has focus                        | runs     |
         | isWeb                             | the user is in a browser                      | runs     |
-        | isDesktop                         | the user is in the desktop app                | runs     |
         | terminalFocus \|\| previewFocus   | the preview has focus                         | runs     |
         | !(terminalOpen && previewOpen)    | both the terminal and preview are open        | does not run |
-        | somethingUnknown                  | anything                                      | does not run |

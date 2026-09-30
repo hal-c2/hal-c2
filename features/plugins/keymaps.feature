@@ -5,7 +5,6 @@
 #   apps/tui/src/keymap.ts (KEYBINDING_GROUPS), apps/tui/src/keymap.test.ts
 #   apps/tui/src/components/SettingsView.tsx (keybindings section)
 #   apps/web/src/components/settings/KeybindingsSettings.tsx
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (configurable keybindings as window shortcuts)
 #   apps/server-ex/lib/hal_c2/keybindings.ex (keybindings.json rules)
 #   packages/contracts/src/rpc.ts (server.upsertKeybinding, server.removeKeybinding)
 #   packages/contracts/src/keybindings.ts (KeybindingsConfigError)
@@ -140,18 +139,8 @@ Feature: Keymaps
     When the user opens the keybinding reference in Settings
     Then bindings are grouped into Global, Conversation, Terminal and Source control
 
-  @desktop
-  Scenario: Keybindings configured in Settings work as window shortcuts on the desktop app
-    Given the user has bound "ctrl+shift+n" to "thread.new" in Settings
-    When the user presses "ctrl+shift+n" in the desktop app
-    Then a new thread starts
-
-  @desktop
-  Scenario: Window shortcuts step aside while an embedded web page has focus
-    Given the user has bound "ctrl+shift+n" to "thread.new" in Settings
-    And an embedded web page has focus
-    When the user presses "ctrl+shift+n"
-    Then the key goes to the web page
+  # The desktop's window shortcuts, and how they stand down for a focused page, are
+  # navigation/keybindings.feature and navigation/keybinding-customisation.feature.
 
   @node
   Scenario: A keybinding rule saved on one client reaches every client of the node

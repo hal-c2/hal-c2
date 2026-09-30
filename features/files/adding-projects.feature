@@ -10,7 +10,10 @@
 #   apps/web/src/shell/useShellFolderDrop.ts
 #   apps/desktop-qt/qml/HalC2/Bricks/ProjectFolderDrop.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Add project)
+#   apps/desktop-qt/qml/HalC2/Bricks/HomePage.qml
 #   apps/desktop-qt/src/ShellBridge.cpp (project.folder.open, localDirectoryPath)
+#   apps/desktop-qt/src/native/ProjectController.cpp (opens a local folder through projects.mutate)
+#   apps/desktop-qt/src/native/ProjectCloneController.cpp (clone toasts: progress, cancel, retry, open, remove)
 #   apps/tui/src/components/AddProjectOverlay.tsx
 #   apps/tui/src/components/ChatView.tsx (add project flow)
 #   apps/mobile/src/features/projects/AddProjectScreen.tsx
@@ -31,6 +34,7 @@ Feature: Adding projects
 
   Rule: Adding a local folder
 
+    # Desktop: HomePage (apps/desktop-qt/tests/tst_HomePage.qml).
     @desktop @tui
     Scenario: A user with no projects is invited to add one
       Given "laptop" has no projects
@@ -51,12 +55,20 @@ Feature: Adding projects
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Adding a folder from the desktop and mobile apps registers it and starts a thread
       Given the folder "/home/sam/shop" exists on "laptop"
       When the user adds the local folder "/home/sam/shop"
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
+
+    @desktop @mobile @backlog-mobile
+    Scenario: A folder the environment refuses to add says why
+      Given the folder "/home/sam/shop" exists on "laptop"
+      And the environment refuses to change projects with "Disk is read-only"
+      When the user adds the local folder "/home/sam/shop"
+      Then the user sees an "error" toast "Could not open folder" saying "Disk is read-only"
+      And the desktop keeps 0 drafts
 
     @node
     Scenario: A new project is titled after its folder
@@ -96,7 +108,7 @@ Feature: Adding projects
       Then no second project is created
       And the user is told the project was already added
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Adding an existing project from the desktop and mobile apps opens its latest thread
       Given "shop" is already a project on "laptop" with an unsettled thread "Fix checkout"
       When the user adds the local folder of "shop" again
@@ -135,14 +147,14 @@ Feature: Adding projects
 
   Rule: Dropping a folder on the desktop app
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Dragging a single local folder over the window offers to open it as a project
       Given the desktop app is connected to its own local environment
       When the user drags the folder "/home/sam/shop" over the window
       Then the user is told the folder opens as a project
       And the user is told no files will be moved or deleted
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Drops that are not a single local folder are refused
       Given the desktop app is connected to its own local environment
       When the user drags <items> over the window
@@ -154,20 +166,20 @@ Feature: Adding projects
         | two folders                 |
         | a link to a remote location |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Folder drops are refused when the app shows a remote environment
       Given the desktop app shows an environment on another machine
       When the user drags a local folder over the window
       Then the drop is refused
 
-    @backlog @desktop
+    @desktop
     Scenario: Dropping a folder adds it as a project and starts a thread
       Given the desktop app is connected to its own local environment
       When the user drops the folder "/home/sam/shop" on the window
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @backlog @desktop
+    @desktop
     Scenario: Dropping a folder while the environment is disconnected reports a failure
       Given the local environment is disconnected
       When the user drops the folder "/home/sam/shop" on the window
@@ -195,9 +207,16 @@ Feature: Adding projects
         | Resolving deltas: 100% (3/3), done.   | resolving | 100     |
         | Updating files:  80% (8/10)           | checkout  | 80      |
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Clone progress is shown while the user keeps working
       Given a clone of "acme/shop" is receiving objects at 45 percent
+      When the user looks at the app
+      Then the user sees "Cloning acme/shop" with "Receiving objects · 45%"
+      And the user can cancel the clone
+
+    @desktop @mobile @backlog-mobile
+    Scenario: A clone on a linked environment shows its progress too
+      Given a clone of "acme/shop" is receiving objects at 45 percent on a linked environment
       When the user looks at the app
       Then the user sees "Cloning acme/shop" with "Receiving objects · 45%"
       And the user can cancel the clone
@@ -209,7 +228,7 @@ Feature: Adding projects
       Then the clone is no longer reported
       And the project "shop" stays with its files
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: A finished clone offers to open its project
       Given a clone of "acme/shop" finished
       When the user looks at the app
@@ -248,7 +267,7 @@ Feature: Adding projects
       When the user retries the clone
       Then the clone is reported as running
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: A failed or cancelled clone offers to remove the project it created
       Given a clone of "acme/shop" failed
       When the user removes the project from the clone's failure notice

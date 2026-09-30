@@ -4,8 +4,7 @@
  * (apps/desktop/src/backend/DesktopBackendConfiguration.ts): a release
  * `bin/hal_c2 start`, or `mix hal_c2.server` in a checkout, with
  * `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON bootstrap line on stdin (port, host,
- * `halC2Home`, `desktopBootstrapToken`; read by apps/server-ex/lib/hal_c2/desktop.ex).
- * The token never appears in argv or the environment.
+ * `halC2Home`; read by apps/server-ex/lib/hal_c2/desktop.ex).
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -235,7 +234,6 @@ export function startNode(input: {
   readonly launch: NodeLaunch;
   readonly port: number;
   readonly home: string | undefined;
-  readonly token: string;
   readonly env: NodeJS.ProcessEnv;
 }): RunningNode {
   const child = NodeChildProcess.spawn(input.launch.command, [...input.launch.args], {
@@ -267,7 +265,6 @@ export function startNode(input: {
   const bootstrap = {
     port: input.port,
     host: NODE_HOST,
-    desktopBootstrapToken: input.token,
     ...(input.home === undefined ? {} : { halC2Home: input.home }),
   };
   child.stdin.on("error", () => {});
@@ -314,6 +311,35 @@ export async function fetchDescriptor(
     body.orchestrationProtocolVersion >= 3
     ? (body as NodeDescriptor)
     : undefined;
+}
+
+/**
+ * Exchanges a node pairing token for a bearer at `/oauth/token`, as a desktop
+ * client. Pairing tokens are single use, so the token is spent afterwards.
+ * Undefined when the node refuses it (invalid, expired or already used).
+ */
+export async function exchangePairingToken(
+  origin: string,
+  token: string,
+  timeoutMs = 5_000,
+): Promise<string | undefined> {
+  const response = await fetch(new URL("/oauth/token", origin), {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      subject_token_type: "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
+      subject_token: token,
+      client_label: "HAL-C2 desktop",
+      client_device_type: "desktop",
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) return undefined;
+  const body = (await response.json().catch(() => undefined)) as
+    | { readonly access_token?: unknown }
+    | undefined;
+  return typeof body?.access_token === "string" ? body.access_token : undefined;
 }
 
 /**

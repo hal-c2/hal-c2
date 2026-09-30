@@ -76,7 +76,7 @@ ShellWindow {
         anchors.fill: parent
         spacing: 0
 
-        // Status line: the wordmark as the page draws it, then a prompt.
+        // Status line: the wordmark as the app draws it, then a prompt.
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 34
@@ -231,22 +231,24 @@ ShellWindow {
                         panelToggle: rightPanel.available ? rightPanel.open : null
                     }
 
-                    ClusterSettings {
+                    SettingsHost {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: root.clusterOpen
+                        section: root.settingsSection
+                        visible: root.settingsActive
                     }
 
-                    WebSurface {
-                        visible: !root.clusterOpen
+                    // The route's centre: a thread, draft, home, pull requests or usage.
+                    CentreHost {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        url: Shell.pageUrl
+                        kind: root.route?.kind ?? ""
+                        visible: !root.settingsActive
                     }
 
                     Composer {
                         Layout.fillWidth: true
-                        visible: ready && !root.clusterOpen
+                        visible: ready && !root.settingsActive
                     }
 
                     TerminalDrawer {

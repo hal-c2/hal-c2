@@ -90,6 +90,16 @@ const makeAgent = (options) => {
                 ),
               ),
             );
+          } else if (message.includes("leave a command running")) {
+            // A shell the run started and never reported finished.
+            sendOptions.onDelta({
+              update: {
+                type: "tool-call-started",
+                callId: "cmd-bg",
+                toolCall: { type: "shell", args: { command: "npm run dev" } },
+              },
+            });
+            say("Started it.");
           } else {
             say("Hello from Cursor");
           }

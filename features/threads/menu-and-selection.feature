@@ -36,12 +36,12 @@ Feature: Thread menu and selecting several threads
     When the user long-presses "Tidy logs"
     Then the menu for "Tidy logs" opens
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The thread menu offers its actions in a fixed order
     When the user opens the menu for "Tidy logs"
     Then the actions read, in order: new thread on "chore/logs", pin, settle, snooze, rename, regenerate title, mark unread, filter by "shop", copy, project settings, archive, delete
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Actions the environment does not support are left out
     Given the environment does not support snoozing or pinning
     When the user opens the menu for "Tidy logs"
@@ -59,7 +59,7 @@ Feature: Thread menu and selecting several threads
       | branch    | "chore/logs"                |
       | thread id | the id of "Tidy logs"       |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: Copying details of a thread confirms what was copied
     When the user copies the <detail> of "Tidy logs"
     Then the clipboard holds <value>
@@ -77,19 +77,19 @@ Feature: Thread menu and selecting several threads
     When the user opens the menu for "Tidy logs"
     Then copying the path is unavailable
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Copying a path that is missing explains why
     Given "Tidy logs" has no workspace path
     When the user copies the path of "Tidy logs"
     Then the user is told "Path unavailable — This thread does not have a workspace path to copy."
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A failed copy is reported
     Given the clipboard cannot be written
     When the user copies the path of "Tidy logs"
     Then the user is told "Failed to copy path"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: Copying a thread reference
     Given "Tidy logs" <link>
     When the user copies a reference to "Tidy logs"
@@ -100,14 +100,14 @@ Feature: Thread menu and selecting several threads
       | is linked to a pull request | the pull request address |
       | has no pull request         | the thread id            |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Filtering the list from a thread's project
     When the user filters by the project of "Tidy logs"
     Then only threads from "shop" are listed
     When the user shows all projects again
     Then threads from every project are listed
 
-  @backlog @desktop
+  @desktop
   Scenario: Opening a thread's project settings
     When the user opens the project settings from "Tidy logs"
     Then the settings for "shop" open

@@ -148,23 +148,24 @@ ShellWindow {
                         color: root.line
                     }
 
-                    ClusterSettings {
+                    SettingsHost {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: root.clusterOpen
+                        section: root.settingsSection
+                        visible: root.settingsActive
                     }
 
-                    WebSurface {
-                        visible: !root.clusterOpen
+                    // The route's centre: a thread, draft, home, pull requests or usage.
+                    CentreHost {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        url: Shell.pageUrl
-                        backgroundColor: root.canvas
+                        kind: root.route?.kind ?? ""
+                        visible: !root.settingsActive
                     }
 
                     Composer {
                         Layout.fillWidth: true
-                        visible: ready && !root.clusterOpen
+                        visible: ready && !root.settingsActive
                         color: "transparent"
                     }
 

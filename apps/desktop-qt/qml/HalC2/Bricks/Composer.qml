@@ -6,14 +6,17 @@ import HalC2.Shell
 
 // The prompt: text input, model/effort/mode pickers, send/stop, with the
 // checkout context strip welded under it. Rendered from Shell.state.composer
-// and Shell.state.workspace (see packages/contracts/src/shell.ts); every
-// change is dispatched back and the web app remains the owner of drafts and
-// sending.
+// and Shell.state.workspace; every change is dispatched back to
+// ComposerController, which keeps the drafts and sends over the node.
 Rectangle {
     id: composer
 
     readonly property var model: Shell.state.composer ?? null
     readonly property var workspace: Shell.state.workspace ?? null
+    // This machine's stashed prompts (ComposerController), newest first.
+    readonly property var stashEntries: Shell.state.composerStash?.entries ?? []
+    readonly property bool stashOpen: ready && Shell.state.composerStash?.open === true
+    readonly property var attachments: ready ? model.attachments : []
     readonly property bool ready: model !== null && model.target !== null
     readonly property string publishedTarget: ready ? model.target : ""
     readonly property string publishedText: ready ? model.text : ""
@@ -60,7 +63,7 @@ Rectangle {
         return true;
     }
 
-    // The last text this brick sent; an echo of it from the page is not an edit.
+    // The last text this brick sent; an echo of it from the controller is not an edit.
     property string lastSentText: ""
     property int lastSentCursor: -1
     property string editingTarget: ""
@@ -71,7 +74,7 @@ Rectangle {
     implicitHeight: stack.implicitHeight + gutter
     color: canvas
 
-    // The page's model-picker and toolbar keybindings land here while this
+    // The model-picker and toolbar keybindings land here while this
     // brick hosts those controls.
     Connections {
         target: Shell
@@ -85,6 +88,22 @@ Rectangle {
                 }
             } else if (action === "composer.control.open") {
                 composer.openControl(payload.command);
+            } else if (action === "composer.stash.key" && composer.ready) {
+                // The stash takes the text as typed, not as last debounced.
+                composer.flushText();
+                Shell.dispatch("composer.stash");
+            } else if (action === "composer.focus") {
+                // A dismissed command palette hands the keyboard back.
+                composer.focusInput();
+            } else if (action === "composer.queue.editLast" && composer.ready && input.activeFocus) {
+                // From the start of the draft the key reaches the queue;
+                // anywhere else it moves there first, as the web's does.
+                if (input.cursorPosition > 0) {
+                    input.cursorPosition = 0;
+                    return;
+                }
+                composer.flushText();
+                Shell.dispatch("composer.queue.edit", {});
             }
         }
     }
@@ -115,8 +134,8 @@ Rectangle {
     }
 
     // Up on the editor's first line recalls the thread's earlier prompts and
-    // Down on its last steps back; the page keeps the history and answers with
-    // the recalled text, or ignores a draft the user typed.
+    // Down on its last steps back. ComposerController keeps no prompt history
+    // yet and drops the step (features/composer/context-references.feature).
     function stepPromptHistory(direction) {
         const caret = input.positionToRectangle(input.cursorPosition).y;
         const edge = input.positionToRectangle(direction === "backward" ? 0 : input.length).y;
@@ -162,6 +181,13 @@ Rectangle {
         }
     }
 
+    function restoreStash(id) {
+        composer.flushText();
+        Shell.dispatch("composer.stash.restore", {
+            id: id
+        });
+    }
+
     function selectSuggestion(index) {
         const item = composer.suggestions[index];
         if (!item) {
@@ -182,11 +208,11 @@ Rectangle {
         });
     }
 
-    // What Enter with these modifiers sends, as the page resolves it from the
+    // What Enter with these modifiers sends, as the controller resolves it from the
     // send shortcut setting and the keybindings (composer.enterIntents); ""
     // leaves the key to the editor as a newline.
     function enterIntent(modifiers) {
-        // Qt calls the Command key Control on macOS, where the page calls it meta.
+        // Qt calls the Command key Control on macOS, where the keybindings call it meta.
         const mac = Qt.platform.os === "osx";
         const held = [];
         if (modifiers & (mac ? Qt.MetaModifier : Qt.ControlModifier)) held.push("ctrl");
@@ -194,7 +220,7 @@ Rectangle {
         if (modifiers & Qt.AltModifier) held.push("alt");
         if (modifiers & Qt.ShiftModifier) held.push("shift");
         const mod = mac ? "meta" : "ctrl";
-        // A page from before enterIntents: Enter sends, mod+Enter the alternative.
+        // Without enterIntents: Enter sends, mod+Enter the alternative.
         const table = composer.model.enterIntents ?? {
             singleLine: { "": "foreground", [mod]: composer.model.isRunning ? "alternate" : "background" }
         };
@@ -206,15 +232,15 @@ Rectangle {
         if (!composer.ready) {
             return;
         }
-        // canSend reflects the text the page has seen, which lags this input by
-        // the debounce; with local text, let the page validate the send (it
-        // echoes the prompt back if it declines).
-        if (!composer.model.canSend && input.text.trim().length === 0) {
+        // canSend reflects the text the controller has seen, which lags this
+        // input by the debounce; with local text, let the controller validate
+        // the send (it echoes the prompt back if it declines).
+        if (!composer.model.canSend && input.text.trim().length === 0 && composer.attachments.length === 0) {
             return;
         }
         textDebounce.stop();
         const text = input.text;
-        // The page clears its published prompt only after accepting the send.
+        // The controller clears its published prompt only after accepting the send.
         // Until then this remains the user's recoverable draft.
         composer.lastSentText = text;
         composer.lastSentCursor = input.cursorPosition;
@@ -243,7 +269,7 @@ Rectangle {
         // an earlier value and coalesced publications must still acknowledge
         // the right edit. Older echoes cannot move the local text or caret.
         const edit = model?.edit;
-        // An absent field means an older page without revision support.
+        // An absent field means a publisher without revision support.
         if (edit !== undefined && lastSentRevision > 0 && (!edit || edit.clientId !== editClientId || edit.revision < lastSentRevision)) {
             return;
         }
@@ -272,7 +298,7 @@ Rectangle {
         width: Math.min(parent.width - composer.gutter * 2, composer.maximumCardWidth)
         spacing: 0
 
-        // @file, $skill and /command suggestions, computed by the page for the
+        // @file, $skill and /command suggestions, computed by the controller for the
         // caret it was last told about; they sit on the card's top edge.
         Rectangle {
             Layout.fillWidth: true
@@ -356,6 +382,146 @@ Rectangle {
             }
         }
 
+        // The stash (composer.stash), on the card's top edge like the
+        // suggestions: a row restores its prompt, its cross deletes it.
+        Rectangle {
+            objectName: "stashList"
+            Layout.fillWidth: true
+            Layout.leftMargin: 22
+            Layout.rightMargin: 22
+            visible: composer.stashOpen && !composer.suggesting
+            implicitHeight: visible ? stashHeader.height + Math.min(Math.max(stashList.contentHeight, 34), 240) + 8 : 0
+            topLeftRadius: 16
+            topRightRadius: 16
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: composer.outline
+            border.width: 1
+
+            RowLayout {
+                id: stashHeader
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 4
+                height: 30
+                spacing: 8
+
+                ShellIcon {
+                    Layout.leftMargin: 8
+                    name: "bookmark"
+                    size: 14
+                    color: composer.muted
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("Stash")
+                    color: composer.muted
+                    font.pixelSize: 12
+                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                }
+
+                Text {
+                    text: composer.stashEntries.length
+                    color: composer.muted
+                    font.pixelSize: 12
+                }
+
+                ShellButton {
+                    objectName: "stashClose"
+                    subtle: true
+                    iconName: "x"
+                    iconSize: 14
+                    implicitHeight: 24
+                    Accessible.name: qsTr("Close stash")
+                    onClicked: Shell.dispatch("composer.stash.menu", { open: false })
+                }
+            }
+
+            ListView {
+                id: stashList
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: stashHeader.bottom
+                anchors.bottom: parent.bottom
+                anchors.margins: 4
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: composer.stashEntries
+                highlightMoveDuration: 0
+                currentIndex: count > 0 ? 0 : -1
+
+                delegate: Rectangle {
+                    id: stashRow
+
+                    required property var modelData
+                    required property int index
+
+                    objectName: "stashEntry-" + index
+                    width: ListView.view.width
+                    height: 34
+                    radius: 10
+                    color: ListView.isCurrentItem ? Theme.palette.color("accentSurface", "#2a2a30") : "transparent"
+
+                    HoverHandler {
+                        onHoveredChanged: if (hovered) stashList.currentIndex = stashRow.index
+                    }
+
+                    TapHandler {
+                        onTapped: composer.restoreStash(stashRow.modelData.id)
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 4
+                        spacing: 8
+
+                        ShellIcon {
+                            name: "file-text"
+                            size: 14
+                            color: composer.muted
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: stashRow.modelData.snippet
+                            color: composer.foreground
+                            font.pixelSize: 12
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                            elide: Text.ElideRight
+                            Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
+                        }
+
+                        ShellButton {
+                            objectName: "stashDelete-" + stashRow.index
+                            subtle: true
+                            iconName: "x"
+                            iconSize: 14
+                            implicitHeight: 24
+                            Accessible.name: qsTr("Delete stashed prompt")
+                            onClicked: Shell.dispatch("composer.stash.delete", { id: stashRow.modelData.id })
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: stashList.count === 0
+                    width: parent.width - 24
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                    text: (Shell.state.composerStash?.shortcut ?? "") !== ""
+                        ? qsTr("Nothing stashed yet. Press %1 with a prompt in the composer to stash it.").arg(Shell.state.composerStash.shortcut)
+                        : qsTr("Nothing stashed yet.")
+                    color: composer.muted
+                    font.pixelSize: 12
+                }
+            }
+        }
+
         // The glass card.
         Rectangle {
             id: card
@@ -387,17 +553,43 @@ Rectangle {
                 anchors.top: parent.top
                 spacing: 0
 
+                // A queued message open for editing: sending saves it.
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 10
+                    Layout.topMargin: 8
+                    visible: composer.ready && (composer.model.editingQueuedRunId ?? null) !== null
+                    spacing: 6
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Editing a queued message")
+                        color: composer.muted
+                        font.pixelSize: 12
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                    }
+
+                    ShellButton {
+                        objectName: "queuedEditCancel"
+                        implicitHeight: 24
+                        subtle: true
+                        text: qsTr("Cancel")
+                        onClicked: Shell.dispatch("composer.queue.edit.cancel")
+                    }
+                }
+
                 // Attached images and terminal selections living on the draft.
                 Flow {
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.topMargin: 12
-                    visible: composer.ready && (composer.model.attachments.length > 0 || composer.model.terminalContexts.length > 0)
+                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0)
                     spacing: 6
 
                     Repeater {
-                        model: composer.ready ? composer.model.attachments : []
+                        model: composer.attachments
 
                         delegate: ShellButton {
                             required property var modelData
@@ -419,11 +611,12 @@ Rectangle {
                         delegate: ShellButton {
                             required property var modelData
 
+                            objectName: "terminalContext-" + modelData.id
                             implicitHeight: 24
                             iconName: "terminal"
-                            text: modelData.label + " " + modelData.lineStart + "–" + modelData.lineEnd
+                            text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
                             font.pixelSize: 12
-                            Accessible.name: qsTr("Remove terminal selection %1").arg(modelData.label)
+                            Accessible.name: qsTr("Remove terminal selection %1").arg(text)
                             onClicked: Shell.dispatch("composer.terminalContext.remove", {
                                 id: modelData.id
                             })
@@ -460,7 +653,7 @@ Rectangle {
                                 textDebounce.restart();
                             }
                         }
-                        // The page's keybindings are window shortcuts too (ShellWindow);
+                        // Keybindings are window shortcuts too (ShellWindow);
                         // an Enter chord that sends is the composer's, not theirs.
                         Keys.onShortcutOverride: event => {
                             event.accepted = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
@@ -491,6 +684,20 @@ Rectangle {
                                         return;
                                     }
                                 }
+                            }
+                            // The stash list, open above the card: arrows pick,
+                            // Enter restores, mod+Backspace deletes, Escape closes.
+                            if (composer.stashOpen && !composer.suggesting) {
+                                const entry = composer.stashEntries[stashList.currentIndex] ?? null;
+                                const mod = event.modifiers & (Qt.ControlModifier | Qt.MetaModifier);
+                                event.accepted = true;
+                                if (event.key === Qt.Key_Escape) Shell.dispatch("composer.stash.menu", { open: false });
+                                else if (event.key === Qt.Key_Down && !mod) stashList.incrementCurrentIndex();
+                                else if (event.key === Qt.Key_Up && !mod) stashList.decrementCurrentIndex();
+                                else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !mod && entry) composer.restoreStash(entry.id);
+                                else if (event.key === Qt.Key_Backspace && mod && entry) Shell.dispatch("composer.stash.delete", { id: entry.id });
+                                else event.accepted = false;
+                                if (event.accepted) return;
                             }
                             if (event.key === Qt.Key_Backtab) {
                                 event.accepted = composer.toggleInteractionMode();
@@ -616,34 +823,35 @@ Rectangle {
                         Layout.fillWidth: true
                     }
 
-                    Text {
-                        visible: composer.ready && composer.model.pendingApprovalCount > 0
-                        text: composer.ready ? qsTr("%1 approval(s) waiting in the timeline").arg(composer.model.pendingApprovalCount) : ""
-                        color: Theme.palette.color("warning", "#e0af68")
+                    // The stash's count, which opens and closes its list.
+                    ShellButton {
+                        objectName: "stashBadge"
+                        visible: composer.ready && composer.stashEntries.length > 0
+                        subtle: true
+                        iconName: "bookmark"
+                        iconSize: 14
+                        iconTint: composer.iconMuted
+                        text: composer.stashEntries.length
                         font.pixelSize: 12
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        Accessible.name: qsTr("Stashed prompts: %1. Open stash.").arg(composer.stashEntries.length)
+                        onClicked: Shell.dispatch("composer.stash.menu")
                     }
 
-                    ShellButton {
-                        visible: composer.ready && composer.model.showPlanFollowUpPrompt && input.text.trim().length === 0 && !primaryAction.stopMode
-                        implicitHeight: 28
-                        text: qsTr("Implement")
-                        onClicked: composer.submit("foreground")
-                    }
+                    // Approvals and the plan's Implement live in TurnRequests above.
 
                     // Round send / stop.
                     AbstractButton {
                         id: primaryAction
                         objectName: "primaryAction"
 
-                        readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0
+                        readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0 && composer.attachments.length === 0
                         // A send during a turn joins it or waits behind it, per the
                         // follow-up setting; the button says which before the click.
                         readonly property string followUp: composer.model.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
 
                         implicitWidth: 32
                         implicitHeight: 32
-                        enabled: composer.ready && (stopMode || composer.model.canSend || input.text.trim().length > 0)
+                        enabled: composer.ready && (stopMode || composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
                         hoverEnabled: true
                         opacity: enabled ? 1 : 0.3
                         scale: down ? 0.97 : hovered ? 1.05 : 1
@@ -782,12 +990,19 @@ Rectangle {
                     iconName: contextStrip.envModeIcon
                     id: envModePicker
                     objectName: "envModePicker"
-                    model: [qsTr("Current checkout"), qsTr("New worktree")]
+                    // A draft can go back to the worktree the project worked in last.
+                    readonly property var previous: contextStrip.wsReady ? contextStrip.ws.previousWorktree ?? null : null
+                    model: previous ? [qsTr("Current checkout"), qsTr("New worktree"), previous.label] : [qsTr("Current checkout"), qsTr("New worktree")]
                     currentIndex: contextStrip.wsReady && contextStrip.ws.envMode === "worktree" ? 1 : 0
                     Accessible.name: qsTr("Checkout mode")
-                    onActivated: index => Shell.dispatch("workspace.envMode.set", {
-                            mode: index === 1 ? "worktree" : "local"
-                        })
+                    onActivated: index => {
+                        if (index === 2)
+                            Shell.dispatch("workspace.previousWorktree");
+                        else
+                            Shell.dispatch("workspace.envMode.set", {
+                                mode: index === 1 ? "worktree" : "local"
+                            });
+                    }
                 }
 
                 RowLayout {
@@ -871,18 +1086,21 @@ Rectangle {
                         id: branchPicker
                         objectName: "branchPicker"
 
+                        scale: Shell.state.layout?.zoom ?? 1
+                        transformOrigin: Item.TopLeft
                         x: parent.width - width
                         y: -height - 4
                         width: 320
                         height: 360
                         padding: 4
+                        // Opening loads the refs afresh, unfiltered.
                         onOpened: {
                             branchSearch.text = "";
                             branchSearch.forceActiveFocus();
+                            Shell.dispatch("workspace.branch.search", {
+                                query: ""
+                            });
                         }
-                        onClosed: Shell.dispatch("workspace.branch.search", {
-                            query: ""
-                        })
 
                         enter: Transition {
                             NumberAnimation {

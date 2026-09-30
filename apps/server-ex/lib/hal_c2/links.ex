@@ -3,31 +3,38 @@ defmodule HalC2.Links do
   Environments this node reaches without clustering with them: other nodes the user
   paired this one with. A link keeps the access token its pairing gave and one
   websocket (`HalC2.Links.Connection`) that forwards client RPCs and subscriptions,
-  so a client that only talks to this node reaches the linked environment too
-  (`HalC2.Web.Socket`).
+  so a client that only talks to this node reaches the linked environment and the
+  other members of its cluster too (`HalC2.Web.Socket`). `route/1` says where an
+  environment id is served: this node, a cluster member, or a link. The other side
+  checks the link token's scopes; this node widens nothing.
 
-  A client can also lend this node the access it already holds on an environment
-  (`borrow/2`): the desktop shell passes on what its page paired with, so nothing is
-  paired twice. A borrowed link lives only as long as this node runs; the client
-  lends it again on every connection and takes it back when the page forgets the
-  environment.
-
-  Paired links persist in the `environment-links` secret. Subscribers get
+  Links persist in the `environment-links` secret. Subscribers get
   `{:hal_c2_links, links}` with the whole list (`list/0`) whenever a link is added,
-  removed, or goes on- or offline.
+  removed, goes on- or offline, or fails in a new way.
+
+  A subscriber can also ask for the linked environments' sidebars (`subscribe_rows/1`).
+  While one does, each link follows its environment's `shell` and keeps its nodes and
+  rows (`HalC2.Links.Rows`); such subscribers also get `{:hal_c2_link_rows, id, change}`
+  for each change, with `change` as `HalC2.Shell` notifies its own. When a link drops,
+  its rows stay and its nodes go offline; when the last such subscriber leaves, the
+  links stop following and forget the rows.
   """
 
   use GenServer
 
   alias HalC2.Connect.Secrets
-  alias HalC2.Links.Connection
+  alias HalC2.Links.{Connection, Rows}
 
   @secret "environment-links"
   @http_timeout 10_000
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @doc ~s|Every link as `%{"environment" => descriptor, "origin", "online"}`.|
+  @doc """
+  Every link as `%{"environment" => descriptor, "origin", "online"}`, plus the
+  `"scopes"` its pairing granted on the other side, and `"problem"` while it is offline for a known reason: `"unreachable"`, or `"refused"`
+  when the environment no longer accepts its token (pair it again).
+  """
   @spec list() :: [map]
   def list do
     if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, :list), else: []
@@ -36,6 +43,25 @@ defmodule HalC2.Links do
   @spec subscribe(pid) :: :ok
   def subscribe(pid) do
     if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, {:subscribe, pid}), else: :ok
+  end
+
+  @doc """
+  Subscribes `pid` as `subscribe/1` does, and to the linked environments' rows too.
+  Returns `list/0` with each link's `"nodes"` and `"rows"` as far as they are known.
+  """
+  @spec subscribe_rows(pid) :: [map]
+  def subscribe_rows(pid) do
+    if Process.whereis(__MODULE__),
+      do: GenServer.call(__MODULE__, {:subscribe_rows, pid}),
+      else: []
+  end
+
+  @doc "Stops sending `pid` the linked environments' rows; it stays subscribed to links."
+  @spec unsubscribe_rows(pid) :: :ok
+  def unsubscribe_rows(pid) do
+    if Process.whereis(__MODULE__),
+      do: GenServer.call(__MODULE__, {:unsubscribe_rows, pid}),
+      else: :ok
   end
 
   @doc """
@@ -48,58 +74,87 @@ defmodule HalC2.Links do
     with {:ok, origin, token} <- parse(pairing_url),
          {:ok, descriptor} <- fetch_descriptor(origin),
          :ok <- not_reachable(descriptor),
-         {:ok, access} <- exchange(origin, token) do
-      link = %{"origin" => origin, "token" => access, "environment" => descriptor}
-      :ok = GenServer.call(__MODULE__, {:put, link})
-      {:ok, descriptor}
-    end
-  end
+         {:ok, access, scopes} <- exchange(origin, token) do
+      link = %{
+        "origin" => origin,
+        "token" => access,
+        "scopes" => scopes,
+        "environment" => descriptor
+      }
 
-  @doc """
-  Links the environment at `origin` with `token`, an access token a client already
-  holds there, without persisting it. Returns the environment's descriptor.
-  """
-  @spec borrow(String.t(), String.t()) :: {:ok, map} | {:error, String.t()}
-  def borrow(origin, token) do
-    with {:ok, origin} <- parse_origin(origin),
-         {:ok, descriptor} <- fetch_descriptor(origin),
-         :ok <- not_reachable(descriptor) do
-      link = %{"origin" => origin, "token" => token, "environment" => descriptor}
-      :ok = GenServer.call(__MODULE__, {:put, Map.put(link, "borrowed", true)})
+      :ok = GenServer.call(__MODULE__, {:put, link})
       {:ok, descriptor}
     end
   end
 
   @doc "Forgets the link to `environment_id`."
   @spec remove(String.t()) :: :ok | {:error, String.t()}
-  def remove(environment_id), do: GenServer.call(__MODULE__, {:remove, environment_id, :any})
+  def remove(environment_id), do: GenServer.call(__MODULE__, {:remove, environment_id})
 
-  @doc "Takes back what `borrow/2` lent for `environment_id`; a paired link stays."
-  @spec give_back(String.t()) :: :ok
-  def give_back(environment_id) do
-    _ = GenServer.call(__MODULE__, {:remove, environment_id, :borrowed})
-    :ok
+  @doc """
+  Where a client's shape or RPC for `environment_id` is served: `{:node, node}` on this
+  node or the cluster member serving it, `:link` through the link to it or to a cluster
+  it is a member of (`rpc/4`, `watch/4`), else `:unknown`. A linked cluster's members
+  are known from its descriptor when the link connects and from any of its shells the
+  link passes on; the linked node routes to them itself.
+  """
+  @spec route(String.t()) :: {:node, node} | :link | :unknown
+  def route(environment_id) do
+    cond do
+      # Even if the node became distributed (and changed its name) after the shell
+      # recorded it.
+      environment_id == HalC2.Environment.id() -> {:node, node()}
+      node = cluster_node(environment_id) -> {:node, node}
+      connection(environment_id) -> :link
+      true -> :unknown
+    end
   end
 
-  @doc "Runs a client RPC on a linked environment, as `HalC2.Rpc.handle/2` answers."
+  defp cluster_node(environment_id) do
+    Enum.find_value(HalC2.Shell.environments(), fn {node, descriptor} ->
+      if descriptor["environmentId"] == environment_id, do: node
+    end)
+  end
+
+  @doc """
+  Runs a client RPC on a linked environment, as `HalC2.Rpc.handle/2` answers, or fails
+  at once with `unreachable/2`'s error while its link is down.
+  """
   @spec rpc(String.t(), String.t(), term, timeout) :: {:ok, term} | {:error, String.t() | map}
   def rpc(environment_id, method, payload, timeout) do
     case connection(environment_id) do
       nil -> {:error, "unknown environment"}
-      pid -> Connection.rpc(pid, method, payload, timeout)
+      pid -> Connection.rpc(pid, environment_id, method, payload, timeout)
     end
   end
 
   @doc """
-  Subscribes `pid` to `shape` (a protocol 3 shape naming the environment) on a
-  linked environment. `pid` receives `{:hal_c2_link, ref, frame}` for each of the
-  subscription's frames; the frame's `id` is the link's, not the client's.
+  The error a request for `environment_id` gets while its link is down: `reason` is
+  `"unreachable"`, or `"refused"` when the environment no longer accepts the link's
+  token. `message` says so for a person.
   """
-  @spec watch(String.t(), map, pid) :: {:ok, reference} | {:error, String.t()}
-  def watch(environment_id, shape, pid) do
+  @spec unreachable(String.t(), String.t(), String.t()) :: map
+  def unreachable(environment_id, reason, message),
+    do: %{
+      "_tag" => "EnvironmentUnreachableError",
+      "environmentId" => environment_id,
+      "reason" => reason,
+      "message" => message
+    }
+
+  @doc """
+  Subscribes `pid` to `shape` (a protocol 3 shape naming the environment) on a
+  linked environment, from `offset` for a stream. `pid` receives
+  `{:hal_c2_link, ref, frame}` for each of the subscription's frames; the frame's `id`
+  is the link's, not the client's. While the link is down after failing, it fails at
+  once as `rpc/4` does; while it first connects, the subscription waits for it.
+  """
+  @spec watch(String.t(), map, pid, non_neg_integer | nil) ::
+          {:ok, reference} | {:error, String.t() | map}
+  def watch(environment_id, shape, pid, offset \\ nil) do
     case connection(environment_id) do
       nil -> {:error, "unknown environment"}
-      link -> Connection.watch(link, shape, pid)
+      link -> Connection.watch(link, shape, pid, offset)
     end
   end
 
@@ -142,17 +197,6 @@ defmodule HalC2.Links do
     end
   end
 
-  defp parse_origin(origin) do
-    case URI.parse(String.trim(origin)) do
-      %URI{scheme: scheme, host: host} = uri
-      when scheme in ["http", "https"] and host not in [nil, ""] ->
-        {:ok, "#{scheme}://#{uri.authority}"}
-
-      _ ->
-        {:error, "not an environment origin"}
-    end
-  end
-
   defp presence(nil), do: nil
   defp presence(value), do: if(String.trim(value) == "", do: nil, else: String.trim(value))
 
@@ -172,9 +216,7 @@ defmodule HalC2.Links do
 
   # This node and its cluster are reached without a link.
   defp not_reachable(%{"environmentId" => id}) do
-    cluster = for {_node, d} <- HalC2.Shell.environments(), do: d["environmentId"]
-
-    if id == HalC2.Environment.id() or id in cluster,
+    if match?({:node, _}, route(id)),
       do: {:error, "this node already reaches that environment"},
       else: :ok
   end
@@ -190,8 +232,12 @@ defmodule HalC2.Links do
       })
 
     case http(:post, origin <> "/oauth/token", [], {"application/x-www-form-urlencoded", form}) do
-      {:ok, 200, %{"access_token" => access}} -> {:ok, access}
-      {:ok, _, _} -> {:error, "the pairing link is invalid or expired"}
+      {:ok, 200, %{"access_token" => access} = grant} ->
+        {:ok, access, String.split(grant["scope"] || "", " ", trim: true)}
+
+      {:ok, _, _} ->
+        {:error, "the pairing link is invalid or expired"}
+
       {:error, reason} -> {:error, "cannot reach #{origin}: #{inspect(reason)}"}
     end
   end
@@ -235,7 +281,34 @@ defmodule HalC2.Links do
       end
 
     Enum.each(links, fn {_, link} -> start_connection(link) end)
-    {:ok, %{links: links, online: MapSet.new(), subscribers: %{}}}
+    # subscribers: pid => {monitor, rows?}; rows: id => Rows, while any subscriber wants
+    # them; following: the ref of each link's shell subscription => id.
+    {:ok,
+     %{
+       links: links,
+       online: MapSet.new(),
+       problems: %{},
+       subscribers: %{},
+       rows: %{},
+       following: %{}
+     }}
+  end
+
+  # From before linked rows: subscribers were pid => monitor.
+  @impl true
+  def code_change(_old_vsn, state, _extra) do
+    subscribers =
+      Map.new(state.subscribers, fn
+        {pid, {_, _} = sub} -> {pid, sub}
+        {pid, monitor} -> {pid, {monitor, false}}
+      end)
+
+    {:ok,
+     state
+     |> Map.put(:subscribers, subscribers)
+     |> Map.put_new(:rows, %{})
+     |> Map.put_new(:following, %{})
+     |> Map.put_new(:problems, %{})}
   end
 
   @impl true
@@ -243,29 +316,46 @@ defmodule HalC2.Links do
 
   def handle_call({:subscribe, pid}, _from, state) do
     subscribers =
-      Map.put_new_lazy(state.subscribers, pid, fn -> Process.monitor(pid) end)
+      Map.put_new_lazy(state.subscribers, pid, fn -> {Process.monitor(pid), false} end)
 
     {:reply, :ok, %{state | subscribers: subscribers}}
   end
 
-  # A borrowed token never replaces a paired link, nor the same loan again.
-  def handle_call({:put, %{"borrowed" => true, "token" => token} = link}, _from, state) do
-    case state.links[link["environment"]["environmentId"]] do
-      %{"borrowed" => true, "token" => ^token} -> {:reply, :ok, state}
-      %{} = paired when not is_map_key(paired, "borrowed") -> {:reply, :ok, state}
-      _ -> put(link, state)
+  def handle_call({:subscribe_rows, pid}, _from, state) do
+    monitor =
+      case state.subscribers[pid] do
+        {monitor, _} -> monitor
+        nil -> Process.monitor(pid)
+      end
+
+    state = follow(%{state | subscribers: Map.put(state.subscribers, pid, {monitor, true})})
+
+    links =
+      for link <- listing(state) do
+        rows = Map.get(state.rows, link["environment"]["environmentId"], Rows.new())
+        Map.merge(link, Rows.listing(rows))
+      end
+
+    {:reply, links, state}
+  end
+
+  def handle_call({:unsubscribe_rows, pid}, _from, state) do
+    case state.subscribers[pid] do
+      {monitor, true} ->
+        subscribers = Map.put(state.subscribers, pid, {monitor, false})
+        {:reply, :ok, unfollow(%{state | subscribers: subscribers})}
+
+      _ ->
+        {:reply, :ok, state}
     end
   end
 
   def handle_call({:put, link}, _from, state), do: put(link, state)
 
-  def handle_call({:remove, id, which}, _from, state) do
+  def handle_call({:remove, id}, _from, state) do
     case state.links[id] do
       nil ->
         {:reply, {:error, "no link to #{id}"}, state}
-
-      link when which == :borrowed and not is_map_key(link, "borrowed") ->
-        {:reply, {:error, "the link to #{id} was paired"}, state}
 
       _ ->
         stop_connection(id)
@@ -273,7 +363,10 @@ defmodule HalC2.Links do
         state = %{
           state
           | links: Map.delete(state.links, id),
-            online: MapSet.delete(state.online, id)
+            online: MapSet.delete(state.online, id),
+            problems: Map.delete(state.problems, id),
+            rows: Map.delete(state.rows, id),
+            following: Map.reject(state.following, &(elem(&1, 1) == id))
         }
 
         persist(state)
@@ -288,36 +381,78 @@ defmodule HalC2.Links do
     state = %{
       state
       | links: Map.put(state.links, id, link),
-        online: MapSet.delete(state.online, id)
+        online: MapSet.delete(state.online, id),
+        problems: Map.delete(state.problems, id)
     }
 
     persist(state)
     start_connection(link)
+    # A link paired again follows its environment afresh; until then its nodes are offline.
+    state = %{state | following: Map.reject(state.following, &(elem(&1, 1) == id))}
+    state = rows_changed(state, id, &Rows.offline/1)
+    state = if rows_wanted?(state), do: follow_link(state, id), else: state
     {:reply, :ok, notify(state)}
   end
 
   @impl true
   def handle_cast({:online, id, online?}, state) do
     online = if online?, do: MapSet.put(state.online, id), else: MapSet.delete(state.online, id)
+    problems = if online?, do: Map.delete(state.problems, id), else: state.problems
 
-    if Map.has_key?(state.links, id) and online != state.online,
-      do: {:noreply, notify(%{state | online: online})},
+    if Map.has_key?(state.links, id) and online != state.online do
+      state = notify(%{state | online: online, problems: problems})
+      {:noreply, if(online?, do: state, else: rows_changed(state, id, &Rows.offline/1))}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_cast({:problem, id, kind}, state) do
+    if Map.has_key?(state.links, id) and state.problems[id] != kind,
+      do: {:noreply, notify(put_in(state.problems[id], kind))},
       else: {:noreply, state}
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _}, state),
-    do: {:noreply, %{state | subscribers: Map.delete(state.subscribers, pid)}}
+    do: {:noreply, unfollow(%{state | subscribers: Map.delete(state.subscribers, pid)})}
+
+  # A frame of a link's own shell subscription. One that ends it (the environment
+  # refused it) leaves the link's rows as they were.
+  def handle_info({:hal_c2_link, ref, frame}, state) do
+    case {state.following, frame["t"]} do
+      {%{^ref => _id}, t} when t in ["end", "error", "resync"] ->
+        {:noreply, %{state | following: Map.delete(state.following, ref)}}
+
+      {%{^ref => id}, _} ->
+        {:noreply, rows_changed(state, id, &Rows.apply(&1, frame))}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
 
   def handle_info(_other, state), do: {:noreply, state}
 
   defp listing(state) do
     for {id, link} <- Enum.sort_by(state.links, &elem(&1, 1)["environment"]["label"]) do
-      %{
+      online = MapSet.member?(state.online, id)
+
+      listed = %{
         "environment" => link["environment"],
         "origin" => link["origin"],
-        "online" => MapSet.member?(state.online, id)
+        "online" => online
       }
+
+      # What the pairing granted on the other side, so a client can show an environment
+      # it may only view as read-only. Links paired before this was kept carry none.
+      listed =
+        if is_list(link["scopes"]), do: Map.put(listed, "scopes", link["scopes"]), else: listed
+
+      case state.problems[id] do
+        problem when is_binary(problem) and not online -> Map.put(listed, "problem", problem)
+        _ -> listed
+      end
     end
   end
 
@@ -327,9 +462,62 @@ defmodule HalC2.Links do
     state
   end
 
+  # --- linked rows ---------------------------------------------------------------
+
+  defp rows_wanted?(state), do: Enum.any?(state.subscribers, &match?({_, {_, true}}, &1))
+
+  # Every link follows its environment's shell, once some subscriber wants rows.
+  defp follow(state) do
+    if map_size(state.following) == 0 and rows_wanted?(state),
+      do: Enum.reduce(Map.keys(state.links), state, &follow_link(&2, &1)),
+      else: state
+  end
+
+  defp follow_link(state, id) do
+    case connection(id) do
+      nil ->
+        state
+
+      pid ->
+        ref = make_ref()
+        Connection.watch_async(pid, ref, %{"type" => "shell"}, self())
+
+        %{
+          state
+          | following: Map.put(state.following, ref, id),
+            rows: Map.put_new(state.rows, id, Rows.new())
+        }
+    end
+  end
+
+  # Once no subscriber wants rows, the links stop following and forget them.
+  defp unfollow(state) do
+    if rows_wanted?(state) do
+      state
+    else
+      for {ref, id} <- state.following, do: unwatch(id, ref)
+      %{state | following: %{}, rows: %{}}
+    end
+  end
+
+  defp rows_changed(state, id, fun) do
+    case state.rows do
+      %{^id => rows} ->
+        {rows, changes} = fun.(rows)
+
+        for {pid, {_, true}} <- state.subscribers,
+            change <- changes,
+            do: send(pid, {:hal_c2_link_rows, id, change})
+
+        %{state | rows: Map.put(state.rows, id, rows)}
+
+      _ ->
+        state
+    end
+  end
+
   defp persist(state) do
-    paired = for {_, link} <- state.links, !link["borrowed"], do: link
-    Secrets.put(@secret, JSON.encode!(paired))
+    Secrets.put(@secret, JSON.encode!(Map.values(state.links)))
   end
 
   defp start_connection(link) do

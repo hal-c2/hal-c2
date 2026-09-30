@@ -411,6 +411,52 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "a Claude turn has finished", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude answers a finished background task by itself", context do
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-wake",
+        "content" => [%{"type" => "text", "text" => "The build passed"}]
+      }
+    })
+
+    context
+  end
+
+  step "the thread shows a running run that Claude started, with Claude's answer", context do
+    World.await_value(context, @thread, fn state ->
+      runs = state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+      messages = StreamState.get(state, "message")
+
+      match?([%{"status" => "completed"}, %{"status" => "running"}], runs) and
+        messages[List.last(runs)["userMessageId"]]["creationSource"] == "provider" and
+        Enum.any?(
+          Map.values(messages),
+          &(&1["runId"] == List.last(runs)["id"] and &1["text"] == "The build passed")
+        )
+    end)
+
+    context
+  end
+
+  step "Claude finishes that work", context do
+    claude_says(context, %{"type" => "result", "subtype" => "success"})
+    context
+  end
+
+  step "that run completes and the user's run stays completed", context do
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
   step "the thread is in plan mode on Claude", context do
     context |> World.fake_providers() |> Map.put(:interaction_mode, "plan")
   end
@@ -655,5 +701,10 @@ defmodule HalC2.Steps.Providers.Claude do
     |> File.read!()
     |> JSON.decode!()
     |> get_in(["providers", "claudeAgent"])
+  end
+
+  defp claude_says(context, message) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    send(pid, {:claude, :sys.get_state(pid).session, {:message, message}})
   end
 end

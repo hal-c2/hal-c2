@@ -7,6 +7,7 @@ import HalC2.Shell
 // or when the desktop host (the bundled server) went away.
 Item {
     id: overlay
+    objectName: "shellError"
 
     readonly property string backendError: Shell.state.backendError ?? ""
     readonly property bool hasError: Runtime.lastError.length > 0 || backendError.length > 0

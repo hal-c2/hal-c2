@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick WebEngineQuick WebChannel WebSockets)
+find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick WebSockets)
 qt_standard_project_setup(REQUIRES 6.9)
 qt_policy(SET QTP0001 NEW)
 
@@ -45,18 +45,6 @@ if(NOT DEFINED HAL_C2_NODE_ENTRY)
   set(HAL_C2_NODE_ENTRY "$<IF:$<CONFIG:Release>,${_hal_c2_installed_node},node>")
 endif()
 
-# qwebchannel.js is the browser half of Qt WebChannel. Qt installs it as data
-# (share/qt6/webchannel); bundling it makes the injected script independent of
-# whether the runtime Qt exposes it as a qrc resource.
-get_filename_component(_qt_prefix "${QT6_INSTALL_PREFIX}" ABSOLUTE)
-find_file(HAL_C2_QWEBCHANNEL_JS qwebchannel.js
-  HINTS
-    "${_qt_prefix}/${QT6_INSTALL_DATA}/webchannel"
-    "${_qt_prefix}/share/qt6/webchannel"
-    "${_qt_prefix}/share/qt/webchannel"
-    "${_qt_prefix}/../qtwebchannel/share/qt6/webchannel"
-)
-
 qt_add_executable(hal-c2-qt
   src/main.cpp
   src/LocalFolderModel.cpp
@@ -67,32 +55,14 @@ qt_add_executable(hal-c2-qt
   src/NativeNotifications.h
   src/BackendProcess.cpp
   src/BackendProcess.h
-  src/ClusterController.cpp
-  src/ClusterController.h
-  src/ComposerController.cpp
-  src/ComposerController.h
-  src/NativeShell.cpp
-  src/NativeShell.h
-  src/NodeClient.cpp
-  src/NodeClient.h
-  src/ShellBridge.cpp
-  src/ShellBridge.h
   src/ShellRuntime.cpp
   src/ShellRuntime.h
-  src/ShellStore.cpp
-  src/ShellStore.h
-  src/SidebarController.cpp
-  src/SidebarController.h
-  src/SidebarModel.cpp
-  src/SidebarModel.h
+  src/ShellWindows.cpp
+  src/ShellWindows.h
   src/StoragePaths.cpp
   src/StoragePaths.h
-  src/TerminalController.cpp
-  src/TerminalController.h
   src/ThemeStore.cpp
   src/ThemeStore.h
-  src/WebProfile.cpp
-  src/WebProfile.h
   src/PlatformWindow.h
 )
 
@@ -102,14 +72,8 @@ if(UNIX AND NOT APPLE)
   target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_HAS_DBUS)
 endif()
 
-if(HAL_C2_QWEBCHANNEL_JS)
-  set_source_files_properties("${HAL_C2_QWEBCHANNEL_JS}" PROPERTIES QT_RESOURCE_ALIAS "qwebchannel.js")
-  qt_add_resources(hal-c2-qt "hal_c2_webchannel" PREFIX "/hal-c2" FILES "${HAL_C2_QWEBCHANNEL_JS}")
-  target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:/hal-c2/qwebchannel.js")
-else()
-  message(STATUS "qwebchannel.js not found next to Qt; relying on qrc:///qtwebchannel/qwebchannel.js at runtime")
-  target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js")
-endif()
+include(cmake/NativeShell.cmake)
+hal_c2_add_native_library()
 
 # The window icon; packaged builds also install it for the desktop entry.
 set(HAL_C2_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/prod/black-universal-1024.png")
@@ -134,9 +98,8 @@ target_link_libraries(hal-c2-qt PRIVATE
   Qt6::Gui
   Qt6::GuiPrivate
   Qt6::Quick
-  Qt6::WebEngineQuick
-  Qt6::WebChannel
   Qt6::WebSockets
+  hal_c2_native
   hal_c2_bricksplugin
   qmlghosttyplugin
 )

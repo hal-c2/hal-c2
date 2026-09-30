@@ -179,11 +179,74 @@ Feature: Reviewing a pull request
     When the user expands the unchanged lines around a change in "src/cart.ts"
     Then the file's contents on both sides are shown
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The review page
     When the user opens pull request 42
     Then the description, conversation, checks and code are shown on its review page
     And a viewed file collapses and the viewed count goes up
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Unmarking a viewed file on the review page
+    Given "src/cart.ts" is marked viewed in pull request 42
+    When the user opens pull request 42
+    And the user marks "src/cart.ts" not viewed on the review page
+    Then "src/cart.ts" expands and the viewed count goes down
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A viewed mark the host refuses is taken back
+    Given GitHub refuses viewed marks on pull request 42
+    When the user opens pull request 42
+    And the user marks "src/cart.ts" viewed on the review page
+    Then "src/cart.ts" is not marked viewed on the review page
+    And the user sees an "error" toast "Could not mark the file viewed"
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Commenting and reviewing from the review page
+    When the user opens pull request 42
+    And the user comments "Looks good" on the review page
+    Then "Looks good" appears in the review page's conversation
+    When the user approves pull request 42 on the review page
+    Then the user sees a "success" toast "Approved"
+
+  @desktop @mobile @backlog-mobile
+  Scenario: The review page refuses what cannot be sent
+    When the user opens pull request 42
+    And the user comments with only spaces on the review page
+    Then the review page says "A comment cannot be empty."
+    When the user requests changes on the review page with no summary
+    Then the review page says "A review needs a summary or at least one comment."
+    And nothing was sent to pull request 42
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Resolving and reopening a thread from the review page
+    Given an unresolved review thread on pull request 42
+    When the user opens pull request 42
+    And the user resolves the thread on the review page
+    Then the review page shows the thread resolved
+    When the user unresolves the thread on the review page
+    Then the review page shows the thread open
+
+  @desktop @mobile @backlog-mobile
+  Scenario: The review page while the environment is unreachable
+    Given the user opened pull request 42
+    When the environment of "Tax work" becomes unreachable
+    Then the review page still shows pull request 42 and sends nothing
+    When the environment of "Tax work" is reachable again
+    Then the user can comment on the review page again
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Copying the number of the reviewed pull request
+    Given the user opened pull request 42
+    When the user copies the pull request number
+    Then the clipboard holds "#42"
+    And the user sees a "success" toast "PR number copied"
+
+  @desktop @mobile @backlog-mobile
+  Scenario: The pull request number cannot be copied
+    Given the user opened pull request 42
+    And the clipboard cannot be written
+    When the user copies the pull request number
+    Then the user sees an "error" toast "Failed to copy PR number"
 
   @backlog @mobile
   Scenario: The phone reviews without the code

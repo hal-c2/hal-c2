@@ -1,7 +1,7 @@
 .pragma library
 
 // The web model picker's list logic, copied so the native picker lists,
-// ranks and cycles exactly as the page does:
+// ranks and cycles exactly as the web app does:
 //   search ranking   apps/web/src/components/chat/modelPickerSearch.ts,
 //                    packages/shared/src/searchRanking.ts
 //   rows and views   apps/web/src/components/chat/ModelPickerContent.tsx
@@ -291,7 +291,7 @@ function webKey(key, text) {
     return normalize(text);
 }
 
-// Whether a Qt key event is the page's chord. The page's `metaKey` is
+// Whether a Qt key event is the binding's chord. The binding's `metaKey` is
 // Command on macOS, which Qt reports as ControlModifier (and Control as
 // MetaModifier).
 function matches(binding, event, mac) {

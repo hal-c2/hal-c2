@@ -1,7 +1,7 @@
 # Sources:
 #   docs/user/activity-log.md
 #   packages/client-runtime/src/halC2ToolSummary.test.ts (summary counting rules)
-#   apps/web/src/components/chat/MessagesTimeline.tsx (Tool calls group, Tool call failed, tool statuses)
+#   apps/web/src/components/chat/MessagesTimeline.tsx (Tool calls group, Tool call failed, tool statuses, workEntryIconName)
 #   apps/web/src/components/chat/V2ItemInspector.tsx (call details, file changes, Open diff)
 #   apps/web/src/components/chat/ChangedFilesTree.tsx
 #   apps/web/src/components/DiffPanel.tsx
@@ -21,11 +21,19 @@ Feature: Tool calls and file changes
     And the user is looking at a thread in "shop"
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Consecutive tool calls in a running turn show only the latest
     Given the agent has run five tool calls in a row in the running turn
     Then the latest tool call is shown
     And the other four are behind "+4 previous tool calls"
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: The previous tool calls can be shown and hidden again
+    Given the agent has run five tool calls in a row in the running turn
+    When the user shows the previous tool calls
+    Then all five tool calls are shown
+    When the user hides them again
+    Then the other four are behind "+4 previous tool calls"
 
   @shared @backlog
   Scenario: A group of tool calls reads as a summary of what the agent did
@@ -55,7 +63,7 @@ Feature: Tool calls and file changes
     Then the calls collapse back into the summary
 
   # TUI: implemented in apps/tui/src/worklog.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A tool call shows how it ended
     Given the agent's tool call <ended>
     Then the call is marked "<status>"
@@ -67,8 +75,22 @@ Feature: Tool calls and file changes
       | was declined by the user | Declined |
       | was interrupted          | Stopped  |
 
+  @shared @backlog-mobile @backlog-tui
+  Scenario Outline: A tool call's icon says what kind of work it was
+    Given the agent's most recent tool call <call>
+    Then the call is shown with the "<icon>" icon
+
+    Examples:
+      | call               | icon           |
+      | ran a command      | terminal       |
+      | changed a file     | square-pen     |
+      | searched the files | search         |
+      | searched the web   | globe          |
+      | called an MCP tool | wrench         |
+      | asked for approval | message-circle |
+
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Files changed by a turn are listed under its reply
     Given the agent changed "src/cart.ts" and "src/checkout.ts" in one turn
     When the turn completes

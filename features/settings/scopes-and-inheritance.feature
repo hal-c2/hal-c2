@@ -76,7 +76,7 @@ Feature: Settings scopes and inheritance
       When the user opens settings
       Then the page says it is applying settings for all projects across all environments
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Changing one axis of the scope keeps the other
       Given the user is editing settings for "hal-c2" on "Laptop"
       When the user chooses <choice>
@@ -88,7 +88,7 @@ Feature: Settings scopes and inheritance
         | all environments              | "hal-c2" across all checkouts         |
         | all projects                  | every project on "Laptop"             |
 
-    @backlog @desktop
+    @desktop
     Scenario: Offline environments are marked when choosing one
       Given "Build box" is offline
       When the user chooses which environment settings apply to
@@ -116,7 +116,7 @@ Feature: Settings scopes and inheritance
 
   Rule: Writes go to every environment in the scope
 
-    @backlog @desktop
+    @desktop
     Scenario: An environment-wide change is saved on every connected environment
       Given the user is editing settings across all environments
       When the user changes an environment-wide setting
@@ -136,14 +136,14 @@ Feature: Settings scopes and inheritance
       Then the preference is saved on this device
       And no environment is changed
 
-    @backlog @desktop
+    @desktop
     Scenario: Saving on some environments but not others is reported
       Given the user is editing settings across all environments
       And saving on "Build box" fails
       When the user changes a setting
       Then the user is told the setting saved on some environments and could not update "Build box"
 
-    @backlog @desktop
+    @desktop
     Scenario: A setting cannot be changed while its environment is disconnected
       Given the user is editing settings for "Build box"
       And "Build box" is disconnected

@@ -3,9 +3,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// Built-in layout, laid out like the page's own chrome: sidebar, header
-// strip, timeline, composer. A user's ~/.hal-c2/shell/shell.qml replaces this
-// file wholesale; it is also the fallback when that file fails to load.
+// Built-in layout: sidebar, header strip, timeline, composer. A user's
+// ~/.hal-c2/shell/shell.qml replaces this file wholesale; it is also the
+// fallback when that file fails to load.
 // Frameless windows get their drag handle and window buttons from the
 // sidebar band and the header strip rather than a separate title bar.
 ShellWindow {
@@ -15,7 +15,7 @@ ShellWindow {
     property alias sidebar: sidebarView
     property alias composer: composerView
     property alias workspace: workspaceView
-    property alias webView: primaryView
+    property alias centreView: centreHost
     property alias terminalDrawer: terminalView
     property alias rightPanel: panelView
     property alias toolbar: toolbarLoader.sourceComponent
@@ -64,23 +64,30 @@ ShellWindow {
             }
 
             SettingsNav {
+                objectName: "settingsNav"
                 Layout.fillHeight: true
                 Layout.preferredWidth: 256
                 visible: root.settingsActive
             }
 
             ColumnLayout {
+                id: centre
+
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                // A maximized right panel covers the thread.
+                visible: !panelView.maximized
                 spacing: 0
 
                 Workspace {
                     id: workspaceView
+                    objectName: "workspace"
 
                     Layout.fillWidth: true
                     visible: ready
                     sidebarToggle: root.sidebarCollapsed
                     panelToggle: panelView.available ? panelView.open : null
+                    detailsToggle: Shell.state.panel ? Shell.state.panel.detailsOpen === true : null
                     window: root
                 }
 
@@ -94,27 +101,35 @@ ShellWindow {
                     visible: active
                 }
 
-                // The shell's own settings pages take the page's place.
-                ClusterSettings {
+                // The settings section showing.
+                SettingsHost {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: root.clusterOpen
+                    section: root.settingsSection
+                    visible: root.settingsActive
                 }
 
-                WebSurface {
-                    id: primaryView
+                // The route's centre: a thread, draft, home, pull requests or usage.
+                CentreHost {
+                    id: centreHost
+                    objectName: "centreHost"
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: !root.clusterOpen
-                    url: Shell.pageUrl
+                    kind: root.route?.kind ?? ""
+                    visible: !root.settingsActive
+                }
+
+                TurnRequests {
+                    Layout.fillWidth: true
+                    visible: composerView.visible && implicitHeight > 0
                 }
 
                 Composer {
                     id: composerView
 
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen
+                    visible: ready && !root.settingsActive
                 }
 
                 TerminalDrawer {
@@ -124,12 +139,24 @@ ShellWindow {
                 }
             }
 
+            // The thread details column (threadPanel.toggle), beside the thread.
+            ThreadDetailsPanel {
+                Layout.fillHeight: true
+                Layout.preferredWidth: implicitWidth
+                details: Shell.state.panel?.details ?? null
+                visible: details !== null && !panelView.maximized
+            }
+
             RightPanel {
                 id: panelView
 
                 Layout.fillHeight: true
+                Layout.fillWidth: maximized
                 ownToggle: false
+                canMaximize: true
                 Layout.preferredWidth: implicitWidth
+                // The thread keeps room of its own.
+                maximumWidth: root.width - (navigation.visible ? navigation.width : 0) - minimumWidth
                 visible: available
             }
         }

@@ -1,6 +1,7 @@
 # Sources:
 #   docs/internals/providers.md (route by instance, unknown drivers keep their configuration)
 #   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?)
+#   apps/server-ex/lib/hal_c2/provider_secrets.ex (sensitive variables in the secret store)
 #   apps/server-ex/lib/hal_c2/acp.ex (instance environment, built-ins off until enabled, binary/3 binaryPath)
 #   apps/server-ex/lib/hal_c2/background_policy.ex (providerHealthRefreshInterval)
 #   apps/server-ex/lib/hal_c2/environment.ex (providers, refresh_providers)
@@ -12,6 +13,7 @@
 #   packages/contracts/src/providerInstance.ts (ProviderInstanceMutation, availability)
 #   packages/contracts/src/settings.ts (provider instance settings, environment variables, binaryPath)
 #   packages/contracts/src/rpc.ts (server.refreshProviders)
+#   apps/desktop-qt/src/native/ProviderSettingsInstances.cpp (rename, accent), ComposerModel.cpp (the picker's name and colour)
 
 @node
 Feature: Provider instances
@@ -71,13 +73,13 @@ Feature: Provider instances
       | 9lives          | Instance ID must start with a letter and use only letters, digits, '-', or '_'. |
       | codex           | An instance named 'codex' already exists.                                 |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-node
   Scenario: An instance can be renamed and given an accent colour
     Given the instance "claudeAgent_work"
     When the user renames it to "Work Claude" and picks a green accent
     Then the model picker shows "Work Claude" in green
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-node
   Scenario: Clearing the accent colour goes back to the default
     Given the instance "claudeAgent_work" has a green accent
     When the user clears the accent colour
@@ -104,11 +106,16 @@ Feature: Provider instances
     Then "acme_work" is listed as unavailable with its configuration preserved
     And sending a message on "acme_work" is refused with a clear error
 
-  @backlog
   Scenario: Sensitive environment variables are stored separately and never sent back
     When the user adds the sensitive variable "ANTHROPIC_AUTH_TOKEN" to a Claude instance
     Then the value is stored in the node's secrets
     And clients only see that a value is set
+
+  Scenario: A secret variable renamed without a new value has no value
+    Given the Claude instance keeps "API_KEY" as a stored secret
+    When a client saves it renamed to "OPENAI_KEY" without a new value
+    Then clients see "OPENAI_KEY" with no value set
+    And the secret of "API_KEY" is forgotten
 
   @backlog
   Scenario: A variable with an invalid name is not saved

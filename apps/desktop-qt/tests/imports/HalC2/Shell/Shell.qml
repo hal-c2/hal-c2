@@ -7,13 +7,20 @@ QtObject {
     property var state: ({
             composer: defaultComposer(),
             modelPicker: defaultModelPicker(),
-            workspace: null
+            workspace: null,
+            turn: null
         })
     property var dispatchedActions: []
     property int dispatchCount: 0
     property bool echoTextEdits: true
+    property bool localFolderImportEnabled: false
 
     signal actionRequested(string action, var payload)
+    signal windowCommandRequested(string command)
+
+    function windowCommand(command) {
+        windowCommandRequested(command);
+    }
 
     function defaultComposer() {
         return {
@@ -60,12 +67,14 @@ QtObject {
 
     function reset() {
         echoTextEdits = true;
+        localFolderImportEnabled = false;
         dispatchedActions = [];
         dispatchCount = 0;
         state = {
             composer: defaultComposer(),
             modelPicker: defaultModelPicker(),
-            workspace: null
+            workspace: null,
+            turn: null
         };
     }
 
@@ -76,6 +85,20 @@ QtObject {
                 edit: edit,
                 cursor: cursor
             })
+        });
+    }
+
+    // The shell's own turn for the composer's target (ComposerController).
+    function publishTurn(fields) {
+        state = Object.assign({}, state, {
+            turn: Object.assign({
+                threadKey: state.composer.target,
+                running: false,
+                approvals: [],
+                questions: [],
+                plan: null,
+                queue: []
+            }, fields)
         });
     }
 
@@ -104,6 +127,10 @@ QtObject {
             publishComposerText(payload.text, state.composer.cursor, payload.edit);
         }
         actionRequested(action, payload);
+    }
+
+    function localDirectoryPath(url) {
+        return String(url).replace(/^file:\/\//, "");
     }
 
     function readImageFiles(urls) {

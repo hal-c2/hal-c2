@@ -4,6 +4,8 @@
 #   apps/web/src/components/ThreadTerminalDrawer.tsx (terminalSelectionMenuItems, terminalContextMenuItems)
 #   apps/web/src/composerDraftStore.ts (terminalContexts on drafts, legacy placeholder migration)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (terminal selection chips, composer.terminalContext.remove)
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalSplits.qml (the terminal menu's Add to chat)
+#   apps/desktop-qt/src/native/ComposerController.cpp (addTerminalContext, withTerminalContexts)
 #   apps/tui/src/features.backlog.test.ts (terminal-session-actions, composer context chips)
 #   Cross-domain: composer/context-references.feature owns how chips sit inside the prompt and
 #   reach the provider; this file owns getting terminal output into the draft.
@@ -12,19 +14,19 @@ Feature: Adding terminal output to a message
   The user can hand the agent a piece of terminal output. The excerpt travels with the draft
   and names the terminal and lines it came from.
 
-  @backlog @desktop
+  @desktop
   Scenario: The user adds selected terminal output to the draft
     Given "Terminal 1" shows a failing test on lines 3 to 5
     When the user selects those lines and adds them to the chat
     Then the draft gains an excerpt labelled "Terminal 1 lines 3-5"
     And the excerpt holds the selected text
 
-  @backlog @desktop
+  @desktop
   Scenario: A one-line selection names a single line
     When the user adds line 7 of "Terminal 2" to the chat
     Then the draft gains an excerpt labelled "Terminal 2 line 7"
 
-  @backlog @desktop
+  @desktop
   Scenario: Selecting only blank lines adds nothing
     When the user selects blank lines in the terminal and adds them to the chat
     Then the draft gains no excerpt

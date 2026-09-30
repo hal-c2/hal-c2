@@ -2,17 +2,16 @@
  * Dev loop for the Qt shell:
  *   1. configure + build apps/desktop-qt with CMake (incremental after the first run)
  *   2. mint a pairing link for the Elixir node `mise run node` runs (`mix hal_c2.pair`)
- *   3. launch hal-c2-qt --url <pairing link>; its desktop host serves the built
- *      web app (apps/web/dist) and opens it paired with that node
+ *   3. launch hal-c2-qt --url <pairing link>; its desktop host pairs the shell
+ *      with that node
  *
  * Flags the script consumes:
  *   --home-dir <dir>   the shell's HAL-C2 home (HAL_C2_HOME for hal-c2-qt): where it
- *                      rices from (<dir>/config/shell) and keeps its web profile, and
- *                      the home a --standalone node gets. Defaults to the checkout's
+ *                      rices from (<dir>/config/shell), and the home a --standalone
+ *                      node gets. Defaults to the checkout's
  *                      .hal-c2 (the shell has no development profile, so it does not
  *                      share `mise run node`'s hal-c2-dev).
- *   --url <url>        skip pairing and attach to this URL (a node pairing link, or
- *                      any page to load as it is)
+ *   --url <url>        skip pairing and attach to the node this pairing link names
  *   --standalone       no pairing: the shell starts its own node from source, as the
  *                      installed app does. Do not run it next to `mise run node` on
  *                      the same home.
@@ -47,7 +46,7 @@ function usage() {
       "Usage: mise run desktop [--home-dir <dir>] [--url <url> | --standalone] [--release] [--configure-only] [-- <hal-c2-qt args>]",
       "",
       "  --home-dir <dir>   the shell's HAL-C2 home (default: the checkout's .hal-c2)",
-      "  --url <url>        attach to this node pairing link (or load this page) instead of pairing",
+      "  --url <url>        attach to this node pairing link instead of pairing",
       "  --standalone       start the shell's own node from source instead of pairing with `mise run node`",
       "  --release          Release build (no disk QML loading)",
       "  --configure-only   build, do not launch",

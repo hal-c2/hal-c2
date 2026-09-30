@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 project(hal-c2-qt-runtime-tests LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_AUTOMOC ON)
-find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick Test WebEngineQuick WebChannel WebSockets)
+find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick Test WebSockets)
 enable_testing()
 if(APPLE)
   enable_language(OBJCXX)
@@ -10,6 +10,8 @@ endif()
 include(../../cmake/PlatformWindow.cmake)
 # The bricks the layout tests load import Ghostty (the terminal drawer).
 include(../../cmake/QmlGhostty.cmake)
+include(../../cmake/NativeShell.cmake)
+hal_c2_add_native_library()
 if(APPLE)
   add_executable(tst_PlatformWindow tst_PlatformWindow.mm)
   target_include_directories(tst_PlatformWindow PRIVATE ../../src)
@@ -19,7 +21,7 @@ if(APPLE)
 endif()
 add_executable(tst_FolderExplorer tst_FolderExplorer.cpp ../../src/LocalFolderModel.cpp ../../src/ShellBridge.cpp ../../src/ThemeStore.cpp)
 target_include_directories(tst_FolderExplorer PRIVATE ../../src)
-target_compile_definitions(tst_FolderExplorer PRIVATE HAL_C2_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../.." HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js")
+target_compile_definitions(tst_FolderExplorer PRIVATE HAL_C2_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 target_link_libraries(tst_FolderExplorer PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 add_test(NAME FolderExplorer COMMAND tst_FolderExplorer)
 set_tests_properties(FolderExplorer PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
@@ -36,58 +38,45 @@ add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProces
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME BackendProcess COMMAND tst_BackendProcess)
-# The native scenarios of features/desktop, against a fake node.
-add_executable(tst_Features
-  tst_Features.cpp
-  ../../src/ClusterController.cpp
-  ../../src/ComposerController.cpp
-  ../../src/NativeShell.cpp
-  ../../src/NodeClient.cpp
-  ../../src/ShellBridge.cpp
-  ../../src/ShellStore.cpp
-  ../../src/SidebarController.cpp
-  ../../src/SidebarModel.cpp
-  ../../src/TerminalController.cpp
-)
-target_include_directories(tst_Features PRIVATE ../../src)
+# The native scenarios of features/, against a fake node: the harness, the fake
+# node, and one steps file per domain (features/*.cpp, picked up on the next build).
+file(GLOB _feature_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/features/*.h")
+# Windows are closed as the user closes them, through their ShellRuntime.
+add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp ../../src/ShellRuntime.cpp ../../src/ShellWindows.cpp)
 target_compile_definitions(tst_Features PRIVATE
+  HAL_C2_APP_VERSION="test"
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"
-  HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js"
+  HAL_C2_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../qml"
+  HAL_C2_DEVICE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/features/fixtures/device-72x160.h264"
 )
-target_link_libraries(tst_Features PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Network Qt6::WebSockets Qt6::Test)
+target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::Test)
+hal_c2_target_platform_window(tst_Features)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 add_executable(tst_LocalTranscriber tst_LocalTranscriber.cpp ../../src/LocalTranscriber.cpp)
 target_include_directories(tst_LocalTranscriber PRIVATE ../../src)
 target_link_libraries(tst_LocalTranscriber PRIVATE Qt6::Core Qt6::Qml Qt6::Test)
 add_test(NAME LocalTranscriber COMMAND tst_LocalTranscriber)
-foreach(test_name IN ITEMS ShellRuntime ShellExamples AppViews)
+foreach(test_name IN ITEMS ShellRuntime ShellExamples)
   add_executable(tst_${test_name}
     tst_${test_name}.cpp
     ../../src/ShellRuntime.cpp
     ../../src/ShellBridge.cpp
     ../../src/ThemeStore.cpp
-    ../../src/WebProfile.cpp
   )
   target_include_directories(tst_${test_name} PRIVATE ../../src)
   target_compile_definitions(tst_${test_name} PRIVATE
     HAL_C2_APP_VERSION="test"
-    HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js"
     HAL_C2_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../.."
   )
   target_link_libraries(tst_${test_name} PRIVATE
-    Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Quick Qt6::Test Qt6::WebEngineQuick Qt6::WebChannel qmlghosttyplugin
+    Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Quick Qt6::Test qmlghosttyplugin
   )
   hal_c2_target_platform_window(tst_${test_name})
   add_test(NAME ${test_name} COMMAND tst_${test_name})
   set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 endforeach()
 
-qt_add_resources(tst_ShellExamples "shell_connector"
-  PREFIX "/qt/qml/HalC2/Bricks"
-  BASE "../../qml/HalC2/Bricks"
-  FILES "../../qml/HalC2/Bricks/js/shell-connect.js"
-)
 target_sources(tst_ShellExamples PRIVATE ../../src/LocalFolderModel.cpp)
 
 if(UNIX AND NOT APPLE)
@@ -99,3 +88,8 @@ if(UNIX AND NOT APPLE)
   target_link_libraries(tst_NativeNotifications PRIVATE Qt6::Core Qt6::Test Qt6::DBus)
   add_test(NAME NativeNotifications COMMAND "${HAL_C2_DBUS_RUN_SESSION}" -- $<TARGET_FILE:tst_NativeNotifications>)
 endif()
+# How the shell resolves its theme: the lookup order, the halves, the fallbacks.
+add_executable(tst_ThemeResolution tst_ThemeResolution.cpp)
+target_link_libraries(tst_ThemeResolution PRIVATE hal_c2_native Qt6::Test)
+add_test(NAME ThemeResolution COMMAND tst_ThemeResolution)
+set_tests_properties(ThemeResolution PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")

@@ -6,6 +6,7 @@
 #   apps/server/src/cli/theme.ts (hal-c2 theme set, clear, show)
 #   docs/internals/desktop-qt.md (theme.json ricing contract)
 #   apps/desktop-qt/src/ThemeStore.cpp
+#   apps/desktop-qt/src/native/ThemeController.cpp (follows the themes its own node publishes)
 
 Feature: Environment themes and the desktop shell theme
   A machine can publish themes for the clients it serves, and set a default that connected
@@ -65,7 +66,7 @@ Feature: Environment themes and the desktop shell theme
 
   Rule: Following published themes
 
-    @backlog @desktop
+    @desktop
     Scenario: Selecting a published theme follows its updates
       Given the user selected the published theme "nightfall"
       When the server updates "nightfall"
@@ -77,19 +78,26 @@ Feature: Environment themes and the desktop shell theme
       When the user duplicates "nightfall"
       Then the user has an editable copy that does not change when the server updates "nightfall"
 
-    @backlog @desktop
+    @desktop
     Scenario: A saved custom theme with the same id wins
       Given the user saved a custom theme with the id "nightfall"
       And the server publishes "nightfall"
       Then the app uses the user's saved "nightfall"
 
-    @backlog @desktop
+    @desktop
     Scenario: A theme that stops being published falls back to the standard theme
       Given the user selected the published theme "nightfall"
       When the server stops publishing "nightfall"
       Then the app uses the standard theme
 
-    @backlog @desktop
+    @desktop
+    Scenario: A published theme stays chosen across a reconnect
+      Given the user selected the published theme "nightfall"
+      When the node drops the connection
+      And the desktop reconnects to the node
+      Then the app uses the published "nightfall"
+
+    @desktop
     Scenario: Extra connections do not impose their themes
       Given the user connected a second environment that publishes "sunrise"
       Then "sunrise" is not offered
@@ -142,7 +150,7 @@ Feature: Environment themes and the desktop shell theme
     Scenario: Editing the shell theme file recolors the app live
       Given the desktop shell is running
       When a theme manager writes a new canvas color into the shell theme file
-      Then the native chrome and the page both use the new canvas color
+      Then the app uses the new canvas color
 
     @desktop
     Scenario: A malformed shell theme file keeps the last good theme

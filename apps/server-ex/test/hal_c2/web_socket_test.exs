@@ -114,6 +114,32 @@ defmodule HalC2.Web.SocketTest do
            ] = skipped
   end
 
+  test "a stream named by environment resumes on the node serving it; an unknown one fails",
+       %{port: port} do
+    {:ok, first} =
+      HalC2.Streams.commit("th-3", :thread, [{"turn-item", "i1", %{"s" => %{"text" => "a"}}}])
+
+    {:ok, next} =
+      HalC2.Streams.commit("th-3", :thread, [{"turn-item", "i2", %{"s" => %{"text" => "b"}}}])
+
+    shape = %{"type" => "stream", "environment" => HalC2.Environment.id(), "stream" => "th-3"}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape, "offset" => first})
+
+    {%{"t" => "live", "offset" => ^next}, [%{"t" => "events", "events" => events}], client} =
+      WsClient.recv_until(client, &(&1["t"] == "live"))
+
+    assert [[^next, "turn-item", "i2", _patch, _at]] = events
+
+    missing = %{shape | "environment" => "env-missing"}
+    client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => missing})
+
+    assert {%{"t" => "error", "id" => 2, "reason" => "unknown environment"}, _} =
+             WsClient.recv(client, 1_000)
+  end
+
   test "command output and file diffs stay on the node", %{port: port} do
     command = %{"id" => "c1", "type" => "command_execution", "output" => "x", "exitCode" => nil}
     change = %{"id" => "f1", "type" => "file_change", "path" => "a.ex", "diffStr" => "@@"}

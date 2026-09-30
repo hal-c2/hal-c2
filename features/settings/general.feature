@@ -1,6 +1,7 @@
 # Sources:
 #   apps/web/src/components/settings/SettingsPanels.tsx (GeneralSettingsPanel, LegacyFeaturesSection, AboutVersionTitle, update track)
 #   apps/web/src/components/settings/ScopedSwitch.tsx
+#   apps/desktop-qt/src/native/ProjectController.cpp (addProjectBaseDirectory: where Add project browses from)
 #   apps/web/src/components/settings/SettingInheritance.tsx (reset buttons)
 #   packages/contracts/src/settings.ts (sidebarProjectGroupingMode, autoResumeLimitedThreads, snoozeLimitedThreads, sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays, timestampFormat, responseStreamingMode, diffIgnoreWhitespace, diffFilesCollapsed, diffLayout, proactivePanelsEnabled, sendShortcut, followUpBehavior, continueThreadsAfterServerUpdate, newWorktreesStartFromOrigin, addProjectBaseDirectory, confirmThreadUnpin, confirmThreadArchive, confirmThreadDelete, confirmQuit, textGenerationModelSelection)
 #   apps/server-ex/lib/hal_c2/settings.ex
@@ -84,7 +85,7 @@ Feature: General settings
       When the node sweeps threads
       Then the thread is not settled
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Turning inactive settling on starts from the default number of days
       Given "Auto-settle inactive threads" is off
       When the user turns it on
@@ -246,13 +247,13 @@ Feature: General settings
       When an agent creates a worktree for a thread without choosing a base
       Then the worktree starts from the local branch
 
-    @backlog @desktop
+    @desktop
     Scenario: The add project browser opens in the chosen base directory
       Given the add project base directory is "~/code"
       When the user starts adding a project
       Then the folder browser opens in "~/code"
 
-    @backlog @desktop
+    @desktop
     Scenario: An empty base directory opens the add project browser at home
       Given the add project base directory is empty
       When the user starts adding a project
@@ -345,14 +346,14 @@ Feature: General settings
 
   Rule: Resetting rows
 
-    @backlog @desktop
+    @desktop
     Scenario: A changed row can be reset to its default
       Given the user turned project grouping off
       When the user resets project grouping
       Then project grouping is back to its default
       And the row no longer offers a reset
 
-    @backlog @desktop
+    @desktop
     Scenario: A row at its default offers no reset
       Given auto-settle on merge is at its default
       Then the row offers no reset

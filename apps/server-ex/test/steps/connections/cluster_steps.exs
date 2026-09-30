@@ -474,12 +474,16 @@ defmodule HalC2.Steps.Connections.Cluster do
   end
 
   step "it follows a thread that lives on the second member", context do
-    shape = %{
-      "type" => "stream",
-      "node" => Atom.to_string(context.second.node),
-      "stream" => "remote-th"
-    }
+    follow_second(context, %{"node" => Atom.to_string(context.second.node)})
+  end
 
+  step "it follows a thread that lives on the second member by that member's environment",
+       context do
+    follow_second(context, %{"environment" => context.second.environment})
+  end
+
+  defp follow_second(context, target) do
+    shape = Map.merge(%{"type" => "stream", "stream" => "remote-th"}, target)
     client = Node.sub(World.client(context), 2, shape)
     {_, client} = Node.await(client, &(&1["t"] == "live" and &1["id"] == 2), 5_000)
     World.put_client(context, client)

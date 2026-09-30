@@ -46,6 +46,13 @@ Feature: Codex
     When the user updates Codex
     Then Codex is updated through npm and the new version is shown
 
+  # A compatibility advisory can recommend a release other than the latest; npm is
+  # the one installer that can pin it (provider_updates.ex targeted/2).
+  Scenario: Codex installed with npm can install a chosen version
+    Given Codex was installed with npm and is outdated
+    When the user installs Codex "0.60.0"
+    Then Codex is installed at "0.60.0" through npm
+
   Scenario Outline: Codex approvals are answered from HAL-C2
     Given the thread runs Codex with approval required
     When Codex asks to <action>

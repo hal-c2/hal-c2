@@ -6,7 +6,7 @@ import HalC2.Bricks
 
 // Rosé dashboard: an icon rail owns project scope, the app's places and
 // settings, and the sidebar is just threads. The rail's Dashboard button
-// pulls a widget drawer over the page: today and the calendar, the open
+// pulls a widget drawer over the centre: today and the calendar, the open
 // workspace and its git state, thread meters, and the agent behind the
 // composer.
 ShellWindow {
@@ -32,9 +32,8 @@ ShellWindow {
     readonly property string dayKey: Qt.formatDate(now, "yyyy-MM-dd")
     readonly property var calendarCells: buildCalendar(dayKey)
 
-    // The floor under the cards is the theme's chrome; its canvas is the
-    // page's own background and matches the cards, so the page sits flush in
-    // its card.
+    // The floor under the cards is the theme's chrome; the cards are the
+    // theme's surface, so the centre sits flush in its card.
     readonly property color canvas: Theme.palette.color("chrome", "#ecd6cc")
     readonly property color card: Theme.palette.color("surface", "#fbf1ed")
     readonly property color raised: Theme.palette.color("surfaceRaised", "#f2dcd5")
@@ -467,7 +466,7 @@ ShellWindow {
                         Layout.alignment: Qt.AlignHCenter
                         kind: "command"
                         text: qsTr("Command palette")
-                        onClicked: Shell.dispatch("palette.open")
+                        onClicked: PaletteModel.show()
                     }
 
                     RailButton {
@@ -517,7 +516,7 @@ ShellWindow {
                 Layout.fillHeight: true
                 spacing: 12
 
-                // The page.
+                // The route's centre, or the settings section showing.
                 ShellCard {
                     id: surfaceCard
 
@@ -525,21 +524,24 @@ ShellWindow {
                     Layout.fillHeight: true
                     clip: true
 
-                    WebSurface {
-                        anchors.fill: parent
-                        visible: !root.clusterOpen
-                        url: Shell.pageUrl
-                        radius: surfaceCard.radius - surfaceCard.border.width
-                    }
-
-                    ClusterSettings {
+                    SettingsHost {
                         anchors.fill: parent
                         anchors.margins: surfaceCard.border.width
                         radius: surfaceCard.radius - surfaceCard.border.width
-                        visible: root.clusterOpen
+                        section: root.settingsSection
+                        visible: root.settingsActive
                     }
 
-                    // The page dims under the drawer; clicking it closes the drawer.
+                    // The route's centre: a thread, draft, home, pull requests or usage.
+                    CentreHost {
+                        anchors.fill: parent
+                        anchors.margins: surfaceCard.border.width
+                        radius: surfaceCard.radius - surfaceCard.border.width
+                        kind: root.route?.kind ?? ""
+                        visible: !root.settingsActive
+                    }
+
+                    // The centre dims under the drawer; clicking it closes the drawer.
                     Rectangle {
                         anchors.fill: parent
                         radius: surfaceCard.radius - surfaceCard.border.width
@@ -1104,12 +1106,12 @@ ShellWindow {
                 }
 
                 // The composer draws its own card, so it floats on the floor
-                // between the page and the terminal like the page's does.
+                // between the centre and the terminal.
                 Composer {
                     id: composer
 
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen
+                    visible: ready && !root.settingsActive
                     color: "transparent"
                 }
 

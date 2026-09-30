@@ -52,14 +52,25 @@ Status tags say whether the HAL-C2 stack delivers the scenario today. The HAL-C2
 Elixir node, native QML, and the TUI. Anything served by `apps/server`, `apps/web` or
 `apps/mobile` does not count.
 
-- No status tag means the scenario passes on the HAL-C2 stack now.
-- `@backlog` means the product does this today through code that is going away, or it is new
-  intended behaviour. This is the list of things we must not lose.
+- No status tag means the scenario passes on every one of its surfaces now.
+- `@backlog` means it passes on none of its surfaces yet: the product does this today through
+  code that is going away, or it is new intended behaviour. This is the list of things we
+  must not lose.
+- `@backlog-node`, `@backlog-desktop`, `@backlog-mobile` and `@backlog-tui` mean it does not
+  pass on that one surface yet. When a `@backlog @desktop @mobile` scenario starts passing on
+  the desktop it becomes `@desktop @mobile @backlog-mobile`; `@shared @backlog-mobile
+@backlog-tui` passes only on the desktop. Each runner treats its own surface's tag like
+  `@backlog`.
 - `@dropped` means we decided not to carry the behaviour. The scenario stays so the decision
   is visible and reviewable.
 
+Tags on a `Feature`, `Rule` or `Examples` table apply to everything under it.
+
 `@plugin-<id>` marks behaviour a plugin provides, for example `@plugin-claude`. The core must
 work with that plugin absent.
+
+`@priority-high` and `@priority-low` weight a `@backlog` scenario for `mise run features:pick`,
+which picks random backlog scenarios to work on. Low priority still comes up, just less often.
 
 ## Writing rules
 
@@ -91,11 +102,19 @@ Each of these must be named in at least one `# Sources:` block:
 - every keybinding id in `packages/contracts/src/keybindings.ts` (see `navigation/keybindings.feature`)
 - every command palette entry
 
+## Upstream
+
+T3 Code keeps shipping, and its behaviour is ledgered here even though its code is not carried.
+`features/UPSTREAM` is the upstream commit the ledger has been reviewed through, and
+`mise run upstream` digests the pull requests merged after it. The
+[upstream-ledger skill](../.agents/skills/upstream-ledger/SKILL.md) turns them into scenarios.
+
 ## Running
 
 The mise tasks in `mise-tasks/` are the way to run them (`mise tasks ls`); globs are relative to
-`features/`. On the node and the TUI, `@backlog` scenarios (and `@backlog` example tables) run
-only with `--backlog` or `INCLUDE_BACKLOG=1`, and are expected to fail there.
+`features/`. On the node and the TUI, `@backlog` scenarios, and those tagged `@backlog-node` or
+`@backlog-tui` respectively, run only with `--backlog` or `INCLUDE_BACKLOG=1`, and are expected
+to fail there.
 
 | Surface    | Task                                                      | Raw command                                                                                  |
 | ---------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -106,6 +125,6 @@ only with `--backlog` or `INCLUDE_BACKLOG=1`, and are expected to fail there.
 Node globs are required; `features:node:all` runs the suite one top-level directory at a time,
 because one run of everything is slow. `features:tui:all` runs every file with a `@tui` or
 `@shared` scenario. On the desktop, the native tests' `tst_Features` runs the `@desktop` scenarios
-of `desktop/native-*.feature` against a fake node (`HAL_C2_FEATURES="<globs>"` picks other files);
+of `desktop/native-*.feature` and the desktop-passing `@shared` timeline scenarios against a fake node (`HAL_C2_FEATURES="<globs>"` picks other files);
 `apps/desktop-qt/tests/tst_Scenarios.qml` still mirrors the `qt-scenarios.feature` files by hand. `mise run features` runs all three and reports
 each. Step definitions live in `apps/server-ex/test/steps/` and `apps/tui/features/`.

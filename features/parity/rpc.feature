@@ -7,6 +7,7 @@
 #   packages/client-runtime/src/v3/clusterSocket.ts (protocol 3 client adapter)
 #   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.*), apps/server-ex/lib/hal_c2/connect/relay_client.ex (cloud.*)
 #   apps/server-ex/lib/hal_c2/cluster.ex (cluster.*; the TypeScript server answers them as unsupported)
+#   packages/contracts/src/environmentHttp.ts, apps/server-ex/lib/hal_c2/web/router.ex (/api/auth/*, twinned by hal-c2.* access methods)
 #   Counts: 172 contract methods; 169 aligned, 3 dropped.
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
@@ -233,12 +234,23 @@ Feature: RPC parity with the TypeScript server
     Then the node answers with <result>
 
     Examples: node-only methods behind aligned contract methods
-      | method                  | result                                                        |
-      | hal-c2.readSettings     | the settings document with its version                        |
-      | hal-c2.writeSettings    | the new version, or a stale-settings error for an old version |
-      | hal-c2.threadRows       | one thread's stream rows with their offset and time           |
-      | hal-c2.upsertKeybinding | the keybindings after the change                              |
-      | hal-c2.removeKeybinding | the keybindings after the removal                             |
+      | method                    | result                                                        |
+      | hal-c2.readSettings       | the settings document with its version                        |
+      | hal-c2.writeSettings      | the new version, or a stale-settings error for an old version |
+      | hal-c2.threadRows         | one thread's stream rows with their offset and time           |
+      | hal-c2.upsertKeybinding   | the keybindings after the change                              |
+      | hal-c2.removeKeybinding   | the keybindings after the removal                             |
+
+    # The socket twins of the environment HTTP API's /api/auth/* routes (environmentHttp.ts),
+    # which has no RPC contract; replies are the routes' bodies.
+    Examples: node-only twins of the access routes
+      | method                    | result                                                  |
+      | hal-c2.createPairingLink  | a pairing link and its credential                       |
+      | hal-c2.pairingLinks       | the pairing links without their credentials             |
+      | hal-c2.revokePairingLink  | whether the link was revoked                            |
+      | hal-c2.clients            | the paired clients, the caller's own marked current     |
+      | hal-c2.revokeClient       | whether the client was revoked                          |
+      | hal-c2.revokeOtherClients | how many other clients it revoked                       |
 
   @node
   Scenario: A method outside the contract is refused

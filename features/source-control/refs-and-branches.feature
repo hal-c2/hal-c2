@@ -10,6 +10,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (branch line)
 #   packages/contracts/src/shell.ts (workspace.branch.search, workspace.branch.select, workspace.branch.create)
 #   apps/tui/src/features.backlog.test.ts (branch-worktree-management)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (the ref list, switching and creating)
 
 Feature: Picking, switching and creating branches
   The user moves a thread's checkout between refs, or makes a new one, from the thread
@@ -94,6 +95,14 @@ Feature: Picking, switching and creating branches
     When the user switches the thread to "main"
     Then the switch fails with git's explanation
     And the changes in "src/cart.ts" are kept
+
+  @desktop
+  Scenario: A switch that fails keeps the branch and says why
+    Given the node cannot switch the checkout: "Your local changes would be overwritten"
+    When the user switches the thread to "main"
+    Then the user sees an "error" toast "Failed to switch ref." saying "Your local changes would be overwritten"
+    And the checkout is on "feature/tax"
+    And the thread's branch reads "feature/tax"
 
   @desktop
   Scenario: The thread list shows each thread's branch

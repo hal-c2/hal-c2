@@ -3370,7 +3370,14 @@ defmodule HalC2.Test.Node.World do
 
         script!(
           Path.join([prefix, "bin", "npm"]),
-          "echo \"$@\" > #{dir}/npm.args; echo 9.9.9 > #{version_file}"
+          # Installs the pinned `<package>@<version>`, or 9.9.9 for `@latest`.
+          """
+          echo "$@" > #{dir}/npm.args
+          for arg; do last=$arg; done
+          version=${last##*@}
+          [ "$version" = latest ] && version=9.9.9
+          echo $version > #{version_file}
+          """
         )
 
         link(real, Path.join([prefix, "bin", name]))

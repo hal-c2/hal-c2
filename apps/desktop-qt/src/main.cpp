@@ -1,26 +1,31 @@
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QProcess>
 #include <QProcessEnvironment>
 #include <QQmlEngine>
-#include <QQuickWebEngineProfile>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QWindow>
 #include <QtLogging>
-#include <QtWebEngineQuick/qtwebenginequickglobal.h>
 
+#include "AlertController.h"
 #include "BackendProcess.h"
+#include "LicensesController.h"
 #include "LocalFolderModel.h"
 #include "LocalTranscriber.h"
 #include "NativeNotifications.h"
 #include "NativeShell.h"
+#include "QuitController.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "ShellWindows.h"
 #include "StoragePaths.h"
 #include "ThemeStore.h"
-#include "WebProfile.h"
 
 namespace {
 
@@ -78,13 +83,9 @@ int main(int argc, char* argv[]) {
   // Stable app id so compositor rules (blur, opacity, workspace) can target it.
   QGuiApplication::setDesktopFileName(QStringLiteral("hal-c2"));
 
-  // Chromium's classic scrollbars paint a thumb in the page's scrollbar
-  // gutters; overlay scrollbars match what the app expects from browsers.
-  if (!qEnvironmentVariableIsSet("QTWEBENGINE_CHROMIUM_FLAGS")) {
-    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--enable-features=OverlayScrollbar");
-  }
-  QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
+  // Closing a window closes only it; the last one quits (NativeShell::lastWindowClosed).
+  QGuiApplication::setQuitOnLastWindowClosed(false);
   QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/hal-c2/app-icon.png")));
   useSoftwareRenderingWithoutDisplay();
 
@@ -94,8 +95,7 @@ int main(int argc, char* argv[]) {
   parser.addVersionOption();
   const QCommandLineOption urlOption(
       QStringLiteral("url"),
-      QStringLiteral("Attach to the node this pairing link names instead of starting one; any other "
-                     "URL is loaded as it is."),
+      QStringLiteral("Attach to the node this pairing link names instead of starting one."),
       QStringLiteral("url"));
   const QCommandLineOption configDirOption(
       QStringLiteral("config-dir"),
@@ -124,16 +124,16 @@ int main(int argc, char* argv[]) {
       QStringLiteral("path"), resolveDefaultNodeExecutable());
   const QCommandLineOption screenshotOption(
       QStringLiteral("screenshot"),
-      QStringLiteral("Write a PNG of the window once the page has loaded, then quit."),
+      QStringLiteral("Write a PNG of the window once the node's first snapshot is in, then quit."),
       QStringLiteral("file"));
   const QCommandLineOption actionOption(
       QStringLiteral("action"),
-      QStringLiteral("Dispatch a shell action after the page loads, e.g. rightPanel.toggle. "
+      QStringLiteral("Dispatch a shell action once the node's first snapshot is in, e.g. rightPanel.toggle. "
                      "Repeatable; runs in order."),
       QStringLiteral("name[=json]"));
   const QCommandLineOption keyOption(
       QStringLiteral("key"),
-      QStringLiteral("Press a key chord after the page loads, e.g. Ctrl+1 (portable QKeySequence "
+      QStringLiteral("Press a key chord once the node's first snapshot is in, e.g. Ctrl+1 (portable QKeySequence "
                      "names). Repeatable; runs in command-line order together with --action."),
       QStringLiteral("chord"));
   parser.addOptions({urlOption, configDirOption, homeDirOption, qmlDirOption, hostEntryOption,
@@ -156,46 +156,84 @@ int main(int argc, char* argv[]) {
     qInfo().noquote() << "[shell] bricks from disk:" << qmlSourceDir;
   }
 
-  // Configured before any engine exists so the first page already lands on it.
-  WebProfile webProfile(QDir(storage.cache).filePath(QStringLiteral("shell-web")));
-  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", webProfile.profile());
-
   ShellBridge bridge;
   bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));
-  qmlRegisterType<NativeNotifications>("HalC2.Shell", 1, 0, "NativeNotifications");
   qmlRegisterType<LocalTranscriber>("HalC2.Shell", 1, 0, "LocalTranscriber");
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
   NativeShell native(&bridge);
-  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Terminals", native.terminals());
+  native.registerQmlSingletons();
+  // Each window reopens where the user left it (its route and panels are
+  // state); the drafts are every window's unsent work (data).
+  native.setStoreDirs(storage.state, storage.data);
+  native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
   ThemeStore theme(configDir);
-  ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
-  // The page publishes its resolved theme; without a theme.json it is the
-  // shell's palette.
-  QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &theme,
-                   [&theme](const QString& key, const QVariant& value) {
-                     if (key == QStringLiteral("theme")) {
-                       theme.applyPageTheme(value);
-                     }
-                   });
+  // ThemeController's resolved theme is the palette under theme.json.
+  theme.applyBaseTheme(bridge.state()->value(QStringLiteral("theme")));
+  // Every window (the first, window.new's, restored ones) is its own engine on
+  // its window's bridge.
+  ShellWindows windows(&native, {configDir, qmlSourceDir}, &theme);
+  ShellRuntime& runtime = *windows.runtime(native.main());
+  // Closing the last window quits, except on macOS, where the app stays in the
+  // dock and coming back to it shows the window again.
+#ifdef Q_OS_MACOS
+  QObject::connect(&app, &QGuiApplication::applicationStateChanged, &windows, [&windows](Qt::ApplicationState state) {
+    if (state != Qt::ApplicationActive) return;
+    for (QWindow* window : QGuiApplication::topLevelWindows()) {
+      if (window->isVisible()) return;
+    }
+    windows.reopen();
+  });
+#else
+  QObject::connect(&native, &NativeShell::lastWindowClosed, &app, &QCoreApplication::quit, Qt::QueuedConnection);
+#endif
+
+  // Alerts reach the desktop's notification service; a click shows its thread.
+  NativeNotifications notifications;
+  auto* alerts = native.controller<AlertController>();
+  alerts->setPresenter({
+      [&notifications](const QString& key, const QString& title, const QString& body, bool silent) {
+        return notifications.show(key, title, body, silent);
+      },
+      [&notifications] { notifications.closeAll(); },
+      [&notifications](bool enabled) { notifications.setEnabled(enabled); },
+      [](const QString& kind) {
+        // No audio module: the sound theme's player, where the desktop has one.
+        static const QString player = QStandardPaths::findExecutable(QStringLiteral("canberra-gtk-play"));
+        if (player.isEmpty()) return;
+        const QString event = kind == QLatin1String("completion") ? QStringLiteral("complete") : QStringLiteral("dialog-question");
+        QProcess::startDetached(player, {QStringLiteral("-i"), event});
+      },
+  });
+  QObject::connect(&notifications, &NativeNotifications::activated, alerts, &AlertController::openThread);
+
+  // mod+Q, guarded as `confirmQuit` says; a finished hold hides the windows
+  // while the key is let go.
+  auto* quitting = native.controller<QuitController>();
+  QObject::connect(quitting, &QuitController::quitRequested, &app, &QCoreApplication::quit, Qt::QueuedConnection);
+  QObject::connect(quitting, &QuitController::concealRequested, &app, [] {
+    for (QWindow* window : QGuiApplication::topLevelWindows()) window->hide();
+  });
 
   BackendProcess::Options backendOptions;
   backendOptions.nodeExecutable = parser.value(nodeOption);
   backendOptions.hostEntry = parser.value(hostEntryOption);
+  // Staged beside the host (scripts/stage-runtime.mjs), or `vp run licenses`'s
+  // apps/desktop-qt/licenses/ in a dev build.
+  LicensesController::setManifestPath(
+      QFileInfo(backendOptions.hostEntry).dir().absoluteFilePath(QStringLiteral("../licenses/third-party-licenses.json")));
   backendOptions.hostArguments = parser.positionalArguments();
   // Without a root the node resolves the same XDG directories itself.
   if (!storage.root.isEmpty()) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
   }
-  // Attach mode: the host starts no node; it serves the app paired with the
-  // linked node, or hands back any other URL unchanged.
+  // Attach mode: the host starts no node; it pairs the shell with the linked
+  // node, and fails for a URL that is not one.
   if (parser.isSet(urlOption)) {
     backendOptions.hostArguments.prepend(
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));
   }
   BackendProcess backend(backendOptions);
-  // Announced before `ready`, so the shell's own connection starts with the page.
-  QObject::connect(&backend, &BackendProcess::nodeAvailable, &native, &NativeShell::open);
-  QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
+  QObject::connect(&backend, &BackendProcess::ready, &native, &NativeShell::open);
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
     qCritical().noquote() << "[shell]" << message;
     bridge.publish(QStringLiteral("backendError"), message);
@@ -205,8 +243,8 @@ int main(int argc, char* argv[]) {
   backend.start();
 
   // Scripted runs: replay --action and --key steps in command-line order once
-  // the page is up, then optionally grab the window and quit. Only the first
-  // load triggers this.
+  // the node's first snapshot is in (NativeShell::ready), then optionally grab
+  // the window and quit.
   struct ScriptedStep {
     bool isKey;
     QString spec;
@@ -226,16 +264,9 @@ int main(int argc, char* argv[]) {
   const bool screenshotRequested = parser.isSet(screenshotOption);
   if (!scriptedSteps.isEmpty() || screenshotRequested) {
     const QString target = parser.value(screenshotOption);
-    QObject::connect(&bridge, &ShellBridge::pageLoaded, &runtime,
+    QObject::connect(&native, &NativeShell::ready, &runtime,
                      [&runtime, &bridge, &app, target, scriptedSteps,
-                      screenshotRequested](bool ok) {
-                       if (!ok) {
-                         qWarning().noquote() << "[shell] page failed to load; scripted run aborted";
-                         if (screenshotRequested) {
-                           app.exit(2);
-                         }
-                         return;
-                       }
+                      screenshotRequested] {
                        int delay = 1500;
                        for (const ScriptedStep& step : scriptedSteps) {
                          if (step.isKey) {
@@ -268,7 +299,7 @@ int main(int argc, char* argv[]) {
                        }
                      },
                      Qt::SingleShotConnection);
-    // A start that fails never loads a page; grab the error the window shows
+    // A start that fails never reaches the node; grab the error the window shows
     // instead of waiting forever, and quit with a failure code.
     if (screenshotRequested) {
       QObject::connect(&backend, &BackendProcess::failed, &runtime,
@@ -282,6 +313,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  runtime.start();
+  windows.start();
+  native.restoreWindows();
   return app.exec();
 }

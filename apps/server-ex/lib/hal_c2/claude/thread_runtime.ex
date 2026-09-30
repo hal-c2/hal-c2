@@ -9,6 +9,19 @@ defmodule HalC2.Claude.ThreadRuntime do
   `--resume` on the recorded session id. Text and thinking stream from partial
   messages and are written as appends; tool calls become command, file-change,
   web-search, or generic tool items, finished by their tool results.
+
+  Work Claude runs in the background outlives the turn that started it: a subagent
+  (the `Agent` tool) is a provider-native subagent (`NativeSubagent`), and a
+  background Bash call's command item stays running after its tool result, which
+  only acknowledges the launch. Both end on the task's `task_notification`, and with
+  the turn when it is interrupted or fails, or with the process. While they run, the
+  thread lists them as background work (`HalC2.Projection.BackgroundWork`), which
+  keeps the idle reaper from stopping the process.
+
+  When background work ends between the node's turns, Claude answers its notification
+  with a turn of its own (a "wake"). Its messages wait for a run of their own, which
+  the runtime asks the thread for (`wake/2`); that run replays them and follows the
+  rest to Claude's `result`.
   """
 
   use GenServer, restart: :temporary
@@ -20,9 +33,10 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Claude.Provider
   alias HalC2.Claude.Session
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.Entities
+  alias HalC2.Orchestration.{Entities, NativeSubagent}
+  alias HalC2.StreamState
 
-  @state_version 5
+  @state_version 8
 
   @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
                 "on this environment's machine, then start a new thread. For API-key " <>
@@ -40,6 +54,9 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   @file_tools ~w(Edit Write MultiEdit NotebookEdit)
   @web_tools ~w(WebSearch WebFetch)
+  # Claude's subagent tool; "Task" before Claude Code 2.1.
+  @agent_tools ~w(Agent Task)
+  @task_status %{"completed" => "completed", "failed" => "failed", "stopped" => "cancelled"}
 
   def driver, do: "claudeAgent"
 
@@ -143,22 +160,78 @@ defmodule HalC2.Claude.ThreadRuntime do
        launch: nil,
        # A steer ends the turn's current part with an "aborted" result; that one
        # result is not the end of the turn.
-       steered: false
+       steered: false,
+       # Subagents and background commands still running, by tool use id:
+       # `%{sub: NativeSubagent handle | nil, item: command item | nil, background: bool}`.
+       work: %{},
+       # Claude's task ids -> the tool use id of their work, or nil for a task that is
+       # not work (ambient, a foreground command) or has ended.
+       tasks: %{},
+       # The latest turn's ids, which work Claude starts between turns joins.
+       last_ids: nil,
+       # A turn Claude runs by itself (`wake/2`) that no run follows yet:
+       # `%{open: bool, buffer: [message] | nil}`, `open` until its `result`, `buffer` its
+       # messages newest first, nil once the thread refused it a run.
+       wake: nil
      }}
   end
 
+  # The run of a wake: nothing is sent to Claude. What it said so far is replayed into
+  # the run, which then follows it to its `result`.
   @impl true
+  def handle_call({:start_turn, %{wake: true} = turn}, _from, state) do
+    ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
+    launch = state.launch || Provider.launch(turn.model, Map.get(turn, :options, %{}))
+    turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
+    wake = state.wake || %{open: false, buffer: nil}
+    buffer = Enum.reverse(wake.buffer || [])
+
+    state = %{
+      state
+      | turn: turn,
+        items: %{},
+        blocks: %{},
+        interrupted: false,
+        last_ids: ids,
+        wake: nil
+    }
+
+    started(state)
+    state = Enum.reduce(buffer, state, &receive_message/2)
+
+    # Replayed to its end, or Claude is still at it; a wake a user's turn took over
+    # (`take_wake/2`) leaves its run nothing to show.
+    state =
+      cond do
+        state.turn == nil ->
+          state
+
+        state.session == nil and (wake.open or buffer != []) ->
+          end_turn(state, "failed", "Claude exited")
+
+        wake.open ->
+          state
+
+        true ->
+          end_turn(state, "completed", nil)
+      end
+
+    {:reply, :ok, state}
+  end
+
   def handle_call({:start_turn, turn}, _from, state) do
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
     launch = Provider.launch(turn.model, Map.get(turn, :options, %{}))
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
-    state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false}
+    state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
+    session = state.session
 
     case open_session(state, turn) do
       {:ok, state, turn} ->
         state = %{state | turn: turn}
-        Session.send_message(state.session, claude_content(turn))
         started(state)
+        {state, opts} = take_wake(state, session)
+        Session.send_message(state.session, claude_content(turn), opts)
 
         {:reply, :ok, state}
 
@@ -175,6 +248,15 @@ defmodule HalC2.Claude.ThreadRuntime do
     {:reply, :ok, %{state | interrupted: true}}
   end
 
+  # Between turns, stopping the thread stops the work it left running in the background,
+  # with the process that runs it; the next turn resumes the conversation.
+  def handle_call(:interrupt, _from, %{turn: nil, session: session} = state)
+      when session != nil and state.work != %{} do
+    state = end_work(state, "interrupted")
+    GenServer.stop(session)
+    {:reply, :ok, %{state | session: nil, permission_mode: nil}}
+  end
+
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
 
   # The message reads like the turn's own: its effort prefix, files and images.
@@ -186,8 +268,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_call(:rollback, _from, %{turn: nil} = state) do
+    state = end_work(state, "interrupted")
     if state.session, do: GenServer.stop(state.session)
-    {:reply, :ok, %{state | session: nil, session_id: nil, permission_mode: nil}}
+    {:reply, :ok, %{state | session: nil, session_id: nil, permission_mode: nil, wake: nil}}
   end
 
   def handle_call(:rollback, _from, state),
@@ -237,7 +320,15 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   @impl true
   def handle_info({:claude, _session, {:message, message}}, state),
-    do: {:noreply, message(message, state)}
+    do: {:noreply, receive_message(message, state)}
+
+  # The thread would not run the wake (`wake/2`): its messages go on as between turns.
+  def handle_info(:wake_refused, %{turn: nil, wake: %{buffer: [_ | _] = buffer} = wake} = state) do
+    state = %{state | wake: if(wake.open, do: %{wake | buffer: nil})}
+    {:noreply, buffer |> Enum.reverse() |> Enum.reduce(state, &message/2)}
+  end
+
+  def handle_info(:wake_refused, state), do: {:noreply, state}
 
   def handle_info(
         {:claude, session, {:permission, id, _tool, _input, _context}},
@@ -286,18 +377,39 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_info({:EXIT, session, _reason}, %{session: session} = state) do
-    state = if state.turn, do: end_turn(state, "failed", "Claude exited"), else: state
-    {:noreply, %{state | session: nil}}
+    state =
+      if state.turn,
+        do: end_turn(state, "failed", "Claude exited"),
+        else: end_work(state, "failed")
+
+    # A wake waiting for its run ends there, cut short.
+    wake = if match?(%{buffer: [_ | _]}, state.wake), do: %{state.wake | open: false}
+    {:noreply, %{state | session: nil, wake: wake}}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
   def handle_info(_other, state), do: {:noreply, state}
+
+  # The process runs the background work, so it ends with it: released when idle, or
+  # stopped with its thread. Its writes may fail when the node itself is stopping; the
+  # next boot ends what is left (`HalC2.Orchestration.Recovery`).
+  @impl true
+  def terminate(_reason, state) do
+    end_work(state, "interrupted")
+    :ok
+  catch
+    _, _ -> :ok
+  end
 
   @impl true
   def code_change(_old, state, _extra),
     do:
       {:ok,
        state
+       |> Map.put_new(:work, %{})
+       |> Map.put_new(:tasks, %{})
+       |> Map.put_new(:last_ids, nil)
+       |> Map.put_new(:wake, nil)
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
        |> Map.put_new(:launch, nil)
@@ -518,6 +630,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   # conversation in a new process.
   defp ensure_session(%{session: session} = state, turn)
        when session != nil and state.launch != turn.launch do
+    state = end_work(state, "interrupted")
     GenServer.stop(session)
     ensure_session(%{state | session: nil}, turn)
   end
@@ -574,9 +687,171 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # --- messages ------------------------------------------------------------------
 
+  # Claude runs one turn at a time and ends each with one `result`, so which turn a
+  # result ends follows from the order: a wake Claude is running when a user's turn
+  # starts ends first (`take_wake/2`), and between the node's turns every result is a
+  # wake's.
+  defp receive_message(message, %{turn: nil, wake: %{buffer: buffer} = wake} = state)
+       when is_list(buffer) do
+    open = if result?(message), do: false, else: wake.open or wake?(message)
+    %{state | wake: %{open: open, buffer: [message | buffer]}}
+  end
+
+  defp receive_message(message, %{turn: nil, wake: %{buffer: nil}} = state) do
+    state = message(message, state)
+    if result?(message), do: %{state | wake: nil}, else: state
+  end
+
+  defp receive_message(message, %{turn: nil, wake: nil} = state) do
+    if wake?(message), do: wake(state, message), else: message(message, state)
+  end
+
+  # The result of the wake a user's turn took over; the user's own follows it. An
+  # interrupt ends the user's turn with the first.
+  defp receive_message(%{"type" => "result"}, %{wake: %{open: true}} = state)
+       when not state.interrupted,
+       do: %{state | wake: nil}
+
+  defp receive_message(message, state), do: message(message, state)
+
+  defp result?(message), do: match?(%{"type" => "result"}, message)
+
+  defp wake?(%{"type" => type}) when type in ~w(assistant user stream_event), do: true
+  defp wake?(_message), do: false
+
+  # Claude started a turn by itself: the thread gets a message for it, from the agent,
+  # whose run (`handle_call({:start_turn, %{wake: true}})`) queues behind any other.
+  # Off this process, since starting the run calls back into it.
+  defp wake(state, message) do
+    runtime = self()
+    thread_id = state.thread_id
+
+    Task.start(fn ->
+      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+      latest = stream |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
+      message_id = Entities.new_id("message")
+
+      with {:error, reason} <-
+             Orchestration.dispatch(%{
+               "type" => "message.dispatch",
+               "commandId" => "command:claude-wake:#{message_id}",
+               "threadId" => thread_id,
+               "messageId" => message_id,
+               "text" => "Background task completed.",
+               "attachments" => [],
+               "modelSelection" => latest["modelSelection"],
+               "dispatchMode" => %{"type" => "queue_after_active"},
+               "createdBy" => "agent",
+               "creationSource" => "provider",
+               "providerWake" => true
+             }) do
+        Logger.warning("claude wake in #{thread_id} has no run: #{inspect(reason)}")
+        send(runtime, :wake_refused)
+      end
+    end)
+
+    %{state | wake: %{open: not result?(message), buffer: [message]}}
+  end
+
+  # A user's turn that starts while Claude runs a wake takes it over: what the wake said
+  # so far joins the turn, and the message steers it, so the wake's `result` comes
+  # before the turn's own instead of the two being one (`receive_message/2`). A new
+  # process (`session` was another) ended the wake. A wake that already ended keeps
+  # its messages for its own run.
+  defp take_wake(%{wake: %{open: true} = wake} = state, session) do
+    state =
+      (wake.buffer || [])
+      |> Enum.reverse()
+      |> Enum.reject(&result?/1)
+      |> Enum.reduce(%{state | wake: nil}, &message/2)
+
+    if state.session == session,
+      do: {%{state | wake: %{open: true, buffer: []}}, [priority: "now"]},
+      else: {state, []}
+  end
+
+  defp take_wake(state, _session), do: {state, []}
+
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
     HalC2.ProviderUsageLimits.claude_event(info)
     rate_limit(info, state)
+  end
+
+  # Background work reports its progress and end after its turn is over.
+  defp message(%{"type" => "system", "subtype" => "task_notification"} = task, state) do
+    tool = state.tasks[task["task_id"]] || task["tool_use_id"]
+    status = Map.get(@task_status, task["status"], "failed")
+    state = if state.work[tool], do: end_work(state, tool, status, task["summary"]), else: state
+    %{state | tasks: Map.delete(state.tasks, task["task_id"])}
+  end
+
+  # A task Claude started without telling this runtime (between turns, or before it
+  # was upgraded to record them) is recorded on its first progress.
+  defp message(%{"type" => "system", "subtype" => "task_progress"} = task, state) do
+    state =
+      if is_map_key(state.tasks, task["task_id"]), do: state, else: task_started(state, task)
+
+    text = non_empty(task["summary"], non_empty(task["description"], ""))
+
+    case state.work[state.tasks[task["task_id"]]] do
+      %{sub: %{} = sub} when text != "" -> NativeSubagent.progress(sub, text)
+      _ -> :ok
+    end
+
+    state
+  end
+
+  defp message(
+         %{
+           "type" => "system",
+           "subtype" => "task_updated",
+           "patch" => %{"is_backgrounded" => true}
+         } =
+           task,
+         state
+       ) do
+    case state.work[state.tasks[task["task_id"]]] do
+      nil -> state
+      work -> put_in(state.work[state.tasks[task["task_id"]]], %{work | background: true})
+    end
+  end
+
+  # Claude starts tasks between turns too: in the turn a task notification wakes it
+  # for, or resuming a subagent (SendMessage).
+  defp message(%{"type" => "system", "subtype" => "task_started"} = task, state),
+    do: task_started(state, task)
+
+  # Between turns, a wake the thread would not run (`wake/2`) records only the work
+  # Claude starts: its subagents and background commands, and their launches' results.
+  defp message(
+         %{"type" => "assistant", "message" => %{"content" => content}},
+         %{turn: nil} = state
+       )
+       when is_list(content) do
+    case with_ids(state) do
+      %{last_ids: nil} = state ->
+        state
+
+      state ->
+        state = %{state | turn: %{ids: state.last_ids}}
+
+        content
+        |> Enum.filter(&background_launch?/1)
+        |> Enum.reduce(state, &assistant_block(&1, nil, nil, &2))
+        |> Map.put(:turn, nil)
+    end
+  end
+
+  defp message(%{"type" => "user", "message" => %{"content" => content}}, %{turn: nil} = state)
+       when is_list(content) do
+    Enum.reduce(content, state, fn
+      %{"type" => "tool_result", "tool_use_id" => tool_id} = result, state
+      when is_map_key(state.work, tool_id) ->
+        tool_result(state, tool_id, result)
+
+      _, state ->
+        state
+    end)
   end
 
   defp message(_message, %{turn: nil} = state), do: state
@@ -793,6 +1068,35 @@ defmodule HalC2.Claude.ThreadRuntime do
        when name in ["AskUserQuestion", "ExitPlanMode"],
        do: state
 
+  # A subagent; its task's messages end it (`task_started`, `task_notification`).
+  defp assistant_block(
+         %{"type" => "tool_use", "id" => tool_id, "name" => name} = block,
+         _,
+         _,
+         state
+       )
+       when name in @agent_tools and not is_map_key(state.work, tool_id) do
+    input = block["input"] || %{}
+    state = flush(state)
+
+    sub =
+      NativeSubagent.start(work_ids(state), tool_id, %{
+        "prompt" => input["prompt"],
+        "title" => input["description"],
+        "model" => input["model"]
+      })
+
+    put_in(state.work[tool_id], %{
+      sub: sub,
+      item: nil,
+      background: input["run_in_background"] == true
+    })
+  end
+
+  defp assistant_block(%{"type" => "tool_use", "name" => name}, _id, _index, state)
+       when name in @agent_tools,
+       do: state
+
   defp assistant_block(
          %{"type" => "tool_use", "id" => tool_id, "name" => name} = block,
          _id,
@@ -800,6 +1104,12 @@ defmodule HalC2.Claude.ThreadRuntime do
          state
        ) do
     input = block["input"] || %{}
+
+    # A background command's tool result only says it started; its task ends it.
+    state =
+      if name == "Bash" and input["run_in_background"] == true,
+        do: put_in(state.work[tool_id], %{sub: nil, item: nil, background: true}),
+        else: state
 
     {kind, fields} =
       cond do
@@ -822,6 +1132,67 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp assistant_block(_block, _id, _index, state), do: state
 
   defp tool_result(state, tool_id, result) do
+    case state.work[tool_id] do
+      nil ->
+        item_result(state, tool_id, result)
+
+      work ->
+        cond do
+          result["is_error"] == true or not work.background ->
+            work_result(state, tool_id, work, result)
+
+          # A background subagent runs on; the call that started it (SendMessage's, say)
+          # is done.
+          work.sub ->
+            item_result(state, tool_id, result)
+
+          true ->
+            launched(state, tool_id, work, result)
+        end
+    end
+  end
+
+  defp background_launch?(%{"type" => "tool_use", "name" => name}) when name in @agent_tools,
+    do: true
+
+  defp background_launch?(%{"type" => "tool_use", "name" => "Bash", "input" => input}),
+    do: input["run_in_background"] == true
+
+  defp background_launch?(_block), do: false
+
+  # A background launch's acknowledgement: a command's item leaves the turn's items, so
+  # the turn's end does not close it, and keeps running with the acknowledgement as its
+  # output. A launch that failed ends the work.
+  defp launched(state, tool_id, work, result) do
+    case Map.pop(state.items, tool_id) do
+      {nil, _} ->
+        state
+
+      {item, items} ->
+        output = result_text(result["content"])
+
+        commit(
+          state,
+          &[
+            Orchestration.upsert(&1, "turn-item", item.id, fn e ->
+              Map.put(e, "output", output)
+            end)
+          ]
+        )
+
+        %{state | items: items, work: %{state.work | tool_id => %{work | item: item}}}
+    end
+  end
+
+  defp work_result(state, tool_id, work, result) do
+    status = if result["is_error"] == true, do: "failed", else: "completed"
+    output = result_text(result["content"])
+    state = if work.sub, do: end_work(state, tool_id, status, output), else: state
+    state = %{state | work: Map.delete(state.work, tool_id)}
+    item_result(state, tool_id, result)
+  end
+
+  defp item_result(state, tool_id, result) do
     case state.items[tool_id] do
       nil ->
         state
@@ -844,7 +1215,13 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp end_turn(state, status, failure) do
     state = flush(state)
 
-    # Items and prompts still open when the turn ends are closed with it.
+    # Items and prompts still open when the turn ends are closed with it; background
+    # work goes on after a completed turn.
+    state =
+      if status == "completed",
+        do: end_work(state, &(not &1.background), status),
+        else: end_work(state, status)
+
     state = close_open_items(state, status)
 
     state =
@@ -864,10 +1241,143 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
 
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}, blocks: %{}, requests: %{}}
+    # Only a wake waiting for its own run outlives the turn.
+    wake = if match?(%{buffer: [_ | _]}, state.wake), do: state.wake
+    %{state | turn: nil, items: %{}, blocks: %{}, requests: %{}, wake: wake}
   end
 
   defp block_key(message_id, index), do: "#{message_id}:#{index}"
+
+  # Claude registered a task for a tool call: a subagent's or a command's, which says
+  # whether it runs in the background. Other tasks (a workflow, say) show as subagents.
+  # Ambient tasks, such as watchers, are not activity.
+  defp task_started(state, %{"task_id" => task_id} = task) do
+    tool = task["tool_use_id"] || task_id
+    background? = task["is_backgrounded"] == true
+
+    cond do
+      task["ambient"] == true or task["skip_transcript"] == true ->
+        %{state | tasks: Map.put(state.tasks, task_id, nil)}
+
+      work = state.work[tool] ->
+        work = %{work | background: work.background or background?}
+
+        %{
+          state
+          | work: Map.put(state.work, tool, work),
+            tasks: Map.put(state.tasks, task_id, tool)
+        }
+
+      background? and match?(%{kind: :command}, state.items[tool]) ->
+        work = %{sub: nil, item: nil, background: true}
+
+        %{
+          state
+          | work: Map.put(state.work, tool, work),
+            tasks: Map.put(state.tasks, task_id, tool)
+        }
+
+      task["task_type"] == "local_bash" ->
+        %{state | tasks: Map.put(state.tasks, task_id, nil)}
+
+      true ->
+        subagent_task(with_ids(state), tool, task)
+    end
+  end
+
+  # No run to join: nothing is recorded.
+  defp subagent_task(%{turn: nil, last_ids: nil} = state, _tool, _task), do: state
+
+  defp subagent_task(state, tool, %{"task_id" => task_id} = task) do
+    state = flush(state)
+
+    sub =
+      NativeSubagent.start(work_ids(state), tool, %{
+        "prompt" => task["prompt"] || task["description"],
+        "title" => task["description"]
+      })
+
+    work = %{sub: sub, item: nil, background: task["is_backgrounded"] != false}
+
+    %{
+      state
+      | work: Map.put(state.work, tool, work),
+        tasks: Map.put(state.tasks, task_id, tool)
+    }
+  end
+
+  # Ends the work `which` picks (all of it by default) with `status`.
+  defp end_work(state, which \\ fn _ -> true end, status)
+
+  defp end_work(state, which, status) when is_function(which) do
+    Enum.reduce(state.work, state, fn {tool, work}, state ->
+      if which.(work), do: end_work(state, tool, status, nil), else: state
+    end)
+  end
+
+  # Ends one piece of work: its subagent with the task's `result`, or its command item.
+  defp end_work(state, tool, status, result) do
+    case state.work[tool] do
+      %{sub: %{} = sub} ->
+        NativeSubagent.finish(sub, status, result)
+
+      %{item: %{id: item_id, node: node_id}} ->
+        at = Entities.now()
+        done = %{"status" => status, "completedAt" => at}
+
+        commit(state, fn stream ->
+          [
+            Orchestration.upsert(stream, "turn-item", item_id, fn item ->
+              item
+              |> Map.merge(Map.put(done, "updatedAt", at))
+              |> then(&if(result, do: Map.put(&1, "output", result), else: &1))
+            end),
+            Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
+          ]
+        end)
+
+      _ ->
+        :ok
+    end
+
+    %{
+      state
+      | work: Map.delete(state.work, tool),
+        tasks: Map.new(state.tasks, fn {task, t} -> {task, if(t != tool, do: t)} end)
+    }
+  end
+
+  # The ids work joins: the running turn's, or between turns the latest one's.
+  defp work_ids(%{turn: %{ids: ids}}), do: ids
+  defp work_ids(state), do: state.last_ids
+
+  # Fills in the latest turn's ids from the thread when this runtime has not run one
+  # (it started, or was upgraded, after that turn).
+  defp with_ids(%{turn: nil, last_ids: nil} = state) do
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(state.thread_id))
+
+    case stream
+         |> StreamState.list("run")
+         |> Enum.max_by(& &1["ordinal"], fn -> nil end) do
+      nil ->
+        state
+
+      run ->
+        ids = %{
+          driver: driver(),
+          instance: run["providerInstanceId"] || driver(),
+          thread: state.thread_id,
+          run: run["id"],
+          attempt: run["activeAttemptId"],
+          root_node: run["rootNodeId"],
+          provider_thread: run["providerThreadId"]
+        }
+
+        %{state | last_ids: ids}
+    end
+  end
+
+  defp with_ids(state), do: state
 
   defp result_text(content) when is_binary(content), do: content
 

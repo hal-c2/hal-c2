@@ -6,7 +6,7 @@ import HalC2.Bricks
 // Copy to ~/.hal-c2/shell/shell.qml and edit; the app reloads on save.
 // Bricks come from HalC2.Bricks, data from the HalC2.Shell singletons
 // (Shell.state, Shell.dispatch, Theme.*, Runtime.*). ShellWindow brings the
-// window boilerplate, the error overlay and the page's window commands.
+// window boilerplate, the error overlay and the window commands.
 ShellWindow {
     id: root
 
@@ -53,22 +53,24 @@ ShellWindow {
                     panelToggle: rightPanel.available ? rightPanel.open : null
                 }
 
-                ClusterSettings {
+                SettingsHost {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: root.clusterOpen
+                    section: root.settingsSection
+                    visible: root.settingsActive
                 }
 
-                WebSurface {
-                    visible: !root.clusterOpen
+                // The route's centre: a thread, draft, home, pull requests or usage.
+                CentreHost {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    url: Shell.pageUrl
+                    kind: root.route?.kind ?? ""
+                    visible: !root.settingsActive
                 }
 
                 Composer {
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen
+                    visible: ready && !root.settingsActive
                 }
 
                 TerminalDrawer {

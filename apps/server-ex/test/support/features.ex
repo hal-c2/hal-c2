@@ -3,9 +3,9 @@ defmodule HalC2.Test.Features do
   Runs the repo's Gherkin specification (`features/`) against this node.
 
   Only scenarios tagged `@node` and not `@dropped` become tests; the rest belong
-  to other surfaces. `@backlog` scenarios (and `@backlog` example tables) are left
-  out unless `backlog: true` (`mix features --backlog`), since they name behaviour
-  the node does not have yet. Step definitions live in `test/steps/`, one file per feature
+  to other surfaces. `@backlog` and `@backlog-node` scenarios (and example tables)
+  are left out unless `backlog: true` (`mix features --backlog`), since they name
+  behaviour the node does not have yet. Step definitions live in `test/steps/`, one file per feature
   directory, on the harness in `HalC2.Test.Node`. `mix features` runs them, or
   `HAL_C2_FEATURES=<globs> mix test --only cucumber`; globs are relative to `features/`.
   """
@@ -69,11 +69,11 @@ defmodule HalC2.Test.Features do
 
   defp without_backlog(scenario, inherited, false) do
     cond do
-      "backlog" in inherited or "backlog" in scenario.tags ->
+      backlog?(inherited) or backlog?(scenario.tags) ->
         []
 
       examples = Map.get(scenario, :examples) ->
-        case Enum.reject(examples, &("backlog" in &1.tags)) do
+        case Enum.reject(examples, &backlog?(&1.tags)) do
           [] when examples != [] -> []
           kept -> [%{scenario | examples: kept}]
         end
@@ -82,6 +82,8 @@ defmodule HalC2.Test.Features do
         [scenario]
     end
   end
+
+  defp backlog?(tags), do: "backlog" in tags or "backlog-node" in tags
 
   # Example tables carry tags too; an outline runs when any of its tables is a
   # node table. (No feature uses per-table surface tags today.)

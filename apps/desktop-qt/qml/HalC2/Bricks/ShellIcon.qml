@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Shapes
 import "js/lucide.js" as Lucide
 
-// A lucide icon drawn as a stroke, so it scales and tints like the page's
+// A lucide icon drawn as a stroke, so it scales and tints like the web app's
 // SVG icons. `name` is the lucide id ("panel-left"); see js/lucide.js.
 Item {
     id: icon
@@ -11,7 +11,7 @@ Item {
     property real size: 16
     property color color: "#e4e4e7"
     property real strokeWidth: 2
-    // Fills the outline too, for the filled variants the page draws with
+    // Fills the outline too, for the filled variants the web app draws with
     // `fill-current` (the favourites star).
     property bool filled: false
 

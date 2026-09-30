@@ -1,10 +1,12 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/acp.ex (grok agent, permission-mode args, supportsTextGeneration)
-#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (permission requests, session/cancel)
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (permission requests, session/cancel, background tasks and subagents)
 #   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Grok transcripts)
 #   apps/server/src/provider/Layers/GrokProvider.ts, apps/server/src/provider/Drivers/GrokDriver.ts, apps/server/src/provider/acp/GrokAcpSupport.ts
 #   apps/server/src/orchestration-v2/Adapters/GrokAdapterV2.ts, apps/server/src/provider/Drivers/GrokSkills.ts
 #   apps/server/src/provider/Layers/grokUsageLimits.ts, apps/server/src/textGeneration/GrokTextGeneration.ts
+#   apps/server/src/provider/acp/XAiAcpExtension.ts, apps/server/src/orchestration-v2/Adapters/XAiBackgroundTasks.ts
+#     (x.ai/task_backgrounded, x.ai/task_completed, background subagent notices, persistent monitors)
 
 @plugin-grok @node
 Feature: Grok
@@ -106,3 +108,39 @@ Feature: Grok
   Scenario: A Grok usage limit stops the turn with a clear reason
     When Grok stops because the account hit its usage limit
     Then the thread says Grok's usage limit was reached
+
+  # Grok keeps background shells and subagents running after its turn, and says when
+  # each ends: x.ai/task_completed, or a "Background subagent ... completed" notice.
+  Scenario: Grok's background work keeps its session until Grok reports it ended
+    Given Grok left a command and a subagent running in the background
+    Then "Work" lists the command and the subagent as background work
+    And the node keeps Grok's session of "Work" while they run
+    When Grok reports the command and the subagent ended
+    Then Grok's command and subagent are completed
+    And the node can release Grok's session of "Work"
+
+  # Grok's background work runs inside the grok process, so ending it ends the process.
+  Scenario: Stopping a Grok thread between turns ends its background work and the agent
+    Given Grok left a command and a subagent running in the background
+    When the user stops "Work"
+    Then Grok's command and subagent are interrupted
+    And "Work" lists no background work
+    And Grok's agent process for "Work" stops
+
+  Scenario: A background task Grok kills ends
+    Given Grok left a command and a subagent running in the background
+    When the user asks Grok to stop the dev server
+    Then Grok's command is cancelled
+    And "Work" lists only the subagent as background work
+
+  # A persistent monitor watches until the session ends, so nothing waits on it.
+  Scenario: A persistent Grok monitor is not background work
+    Given Grok left a persistent monitor running
+    Then Grok's monitor is not listed as background work
+
+  # Upstream wakes the thread with a turn when a background task finishes.
+  @backlog
+  Scenario: Finished Grok background work wakes the thread
+    Given Grok left a command and a subagent running in the background
+    When Grok reports the command and the subagent ended
+    Then "Work" runs a turn telling Grok its background work finished

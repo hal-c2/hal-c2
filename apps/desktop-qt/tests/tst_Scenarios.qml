@@ -4,7 +4,7 @@ import HalC2.Shell
 import "../qml/HalC2/Bricks"
 
 // Behaviour scenarios for the native bricks, one Given/When/Then per test,
-// driven through the Shell test double: the page state goes in as
+// driven through the Shell test double: the shell's state goes in as
 // Shell.state and the outcome is what the brick dispatches back.
 Item {
     id: root
@@ -165,7 +165,7 @@ Item {
             verify(typeof lastDispatch().payload.x === "number");
         }
 
-        function test_given_a_hovered_thread_when_settle_is_clicked_then_the_page_settles_it() {
+        function test_given_a_hovered_thread_when_settle_is_clicked_then_the_shell_settles_it() {
             const sidebar = createSidebar({});
             const row = waitForRow(sidebar, "second");
             mouseMove(row, 100, 40);
@@ -177,7 +177,7 @@ Item {
             compare(lastDispatch().payload.key, "second");
         }
 
-        function test_given_a_snoozed_thread_when_wake_is_clicked_then_the_page_unsnoozes_it() {
+        function test_given_a_snoozed_thread_when_wake_is_clicked_then_the_shell_unsnoozes_it() {
             const sidebar = createSidebar({
                 active: [thread("first", qsTr("First"))],
                 snoozed: [thread("sleeper", qsTr("Sleeper"))]
@@ -270,7 +270,7 @@ Item {
             verify(!Shell.dispatchedActions.some(entry => entry.action === "composer.history.step"));
         }
 
-        function test_given_the_page_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens_data() {
+        function test_given_the_shell_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens_data() {
             return [
                 { tag: "effort", command: "composer.effort", picker: "effortPicker" },
                 { tag: "access mode", command: "composer.mode", picker: "runtimeModePicker" },
@@ -280,7 +280,7 @@ Item {
             ];
         }
 
-        function test_given_the_page_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens(data) {
+        function test_given_the_shell_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens(data) {
             const composer = createComposer({
                 options: [{
                     type: "select",
@@ -316,6 +316,39 @@ Item {
             verify(!!picker, data.picker);
             Shell.actionRequested("composer.control.open", { command: data.command });
             tryCompare(picker.popup ?? picker, "visible", true);
+        }
+
+        function test_given_a_thread_on_a_branch_when_the_branch_picker_opens_then_the_refs_are_loaded_unfiltered() {
+            const composer = createComposer({});
+            Shell.state = Object.assign({}, Shell.state, {
+                workspace: {
+                    environments: [],
+                    activeEnvironmentId: "here",
+                    environmentChangeable: false,
+                    envMode: "local",
+                    envModeLabel: "Local checkout",
+                    envModeChangeable: false,
+                    git: null,
+                    canOpenPullRequest: false,
+                    branch: "feature/tax",
+                    branchChangeable: true,
+                    branchSwitchPending: false,
+                    branchQuery: "old",
+                    branches: [],
+                    branchesTotal: 0,
+                    branchesLoading: false
+                }
+            });
+            const picker = findChild(composer, "branchPicker");
+            verify(!!picker, "branchPicker");
+            const searches = () => Shell.dispatchedActions.filter(entry => entry.action === "workspace.branch.search");
+            picker.open();
+            tryCompare(picker, "opened", true);
+            compare(searches().length, 1);
+            compare(searches()[0].payload.query, "");
+            picker.close();
+            tryCompare(picker, "visible", false);
+            compare(searches().length, 1);
         }
 
         function test_given_a_running_turn_and_an_empty_draft_when_the_primary_button_is_clicked_then_the_turn_is_interrupted() {
@@ -363,6 +396,9 @@ Item {
             }, overrides ?? {});
         }
 
+        // The Control key, which Qt calls Meta on macOS.
+        readonly property int ctrl: Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier
+
         function chord(key, shift) {
             return {
                 key: key,
@@ -374,7 +410,7 @@ Item {
             };
         }
 
-        // "the page lists models from Codex and Claude": the catalogue
+        // "the catalogue lists models from Codex and Claude": the catalogue
         // Shell.state.modelPicker carries, with the default chords.
         function codexAndClaude(overrides) {
             return {
@@ -425,7 +461,7 @@ Item {
             return Shell.dispatchedActions.filter(entry => entry.action === "composer.model.select");
         }
 
-        function test_given_the_page_owns_the_model_shortcut_when_it_requests_the_picker_then_the_native_picker_toggles() {
+        function test_given_the_shell_owns_the_model_shortcut_when_it_requests_the_picker_then_the_native_picker_toggles() {
             const picker = createPicker(codexAndClaude());
             togglePicker(picker, true);
             togglePicker(picker, false);
@@ -452,7 +488,7 @@ Item {
             compare(icon.driverKind, "claudeAgent");
         }
 
-        function test_given_codex_and_claude_when_claude_opus_is_chosen_then_the_page_switches_and_the_picker_closes() {
+        function test_given_codex_and_claude_when_claude_opus_is_chosen_then_the_shell_switches_and_the_picker_closes() {
             const picker = createPicker(codexAndClaude());
             togglePicker(picker, true);
             mouseClick(inPicker(picker, "modelPickerProvider:claudeAgent"));
@@ -549,7 +585,7 @@ Item {
             togglePicker(picker, true);
             compare(picker.view, "codex");
             tryCompare(inPicker(picker, "modelPickerSearch"), "activeFocus", true);
-            keyClick(Qt.Key_Down, Qt.ControlModifier | Qt.ShiftModifier);
+            keyClick(Qt.Key_Down, ctrl | Qt.ShiftModifier);
             tryCompare(picker, "view", "claudeAgent");
             compare(listed(picker), ["claudeAgent:opus", "claudeAgent:sonnet", "claudeAgent:haiku"]);
         }
@@ -559,19 +595,20 @@ Item {
             togglePicker(picker, true);
             tryCompare(inPicker(picker, "modelPickerSearch"), "activeFocus", true);
             const second = listed(picker)[1];
-            keyClick(Qt.Key_2, Qt.ControlModifier);
+            keyClick(Qt.Key_2, ctrl);
             tryCompare(Shell, "dispatchCount", 1);
             compare(lastDispatch().action, "composer.model.select");
             compare(lastDispatch().payload.instanceId + ":" + lastDispatch().payload.model, second);
             tryCompare(picker.popup, "visible", false);
         }
 
-        function test_given_a_toast_with_an_action_when_the_action_is_clicked_then_the_page_runs_that_action() {
+        // Scenario: A notification's action runs it (features/timeline/notifications.feature)
+        function test_given_a_toast_with_an_action_when_the_action_is_clicked_then_its_action_runs() {
             Shell.state = {
-                notifications: {
+                toasts: {
                     items: [
                         {
-                            id: "update",
+                            id: "native:1",
                             type: "info",
                             title: qsTr("Update ready"),
                             description: null,
@@ -588,22 +625,23 @@ Item {
             };
             const host = createTemporaryObject(notificationsComponent, root);
             verify(!!host, "Component exists");
-            tryVerify(() => findChild(host, "notificationAction-update-restart") !== null);
-            const action = findChild(host, "notificationAction-update-restart");
+            tryVerify(() => findChild(host, "notificationAction-native:1-restart") !== null);
+            const action = findChild(host, "notificationAction-native:1-restart");
             tryCompare(action, "visible", true);
             mouseClick(action);
             tryCompare(Shell, "dispatchCount", 1);
             compare(lastDispatch().action, "notification.action");
-            compare(lastDispatch().payload.id, "update");
+            compare(lastDispatch().payload.id, "native:1");
             compare(lastDispatch().payload.actionId, "restart");
         }
 
-        function test_given_a_toast_when_dismiss_is_clicked_then_the_page_dismisses_it() {
+        // Scenario: Dismissing the last notification hides the notifications (features/timeline/notifications.feature)
+        function test_given_a_toast_when_dismiss_is_clicked_then_it_is_dismissed() {
             Shell.state = {
-                notifications: {
+                toasts: {
                     items: [
                         {
-                            id: "copied",
+                            id: "native:2",
                             type: "success",
                             title: qsTr("Copied"),
                             description: null,
@@ -614,13 +652,13 @@ Item {
             };
             const host = createTemporaryObject(notificationsComponent, root);
             verify(!!host, "Component exists");
-            tryVerify(() => findChild(host, "notificationDismiss-copied") !== null);
-            mouseClick(findChild(host, "notificationDismiss-copied"));
+            tryVerify(() => findChild(host, "notificationDismiss-native:2") !== null);
+            mouseClick(findChild(host, "notificationDismiss-native:2"));
             tryCompare(Shell, "dispatchCount", 1);
             compare(lastDispatch().action, "notification.dismiss");
-            compare(lastDispatch().payload.id, "copied");
+            compare(lastDispatch().payload.id, "native:2");
             Shell.state = {
-                notifications: {
+                toasts: {
                     items: []
                 }
             };

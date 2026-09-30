@@ -8,6 +8,15 @@ defmodule HalC2.Codex.ThreadRuntime do
   `turn/start`; the app-server's notifications then become entity patches.
   Streamed text and command output are written as appends (`HalC2.Orchestration.TurnWriter`),
   so a long answer costs its new bytes, not its whole length, per update.
+
+  A command Codex leaves running in a background terminal (unified exec) when its turn
+  completes keeps its item running after the turn: the thread lists it as background
+  work (`HalC2.Projection.BackgroundWork`), which keeps the idle reaper from stopping
+  the app-server that runs it. Codex's late `item/completed` for it ends the item. An
+  interrupted turn, or a stop between turns, terminates those terminals
+  (`thread/backgroundTerminals/terminate`) along with the turn's own commands, which
+  Codex leaves running when it interrupts; the app-server exiting or being released
+  ends them too.
   """
 
   use GenServer, restart: :temporary
@@ -20,7 +29,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   alias HalC2.Orchestration.{Entities, TurnWatch}
   alias HalC2.JsonRpc.Connection
 
-  @state_version 1
+  @state_version 2
 
   # runtimeMode -> {approvalPolicy, approvalsReviewer, sandboxPolicy type}, as the Node
   # adapter maps it. Auto lets Codex's own reviewer answer what it would ask the user.
@@ -128,13 +137,19 @@ defmodule HalC2.Codex.ThreadRuntime do
        flush_timer: nil,
        failure: nil,
        # Open approval prompts: request id -> the app-server request to answer.
-       requests: %{}
+       requests: %{},
+       # The turn's commands still running: native item id -> Codex's process id (nil
+       # outside unified exec).
+       running: %{},
+       # Commands an earlier turn left running in the background: native item id ->
+       # `%{item: turn item, process: process id | nil}`.
+       background: %{}
      }}
   end
 
   @impl true
   def handle_call({:start_turn, turn}, _from, state) do
-    state = %{state | turn: turn, items: %{}, failure: nil}
+    state = %{state | turn: turn, items: %{}, failure: nil, running: %{}}
 
     case begin_turn(state, turn) do
       {:ok, state} ->
@@ -163,6 +178,10 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:reply, :ok, state}
   end
 
+  # Between turns, stopping the thread stops the commands it left running.
+  def handle_call(:interrupt, _from, %{turn: nil} = state) when state.background != %{},
+    do: {:reply, :ok, end_background(state, "interrupted")}
+
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
 
   # Codex refuses the steer if its turn has moved on, so a late steer fails cleanly.
@@ -187,6 +206,8 @@ defmodule HalC2.Codex.ThreadRuntime do
     do: {:reply, {:error, "Interrupt the current turn before rewinding."}, state}
 
   def handle_call({:rollback, plan}, _from, state) do
+    state = end_background(state, "interrupted")
+
     # A session carried from another machine is forked from its copy before rewinding.
     turn = %{
       cwd: plan.cwd,
@@ -325,7 +346,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
+    state = %{state | conn: nil}
     state = if state.turn, do: end_turn(state, "failed", "Codex exited unexpectedly"), else: state
+    # Its terminals went with it.
+    state = end_background(state, "failed")
     # The native thread was loaded in that app-server; the next one resumes it.
     {:noreply, %{state | conn: nil, native_thread_id: nil}}
   end
@@ -333,8 +357,25 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
   def handle_info(_other, state), do: {:noreply, state}
 
+  # The app-server, and the terminals it runs, stop with this process: released when
+  # idle, or stopped with its thread. Its writes may fail when the node itself is
+  # stopping; the next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
-  def code_change(_old, state, _extra), do: {:ok, %{state | v: @state_version}}
+  def terminate(_reason, state) do
+    end_background(%{state | conn: nil}, "interrupted")
+    :ok
+  catch
+    _, _ -> :ok
+  end
+
+  @impl true
+  def code_change(_old, state, _extra),
+    do:
+      {:ok,
+       state
+       |> Map.put_new(:running, %{})
+       |> Map.put_new(:background, %{})
+       |> Map.put(:v, @state_version)}
 
   # The message, with where its files are, and its images inline.
   defp codex_input(turn) do
@@ -666,7 +707,27 @@ defmodule HalC2.Codex.ThreadRuntime do
       else: state
   end
 
+  # A background command ended, between turns or during a later one. Its output
+  # meanwhile is not streamed: the end carries it whole.
+  defp notification("item/completed", %{"item" => %{"id" => native} = item}, state)
+       when is_map_key(state.background, native),
+       do: background_done(state, native, item)
+
+  defp notification("item/commandExecution/outputDelta", %{"itemId" => native}, state)
+       when is_map_key(state.background, native),
+       do: state
+
   defp notification(_method, _params, %{turn: nil} = state), do: state
+
+  # Another turn's item that is not running any more (a command stopped with its
+  # turn, say) is not this turn's.
+  defp notification(
+         "item/" <> _,
+         %{"threadId" => thread, "turnId" => turn_id},
+         %{native_thread_id: thread, turn: %{native_turn_id: current}} = state
+       )
+       when turn_id != current,
+       do: state
 
   defp notification(
          "item/started",
@@ -678,6 +739,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification("item/started", %{"item" => %{"type" => "commandExecution"} = item}, state) do
     state
     |> ensure_item(item["id"], :command, %{"input" => item["command"] || "", "output" => ""})
+    |> then(&%{&1 | running: Map.put(&1.running, item["id"], item["processId"])})
   end
 
   # Plan mode's proposed plan streams as its own item.
@@ -770,7 +832,20 @@ defmodule HalC2.Codex.ThreadRuntime do
     state =
       Enum.reduce(Map.keys(state.requests), state, &resolve_request(&2, &1, nil, "cancelled"))
 
-    # Items the provider left running end with the turn, as with Claude and ACP.
+    # A completed turn's commands still running go on in the background; an
+    # interrupted or failed turn stops them, and an interrupt everything else too.
+    # Other items the provider left running end with the turn, as with Claude and ACP.
+    state =
+      case status do
+        "completed" ->
+          to_background(state)
+
+        _ ->
+          for {_native, process} <- state.running, do: terminate_terminal(state, process)
+          state = %{state | running: %{}}
+          if status == "interrupted", do: end_background(state, status), else: state
+      end
+
     state = close_open_items(state, status)
     finish(state, status, failure)
     %{state | turn: nil, items: %{}, requests: %{}}
@@ -851,6 +926,91 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  defp command_status(%{"status" => "failed"}), do: "failed"
+  defp command_status(%{"status" => "declined"}), do: "cancelled"
+  defp command_status(_item), do: "completed"
+
+  defp command_result(entity, item) do
+    entity
+    |> Map.put("output", item["aggregatedOutput"] || entity["output"] || "")
+    |> then(
+      &if(is_integer(item["exitCode"]), do: Map.put(&1, "exitCode", item["exitCode"]), else: &1)
+    )
+  end
+
+  # --- background commands ---------------------------------------------------------
+
+  # The completed turn's commands still running move out of its items, so the turn's
+  # end does not close them.
+  defp to_background(state) do
+    background =
+      for {native, process} <- state.running,
+          item = state.items[native],
+          into: state.background,
+          do: {native, %{item: item, process: process}}
+
+    %{
+      state
+      | background: background,
+        items: Map.drop(state.items, Map.keys(state.running)),
+        running: %{}
+    }
+  end
+
+  defp background_done(state, native, item) do
+    {%{item: %{id: item_id, node: node_id}}, background} = Map.pop(state.background, native)
+    end_command(state, item_id, node_id, command_status(item), &command_result(&1, item))
+    %{state | background: background}
+  end
+
+  # Stops every background command, and ends its item as `status`.
+  defp end_background(state, status) do
+    for {_native, %{item: item, process: process}} <- state.background do
+      terminate_terminal(state, process)
+      end_command(state, item.id, item.node, status, & &1)
+    end
+
+    %{state | background: %{}}
+  end
+
+  defp end_command(state, item_id, node_id, status, fun) do
+    at = Entities.now()
+    done = %{"status" => status, "completedAt" => at}
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(
+          stream,
+          "turn-item",
+          item_id,
+          &(fun.(&1) |> Map.merge(Map.put(done, "updatedAt", at)))
+        ),
+        Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
+      ]
+    end)
+  end
+
+  # Codex keeps a unified exec process running when its turn is interrupted; this
+  # stops it. Without the app-server there is nothing to ask (its terminals went with
+  # it), and a command outside unified exec has no process to name.
+  defp terminate_terminal(%{conn: conn} = state, process)
+       when conn != nil and process != nil do
+    params = %{"threadId" => state.native_thread_id, "processId" => process}
+
+    case Connection.call(conn, "thread/backgroundTerminals/terminate", params, 10_000) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("codex terminal #{process} not terminated: #{inspect(reason)}")
+    end
+  catch
+    :exit, reason ->
+      Logger.warning("codex terminal #{process} not terminated: #{inspect(reason)}")
+  end
+
+  defp terminate_terminal(_state, _process), do: :ok
+
   defp complete_item(state, %{"type" => "agentMessage", "id" => native} = item) do
     finish_item(state, native, "completed", fn entity ->
       Map.merge(entity, %{"text" => item["text"] || entity["text"], "streaming" => false})
@@ -870,22 +1030,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp complete_item(state, %{"type" => "commandExecution", "id" => native} = item) do
-    status =
-      case item["status"] do
-        "failed" -> "failed"
-        "declined" -> "cancelled"
-        _ -> "completed"
-      end
-
-    state
+    %{state | running: Map.delete(state.running, native)}
     |> ensure_item(native, :command, %{"input" => item["command"] || "", "output" => ""})
-    |> finish_item(native, status, fn entity ->
-      entity
-      |> Map.put("output", item["aggregatedOutput"] || entity["output"] || "")
-      |> then(
-        &if(is_integer(item["exitCode"]), do: Map.put(&1, "exitCode", item["exitCode"]), else: &1)
-      )
-    end)
+    |> finish_item(native, command_status(item), &command_result(&1, item))
   end
 
   defp complete_item(state, %{"type" => "fileChange", "id" => native, "changes" => [change | _]}) do

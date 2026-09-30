@@ -12,6 +12,11 @@
 class ShellBridge;
 class ThemeStore;
 
+// Runs after the QGuiApplication exists and before any window. Without a
+// display (the offscreen platform) Qt Quick can only draw with its software
+// renderer, so grabs and --screenshot need it chosen explicitly.
+void useSoftwareRenderingWithoutDisplay();
+
 // Owns one QML engine: resolves which shell.qml to load (user
 // config dir first, built-in default otherwise), watches the QML sources it
 // loaded from disk, and replaces its root objects when they change. A broken
@@ -46,6 +51,10 @@ public:
 
   void start();
   Q_INVOKABLE void reload();
+  // The window the loaded shell shows.
+  QQuickWindow* window() const { return rootWindow(); }
+  // Shows the window again after the user closed it, in front.
+  void show();
   // Grabs the current root window into a PNG; used by --screenshot and
   // available to bricks for the same purpose.
   Q_INVOKABLE bool captureWindow(const QString& path);
@@ -56,6 +65,10 @@ public:
 
 signals:
   void generationChanged();
+  // The user closed the window (not a reload replacing it).
+  void closed();
+  // The window became the active one.
+  void activated();
 
 private:
   bool loadGeneration(const QUrl& rootUrl, QString* errorOut);

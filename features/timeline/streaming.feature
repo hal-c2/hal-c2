@@ -6,10 +6,14 @@
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Thinking, Thought, Working for, turn folds, Show full message)
 #   apps/web/src/components/chat/MessagesTimeline.logic.ts
 #   apps/web/src/components/chat/MessageCopyButton.tsx
+#   apps/web/src/timestampFormat.ts (formatDayAwareTimestamp, formatChatTimestampTooltip)
 #   apps/tui/src/timeline.ts (Worked for, You stopped after, running turn stays expanded)
 #   apps/tui/src/orchestrationV2Adapter.ts (Thinking)
 #   apps/tui/src/components/MessagesTimeline.tsx
 #   apps/tui/src/components/WorkingIndicator.tsx
+#   apps/server-ex/lib/hal_c2/web/socket.ex (stream snapshot after a reconnect, resync, unknown node)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (stream shape by environment, through a link)
+#   apps/desktop-qt/src/native/ThreadStore.cpp (reload, retrying a thread its node stopped sending)
 
 Feature: Streaming the agent's reply
   While a turn runs, the agent's text and reasoning arrive as they are written. When the
@@ -34,7 +38,7 @@ Feature: Streaming the agent's reply
     And tool calls and plans still appear as they happen
 
   # TUI: implemented in apps/tui/src/orchestrationV2Adapter.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: Reasoning shows while it is written and stays readable afterwards
     Given the agent is reasoning before it answers
     When the reasoning is <state>
@@ -46,14 +50,14 @@ Feature: Streaming the agent's reply
       | finished  | Thought  |
 
   # TUI: implemented in apps/tui/src/components/WorkingIndicator.tsx
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A running turn shows how long the agent has been working
     When the agent has been working for 12 seconds
     Then the thread says the agent is working
     And the elapsed time keeps counting
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A finished turn folds its work behind how long it took
     Given the agent ran four tool calls and then answered
     When the turn completes after 2 minutes
@@ -61,7 +65,7 @@ Feature: Streaming the agent's reply
     And the answer stays visible
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A folded turn can be opened and closed again
     Given a finished turn is folded behind "Worked for 2m"
     When the user opens the folded work
@@ -70,7 +74,7 @@ Feature: Streaming the agent's reply
     Then the tool calls fold away
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A stopped turn says who stopped it
     Given the user interrupted a turn <when>
     When the turn settles
@@ -96,8 +100,91 @@ Feature: Streaming the agent's reply
     When the user shows less
     Then the message returns to its preview
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user copies an assistant reply
     Given the agent has answered
     When the user copies the reply
     Then the reply's markdown is on the clipboard
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: Only a turn's last reply carries its time and actions
+    Given the agent commented, ran a tool call and then answered
+    Then neither message shows its time and actions while the agent works
+    When the turn completes after 2 minutes
+    And the user opens the folded work
+    Then only the answer shows its time and actions
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario Outline: A message says when it was sent, in the time format the user chose
+    Given this device's "timestampFormat" is set to "<format>"
+    When the user sent a message today at 9:05 in the morning
+    Then the message is stamped "<stamp>"
+
+    Examples:
+      | format  | stamp   |
+      | locale  | 9:05 AM |
+      | 12-hour | 9:05 AM |
+      | 24-hour | 09:05   |
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario Outline: A message from an earlier day also says which day it was sent
+    When the user sent a message <when> at 9:05 in the morning
+    Then the message is stamped "<stamp>"
+    And its full time reads "<full>"
+
+    Examples:
+      | when                 | stamp                | full                              |
+      | yesterday            | yesterday at 9:05 AM | 9:05 AM, 22nd September 2026      |
+      | on September 20      | 9/20 9:05 AM         | 9:05 AM, 20th September 2026      |
+      | on December 30, 2025 | 12/30/2025 9:05 AM   | 9:05 AM, 30th December 2025       |
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A reply that finishes while the connection is down is caught up
+    Given the agent is writing a reply
+    And the node drops the connection
+    When the agent finishes the reply while the shell is disconnected
+    And the shell reconnects to the node
+    Then the whole reply is shown
+    And the rows shown before are kept
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A thread that falls behind is caught up from the node
+    Given the agent is writing a reply
+    When the agent writes more than the shell has read
+    And the node tells the shell to resync the thread
+    Then the whole reply is shown
+    And the rows shown before are kept
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A thread whose node leaves the cluster says so until the node returns
+    Given the user is looking at a thread on another node of the cluster
+    And the agent has answered "Use the tax table."
+    When that node leaves the cluster
+    Then the thread says its node cannot be reached
+    And the answer "Use the tax table." is still shown
+    When that node rejoins the cluster
+    Then the thread follows its node again
+    And the answer "Use the tax table." is still shown
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A thread on an environment the node is linked to says so while the link is down
+    Given the user is looking at a thread on an environment the node is linked to
+    And the agent has answered "Deploy when green."
+    When that environment becomes unreachable
+    Then the thread says its node cannot be reached
+    And the answer "Deploy when green." is still shown
+    When that environment is reachable again
+    Then the thread follows its node again
+    And the answer "Deploy when green." is still shown
+
+  @desktop
+  Scenario: Retrying follows the thread again once its node sends it
+    Given the agent has answered "The cart has tax."
+    When the node stops sending the thread
+    Then the thread says its node cannot be reached
+    When the user retries the thread
+    Then the thread is still unreachable
+    When the node can send the thread again
+    And the user retries the thread
+    Then the thread follows its node again
+    And the answer "The cart has tax." is still shown

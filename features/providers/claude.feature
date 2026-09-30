@@ -86,6 +86,13 @@ Feature: Claude
     When the user sends a follow-up message
     Then Claude receives the message during the running turn
 
+  Scenario: Work Claude does by itself between turns is a run of its own
+    Given a Claude turn has finished
+    When Claude answers a finished background task by itself
+    Then the thread shows a running run that Claude started, with Claude's answer
+    When Claude finishes that work
+    Then that run completes and the user's run stays completed
+
   Scenario: Claude's proposed plan becomes a plan the user can implement
     Given the thread is in plan mode on Claude
     When Claude finishes planning

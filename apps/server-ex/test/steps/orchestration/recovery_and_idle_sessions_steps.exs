@@ -278,6 +278,285 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     )
   end
 
+  # The fake Claude starts both on "in the background" (`test/support/fake_claude.py`);
+  # what it reports after the turn is sent to the thread's runtime as if it came from
+  # the CLI.
+  step "thread {string} left a Claude subagent and a command running in the background",
+       %{args: [thread]} = context do
+    background_turn(context, thread)
+  end
+
+  step "thread {string} had a Claude subagent and a command running in the background when the node stopped",
+       %{args: [thread]} = context do
+    context = background_turn(context, thread)
+    # Killed outright, as the node's stop leaves no time to end the work.
+    Process.exit(context.runtime, :kill)
+    assert_receive {:DOWN, _, :process, _, :killed}
+    assert length(World.row(context, thread)["pendingBackgroundTasks"]) == 2
+    context
+  end
+
+  step "thread {string} finished a Claude turn", %{args: [thread]} = context do
+    context = context |> World.providers() |> World.named_thread(thread)
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+    context = World.dispatch_message(context, thread, "Hi", claude)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_run(context, thread, &(&1["status"] == "completed"))
+    pid = runtime(context, thread)
+    Process.monitor(pid)
+    Map.put(context, :runtime, pid)
+  end
+
+  # The turn a task notification wakes Claude for, which the node did not run.
+  step "Claude launches a subagent in the background between turns", context do
+    claude_says(context, context.thread, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-wake",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "agent-wake",
+            "name" => "Agent",
+            "input" => %{"description" => "Check the tests", "run_in_background" => true}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, context.thread, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-wake",
+      "tool_use_id" => "agent-wake",
+      "description" => "Check the tests",
+      "task_type" => "local_agent",
+      "is_backgrounded" => true
+    })
+
+    # The launch was a turn of Claude's own; it ends with its result.
+    claude_says(context, context.thread, %{"type" => "result", "subtype" => "success"})
+    await_background(context)
+  end
+
+  # A subagent resumed through SendMessage, or one started before the node recorded them.
+  step "Claude reports progress on a subagent it resumed between turns", context do
+    claude_says(context, context.thread, %{
+      "type" => "system",
+      "subtype" => "task_progress",
+      "task_id" => "task-wake",
+      "tool_use_id" => "agent-wake",
+      "description" => "Check the tests",
+      "summary" => "Running mix test"
+    })
+
+    await_background(context)
+  end
+
+  step "{string} lists the subagent {string} as background work",
+       %{args: [thread, title]} = context do
+    assert [%{"taskType" => "subagent", "description" => ^title}] =
+             World.row(context, thread)["pendingBackgroundTasks"]
+
+    context
+  end
+
+  step "Claude reports that subagent completed", context do
+    claude_says(
+      context,
+      context.thread,
+      notification("task-wake", "agent-wake", "completed", "All green")
+    )
+
+    context
+  end
+
+  step "{string} has had no activity for {int} minutes", %{args: [thread, minutes]} = context do
+    backdate(context, thread, minutes)
+  end
+
+  step "{string} lists the subagent and the command as background work",
+       %{args: [thread]} = context do
+    assert [
+             %{
+               "taskId" => "agent-2",
+               "taskType" => "subagent",
+               "description" => "Survey the repo"
+             },
+             %{
+               "taskId" => "bash-2",
+               "taskType" => "command_execution",
+               "description" => "npm run build"
+             }
+           ] = Enum.sort_by(World.row(context, thread)["pendingBackgroundTasks"], & &1["taskId"])
+
+    context
+  end
+
+  step "{string} lists no background work", %{args: [thread]} = context do
+    World.await_row(World.thread_id(context, thread), &(&1["pendingBackgroundTasks"] == []))
+    context
+  end
+
+  step ~r/^Claude reports the subagent completed with "(?<summary>[^"]+)" and the command stopped$/,
+       %{args: [summary]} = context do
+    claude_says(
+      context,
+      context.thread,
+      notification("task-agent-2", "agent-2", "completed", summary)
+    )
+
+    claude_says(
+      context,
+      context.thread,
+      notification("task-bash-2", "bash-2", "stopped", "Stopped")
+    )
+
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(&1["pendingBackgroundTasks"] == [])
+    )
+
+    context
+  end
+
+  step "the subagent of {string} is completed with {string}",
+       %{args: [thread, summary]} = context do
+    assert [%{"status" => "completed", "result" => ^summary, "origin" => "provider_native"}] =
+             World.entities(context, thread, "subagent")
+
+    context
+  end
+
+  step "the user rewinds {string} to its first run", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    scope = HalC2.Checkpoint.scope_id(id)
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "checkpoint.rollback",
+        "threadId" => id,
+        "scopeId" => scope,
+        "checkpointId" => HalC2.Checkpoint.checkpoint_id(scope, 1),
+        "restoreFiles" => false
+      })
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the subagent and the command of {string} are interrupted", %{args: [thread]} = context do
+    World.await_state(context, thread, fn state ->
+      items = Map.values(state.entities["turn-item"] || %{})
+
+      Enum.map(Map.values(state.entities["subagent"] || %{}), & &1["status"]) == ["interrupted"] and
+        Enum.sort(
+          for(
+            item <- items,
+            item["type"] in ["subagent", "command_execution"],
+            item["nativeItemRef"]["nativeId"] in ["agent-2", "bash-2"],
+            do: item["status"]
+          )
+        ) == ["interrupted", "interrupted"]
+    end)
+
+    context
+  end
+
+  # The fake Codex leaves "npm run dev" (cmd-bg, process 4275) running on "in the
+  # background" (`test/support/fake_codex.py`); its exit is sent to the thread's runtime
+  # as if the app-server reported it.
+  step "thread {string} left a Codex command running in the background",
+       %{args: [thread]} = context do
+    context = idle_turn(context, thread)
+    context = World.dispatch_message(context, thread, "Start the dev server in the background")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_run(context, thread, &(&1["ordinal"] == 2 and &1["status"] == "completed"))
+    await_background(context)
+  end
+
+  step "thread {string} has a Codex turn running a command in a terminal",
+       %{args: [thread]} = context do
+    context =
+      context |> World.providers() |> World.named_thread(thread) |> Map.put(:thread, thread)
+
+    context =
+      World.dispatch_message(context, thread, "Start the dev server in the background and wait")
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["turn-item"] || %{}),
+        &(&1["type"] == "command_execution")
+      )
+    end)
+
+    context
+  end
+
+  step "{string} lists the command {string} as background work",
+       %{args: [thread, command]} = context do
+    assert [%{"taskType" => "command_execution", "description" => ^command}] =
+             World.row(context, thread)["pendingBackgroundTasks"]
+
+    context
+  end
+
+  step "Codex reports the command exited with {string}", %{args: [output]} = context do
+    World.codex_notify(context, context.thread, "item/completed", %{
+      "threadId" => "native-thread-1",
+      "turnId" => "native-turn-2",
+      "item" => %{
+        "type" => "commandExecution",
+        "id" => "cmd-bg",
+        "command" => "npm run dev",
+        "status" => "completed",
+        "aggregatedOutput" => output,
+        "exitCode" => 0
+      }
+    })
+
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(&1["pendingBackgroundTasks"] == [])
+    )
+
+    context
+  end
+
+  step "the Codex process of {string} exits", %{args: [thread]} = context do
+    {_pid, state} = World.codex_runtime(context, thread)
+    Process.exit(state.conn, :kill)
+    context
+  end
+
+  step ~r/^the command of "(?<thread>[^"]+)" is (?<status>completed with "[^"]+"|interrupted|failed)$/,
+       %{args: [thread, status]} = context do
+    {status, output} =
+      case Regex.run(~r/^completed with "(.+)"$/, status) do
+        [_, output] -> {"completed", output}
+        nil -> {status, nil}
+      end
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["turn-item"] || %{}),
+        &(&1["nativeItemRef"]["nativeId"] == "cmd-bg" and &1["status"] == status and
+            (output == nil or &1["output"] == output))
+      )
+    end)
+
+    context
+  end
+
+  step "Codex is asked to terminate the command's terminal", context do
+    assert [%{"processId" => "4275"}] =
+             World.codex_requests(context, "thread/backgroundTerminals/terminate")
+
+    context
+  end
+
   step "{string} has an active run", %{args: [thread]} = context do
     at = World.iso_from_now(-120 * 60_000)
 
@@ -359,8 +638,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   step "the provider process of {string} keeps running", %{args: [thread]} = context do
     refute World.thread_id(context, thread) in context.released
     assert Process.alive?(context.runtime)
-    assert [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, thread))
-    assert pid == context.runtime
+    assert runtime(context, thread) == context.runtime
     context
   end
 
@@ -514,6 +792,56 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     Map.put(context, :runtime, pid)
   end
 
+  # Two turns on the fake Claude: "Hi", then one that leaves a subagent (agent-2) and a
+  # command (bash-2) running in the background.
+  defp background_turn(context, thread) do
+    context = context |> World.providers() |> World.named_thread(thread)
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+
+    context =
+      for {text, n} <- [{"Hi", 1}, {"Work in the background", 2}], reduce: context do
+        context ->
+          context = World.dispatch_message(context, thread, text, claude)
+          assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+          World.await_run(context, thread, &(&1["ordinal"] == n and &1["status"] == "completed"))
+          context
+      end
+
+    World.await_row(
+      World.thread_id(context, thread),
+      &(length(&1["pendingBackgroundTasks"] || []) == 2)
+    )
+
+    pid = runtime(context, thread)
+    Process.monitor(pid)
+    Map.put(context, :runtime, pid)
+  end
+
+  defp await_background(context) do
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(length(&1["pendingBackgroundTasks"] || []) == 1)
+    )
+
+    context
+  end
+
+  defp claude_says(context, thread, message) do
+    pid = runtime(context, thread)
+    send(pid, {:claude, :sys.get_state(pid).session, {:message, message}})
+  end
+
+  defp notification(task_id, tool_id, status, summary),
+    do: %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => task_id,
+      "tool_use_id" => tool_id,
+      "status" => status,
+      "output_file" => "/tmp/#{task_id}.output",
+      "summary" => summary
+    }
+
   # Moves every activity timestamp of the thread `minutes` into the past.
   defp backdate(context, thread, minutes) do
     at = World.iso_from_now(-minutes * 60_000)
@@ -552,6 +880,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     pid = context.runtime
     assert_receive {:DOWN, _, :process, ^pid, _}
     assert Registry.lookup(HalC2.Codex.Registry, id) == []
+    assert Registry.lookup(HalC2.Claude.Registry, id) == []
     context
   end
 

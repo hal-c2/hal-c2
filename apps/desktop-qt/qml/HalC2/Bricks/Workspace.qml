@@ -5,7 +5,7 @@ import HalC2.Shell
 
 // The header strip: project / thread breadcrumb on the left, the run, open
 // and git pills on the right, from Shell.state.workspace. Checkout mode and
-// branch live under the Composer, as in the page.
+// branch live under the Composer, as in the web app.
 Rectangle {
     id: strip
 
@@ -26,8 +26,10 @@ Rectangle {
     // toggle; true shows it in the sidebar's place.
     property var sidebarToggle: null
     // Same for the right panel: null hides the toggle, otherwise whether the
-    // panel is open. The page's header keeps this button next to the pills.
+    // panel is open. The web app's header keeps this button next to the pills.
     property var panelToggle: null
+    // Whether the thread details column shows, or null away from a thread.
+    property var detailsToggle: null
     // The window, for a frameless shell: the strip is its drag handle and
     // carries the window buttons.
     property Window window: null
@@ -53,6 +55,7 @@ Rectangle {
     }
 
     TapHandler {
+        objectName: "titleTap"
         enabled: strip.framelessChrome
         onDoubleTapped: strip.window.visibility === Window.Maximized ? strip.window.showNormal() : strip.window.showMaximized()
     }
@@ -249,10 +252,24 @@ Rectangle {
                     }
                 }
             }
+
+            // The thread's environment is unreachable; the header stays, and
+            // says so until the environment comes back.
+            Text {
+                objectName: "offlineLabel"
+                visible: strip.ready && strip.model.offline === true
+                text: qsTr("Offline")
+                color: strip.muted
+                font.pixelSize: 12
+                font.weight: Font.Medium
+                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                Layout.alignment: Qt.AlignVCenter
+            }
         }
 
         ShellSplitButton {
             id: scriptsPill
+            objectName: "runActionButton"
 
             visible: strip.ready && strip.model.scripts.length > 0
             compact: strip.compact
@@ -290,6 +307,7 @@ Rectangle {
         }
 
         ShellSplitButton {
+            objectName: "openEditorButton"
             visible: strip.ready && strip.model.editors.length > 0
             compact: strip.compact
             iconName: "external-link"
@@ -327,7 +345,7 @@ Rectangle {
         }
 
         // The terminal drawer's toggle is the strip's, next to the panel's,
-        // as in the page's header.
+        // as in the web app's header.
         ShellButton {
             visible: Terminals.available
             subtle: true
@@ -339,6 +357,19 @@ Rectangle {
             objectName: "terminalToggle"
             Accessible.name: Terminals.open ? qsTr("Hide terminal") : qsTr("Show terminal")
             onClicked: Shell.dispatch("terminal.toggle")
+        }
+
+        ShellButton {
+            objectName: "threadDetailsToggle"
+            visible: strip.detailsToggle !== null
+            subtle: true
+            implicitHeight: 28
+            iconName: "info"
+            iconSize: 16
+            iconTint: strip.detailsToggle === true ? strip.foreground : strip.iconMuted
+            Layout.leftMargin: 4
+            Accessible.name: strip.detailsToggle === true ? qsTr("Hide thread details") : qsTr("Show thread details")
+            onClicked: Shell.dispatch("threadPanel.toggle")
         }
 
         ShellButton {
@@ -354,6 +385,7 @@ Rectangle {
         }
 
         WindowControls {
+            objectName: "windowControls"
             visible: strip.framelessChrome && Qt.platform.os !== "osx"
             window: strip.window
             buttonWidth: 32
