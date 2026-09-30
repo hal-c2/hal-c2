@@ -524,7 +524,12 @@ defmodule HalC2.Steps.Parity.Fixtures do
          }, context}
 
       "previewAutomation.focusHost" ->
-        {%{"threadId" => f.thread}, context}
+        {%{
+           "clientId" => "hal-c2-none",
+           "environmentId" => context.node.environment,
+           "connectionId" => "hal-c2-none",
+           "focused" => true
+         }, context}
 
       "device.list" ->
         {%{"inspectOnly" => true}, context}
