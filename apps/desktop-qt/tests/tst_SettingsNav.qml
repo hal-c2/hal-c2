@@ -123,7 +123,7 @@ Item {
         function type(nav, text) {
             const search = findChild(nav, "search");
             search.forceActiveFocus();
-            for (const char of text) keyClick(char === " " ? Qt.Key_Space : char.toUpperCase().charCodeAt(0));
+            for (const ch of text) keyClick(ch === " " ? Qt.Key_Space : ch.toUpperCase().charCodeAt(0));
             return search;
         }
         function row(nav, index) {

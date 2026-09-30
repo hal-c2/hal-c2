@@ -33,9 +33,9 @@ Rectangle {
             state = Math.imul(state, 0x01000193);
         }
         let result = "";
-        for (const char of value) {
-            if (char === "@" || char === "." || char === "-" || char === "_") {
-                result += char;
+        for (const ch of value) {
+            if (ch === "@" || ch === "." || ch === "-" || ch === "_") {
+                result += ch;
                 continue;
             }
             state = Math.imul(state ^ (state >>> 13), 0x85ebca6b);
