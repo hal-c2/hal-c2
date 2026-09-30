@@ -256,6 +256,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/drafting-and-sending.feature:Sending while disconnected*"),
     QStringLiteral("composer/drafting-and-sending.feature:A send the node rejects*"),
     QStringLiteral("composer/sending-turns.feature"),
+    QStringLiteral("composer/editors-and-keys.feature"),
     QStringLiteral("composer/drafting-and-sending.feature:A background prompt*"),
     QStringLiteral("composer/model-and-mode.feature:The user switches the model*"),
     QStringLiteral("composer/model-and-mode.feature:Models from unavailable providers*"),

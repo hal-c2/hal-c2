@@ -13,6 +13,9 @@ Rectangle {
 
     readonly property var model: Shell.state.composer ?? null
     readonly property var workspace: Shell.state.workspace ?? null
+    // This machine's stashed prompts (ComposerController), newest first.
+    readonly property var stashEntries: Shell.state.composerStash?.entries ?? []
+    readonly property bool stashOpen: ready && Shell.state.composerStash?.open === true
     readonly property var attachments: ready ? model.attachments : []
     readonly property bool ready: model !== null && model.target !== null
     readonly property string publishedTarget: ready ? model.target : ""
@@ -85,6 +88,10 @@ Rectangle {
                 }
             } else if (action === "composer.control.open") {
                 composer.openControl(payload.command);
+            } else if (action === "composer.stash.key" && composer.ready) {
+                // The stash takes the text as typed, not as last debounced.
+                composer.flushText();
+                Shell.dispatch("composer.stash");
             } else if (action === "composer.focus") {
                 // A dismissed command palette hands the keyboard back.
                 composer.focusInput();
@@ -172,6 +179,13 @@ Rectangle {
                 cursor: input.cursorPosition
             });
         }
+    }
+
+    function restoreStash(id) {
+        composer.flushText();
+        Shell.dispatch("composer.stash.restore", {
+            id: id
+        });
     }
 
     function selectSuggestion(index) {
@@ -368,6 +382,146 @@ Rectangle {
             }
         }
 
+        // The stash (composer.stash), on the card's top edge like the
+        // suggestions: a row restores its prompt, its cross deletes it.
+        Rectangle {
+            objectName: "stashList"
+            Layout.fillWidth: true
+            Layout.leftMargin: 22
+            Layout.rightMargin: 22
+            visible: composer.stashOpen && !composer.suggesting
+            implicitHeight: visible ? stashHeader.height + Math.min(Math.max(stashList.contentHeight, 34), 240) + 8 : 0
+            topLeftRadius: 16
+            topRightRadius: 16
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: composer.outline
+            border.width: 1
+
+            RowLayout {
+                id: stashHeader
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 4
+                height: 30
+                spacing: 8
+
+                ShellIcon {
+                    Layout.leftMargin: 8
+                    name: "bookmark"
+                    size: 14
+                    color: composer.muted
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("Stash")
+                    color: composer.muted
+                    font.pixelSize: 12
+                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                }
+
+                Text {
+                    text: composer.stashEntries.length
+                    color: composer.muted
+                    font.pixelSize: 12
+                }
+
+                ShellButton {
+                    objectName: "stashClose"
+                    subtle: true
+                    iconName: "x"
+                    iconSize: 14
+                    implicitHeight: 24
+                    Accessible.name: qsTr("Close stash")
+                    onClicked: Shell.dispatch("composer.stash.menu", { open: false })
+                }
+            }
+
+            ListView {
+                id: stashList
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: stashHeader.bottom
+                anchors.bottom: parent.bottom
+                anchors.margins: 4
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: composer.stashEntries
+                highlightMoveDuration: 0
+                currentIndex: count > 0 ? 0 : -1
+
+                delegate: Rectangle {
+                    id: stashRow
+
+                    required property var modelData
+                    required property int index
+
+                    objectName: "stashEntry-" + index
+                    width: ListView.view.width
+                    height: 34
+                    radius: 10
+                    color: ListView.isCurrentItem ? Theme.palette.color("accentSurface", "#2a2a30") : "transparent"
+
+                    HoverHandler {
+                        onHoveredChanged: if (hovered) stashList.currentIndex = stashRow.index
+                    }
+
+                    TapHandler {
+                        onTapped: composer.restoreStash(stashRow.modelData.id)
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 4
+                        spacing: 8
+
+                        ShellIcon {
+                            name: "file-text"
+                            size: 14
+                            color: composer.muted
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: stashRow.modelData.snippet
+                            color: composer.foreground
+                            font.pixelSize: 12
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                            elide: Text.ElideRight
+                            Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
+                        }
+
+                        ShellButton {
+                            objectName: "stashDelete-" + stashRow.index
+                            subtle: true
+                            iconName: "x"
+                            iconSize: 14
+                            implicitHeight: 24
+                            Accessible.name: qsTr("Delete stashed prompt")
+                            onClicked: Shell.dispatch("composer.stash.delete", { id: stashRow.modelData.id })
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: stashList.count === 0
+                    width: parent.width - 24
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                    text: (Shell.state.composerStash?.shortcut ?? "") !== ""
+                        ? qsTr("Nothing stashed yet. Press %1 with a prompt in the composer to stash it.").arg(Shell.state.composerStash.shortcut)
+                        : qsTr("Nothing stashed yet.")
+                    color: composer.muted
+                    font.pixelSize: 12
+                }
+            }
+        }
+
         // The glass card.
         Rectangle {
             id: card
@@ -531,6 +685,20 @@ Rectangle {
                                     }
                                 }
                             }
+                            // The stash list, open above the card: arrows pick,
+                            // Enter restores, mod+Backspace deletes, Escape closes.
+                            if (composer.stashOpen && !composer.suggesting) {
+                                const entry = composer.stashEntries[stashList.currentIndex] ?? null;
+                                const mod = event.modifiers & (Qt.ControlModifier | Qt.MetaModifier);
+                                event.accepted = true;
+                                if (event.key === Qt.Key_Escape) Shell.dispatch("composer.stash.menu", { open: false });
+                                else if (event.key === Qt.Key_Down && !mod) stashList.incrementCurrentIndex();
+                                else if (event.key === Qt.Key_Up && !mod) stashList.decrementCurrentIndex();
+                                else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !mod && entry) composer.restoreStash(entry.id);
+                                else if (event.key === Qt.Key_Backspace && mod && entry) Shell.dispatch("composer.stash.delete", { id: entry.id });
+                                else event.accepted = false;
+                                if (event.accepted) return;
+                            }
                             if (event.key === Qt.Key_Backtab) {
                                 event.accepted = composer.toggleInteractionMode();
                                 return;
@@ -653,6 +821,20 @@ Rectangle {
 
                     Item {
                         Layout.fillWidth: true
+                    }
+
+                    // The stash's count, which opens and closes its list.
+                    ShellButton {
+                        objectName: "stashBadge"
+                        visible: composer.ready && composer.stashEntries.length > 0
+                        subtle: true
+                        iconName: "bookmark"
+                        iconSize: 14
+                        iconTint: composer.iconMuted
+                        text: composer.stashEntries.length
+                        font.pixelSize: 12
+                        Accessible.name: qsTr("Stashed prompts: %1. Open stash.").arg(composer.stashEntries.length)
+                        onClicked: Shell.dispatch("composer.stash.menu")
                     }
 
                     // Approvals and the plan's Implement live in TurnRequests above.

@@ -97,7 +97,7 @@ void KeybindingController::activate() {
 }
 
 // The commands the shell has natively. A command no one registers (the
-// preview's, composer.stash, composer.previousWorktree) does nothing.
+// in-app browser's preview keys) does nothing.
 void KeybindingController::registerCommands() {
   auto* shell = NativeShell::of(this);
   auto* navigation = shell->controller<NavigationController>();
@@ -128,6 +128,8 @@ void KeybindingController::registerCommands() {
   // The composer brick edits the last queued message when its caret is at
   // the start, and moves the caret there otherwise.
   add(QStringLiteral("thread.editQueuedMessage"), [this] { m_bridge->sendToPage(QStringLiteral("composer.queue.editLast")); });
+  // The composer brick hands the stash its latest text first.
+  add(QStringLiteral("composer.stash"), [this] { m_bridge->sendToPage(QStringLiteral("composer.stash.key")); });
   // The composer brick opens its own pickers.
   add(QStringLiteral("modelPicker.toggle"), [this] { m_bridge->sendToPage(QStringLiteral("composer.modelPicker.toggle")); });
   for (const QString& command : {QStringLiteral("composer.effort"), QStringLiteral("composer.mode"),
