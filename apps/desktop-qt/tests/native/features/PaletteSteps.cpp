@@ -195,7 +195,7 @@ QString addThread(World& world, const QString& title, QJsonObject row = {}, cons
     world.node.sendLinkRow(environment, id, row);
     key = environment + QLatin1Char(':') + id;
   } else if (!peer.isEmpty()) {
-    world.node.sendRows(peer, QJsonArray{QJsonArray{id, QStringLiteral("thread"), row}});
+    world.node.sendRows(peer, QJsonArray{QJsonValue(QJsonArray{id, QStringLiteral("thread"), row})});
     key = stream::kPeerEnvironment + QLatin1Char(':') + id;
   } else {
     world.node.threads.insert(id, row);
