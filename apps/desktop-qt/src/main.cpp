@@ -7,12 +7,10 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QQmlEngine>
-#include <QQuickWebEngineProfile>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QWindow>
 #include <QtLogging>
-#include <QtWebEngineQuick/qtwebenginequickglobal.h>
 
 #include "AlertController.h"
 #include "BackendProcess.h"
@@ -28,7 +26,6 @@
 #include "ShellWindows.h"
 #include "StoragePaths.h"
 #include "ThemeStore.h"
-#include "WebProfile.h"
 
 namespace {
 
@@ -86,12 +83,6 @@ int main(int argc, char* argv[]) {
   // Stable app id so compositor rules (blur, opacity, workspace) can target it.
   QGuiApplication::setDesktopFileName(QStringLiteral("hal-c2"));
 
-  // Chromium's classic scrollbars paint a thumb in the page's scrollbar
-  // gutters; overlay scrollbars match what the app expects from browsers.
-  if (!qEnvironmentVariableIsSet("QTWEBENGINE_CHROMIUM_FLAGS")) {
-    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--enable-features=OverlayScrollbar");
-  }
-  QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
   // Closing a window closes only it; the last one quits (NativeShell::lastWindowClosed).
   QGuiApplication::setQuitOnLastWindowClosed(false);
@@ -104,8 +95,7 @@ int main(int argc, char* argv[]) {
   parser.addVersionOption();
   const QCommandLineOption urlOption(
       QStringLiteral("url"),
-      QStringLiteral("Attach to the node this pairing link names instead of starting one; any other "
-                     "URL is loaded as it is."),
+      QStringLiteral("Attach to the node this pairing link names instead of starting one."),
       QStringLiteral("url"));
   const QCommandLineOption configDirOption(
       QStringLiteral("config-dir"),
@@ -134,16 +124,16 @@ int main(int argc, char* argv[]) {
       QStringLiteral("path"), resolveDefaultNodeExecutable());
   const QCommandLineOption screenshotOption(
       QStringLiteral("screenshot"),
-      QStringLiteral("Write a PNG of the window once the page has loaded, then quit."),
+      QStringLiteral("Write a PNG of the window once the node's first snapshot is in, then quit."),
       QStringLiteral("file"));
   const QCommandLineOption actionOption(
       QStringLiteral("action"),
-      QStringLiteral("Dispatch a shell action after the page loads, e.g. rightPanel.toggle. "
+      QStringLiteral("Dispatch a shell action once the node's first snapshot is in, e.g. rightPanel.toggle. "
                      "Repeatable; runs in order."),
       QStringLiteral("name[=json]"));
   const QCommandLineOption keyOption(
       QStringLiteral("key"),
-      QStringLiteral("Press a key chord after the page loads, e.g. Ctrl+1 (portable QKeySequence "
+      QStringLiteral("Press a key chord once the node's first snapshot is in, e.g. Ctrl+1 (portable QKeySequence "
                      "names). Repeatable; runs in command-line order together with --action."),
       QStringLiteral("chord"));
   parser.addOptions({urlOption, configDirOption, homeDirOption, qmlDirOption, hostEntryOption,
@@ -165,14 +155,6 @@ int main(int argc, char* argv[]) {
   if (!qmlSourceDir.isEmpty()) {
     qInfo().noquote() << "[shell] bricks from disk:" << qmlSourceDir;
   }
-
-  // Configured before any engine exists so the first page already lands on it.
-  WebProfile webProfile(QDir(storage.cache).filePath(QStringLiteral("shell-web")));
-  // Every window's engine shares the one profile (and its cookies).
-  qmlRegisterSingletonType<QQuickWebEngineProfile>("HalC2.Shell", 1, 0, "WebProfile", [&webProfile](QQmlEngine*, QJSEngine*) {
-    QQmlEngine::setObjectOwnership(webProfile.profile(), QQmlEngine::CppOwnership);
-    return webProfile.profile();
-  });
 
   ShellBridge bridge;
   bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));
@@ -244,18 +226,14 @@ int main(int argc, char* argv[]) {
   if (!storage.root.isEmpty()) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
   }
-  // Attach mode: the host starts no node; it pairs the shell (and the app) with
-  // the linked node; any other URL comes back without a node, which BackendProcess
-  // reports as not a node.
+  // Attach mode: the host starts no node; it pairs the shell with the linked
+  // node, and fails for a URL that is not one.
   if (parser.isSet(urlOption)) {
     backendOptions.hostArguments.prepend(
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));
   }
   BackendProcess backend(backendOptions);
-  // Announced before `ready`, so the shell's own connection starts with the page.
-  QObject::connect(&backend, &BackendProcess::nodeAvailable, &native, &NativeShell::open);
-  // On the first window's bridge, which every other window mirrors (NativeWindow).
-  QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
+  QObject::connect(&backend, &BackendProcess::ready, &native, &NativeShell::open);
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
     qCritical().noquote() << "[shell]" << message;
     bridge.publish(QStringLiteral("backendError"), message);

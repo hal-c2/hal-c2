@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QImage>
 #include <QKeySequence>
 #include <QQmlContext>
@@ -27,6 +28,12 @@ bool isWatchedSource(const QFileInfo& info) {
 }
 
 }  // namespace
+
+void useSoftwareRenderingWithoutDisplay() {
+  if (QGuiApplication::platformName() == QLatin1String("offscreen")) {
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+  }
+}
 
 ShellRuntime::ShellRuntime(Options options, ShellBridge* bridge, ThemeStore* theme, QObject* parent)
     : QObject(parent), m_options(std::move(options)), m_bridge(bridge), m_theme(theme) {

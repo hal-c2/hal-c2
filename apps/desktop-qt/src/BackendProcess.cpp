@@ -29,8 +29,8 @@ BackendProcess::BackendProcess(Options options, QObject* parent)
     }
     const QString how = status == QProcess::CrashExit ? QStringLiteral("crashed")
                                                        : QStringLiteral("normal exit");
-    // A host that dies after announcing leaves the web view on a dead origin;
-    // say so instead of letting the page spin on reconnects forever.
+    // A host that dies after announcing took the node it started with it; say
+    // so instead of letting the shell reconnect forever.
     emit failed(m_announced
                     ? QStringLiteral("Desktop host exited (code %1, %2). Restart HAL-C2 to reconnect.")
                           .arg(exitCode)
@@ -83,25 +83,16 @@ void BackendProcess::handleLine(const QByteArray& line) {
   const QJsonObject message = doc.object();
   const QString type = message.value(QStringLiteral("type")).toString();
   if (type == QStringLiteral("ready") && !m_announced) {
-    const QUrl url(message.value(QStringLiteral("url")).toString());
-    if (!url.isValid()) {
-      emit failed(QStringLiteral("Desktop host announced an invalid URL."));
-      return;
-    }
     m_announced = true;
     const QJsonObject node = message.value(QStringLiteral("node")).toObject();
     const QUrl origin(node.value(QStringLiteral("origin")).toString());
     const QString token = node.value(QStringLiteral("token")).toString();
-    // The shell runs on its own client, so an attached address that is not a
-    // node (the host hands it back without one) has nothing to open.
     if (!origin.isValid() || origin.isEmpty() || token.isEmpty()) {
       m_reportedError = true;
-      emit failed(QStringLiteral("%1 is not a HAL-C2 node. Start the desktop app with a node's pairing link to attach to it.")
-                      .arg(url.toDisplayString(QUrl::RemoveUserInfo | QUrl::RemoveQuery | QUrl::RemoveFragment)));
+      emit failed(QStringLiteral("Desktop host announced no node to connect to."));
       return;
     }
-    emit nodeAvailable(origin, token);
-    emit ready(url);
+    emit ready(origin, token);
   } else if (type == QStringLiteral("error")) {
     m_reportedError = true;
     emit failed(message.value(QStringLiteral("message")).toString());

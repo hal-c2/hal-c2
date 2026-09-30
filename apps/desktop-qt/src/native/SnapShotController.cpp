@@ -120,7 +120,6 @@ void SnapShotController::activate() {
     connect(settings, &SettingsController::deviceChanged, this, &SnapShotController::follow, Qt::UniqueConnection);
   }
   m_active = true;
-  m_bridge->claimKey(QStringLiteral("snapShot"));
   follow();
 }
 
@@ -516,7 +515,7 @@ void SnapShotController::onCaptured(const QImage& image, const QString& appName,
                            {QStringLiteral("windowTitle"), windowTitle.trimmed()}};
   if (auto* composer = window->controller<ComposerController>()) composer->attachImage(to, name, mimeType, *bytes, source);
   window->bridge()->windowCommand(QStringLiteral("raise"));
-  window->bridge()->sendToPage(QStringLiteral("composer.focus"));
+  window->bridge()->sendToBricks(QStringLiteral("composer.focus"));
 }
 
 void SnapShotController::onFailed(const QString& message) {

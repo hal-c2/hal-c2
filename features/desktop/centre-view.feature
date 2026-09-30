@@ -3,16 +3,16 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (loading, empty, draft and unreachable states, links, revert)
 #   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (Revert to here, changed files, a tool call's file)
 #   apps/desktop-qt/tests/tst_ThreadView.qml (these scenarios, by name; not run by tst_Features)
-#   apps/desktop-qt/tests/native/tst_ShellExamples.cpp (every example layout swaps the page for the thread)
+#   apps/desktop-qt/tests/native/tst_ShellExamples.cpp (every example layout draws the thread and gives way to settings)
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Send a message to start the conversation.)
 #   apps/web/src/components/chat/DraftHeroHeadline.tsx (What should we build in {project}?)
 #   apps/web/src/components/ChatView.tsx (Revert files too, Revert and keep changes)
-#   Shared domain: timeline/*.feature owns what the thread shows; this file owns that the Qt shell
-#   draws a thread or draft route's centre itself, in the page's place.
+#   Shared domain: timeline/*.feature owns what the thread shows; this file owns how the Qt shell
+#   draws a thread or draft route's centre.
 
 Feature: The desktop shell draws the thread in the window's centre
-  For a thread or a new thread's draft, the Qt shell shows the conversation itself where
-  the page used to be, above the composer. It says when a thread is loading, empty or
+  For a thread or a new thread's draft, the Qt shell shows the conversation in the window's
+  centre, above the composer. It says when a thread is loading, empty or
   cannot be reached, and its rows lead to their files and back to earlier turns.
 
   Background:
@@ -21,12 +21,11 @@ Feature: The desktop shell draws the thread in the window's centre
   Rule: The centre says what state the thread is in and where its rows lead
 
     @desktop
-    Scenario: A thread or draft route shows the conversation in the page's place
+    Scenario: A thread route shows the conversation in the centre
       When the user opens a thread
       Then the thread's conversation is shown above the composer
-      And the page is hidden
-      When the user opens a settings section the shell does not draw
-      Then the page is shown again
+      When the user opens settings
+      Then settings take the centre's place
 
     @desktop
     Scenario: A thread says it is loading without moving

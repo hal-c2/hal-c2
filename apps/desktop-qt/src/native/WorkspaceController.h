@@ -17,7 +17,7 @@ class ShellBridge;
 class ShellStore;
 
 // The header and the composer's context strip for the route's thread (a
-// draft too), from the node: publishes `workspace` in the page's
+// draft too), from the node: publishes `workspace` in the web's
 // ShellWorkspaceState shape (packages/contracts shell.ts) less the terminal
 // fields, which the Terminals singleton owns. The thread and its project are
 // ShellStore rows, the checkout's git status the node's `vcs` shape, the refs
@@ -31,9 +31,7 @@ class ShellStore;
 //
 // A draft's checkout (mode, start from origin, branch, worktree, the machine
 // it runs on) lives here, keyed by draft id, and launch() turns it into the
-// thread ComposerController launches. The page, which still starts a thread in
-// the background, is told each change: the checkout actions go on to it after
-// they land here, and a branch picked for a draft as `workspace.checkout.follow`.
+// thread ComposerController launches.
 class WorkspaceController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -157,8 +155,6 @@ private:
   // The draft moves into it (composer.previousWorktree).
   void usePreviousWorktree();
   void updateCheckout(const std::function<void(Checkout&)>& edit);
-  // Tells the page a draft's checkout, while it still sends the first message.
-  void followCheckout(const QString& draftId);
   void openPullRequest();
 
   ShellBridge* m_bridge;

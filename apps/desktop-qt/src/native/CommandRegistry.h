@@ -13,15 +13,14 @@
 // The commands the shell runs itself, by keybinding command id
 // (packages/contracts keybindings.ts) or, for one without a key, an id of its
 // owner's (NavigationController::kOpenSettings): what a key press, the command
-// palette or a menu runs natively instead of handing to the page. The command
-// palette lists every one as an action. Each row is
+// palette or a menu runs. The command palette lists every one as an action. Each row is
 // {command, title, shortcut, description, enabled, listed}; KeybindingController
 // fills in the shortcut label from the user's keybindings.
 //
 // C++ owners add a function; QML adds a callback owned by an object, and the
 // command goes when that object does:
 //
-//   Keybindings.commands.add("appearance.cycle", qsTr("Cycle appearance"), () => cycle(), page)
+//   Keybindings.commands.add("appearance.cycle", qsTr("Cycle appearance"), () => cycle(), owner)
 //
 // An owner keeps what the palette shows current: its title and description
 // (setTitle, setDescription: "Copy PR link" and the link), whether it can run

@@ -43,15 +43,6 @@ const FakeNode::Extension uploads([](FakeNode& node) {
   });
 });
 
-// The window shows the route, as the page's own navigation took it there.
-void composerOn(World& world, const QString& target, const QString& routeKind) {
-  if (routeKind == QLatin1String("draft")) {
-    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), target}});
-  } else {
-    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), target}});
-  }
-}
-
 // The text the shell's composer keeps for the thread or draft.
 QString textOf(World& world, const QString& target) {
   return world.native().controller<ComposerController>()->draft(target);
@@ -85,10 +76,7 @@ const Steps steps([] {
 
   // The composer.
   step(QStringLiteral("the composer shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    composerOn(world, c[0], QStringLiteral("server"));
-  });
-  step(QStringLiteral("the composer shows the draft %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    composerOn(world, c[0], QStringLiteral("draft"));
+    world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), c[0]}});
   });
   step(QStringLiteral("the user stops the turn"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("composer.interrupt"));

@@ -2,9 +2,7 @@ import QtQuick
 import HalC2.Shell
 import "js/settingsPages.js" as Pages
 
-// The native settings page for the section showing (js/settingsPages.js),
-// where the page would be. Empty while the section is still the page's:
-// layouts show the WebSurface instead, by ShellWindow.nativeSettingsOpen.
+// The settings page for the section showing (js/settingsPages.js).
 Loader {
     id: host
 

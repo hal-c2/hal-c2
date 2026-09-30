@@ -296,12 +296,11 @@ Feature: Clustering one person's machines
     Then the cluster page shows the error "The node is shutting down." instead of the machines
 
   @desktop
-  Scenario: Back leaves the desktop's cluster page without the page
+  Scenario: Back leaves the desktop's cluster page
     Given the desktop shell is connected to its node
     When the user opens Cluster in the desktop's settings
     And the user goes back from settings
     Then the cluster page closes
-    And nothing reaches the page
 
   @desktop
   Scenario: Another settings section takes the cluster page's place

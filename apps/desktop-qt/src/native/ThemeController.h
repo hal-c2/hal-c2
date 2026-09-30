@@ -16,8 +16,7 @@ class ShellBridge;
 
 // The shell's theme, resolved natively and published as `theme` (the
 // ShellThemeState shape: {id, appearance, colors, radius, fontUi, fontMono},
-// colours as #rrggbb[aa]); ThemeStore paints it with theme.json on top, and
-// injects it into the page, which follows rather than leads.
+// colours as #rrggbb[aa]); ThemeStore paints it with theme.json on top.
 //
 // The choice is this device's (SettingsController's device preferences):
 // `appearance` (system, light or dark), `theme` (an id; none is the standard
@@ -51,9 +50,8 @@ public:
   // theme (theme.select) and Change appearance (appearance.select) menus and
   // Toggle theme editor (themeEditor.toggle).
   void activate() override;
-  // The page forwards its own theme commands here (`appearance.cycle`,
-  // `theme.mode {mode}`, `theme.choose {id}`, `theme.chooseHalf {appearance,
-  // id}`), so its shortcut and palette change the desktop's theme.
+  // `appearance.cycle`, `theme.mode {mode}`, `theme.choose {id}` and
+  // `theme.chooseHalf {appearance, id}` change the desktop's theme.
   bool handle(const QString& action, const QVariant& payload) override;
 
   QString mode() const;

@@ -35,7 +35,6 @@ ClusterController::ClusterController(ShellBridge* bridge, NodeClient* client, QO
 void ClusterController::activate() {
   if (m_active) return;
   m_active = true;
-  m_bridge->claimKey(QStringLiteral("cluster"));
   publish();
   // Opening the page (NavigationController takes cluster.open) reads it afresh.
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();

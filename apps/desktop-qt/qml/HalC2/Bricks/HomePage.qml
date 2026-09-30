@@ -59,7 +59,7 @@ Rectangle {
             onClicked: {
                 if (home.failed)
                     Shell.dispatch("landing.retry");
-                // A local folder is picked here, as the sidebar does; without local folders the page's palette asks.
+                // A local folder is picked here, as the sidebar does; without local folders the command palette asks.
                 else if (Shell.localFolderImportEnabled && (home.sidebar.localEnvironmentId ?? null) !== null)
                     addProjectDialog.open();
                 else

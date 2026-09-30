@@ -38,8 +38,6 @@ class ShellBridge;
 // The rows of the settings pages go through `setting` / `set` / `reset`,
 // which know which store a key is in and its default (the web's
 // DEFAULT_CLIENT_SETTINGS and DEFAULT_SERVER_SETTINGS). Failures are toasted.
-// The page, while it still renders the centre, follows this device's rows
-// (`clientSettings.follow {settings}`) instead of its own storage.
 class SettingsController : public QObject, public NativeController {
   Q_OBJECT
   // The node's document has been read since the shell connected.
@@ -62,13 +60,11 @@ public:
   using Edit = std::function<QJsonObject(const QJsonObject& settings)>;
   using Done = std::function<void(const std::optional<QString>& error)>;
 
-  SettingsController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  SettingsController(ShellBridge*, NodeClient* client, QObject* parent = nullptr);
 
   // Subscribes to the node's config and reads its settings.
   void activate() override;
   bool handle(const QString&, const QVariant&) override { return false; }
-  // A (re)loaded page gets this device's rows.
-  void pageReady(ShellBridge* page);
 
   bool ready() const { return m_ready; }
   QJsonObject settings() const { return m_settings; }
@@ -135,9 +131,6 @@ private:
   void fail(const QString& error);
   // In `window` (the one that made the change), else the one in use.
   void toast(const QString& title, const QString& reason, NativeWindow* window = nullptr);
-  // This device's rows, which every window's page follows.
-  QJsonObject clientSettings() const;
-  void follow();
   QVariantMap documentVariant() const { return m_settings.toVariantMap(); }
   QVariantMap configVariant() const { return m_config.toVariantMap(); }
   QVariantList themesVariant() const { return m_themes.toVariantList(); }
@@ -158,7 +151,4 @@ private:
   QJsonObject m_device;
   QString m_deviceError;
   bool m_deviceUnreadable = false;
-  ShellBridge* m_bridge;
-  // What the page was last told of this device's rows.
-  QJsonObject m_followed;
 };

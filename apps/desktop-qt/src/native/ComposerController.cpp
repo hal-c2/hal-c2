@@ -134,7 +134,7 @@ void ComposerController::activate() {
   auto* shell = NativeShell::of(this);
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, &ComposerController::follow);
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &ComposerController::follow);
-  // A draft the page opened becomes the shell's once DraftController adopts it.
+  // A draft opened, renewed or promoted in any window.
   connect(shell->controller<DraftController>(), &DraftController::changed, this, &ComposerController::publish);
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, &ComposerController::publish);
@@ -1339,7 +1339,7 @@ bool ComposerController::selectSuggestion(const QString& target, const QString& 
   const QString next = text.left(trigger->start) + replacement + text.mid(end);
   setText(target, next, trigger->start + int(replacement.size()));
   if (id == QLatin1String("slash:model")) {
-    m_bridge->sendToPage(QStringLiteral("composer.modelPicker.toggle"));
+    m_bridge->sendToBricks(QStringLiteral("composer.modelPicker.toggle"));
   } else if (id == QLatin1String("slash:plan") || id == QLatin1String("slash:default")) {
     setInteractionMode(target, id.mid(6));
   }

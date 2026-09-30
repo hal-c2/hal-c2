@@ -22,22 +22,22 @@
 
 class Brick;
 
-struct PageAction {
+// An action no controller handled, or one native code sent the bricks
+// (ShellBridge::actionRequested).
+struct BrickAction {
   QString type;
   QVariantMap payload;
 };
 
-// The shell as main.cpp builds it, the page as a recorder of what the shell
-// asks of it, and the node. One per scenario.
+// The shell as main.cpp builds it, a recorder of what reaches the bricks, and
+// the node. One per scenario.
 class World {
 public:
   World();
   ~World();
 
   FakeNode node;
-  QList<PageAction> pageActions;
-  QVariant pageNative;  // what the last `shell.native` told the page
-  QList<QVariantMap> follows;  // every `route.follow` the page was sent
+  QList<BrickAction> brickActions;
   // The draft the last new thread opened.
   QString draftId;
   std::optional<qsizetype> command;  // the command the last "receives" step found
@@ -64,7 +64,7 @@ public:
   QString homeDir() const { return m_home.path(); }
   ThemeStore& theme() { return *m_theme; }
   QVariant state(const QString& key) const { return m_bridge->state()->value(key); }
-  // The desktop quits and starts again: a new shell and page, the same files.
+  // The desktop quits and starts again: a new shell, the same files.
   void restart();
   // Puts every window of the shell on screen (as main.cpp does), each a
   // bare window, so the user can close them.
@@ -80,10 +80,10 @@ public:
 
   // Dispatches `thread.new`; the draft it opens (if any) becomes draftId.
   void startNewThread(const QVariantMap& payload);
+  // Opens the draft of the node's project `projectId`, which becomes draftId.
+  void openDraft(const QString& projectId);
   // The key of the sidebar's project named `name`; `name` itself when none is.
   QString projectKey(const QString& name) const;
-  // The page reports that its own navigation took it to `route` (`route.open`).
-  void pageOpens(const QVariantMap& route, bool replace = false);
 
   void connect(const QString& token = QStringLiteral("node-token"));
   int shellSubscriptions() const;
@@ -96,13 +96,11 @@ public:
   // answer to a command sent before, has been handled once it returns.
   void sync();
 
-  QList<PageAction> actionsOf(const QString& type) const;
-  QString describePage() const;
+  QList<BrickAction> actionsOf(const QString& type) const;
+  QString describeBrickActions() const;
   QString describeCommands() const;
 
 private:
-  void onPageAction(const QString& type, const QVariantMap& payload);
-
   void start();
 
   QDateTime m_now;

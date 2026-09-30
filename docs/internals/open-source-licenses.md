@@ -11,9 +11,9 @@ License notices are generated independently for the client that ships them:
   network request.
 - The Qt desktop stages `licenses/third-party-licenses.json` beside its runtime
   (`apps/desktop-qt/scripts/stage-runtime.mjs`, or `vp run --filter @hal-c2/desktop-qt licenses` for
-  a dev build). It holds the web page it still embeds plus the `desktop-qt` custom notices: Qt, the
-  Erlang/OTP and Elixir runtime of the node, and the Node.js it ships. `LicensesController` reads it
-  when the page opens.
+  a dev build). It holds the web app's packages, whose icons the bricks draw, plus the `desktop-qt`
+  custom notices: Qt, the Erlang/OTP and Elixir runtime of the node, and the Node.js it ships.
+  `LicensesController` reads it when the Open source licenses section opens.
 
 No path depends on the connected environment or an RPC.
 

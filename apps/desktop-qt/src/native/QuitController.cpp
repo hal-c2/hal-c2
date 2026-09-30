@@ -48,7 +48,6 @@ QuitController::QuitController(ShellBridge* bridge, NodeClient*, QObject* parent
 void QuitController::activate() {
   if (m_active) return;
   m_active = true;
-  m_bridge->claimKey(QStringLiteral("quitHint"));
   publish();
 }
 

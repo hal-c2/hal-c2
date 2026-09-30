@@ -8,13 +8,12 @@
 #include <QTimer>
 #include <QVariantMap>
 
-// The shell's palette for QML (the `Theme` singleton) and the web view: the
-// theme ThemeController resolves (the base), with `<configDir>/theme.json`,
-// watched, on top. The file is the web app's own
-// ThemeFile format (`{version, id, name, appearance, colors, variants}`, role
-// names such as `canvas`, `chrome`, `text`, `sidebar`) plus a shell-only
-// `window` section, so one file themes both halves and the web's Theme Editor
-// can author it.
+// The shell's palette for QML (the `Theme` singleton): the theme
+// ThemeController resolves (the base), with `<configDir>/theme.json`, watched,
+// on top. The file is the web app's own ThemeFile format (`{version, id, name,
+// appearance, colors, variants}`, role names such as `canvas`, `chrome`,
+// `text`, `sidebar`) plus a shell-only `window` section, so the web's Theme
+// Editor can author it.
 class ThemeStore : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool loaded READ loaded NOTIFY themeChanged)
@@ -35,7 +34,6 @@ class ThemeStore : public QObject {
   Q_PROPERTY(bool windowBlur READ windowBlur NOTIFY themeChanged)
   Q_PROPERTY(bool windowLiquidGlass READ windowLiquidGlass NOTIFY themeChanged)
   Q_PROPERTY(bool frameless READ frameless NOTIFY themeChanged)
-  Q_PROPERTY(QString injectionScript READ injectionScript NOTIFY themeChanged)
   Q_PROPERTY(QString lastError READ lastError NOTIFY themeChanged)
 
 public:
@@ -58,7 +56,6 @@ public:
   bool windowLiquidGlass() const { return m_windowLiquidGlass; }
   bool followsSystemAppearance() const { return m_followsSystemAppearance; }
   bool frameless() const { return m_frameless; }
-  QString injectionScript() const;
   QString lastError() const { return m_lastError; }
 
   // Resolved colour for a role (`canvas`, `text`, ...): theme.json first, then

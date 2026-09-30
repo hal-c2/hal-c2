@@ -19,7 +19,7 @@
 // functions, ported from the web (shellComposerState.ts, providerInstances.ts,
 // modelOrdering.ts, packages/shared/src/model.ts, composer-logic.ts,
 // composerSlashCommandSearch.ts, providerSkillSearch.ts, searchRanking.ts), so
-// ComposerController publishes what the page did.
+// ComposerController publishes what the web app does.
 namespace composer {
 
 // One provider instance of the config's `providers`, as the picker lists it.

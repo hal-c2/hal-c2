@@ -121,7 +121,6 @@ WorkspaceController* GitController::workspace() const {
 void GitController::activate() {
   if (m_active) return;
   m_active = true;
-  m_bridge->claimKey(QStringLiteral("git"));
   WorkspaceController* header = workspace();
   connect(header, &WorkspaceController::gitChanged, this, &GitController::publish);
   connect(header, &WorkspaceController::placeChanged, this, [this] {

@@ -48,7 +48,6 @@ SettingsScopeController::SettingsScopeController(ShellBridge* bridge, NodeClient
 void SettingsScopeController::activate() {
   if (m_active) return;
   m_active = true;
-  m_bridge->claimKey(kKey);
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
   const auto follow = [this, navigation] {
     const NavigationController::Route& route = navigation->route();

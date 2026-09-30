@@ -14,7 +14,7 @@
 #include <optional>
 
 // The native sidebar's rules: the node's thread rows in, the `sidebar` view
-// model out. A port of the page's shell sidebar (apps/web/src/shell/
+// model out. A port of the web app's shell sidebar (apps/web/src/shell/
 // shellSidebarState.ts, Sidebar.logic.ts and client-runtime's
 // state/threadSettled.ts, state/threadSort.ts), so both render the same rows.
 // Pure: every clock is passed in.
@@ -94,7 +94,7 @@ Nullable visibleWokeAt(const Thread& thread, qint64 nowMs);
 struct Capabilities {
   bool settlement = false;
   bool snooze = false;
-  // The node keeps the visited watermark; without it the page keeps unread markers.
+  // The node keeps the visited watermark; without it there are no unread markers.
   bool visitedTracking = false;
   bool pinning = false;
   bool titleRegeneration = false;
@@ -160,20 +160,20 @@ struct ProjectGroup {
   QList<Project> members;
 };
 
-// The page's logical grouping (client-runtime's state/projectGrouping.ts) and
+// The web app's logical grouping (client-runtime's state/projectGrouping.ts) and
 // sidebar order (Sidebar.logic.ts sortLogicalProjectsForSidebar), from every
 // project the shell sees. Linked environments' projects are just more rows.
 QList<ProjectGroup> groupProjects(const QList<Project>& projects, const GroupingSettings& settings,
                                   const QString& preferredEnvironmentId, const QList<Thread>& threads);
 
 // The project a window with no thread lands in: the first of every project the
-// shell sees in the page's "updated_at" order (Sidebar.logic.ts
+// shell sees in the web app's "updated_at" order (Sidebar.logic.ts
 // sortScopedProjectsForSidebar), whatever order the sidebar is set to.
 std::optional<Project> mostRecentProject(const QList<Project>& projects, const QList<Thread>& threads);
 
 // Where a window that showed the deleted thread `key` goes: the first other
 // thread of its project on its environment in `sortOrder` ("updated_at" or
-// "created_at"), as the page's getFallbackThreadIdAfterDelete, leaving out the
+// "created_at"), as the web app's getFallbackThreadIdAfterDelete, leaving out the
 // archived and subagent rows the sidebar does not list either.
 std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const QString& key, const QString& sortOrder);
 
@@ -213,7 +213,7 @@ struct SnoozePreset {
   QString snoozedUntil;
 };
 
-// "12-hour", "24-hour" or "locale", as the page's timestampFormat setting.
+// "12-hour", "24-hour" or "locale", as the web app's timestampFormat setting.
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale);
 QList<SnoozePreset> snoozePresets(const QDateTime& now, const QString& timestampFormat,
                                   const QLocale& locale);

@@ -378,7 +378,7 @@ const Steps steps([] {
     // main.cpp reads this device's preferences before anything else.
     settings(world)->setDevicePath(preferencesPath(world));
     world.connect();
-    world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
   });
   step(QStringLiteral("the desktop saves the device preference %1 as %1").arg(q), [](World& world, const Captures& c, const Table&) {
     settings(world)->writeDevice(c[0], c[1]);

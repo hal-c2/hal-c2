@@ -1,26 +1,23 @@
 .pragma library
 .import "settingsRows.js" as Rows
 
-// The settings sections, in the page's order (apps/web SettingsSidebarNav).
-// A section with a `brick` is a native page, loaded from <brick>.qml in this
-// module; one without is still the embedded page's, which the shell falls
-// back to. Moving a section to QML is giving its line a brick.
+// The settings sections, in the web's order (apps/web SettingsSidebarNav).
+// Each section's page is <brick>.qml in this module.
 //
-//   action     dispatched instead of settings.navigate (the page never shows it)
-//   page       the hidden page still follows it, drawing with its preferences
+//   action     dispatched instead of settings.navigate
 //   under      the section it opens from, which stays current; it is not listed itself
 //   requires   shell state the section needs before it is listed
 //   keywords   what the native search matches, beside the label
-//   rows       the page's settingsRows.js rows, each found by its title and description
+//   rows       the section's settingsRows.js rows, each found by its title and description
 //   settings   other settings on the page the search finds: {title, targetId, keywords}
 var sections = [
-    { to: "/settings/general", label: "General", brick: "GeneralSettings", page: true, rows: Rows.general,
+    { to: "/settings/general", label: "General", brick: "GeneralSettings", rows: Rows.general,
       keywords: "project grouping auto-resume snooze limited threads auto-settle merged inactive notifications time format response streaming whitespace diff layout proactive panels skills slash rich text composer collapse send shortcut follow-up provider update checks continue restarts origin worktree add project unpin archive delete confirmation quit text generation model legacy plan context window sidebar" },
     { to: "/settings/diagnostics", label: "Diagnostics", brick: "DiagnosticsSettings", under: "/settings/general",
       keywords: "diagnostics processes cpu memory kill signal sigint sigkill resource history traces spans failures logs folder" },
     { to: "/settings/open-source-licenses", label: "Open source licenses", brick: "OpenSourceLicenses", under: "/settings/general",
       keywords: "open source licenses licences notices third party attribution dependencies" },
-    { to: "/settings/appearance", label: "Appearance", brick: "AppearanceSettings", page: true, rows: Rows.appearance,
+    { to: "/settings/appearance", label: "Appearance", brick: "AppearanceSettings", rows: Rows.appearance,
       settings: [{ title: "Theme", targetId: "themes", keywords: "theme themes light dark system color scheme mode" }],
       keywords: "appearance theme themes light dark system color scheme contrast glass opacity environment identification diff colors composer context panel animations font size family smoothing word wrap custom editor" },
     { to: "/settings/projects", label: "Project", brick: "ProjectSettings", requires: "projectSettings",
@@ -75,7 +72,7 @@ function current(section) {
     return found !== null && found.under ? found.under : resolve(section);
 }
 
-// The native brick for a section, or "" when the page renders it.
+// The brick that draws a section, or "" for one there is not.
 function brickFor(section) {
     var found = find(section);
     return found !== null && found.brick ? found.brick : "";
@@ -106,9 +103,9 @@ function rank(title, query, words, others) {
 }
 
 // What the native search finds for `query` (lower case): sections by label or
-// keywords, the settings on their pages, and the commands in `bindings`
+// keywords, the settings in their sections, and the commands in `bindings`
 // (Keybindings.bindings), each {label, detail (its section), to, action,
-// targetId (the setting's objectName on the page)}. Every word must match;
+// targetId (the setting's objectName in its section)}. Every word must match;
 // the best matching titles come first, commands after every setting.
 function searchRows(query, state, bindings) {
     query = query.trim().replace(/\s+/g, " ");

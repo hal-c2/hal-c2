@@ -2,9 +2,8 @@ import QtQuick
 import HalC2.Shell
 import "js/centreViews.js" as Views
 
-// The native centre for the route (js/centreViews.js), where the page would
-// be. Empty while the route is still the page's: layouts show the WebSurface
-// instead, by ShellWindow.nativeCentreOpen.
+// The centre for the route (js/centreViews.js): its thread or draft, home,
+// pull requests or usage. Empty for a route kind no view draws.
 Loader {
     id: host
 

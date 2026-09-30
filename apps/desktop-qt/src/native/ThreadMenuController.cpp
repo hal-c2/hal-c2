@@ -24,7 +24,7 @@ namespace {
 
 const NativeControllerRegistrar<ThreadMenuController> registrar(QStringLiteral("threadMenu"));
 
-// The page's settings page for projects; the route names which one.
+// The settings page for projects; the route names which one.
 const QString kProjectSettings = QStringLiteral("/settings/projects");
 
 using Item = MenuController::Item;
@@ -67,7 +67,6 @@ bool ThreadMenuController::handle(const QString& action, const QVariant& payload
   const double x = map.value(QStringLiteral("x")).toDouble();
   const double y = map.value(QStringLiteral("y")).toDouble();
   if (action == QLatin1String("thread.menu")) {
-    // A thread the shell does not know stays with the page.
     return open(map.value(QStringLiteral("key")).toString(), x, y, false);
   }
   if (action == QLatin1String("workspace.titleMenu")) {

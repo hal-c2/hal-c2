@@ -116,20 +116,6 @@ Item {
             menu.close();
         }
 
-        // Every window menu is the shell's own: a menu the hidden page asks
-        // for never shows.
-        function test_pageMenusDoNotShow() {
-            const window = createTemporaryObject(menuWindowComponent, null);
-            verify(waitForRendering(window.contentItem));
-            Shell.state = Object.assign({}, Shell.state, {
-                contextMenu: { requestId: "page:1", surfaceId: "shell", x: 20, y: 20, items: [{ id: "rename", label: "Rename" }] }
-            });
-            wait(0);
-            const menu = findChild(findChild(window.contentItem, "shellMenuHost"), "contextMenu");
-            verify(!menu.visible);
-            Shell.state = Object.assign({}, Shell.state, { contextMenu: null });
-        }
-
         // Where an item draws in the window: its scene rect, whatever the
         // transforms (the body's, a popup's own) between.
         function sceneRect(item) {

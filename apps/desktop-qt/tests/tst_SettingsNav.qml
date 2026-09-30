@@ -119,7 +119,7 @@ Item {
             compare(Shell.dispatchedActions[0].payload.targetId, "themes");
         }
 
-        // features/settings/search-and-navigation.feature, without the page.
+        // features/settings/search-and-navigation.feature, on the native settings.
         function type(nav, text) {
             const search = findChild(nav, "search");
             search.forceActiveFocus();

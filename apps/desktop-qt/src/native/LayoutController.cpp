@@ -44,7 +44,6 @@ void LayoutController::load() {
       publish();
     });
   }
-  m_bridge->claimKey(QStringLiteral("layout"));
   publish();
 }
 

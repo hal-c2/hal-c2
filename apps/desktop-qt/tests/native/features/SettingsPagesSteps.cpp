@@ -77,19 +77,11 @@ void openSection(World& world, const QString& section) {
                 [&] { return QStringLiteral("the route is %1").arg(show(world.state(QStringLiteral("route")))); });
 }
 
-// The client settings the page was last told to follow.
-QVariantMap followed(World& world) {
-  const QList<PageAction> follows = world.actionsOf(QStringLiteral("clientSettings.follow"));
-  return follows.isEmpty() ? QVariantMap() : follows.last().payload.value(QStringLiteral("settings")).toMap();
-}
-
 void atDefault(World& world, const QString& key) {
   world.sync();
   expect(settings(world)->isDefault(key) && settings(world)->setting(key) == settings(world)->defaultOf(key), describe(world, key));
   if (settings(world)->onDevice(key)) {
     expect(!settings(world)->deviceSettings().contains(key), QStringLiteral("this device holds %1").arg(show(settings(world)->deviceSettings().toVariantMap())));
-    // The page, which still draws the centre, follows.
-    expect(followed(world).value(key) == settings(world)->defaultOf(key), QStringLiteral("the page follows %1").arg(show(followed(world))));
   }
 }
 

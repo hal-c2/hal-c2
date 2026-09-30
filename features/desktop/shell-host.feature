@@ -1,32 +1,30 @@
 # Sources:
-#   apps/desktop-qt/host/main.ts (desktop host: node lifecycle, app bundle, ready URL)
+#   apps/desktop-qt/host/main.ts (desktop host: node lifecycle, the ready line)
 #   apps/desktop-qt/host/elixirNode.ts (the node's access token, found through its runtime record when attached)
 #   apps/desktop-qt/host/main.test.ts (these scenarios, by name, against a fake node)
 #   apps/desktop-qt/src/BackendProcess.cpp (host process, ready/error lines, stdin close on exit)
 #   apps/desktop-qt/src/main.cpp (--url attach mode, --home-dir, --screenshot scripted runs on NativeShell::ready)
 #   apps/desktop-qt/tests/native/features/ConnectionSteps.cpp (the scripted screenshot)
-#   apps/desktop-qt/src/WebProfile.cpp (software rendering for a run without a display)
 #   apps/server-ex/lib/hal_c2/desktop.ex (bootstrap line on standard input)
-#   apps/web/src/components/auth/PairingRouteSurface.tsx (hosted pairing route, auto=1)
 #   docs/internals/desktop-qt.md (process model)
 #   Shared domain: connections/ owns pairing; node/platform/ owns the node's side of the bootstrap.
 
 Feature: The desktop app runs its own node
-  Started on its own, the Qt desktop app starts an Elixir node on this machine and opens the
-  app already paired with it. Given a node's pairing link, it attaches to that node instead.
-  Either way the shell's own client is paired with the node, so the shell never waits on the page.
-  The app itself is served by the desktop app from this machine; the node serves no app.
+  Started on its own, the Qt desktop app starts an Elixir node on this machine and connects to
+  it with the node's own access token. Given a node's pairing link, it attaches to that node
+  instead. Either way the shell's own client is paired with the node before the window fills.
 
-  Rule: Starting the desktop app starts its node and opens the app paired
+  Rule: Starting the desktop app starts its node and connects to it
 
     @desktop
     Scenario: Starting the desktop app starts a node with the desktop's HAL-C2 home
       Given the desktop app's HAL-C2 home is "/tmp/sandbox"
       When the user starts the desktop app
       Then a node starts with the HAL-C2 home "/tmp/sandbox"
-      And its bootstrap token reaches it on standard input, not on the command line
+      And its bootstrap reaches it on standard input, not on the command line
 
-    @desktop
+    # The shell connects with the node's own access token; there is no web app to pair.
+    @dropped
     Scenario: The app opens paired with the desktop's node
       When the user starts the desktop app
       Then the app opens with a pairing link for the desktop's node
@@ -37,9 +35,9 @@ Feature: The desktop app runs its own node
     Scenario: The desktop's own client is given the node and its access token
       When the user starts the desktop app
       Then the shell is told the desktop node's address and the node's own access token
-      And that token is not the bootstrap token the app pairs with
 
-    @desktop
+    # The desktop app no longer serves a web app.
+    @dropped
     Scenario: The app is served from this machine, not by the node
       When the user starts the desktop app
       Then the app's pages come from a loopback address on this machine
@@ -74,21 +72,29 @@ Feature: The desktop app runs its own node
       When the user starts the desktop app
       Then the node listens on the next free port
 
-  Rule: Starting again reuses the paired environment
+  Rule: Starting again reuses the environment
 
-    @desktop @backlog
+    # The address was the served web app's, whose saved state lived per origin.
+    @dropped
     Scenario: The app keeps its address across restarts
       Given the user started the desktop app with the HAL-C2 home "/tmp/sandbox" before
       When the user starts it again with the same home
       Then the app is served from the same address as before
       And its saved environments, drafts and settings are still there
 
-    @desktop
+    # The web app's pairing on each start; the shell connects with the node's own token.
+    @dropped
     Scenario: Restarting the desktop app pairs the same environment again
       Given the user started the desktop app before and the app saved the desktop's node
       When the user starts the desktop app again
       Then the app is paired with a fresh token for the same node
       And the app lists the desktop's node once
+
+    @desktop
+    Scenario: Restarting the desktop app connects to the same environment again
+      Given the user started the desktop app before
+      When the user starts the desktop app again
+      Then the shell connects to a node with the same environment as before
 
   Rule: Attaching to a running node with its pairing link
 
@@ -96,7 +102,7 @@ Feature: The desktop app runs its own node
     Scenario: Attaching to a node with its pairing link
       Given a node is running on this machine
       When the user starts the desktop app with that node's pairing link
-      Then the app opens with a pairing link for that node
+      Then the shell is told that node's address and the session its pairing link opened
       And the desktop app starts no node of its own
 
     @desktop
@@ -110,9 +116,9 @@ Feature: The desktop app runs its own node
       Given a node is running whose runtime record this machine does not have
       When the user starts the desktop app with that node's pairing link
       Then the shell is told that node's address and the session its pairing link opened
-      And the app opens with a fresh pairing link of its own
 
-    @desktop
+    # The web app's own pairing link; the shell is the only client now.
+    @dropped
     Scenario: A pairing link without access to pairing opens the app unpaired
       Given a node is running whose pairing link carries standard access
       When the user starts the desktop app with that node's pairing link
@@ -158,7 +164,8 @@ Feature: The desktop app runs its own node
 
   Rule: Start-up failures say what went wrong
 
-    @desktop
+    # The desktop app no longer serves a web app.
+    @dropped
     Scenario: The app bundle is missing
       Given the desktop app has no built app bundle
       When the user starts the desktop app
@@ -172,16 +179,19 @@ Feature: The desktop app runs its own node
       Then the desktop app says the node failed to start, with its exit code
 
     @desktop
-    Scenario Outline: A port the desktop app was told to use is taken
-      Given "<setting>" names a port another program listens on
+    Scenario: The node's port the desktop app was told to use is taken
+      Given "HAL_C2_NODE_PORT" names a port another program listens on
       When the user starts the desktop app
-      Then the desktop app says that port is in use and names "<setting>"
+      Then the desktop app says that port is in use and names "HAL_C2_NODE_PORT"
       And no node is started
 
-      Examples:
-        | setting          |
-        | HAL_C2_NODE_PORT |
-        | HAL_C2_WEB_PORT  |
+    # The web app's port; the desktop app no longer serves one.
+    @dropped
+    Scenario: The web app's port the desktop app was told to use is taken
+      Given "HAL_C2_WEB_PORT" names a port another program listens on
+      When the user starts the desktop app
+      Then the desktop app says that port is in use and names "HAL_C2_WEB_PORT"
+      And no node is started
 
   Rule: A scripted screenshot shows what the user would see
 

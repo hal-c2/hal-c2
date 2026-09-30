@@ -16,7 +16,7 @@ class ToastController;
 
 // A thread's action menu, from its sidebar row (`thread.menu {key, x, y}`)
 // and from the header's title (`workspace.titleMenu {x, y}`, the route's
-// thread, or its draft's menu). Items follow the page's
+// thread, or its draft's menu). Items follow the web app's
 // buildThreadActionMenuItems order, plus Fork and Move to another machine;
 // the environment's capabilities leave items out and an offline environment
 // turns the ones that need it off. Each action toasts its failure, and the

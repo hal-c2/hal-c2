@@ -1,10 +1,9 @@
 import QtQuick
 import HalC2.Shell
 import "js/settingsPages.js" as Pages
-import "js/centreViews.js" as Centre
 
 // The window every rice starts from: theme-driven colour, opacity and frame,
-// the shell's own context menus, questions and error overlay, and the page's window
+// the shell's own context menus, questions and error overlay, and the window
 // commands (minimize / maximize / close / move). Children land in the body
 // under the overlay, so a broken layout still shows its error.
 Window {
@@ -21,24 +20,13 @@ Window {
     // Where the window is (NavigationController).
     readonly property var route: Shell.state.route ?? null
     readonly property bool settingsActive: route !== null && route.kind === "settings"
-    // The settings section showing, and whether the shell renders it itself
-    // (js/settingsPages.js): layouts put SettingsHost where the page would be
-    // and hide the page and composer.
+    // The settings section showing (js/settingsPages.js): layouts show
+    // SettingsHost and hide the composer while settingsActive, and CentreHost
+    // otherwise.
     readonly property string settingsSection: !settingsActive ? "" : Pages.resolve(route.section)
-    readonly property bool nativeSettingsOpen: settingsActive && Pages.brickFor(settingsSection).length > 0
-    // Whether the shell draws the route's centre itself (js/centreViews.js):
-    // layouts put CentreHost where the page would be.
-    readonly property bool nativeCentreOpen: route !== null && !settingsActive && Centre.brickFor(route.kind).length > 0
-    // Whether the embedded page is what the centre shows.
-    readonly property bool pageOpen: !nativeSettingsOpen && !nativeCentreOpen
-    readonly property bool webFocused: isWebItem(root.activeFocusItem)
     readonly property bool terminalFocused: hasAncestor(root.activeFocusItem, "HalC2Terminal")
     // A text field has the keyboard (the web's editableFocus).
     readonly property bool editableFocused: root.activeFocusItem !== null && root.activeFocusItem.cursorPosition !== undefined
-
-    function isWebItem(item) {
-        return hasAncestor(item, "HalC2WebSurface");
-    }
 
     function hasAncestor(item, objectName) {
         for (let node = item; node; node = node.parent) {
@@ -132,12 +120,10 @@ Window {
         anchors.fill: parent
     }
 
-    // One window shortcut per sequence the keymap (Keybindings) binds. A
-    // command the shell runs natively fires whatever has focus, a focused page
-    // included, so the page never sees the key too. A key with no native
-    // command in that focus stands down and stays with the focused control.
-    // A focused terminal keeps every key except the shell's own
-    // terminal-context commands (Ctrl+J and co).
+    // One window shortcut per sequence the keymap (Keybindings) binds. A key
+    // with no command in the current focus stands down and stays with the
+    // focused control. A focused terminal keeps every key except the shell's
+    // own terminal-context commands (Ctrl+J and co).
     Instantiator {
         model: Keybindings.shortcuts
 
@@ -146,9 +132,8 @@ Window {
 
             sequence: modelData.sequence
             context: Qt.WindowShortcut
-            enabled: root.terminalFocused ? modelData.terminal : root.webFocused ? modelData.page : modelData.chrome
+            enabled: root.terminalFocused ? modelData.terminal : modelData.chrome
             onActivated: Keybindings.press(modelData.sequence, {
-                page: root.webFocused,
                 terminal: root.terminalFocused,
                 editable: root.editableFocused
             })

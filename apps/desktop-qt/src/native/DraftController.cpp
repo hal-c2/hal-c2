@@ -144,24 +144,8 @@ std::optional<DraftController::Draft> DraftController::draft(const QString& id) 
 }
 
 bool DraftController::handle(const QString& action, const QVariant& payload) {
-  const QVariantMap map = payload.toMap();
-  // A draft the page opened by itself (its own new-thread shortcut) is one
-  // the sidebar lists too.
-  if (action == QLatin1String("route.open")) {
-    const QString id = map.value(QStringLiteral("draftId")).toString();
-    const QString environmentId = map.value(QStringLiteral("environmentId")).toString();
-    const QString projectId = map.value(QStringLiteral("projectId")).toString();
-    const QString threadId = map.value(QStringLiteral("threadId")).toString();
-    if (map.value(QStringLiteral("kind")).toString() == QLatin1String("draft") && !id.isEmpty() && !draft(id) &&
-        !environmentId.isEmpty() && !projectId.isEmpty() && !threadId.isEmpty() &&
-        !m_store->thread(environmentId + QLatin1Char(':') + threadId)) {
-      m_drafts.append({id, environmentId, projectId, threadId, sidebar::formatIso(QDateTime::currentDateTimeUtc()), {}});
-      save();
-      changedEverywhere();
-    }
-    return false;
-  }
   if (!m_active) return false;
+  const QVariantMap map = payload.toMap();
   if (action == QLatin1String("thread.new")) return startNew(map);
   if (action == QLatin1String("landing.retry")) {
     setLandingFailed(false);
@@ -244,7 +228,7 @@ QString DraftController::start(const QString& environmentId, const QString& proj
 }
 
 // Home passes through (NavigationController), so the draft takes its place
-// rather than stacking on it, as the page's replace navigation does.
+// rather than stacking on it, as the web's replace navigation does.
 void DraftController::land() {
   if (!m_active || !m_store->synchronized()) return;
   if (NativeShell::of(this)->controller<NavigationController>()->route().kind != QLatin1String("home")) {

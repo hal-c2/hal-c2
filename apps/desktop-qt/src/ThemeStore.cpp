@@ -5,7 +5,6 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QGuiApplication>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -14,39 +13,17 @@
 
 namespace {
 
-// Role names are camelCase in the file and become `--app-theme-<kebab>` on
-// the page, mirroring APP_THEME_VARIABLES in apps/web/src/themePalette.ts.
+// Role names are camelCase in the file, as APP_THEME_VARIABLES in
+// apps/web/src/themePalette.ts names them.
 bool isRoleName(const QString& name) {
   static const QRegularExpression pattern(QStringLiteral("^[a-z][a-zA-Z0-9]*$"));
   return pattern.match(name).hasMatch();
 }
 
-QString cssVariableForRole(const QString& role) {
-  if (role == QStringLiteral("terminalSelection")) {
-    return QStringLiteral("--app-theme-terminal-selection-background");
-  }
-  QString kebab;
-  for (const QChar ch : role) {
-    if (ch.isUpper()) {
-      kebab += QLatin1Char('-');
-      kebab += ch.toLower();
-    } else {
-      kebab += ch;
-    }
-  }
-  return QStringLiteral("--app-theme-") + kebab;
-}
-
-// Values land in inline styles; keep them to what a colour token can be.
+// Keep values to what a colour token can be.
 bool isSafeColorValue(const QString& value) {
   static const QRegularExpression pattern(QStringLiteral("^[a-zA-Z0-9#(),.%/ -]+$"));
   return !value.isEmpty() && value.size() < 128 && pattern.match(value).hasMatch();
-}
-
-QString jsLiteral(const QJsonValue& value) {
-  return QString::fromUtf8(QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact))
-      .mid(1)
-      .chopped(1);
 }
 
 void mergeColors(QVariantMap& into, const QJsonObject& colors) {
@@ -185,112 +162,6 @@ void ThemeStore::resolveColors() {
   mergeColors(m_colors, m_variants.value(m_appearance).toObject());
 }
 
-QString ThemeStore::injectionScript() const {
-  // Applies the theme the same way the web app applies its own
-  // (applyThemeColorPreview in themePalette.ts): `data-theme-id` on <html>
-  // plus inline `--app-theme-*` variables. It runs as a user script at
-  // document creation so the first paint is already in the shell's colours,
-  // and again on theme changes. Once the page claims the bootstrap mailbox,
-  // subsequent injections deliver the override to its theme module. Older
-  // pages retain the observer fallback. An empty theme removes the override.
-  // The page draws the base theme with theme.json's colours over it; with
-  // neither, the override is removed and the page draws its own.
-  QVariantMap colors = m_baseColors;
-  colors.insert(m_colors);
-  QJsonObject vars;
-  for (auto it = colors.cbegin(); it != colors.cend(); ++it) {
-    vars.insert(cssVariableForRole(it.key()), it.value().toString());
-  }
-  // The boot splash in index.html paints `--boot-*` until React mounts.
-  const auto boot = [&](const char* variable, const char* role) {
-    const QString value = colors.value(QLatin1String(role)).toString();
-    if (!value.isEmpty()) {
-      vars.insert(QLatin1String(variable), value);
-    }
-  };
-  boot("--boot-background", "canvas");
-  boot("--boot-foreground", "text");
-  boot("--boot-accent", "accent");
-  const QJsonObject theme{
-      {QStringLiteral("id"), m_loaded ? m_id : m_baseTheme.value(QStringLiteral("id")).toString()},
-      {QStringLiteral("dark"), appearance() != QStringLiteral("light")},
-      {QStringLiteral("vars"), vars},
-  };
-  return QStringLiteral(
-             "(() => {"
-             "  const theme = %1;"
-             "  const run = () => {"
-             "    const root = document.documentElement;"
-             "    const state = (window.__halC2ShellTheme ||= {});"
-             "    if (state.observer) { state.observer.disconnect(); state.observer = null; }"
-             "    state.override = theme;"
-             "    if (state.applyOverride) { state.applyOverride(theme); return; }"
-             "    const restoreBackground = () => {"
-             "      if (state.original) root.style.setProperty('background-color', state.original.background, state.original.backgroundPriority);"
-             "      state.chromeApplied = false;"
-             "    };"
-             "    const restoreVariable = name => {"
-             "      const previous = state.originalVars?.[name];"
-             "      if (previous) root.style.setProperty(name, previous.value, previous.priority);"
-             "      else root.style.removeProperty(name);"
-             "      if (state.originalVars) delete state.originalVars[name];"
-             "    };"
-             "    if (!theme.id) {"
-             "      for (const name of state.applied || []) restoreVariable(name);"
-             "      state.applied = [];"
-             "      if (state.original) {"
-             "        for (const [name, value] of Object.entries(state.original.attributes)) {"
-             "          if (value === null) root.removeAttribute(name); else root.setAttribute(name, value);"
-             "        }"
-             "        root.classList.toggle('dark', state.original.dark);"
-             "        restoreBackground();"
-             "        delete state.original;"
-             "      }"
-             "      return;"
-             "    }"
-             "    state.original ||= {"
-             "      attributes: {'data-theme-id': root.getAttribute('data-theme-id'), 'data-theme-selected': root.getAttribute('data-theme-selected')},"
-             "      dark: root.classList.contains('dark'),"
-             "      background: root.style.getPropertyValue('background-color'),"
-             "      backgroundPriority: root.style.getPropertyPriority('background-color')"
-             "    };"
-             "    state.originalVars ||= {};"
-             "    for (const name of Object.keys(theme.vars)) {"
-             "      state.originalVars[name] ||= {value: root.style.getPropertyValue(name), priority: root.style.getPropertyPriority(name)};"
-             "    }"
-             "    const chrome = theme.vars['--app-theme-chrome'] || '';"
-             "    const probe = document.createElement('div');"
-             "    probe.style.backgroundColor = chrome;"
-             "    const chromeCss = probe.style.backgroundColor;"
-             "    if (!chromeCss && state.chromeApplied) restoreBackground();"
-             "    const stale = () =>"
-             "      root.dataset.themeId !== theme.id ||"
-             "      root.classList.contains('dark') !== theme.dark ||"
-             "      (chromeCss && root.style.backgroundColor !== chromeCss) ||"
-             "      Object.entries(theme.vars).some(([name, value]) => root.style.getPropertyValue(name) !== value);"
-             "    const apply = () => {"
-             "      root.dataset.themeId = theme.id;"
-             "      root.dataset.themeSelected = 'true';"
-             "      root.classList.toggle('dark', theme.dark);"
-             "      for (const [name, value] of Object.entries(theme.vars)) root.style.setProperty(name, value);"
-             "      if (chromeCss) { root.style.backgroundColor = chromeCss; state.chromeApplied = true; }"
-             "    };"
-             "    for (const name of state.applied || []) if (!(name in theme.vars)) restoreVariable(name);"
-             "    state.applied = Object.keys(theme.vars);"
-             "    apply();"
-             "    state.observer = new MutationObserver(() => {"
-             "      if (stale()) apply();"
-             "    });"
-             "    state.observer.observe(root, { attributes: true, attributeFilter: ['data-theme-id', 'class', 'style'] });"
-             "  };"
-             "  if (document.documentElement) run();"
-             "  else new MutationObserver((_, observer) => {"
-             "    if (document.documentElement) { observer.disconnect(); run(); }"
-             "  }).observe(document, { childList: true });"
-             "})();")
-      .arg(jsLiteral(theme));
-}
-
 namespace {
 
 // CSS hex colours put alpha last (#rrggbbaa); Qt puts it first (#aarrggbb).
@@ -327,7 +198,7 @@ QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
 
 namespace {
 
-// The page publishes CSS font-family lists; QML wants one family and falls
+// The node's theme carries CSS font-family lists; QML wants one family and falls
 // back on its own, so take the first installed non-generic entry, or the
 // first non-generic one when nothing in the list is installed.
 QString firstFontFamily(const QString& list) {

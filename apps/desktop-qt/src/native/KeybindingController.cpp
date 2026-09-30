@@ -127,16 +127,16 @@ void KeybindingController::registerCommands() {
   add(QStringLiteral("thread.steerQueuedMessage"), [this] { m_bridge->dispatch(QStringLiteral("composer.queue.steer")); });
   // The composer brick edits the last queued message when its caret is at
   // the start, and moves the caret there otherwise.
-  add(QStringLiteral("thread.editQueuedMessage"), [this] { m_bridge->sendToPage(QStringLiteral("composer.queue.editLast")); });
+  add(QStringLiteral("thread.editQueuedMessage"), [this] { m_bridge->sendToBricks(QStringLiteral("composer.queue.editLast")); });
   // The composer brick hands the stash its latest text first.
-  add(QStringLiteral("composer.stash"), [this] { m_bridge->sendToPage(QStringLiteral("composer.stash.key")); });
+  add(QStringLiteral("composer.stash"), [this] { m_bridge->sendToBricks(QStringLiteral("composer.stash.key")); });
   // The composer brick opens its own pickers.
-  add(QStringLiteral("modelPicker.toggle"), [this] { m_bridge->sendToPage(QStringLiteral("composer.modelPicker.toggle")); });
+  add(QStringLiteral("modelPicker.toggle"), [this] { m_bridge->sendToBricks(QStringLiteral("composer.modelPicker.toggle")); });
   for (const QString& command : {QStringLiteral("composer.effort"), QStringLiteral("composer.mode"),
                                  QStringLiteral("composer.host"), QStringLiteral("composer.workspace"),
                                  QStringLiteral("composer.branch")}) {
     add(command, [this, command] {
-      m_bridge->sendToPage(QStringLiteral("composer.control.open"), QVariantMap{{QStringLiteral("command"), command}});
+      m_bridge->sendToBricks(QStringLiteral("composer.control.open"), QVariantMap{{QStringLiteral("command"), command}});
     });
   }
   // The route thread's, as its menu has them; Undo is the newest toast's.
@@ -235,30 +235,11 @@ bool KeybindingController::press(const QString& sequence, const QVariantMap& foc
   return false;
 }
 
-bool KeybindingController::handle(const QString& action, const QVariant& payload) {
-  if (action != QLatin1String("keybinding.press")) return false;
-  const QVariantMap press = payload.toMap();
-  const bool ctrl = press.value(QStringLiteral("ctrlKey")).toBool();
-  const bool meta = press.value(QStringLiteral("metaKey")).toBool();
-  keybindings::Shortcut shortcut;
-  shortcut.key = press.value(QStringLiteral("key")).toString().toLower();
-  shortcut.mod = m_mac ? meta : ctrl;
-  shortcut.ctrl = m_mac && ctrl;
-  shortcut.meta = !m_mac && meta;
-  shortcut.shift = press.value(QStringLiteral("shiftKey")).toBool();
-  shortcut.alt = press.value(QStringLiteral("altKey")).toBool();
-  // The embed checked the command is the same without its focus. A key the
-  // shell has no command for stops here; the primary page is not handed it.
-  m_commands.run(resolve(keybindings::sequence(shortcut, m_mac)));
-  return true;
-}
-
-// One entry per sequence; the chrome, page and terminal flags say whether the
-// key is the shell's with that focus. The chrome's covers a focused composer.
+// One entry per sequence; the chrome and terminal flags say whether the key
+// is the shell's with that focus. The chrome's covers a focused composer.
 void KeybindingController::refreshShortcuts() {
   const QVariantMap chrome;
   const QVariantMap composer{{QStringLiteral("composer"), true}, {QStringLiteral("editable"), true}};
-  const QVariantMap page{{QStringLiteral("page"), true}};
   const QVariantMap terminal{{QStringLiteral("terminal"), true}};
   const auto native = [this](const QString& command) { return m_commands.contains(command) || isScriptRun(command); };
   QVariantList shortcuts;
@@ -269,7 +250,6 @@ void KeybindingController::refreshShortcuts() {
     shortcuts.append(QVariantMap{
         {QStringLiteral("sequence"), sequence},
         {QStringLiteral("chrome"), native(resolve(sequence, chrome)) || native(resolve(sequence, composer))},
-        {QStringLiteral("page"), native(resolve(sequence, page))},
         {QStringLiteral("terminal"), native(resolve(sequence, terminal))},
     });
   }

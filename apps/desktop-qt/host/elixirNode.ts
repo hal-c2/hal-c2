@@ -4,8 +4,7 @@
  * (apps/desktop/src/backend/DesktopBackendConfiguration.ts): a release
  * `bin/hal_c2 start`, or `mix hal_c2.server` in a checkout, with
  * `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON bootstrap line on stdin (port, host,
- * `halC2Home`, `desktopBootstrapToken`; read by apps/server-ex/lib/hal_c2/desktop.ex).
- * The token never appears in argv or the environment.
+ * `halC2Home`; read by apps/server-ex/lib/hal_c2/desktop.ex).
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -235,7 +234,6 @@ export function startNode(input: {
   readonly launch: NodeLaunch;
   readonly port: number;
   readonly home: string | undefined;
-  readonly token: string;
   readonly env: NodeJS.ProcessEnv;
 }): RunningNode {
   const child = NodeChildProcess.spawn(input.launch.command, [...input.launch.args], {
@@ -267,7 +265,6 @@ export function startNode(input: {
   const bootstrap = {
     port: input.port,
     host: NODE_HOST,
-    desktopBootstrapToken: input.token,
     ...(input.home === undefined ? {} : { halC2Home: input.home }),
   };
   child.stdin.on("error", () => {});
@@ -343,30 +340,6 @@ export async function exchangePairingToken(
     | { readonly access_token?: unknown }
     | undefined;
   return typeof body?.access_token === "string" ? body.access_token : undefined;
-}
-
-/**
- * A fresh one-time pairing credential minted with `bearer`
- * (`POST /api/auth/pairing-token`, access:write). Undefined when the session
- * may not mint one.
- */
-export async function mintPairingToken(
-  origin: string,
-  bearer: string,
-  label: string,
-  timeoutMs = 5_000,
-): Promise<string | undefined> {
-  const response = await fetch(new URL("/api/auth/pairing-token", origin), {
-    method: "POST",
-    headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-    body: JSON.stringify({ label }),
-    signal: AbortSignal.timeout(timeoutMs),
-  }).catch(() => undefined);
-  if (response === undefined || !response.ok) return undefined;
-  const body = (await response.json().catch(() => undefined)) as
-    | { readonly credential?: unknown }
-    | undefined;
-  return typeof body?.credential === "string" ? body.credential : undefined;
 }
 
 /**

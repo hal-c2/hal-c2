@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// A select in the page's clothes: the composer's ghost pickers by default
+// A select in the web app's clothes: the composer's ghost pickers by default
 // (icon, muted label, chevron), `outline: true` for a bordered field.
 ComboBox {
     id: control

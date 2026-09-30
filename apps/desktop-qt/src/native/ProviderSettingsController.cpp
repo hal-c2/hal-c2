@@ -246,7 +246,6 @@ ProviderSettingsController::ProviderSettingsController(ShellBridge* bridge, Node
 void ProviderSettingsController::activate() {
   if (m_active) return;
   m_active = true;
-  m_bridge->claimKey(kKey);
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
   const auto section = NavigationController::Route::settings(NavigationController::kProvidersSection);
   if (auto* keys = NativeShell::of(this)->controller<KeybindingController>()) {

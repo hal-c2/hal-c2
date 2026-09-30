@@ -33,8 +33,8 @@ namespace {
 const QString kNewWindow = QStringLiteral("window.new");
 const QString kWindowsDir = QStringLiteral("shell-windows");
 
-// A window's id names its directory under shell-windows/, so one from the page
-// or a saved file is used only if it cannot climb out of it.
+// A window's id names its directory under shell-windows/, so one from an
+// action or a saved file is used only if it cannot climb out of it.
 bool validWindowId(const QString& id) {
   static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9_-]{1,32}$"));
   return pattern.match(id).hasMatch();
@@ -72,15 +72,11 @@ NativeWindow::NativeWindow(NativeShell* shell, const QString& id, ShellBridge* b
     // The shared controllers publish on the shared bridge; this one shows the
     // same.
     for (const QString& key : shell->sharedKeys()) {
-      bridge->claimKey(key);
       if (shared->state()->contains(key)) bridge->publish(key, shared->state()->value(key));
     }
     connect(shared, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
       if (m_shell->sharedKeys().contains(key)) m_bridge->publish(key, value);
     });
-    // The page the backend serves, which main.cpp sets on the shared bridge.
-    bridge->setPageUrl(shared->pageUrl());
-    connect(shared, &ShellBridge::pageUrlChanged, this, [this, shared] { m_bridge->setPageUrl(shared->pageUrl()); });
   }
   // The shared bridge outlives the first window, and keeps its interceptor.
   bridge->addInterceptor([window = QPointer<NativeWindow>(this)](const QString& action, const QVariant& payload) {
@@ -135,16 +131,6 @@ void NativeWindow::setStoreDirs(const QString& state) {
 }
 
 bool NativeWindow::handle(const QString& action, const QVariant& payload) {
-  // A (re)loaded page asks who owns what; the answer comes as `shell.native`.
-  if (action == QLatin1String("shell.native.query")) {
-    if (m_active) {
-      announce();
-      // A page that just asked knows nothing of the route yet.
-      if (auto* navigation = controller<NavigationController>()) navigation->pageReady();
-      if (auto* settings = controller<SettingsController>()) settings->pageReady(m_bridge);
-    }
-    return true;
-  }
   if (action == kNewWindow) {
     m_shell->openWindow(payload.toMap().value(QStringLiteral("id")).toString());
     return true;
@@ -155,24 +141,12 @@ bool NativeWindow::handle(const QString& action, const QVariant& payload) {
 }
 
 void NativeWindow::activate() {
-  m_active = true;
   for (const NativeControllerEntry& entry : m_controllers) entry.native->activate();
-  m_bridge->claimKey(QStringLiteral("sidebar"));
   m_sidebar.activate();
   for (const NativeControllerEntry& entry : m_shell->m_shared) entry.native->attach(this);
   if (auto* keys = controller<KeybindingController>()) {
     keys->commands()->add(kNewWindow, tr("New window"), [this] { m_shell->openWindow(); });
   }
-  announce();
-}
-
-void NativeWindow::announce() {
-  const QVariantMap native{
-      {QStringLiteral("sidebar"), m_sidebar.isActive()},
-      {QStringLiteral("composer"), true},
-  };
-  m_bridge->publish(QStringLiteral("native"), native);
-  m_bridge->sendToPage(QStringLiteral("shell.native"), native);
 }
 
 NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)

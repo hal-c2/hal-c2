@@ -5,12 +5,10 @@
 // who takes a key under focus).
 //
 // A press goes where ShellWindow sends it: with no window shortcut for the
-// sequence, or one standing down for the focused page or terminal, the key
-// reaches whatever has focus; otherwise Keybindings.press runs it. An open
-// model picker takes its own chords first (ModelPicker's ShortcutOverride). A
-// command "runs" when the shell ran it, or when the page was handed the key
-// (forwarded as `keybinding.press`, or focused and handling its own keydown)
-// and the page's keymap resolves it to that command.
+// sequence, or one standing down for the focused terminal, the key reaches
+// whatever has focus; otherwise Keybindings.press runs it. An open model
+// picker takes its own chords first (ModelPicker's ShortcutOverride). A
+// command "runs" when the shell or the picker ran it.
 
 #include <QCoreApplication>
 #include <QJsonArray>
@@ -37,7 +35,7 @@
 namespace {
 
 struct KeyState {
-  // Where the keyboard is: {page, terminal, composer, editable}; empty for
+  // Where the keyboard is: {terminal, composer, editable}; empty for
   // the native chrome.
   QVariantMap focus;
   bool mac = false;
@@ -47,13 +45,11 @@ struct KeyState {
   bool acted = false;
   bool threadShown = false;
   // The last press: its sequence, the commands the shell ran, the picker's
-  // command, what received the key when the window did not take it, and the
-  // page actions before it.
+  // command, and what received the key when the window did not take it.
   QString sequence;
   QStringList ran;
   QString picker;
   QString delivered;
-  qsizetype actionsBefore = 0;
   // Settings → Keybindings.
   QString query;
   QString condition;
@@ -130,8 +126,8 @@ bool connected(World& world) {
 void ensureShell(World& world) {
   if (!connected(world)) {
     world.connect();
-    world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); },
-                  QStringLiteral("the shell to take over"));
+    world.waitFor([&world] { return world.native().isActive(); },
+                  QStringLiteral("the shell to start"));
   }
   world.sync();
   KeyState& state = keys(world);
@@ -167,7 +163,6 @@ void settle(World& world) {
 
 QString focusName(const QVariantMap& focus) {
   if (focus.value(QStringLiteral("terminal")).toBool()) return QStringLiteral("terminal");
-  if (focus.value(QStringLiteral("page")).toBool()) return QStringLiteral("page");
   if (focus.value(QStringLiteral("composer")).toBool()) return QStringLiteral("composer");
   return QStringLiteral("window");
 }
@@ -194,7 +189,6 @@ void pressSequence(World& world, const QString& sequence) {
   state.ran.clear();
   state.picker.clear();
   state.delivered.clear();
-  state.actionsBefore = world.pageActions.size();
   KeybindingController* controller = keymap(world);
   if (sequence.isEmpty()) {
     state.delivered = focusName(state.focus);
@@ -227,10 +221,7 @@ void pressSequence(World& world, const QString& sequence) {
   }
   const QVariantMap shortcut = entry->toMap();
   const bool terminal = state.focus.value(QStringLiteral("terminal")).toBool();
-  const bool page = state.focus.value(QStringLiteral("page")).toBool();
-  const bool enabled = terminal ? shortcut.value(QStringLiteral("terminal")).toBool()
-                       : page   ? shortcut.value(QStringLiteral("page")).toBool()
-                                : shortcut.value(QStringLiteral("chrome")).toBool();
+  const bool enabled = shortcut.value(terminal ? QStringLiteral("terminal") : QStringLiteral("chrome")).toBool();
   if (!enabled) {
     state.delivered = focusName(state.focus);
     return;
@@ -287,34 +278,16 @@ void press(World& world, const QString& key) {
   pressSequence(world, keybindings::sequence(*shortcut, keys(world).mac));
 }
 
-QList<PageAction> forwarded(World& world) {
-  QList<PageAction> presses;
-  for (qsizetype index = keys(world).actionsBefore; index < world.pageActions.size(); ++index) {
-    if (world.pageActions.at(index).type == QLatin1String("keybinding.press")) presses.append(world.pageActions.at(index));
-  }
-  return presses;
-}
-
-// What the page's keymap makes of the key, focused on its body.
-QString pageCommand(World& world) {
-  return keybindings::resolve(keymap(world)->resolved(), keys(world).sequence,
-                              {{QStringLiteral("isDesktop"), true}}, keys(world).mac);
-}
-
 bool ran(World& world, const QString& command) {
   const KeyState& state = keys(world);
-  if (state.ran.contains(command) || state.picker == command) return true;
-  const bool toPage = !forwarded(world).isEmpty() || state.delivered == QLatin1String("page");
-  return toPage && pageCommand(world) == command;
+  return state.ran.contains(command) || state.picker == command;
 }
 
 QString describePress(World& world) {
   const KeyState& state = keys(world);
-  return QStringLiteral("%1 with %2: the shell ran %3, the picker %4, the key went to %5, the page got %6 (%7)")
+  return QStringLiteral("%1 with %2: the shell ran %3, the picker %4, the key went to %5")
       .arg(state.sequence, focusName(state.focus), show(state.ran), state.picker.isEmpty() ? u"nothing"_qs : state.picker,
-           state.delivered.isEmpty() ? u"the window"_qs : state.delivered)
-      .arg(forwarded(world).size())
-      .arg(pageCommand(world));
+           state.delivered.isEmpty() ? u"the window"_qs : state.delivered);
 }
 
 // A thread of a project with a `test` script, shown in the window.
@@ -440,13 +413,10 @@ const Steps steps([] {
        });
   step(QStringLiteral("(?:the native chrome has keyboard focus|the user is in the desktop app|anything|the terminal is closed)"),
        [](World& world, const Captures&, const Table&) { setFocus(world, {}); });
-  step(QStringLiteral("the page has keyboard focus"), [](World& world, const Captures&, const Table&) {
-    setFocus(world, {{QStringLiteral("page"), true}});
-  });
   step(QStringLiteral("the composer has (?:keyboard )?focus"), [](World& world, const Captures&, const Table&) {
     // As an outcome: the shell handed the composer the keyboard.
     if (world.checking) {
-      expect(!world.actionsOf(QStringLiteral("composer.focus")).isEmpty(), world.describePage());
+      expect(!world.actionsOf(QStringLiteral("composer.focus")).isEmpty(), world.describeBrickActions());
       return;
     }
     setFocus(world, kComposer);
@@ -486,6 +456,17 @@ const Steps steps([] {
   step(QStringLiteral("the user has several projects"), [](World& world, const Captures&, const Table&) {
     addThreads(world, {{QStringLiteral("One"), QStringLiteral("p1")}, {QStringLiteral("Two"), QStringLiteral("p2")}});
     openThread(world, QStringLiteral("Two"));
+  });
+  step(QStringLiteral("the thread list shows at least three threads"), [](World& world, const Captures&, const Table&) {
+    addThreads(world, {{QStringLiteral("One"), QStringLiteral("p1")},
+                       {QStringLiteral("Two"), QStringLiteral("p1")},
+                       {QStringLiteral("Three"), QStringLiteral("p1")}});
+    world.waitFor([&] { return world.native().sidebar()->orderedKeys().size() >= 3; }, QStringLiteral("three threads in the list"));
+  });
+  step(QStringLiteral("the third thread opens"), [](World& world, const Captures&, const Table&) {
+    const QString key = world.native().sidebar()->orderedKeys().value(2);
+    world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },
+                  [&] { return QStringLiteral("%1; the window shows %2").arg(key, show(world.state(QStringLiteral("route")))); });
   });
   step(QStringLiteral("the user goes forward"), [](World& world, const Captures&, const Table&) {
     keymap(world)->commands()->run(QStringLiteral("navigation.forward"));
@@ -536,12 +517,6 @@ const Steps steps([] {
   step(QStringLiteral("the (terminal|composer) receives the key"), [](World& world, const Captures& c, const Table&) {
     expect(keys(world).delivered == c[0], describePress(world));
   });
-  step(QStringLiteral("the page handles the key itself"), [](World& world, const Captures&, const Table&) {
-    expect(keys(world).delivered == QLatin1String("page") && keys(world).ran.isEmpty(), describePress(world));
-  });
-  step(QStringLiteral("the desktop shell does not forward it a second time"), [](World& world, const Captures&, const Table&) {
-    expect(forwarded(world).isEmpty(), describePress(world));
-  });
 
   // The thread's terminal.
   step(QStringLiteral("the thread's terminal is (shown|hidden)"), [](World& world, const Captures& c, const Table&) {
@@ -577,31 +552,6 @@ const Steps steps([] {
   step(QStringLiteral("the %1 script runs").arg(q), [](World& world, const Captures&, const Table&) {
     world.waitFor([&world] { return terminals(world)->isOpen() && terminals(world)->tabs()->rowCount() == 1; },
                   [&world] { return QStringLiteral("the script's terminal; ") + describePress(world); });
-  });
-
-  step(QStringLiteral("the page forwards ([^ ]+)"), [](World& world, const Captures& c, const Table&) {
-    // As an embed hands the shell a keydown it did not take (ShellBridge.ts).
-    ensureShell(world);
-    const auto shortcut = keybindings::parseShortcut(c[0]);
-    if (!shortcut) fail(QStringLiteral("%1 is not a key").arg(c[0]));
-    KeyState& state = keys(world);
-    state.acted = true;
-    state.ran.clear();
-    state.sequence = keybindings::sequence(*shortcut, state.mac);
-    state.actionsBefore = world.pageActions.size();
-    world.bridge().dispatch(QStringLiteral("keybinding.press"),
-                            QVariantMap{{QStringLiteral("key"), shortcut->key},
-                                        {QStringLiteral("ctrlKey"), shortcut->ctrl || (shortcut->mod && !state.mac)},
-                                        {QStringLiteral("metaKey"), shortcut->meta || (shortcut->mod && state.mac)},
-                                        {QStringLiteral("shiftKey"), shortcut->shift},
-                                        {QStringLiteral("altKey"), shortcut->alt}});
-    world.sync();
-  });
-  step(QStringLiteral("the page is not handed the key"), [](World& world, const Captures&, const Table&) {
-    expect(forwarded(world).isEmpty() && keys(world).delivered != QLatin1String("page"), describePress(world));
-  });
-  step(QStringLiteral("the page is handed the key once"), [](World& world, const Captures&, const Table&) {
-    expect(forwarded(world).size() == 1 && keys(world).ran.isEmpty(), describePress(world));
   });
 
   // keybindings.json.

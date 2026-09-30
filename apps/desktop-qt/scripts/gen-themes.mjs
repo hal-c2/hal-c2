@@ -15,7 +15,7 @@ const palettes = await import(
 );
 const output = NodePath.join(here, "..", "src/native/themes.json");
 
-// Roles the page paints outside theme files (apps/web/src/index.css: --success
+// Roles the web app paints outside theme files (apps/web/src/index.css: --success
 // is emerald-500, --info blue-500, in both appearances) that the bricks read.
 const fixed = { success: "oklch(0.696 0.17 162.48)", info: "oklch(0.623 0.214 259.815)" };
 

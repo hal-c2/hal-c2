@@ -1,8 +1,7 @@
 .pragma library
 
-// The routes whose centre the shell draws itself, and the brick that draws
-// it (<brick>.qml in this module). Any other route still shows the embedded
-// page. Taking a route from the page is one line here.
+// The route kinds and the brick that draws each one's centre (<brick>.qml in
+// this module).
 var views = [
     { kind: "thread", brick: "ThreadView" },
     { kind: "draft", brick: "ThreadView" },
@@ -11,7 +10,7 @@ var views = [
     { kind: "usage", brick: "UsagePage" },
 ];
 
-// The brick for a route kind, or "" while the page draws it.
+// The brick for a route kind, or "" for one no view draws.
 function brickFor(kind) {
     for (var i = 0; i < views.length; ++i) {
         if (views[i].kind === kind)

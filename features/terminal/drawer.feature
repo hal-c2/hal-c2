@@ -52,10 +52,10 @@ Feature: The desktop's terminal drawer
 
     @desktop
     Scenario: A draft thread has a terminal in its project
-      Given the user is viewing the draft "d1" in "p1"
+      Given the user is viewing a new thread in "p1"
       When the user toggles the terminal drawer
       Then the terminal drawer shows the tabs "Terminal 1"
-      And the node attaches "term-1" of "d1" in "/work/p1"
+      And the node attaches "term-1" of the new thread in "/work/p1"
 
     @desktop
     Scenario: A thread on a node clustered with the desktop's node has its terminal there

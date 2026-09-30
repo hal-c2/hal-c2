@@ -9,7 +9,7 @@
 
 Feature: The desktop shell adds and removes its node's projects
   The Qt shell opens a local folder as a project and removes projects through its node's
-  `projects.mutate`, without the page. Adding by typing a path is the command palette's
+  `projects.mutate`. Adding by typing a path is the command palette's
   Add project; cloning is not native yet.
 
   Background:
@@ -24,7 +24,7 @@ Feature: The desktop shell adds and removes its node's projects
     And no project is created
 
   @desktop
-  Scenario: A page that may not reach local folders opens none
+  Scenario: A shell that may not reach local folders opens none
     Given the shell may not open local folders
     When the user drops the folder "/home/sam/shop" on the window
     Then no project is created

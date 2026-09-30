@@ -229,7 +229,7 @@ bool ProviderSettingsController::handleInstance(const QString& action, const QVa
       m_wizard->config.insert(m_wizard->driver, config);
     } else if (action == QLatin1String("providerSettings.wizardStep") || action == QLatin1String("providerSettings.wizardSubmit")) {
       const QString driver = m_wizard->driver;
-      // The page keeps a label or id being typed to itself and hands it over here.
+      // The wizard keeps a label or id being typed to itself and hands it over here.
       if (input.contains(QStringLiteral("label"))) m_wizard->identity[driver].insert(QStringLiteral("label"), input.value(QStringLiteral("label")).toString());
       if (input.contains(QStringLiteral("instanceId"))) {
         m_wizard->identity[driver].insert(QStringLiteral("instanceId"), input.value(QStringLiteral("instanceId")).toString().trimmed());

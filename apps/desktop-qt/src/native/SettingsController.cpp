@@ -9,7 +9,6 @@
 
 #include "NativeShell.h"
 #include "NodeClient.h"
-#include "ShellBridge.h"
 #include "ToastController.h"
 
 namespace {
@@ -33,7 +32,7 @@ QJsonObject withPath(QJsonObject object, const QStringList& path, const QJsonVal
 }
 
 // The rows of the settings pages: the store a key is in and its default.
-// Device rows are the web's ClientSettings, which the page follows; node rows
+// Device rows are the web's ClientSettings; node rows
 // its ServerSettings, which the node's document leaves out while at default.
 struct Row {
   const char* key;
@@ -111,9 +110,8 @@ const Row* rowOf(const QString& key) {
 
 }  // namespace
 
-SettingsController::SettingsController(ShellBridge* bridge, NodeClient* client, QObject* parent)
-    : QObject(parent), m_client(client), m_bridge(bridge) {
-  connect(this, &SettingsController::deviceChanged, this, [this] { follow(); });
+SettingsController::SettingsController(ShellBridge*, NodeClient* client, QObject* parent)
+    : QObject(parent), m_client(client) {
   // A reconnect may reach a restarted node, whose versions start again; the
   // config snapshot that follows the re-sent subscription reads them afresh.
   connect(m_client, &NodeClient::readyChanged, this, [this](bool ready) {
@@ -341,30 +339,6 @@ void SettingsController::toast(const QString& title, const QString& reason, Nati
   if (!window) window = NativeShell::of(this);
   if (!window) return;
   if (auto* toasts = window->controller<ToastController>()) toasts->error(title, reason);
-}
-
-QJsonObject SettingsController::clientSettings() const {
-  QJsonObject settings;
-  for (const Row& row : rows()) {
-    if (!row.device) continue;
-    const QString key = QLatin1String(row.key);
-    settings.insert(key, m_device.contains(key) ? m_device.value(key) : row.fallback);
-  }
-  return settings;
-}
-
-void SettingsController::pageReady(ShellBridge* page) {
-  page->sendToPage(QStringLiteral("clientSettings.follow"),
-                   QVariantMap{{QStringLiteral("settings"), clientSettings().toVariantMap()}});
-}
-
-void SettingsController::follow() {
-  const QJsonObject settings = clientSettings();
-  if (settings == m_followed) return;
-  m_followed = settings;
-  const NativeWindow* here = NativeShell::of(this);
-  if (!here) return;
-  for (const auto& window : here->shell()->windows()) pageReady(window->bridge());
 }
 
 void SettingsController::setDevicePath(const QString& path) {

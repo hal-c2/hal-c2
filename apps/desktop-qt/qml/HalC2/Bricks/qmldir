@@ -1,8 +1,6 @@
 module HalC2.Bricks
 FolderExplorer 1.0 FolderExplorer.qml
 FolderOperationDialog 1.0 FolderOperationDialog.qml
-AppView 1.0 AppView.qml
-AppWindow 1.0 AppWindow.qml
 ClusterSettings 1.0 ClusterSettings.qml
 ConnectionsSettings 1.0 ConnectionsSettings.qml
 Composer 1.0 Composer.qml
@@ -32,7 +30,6 @@ SidebarThreadRow 1.0 SidebarThreadRow.qml
 HalC2Wordmark 1.0 HalC2Wordmark.qml
 TerminalDrawer 1.0 TerminalDrawer.qml
 TitleBar 1.0 TitleBar.qml
-WebSurface 1.0 WebSurface.qml
 WindowControls 1.0 WindowControls.qml
 Workspace 1.0 Workspace.qml
 Timeline 1.0 Timeline.qml

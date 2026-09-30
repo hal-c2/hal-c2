@@ -1,11 +1,11 @@
 # Sources:
-#   apps/desktop-qt/src/native/SidebarController.cpp (what it leaves to the page)
+#   apps/desktop-qt/src/native/SidebarController.cpp (the row actions it does not send)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   threads/thread-list.feature has what the desktop's sidebar does against its node; this file
-#   keeps what it still leaves to the embedded page.
+#   keeps what it does not send.
 
-Feature: What the desktop's sidebar leaves to the page
-  The desktop sends row actions to its node itself. What its node cannot take, the page keeps.
+Feature: What the desktop's sidebar does not send to its node
+  The desktop sends row actions to its node itself. What its node cannot take, it does not send.
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
@@ -21,15 +21,14 @@ Feature: What the desktop's sidebar leaves to the page
     And the node has the project "p2" titled "proj-2"
     And the desktop shell is connected to its node
 
-  Rule: What the node cannot take stays with the page
+  Rule: What the node cannot take is not sent
 
     @desktop
-    Scenario Outline: An environment that does not track visits keeps unread markers in the page
+    Scenario Outline: An environment that does not track visits is sent no unread markers
       Given the node's environment does not track visits
       And the node sends its snapshot
       When the user dispatches "<action>" for "env-a:t1"
-      Then the action "<action>" for "env-a:t1" reaches the page
-      And the node receives no commands
+      Then the node receives no commands
 
       Examples:
         | action             |
@@ -37,7 +36,6 @@ Feature: What the desktop's sidebar leaves to the page
         | thread.wokeDismiss |
 
     @desktop
-    Scenario: A thread the node's cluster does not know stays with the page
+    Scenario: A thread the node's cluster does not know is not sent
       When the user settles "env-b:elsewhere"
-      Then the action "thread.settle" for "env-b:elsewhere" reaches the page
-      And the node receives no commands
+      Then the node receives no commands

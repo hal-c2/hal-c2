@@ -8,7 +8,7 @@ import "js/modelPicker.js" as Picker
 // the trigger shows the chosen model with its provider's icon, and the popup
 // has the provider rail (ModelPickerSidebar) beside a searchable model list
 // (ModelPickerContent, ModelListRow). The catalogue is Shell.state.modelPicker;
-// choosing a model or starring it is dispatched back to the page.
+// choosing a model or starring it is dispatched to the shell.
 AbstractButton {
     id: control
 
@@ -123,7 +123,7 @@ AbstractButton {
         });
     }
 
-    // The chords the page resolved for the open picker: previous/next
+    // The chords the catalogue carries for the open picker: previous/next
     // provider and the numbered jumps.
     function chordFor(event) {
         if (!catalogue)
@@ -264,7 +264,7 @@ AbstractButton {
         focus: true
         // Escape is handled by the search field and the rail. A popup that
         // closes on Escape blocks every window shortcut, and the model
-        // picker keybinding must still reach the page to close it again.
+        // picker keybinding must still reach the shell to close it again.
         // Pressing the trigger closes it through onClicked.
         closePolicy: Popup.CloseOnPressOutsideParent
         onAboutToShow: {

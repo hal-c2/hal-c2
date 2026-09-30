@@ -8,8 +8,6 @@ qt_add_qml_module(hal_c2_bricks
   NO_GENERATE_QMLDIR
   NO_PLUGIN_OPTIONAL
   QML_FILES
-    AppView.qml
-    AppWindow.qml
     ClusterSettings.qml
     ConnectionsSettings.qml
     Composer.qml
@@ -42,7 +40,6 @@ qt_add_qml_module(hal_c2_bricks
     KeybindingsSettings.qml
     TerminalDrawer.qml
     TitleBar.qml
-    WebSurface.qml
     WindowControls.qml
     Workspace.qml
     Timeline.qml
@@ -97,6 +94,5 @@ qt_add_qml_module(hal_c2_bricks
     SnapShotSettings.qml
   RESOURCES
     qmldir
-    js/shell-connect.js
     icons/antigravity.png
 )

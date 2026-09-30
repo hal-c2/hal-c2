@@ -5,23 +5,29 @@
 #include <QQuickItem>
 #include <QPointer>
 #include <QSignalSpy>
-#include <QQuickWebEngineProfile>
 #include <QTemporaryDir>
 #include <QTest>
-#include <QtWebEngineQuick>
 #include <memory>
 
 #include "ShellBridge.h"
 #include "LocalFolderModel.h"
 #include "ShellRuntime.h"
 #include "ThemeStore.h"
-#include "WebProfile.h"
 
 // List delegates belong to the visual tree, not necessarily the QObject tree.
 static QQuickItem* findVisualItem(QQuickItem* parent, const QString& name) {
   if (parent->objectName() == name) return parent;
   for (auto* child : parent->childItems()) {
     if (auto* found = findVisualItem(child, name)) return found;
+  }
+  return nullptr;
+}
+
+// The first item in the visual tree that is a `type` (a QML component name).
+static QQuickItem* findVisualItemOfType(QQuickItem* parent, const char* type) {
+  if (QByteArray(parent->metaObject()->className()).startsWith(type)) return parent;
+  for (auto* child : parent->childItems()) {
+    if (auto* found = findVisualItemOfType(child, type)) return found;
   }
   return nullptr;
 }
@@ -33,7 +39,6 @@ class ShellExamplesTest : public QObject {
   ShellBridge bridge;
   QVariantMap initialState;
   std::unique_ptr<ThemeStore> theme;
-  std::unique_ptr<WebProfile> profile;
   std::unique_ptr<ShellRuntime> runtime;
 
   static QObject* terminalsOf(QQmlEngine* engine) {
@@ -45,8 +50,6 @@ private slots:
     QVERIFY(directory.isValid());
     qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
     theme = std::make_unique<ThemeStore>(directory.path());
-    profile = std::make_unique<WebProfile>(directory.filePath("web"));
-    qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", profile->profile());
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Terminals.qml")),
                              "HalC2.Shell", 1, 0, "Terminals");
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Keybindings.qml")),
@@ -66,7 +69,6 @@ private slots:
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
-    bridge.setPageUrl(QUrl("about:blank"));
     const auto state = QJsonDocument::fromJson(R"({
       "workspace": {
         "projectTitle": "Example project", "threadTitle": "Fix TUI Readability Issue",
@@ -90,17 +92,16 @@ private slots:
     initialState = state;
   }
 
-  // A thread or draft route shows the shell's own centre in the page's
-  // place (js/centreViews.js); a settings section with no brick shows the page again.
+  // A thread or draft route draws its view in the centre (js/centreViews.js);
+  // settings take the centre's place until they close.
   void threadRoutesDrawTheCentre(QQuickWindow* window) {
-    auto* page = findVisualItem(window->contentItem(), "HalC2WebSurface");
-    QVERIFY(page);
-    QVERIFY(page->isVisible());
+    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    QVERIFY(centre);
+    QVERIFY(centre->isVisible());
     bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
     QTRY_VERIFY(findVisualItem(window->contentItem(), "threadTimeline"));
     auto* timeline = findVisualItem(window->contentItem(), "threadTimeline");
     QTRY_VERIFY(timeline->isVisible());
-    QVERIFY(!page->isVisible());
     QTRY_VERIFY(timeline->width() >= 300 && timeline->height() > 0);
     QVERIFY(timeline->mapToScene(QPointF(timeline->width(), 0)).x() <= window->width());
     bridge.publish("route", QVariantMap{{"kind", "draft"}, {"draftId", "draft-1"}});
@@ -108,11 +109,14 @@ private slots:
     QVERIFY(placeholder);
     QTRY_COMPARE(placeholder->property("text").toString(), QString("What should we build in Example project?"));
     QVERIFY(placeholder->isVisible());
-    QVERIFY(!page->isVisible());
-    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/nowhere"}});
-    QTRY_VERIFY(page->isVisible());
+    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/general"}});
+    QTRY_VERIFY(!centre->isVisible());
+    auto* settings = findVisualItemOfType(window->contentItem(), "SettingsHost");
+    QVERIFY(settings);
+    QTRY_VERIFY(settings->isVisible());
     bridge.publish("route", QVariant());
-    QTRY_VERIFY(page->isVisible());
+    QTRY_VERIFY(centre->isVisible());
+    QTRY_VERIFY(!settings->isVisible());
   }
 
   void layoutsFit_data() {
@@ -157,7 +161,7 @@ private slots:
     if (width == 1000) threadRoutesDrawTheCentre(window);
 
     if (example == "glass-macos") {
-      // The page's breakpoints: the sidebar goes off-canvas under 768, the
+      // The web app's breakpoints: the sidebar goes off-canvas under 768, the
       // right panel becomes a sheet under 980. Panels slide, so every
       // geometry check waits.
       const bool sidebarOverlay = width < 768;
@@ -215,7 +219,6 @@ private slots:
         QTest::keyClick(window, Qt::Key_Escape);
         QTRY_COMPARE(actions.count(), 1);
         QCOMPARE(actions.first().first().toString(), "rightPanel.toggle");
-        // The page remains authoritative and publishes the result of the action.
       } else {
         // Beside the content: the content folds back and stays usable.
         QTRY_VERIFY(content->width() < beforeInspector);
@@ -271,15 +274,15 @@ private slots:
     if (example == "folders") {
       auto* explorer = window->findChild<QQuickItem*>("folderExplorer");
       QVERIFY(explorer);
-      auto* page = window->findChild<QQuickItem*>("HalC2WebSurface");
-      QVERIFY(page);
+      auto* centre = window->findChild<QQuickItem*>("centreHost");
+      QVERIFY(centre);
       auto* threads = window->findChild<QQuickItem*>("threadSidebar");
       QVERIFY(threads);
       QVERIFY(threads->isVisible());
       QVERIFY(explorer->isVisible());
       QTRY_VERIFY(explorer->width() > 0);
-      QTRY_VERIFY(page->mapToScene(QPointF()).x() >= explorer->mapToScene(QPointF(explorer->width(), 0)).x());
-      QTRY_VERIFY(page->width() >= 300);
+      QTRY_VERIFY(centre->mapToScene(QPointF()).x() >= explorer->mapToScene(QPointF(explorer->width(), 0)).x());
+      QTRY_VERIFY(centre->width() >= 300);
       if (width >= 1100) {
         QTRY_VERIFY(explorer->mapToScene(QPointF()).x() >= threads->mapToScene(QPointF(threads->width(), 0)).x());
       } else {
@@ -489,15 +492,13 @@ private slots:
     QVERIFY(window);
     window->resize(1400, 880);
     QVERIFY(QTest::qWaitForWindowExposed(window));
-    auto* page = findVisualItem(window->contentItem(), "HalC2WebSurface");
+    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
     auto* drawer = findVisualItem(window->contentItem(), "drawer");
-    QVERIFY(page);
+    QVERIFY(centre);
     QVERIFY(drawer);
-    QTRY_VERIFY(page->width() > 400);
-    QTRY_VERIFY(page->height() > 400);
-    // about:blank lacks the app's CSS corner mask; isolate the native dimmer.
-    page->setVisible(false);
-    const QRect bounds = page->mapRectToScene(QRectF(0, 0, page->width(), page->height())).toAlignedRect();
+    QTRY_VERIFY(centre->width() > 400);
+    QTRY_VERIFY(centre->height() > 400);
+    const QRect bounds = centre->mapRectToScene(QRectF(0, 0, centre->width(), centre->height())).toAlignedRect();
     const QPoint corner = bounds.topLeft() + QPoint(1, 1);
     const QPoint center = QPoint(bounds.center().x(), bounds.bottom() - 30);
     const QImage closed = window->grabWindow();
@@ -547,14 +548,14 @@ private slots:
     window->resize(width, 820);
     QVERIFY(QTest::qWaitForWindowExposed(window));
     auto* workspace = window->property("workspace").value<QQuickItem*>();
-    auto* webView = window->property("webView").value<QQuickItem*>();
+    auto* centre = window->property("centreView").value<QQuickItem*>();
     auto* toolbar = window->findChild<QQuickItem*>("extensionToolbar");
     QVERIFY(workspace);
-    QVERIFY(webView);
+    QVERIFY(centre);
     QVERIFY(toolbar);
     QTRY_COMPARE(toolbar->height(), 48);
     QTRY_COMPARE(toolbar->mapToScene(QPointF()).y(), workspace->mapToScene(QPointF(0, workspace->height())).y());
-    QTRY_COMPARE(webView->mapToScene(QPointF()).y(), toolbar->mapToScene(QPointF(0, toolbar->height())).y());
+    QTRY_COMPARE(centre->mapToScene(QPointF()).y(), toolbar->mapToScene(QPointF(0, toolbar->height())).y());
     QPointer<QQuickItem> content = toolbar->property("item").value<QQuickItem*>();
     QVERIFY(content);
     QCOMPARE(content->width(), toolbar->width());
@@ -563,7 +564,7 @@ private slots:
     QTRY_VERIFY(!toolbar->property("active").toBool());
     QTRY_VERIFY(!toolbar->isVisible());
     QTRY_VERIFY(content.isNull());
-    QTRY_COMPARE(webView->mapToScene(QPointF()).y(), workspace->mapToScene(QPointF(0, workspace->height())).y());
+    QTRY_COMPARE(centre->mapToScene(QPointF()).y(), workspace->mapToScene(QPointF(0, workspace->height())).y());
   }
 
   // Scenario: The sidebar snaps rather than animating its width, Settings
@@ -684,13 +685,11 @@ private slots:
 
   void cleanupTestCase() {
     runtime.reset();
-    profile.reset();
     theme.reset();
   }
 };
 
 int main(int argc, char** argv) {
-  QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
   useSoftwareRenderingWithoutDisplay();
   ShellExamplesTest test;

@@ -1,7 +1,7 @@
 # Sources:
 #   apps/desktop-qt/src/native/NodeClient.cpp (protocol-3 socket: subscriptions, rpc, reconnect)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the shell shape folded into project and thread rows)
-#   apps/desktop-qt/src/native/NativeShell.cpp (hand-over from the page after the first snapshot, ready)
+#   apps/desktop-qt/src/native/NativeShell.cpp (ready once the node's first snapshot is in)
 #   apps/desktop-qt/src/main.cpp (scripted runs start on NativeShell::ready)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (the protocol the shell speaks)
@@ -9,9 +9,8 @@
 #   Shared domain: desktop/shell-host.feature starts the node and hands the shell its token.
 
 Feature: The desktop shell talks to its node itself
-  The Qt shell holds its own connection to the desktop's node, as the TUI does, so the sidebar
-  and the composer's turn actions no longer travel through the page. The page stays in charge
-  until the node's first snapshot arrives, so a node that never answers leaves a working app.
+  The Qt shell holds its own connection to the desktop's node, as the TUI does, and sends the
+  sidebar's and the composer's actions to it.
 
   Background:
     Given the desktop's node "node-a" serves the environment "env-a"
@@ -40,16 +39,14 @@ Feature: The desktop shell talks to its node itself
       When the node deletes the thread "t1"
       Then the sidebar's "active" section is empty
 
-  Rule: The page keeps the sidebar and the composer until the node's first snapshot
+  Rule: The shell starts on the node's first snapshot
 
     @desktop
-    Scenario: Before the first snapshot the page handles the shell's actions
+    Scenario: Before the first snapshot the shell sends nothing for threads it has not seen
       Given the node holds back its snapshot
       And the desktop shell connects to its node
       When the user settles "env-a:t1"
-      Then the action "thread.settle" for "env-a:t1" reaches the page
-      And the shell has not taken over from the page
-      And the node receives no commands
+      Then the node receives no commands
 
     @desktop
     Scenario: A scripted run starts once the node's first snapshot is in
@@ -60,28 +57,29 @@ Feature: The desktop shell talks to its node itself
       When the node sends its snapshot
       Then the scripted run starts once
 
-    @desktop
+  # The shell owns the sidebar and the composer from the start: there is no page to hand
+  # them over from, to tell, or to publish a sidebar of its own.
+  @dropped @desktop
+  Rule: The page keeps the sidebar and the composer until the node's first snapshot
+
     Scenario: The first snapshot hands the sidebar and the composer to the shell
       Given the node holds back its snapshot
       And the desktop shell connects to its node
       When the node sends its snapshot
       Then the shell tells the page it owns the sidebar and the composer
 
-    @desktop
     Scenario: Before the first snapshot the page is told nothing when it asks
       Given the node holds back its snapshot
       And the desktop shell connects to its node
       When the page asks who owns the sidebar
       Then the page has not been told who owns the sidebar
 
-    @desktop
     Scenario: A page that loads after the hand-over asks and is told
       Given the desktop shell is connected to its node
       And the page forgets who owns the sidebar
       When the page asks who owns the sidebar
       Then the shell tells the page it owns the sidebar and the composer
 
-    @desktop
     Scenario: The page's own sidebar no longer replaces the shell's
       Given the desktop shell is connected to its node
       When the page publishes its own sidebar

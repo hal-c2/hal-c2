@@ -172,7 +172,7 @@ Item {
             return view;
         }
 
-        function test_aThreadOrDraftRouteShowsTheConversationInThePagesPlace() {
+        function test_aThreadRouteShowsTheConversationInTheCentre() {
             rows.append(root.row({
                 rowId: "reply:1",
                 text: "The cart adds tax now."
@@ -180,8 +180,8 @@ Item {
             const view = openThread();
             verify(visibleIn(findChild(view, "threadTimeline")), "the thread's conversation is shown");
             verify(!visibleIn(placeholder(view)), "nothing covers the conversation");
-            // Which routes take the page's place is centreViews.js; that
-            // the page hides and shows again with them is tst_ShellExamples.
+            // Which routes draw which centre is centreViews.js; that
+            // settings take the centre's place is tst_ShellExamples.
         }
 
         function test_aThreadSaysItIsLoadingWithoutMoving() {

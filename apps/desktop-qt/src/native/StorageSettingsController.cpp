@@ -32,7 +32,6 @@ public:
   void activate() override {
     if (m_active) return;
     m_active = true;
-    m_bridge->claimKey(QStringLiteral("storageSettings"));
     connect(scope(), &SettingsScopeController::changed, this, &StorageSettingsController::publish);
     publish();
   }

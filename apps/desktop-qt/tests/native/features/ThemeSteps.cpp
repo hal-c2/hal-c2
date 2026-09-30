@@ -40,16 +40,6 @@ QColor drawnCanvas(World& world) {
   return world.theme().color(QStringLiteral("canvas"), QColor());
 }
 
-// What the shell last handed the page: {id, dark, vars}.
-QVariantMap pageTheme(World& world) {
-  const QString script = world.theme().injectionScript();
-  const QString head = QStringLiteral("const theme = ");
-  const qsizetype start = script.indexOf(head);
-  const qsizetype end = script.indexOf(QStringLiteral(";  const run"), start);
-  if (start < 0 || end < 0) return {};
-  return QJsonDocument::fromJson(script.mid(start + head.size(), end - start - head.size()).toUtf8()).object().toVariantMap();
-}
-
 QString describe(World& world) {
   return QStringLiteral("the shell resolved %1 (%2), drawing canvas %3 from %4")
       .arg(themes(world)->resolvedId(), themes(world)->appearance(), drawnCanvas(world).name(),
@@ -116,7 +106,7 @@ void writeThemeFile(World& world, const QJsonObject& theme) {
 
 void shellRunning(World& world) {
   world.connect();
-  world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+  world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
 }
 
 // A theme of this device's by that name (its id), with a palette for each
@@ -215,13 +205,6 @@ const Steps steps([] {
   });
   step(QStringLiteral("the app uses %1").arg(q), [](World& world, const Captures& c, const Table&) { usesTheme(world, c[0]); });
   step(QStringLiteral("the app is drawn (dark|light)"), [](World& world, const Captures& c, const Table&) { drawn(world, c[0]); });
-  step(QStringLiteral("the page is drawn in the shell's theme"), [](World& world, const Captures&, const Table&) {
-    const QVariantMap page = pageTheme(world);
-    expect(page.value(QStringLiteral("id")) == themes(world)->resolvedId() &&
-               page.value(QStringLiteral("dark")).toBool() == (themes(world)->appearance() == QLatin1String("dark")) &&
-               QColor(at(page, QStringLiteral("vars.--app-theme-canvas")).toString()) == publishedCanvas(world),
-           QStringLiteral("the page was handed %1; %2").arg(show(page), describe(world)));
-  });
   step(QStringLiteral("%1 is the dark theme").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(themes(world)->halves().value(QStringLiteral("dark")) == c[0], QStringLiteral("the halves are %1").arg(show(themes(world)->halves())));
   });
@@ -293,11 +276,8 @@ const Steps steps([] {
   step(QStringLiteral("a theme manager writes a new canvas color into the shell theme file"), [](World& world, const Captures&, const Table&) {
     writeThemeFile(world, QJsonObject{{QStringLiteral("colors"), QJsonObject{{QStringLiteral("canvas"), kShellCanvas.name()}}}});
   });
-  step(QStringLiteral("the native chrome and the page both use the new canvas color"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&world] {
-      return drawnCanvas(world) == kShellCanvas &&
-             QColor(at(pageTheme(world), QStringLiteral("vars.--app-theme-canvas")).toString()) == kShellCanvas;
-    }, [&world] { return QStringLiteral("%1; the page was handed %2").arg(describe(world), show(pageTheme(world))); });
+  step(QStringLiteral("the app uses the new canvas color"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&world] { return drawnCanvas(world) == kShellCanvas; }, [&world] { return describe(world); });
   });
   step(QStringLiteral("the shell theme file is saved with a syntax error"), [](World& world, const Captures&, const Table&) {
     writeThemeFile(world, QByteArray("{ \"colors\": { \"canvas\": "));
@@ -315,8 +295,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the app uses its own selected theme again"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&world] {
-      return !world.theme().loaded() && drawnCanvas(world) == publishedCanvas(world) &&
-             pageTheme(world).value(QStringLiteral("id")) == themes(world)->resolvedId();
+      return !world.theme().loaded() && drawnCanvas(world) == publishedCanvas(world);
     }, [&world] { return describe(world); });
   });
   step(QStringLiteral("the shell theme has a light variant with a different canvas"), [](World& world, const Captures&, const Table&) {
@@ -352,7 +331,7 @@ const Steps steps([] {
     }
   });
   step(QStringLiteral("the user presses the appearance shortcut"), [](World& world, const Captures&, const Table&) {
-    // The keybinding and the page's command palette both send this.
+    // The keybinding and the command palette both send this.
     world.bridge().dispatch(QStringLiteral("appearance.cycle"), {});
   });
   step(QStringLiteral("the user chooses the %1 theme in Settings → Appearance").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -404,7 +383,7 @@ const Steps steps([] {
     usesTheme(world, c[0]);
   });
   step(QStringLiteral("the user creates a theme"), [](World& world, const Captures&, const Table&) {
-    // As the page's "New theme" does: the active theme's colors, as a new theme.
+    // As Settings' "New theme" does: the active theme's colors, as a new theme.
     world.themeDraft = themes(world)->draft();
     world.themeDraft.insert(QStringLiteral("id"), QString());
   });

@@ -187,8 +187,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/windows.feature:The window title follows*"),
     QStringLiteral("navigation/windows.feature:A second window works on its own"),
     QStringLiteral("navigation/windows.feature:Closing a second window leaves the first alone"),
-    QStringLiteral("navigation/windows.feature:Every window shows the app and a backend failure"),
-    QStringLiteral("navigation/windows.feature:Every window's page follows*"),
+    QStringLiteral("navigation/windows.feature:Every window shows a backend failure"),
     QStringLiteral("navigation/windows.feature:A setting that fails to save*"),
     QStringLiteral("navigation/windows.feature:Closing the first window leaves the others open"),
     QStringLiteral("navigation/windows.feature:Closing the last window quits"),
@@ -273,6 +272,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/qt-shell-backlog.feature:A device tab streams a device screen"),
     QStringLiteral("desktop/shell-host.feature:A screenshot taken without a display shows the app's window"),
     QStringLiteral("navigation/qt-shell-backlog.feature:The previous worktree shortcut works in the native composer"),
+    QStringLiteral("navigation/qt-shell-backlog.feature:Thread number shortcuts work in the native desktop shell"),
     // The alerts themselves; the in-app card's own clicks are tst_Scenarios.qml's.
     QStringLiteral("timeline/notifications.feature:A thread that changes state*"),
     QStringLiteral("timeline/notifications.feature:Threads *"),

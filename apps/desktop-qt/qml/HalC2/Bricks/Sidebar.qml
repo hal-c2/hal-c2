@@ -16,7 +16,7 @@ Rectangle {
     // rail, say) turns these off so the brick is just the thread list.
     property bool showScope: true
     property bool showFooter: true
-    // The brand band ("HAL-C2" plus the collapse toggle) is what the page
+    // The brand band ("HAL-C2" plus the collapse toggle) is what the web app
     // shows above its sidebar; a rice with its own title bar leaves it off.
     // When frameless it doubles as the window's drag handle.
     property bool showBrand: false
@@ -309,7 +309,7 @@ Rectangle {
                     iconTint: sidebar.iconColor
                     objectName: "addProject"
                     Accessible.name: qsTr("Add project")
-                    // A local folder is picked here; without local folders the page's palette asks.
+                    // A local folder is picked here; without local folders the command palette asks.
                     onClicked: Shell.localFolderImportEnabled && (sidebar.model?.localEnvironmentId ?? null) !== null ? addProjectDialog.open() : Shell.dispatch("project.add")
                 }
 

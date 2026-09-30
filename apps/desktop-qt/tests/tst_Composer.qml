@@ -102,7 +102,7 @@ Item {
             compare(sent.payload.intent, "background");
             compare(root.stolenChords, 0);
 
-            // A chord the page does not send with is a newline.
+            // A chord the composer does not send with is a newline.
             const count = Shell.dispatchCount;
             keyClick(Qt.Key_Return, Qt.ShiftModifier);
             verify(Shell.dispatchedActions.slice(count).every(entry => entry.action !== "composer.submit"));

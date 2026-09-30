@@ -57,7 +57,7 @@ Item {
                     id: slide
                 }
 
-                // Slide in from the edge, like the page's own toasts.
+                // Slide in from the edge, like the web app's toasts.
                 ParallelAnimation {
                     running: true
 

@@ -12,6 +12,11 @@
 class ShellBridge;
 class ThemeStore;
 
+// Runs after the QGuiApplication exists and before any window. Without a
+// display (the offscreen platform) Qt Quick can only draw with its software
+// renderer, so grabs and --screenshot need it chosen explicitly.
+void useSoftwareRenderingWithoutDisplay();
+
 // Owns one QML engine: resolves which shell.qml to load (user
 // config dir first, built-in default otherwise), watches the QML sources it
 // loaded from disk, and replaces its root objects when they change. A broken

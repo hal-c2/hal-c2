@@ -43,7 +43,6 @@ LicensesController::LicensesController(ShellBridge* bridge, NodeClient*, QObject
 void LicensesController::activate() {
   if (m_active) return;
   m_active = true;
-  m_bridge->claimKey(QStringLiteral("licenses"));
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
   auto opened = [navigation] { return navigation->route() == NavigationController::Route::settings(kSection); };
   // Read when the page opens, until it has read.

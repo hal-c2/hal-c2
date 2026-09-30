@@ -71,7 +71,7 @@ private slots:
     QCOMPARE(canvas(), QStringLiteral("#fcfcfc"));
     themes()->setSystemDark(true);
     QCOMPARE(canvas(), QStringLiteral("#0a0a0a"));
-    // The roles the page paints outside theme files come with every theme.
+    // The roles the bricks paint outside theme files come with every theme.
     QVERIFY(published().value(QStringLiteral("colors")).toMap().contains(QStringLiteral("success")));
     QVERIFY(published().value(QStringLiteral("colors")).toMap().contains(QStringLiteral("info")));
   }
