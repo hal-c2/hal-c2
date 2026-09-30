@@ -90,6 +90,14 @@ Feature: Linking a node to environments outside its cluster
     When a client of the node asks for the config of "beast"
     Then it receives the config of "beast" with its providers and editors
 
+  # The desktop's clone toasts follow a clone started on a linked environment this way.
+  @node
+  Scenario: A client follows a linked environment's project clones through its node
+    Given the node is linked to "beast"
+    And a client of the node follows the project clones of "beast"
+    When a client of the node starts cloning a repository on "beast"
+    Then the client is told of that clone by "beast"
+
   @node
   Scenario Outline: A client calls <method> on a linked environment through its node
     Given the node is linked to "beast"

@@ -268,6 +268,9 @@ const Steps steps([] {
   step(QStringLiteral("the shell may not open local folders"), [](World& world, const Captures&, const Table&) {
     world.bridge().setLocalFolderImportEnabled(false);
   });
+  step(QStringLiteral("the shell's node runs on another machine"), [](World& world, const Captures&, const Table&) {
+    world.bridge().setNodeOrigin(QUrl(QStringLiteral("https://node-b.example.ts.net")));
+  });
   step(QStringLiteral("the user asks to add a project without a folder"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap());
   });

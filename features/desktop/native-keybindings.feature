@@ -1,5 +1,5 @@
 # Sources:
-#   apps/desktop-qt/src/native/KeybindingController.cpp (the keymap, its native commands and keybinding.press)
+#   apps/desktop-qt/src/native/KeybindingController.cpp (the keymap, its native commands, keybinding.press from secondary pages)
 #   apps/desktop-qt/src/native/Keybindings.cpp (defaults, when expressions, merging the node's rules)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
@@ -10,7 +10,8 @@
 
 Feature: The desktop shell keeps the keymap
   The Qt shell runs the commands it owns itself, even when the page or a terminal has
-  focus, and hands every other bound key to the page as a keybinding press.
+  focus. A key it has no command for stays with the focused control; the page is never
+  handed one.
 
   Rule: A key the page forwards runs natively
 
@@ -47,8 +48,15 @@ Feature: The desktop shell keeps the keymap
       Then "sidebar.toggle" runs
 
     @desktop
-    Scenario: The page's commands go to the page from the native chrome
+    Scenario: The native chrome's keys run in the shell, never in the page
       Given the native chrome has keyboard focus
       When the user presses mod+o
-      Then the page is handed the key once
-      And "editor.openFavorite" runs
+      Then "editor.openFavorite" runs
+      And the page is not handed the key
+
+    @desktop
+    Scenario: A key the shell has no command for stays with the focused control
+      Given the composer has keyboard focus
+      When the user presses mod+shift+l
+      Then the composer receives the key
+      And the page is not handed the key

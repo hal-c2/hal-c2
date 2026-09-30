@@ -221,11 +221,19 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
 }
 
 void NavigationController::back() {
-  if (m_backStack.isEmpty()) {
-    go(Route(), true, true);
-    return;
-  }
-  go(m_backStack.takeLast(), true, true);
+  const Route from = m_route;
+  go(m_backStack.isEmpty() ? Route() : m_backStack.takeLast(), true, true);
+  if (m_route != from) m_forwardStack.append(from);
+}
+
+// Where back left, as the browser's forward: gone once the user goes
+// somewhere new.
+void NavigationController::forward() {
+  if (m_forwardStack.isEmpty()) return;
+  const Route to = m_forwardStack.takeLast();
+  QList<Route> rest = m_forwardStack;
+  go(to, false, true);
+  m_forwardStack = rest;
 }
 
 void NavigationController::go(const Route& route, bool replace, bool followPage) {
@@ -233,6 +241,7 @@ void NavigationController::go(const Route& route, bool replace, bool followPage)
     m_target.clear();
     const bool settingsToSettings =
         route.kind == QLatin1String("settings") && m_route.kind == QLatin1String("settings");
+    if (!replace) m_forwardStack.clear();
     if (!replace && !settingsToSettings && !passesThrough(m_route)) {
       m_backStack.removeAll(m_route);
       m_backStack.append(m_route);

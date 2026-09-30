@@ -217,6 +217,12 @@ NativeWindow* NativeShell::window(const QString& id) const {
   return nullptr;
 }
 
+void NativeShell::open(const QUrl& origin, const QString& token) {
+  m_sharedBridge->setNodeOrigin(origin);
+  for (const auto& window : m_windows) window->bridge()->setNodeOrigin(origin);
+  m_client.open(origin, token);
+}
+
 NativeWindow* NativeShell::openWindow(const QString& id) {
   if (NativeWindow* open = window(id)) {
     open->bridge()->windowCommand(QStringLiteral("raise"));
@@ -225,6 +231,7 @@ NativeWindow* NativeShell::openWindow(const QString& id) {
   const QString windowId = validWindowId(id) ? id : QUuid::createUuid().toString(QUuid::Id128).left(12);
   auto bridge = std::make_unique<ShellBridge>();
   bridge->setLocalFolderImportEnabled(m_sharedBridge->localFolderImportEnabled());
+  bridge->setNodeOrigin(m_sharedBridge->nodeOrigin());
   ShellBridge* raw = bridge.get();
   m_windows.push_back(std::make_unique<NativeWindow>(this, windowId, raw, std::move(bridge)));
   NativeWindow* window = m_windows.back().get();
@@ -335,6 +342,7 @@ void NativeShell::update() {
   m_active = true;
   for (const NativeControllerEntry& entry : m_shared) entry.native->activate();
   for (const auto& window : m_windows) activate(window.get());
+  emit ready();
 }
 
 void NativeShell::activate(NativeWindow* window) { window->activate(); }

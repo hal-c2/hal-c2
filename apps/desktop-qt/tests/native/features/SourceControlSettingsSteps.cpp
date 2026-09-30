@@ -5,12 +5,14 @@
 // what the node does with a setting is its own scenarios', so these check
 // what the section saves.
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 
 #include <functional>
 
 #include "FakeConfig.h"
+#include "FakeSourceControl.h"
 #include "FakeNode.h"
 #include "Harness.h"
 #include "NativeShell.h"
@@ -457,3 +459,22 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void setSourceControlHost(FakeNode& node, const QString& kind, bool ready) {
+  static const QHash<QString, QPair<QString, QString>> known{
+      {QStringLiteral("github"), {QStringLiteral("GitHub"), QStringLiteral("gh")}},
+      {QStringLiteral("gitlab"), {QStringLiteral("GitLab"), QStringLiteral("glab")}},
+      {QStringLiteral("bitbucket"), {QStringLiteral("Bitbucket"), QString()}},
+  };
+  const auto [label, executable] = known.value(kind);
+  const QJsonObject entry = hostItem(kind, label, executable, ready, ready ? QStringLiteral("authenticated") : QStringLiteral("unknown"),
+                                     ready ? QStringLiteral("sam") : QString());
+  FakeSourceControl& fake = node.part<FakeSourceControl>();
+  for (QJsonObject& host : fake.hosts) {
+    if (host.value(QLatin1String("kind")) == kind) {
+      host = entry;
+      return;
+    }
+  }
+  fake.hosts.append(entry);
+}

@@ -137,9 +137,9 @@ private slots:
     ShellBridge bridge;
     const auto url = QUrl::fromLocalFile(directory.path());
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
-    bridge.setPageUrl(QUrl("https://remote.example/thread"));
+    bridge.setNodeOrigin(QUrl("https://remote.example"));
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
-    bridge.setPageUrl(QUrl("http://127.0.0.1:6182/thread"));
+    bridge.setNodeOrigin(QUrl("http://127.0.0.1:6182"));
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
     QSignalSpy dispatched(&bridge, &ShellBridge::actionRequested);
     const QVariantMap request{{QStringLiteral("path"), directory.path()}};
@@ -157,7 +157,9 @@ private slots:
     QVERIFY(file.open(QIODevice::WriteOnly));
     file.close();
     QVERIFY(bridge.localDirectoryPath(QUrl::fromLocalFile(file.fileName())).isEmpty());
-    bridge.setPageUrl(QUrl("https://remote.example/thread"));
+    // A node on another machine: its folders are not this machine's.
+    bridge.setNodeOrigin(QUrl("https://remote.example"));
+    QVERIFY(bridge.localDirectoryPath(url).isEmpty());
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
     bridge.dispatch(QStringLiteral("project.folder.open"), request);
     QCOMPARE(dispatched.count(), 1);

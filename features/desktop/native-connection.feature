@@ -1,7 +1,8 @@
 # Sources:
 #   apps/desktop-qt/src/native/NodeClient.cpp (protocol-3 socket: subscriptions, rpc, reconnect)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the shell shape folded into project and thread rows)
-#   apps/desktop-qt/src/native/NativeShell.cpp (hand-over from the page after the first snapshot)
+#   apps/desktop-qt/src/native/NativeShell.cpp (hand-over from the page after the first snapshot, ready)
+#   apps/desktop-qt/src/main.cpp (scripted runs start on NativeShell::ready)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (the protocol the shell speaks)
 #   packages/client-runtime/src/v3/clusterSocket.ts (the TypeScript twin of the shell's client)
@@ -49,6 +50,15 @@ Feature: The desktop shell talks to its node itself
       Then the action "thread.settle" for "env-a:t1" reaches the page
       And the shell has not taken over from the page
       And the node receives no commands
+
+    @desktop
+    Scenario: A scripted run starts once the node's first snapshot is in
+      Given a scripted run is waiting for the desktop app
+      And the node holds back its snapshot
+      And the desktop shell connects to its node
+      Then the scripted run has not started
+      When the node sends its snapshot
+      Then the scripted run starts once
 
     @desktop
     Scenario: The first snapshot hands the sidebar and the composer to the shell

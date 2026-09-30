@@ -150,10 +150,11 @@ defmodule HalC2.Web.Protocol do
   # The shapes a client may name by environment. The rest are about the node a client
   # talks to (shell, authAccess) or administer one node's host (serverUpdate,
   # relayClientInstall, resourceTelemetry, localServers, devices, preview,
-  # previewAutomation, projectClones, scheduledTasks, backgroundPolicy, providerInstall),
-  # and are asked of that node by name.
+  # previewAutomation, scheduledTasks, backgroundPolicy, providerInstall),
+  # and are asked of that node by name. projectClones is routed because a client
+  # starts a clone on any environment with a routed rpc and follows it there.
   @routed ~w(stream terminal terminals config vcs gitAction worktreeSetup providerAuth
-             pullRequestRefreshes)
+             pullRequestRefreshes projectClones)
 
   @doc "The shape types a client may name by environment rather than node."
   def routed, do: @routed
@@ -164,7 +165,11 @@ defmodule HalC2.Web.Protocol do
   """
   @spec at_node(map, node) :: {:ok, term} | {:error, String.t()}
   def at_node(shape, node),
-    do: shape |> Map.delete("environment") |> Map.put("node", Atom.to_string(node)) |> decode_shape([node])
+    do:
+      shape
+      |> Map.delete("environment")
+      |> Map.put("node", Atom.to_string(node))
+      |> decode_shape([node])
 
   @spec decode(binary, [node]) :: {:ok, request} | {:error, String.t()}
   def decode(frame, known_nodes) do

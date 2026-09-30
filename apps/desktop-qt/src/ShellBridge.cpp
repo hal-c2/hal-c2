@@ -132,11 +132,14 @@ void ShellBridge::notifyPageLoaded(bool ok, const QUrl& url) {
   emit pageLoaded(ok, url);
 }
 
+bool ShellBridge::localFolders() const {
+  const auto host = m_nodeOrigin.host().toLower();
+  return m_localFolderImportEnabled && (host == QStringLiteral("localhost") || host == QStringLiteral("127.0.0.1") ||
+                                        host == QStringLiteral("::1"));
+}
+
 QString ShellBridge::localDirectoryPath(const QUrl& url) const {
-  const auto host = m_pageUrl.host().toLower();
-  if (!m_localFolderImportEnabled || !isAppOrigin(m_pageUrl) ||
-      (host != QStringLiteral("localhost") && host != QStringLiteral("127.0.0.1") &&
-       host != QStringLiteral("::1")) || !url.isLocalFile() || !url.host().isEmpty()) {
+  if (!localFolders() || !url.isLocalFile() || !url.host().isEmpty()) {
     return {};
   }
   const QFileInfo directory(url.toLocalFile());
