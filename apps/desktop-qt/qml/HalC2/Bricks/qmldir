@@ -32,6 +32,8 @@ TerminalDrawer 1.0 TerminalDrawer.qml
 TitleBar 1.0 TitleBar.qml
 WindowControls 1.0 WindowControls.qml
 Workspace 1.0 Workspace.qml
+XrHost 1.0 XrHost.qml
+XrWorkspace 1.0 XrWorkspace.qml
 Timeline 1.0 Timeline.qml
 KeybindingsSettings 1.0 KeybindingsSettings.qml
 SettingsHost 1.0 SettingsHost.qml

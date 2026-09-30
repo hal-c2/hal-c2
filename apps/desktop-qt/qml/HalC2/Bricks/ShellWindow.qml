@@ -68,6 +68,11 @@ Window {
 
     CommandPalette {}
 
+    // The palette's "Toggle XR workspace": the window in XR glasses.
+    XrHost {
+        route: root.route
+    }
+
     // The palette's "Toggle theme editor": the active theme's colours.
     ThemeEditor {
         id: themeEditor
