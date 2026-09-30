@@ -181,9 +181,9 @@ Feature: In-app preview browser
 
   Rule: The desktop shows the page beside the thread
 
-    # The desktop embeds no browser: drawing the page needs QtWebEngine, which is
-    # being removed, or QtWebView, which on Linux is WebEngine underneath and has
-    # no input, zoom or popup control. Until one is chosen the Previews tab lists
+    # The desktop embeds no browser: drawing the page needs QtWebEngine or
+    # QtWebView, which on Linux is WebEngine underneath and has no input, zoom or
+    # popup control. Until one is chosen the Previews tab lists
     # the thread's browser tabs and opens them in the user's browser, and the
     # scenarios that draw the page wait (@backlog-desktop).
 

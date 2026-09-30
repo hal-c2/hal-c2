@@ -8,8 +8,6 @@
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route's title)
 #   apps/desktop-qt/qml/HalC2/Bricks/TitleBar.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/AppWindow.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/AppView.qml
 #   apps/desktop-qt/src/native/NativeShell.cpp (window.new, per-window state)
 #   apps/desktop-qt/src/ShellWindows.cpp (closing one window)
 #   apps/desktop/src/app/DesktopLifecycle.ts (quit on the last window, except macOS; activate reopens)
@@ -196,7 +194,7 @@ Feature: Windows, zoom and quitting
 
     @desktop
     Scenario: A window has a sensible title and size
-      Given a second window has no page title yet
+      Given a second window shows no thread yet
       Then its title is "HAL-C2"
       And it cannot be made smaller than 640 by 400
 

@@ -4,72 +4,48 @@
 is a compiled Qt 6 / QML binary (`hal-c2-qt`) whose window, chrome, layout and
 colours are QML "bricks" a user can rearrange and restyle from
 `~/.config/hal-c2/shell/`, fed by the shell's own connection to the node. It
-still embeds the legacy web app in a `WebEngineView` for what has not moved to
-QML yet; that page leaves piece by piece and nothing new is built on it (see
-[Moving off the page](#moving-off-the-page)). Nothing in `apps/web` or
-`apps/server-ex` may become Qt-specific.
+embeds no web content. Nothing in `apps/web` or `apps/server-ex` may become
+Qt-specific.
 
 ## Process model
 
 ```text
 hal-c2-qt (C++/QML, the shell)
   └─ spawns ─► node apps/desktop-qt/host/main.ts  (the desktop host)
-                 ├─ serves ─► apps/web/dist on http://127.0.0.1:<web port>
                  └─ spawns ─► bin/hal_c2 start | mix hal_c2.server  (the Elixir node)
 NativeShell (NodeClient) ── WebSocket (protocol 3) ──────────────────► node
-WebEngineView (legacy page) ── WebSocket (protocol 3) ──────────────► node
-WebEngineView ◄─── WebChannel ───► QML bricks
 ```
 
 - **The shell talks to the node itself.** `NativeShell` holds its own
   protocol-3 connection (`NodeClient`), and its C++ controllers own the state
-  of every piece that has left the page. The embedded page keeps its own
-  WebSocket client, as in a browser tab, only for what it still renders.
-- **The Node desktop host** owns everything TypeScript-owned: serving the web
-  bundle and the node's lifecycle today; SSH, Tailscale, secrets and updates as
-  they are ported from `apps/desktop`. It reports to the shell over its stdout
-  as newline-delimited JSON (`ready {url}`, `error {message}`, `exit {code}`);
-  the shell closes the host's stdin when it exits, which is the host's cue to
-  stop the node it started.
+  of every piece of the window.
+- **The Node desktop host** owns everything TypeScript-owned: the node's
+  lifecycle today; SSH, Tailscale, secrets and updates as they are ported from
+  `apps/desktop`. It reports to the shell over its stdout as newline-delimited
+  JSON (`ready {node: {origin, token}}`, `error {message}`, `exit {code}`); the
+  shell closes the host's stdin when it exits, which is the host's cue to stop
+  the node it started.
 - **The node is started the way Electron starts it.** A release
   (`HAL_C2_NODE_RELEASE`, else the bundled `hal-c2-node/`) runs `bin/hal_c2
 start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   Either gets `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON line on stdin (port, host
-  `127.0.0.1`, `halC2Home` from `--base-dir`, a random `desktopBootstrapToken`;
-  `HalC2.Desktop`), and `HAL_C2_NODE_COMMAND` names the host's Node for the
-  node's JavaScript sidecars. The node runs in its own process group so a stop
-  reaches the BEAM behind `mix` and the release script.
-- **The app is served by the host, not the node.** The node serves no web
-  bundle (`features/node/platform/http-and-hosting.feature`), so the web view
-  runs the app the way the hosted static app runs: no same-origin server,
-  every environment remote (`isHostedStaticApp` treats `window.halC2Shell` as
-  hosted). Loopback HTTP rather than a custom scheme: `http://127.0.0.1` is a
-  secure context (WebCrypto for DPoP), can still reach `http://` nodes on the
-  LAN or tailnet, and needs no C++ scheme handler. The port is derived from the
-  home (or `HAL_C2_WEB_PORT`) and stays the same across launches, because
-  WebEngine keys IndexedDB and localStorage by origin: a new port would be a
-  fresh app with no saved environments or drafts.
-- **The ready URL opens the app paired.** It is the app's
-  `/pair?host=<node>&auto=1#token=<desktopBootstrapToken>`; the pair route
-  exchanges the token like any pairing link and goes to `/` on success. The
-  connection catalog keys a bearer environment by its environment id, so the
-  next launch re-pairs the same entry instead of adding one.
-- **QML reads `Shell.state`, whoever fills it.** The web view publishes over
-  WebChannel (`halC2Shell.publish(key, value)` → `Shell.state[key]`) and
-  actions flow QML → web (`Shell.dispatch(action, payload)` →
-  `halC2Shell.onAction(listener)`), except the ones the shell's own node
-  client takes (below).
-- **The shell's own node client** does what the TUI's does: the page is
-  legacy, so RPC moves out of it key by key. In every mode the host's
+  `127.0.0.1`, `halC2Home` from `--base-dir`; `HalC2.Desktop`), and
+  `HAL_C2_NODE_COMMAND` names the host's Node for the node's JavaScript
+  sidecars. The node runs in its own process group so a stop reaches the BEAM
+  behind `mix` and the release script. The shell connects with the node's own
+  access token, which the node writes into its data directory at boot.
+- **QML reads `Shell.state`; controllers fill it.** Controllers publish view
+  models (`ShellBridge::publish(key, value)` → `Shell.state[key]`), and bricks
+  act with `Shell.dispatch(action, payload)`, which the controllers take in
+  turn. An action none of them handles reaches the bricks as
+  `Shell.actionRequested`, as does what native code asks of a brick (focus the
+  composer, open its model picker) through `sendToBricks`.
+- **The shell's own node client** does what the TUI's does. The host's
   `ready` line carries the node's origin and access token, and `NativeShell`
   opens one protocol-3 socket (`NodeClient`) and folds the `shell` snapshot and
-  row deltas (`ShellStore`, projects and threads). On the first snapshot it
-  builds `sidebar` itself from those rows, its own drafts and its own `route`,
-  claims the key so anything the page still publishes to it is dropped, and
-  intercepts the row, project, draft and composer actions;
-  it announces this as `native` and a `shell.native` action, and a page that
-  loads later asks with `shell.native.query`. Nothing it builds reads
-  page-published state. Environments outside the node's cluster are reached
+  row deltas (`ShellStore`, projects and threads). The controllers start on
+  the first snapshot (`NativeShell::isActive`, `ready`); nothing is sent to the
+  node before it. Environments outside the node's cluster are reached
   through the node's links (`ConnectionsController`). The shell subscribes
   with `{"type":"shell","links":true}`, and `ShellStore` keeps each linked
   node's rows beside the cluster's under a key of link and node (a linked
@@ -78,59 +54,24 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   leaves `shell.links` takes its rows; one that drops keeps them, its nodes
   offline, and the sidebar rows and header say `offline`. The hello frame names the environment the node
   serves, which is where the shell sends calls about the node itself (its
-  cluster). Pieces that never existed on the page, such as the cluster
-  settings (`ClusterController`), have no page counterpart at all. The
-  scenarios are `features/desktop/native-*.feature` and the `@desktop` and
-  `@shared` ones in the files `tests/native/tst_Features.cpp` lists, run by
-  the native `tst_Features`.
+  cluster). The scenarios are `features/desktop/native-*.feature` and the
+  `@desktop` and `@shared` ones in the files `tests/native/tst_Features.cpp`
+  lists, run by the native `tst_Features`.
 - The UI-owned parts of `desktopBridge` (open external, window commands,
-  colour scheme, dialogs/context menus later) are served by the shell over the
-  same channel; the TypeScript-owned parts stay on the Node side.
+  colour scheme, dialogs/context menus) are served by the shell itself; the
+  TypeScript-owned parts stay on the Node side.
+- **Per-key bindings.** `Shell.state` is a `QQmlPropertyMap`, so a publish
+  only re-evaluates bindings on that key. Keys are declared up front, in each
+  native controller's registration for the ones it owns; a rice can read any
+  of them, but a new key must be declared before a binding will follow it.
 
 Attach mode (`--url <link>`) starts no node. The shell hands the link to the
-host (`--attach`): a node pairing link (`mix hal_c2.pair`, `mise run node:pair`)
-gets the app served and the shell's own client paired with that node. The host
-hands any other address back without a node, and the shell refuses it with an
-error rather than load a page it has no client for. For a node on this machine the host finds its
-access token through the runtime record and the page keeps the link. For any
-other node the host spends the link's single-use token on the shell's session,
-then mints the page a fresh link with it; a link without `access:write` cannot
-mint one, so the page opens unpaired (with whatever it saved before). Quitting
-leaves the attached node running. `mise run desktop` attaches this way to the
-node `mise run node` runs.
-
-### Web engine
-
-- **One profile.** `src/WebProfile.cpp` configures Qt WebEngine's default
-  profile and registers it as the `WebProfile` singleton: storage and a 64 MiB
-  disk HTTP cache under `<cache>/shell-web` (`~/.cache/hal-c2/shell-web`, or
-  `<root>/cache/shell-web` under `--home-dir` or `HAL_C2_HOME`; see
-  `src/StoragePaths.h`), cookies forced persistent, permissions stored.
-  Every `WebSurface` shares it, so the embed surfaces reuse the primary's
-  session and the bundle comes from cache on the next start. Chromium cannot
-  share a profile directory between processes: a second shell on the same
-  home finds the lock file taken and stays off-the-record for its run.
-- **One renderer per surface.** Chromium gives each top-level view its own
-  renderer process (roughly the app bundle's footprint each), so the shell
-  keeps one: the right panel is native and embeds no second document. A
-  surface that may hide sets `sleepsWhenHidden`, which freezes its page (no
-  timers, no painting) until it shows again. The primary surface never sleeps.
-- **The channel carries no properties.** QWebChannel re-sends a changed
-  property to every connected page, so `Shell.state` is not on it: pages talk
-  to `ShellChannel` (`publish`, `dispatch`, `snapshot`, `actionRequested`,
-  `stateEntryChanged`), and `shell-connect.js` pulls the map lazily. A page
-  that never reads it (the primary) is never sent its own publishes back.
-- **Per-key bindings.** `Shell.state` is a `QQmlPropertyMap`, so a publish
-  only re-evaluates bindings on that key. Keys are declared up front, in
-  `ShellBridge.cpp` for the page's and in each native controller's
-  registration for the ones it owns; a rice can read any of them, but a new
-  key must be declared before a binding will follow it.
-- **Permissions and downloads.** Pages get the async clipboard; other browser
-  permissions are denied, notifications included: the shell raises its own
-  (below). Downloads go to the user's download folder.
-- **No width animation on the surfaces' neighbours.** Animating the sidebar
-  or panel width resizes the web view every frame, which is a Chromium
-  relayout and a new GPU surface each time; both snap instead.
+host (`--attach`), which needs a node pairing link (`mix hal_c2.pair`,
+`mise run node:pair`) and refuses any other address. For a node on this
+machine the host finds its access token through the runtime record. For any
+other node it spends the link's single-use token on the shell's session.
+Quitting leaves the attached node running. `mise run desktop` attaches this way
+to the node `mise run node` runs.
 
 ## Source layout
 
@@ -138,56 +79,49 @@ node `mise run node` runs.
 | ------------------------ | -------------------------------------------------------------------- |
 | `src/main.cpp`           | CLI flags, config dir resolution, wiring                             |
 | `src/ShellRuntime.*`     | QML root generations, `shell.qml` resolution, hot reload, fallback   |
-| `src/ShellBridge.*`      | The `shell` WebChannel object / `Shell` QML singleton                |
-| `src/ThemeStore.*`       | `theme.json` loader + watcher, `Theme` QML singleton, CSS injection  |
+| `src/ShellBridge.*`      | The `Shell` QML singleton: published state and dispatched actions    |
+| `src/ThemeStore.*`       | `theme.json` loader + watcher, `Theme` QML singleton                 |
 | `src/BackendProcess.*`   | Spawns the Node desktop host, waits for `ready`                      |
 | `src/native/`            | The shell's node client and the controllers that take keys over      |
 | `src/native/themes.json` | Built-in palettes, generated by `scripts/gen-themes.mjs`             |
-| `qml/HalC2/Bricks/`      | Pure-QML bricks (see below) and the injected `js/shell-connect.js`   |
+| `qml/HalC2/Bricks/`      | Pure-QML bricks (see below)                                          |
 | `scripts/gen-icons.mjs`  | Regenerates `js/lucide.js`, the icon paths `ShellIcon` draws         |
 | `scripts/gen-themes.mjs` | Regenerates `src/native/themes.json` from `packages/shared` palettes |
-| `host/main.ts`           | Node desktop host: serves the web bundle, starts or attaches a node  |
+| `host/main.ts`           | Node desktop host: starts or attaches a node                         |
 | `scripts/dev-qt.mjs`     | Build, pair with the running node, launch                            |
 | `examples/`              | Starter `theme.json` and `shell.qml`                                 |
 
-QML modules: `HalC2.Shell` is C++-only (`Shell`, `Theme`, `Runtime`, and `WebProfile`
+QML modules: `HalC2.Shell` is C++-only (`Shell`, `Theme` and `Runtime`
 singletons, registered once and used by one engine throughout its lifetime). `HalC2.Bricks` is
 QML-only with a hand-written `qmldir` (no `prefer` line) so the same directory
 works compiled into the binary and as an on-disk import path.
 
-The bricks come in two layers. Chrome bricks each own one piece of the page's
-chrome and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
+The bricks come in two layers. Chrome bricks each own one piece of the window
+and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
 strip), `Composer`, `RightPanel`, `SettingsNav`, `ClusterSettings`,
-`ConnectionsSettings`, `GitActions`, `Notifications`, `ContextMenuHost`, plus `WebSurface`,
-`DefaultShell` and `ShellErrorOverlay`. `TerminalDrawer` reads the native
+`ConnectionsSettings`, `GitActions`, `Notifications`, `ContextMenuHost`, plus
+`CentreHost` (the view `route.kind` names), `SettingsHost`, `DefaultShell` and
+`ShellErrorOverlay`. `TerminalDrawer` reads the native
 `Terminals` controller instead (see the terminal drawer below), and `Timeline`
 renders a native `Threads` timeline (see the thread store below). `RightPanel`'s
 native tabs, `DiffPanel` and `FilesPanel`, take their `Panel` object as
-`source` (see `rightPanel` and `panel` below). A rice that
-cards a surface passes the card's inner radius as `WebSurface.radius`
-(`RightPanel` forwards its own; `TerminalDrawer` insets its terminal from its
-own `radius`): the page clips itself to the curve and drops its own backdrop
-(`data-shell-surface-radius` in `index.html` and `index.css`), so no QML layer is needed to
-round a live web view. `WebSurface.transparentCanvas` additionally clears the
-chat's web backdrop layers without fading text, messages, code or menus. A
-transparent WebEngine background alone cannot clear CSS backgrounds or an
-opaque parent `ShellCard`; wallpaper layouts must account for both.
+`source` (see `rightPanel` and `panel` below).
 Under them sit the primitives a rice composes its own
 chrome from, all styled from `Theme`: `ShellWindow` (the root every rice
 starts from: theme-driven colour, opacity and frame, `sidebarCollapsed`,
-`settingsActive`, `settingsSection` and `nativeSettingsOpen`, the shell's context menus, the error
-overlay and the page's window commands), `ShellCard` (a rounded, hairlined
+`route`, `settingsActive` and `settingsSection`, the shell's context menus, the error
+overlay and the window commands), `ShellCard` (a rounded, hairlined
 panel), `ShellButton` (outline, `subtle` ghost, `primary`), `ShellComboBox`
 (ghost, `outline: true` for a field), `ShellSplitButton` (the header's action
 and chevron pill), `ShellMenu` / `ShellMenuItem`, `ShellTextField`, `ShellIcon`,
 `WindowControls` (glyph buttons, or macOS traffic lights with
 `trafficLights: true`), `TitleBar` and `HalC2Wordmark` (the web app's "HAL-C2"
-mark as a filled `Shape`, sized by its height). `ShellIcon` draws the page's
+mark as a filled `Shape`, sized by its height). `ShellIcon` draws the web app's
 lucide icons as a `Shape` from the path table in `js/lucide.js`, so bricks
-pass an icon name (`iconName: "git-branch"`) and get the same glyph the HTML
-shows, at any size or color.
+pass an icon name (`iconName: "git-branch"`) and get the same glyph the web
+app shows, at any size or color.
 
-`DefaultShell` is laid out like the page: the sidebar's brand band ("HAL-C2"
+`DefaultShell` is laid out like the web app: the sidebar's brand band ("HAL-C2"
 plus the collapse toggle), a 52 px header strip with the breadcrumb and the
 run / open / git pills, the timeline, and the composer card with the checkout
 strip welded under it. Frameless windows get their drag handle and buttons
@@ -198,23 +132,22 @@ bar row still use that brick.
 ## Setup
 
 Requirements: CMake ≥ 3.21, Ninja, a C++20 compiler, Qt ≥ 6.9 with
-`WebEngineQuick` and `WebChannel`, Node (the host runs from TypeScript source).
+`WebSockets`, Node (the host runs from TypeScript source).
 
-- macOS: `brew install qt` (6.11 at time of writing, WebEngine included).
-- Linux: distro Qt often lacks WebEngine; prefer the official binaries via
-  `uvx aqtinstall install-qt linux desktop 6.11.1 -m qtwebengine qtwebchannel qtpositioning`
-  and set `QT_PREFIX=~/Qt/6.11.1/gcc_64`.
+- macOS: `brew install qt` (6.11 at time of writing).
+- Linux: the distro's Qt 6 with its WebSockets module, or the official
+  binaries via `uvx aqtinstall install-qt linux desktop 6.11.1 -m qtwebsockets`
+  with `QT_PREFIX=~/Qt/6.11.1/gcc_64`.
 - CI/release builds use `aqtinstall` on every platform for reproducibility.
 
 ```sh
-vp run --filter @hal-c2/web build   # once, and after web changes: the shell serves apps/web/dist
-mise run node                       # terminal 1: the Elixir node on 3780 (HAL_C2_NODE_PORT)
-mise run desktop                    # terminal 2: cmake build, `mix hal_c2.pair`, launch with --url
+mise run node       # terminal 1: the Elixir node on 3780 (HAL_C2_NODE_PORT)
+mise run desktop    # terminal 2: cmake build, `mix hal_c2.pair`, launch with --url
 ```
 
 `mise run desktop` runs `scripts/dev-qt.mjs`. It uses `--home-dir`, else the
-checkout's `.hal-c2`, as the shell's `HAL_C2_HOME`, so the shell rices from `<root>/config/shell/` and keeps its web
-profile under `<root>/cache`. Its other flags are `--url` (attach to that link
+checkout's `.hal-c2`, as the shell's `HAL_C2_HOME`, so the shell rices from `<root>/config/shell/`
+and keeps its state under `<root>`. Its other flags are `--url` (attach to that link
 instead of pairing), `--standalone` (start the shell's own node from source, as
 the installed app does; not next to `mise run node` on the same home),
 `--release` (no disk QML loading) and `--configure-only` (build, do not
@@ -223,8 +156,8 @@ the binary, so `mise run desktop -- --screenshot out.png --action
 rightPanel.toggle` works. Build output lands in
 `apps/desktop-qt/build/<debug|release>` (gitignored).
 
-Standalone: run the binary with no `--url`; the host serves the built web app
-and starts the node for the shell's home.
+Standalone: run the binary with no `--url`; the host starts the node for the
+shell's home.
 
 CLI: `--url`, `--home-dir`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
 (grab the window once the node's first snapshot is in, or with the error when the start fails, then quit with
@@ -235,9 +168,8 @@ actions after that snapshot, e.g. `--action rightPanel.toggle`), `--key <chord>`
 `QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
 apart, so a key test can open a thread first); env `HAL_C2_HOME`,
 `HAL_C2_QML_DIR`, `HAL_C2_NODE_BIN`, and for the host `HAL_C2_NODE_RELEASE`
-(a node release or its `bin/hal_c2`), `HAL_C2_WEB_DIST` (a built
-`apps/web/dist`), `HAL_C2_NODE_PORT` and `HAL_C2_WEB_PORT` (fixed ports; a taken
-one is an error rather than a silent move).
+(a node release or its `bin/hal_c2`) and `HAL_C2_NODE_PORT` (a fixed port; a
+taken one is an error rather than a silent move).
 
 ## Ricing contract
 
@@ -278,22 +210,15 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
   `text`, `textMuted`, `accent`, `sidebar`, `terminalBackground`, … — the
   `ThemeColorRole` list in `packages/shared/src/themePalettes.ts`).
   `variants.<appearance>` overrides `colors` for that appearance.
-- The native document-creation script applies the first-paint colors, then
-  hands its override to the web theme module through `window.__halC2ShellTheme`.
-  The web module applies the override after stored palettes and editor previews,
-  without changing saved preferences. Native reinjections deliver data only.
-  Embedded documents claim their own override without publishing native colors.
-  Older pages retain the DOM-observer fallback. Supply the full role set
-  (the files under `examples/*/` do) for consistent colors during startup.
-- QML reads the same roles: `Theme.colors`, `Theme.palette.color("chrome", fallback)`,
+- QML reads the roles: `Theme.colors`, `Theme.palette.color("chrome", fallback)`,
   `Theme.appearance`, `Theme.id`.
-- `window.*` is shell-only: `opacity` (whole-window), `transparent` (window and
-  web view background cleared; compositor rules do the blur on Wayland),
+- `window.*` is shell-only: `opacity` (whole-window), `transparent` (window
+  background cleared; compositor rules do the blur on Wayland),
   `blur` (advisory for platform hooks), `frameless` (default `true`).
 - `window.followSystemAppearance` makes `variants` track the app's appearance
   (the system's unless the user pinned light or dark); otherwise the file's
   own `appearance` holds.
-- The file is watched; edits apply live to QML and to the page. A malformed
+- The file is watched; edits apply live. A malformed
   file keeps the previous good theme and sets `Theme.lastError`. Deleting it
   returns to the theme the shell resolves (below). The file never changes the
   user's saved choice.
@@ -304,7 +229,7 @@ If `~/.config/hal-c2/shell/shell.qml` exists it is loaded as the root instead of
 built-in `DefaultShell.qml`. It composes bricks from `HalC2.Bricks` and reads the
 `HalC2.Shell` singletons:
 
-- `Shell.pageUrl`, `Shell.state` (whatever the web app published),
+- `Shell.state` (whatever the controllers published),
   `Shell.dispatch(action, payload)`, `Shell.windowCommandRequested(command)`.
 - `Theme.*` as above.
 - `Runtime.configDir`, `Runtime.userShellPath`, `Runtime.usingUserShell`,
@@ -318,11 +243,11 @@ path). If `shell.qml` fails to load, the default shell takes over with
 
 Extensions are trusted QML components instantiated by `shell.qml`, not a plugin
 registry or a sandbox. `DefaultShell` exposes `sidebar`, `composer`, `workspace`,
-`webView`, `terminalDrawer`, and `rightPanel` so extensions do not need to copy
+`centreView`, `terminalDrawer`, and `rightPanel` so extensions do not need to copy
 the layout. Removing a component removes its controls and signal subscriptions.
 `DefaultShell.toolbar` accepts a component above the timeline. Give it an
 `implicitHeight`; the empty slot takes no space. Use it for extension controls
-rather than positioning buttons over web content.
+rather than positioning buttons over the timeline.
 
 `Composer.editorActions` accepts toolbar controls. `editorKeyPressed(event)`
 allows opt-in input handling, and `insertText(text, capturedTarget)` replaces the
@@ -336,7 +261,7 @@ editor. Focus and rename entry points are `Composer.focusInput()`,
 `Sidebar.model` can be overridden to filter or reorder the published rows.
 The source includes `createdAt` and `latestUserMessageAt`; the latter excludes
 agent replies and renames. Local filtering cannot recover rows omitted by the
-page's 50-row Settled limit. `thread.markUnread {key}` uses the existing client
+sidebar's 50-row Settled limit. `thread.markUnread {key}` uses the existing client
 unread state.
 
 `ProjectFolderDrop` imports one existing directory through `ProjectController`
@@ -360,8 +285,7 @@ filesystem roots, registered project roots, and their containing directories
 are protected from rename, move and Trash. Moving a live project root would
 leave thread paths stale, so that is not offered here. The model is enabled
 only while the explorer is visible, the primary loopback environment is
-connected, and native local-folder permission allows access. No native
-filesystem methods are exposed to the web page.
+connected, and native local-folder permission allows access.
 
 `sidebar.localProjects` lists every checkout of the environment the shell's
 node serves, independently of grouped sidebar representatives. "Remove from
@@ -388,8 +312,7 @@ controller must never be registered with `qmlRegisterSingletonInstance`, which
 binds it to one engine. A shared controller reaches "its" window through
 `NativeShell::of`, which answers the window the user last acted in, so an
 answer that arrives later (a failed save's toast) must capture that window when
-asked; what every page needs (`clientSettings.follow`) goes to every window's
-bridge. A shared controller meets each window in `attach()`.
+asked. A shared controller meets each window in `attach()`.
 
 The drafts and composer text live in `<data>`. The window with the id `main`
 keeps its route and panels directly in `<state>`; another keeps them under
@@ -408,10 +331,6 @@ quit. Pass a stable `id` to reopen a known window rather than opening another;
 ids name folders, so the shell accepts only `[A-Za-z0-9_-]{1,32}` and
 generates one otherwise.
 
-`AppView` and `AppWindow` are the web client's equivalent: another complete
-page sharing `WebProfile` authentication, with a per-view `storageId`
-namespace for the page's own drafts and panels and no primary shell bridge.
-`AppWindow` clears its transient parent so it is a normal top-level window.
 `--app-id` sets the native desktop identity before any window is created,
 allowing launch-profile-specific window rules.
 
@@ -419,8 +338,7 @@ allowing launch-profile-specific window rules.
 
 `AlertController` decides when a thread alerts, from the shell's own rows
 (cluster and linked environments alike), as the web's
-`ThreadNotificationCoordinator` does; the page's coordinator is not mounted in
-the shell, so nothing alerts twice. It compares each thread with what it saw
+`ThreadNotificationCoordinator` does. It compares each thread with what it saw
 last, so the snapshot after connecting, or reconnecting, is a baseline rather
 than a burst of old completions. This device's `notificationMode` and
 `inAppNotificationsEnabled` pick a toast while the window has focus, or a
@@ -440,8 +358,7 @@ no audio module: sound goes through the desktop sound theme's
 ### Local dictation helpers
 
 `LocalTranscriber` runs an explicitly configured absolute executable with an
-argument vector, never a shell command. It is available to trusted local QML,
-not to the hosted page. It starts only when the extension calls `start()`.
+argument vector, never a shell command. It is available to trusted local QML. It starts only when the extension calls `start()`.
 Helpers emit newline-delimited JSON status and transcript messages;
 `finishRecording()` writes `stop` to stdin. A transcript is delivered only
 after a successful exit. Cancellation discards pending output and terminates
@@ -463,38 +380,12 @@ cache and loads new root objects in the same engine. The new window loads before
 the old roots are dropped, and a replaced root is not a closed window. If both
 the user shell and default shell fail, the previous roots stay alive. Generations
 share C++ singleton state, never QML-created objects with generation-specific
-types. The web view is recreated with the window
-and reloads the page; keeping it alive across generations is a follow-up.
+types.
 QmlLive was evaluated and rejected: unmaintained since 2019, Qt 5 only.
 
-## Page-side API
+## State keys and actions
 
-`WebSurface` injects `qwebchannel.js` (bundled from Qt's data dir at build
-time) and `js/shell-connect.js` at document creation, which exposes:
-
-```ts
-window.halC2Shell: {
-  protocolVersion: number;                           // 1
-  surfaceId: string;                                 // "primary" | "rightPanel"
-  ready: Promise<ShellObject>;                       // raw WebChannel proxy
-  publish(key: string, value: unknown): Promise<void>;
-  dispatch(action: string, payload?: unknown): Promise<void>;
-  onAction(listener: (action: string, payload: unknown) => void): Promise<() => void>;
-  getState(): Promise<Record<string, unknown>>;      // everything published, any document
-  onState(listener: (state: Record<string, unknown>) => void): Promise<() => void>;
-}
-```
-
-`window.halC2Shell` is undefined in a browser tab; the web app must keep working
-without it. `apps/web/src/env.ts` exports `isHalC2Shell` (module-load-time, like
-`isElectron`). The contract — what gets published under which key and which
-actions exist — lives in `packages/contracts/src/shell.ts` and is imported as
-`@hal-c2/contracts/shell`, not from the package barrel, so browsers never
-bundle it. The bridges follow the same rule: `apps/web/src/shell/lazy.tsx`
-wraps each one in `React.lazy`, and only a shell-hosted document ever imports
-`shell/bridges.ts`. Every bridge decodes actions through `useShellActions`
-(one subscription per bridge, handlers read live props) and publishes through
-`useShellPublish` (skips unchanged JSON, clears the key on unmount).
+What each `Shell.state` key carries and which actions its controller takes.
 
 ### `sidebar`
 
@@ -510,8 +401,7 @@ real count. Projects are grouped and ordered by this device's preferences
 `sidebarProjectSortOrder`, `timestampFormat`, read through
 `SettingsController`): folders sharing a repository identity are one project
 unless grouping is separate, and a folder with none groups by
-`<environment>:<root>`. There is no manual project order yet. The page
-publishes no sidebar; when hosted, `AppSidebarLayout` renders none either.
+`<environment>:<root>`. There is no manual project order yet.
 
 Projects are added and removed through `projects.mutate` by
 `ProjectController`. `project.add {path}` (the sidebar's folder picker) and
@@ -528,9 +418,8 @@ from the environment's `addProjectBaseDirectory` setting, else `~/`. The node
 adds the project at once and clones in the background; each clone an online
 environment reports on its `projectClones` shape (by environment, so a linked
 one's come through the link) is one toast, updated in place, whose Cancel and
-Retry keep it open. Only before the shell has
-its node, or with a path where the page may not reach local folders, does
-`project.add` fall through to the page. `project.remove
+Retry keep it open. A path does nothing when the node is not on this
+machine, whose folders it cannot reach. `project.remove
 {projectKey}` publishes `projectRemoval {projectKey, title, workspaceRoot,
 threadCount}`, which `ProjectRemovalDialog` asks about; `project.remove.confirm`
 deletes with `force` and `project.remove.cancel` closes it, as does the
@@ -542,12 +431,9 @@ it will become. `thread.new {projectKey?}` opens the project's draft (the
 scope's or the open route's project without a key), `draft.open`,
 `draft.menu {draftId, x, y}` and `draft.delete` open and delete it, and the
 first send promotes it (`ComposerController`); a draft whose thread row
-arrives, or whose project goes, is dropped. The page is told the draft's
-`environmentId`, `projectId` and `threadId` with `route.follow`, and draws
-the composer for that thread id; a draft the page opened itself comes back
-the same way with `route.open` and is adopted. The draft's text is kept with
+arrives, or whose project goes, is dropped. The draft's text is kept with
 the draft: the composer's `composer.text.set` on a draft route saves it
-through `DraftController`, so it survives a restart. As on the page, the
+through `DraftController`, so it survives a restart. As in the web app, the
 sidebar lists only drafts that hold something, and the open draft keeps the
 row it had when the window opened it, so a fresh draft is not listed while
 the user types into it.
@@ -556,18 +442,17 @@ The QML sidebar reconciles publications into a keyed `ListModel`, updating
 and moving existing rows instead of replacing the list. This preserves row
 hover, keyboard focus and scroll position while thread state changes.
 
-Actions (`Shell.dispatch(name, payload)` in QML → `ShellAction` on the page):
+Actions (`Shell.dispatch(name, payload)` in QML):
 `sidebar.scope {projectKey|null}`, `project.add {path?}`, `project.remove
 {projectKey}`, `draft.menu {draftId, x, y}`, and the
-navigation ones `route` takes once the shell has its node (`thread.open {key}`,
+navigation ones `route` takes (`thread.open {key}`,
 `draft.open {draftId}`, `thread.new {projectKey?}`, `settings.open`,
-`pullRequests.open`, `usage.open`). The active row is the route's. Row actions run the
-handlers the HTML row's hover buttons use (`useShellThreadRowActions`):
+`pullRequests.open`, `usage.open`). The active row is the route's. Row actions are the
+HTML row's hover buttons:
 `thread.settle {key}`, `thread.unsettle {key}`, `thread.unsnooze {key}`,
 `thread.snoozeMenu {key, x, y}` (the snooze durations open as the shell's
 `menu` at those window coordinates), `thread.wokeDismiss {key}`, and
-`thread.menu {key, x, y}` for the thread menu. Unknown or malformed actions
-are dropped by the schema guard.
+`thread.menu {key, x, y}` for the thread menu.
 
 `SidebarThreadRow` mirrors the HTML row's states: Working/Monitoring,
 Approval, Input, Failed, Woke (a pill that dismisses on click while `wokeAt`
@@ -578,12 +463,6 @@ its actions — snooze and settle on live rows, wake on snoozed rows, un-settle
 on settled rows — and a right-click anywhere on the row opens the thread
 menu on press.
 
-The HTML sidebar and native row actions share `threadParking.ts` for navigation
-planning and pending commands. The plan is captured before a settle or snooze;
-successful commands navigate only if the same thread is still open. HTML keeps
-separate settle/snooze pending scopes and batch exclusions; native row actions
-share one pending scope. Menus, Undo, and batch feedback stay with their callers.
-
 The thread list is a Tab stop. Up/Down move a cursor (a ring in the `focus`
 theme role) over rows and section headers, Home/End jump to the ends, Enter
 or Space open the row or fold the header, and Menu or Shift+F10 open the
@@ -593,8 +472,7 @@ buttons are not Tab stops; the thread menu carries the same actions.
 ### `composer`
 
 `ComposerController` publishes `composer` (`ShellComposerState`) and owns
-the composer of the thread or new-thread draft the route shows; the page
-publishes nothing for it. Each thread keeps its draft (text, caret, model,
+the composer of the thread or new-thread draft the route shows. Each thread keeps its draft (text, caret, model,
 options, modes, images) in the controller, saved on this machine; a new
 thread's text is `DraftController`'s. It sends, queues, steers, stops,
 answers approvals and questions and implements the plan with node RPCs, and
@@ -658,8 +536,8 @@ live in memory like images.
 Prompt history (`composer.history.step`) is not the controller's yet: it
 drops the step.
 
-The page's `modelPicker.toggle` command dispatches
-`composer.modelPicker.toggle` page → shell, and the toolbar commands
+The `modelPicker.toggle` binding sends `composer.modelPicker.toggle` to the
+bricks, and the toolbar commands
 (`composer.effort`, `.mode`, `.host`, `.workspace`, `.branch`) dispatch
 `composer.control.open {command}`; the `Composer` brick listens on
 `Shell.actionRequested` and opens its own control.
@@ -689,9 +567,9 @@ synced and nothing is sent. The Previews tab (`PreviewsPanel` over
 browser. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
 in `RightPanelController::nativeKinds`.
 
-The desktop embeds no browser. QtWebEngine is the dependency being removed,
-and QtWebView is WebEngine underneath on Linux with no input injection, zoom
-or popup control, so neither can host the agent's preview tabs (that host was
+The desktop embeds no browser. QtWebView is WebEngine underneath on Linux,
+with no input injection, zoom or popup control, so it cannot host the agent's
+preview tabs (that host was
 only ever Electron's `desktopBridge`). The embedding scenarios in
 `features/preview/surfaces.feature` are `@backlog-desktop` for that reason.
 
@@ -720,7 +598,7 @@ decoding H.264 with FFmpeg's libavcodec (headers at build time, the libraries
 loaded at run time; see [Devices](devices.md#the-viewers-decode-both-vendored-protocols)).
 A device tab streams only while it is the active tab.
 
-The panel never asks the page for anything. Per thread, the controller keeps
+Per thread, the controller keeps
 whether it is open, its tabs, the active one and the details column, plus one
 width for all threads, in `shell-panel.json` in the state directory, so they
 survive a restart (maximizing does not). `rightPanel.resize {width}` and `rightPanel.toggleMaximized`
@@ -730,8 +608,7 @@ line, for the timeline's links.
 
 ### `workspace`
 
-`WorkspaceController` builds `workspace` from the node, in the page's
-`ShellWorkspaceState` shape: the thread and its project are `ShellStore` rows,
+`WorkspaceController` builds `workspace` from the node: the thread and its project are `ShellStore` rows,
 the git summary the node's `vcs` shape for the checkout, the refs
 `vcs.listRefs`, the editors each environment's `config`. It keeps
 `useThreadBranchSelection`'s rules (optimistic branch, `switchRef` /
@@ -745,12 +622,9 @@ picker, PR badge) are the context strip under the `Composer` brick.
 `workspace.newThread` starts a draft in the header's project (`thread.new`),
 `workspace.openPullRequest` opens the checkout's pull request in the system
 browser, and `workspace.titleMenu {x, y}` opens the thread menu (below). A
-draft's checkout (mode, start from
-origin, branch, worktree, the machine it runs on) is kept natively by draft
-id and the page is told each change: `workspace.envMode.set`,
-`.startFromOrigin.set` and `.environment.set` go on to it after they land, and
-a branch picked for a draft as `workspace.checkout.follow {draftId, branch,
-worktreePath, envMode}`. Which thread a draft is, `NativeShell` asks
+draft's checkout (mode, start from origin, branch, worktree, the machine it
+runs on) is kept by draft id, set with `workspace.envMode.set`,
+`.startFromOrigin.set`, `.environment.set` and the branch picker. Which thread a draft is, `NativeShell` asks
 `DraftController` (`setDraftResolver`). The `vcs` shape names the thread's
 environment, so a linked thread's git status comes through its link; while the
 link is down the subscription fails at once with the link's message
@@ -771,7 +645,7 @@ it or through a link (`HalC2.Links`) to an environment outside the cluster; the
 drawer is available wherever the header is, cluster and linked environments
 alike (`features/terminal/drawer.feature`).
 Environments outside the cluster are paired natively, as node links (see
-`connections` below); the page's saved environments are not lent to the node.
+`connections` below).
 
 - **Launch context.** Every attach and open sends the thread's cwd (worktree,
   else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables as the
@@ -785,7 +659,7 @@ Environments outside the cluster are paired natively, as node links (see
 - **One write in flight.** Keys typed while `terminal.write` is pending
   coalesce into the next one, so the shell sees the user's order.
 - **Hidden is not detached.** Once opened, the drawer stays attached while
-  hidden, like the page's drawer did, so output keeps arriving and switching
+  hidden, like the web's drawer, so output keeps arriving and switching
   back costs nothing.
 - **Groups.** Terminals are laid out in groups, as the web's terminal grid: a
   terminal never split is a group of its own, `terminal.split` (side by side)
@@ -796,22 +670,13 @@ Environments outside the cluster are paired natively, as node links (see
   row belongs to, so no session has two views fighting over its size. Groups
   live in memory: a restart or another client sees ungrouped drawer terminals.
 
-### Settings sections and the shell's own pages
+### Settings sections
 
-The settings nav is the shell's (`SettingsNav`); the sections behind it are
-either the shell's own or still HTML.
-
-The shell's own sections work with no page loaded. `js/settingsPages.js`
-lists every section in the page's order: a section with a `brick` is native,
-and moving one to QML is giving its line a brick, the state key it
-`requires` before it is listed, and the words and rows search finds it by.
-`SettingsHost` loads the brick for `ShellWindow.settingsSection`, and layouts
-put it where the page would be while `ShellWindow.nativeSettingsOpen`.
-`NavigationController::isNative`, the routes the page is never told about,
-reads the same file (compiled in as `:/hal-c2/settings/settingsPages.js`), so
-a section with a brick is native to both, except those marked `page` (General
-and Appearance), which still `route.follow` the hidden page because it draws
-with some of their preferences; `settings.navigate` opens any section from
+The settings nav (`SettingsNav`) and every section behind it are bricks.
+`js/settingsPages.js` lists the sections in the web's order: each names its
+brick, the state key it `requires` before it is listed, and the words and
+rows search finds it by. `SettingsHost` loads the brick for
+`ShellWindow.settingsSection`, and `settings.navigate` opens any section from
 anywhere. A section `under` another (Diagnostics and Open
 source licenses, under General, as on the web) is left out of the nav, reached
 by a `link` row of its parent, and keeps the parent marked
@@ -824,17 +689,14 @@ must match, and a result names the setting's `targetId`. Opening one is
 `settings.openResult {to, targetId}`: `NavigationController` opens the
 section and bumps `route.targetSeq` with `route.target` set, and
 `SettingsPage` scrolls the brick's child of that objectName to the top on
-each bump, so opening the same result twice scrolls back to it. Sections
-still on the page get the page's results, and the page scrolls those itself.
+each bump, so opening the same result twice scrolls back to it.
 
 General and Appearance are rows over `Settings` (`js/settingsRows.js`: a key,
 a kind and the web's wording). Each key's store and default are
 `SettingsController`'s row table: `setting`, `defaultOf`, `isDefault`,
 `onDevice`, `set` and `reset` read and write it wherever it lives. The node
 leaves defaults out of its document, and a null `sidebarAutoSettleAfterDays`
-means off. Rows the page still draws with are device preferences, and the
-shell sends them to the page as `clientSettings.follow {settings}` whenever
-they change. Appearance also draws the theme choice and this device's own
+means off. Appearance also draws the theme choice and this device's own
 themes (`ThemeEditor`); errors are the shell's toasts.
 
 Each other native section is a controller publishing one key, whose header
@@ -904,12 +766,11 @@ scenarios, and the Electron helpers, are `@backlog-desktop`. The portal gives no
 flash, animation or accessibility tree, so those rows stay locked. A capture
 lands through `ComposerController::attachImage`, shrunk to the attachment
 limit like the web's. The shell's settings navigation and search are its own
-(`js/settingsPages.js`). When hosted, `AppSidebarLayout` renders no sidebar on
-any route.
+(`js/settingsPages.js`).
 
 ### `route`
 
-`NavigationController` owns where the window is once the shell has its node:
+`NavigationController` owns where the window is:
 `route` is `{kind, threadKey, draftId, projectKey, section, title,
 canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `settings`,
 `pullRequests`, `usage` (the `ShellRoute` contract plus
@@ -917,28 +778,18 @@ canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `se
 `settingsActive` and `settingsSection` from it; the sidebar's active row and the
 composer's target thread come from it too. It keeps a back stack (home is
 passed through, and moving between settings sections is one step) and writes the last route to `shell-route.json` in the shell's state
-directory; the next launch reopens it unless the thread was deleted or the
-user clicked somewhere in the page before the node answered.
+directory; the next launch reopens it unless the thread or draft was
+deleted.
 
-The page still draws the centre, so it follows: the shell sends
-`route.follow {kind, …}` (with the draft's thread for a draft) for every route
-the page is not already on (and to a
-page that reloads), and `HalC2ShellBridge` navigates there. Where the page's
-own links, redirects and history take it comes back as `route.open {kind, …,
-replace}` (`shellRoute.ts` maps paths), and the shell adopts it; a page
-report that matches the top of the back stack pops it. The page never keeps
-state of its own about where it is beyond its URL.
-
-Bridges tied to a thread route (`workspace`, `rightPanel`)
-publish `null` for their key on unmount, so leaving a thread clears the
-native chrome instead of freezing it on the last thread.
+Controllers tied to a thread route (`workspace`, `panel`) publish `null` for
+their key off one, so leaving a thread clears the chrome instead of freezing
+it on the last thread.
 
 ### Settings and preferences
 
 `SettingsController` (the `Settings` QML singleton; C++ reaches it with
 `NativeShell::controller<SettingsController>()`) holds two stores. The API is
-documented in its header; later settings pages build on it rather than on
-page state.
+documented in its header.
 
 - The node's settings document, shared by every client of the environment:
   `hal-c2.readSettings` gives `{settings, version}`, and `hal-c2.writeSettings`
@@ -956,27 +807,24 @@ page state.
   (appearance, theme choice, saved custom themes, the client settings rows).
   They are available before
   the node is. A save that fails sets `deviceError` and leaves them as they
-  were. Nothing migrates from the page's storage; they start empty.
+  were.
 
-### `theme` (shell → page)
+### `theme`
 
-`ThemeController` (the `Themes` singleton) claims `theme` and publishes the
-`ShellThemeState` it resolves; the page's own publishes to that key are
-dropped. The choice lives in this device's preferences: `appearance`
+`ThemeController` (the `Themes` singleton) publishes the `ShellThemeState` it
+resolves as `theme`. The choice lives in this device's preferences: `appearance`
 (`system`, `light`, `dark`), `theme`, `themeHalves` (a theme per appearance)
 and `customThemes`. An id is looked up among the built-ins first, then this
 device's saved themes, then the themes the shell's own node publishes. Themes
 from linked environments are never offered. The lookup mirrors the web's
 `getThemeDefinition`: missing roles come from the T3 Chat palette, and a
 theme with one appearance takes that half only. An id that is no longer found
-draws the standard look, published as `hal-c2` so the page paints the variables
-it is given. The built-ins are `src/native/themes.json`, generated from
+draws the standard look, published as `hal-c2`. The built-ins are `src/native/themes.json`, generated from
 `packages/shared/src/themePalettes.ts`. Run `node apps/desktop-qt/scripts/gen-themes.mjs`
 after changing a palette. Colours are converted from `oklch()` natively.
 
-`ThemeStore` paints the resolved theme with `theme.json` over it, role by role,
-and hands the result to the page through the injection script above, so the
-page follows the shell. `Theme.palette.color()` resolves theme.json first, then
+`ThemeStore` paints the resolved theme with `theme.json` over it, role by
+role. `Theme.palette.color()` resolves theme.json first, then
 the resolved theme, then the brick's fallback. The notified `palette` receiver
 makes QML bindings follow theme changes; direct calls to the C++ `Theme.color()`
 method do not create that dependency. `Theme.radius`, `Theme.fontUi` and
@@ -986,16 +834,15 @@ borders and fonts from `Theme`.
 
 Settings → Appearance chooses and edits themes through `Themes` (`setMode`,
 `choose`, `chooseHalf`, `draft`, `saveCustom`, `duplicate`, `removeCustom`).
-The page's own picker and appearance shortcut reach the shell as `theme.mode
-{mode}`, `theme.choose {id}`, `theme.chooseHalf {appearance, id}` and
-`appearance.cycle`, which is `Themes.cycleAppearance()` (System → Light → Dark,
-with one toast however fast it is pressed). Themes made in the page's own
-editor live in the page's storage and are unknown to the shell.
+The same choices are the actions `theme.mode {mode}`, `theme.choose {id}`,
+`theme.chooseHalf {appearance, id}` and `appearance.cycle`, which is
+`Themes.cycleAppearance()` (System → Light → Dark, with one toast however
+fast it is pressed).
 
 ### `layout`
 
-The shell owns whether the thread list is hidden: `LayoutController` claims
-`layout {sidebarCollapsed}` from the page, remembers it in the device's
+The shell owns whether the thread list is hidden: `LayoutController`
+publishes `layout {sidebarCollapsed}`, remembers it in the device's
 `preferences.json`, and publishes it before the node's first snapshot so a
 restart does not flash the list. `sidebar.toggle` (action and keybinding
 command, Mod+B by default) flips it. The `Workspace` brick shows a toggle when
@@ -1016,8 +863,7 @@ that places a popup at a pointer maps through the scaled item
 the unscaled overlay, so each sets `scale` to `layout.zoom` about
 `Item.TopLeft` (the origin the popup positioner assumes, centring included)
 and divides any size it takes from the window by it; context menus and tool
-tips stay unscaled, as native ones do. The embedded page is scaled as a
-texture.
+tips stay unscaled, as native ones do.
 `DefaultShell` snaps the sidebar (one relayout, no animated width); examples
 that ease `Layout.preferredWidth` to 0 hide it once it is gone
 (`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
@@ -1079,27 +925,20 @@ for the same chord wins, as it does over Electron's menu.
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
 `Keybindings.press`. Who takes a key follows focus:
 
-- A focused `WebSurface` or terminal keeps every key except the sequences
-  that resolve, in that focus, to a native command or a project script.
+- A focused terminal keeps every key except the sequences that resolve, in
+  that focus, to a native command or a project script.
   Those `Shortcut`s stay enabled, so a native command runs once and a
   terminal still gets Ctrl+K. The web's defaults bind `mod+d` to
   `terminal.split` in a terminal, so off macOS a terminal loses Ctrl+D (EOF)
   unless the user rebinds it.
 - From native chrome (a focused composer included), only a sequence that
   resolves to a native command or script is a window shortcut; any other
-  key stays with the focused control. No key goes to the page as
-  `keybinding.press`.
+  key stays with the focused control.
 - Unmodified keys are never window shortcuts; they belong to whichever
   control has focus.
 
-Secondary documents (the right panel) forward a keydown they did not consume
-as `keybinding.press` when the chord resolves to the same command with and
-without the embed's focus (`shellKeybindingPressToForward`). The controller
-claims that dispatch and runs the command if it is native; the primary page
-never sees it.
-
 Mod+Q is not a shortcut. `QuitController` (shared, one per process) filters
-the application's key events before any window or page sees them and ports
+the application's key events before any window sees them and ports
 `apps/desktop/src/window/QuitHold.ts`: `confirmQuit` "hold" (the default)
 quits after 1.2 seconds held, "double-click" after two presses within half a
 second, "direct" at once, and two quick presses always quit. "Still held" is
@@ -1120,9 +959,8 @@ from the node's push, not from the reply.
 The `Notifications` brick renders only the shell's own `toasts`.
 `ToastController` is what native controllers call (`show`, `error`,
 `showActions` with up to two buttons, `replace` to update one in place), with
-its own timing; its ids start with `native:`. The page's `ShellToastBridge`
-still publishes its toasts as `notifications`, but nothing shows them: every
-toast the desktop needs has a native producer with the web's text, such as
+its own timing; its ids start with `native:`. Every toast has a native
+producer with the web's text, such as
 `KeybindingController`'s "Keybindings updated" on a `config.keybindings` push
 and `ProviderUpdateNotice`'s launch offer of provider updates
 (`ProviderUpdatePrimaryNotification`), whose dismissed version sets are this
@@ -1156,18 +994,15 @@ device's `confirmThread*` settings say so (delete's is on by default).
 
 Every window menu is a native controller's (`thread.menu`,
 `workspace.titleMenu`, `draft.menu`, `thread.snoozeMenu`, `git.menu`), so the
-window has one `ContextMenuHost`, for `menu`. The page's own menus still
-publish `contextMenu` (`localApi.contextMenu.show`, answered by
-`contextMenu.select {requestId, id}`), but only a visible `WebSurface`'s
-inner host renders them; the hidden main page's are never shown.
+window has one `ContextMenuHost`, for `menu`.
 `workspace.rename {title}` / `renameRequestId` drive an inline rename in
 the header; the thread menu's "Rename" asks for it with
 `workspace.rename.begin {threadKey}`.
 
 ### `git`
 
-`GitController` publishes `git` itself from `WorkspaceController`'s `vcs`
-status; the page's `ShellGitBridge` no longer writes the key. The recommended
+`GitController` publishes `git` from `WorkspaceController`'s `vcs` status.
+The recommended
 action and the menu follow `apps/tui/src/gitActions.logic.ts`, not the web's
 `GitActionsControl.logic.ts`: the ledger (`source-control/git-actions.feature`)
 is written against the TUI's labels and reasons, named for the host's change
@@ -1187,7 +1022,7 @@ shows; a refused action or call carries the same message in its error toast.
 
 ### Composer layout
 
-The `Composer` brick is the page's composer card: a centered card (768 px
+The `Composer` brick is the web's composer card: a centered card (768 px
 max) with the attachment chips, the editor and a footer of ghost pickers —
 model, effort, permissions, the plan/build toggle — and the round send/stop
 button. The context strip hangs under the card with the environment
@@ -1214,34 +1049,19 @@ X11 `WM_CLASS`, so compositor rules can target the window — on Hyprland:
 macOS with the official Qt 6.9 binaries (`jurplel/install-qt-action`) and
 packages an AppImage (`scripts/package-linux.sh`, linuxdeploy + its Qt
 plugin) and a macOS bundle (`macdeployqt`). `scripts/stage-runtime.mjs` stages
-the host's TypeScript, the built web app (`web/`), the node release
+the host's TypeScript, the node release
 (`hal-c2-node/`, from `mix release`) and the Node executable that runs the
 host and the node's sidecars. The Linux path was
 written against the documented tooling but has only been exercised in CI, not
 on this machine.
 
-## Moving off the page
+## Adding a feature
 
-The embedded page is legacy and leaves the shell piece by piece. Every piece
-of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
-`TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
-state from the page. Some settings sections are still HTML because they have
-not moved yet, not by design (see
-[Settings sections](#settings-sections-and-the-shells-own-pages)); the right
-panel's tabs are all native.
-
-A piece has moved when a native controller (`src/native/`, registered with
-`NativeControllerRegistrar`) builds its state from the shell's own node client
-and a brick renders it; the controller claims the key,
-so the page's publishes to it are dropped. The terminal drawer (native, on
-qml-ghostty), the cluster settings, the route, the shell's toasts and the
-theme are built this way. New features skip
-the page entirely: a controller, a brick the layouts place, and `@desktop`
-scenarios run by `tst_Features`. They are never hosted in or over
-`WebSurface`, and never gated on state the page publishes. The embed route
-behind `RightPanel` (a second `WebEngineView` on its own connection) is a
-stopgap for HTML that must sit where QML decides, not a pattern for new work;
-web content the desktop cannot draw opens in the user's browser instead.
+A feature is a native controller (`src/native/`, registered with
+`NativeControllerRegistrar`) that builds its state from the shell's own node
+client, a brick the layouts place that renders it, and `@desktop` scenarios
+run by `tst_Features`. Web content the desktop cannot draw opens in the
+user's browser.
 
 ### Thread store and timeline
 
@@ -1258,10 +1078,9 @@ entities but not the rows: row ids are stable, streamed text only emits
 moves and removes, so the `Timeline` brick keeps its scroll position. The
 active thread is the navigation route's.
 
-Which routes the shell draws in the window's centre is one list,
-`Bricks/js/centreViews.js`; `ShellWindow.nativeCentreOpen` and `pageOpen`
-follow it, and every layout puts a `CentreHost` beside the `WebSurface` the way
-it does `SettingsHost`. Thread and draft routes load `ThreadView`: the route's
+Which brick draws each route in the window's centre is one list,
+`Bricks/js/centreViews.js`, which `CentreHost` loads from; every layout
+places it the way it does `SettingsHost`. Thread and draft routes load `ThreadView`: the route's
 timeline, a quiet loading line, the draft's opening line with its project and
 checkout, and Retry (`Threads.reload`) for a thread whose node stopped sending
 it. Links in a reply open in the browser or, for a path, in the right panel

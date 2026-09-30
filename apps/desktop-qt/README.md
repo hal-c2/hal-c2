@@ -2,20 +2,19 @@
 
 Qt/QML desktop client for HAL-C2. Its QML chrome talks to the node over the
 shell's own connection and can be rearranged and themed from
-`~/.config/hal-c2/shell/`. What has not moved to QML yet still comes from the
-legacy web app in an embedded `WebEngineView`.
+`~/.config/hal-c2/shell/`.
 
 Architecture, setup, and the QML/theme contracts: `docs/internals/desktop-qt.md`.
 
 ```sh
 mise run node       # terminal 1: the Elixir node
-mise run desktop    # terminal 2: build the web app (apps/web/dist) and the shell, pair with the node, launch
+mise run desktop    # terminal 2: build the shell, pair with the node, launch
 ```
 
 `mise run desktop -- --standalone` skips the pairing and lets the shell start its own node,
 as the installed app does.
 
-Besides Qt Quick and WebEngine, the shell needs the Qt WebSockets module for its own node
+Besides Qt Quick, the shell needs the Qt WebSockets module for its own node
 client: `qt6-websockets` on Arch and Fedora, `qt6-websockets-dev` on Debian and Ubuntu.
 The Device tab decodes H.264 with FFmpeg's libavcodec, libavutil and libswscale. Building needs
 only their headers, found through `pkg-config`: `ffmpeg` on Arch and Homebrew,
@@ -51,4 +50,4 @@ own part of the fake node (`FakeNode::Extension`).
 `ShellRuntime` covers reload and theme ownership. `ShellExamples` loads all
 the examples at 640, 1000, and 1400 pixels (including `glass-macos` on macOS), checking header text and dashboard
 card bounds, long branch names, clipped icons, and scrolling to the last card. It uses a local
-view-model fixture and a blank web page; no running server or pairing is needed.
+view-model fixture; no running server or pairing is needed.

@@ -457,6 +457,17 @@ const Steps steps([] {
     addThreads(world, {{QStringLiteral("One"), QStringLiteral("p1")}, {QStringLiteral("Two"), QStringLiteral("p2")}});
     openThread(world, QStringLiteral("Two"));
   });
+  step(QStringLiteral("the thread list shows at least three threads"), [](World& world, const Captures&, const Table&) {
+    addThreads(world, {{QStringLiteral("One"), QStringLiteral("p1")},
+                       {QStringLiteral("Two"), QStringLiteral("p1")},
+                       {QStringLiteral("Three"), QStringLiteral("p1")}});
+    world.waitFor([&] { return world.native().sidebar()->orderedKeys().size() >= 3; }, QStringLiteral("three threads in the list"));
+  });
+  step(QStringLiteral("the third thread opens"), [](World& world, const Captures&, const Table&) {
+    const QString key = world.native().sidebar()->orderedKeys().value(2);
+    world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },
+                  [&] { return QStringLiteral("%1; the window shows %2").arg(key, show(world.state(QStringLiteral("route")))); });
+  });
   step(QStringLiteral("the user goes forward"), [](World& world, const Captures&, const Table&) {
     keymap(world)->commands()->run(QStringLiteral("navigation.forward"));
     world.sync();
