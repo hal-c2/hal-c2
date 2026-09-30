@@ -28,7 +28,8 @@ Item {
             time: "",
             icon: "",
             intent: "",
-            attribution: ""
+            attribution: "",
+            meta: false
         }, fields);
     }
 
@@ -150,6 +151,7 @@ Item {
             rows.append(root.row({
                 rowId: "reply:1",
                 text: "The cart adds tax now.",
+                meta: true,
                 files: [
                     {
                         path: "src/cart.ts",

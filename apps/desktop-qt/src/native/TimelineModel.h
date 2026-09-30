@@ -72,6 +72,10 @@ public:
     // Who sent a user message when not the user: "Sent by automation",
     // "Sent by another agent", or empty.
     AttributionRole,
+    // Whether an assistant reply carries its time and actions: a settled
+    // turn's last reply does, commentary before it does not (the web's
+    // showAssistantMeta).
+    MetaRole,
   };
 
   // Calls shown per collapsed work group.
@@ -148,6 +152,8 @@ private:
     bool expanded = false;
     // A fold's: when its turn started.
     QDateTime at;
+    // A reply's: whether it is its settled turn's last.
+    bool meta = false;
 
     bool operator==(const Row&) const = default;
   };

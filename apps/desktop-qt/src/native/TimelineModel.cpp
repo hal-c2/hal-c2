@@ -645,7 +645,9 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     }
     Row row{id, kindName(kind), {id}};
     if (kind == Kind::Message && !runId.isEmpty() && turns.value(runId).terminal == id) {
-      row.checkpoint = turns.value(runId).checkpoint;
+      const Turn& turn = turns[runId];
+      row.checkpoint = turn.checkpoint;
+      row.meta = !turn.streaming && kSettled.contains(text(runs.value(runId), QLatin1String("status")));
     }
     rows.append(row);
     ++i;
@@ -788,7 +790,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {StatusRole, "status"},    {StatusLabelRole, "statusLabel"}, {MarkerRole, "marker"},
       {EntriesRole, "entries"},  {HiddenCountRole, "hiddenCount"}, {ExpandedRole, "expanded"},
       {FilesRole, "files"},      {TimeRole, "time"},         {IconRole, "icon"},
-      {IntentRole, "intent"},    {AttributionRole, "attribution"},
+      {IntentRole, "intent"},    {AttributionRole, "attribution"}, {MetaRole, "meta"},
   };
 }
 
@@ -915,6 +917,8 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       if (!text(item, QLatin1String("scheduledTaskId")).isEmpty()) return QStringLiteral("Sent by automation");
       if (text(item, QLatin1String("createdBy")) == QLatin1String("agent")) return QStringLiteral("Sent by another agent");
       return QString();
+    case MetaRole:
+      return row.meta;
     case IconRole:
       return row.kind == QLatin1String("message") || row.kind == QLatin1String("plan") ? QString() : iconOf(item);
     case TimeRole:

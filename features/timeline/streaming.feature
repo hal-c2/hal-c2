@@ -107,6 +107,14 @@ Feature: Streaming the agent's reply
     Then the reply's markdown is on the clipboard
 
   @shared @backlog-mobile @backlog-tui
+  Scenario: Only a turn's last reply carries its time and actions
+    Given the agent commented, ran a tool call and then answered
+    Then neither message shows its time and actions while the agent works
+    When the turn completes after 2 minutes
+    And the user opens the folded work
+    Then only the answer shows its time and actions
+
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A message says when it was sent, in the time format the user chose
     Given this device's "timestampFormat" is set to "<format>"
     When the user sent a message today at 9:05 in the morning

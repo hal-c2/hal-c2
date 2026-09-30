@@ -28,7 +28,8 @@ Item {
             time: "",
             icon: "",
             intent: "",
-            attribution: ""
+            attribution: "",
+            meta: false
         }, fields);
     }
 
@@ -243,7 +244,8 @@ Item {
                 rowId: "reply",
                 text: "Tax is applied after discounts.",
                 status: "completed",
-                time: "9:42 AM"
+                time: "9:42 AM",
+                meta: true
             }));
         }
 
@@ -276,6 +278,26 @@ Item {
             verify(visibleIn(revert), "the reply offers Revert without the pointer over it");
             compare(shownOpacity(revert), 1);
             verify(findNamed(question, "revertToTurn") === null, "a user message has no revert");
+        }
+
+        // Scenario: Only a turn's last reply carries its time and actions
+        function test_commentaryHasNoActions() {
+            conversation();
+            actionRows.insert(1, root.row({
+                rowId: "comment",
+                text: "Looking at the cart first.",
+                status: "completed",
+                time: "9:41 AM"
+            }));
+            const timeline = createTemporaryObject(actionTimelineComponent, root, {
+                alwaysShowMeta: true
+            });
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(2) !== null);
+            const comment = list.itemAtIndex(1);
+            verify(!visibleIn(findNamed(comment, "copyMessage")), "commentary offers no Copy");
+            verify(!visibleIn(findText(comment, "9:41 AM")), "commentary shows no time");
+            verify(visibleIn(findNamed(list.itemAtIndex(2), "copyMessage")), "the turn's last reply does");
         }
 
         // With hover, a message's actions keep their place while hidden, so

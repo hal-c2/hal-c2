@@ -6,7 +6,7 @@ import HalC2.Shell
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
 // model with its roles (rowId, kind, author, text, streaming, title, status,
 // statusLabel, marker, entries, hiddenCount, expanded, files, time, icon,
-// intent, attribution).
+// intent, attribution, meta).
 //
 //   Timeline { anchors.fill: parent; model: Threads.timeline }
 //
@@ -350,6 +350,7 @@ Item {
             required property var icon
             required property var intent
             required property var attribution
+            required property var meta
             // The tool calls whose details are open, by id.
             property var openCalls: ({})
             // Whether the row's time and actions show: only this row's
@@ -359,7 +360,8 @@ Item {
             readonly property int gap: {
                 switch (row.kind) {
                 case "message":
-                    return row.author !== "user" && row.streaming === true ? 8 : 16;
+                    // Commentary sits closer to the work that follows it.
+                    return row.author !== "user" && row.meta !== true ? 8 : 16;
                 case "plan":
                     return 16;
                 case "fold":
@@ -661,9 +663,9 @@ Item {
                             }
                         }
                     }
-                    // Its actions and time, once it has finished streaming.
+                    // Its actions and time, on its settled turn's last reply.
                     Row {
-                        visible: row.streaming !== true
+                        visible: row.meta === true && row.streaming !== true
                         topPadding: 6
                         height: 30
                         spacing: 8

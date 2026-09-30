@@ -182,6 +182,23 @@ const Steps steps([] {
     settleRun(world, QStringLiteral("completed"), 120);
     expectFolded(world, c[0]);
   });
+  step(QStringLiteral("the agent commented, ran a tool call and then answered"), [](World& world, const Captures&, const Table&) {
+    startRun(world);
+    addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("id"), QStringLiteral("comment")}, {QStringLiteral("text"), QStringLiteral("Looking at the cart first.")}});
+    addCommand(world, 1);
+    addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("id"), QStringLiteral("answer")}, {QStringLiteral("text"), QStringLiteral("The cart now shows tax.")}});
+  });
+  const auto carriesMeta = [](World& world, const QString& id) {
+    return role(timeline(world), rowShowing(world, id), TimelineModel::MetaRole).toBool();
+  };
+  step(QStringLiteral("neither message shows its time and actions while the agent works"), [carriesMeta](World& world, const Captures&, const Table&) {
+    expect(!carriesMeta(world, QStringLiteral("comment")) && !carriesMeta(world, QStringLiteral("answer")),
+           QStringLiteral("a message of a running turn shows its time and actions"));
+  });
+  step(QStringLiteral("only the answer shows its time and actions"), [carriesMeta](World& world, const Captures&, const Table&) {
+    expect(carriesMeta(world, QStringLiteral("answer")), QStringLiteral("the answer shows no time and actions"));
+    expect(!carriesMeta(world, QStringLiteral("comment")), QStringLiteral("the comment shows its time and actions"));
+  });
   const auto toggleFold = [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
     model.toggle(role(model, lastRowOf(world, QStringLiteral("fold")), TimelineModel::IdRole).toString());
