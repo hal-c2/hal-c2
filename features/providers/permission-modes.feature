@@ -74,6 +74,13 @@ Feature: Permission modes
     When the user sends a message
     Then Cursor starts in auto-accept edits
 
+  @backlog
+  Scenario: Claude still asks before a command in auto-accept edits
+    Given a Claude thread in auto-accept edits
+    When Claude asks to run a command
+    Then the user is asked to approve the command
+    And the command is not approved as if the thread had full access
+
   Scenario: An ACP agent in full access is granted every request at once
     Given an OpenCode thread in full access
     When OpenCode asks to run a command
@@ -83,6 +90,14 @@ Feature: Permission modes
     Given an OpenCode thread in supervised
     When OpenCode asks to run a command
     Then the user is asked to approve the command
+
+  @backlog
+  Scenario: Allowing an ACP command once does not allow it again
+    Given a supervised thread runs on an ACP agent such as OpenCode or Cursor
+    When the user allows a command once
+    Then the command runs
+    When the agent asks to run the same command again
+    Then the user is asked again
 
   Scenario Outline: The user's approval decision reaches the provider
     Given a <provider> thread waiting on a command approval
@@ -159,6 +174,12 @@ Feature: Permission modes
     When Grok runs the same command again
     Then it is allowed without asking
     And a different command still asks
+
+  @backlog
+  Scenario: A Grok session grant stays in its session
+    Given the user chose "Always allow this session" for a Grok command
+    When a thread in another project asks Grok to run the same command
+    Then the user is asked to approve it
 
   @backlog
   Scenario: Antigravity can still ask in full access

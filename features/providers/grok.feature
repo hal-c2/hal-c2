@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/acp.ex (grok agent, permission-mode args, supportsTextGeneration)
 #   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (permission requests, session/cancel, background tasks and subagents)
 #   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Grok transcripts)
@@ -137,6 +138,15 @@ Feature: Grok
   Scenario: A persistent Grok monitor is not background work
     Given Grok left a persistent monitor running
     Then Grok's monitor is not listed as background work
+
+  @backlog
+  Scenario: Grok monitor updates do not end or hold the turn
+    Given Grok reports a monitor update during a turn
+    When the monitor reports progress again
+    Then the run is still working
+    When Grok reports the turn finished while the monitor keeps reporting
+    Then the run is settled
+    And the monitor is not part of the run
 
   # Upstream wakes the thread with a turn when a background task finishes.
   @backlog

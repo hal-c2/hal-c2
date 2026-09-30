@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
 #   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: node + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
 #   apps/server-ex/lib/hal_c2/acp/auth.ex, apps/server-ex/lib/hal_c2/acp/url_auth.ex (server.acceptAcpRegistryUrlAuth)
@@ -151,3 +152,51 @@ Feature: Cursor
   Scenario: A command Cursor leaves running ends with its turn
     When Cursor ends a turn with a command still running
     Then the command it left running ends with the turn
+
+  @backlog
+  Scenario: A Cursor command the user stops shows as interrupted
+    Given Cursor is running a command
+    When the user stops the turn
+    Then the command is shown as interrupted
+    And it is not shown as a successful command
+
+  @backlog
+  Scenario: A full-access Cursor thread does not loosen a sandboxed one
+    Given a Cursor thread runs in a sandbox and another Cursor thread runs in full access
+    When the full-access thread runs and then the sandboxed thread runs again
+    Then the sandboxed thread still runs in its sandbox
+    And its tools still work
+
+  @backlog
+  Scenario: Cursor text generation that its sandbox blocks is retried without the sandbox
+    Given Cursor is picked for text generation
+    And generating a title fails only because Cursor's sandbox blocks it
+    When the node retries the request
+    Then the retry removes only the restriction that blocked it
+    And the thread gets its title
+
+  @backlog
+  Scenario: Cursor keeps its metadata out of the workspace
+    Given a Cursor thread in a project folder
+    When a Cursor turn runs
+    Then the project folder gains no files generated for Cursor
+
+  @backlog
+  Scenario: Cursor receives the project's skills and rules
+    Given the project has skills and rules for Cursor
+    When a Cursor turn starts in the project
+    Then Cursor receives the project's skills and rules
+
+  @backlog
+  Scenario: A Cursor shell command that fails to start does not stop the turn
+    Given Cursor is running a turn
+    When a shell command Cursor tries fails to start
+    Then the turn keeps going
+    And the command is shown as failed
+
+  @backlog
+  Scenario: A Cursor send whose run was abandoned is ended
+    Given a message was sent to Cursor but the node kept only its local run record and no live Cursor session
+    When the node checks its Cursor sessions
+    Then the send is completed or failed explicitly
+    And the user's next message starts a new Cursor run

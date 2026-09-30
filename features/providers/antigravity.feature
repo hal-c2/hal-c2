@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-antigravity.md
 #   docs/internals/providers.md (isolated profiles, installer leases, sign-in owned by the initiating session, reject revert before touching files)
 #   apps/server/src/provider/Layers/AntigravityProvider.ts, apps/server/src/provider/AntigravityAuth.ts
@@ -179,6 +180,18 @@ Feature: Antigravity
       | a 15 MiB audio clip           | accepted |
       | files totalling 60 MiB        | rejected |
       | an unsupported file format    | rejected |
+
+  @backlog
+  Scenario: Antigravity reads a file of a kind it does not recognise by its path
+    Given the project has a file whose kind Antigravity does not recognise
+    When Antigravity asks for that file by its path
+    Then Antigravity receives the file's contents
+
+  @backlog
+  Scenario: Antigravity cannot leave the workspace
+    Given an Antigravity thread works in the project's folder
+    When Antigravity asks for a path outside that folder
+    Then the request is refused
 
   Scenario: Antigravity reads project skills from its skill folders in order
     Given the project has the skill "deploy" in both .gemini/skills and .agents/skills

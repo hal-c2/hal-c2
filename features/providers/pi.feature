@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-pi.md
 #   docs/internals/providers.md (Pi RPC mode, forks through the CLI in the destination directory)
 #   apps/server-ex/lib/hal_c2/pi.ex, apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (Pi RPC mode)
@@ -108,6 +109,13 @@ Feature: Pi
     Given a Pi thread with three turns
     When the user reverts to the end of the first turn
     Then Pi continues from the first turn
+
+  @backlog
+  Scenario: Reverting a Pi turn works past a turn the user stopped
+    Given a Pi thread with a stopped turn followed by a finished turn
+    When the user reverts to before the stopped turn
+    Then Pi continues from the turn before it
+    And the stopped turn is not used as Pi's history
 
   Scenario: Forking a Pi thread copies the native conversation into the new workspace
     Given a Pi thread with three turns
