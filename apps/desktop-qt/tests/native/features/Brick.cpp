@@ -15,7 +15,7 @@ namespace {
 World* current = nullptr;
 
 QObject* owned(QJSEngine* engine, QObject* object) {
-  engine->setObjectOwnership(object, QJSEngine::CppOwnership);
+  if (object) engine->setObjectOwnership(object, QJSEngine::CppOwnership);
   return object;
 }
 
@@ -23,8 +23,14 @@ QObject* owned(QJSEngine* engine, QObject* object) {
 
 void Brick::registerSingletons() {
   static const bool registered = [] {
-    qmlRegisterSingletonType<QObject>("HalC2.Shell", 1, 0, "Shell", [](QQmlEngine*, QJSEngine* engine) { return owned(engine, &current->bridge()); });
-    qmlRegisterSingletonType<QObject>("HalC2.Shell", 1, 0, "Theme", [](QQmlEngine*, QJSEngine* engine) { return owned(engine, &current->theme()); });
+    // As ShellRuntime's: whichever registration QML uses, an engine's Shell
+    // and Theme are the ones it names.
+    qmlRegisterSingletonType<QObject>("HalC2.Shell", 1, 0, "Shell", [](QQmlEngine* qml, QJSEngine* engine) {
+      return owned(engine, qml->property("halC2Bridge").value<QObject*>());
+    });
+    qmlRegisterSingletonType<QObject>("HalC2.Shell", 1, 0, "Theme", [](QQmlEngine* qml, QJSEngine* engine) {
+      return owned(engine, qml->property("halC2Theme").value<QObject*>());
+    });
     qmlRegisterSingletonType<QObject>("HalC2.Shell", 1, 0, "Terminals", [](QQmlEngine*, QJSEngine* engine) {
       return owned(engine, current->native().controller<TerminalController>());
     });
@@ -49,6 +55,8 @@ QQuickItem* findItem(QQuickItem* item, const QString& objectName) {
 Brick::Brick(World& world, const QByteArray& qml, const QSize& size) {
   current = &world;
   registerSingletons();
+  m_engine.setProperty("halC2Bridge", QVariant::fromValue(static_cast<QObject*>(&world.bridge())));
+  m_engine.setProperty("halC2Theme", QVariant::fromValue(static_cast<QObject*>(&world.theme())));
   m_engine.addImportPath(QStringLiteral(HAL_C2_QML_DIR));
   QQmlComponent component(&m_engine);
   component.setData(qml, QUrl(QStringLiteral("file:///brick.qml")));

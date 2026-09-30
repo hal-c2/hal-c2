@@ -22,8 +22,9 @@ public:
   // `qml` is a document importing HalC2.Bricks, whose root is laid out at `size`.
   Brick(World& world, const QByteArray& qml, const QSize& size);
   ~Brick();
-  // Registers the bricks' singletons. Call it from a Steps initialiser, before
-  // any ShellRuntime registers its own: QML keeps the first registration.
+  // Registers the bricks' singletons. Call it from a Steps initialiser, so a
+  // brick has them in a run with no ShellRuntime (whose Shell and Theme
+  // resolve the same way, from the engine).
   static void registerSingletons();
 
   QQuickWindow& window() { return m_window; }
