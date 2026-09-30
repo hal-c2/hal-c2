@@ -133,7 +133,8 @@ jobs:
           elixir-version: "1.20.3"
 
       # The parity steps read packages/contracts' RPC schemas with Bun
-      # (test/support/contract_keys.ts) when they compile.
+      # (test/support/contract_keys.ts) when they compile, and drive
+      # packages/client-runtime's protocol 3 adapter (v3_unsupported_call.ts).
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
@@ -142,6 +143,7 @@ jobs:
           run-install: |
             args:
               - --filter=@hal-c2/contracts...
+              - --filter=@hal-c2/client-runtime...
 
       # Keep in step with mise.toml.
       - name: Setup Bun
