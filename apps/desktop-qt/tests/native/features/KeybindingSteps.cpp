@@ -273,6 +273,14 @@ void press(World& world, const QString& key) {
     world.sync();
     return;
   }
+  // Settings, SnapShots' recorder takes every key while it records (SnapShotSettings.qml).
+  if (at(world.state(QStringLiteral("snapShot")), QStringLiteral("shortcut.recording")).toBool()) {
+    const QKeyCombination combination = QKeySequence(key)[0];
+    world.bridge().dispatch(QStringLiteral("snapShot.record.key"),
+                            QVariantMap{{QStringLiteral("key"), int(combination.key())},
+                                        {QStringLiteral("modifiers"), int(combination.keyboardModifiers().toInt())}});
+    return;
+  }
   const auto shortcut = keybindings::parseShortcut(key.toLower());
   if (!shortcut) fail(QStringLiteral("%1 is not a key").arg(key));
   pressSequence(world, keybindings::sequence(*shortcut, keys(world).mac));

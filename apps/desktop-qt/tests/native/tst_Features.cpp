@@ -554,6 +554,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/projects.feature"),
     QStringLiteral("settings/project-defaults.feature"),
     QStringLiteral("settings/updates.feature:At launch*"),
+    QStringLiteral("settings/snap-shot.feature"),
+    QStringLiteral("source-control/snap-shot.feature"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

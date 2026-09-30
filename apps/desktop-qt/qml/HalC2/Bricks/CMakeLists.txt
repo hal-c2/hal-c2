@@ -92,6 +92,7 @@ qt_add_qml_module(hal_c2_bricks
     DevicePanel.qml
     WelcomeWizard.qml
     OnboardingTerminal.qml
+    SnapShotSettings.qml
   RESOURCES
     qmldir
     js/shell-connect.js

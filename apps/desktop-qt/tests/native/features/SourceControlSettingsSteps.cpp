@@ -200,7 +200,11 @@ const Steps steps([] {
        [](World& world, const Captures&, const Table&) { open(world); });
 
   // source-control.feature
-  step(QStringLiteral("the panel loads"), [](World& world, const Captures&, const Table&) { scan(world); });
+  step(QStringLiteral("the panel loads"), [](World& world, const Captures&, const Table&) {
+    // Settings, SnapShots loads on its own, as it opens (SnapShotSteps).
+    if (at(world.state(QStringLiteral("route")), QStringLiteral("section")) == QLatin1String("/settings/snap-shot")) return;
+    scan(world);
+  });
   step(QStringLiteral("each version control and hosting tool is listed as available, missing or status unknown"),
        [](World& world, const Captures&, const Table&) {
          expect(listed(world, QStringLiteral("git")).value(QStringLiteral("available")).toBool(), QStringLiteral("Git to be available; %1").arg(show(found(world))));

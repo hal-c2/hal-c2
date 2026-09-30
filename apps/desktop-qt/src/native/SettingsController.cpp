@@ -90,6 +90,14 @@ const QList<Row>& rows() {
       {"fontFamilyTerminal", true, QString()},
       {"fontSmoothing", true, true},
       {"wordWrap", true, true},
+      // SnapShots (SnapShotController).
+      {"snapShotEnabled", true, false},
+      {"snapShotIncludeAccessibility", true, true},
+      {"snapShotShortcut", true, QJsonObject{{QStringLiteral("kind"), QStringLiteral("both-shift-keys")}}},
+      {"snapShotPlaySound", true, true},
+      {"snapShotSound", true, QStringLiteral("soft-pop")},
+      {"snapShotFlash", true, true},
+      {"snapShotAnimations", true, true},
   };
   return list;
 }

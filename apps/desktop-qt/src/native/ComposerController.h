@@ -109,6 +109,12 @@ public:
   // SidebarDraftRow): the text's first line, else how many attachments it
   // carries; nothing for an empty draft (composerDraftHasUserContent).
   std::optional<QString> draftPreview(const QString& target) const;
+  // An image (a snapshot) joins `target`'s draft: a thread key or a draft id.
+  // `source` rides with it to the node when set (ChatImageAttachment.source).
+  void attachImage(const QString& target, const QString& name, const QString& mimeType, const QByteArray& bytes,
+                   const QJsonObject& source = {});
+  // The draft's images: {id, name, mimeType, sizeBytes, source}.
+  QVariantList attachments(const QString& target) const;
 
 private:
   struct Attachment {
@@ -117,6 +123,7 @@ private:
     QString mimeType;
     qint64 sizeBytes = 0;
     QString dataUrl;
+    QJsonObject source;
   };
   // A terminal selection on the draft (apps/web/src/lib/terminalContext.ts).
   struct TerminalContext {
@@ -241,7 +248,12 @@ private:
   struct Kept {
     QHash<QString, Draft> drafts;
     QString path;
+    // The images last written beside the drafts (imagesPath), so a keystroke
+    // does not rewrite them.
+    QString images;
   };
+  // Where the drafts' images are kept: shell-composer-images.json beside them.
+  QString imagesPath() const;
   Kept& m_kept;
   QHash<QString, Draft>& m_drafts;
   // Each thread's sends, the one in flight first: a thread sends one at a
@@ -270,7 +282,6 @@ private:
     int request = 0;
   };
   PathSearch m_paths;
-  int m_nextAttachment = 1;
   // The queued message the route thread's composer is editing, and the
   // thread's draft set aside for it.
   struct QueuedEdit {
