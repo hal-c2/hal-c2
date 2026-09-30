@@ -54,10 +54,10 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
   scenario that already passes, tagged `@backlog`, makes the ledger contradict itself.
 - **One behaviour per scenario.** Do not bundle an invariant the node already passes with a
   new one; the combined scenario gets the wrong status. Split it.
-- **Status from evidence.** No status tag only when the runner for each of its surfaces ran
-  it and it passed: `features:node` runs only `@node`, `features:tui` only `@tui` and
-  `@shared`, and the desktop runner only its own files. A scenario no runner exercised
-  stays `@backlog`.
+- **Status from evidence.** A new or changed scenario is `@backlog` unless it tags only
+  `@node` and `mise run features:node <file>` runs it and passes. Client scenarios stay
+  `@backlog` here: no runner covers every surface `@shared` names (there is no mobile runner,
+  and the desktop one reads only its own files), so the backlog job clears them per surface.
 - **Every surface tag that applies.** Anything a user sees needs client tags (`@shared`, or
   `@desktop` / `@mobile` / `@tui`), not only `@node`, or the client runners never select it.
 - **Existing plugin ids only.** `grep -rhoE '@plugin-[a-z0-9-]+' features | sort -u` lists
@@ -71,11 +71,9 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
 ## Finish
 
 1. Write the digest's commit to `features/UPSTREAM`.
-2. Run the runner for every surface a touched file tags: `mise run features:node <file>`,
-   `mise run features:tui <file>` for `@tui` or `@shared`, and `mise run features:desktop`
-   for `@desktop` or `@shared`. They parse the files and keep passing scenarios passing. A
-   scenario whose runner you could not run keeps `@backlog`. If mix deps are missing,
-   `mise run install:node` first.
+2. Run `mise run features:node <each touched file>`, and `mise run features:tui <file>` for
+   files with `@tui` or `@shared` scenarios. They parse the files and keep passing scenarios
+   passing. If mix deps are missing, `mise run install:node` first.
 3. Commit as `test(features): ledger upstream T3 Code through <short sha>`. When asked for a
    PR, its description is one table row per digest entry: pull request or commit and title,
    disposition, and the scenario or reason in a few words.
