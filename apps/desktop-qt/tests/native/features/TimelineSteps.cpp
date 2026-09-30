@@ -9,6 +9,7 @@
 #include <QMap>
 #include <QPersistentModelIndex>
 #include <QSignalSpy>
+#include <QTimeZone>
 
 #include "Harness.h"
 #include "NativeShell.h"
@@ -389,6 +390,23 @@ const Steps steps([] {
     const QString label = lastEntry(world).value(QStringLiteral("statusLabel")).toString();
     expect(label == c[0], QStringLiteral("the call is marked \"%1\"").arg(label));
   });
+  step(QStringLiteral("the agent's most recent tool call (.+)"), [](World& world, const Captures& c, const Table&) {
+    const QHash<QString, QString> types{
+        {QStringLiteral("ran a command"), QStringLiteral("command_execution")},
+        {QStringLiteral("changed a file"), QStringLiteral("file_change")},
+        {QStringLiteral("searched the files"), QStringLiteral("file_search")},
+        {QStringLiteral("searched the web"), QStringLiteral("web_search")},
+        {QStringLiteral("called an MCP tool"), QStringLiteral("dynamic_tool")},
+        {QStringLiteral("asked for approval"), QStringLiteral("approval_request")},
+    };
+    if (!types.contains(c[0])) fail(QStringLiteral("unknown tool call: %1").arg(c[0]));
+    startRun(world);
+    addItem(world, types.value(c[0]));
+  });
+  step(QStringLiteral("the call is shown with the %1 icon").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString icon = lastEntry(world).value(QStringLiteral("icon")).toString();
+    expect(icon == c[0], QStringLiteral("the call is shown with the \"%1\" icon").arg(icon));
+  });
 
   step(QStringLiteral("the agent changed %1 and %1 in one turn").arg(q), [](World& world, const Captures& c, const Table&) {
     startRun(world);
@@ -439,6 +457,34 @@ const Steps steps([] {
     expect(marker == c[0], QStringLiteral("the message is marked \"%1\"").arg(marker));
   });
 
+  // Timestamps, read on the scenarios' clock (2026-09-23 10:00, UTC).
+  step(QStringLiteral("the user sent a message (today|yesterday|on .+) at 9:05 in the morning"), [](World& world, const Captures& c, const Table&) {
+    world.setTime(now());
+    const QLocale english(QLocale::English, QLocale::UnitedStates);
+    QDate day = now().date();
+    if (c[0] == QLatin1String("yesterday")) {
+      day = day.addDays(-1);
+    } else if (c[0].startsWith(QLatin1String("on "))) {
+      const QString date = c[0].mid(3);
+      day = english.toDate(date, QStringLiteral("MMMM d, yyyy"));
+      if (!day.isValid()) day = english.toDate(date + QStringLiteral(", 2026"), QStringLiteral("MMMM d, yyyy"));
+      if (!day.isValid()) fail(QStringLiteral("unknown day: %1").arg(date));
+    }
+    startRun(world, int(QDateTime(day, QTime(9, 5), QTimeZone::UTC).secsTo(now())));
+  });
+  step(QStringLiteral("the message is stamped %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    TimelineModel& model = timeline(world);
+    const int row = rowShowing(world, QStringLiteral("message:") + world.node.part<FakeStreams>().run);
+    // Newer CLDR data puts a narrow no-break space before AM and PM.
+    const QString stamp = role(model, row, TimelineModel::TimeRole).toString().replace(QChar(0x202F), QLatin1Char(' '));
+    expect(stamp == c[0], QStringLiteral("the message is stamped \"%1\"").arg(stamp));
+  });
+  step(QStringLiteral("its full time reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString run = world.node.part<FakeStreams>().run;
+    const QString title = timeline(world).timeTitle(QStringLiteral("message:") + run).replace(QChar(0x202F), QLatin1Char(' '));
+    expect(title == c[0], QStringLiteral("its full time reads \"%1\"").arg(title));
+  });
+
   // Plans and subagents.
   step(QStringLiteral("the agent proposes a plan whose first heading is %1").arg(q), [](World& world, const Captures& c, const Table&) {
     startRun(world);
@@ -447,6 +493,14 @@ const Steps steps([] {
   step(QStringLiteral("the plan card is titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString title = role(timeline(world), lastRowOf(world, QStringLiteral("plan")), TimelineModel::TitleRole).toString();
     expect(title == c[0], QStringLiteral("the plan card is titled \"%1\"").arg(title));
+  });
+  step(QStringLiteral("the agent proposes a plan that opens with the heading %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    startRun(world);
+    addItem(world, QStringLiteral("proposed_plan"), {{QStringLiteral("markdown"), QStringLiteral("# %1\n\n## Summary\n\n- Add the line\n- Test it").arg(c[0])}});
+  });
+  step(QStringLiteral("the plan's text starts with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString body = role(timeline(world), lastRowOf(world, QStringLiteral("plan")), TimelineModel::TextRole).toString();
+    expect(body.startsWith(c[0]), QStringLiteral("the plan's text reads \"%1\"").arg(body));
   });
   step(QStringLiteral("a plan without a heading is titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
     addItem(world, QStringLiteral("proposed_plan"), {{QStringLiteral("markdown"), QStringLiteral("Add the line, then test it.")}});

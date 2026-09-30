@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QJsonObject>
+#include <QLocale>
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
@@ -60,6 +61,8 @@ public:
   Q_INVOKABLE void reload(const QString& threadKey);
 
   void setClock(std::function<QDateTime()> now);
+  // The locale the timelines read times in (the system's by default).
+  void setLocale(const QLocale& locale);
 
   // The one place a thread's stream is addressed.
   static QJsonObject streamShape(const QString& environmentId, const QString& threadId);
@@ -80,6 +83,9 @@ private:
   void onFrame(const QString& threadKey, const QJsonObject& frame);
   void retry();
   void evict();
+  // The device's timestampFormat, for every timeline.
+  void readSettings();
+  void configure(TimelineModel* model) const;
 
   NodeClient* m_client;
   ShellStore* m_store;
@@ -87,4 +93,6 @@ private:
   QStringList m_recent;
   QString m_active;
   std::function<QDateTime()> m_now;
+  QString m_timestampFormat = QStringLiteral("locale");
+  QLocale m_locale;
 };

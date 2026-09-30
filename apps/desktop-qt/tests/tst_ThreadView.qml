@@ -24,7 +24,11 @@ Item {
             entries: [],
             hiddenCount: 0,
             expanded: false,
-            files: []
+            files: [],
+            time: "",
+            icon: "",
+            intent: "",
+            attribution: ""
         }, fields);
     }
 

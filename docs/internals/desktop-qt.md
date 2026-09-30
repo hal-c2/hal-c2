@@ -1069,7 +1069,11 @@ user's browser.
 shape, folded into a `TimelineModel` per thread: the active one plus a few
 recently active ones stay subscribed. The fold is
 `packages/client-runtime/src/v3/threadShape.ts` in C++; the rows follow the
-TUI's timeline (folds of settled turns, tool call groups, markers). A thread is
+TUI's timeline (folds of settled turns, tool call groups, markers) and the
+brick draws them as the web's `MessagesTimeline` does. A message's time and
+actions fade in on hover but keep their place while hidden, so hovering never
+re-lays out the list; `Timeline.alwaysShowMeta` shows them where there is no
+hover (on by default on Android and iOS). A thread is
 addressed by its environment (`ThreadStore::streamShape`), which the node
 routes to a cluster member or through a link; a stream that errors waits for
 the shell to list the thread's node online again. A part-0 snapshot after a reconnect or `resync` replaces the
@@ -1090,9 +1094,8 @@ follows the route's thread whether or not the panel is open: a reply's Revert
 (on the turn `TimelineModel::checkpointOf` finds for its run) and the Diff
 tab's both go through `requestRevert`, and `RevertDialog` asks before
 `confirmRevert` sends `checkpoint.rollback`, keeping or restoring the files.
-The node marks the later runs `rolled_back` and the fold drops them. Jump to
-latest is also the
-`timeline.jumpToLatest` command.
+The node marks the later runs `rolled_back` and the fold drops them. Scroll to
+end is also the `timeline.jumpToLatest` command.
 
 What the shell still lacks next to web and mobile is tracked as Gherkin, not
 prose. The repository's `features/` tree tags every scenario with the surface it

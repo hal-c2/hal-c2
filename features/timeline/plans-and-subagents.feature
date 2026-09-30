@@ -4,6 +4,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration/delegation.ex (delegate_task, completion wake, no answer)
 #   apps/server-ex/lib/hal_c2/projection/timeline.ex (fork marker)
 #   apps/web/src/components/chat/ProposedPlanCard.tsx
+#   apps/web/src/proposedPlan.ts (stripDisplayedPlanMarkdown)
 #   apps/web/src/components/chat/ComposerPlanFollowUpBanner.tsx
 #   apps/web/src/components/chat/ComposerPrimaryActions.tsx (Refine, Implement, Implement in a new thread)
 #   apps/web/src/components/chat/ComposerTasksBadge.tsx
@@ -34,6 +35,12 @@ Feature: Plans and subagents
     When the agent proposes a plan whose first heading is "Add a tax line"
     Then the plan card is titled "Add a tax line"
     And a plan without a heading is titled "Proposed plan"
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A plan card does not repeat its title
+    When the agent proposes a plan that opens with the heading "Add a tax line"
+    Then the plan card is titled "Add a tax line"
+    And the plan's text starts with "- Add the line"
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
   @shared @backlog-mobile @backlog-tui

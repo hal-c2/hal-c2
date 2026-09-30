@@ -5,6 +5,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
+#include "SettingsController.h"
 #include "ShellStore.h"
 
 namespace {
@@ -27,6 +28,10 @@ void ThreadStore::activate() {
   // The open thread is the route's.
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
   connect(navigation, &NavigationController::changed, this, [this, navigation] { open(navigation->threadKey()); });
+  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    connect(settings, &SettingsController::deviceChanged, this, &ThreadStore::readSettings);
+  }
+  readSettings();
   open(navigation->threadKey());
   retry();
 }
@@ -48,6 +53,27 @@ void ThreadStore::setClock(std::function<QDateTime()> now) {
   }
 }
 
+void ThreadStore::setLocale(const QLocale& locale) {
+  m_locale = locale;
+  for (const Followed& followed : std::as_const(m_threads)) {
+    if (followed.model) configure(followed.model);
+  }
+}
+
+void ThreadStore::readSettings() {
+  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  const QJsonValue format = settings ? settings->deviceSettings().value(QLatin1String("timestampFormat")) : QJsonValue();
+  m_timestampFormat = format.isString() && !format.toString().isEmpty() ? format.toString() : QStringLiteral("locale");
+  for (const Followed& followed : std::as_const(m_threads)) {
+    if (followed.model) configure(followed.model);
+  }
+}
+
+void ThreadStore::configure(TimelineModel* model) const {
+  model->setTimestampFormat(m_timestampFormat);
+  model->setLocale(m_locale);
+}
+
 void ThreadStore::open(const QString& threadKey) {
   if (threadKey == m_active) return;
   m_active = threadKey;
@@ -58,6 +84,7 @@ void ThreadStore::open(const QString& threadKey) {
       Followed& followed = m_threads[threadKey];
       followed.model = new TimelineModel(threadKey, this);
       if (m_now) followed.model->setClock(m_now);
+      configure(followed.model);
       follow(threadKey);
     }
     evict();
