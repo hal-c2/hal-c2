@@ -44,7 +44,7 @@ QVariant nullable(const Nullable& value) {
   return value ? QVariant(*value) : QVariant::fromValue(nullptr);
 }
 
-// Missing and malformed timestamps sort as the epoch, as the page's sorts do.
+// Missing and malformed timestamps sort as the epoch, as the web app's sorts do.
 qint64 sortableMs(const Nullable& iso) {
   return parseIso(iso).value_or(0);
 }
@@ -595,7 +595,7 @@ QList<ProjectGroup> groupProjects(const QList<Project>& projects, const Grouping
     sorted.append(entry);
   }
 
-  // "manual" keeps the given order; the page's hand-arranged order is not
+  // "manual" keeps the given order; the web app's hand-arranged order is not
   // carried over (native stores start fresh).
   if (settings.sortOrder != QLatin1String("manual")) {
     QSet<qsizetype> withThreads;

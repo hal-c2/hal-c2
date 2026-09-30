@@ -21,11 +21,9 @@ class ShellBridge;
 // ShellWindow registers one window shortcut per sequence in `shortcuts` and
 // hands every activation to press(). Who gets a key:
 //   - A command in `commands` (CommandRegistry) or a project script runs
-//     here, whatever has focus: its shortcut stays enabled over a focused
-//     page, so the window takes the key before the page sees it and nothing
-//     runs twice.
-//   - A key the shell has no command for is not a window shortcut there; it
-//     stays with the focused control. No key is handed to the page.
+//     here, whatever has focus.
+//   - A key the shell has no command for is not a window shortcut; it stays
+//     with the focused control.
 //   - In a terminal, only a sequence that resolves to a native command with
 //     terminalFocus set is taken (mod+j, mod+d, mod+shift+d, mod+n, mod+w by
 //     default, as the web's); every other chord, Ctrl+K included, reaches the
@@ -39,9 +37,8 @@ class ShellBridge;
 class KeybindingController : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(CommandRegistry* commands READ commands CONSTANT)
-  // [{sequence, chrome, page, terminal}]: every sequence the keymap binds, and
-  // whether its shortcut is enabled while the chrome, the page or a terminal
-  // has focus.
+  // [{sequence, chrome, terminal}]: every sequence the keymap binds, and
+  // whether its shortcut is enabled while the chrome or a terminal has focus.
   Q_PROPERTY(QVariantList shortcuts READ shortcuts NOTIFY shortcutsChanged)
   // The settings page's rows, sorted by command and key: {id, command, label,
   // key, keyLabel, when, source (Default, Custom or Project), defaultKey,
@@ -58,9 +55,8 @@ public:
 
   // Registers the native commands and follows the node's rules.
   void activate() override;
-  // A `keybinding.press` a secondary page forwards runs here when its command
-  // is native; any other is dropped, never handed to the primary page.
-  bool handle(const QString& action, const QVariant& payload) override;
+  // Keys reach it through press(), never as actions.
+  bool handle(const QString&, const QVariant&) override { return false; }
 
   CommandRegistry* commands() { return &m_commands; }
   QVariantList shortcuts() const { return m_shortcuts; }
@@ -70,8 +66,8 @@ public:
   // Whether chords read as macOS ones (mod is Command).
   bool mac() const { return m_mac; }
 
-  // A window shortcut fired. `focus` says where the keyboard is: {page,
-  // terminal, composer, editable}. True when the key ran a command here.
+  // A window shortcut fired. `focus` says where the keyboard is:
+  // {terminal, composer, editable}. True when the key ran a command here.
   Q_INVOKABLE bool press(const QString& sequence, const QVariantMap& focus = {});
   // The command `sequence` runs with that focus, or empty.
   QString resolve(const QString& sequence, const QVariantMap& focus = {}) const;

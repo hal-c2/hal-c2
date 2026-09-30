@@ -7,8 +7,6 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QQmlComponent>
-#include <QQmlEngine>
 #include <QSaveFile>
 
 #include "DraftController.h"
@@ -41,31 +39,6 @@ bool passesThrough(const NavigationController::Route& route) {
 }
 
 }  // namespace
-
-const QStringList& NavigationController::nativeSettingsSections() {
-  static const QStringList sections = [] {
-    QQmlEngine engine;
-    QQmlComponent component(&engine);
-    component.setData(R"(import QtQml
-import "qrc:/hal-c2/settings/settingsPages.js" as Pages
-QtObject { property var paths: Pages.sections.filter(s => s.brick && !s.page).map(s => s.to) })",
-                      QUrl(QStringLiteral("qrc:/hal-c2/settings/NativeSections.qml")));
-    std::unique_ptr<QObject> object(component.create());
-    if (!object) qFatal("js/settingsPages.js: %s", qPrintable(component.errorString()));
-    return object->property("paths").toStringList();
-  }();
-  return sections;
-}
-
-bool NavigationController::isNative(const Route& route) {
-  if (route.kind == QLatin1String("pullRequests") || route.kind == QLatin1String("usage")) return true;
-  if (route.kind != QLatin1String("settings")) return false;
-  // As js/settingsPages.js resolves it: bare /settings is General.
-  const QString section =
-      route.section.isEmpty() || route.section == QLatin1String("/settings") ? QStringLiteral("/settings/general")
-                                                                            : route.section;
-  return nativeSettingsSections().contains(section);
-}
 
 std::optional<NavigationController::Route> NavigationController::Route::fromVariant(const QVariant& value) {
   const QVariantMap map = value.toMap();
@@ -109,17 +82,16 @@ void NavigationController::setStorePath(const QString& path) {
   const auto restored = Route::fromVariant(QJsonDocument::fromJson(file.readAll()).object().toVariantMap());
   if (!restored) return;
   m_route = *restored;
-  m_restored = true;
 }
 
 void NavigationController::activate() {
   if (m_active) return;
   m_active = true;
   // A thread deleted since the last run is not coming back; one on an
-  // environment the node does not serve may be the page's to show.
+  // environment the node does not serve yet may still arrive.
   if (!m_route.threadKey.isEmpty() && m_store->servesEnvironment(m_route.threadKey.section(QLatin1Char(':'), 0, 0)) &&
       !m_store->thread(m_route.threadKey)) {
-    m_route = m_pageRoute.value_or(Route());
+    m_route = Route();
     save();
   }
   // Nor is a draft that was sent or deleted.
@@ -130,10 +102,8 @@ void NavigationController::activate() {
       save();
     }
   }
-  m_restored = false;
   publish();
-  follow();
-  // The pages the palette offers; they have no default keys.
+  // The places the palette offers; they have no default keys.
   auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
   commands->add(kOpenSettings, tr("Open settings"), [this] { open(Route::settings()); });
   commands->add(kOpenUsage, tr("Open usage"), [this] { open(Route::of(QStringLiteral("usage"))); });
@@ -170,35 +140,9 @@ void NavigationController::leaveVanishedThread() {
   replace(Route());
 }
 
-void NavigationController::pageReady() {
-  m_pageRoute.reset();
-  if (m_active) follow();
-}
-
 bool NavigationController::handle(const QString& action, const QVariant& payload) {
-  const QVariantMap map = payload.toMap();
-  // Where the page's own links and redirects took it, even before the shell
-  // takes over, so it starts from where the user is.
-  if (action == QLatin1String("route.open")) {
-    const auto route = Route::fromVariant(map);
-    if (!route) return true;
-    m_pageRoute = *route;
-    // Loading, the page lands on its start page and redirects; that is not
-    // where the user left off. Where they click to is.
-    if (m_restored && map.value(QStringLiteral("replace")).toBool()) return true;
-    m_restored = false;
-    // Behind the shell's own pages the page only lands and redirects.
-    if (isNative(m_route)) return true;
-    // The page went back (its own back button, Escape in settings).
-    if (!m_backStack.isEmpty() && m_backStack.constLast() == *route) {
-      m_backStack.removeLast();
-      go(*route, true, false);
-    } else {
-      go(*route, map.value(QStringLiteral("replace")).toBool(), false);
-    }
-    return true;
-  }
   if (!m_active) return false;
+  const QVariantMap map = payload.toMap();
   if (action == QLatin1String("thread.open")) {
     const QString key = map.value(QStringLiteral("key")).toString();
     if (!key.isEmpty()) open(Route::thread(key));
@@ -224,8 +168,7 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   } else if (action == QLatin1String("connections.close")) {
     if (m_route == Route::settings(kConnectionsSection)) back();
   } else if (action == QLatin1String("settings.navigate") || action == QLatin1String("settings.openResult")) {
-    // Any settings section, from anywhere; the page follows to the ones
-    // without a native brick. Within settings it is one step back.
+    // Any settings section, from anywhere. Within settings it is one step back.
     const QString to = map.value(QStringLiteral("to")).toString();
     const QString target = action == QLatin1String("settings.openResult")
                                ? map.value(QStringLiteral("targetId")).toString()
@@ -241,7 +184,7 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
 
 void NavigationController::back() {
   const Route from = m_route;
-  go(m_backStack.isEmpty() ? Route() : m_backStack.takeLast(), true, true);
+  go(m_backStack.isEmpty() ? Route() : m_backStack.takeLast(), true);
   if (m_route != from) m_forwardStack.append(from);
 }
 
@@ -251,11 +194,11 @@ void NavigationController::forward() {
   if (m_forwardStack.isEmpty()) return;
   const Route to = m_forwardStack.takeLast();
   QList<Route> rest = m_forwardStack;
-  go(to, false, true);
+  go(to, false);
   m_forwardStack = rest;
 }
 
-void NavigationController::go(const Route& route, bool replace, bool followPage) {
+void NavigationController::go(const Route& route, bool replace) {
   if (route != m_route) {
     m_target.clear();
     const bool settingsToSettings =
@@ -272,30 +215,6 @@ void NavigationController::go(const Route& route, bool replace, bool followPage)
     publish();
     emit changed();
   }
-  if (followPage && m_active) follow();
-}
-
-void NavigationController::follow() {
-  if (m_pageRoute == m_route) return;
-  // Home is the page's own landing: nothing to tell a page that has not said
-  // where it is.
-  if (!m_pageRoute && m_route.kind == QLatin1String("home")) return;
-  // The shell's own pages are not the page's; it stays where it was.
-  if (isNative(m_route)) return;
-  m_pageRoute = m_route;
-  QVariantMap follow = m_route.toVariant();
-  // The page opens the shell's draft as its own composer draft, for the
-  // thread id the draft will become.
-  if (m_route.kind == QLatin1String("draft")) {
-    if (const auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
-      if (const auto draft = drafts->draft(m_route.draftId)) {
-        follow.insert(QStringLiteral("environmentId"), draft->environmentId);
-        follow.insert(QStringLiteral("projectId"), draft->projectId);
-        follow.insert(QStringLiteral("threadId"), draft->threadId);
-      }
-    }
-  }
-  m_bridge->sendToPage(QStringLiteral("route.follow"), follow);
 }
 
 void NavigationController::publish() {

@@ -153,7 +153,7 @@ QString shortcutOf(const QString& name) {
 void open(World& world) {
   if (!world.native().client()->isReady()) {
     world.connect();
-    world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
   }
   if (!palette(world).isOpen()) pressToggle(world);
   expect(palette(world).isOpen(), describe(world));

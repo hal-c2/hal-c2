@@ -128,7 +128,6 @@ OnboardingController::OnboardingController(ShellBridge* bridge, NodeClient* clie
     publish();
   });
   m_timeout.start();
-  m_bridge->claimKey(QStringLiteral("onboarding"));
   publish();
 }
 

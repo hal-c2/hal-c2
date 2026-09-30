@@ -8,7 +8,6 @@
 #include <QJsonDocument>
 #include <QEvent>
 #include <QJsonArray>
-#include <QUrl>
 
 #include "ComposerController.h"
 #include "FakeConfig.h"
@@ -64,7 +63,7 @@ void connectWithThreads(World& world) {
                                    {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
   }
   world.connect();
-  world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+  world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
   world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), keyOf(world, kFirst)}});
   world.sync();
 }
@@ -76,11 +75,6 @@ struct SecondWindowWork {
   qsizetype firstSub = 0;
   // Its id, once the first window closed.
   QString id;
-};
-
-// The clientSettings.follow each window's page was sent, by window id.
-struct WindowSettingsWork {
-  QHash<QString, QList<QVariantMap>> follows;
 };
 
 QStringList toastTitles(NativeWindow* window) {
@@ -122,7 +116,7 @@ double zoomOf(NativeWindow* window) {
 void ensureConnected(World& world) {
   if (world.shellSubscriptions() > 0) return;
   world.connect();
-  world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+  world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
 }
 
 // The quit shortcut, timed on a clock the steps move.
@@ -230,55 +224,22 @@ const Steps steps([] {
     expect(!stream::followers(world, kFirst).isEmpty(), QStringLiteral("the first window stopped following its thread"));
   });
 
-  // What main.cpp sets on the first window's bridge as the backend starts.
-  step(QStringLiteral("the backend serves the app and then fails"), [](World& world, const Captures&, const Table&) {
-    world.bridge().setPageUrl(QUrl(QStringLiteral("http://127.0.0.1:3773/")));
+  // What main.cpp publishes on the first window's bridge when the backend fails.
+  step(QStringLiteral("the backend fails"), [](World& world, const Captures&, const Table&) {
     world.bridge().publish(QStringLiteral("backendError"), QStringLiteral("the node exited"));
   });
   step(QStringLiteral("the user opens a third window"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("window.new"), QVariantMap{});
     expect(world.native().windows().size() == 3, QStringLiteral("%1 windows are open").arg(world.native().windows().size()));
   });
-  step(QStringLiteral("every window shows the app and the failure"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("every window shows the failure"), [](World& world, const Captures&, const Table&) {
     for (const auto& window : world.native().windows()) {
-      ShellBridge* bridge = window->bridge();
-      expect(bridge->pageUrl() == QUrl(QStringLiteral("http://127.0.0.1:3773/")),
-             QStringLiteral("window %1 loads %2").arg(window->id(), bridge->pageUrl().toString()));
-      const QString error = bridge->state()->value(QStringLiteral("backendError")).toString();
+      const QString error = window->bridge()->state()->value(QStringLiteral("backendError")).toString();
       expect(error == QLatin1String("the node exited"), QStringLiteral("window %1 shows the error \"%2\"").arg(window->id(), error));
     }
   });
 
-  // Settings reach every window's page, and a failure the window that asked.
-  step(QStringLiteral("the user changes a device setting"), [](World& world, const Captures&, const Table&) {
-    auto& follows = world.node.part<WindowSettingsWork>().follows;
-    for (const auto& window : world.native().windows()) {
-      QObject::connect(window->bridge(), &ShellBridge::actionRequested, window.get(),
-                       [&follows, id = window->id()](const QString& action, const QVariant& payload) {
-                         if (action == QLatin1String("clientSettings.follow")) follows[id].append(payload.toMap());
-                       });
-    }
-    world.native().controller<SettingsController>()->set(QStringLiteral("timestampFormat"), QStringLiteral("24-hour"));
-  });
-  step(QStringLiteral("every window's page follows the change"), [](World& world, const Captures&, const Table&) {
-    const auto& follows = world.node.part<WindowSettingsWork>().follows;
-    for (const auto& window : world.native().windows()) {
-      const QVariantMap last = follows.value(window->id()).value(follows.value(window->id()).size() - 1);
-      expect(at(last, QStringLiteral("settings")).toMap().value(QStringLiteral("timestampFormat")) == QLatin1String("24-hour"),
-             QStringLiteral("window %1's page follows %2").arg(window->id(), show(last)));
-    }
-  });
-  step(QStringLiteral("the second window's page reloads"), [](World& world, const Captures&, const Table&) {
-    world.node.part<WindowSettingsWork>().follows.clear();
-    second(world)->bridge()->dispatch(QStringLiteral("shell.native.query"), QVariant());
-  });
-  step(QStringLiteral("only the second window's page is told this device's settings"), [](World& world, const Captures&, const Table&) {
-    const auto& follows = world.node.part<WindowSettingsWork>().follows;
-    const QList<QVariantMap> told = follows.value(second(world)->id());
-    expect(told.size() == 1 && at(told.first(), QStringLiteral("settings")).toMap().value(QStringLiteral("timestampFormat")) == QLatin1String("24-hour"),
-           QStringLiteral("the second window's page was told %1 times").arg(told.size()));
-    expect(follows.value(world.native().main()->id()).isEmpty(), QStringLiteral("the first window's page was told too"));
-  });
+  // A failure to save settings reaches the window that asked.
   step(QStringLiteral("the node refuses to save settings"), [](World& world, const Captures&, const Table&) {
     auto* settings = world.native().controller<SettingsController>();
     world.waitFor([settings] { return settings->ready(); }, QStringLiteral("the shell to read the node's settings"));
@@ -330,7 +291,7 @@ const Steps steps([] {
   });
 
   // A window's id names its folder (NativeShell's validWindowId).
-  step(QStringLiteral("the page asks for a second window with the id \"([^\"]*)\""), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the shell is asked for a second window with the id \"([^\"]*)\""), [](World& world, const Captures& c, const Table&) {
     connectWithThreads(world);
     openSecond(world, {{QStringLiteral("id"), c[0]}});
   });
@@ -425,7 +386,7 @@ const Steps steps([] {
     expect(text == kDraft, QStringLiteral("the first window's draft of the thread is \"%1\"").arg(text));
     const QString draftText = composer->draft(world.draftId);
     expect(draftText == kDraft, QStringLiteral("the first window's new-thread draft is \"%1\"").arg(draftText));
-    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), world.draftId}});
+    world.bridge().dispatch(QStringLiteral("draft.open"), QVariantMap{{QStringLiteral("draftId"), world.draftId}});
     world.sync();
     const QString shown = at(world.state(QStringLiteral("composer")), QStringLiteral("text")).toString();
     expect(shown == kDraft, QStringLiteral("the first window's composer on the new thread shows \"%1\"").arg(shown));
@@ -434,7 +395,7 @@ const Steps steps([] {
   step(QStringLiteral("the user restarts the app"), [](World& world, const Captures&, const Table&) {
     world.restart();
     world.connect();
-    world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
   });
   step(QStringLiteral("that window has the same draft and panel"), [](World& world, const Captures&, const Table&) {
     NativeWindow* window = world.native().window(kStableId);

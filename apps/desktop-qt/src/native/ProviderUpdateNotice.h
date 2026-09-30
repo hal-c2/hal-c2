@@ -23,7 +23,7 @@ class ToastController;
 // each one the node can update itself and reports how it went; Settings opens
 // the Providers section. Closing the toast dismisses that set of versions for
 // good (this device's `dismissedProviderUpdateNotificationKeys`); a set is
-// offered once per run either way. One per process, like the web's page: the
+// offered once per run either way. One per process, as in the web app: the
 // toast shows in the window in use.
 class ProviderUpdateNotice : public QObject, public NativeController {
   Q_OBJECT

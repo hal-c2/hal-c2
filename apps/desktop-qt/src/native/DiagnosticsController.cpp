@@ -121,7 +121,6 @@ public:
   void activate() override {
     if (m_active) return;
     m_active = true;
-    m_bridge->claimKey(QStringLiteral("diagnostics"));
     auto* navigation = NativeShell::of(this)->controller<NavigationController>();
     auto opened = [navigation] { return navigation->route() == NavigationController::Route::settings(kSection); };
     connect(navigation, &NavigationController::changed, this, [this, opened] {

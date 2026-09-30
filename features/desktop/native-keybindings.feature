@@ -1,18 +1,19 @@
 # Sources:
-#   apps/desktop-qt/src/native/KeybindingController.cpp (the keymap, its native commands, keybinding.press from secondary pages)
+#   apps/desktop-qt/src/native/KeybindingController.cpp (the keymap and its native commands)
 #   apps/desktop-qt/src/native/Keybindings.cpp (defaults, when expressions, merging the node's rules)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused terminal)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   Shared domain: navigation/keybindings.feature and navigation/keybinding-customisation.feature
 #   own what each binding does, including the thread shortcuts and the node's rules;
 #   composer/queue-and-steer.feature owns the stop shortcut. This file owns only who takes a
-#   key when the page, a terminal or the native chrome has focus.
+#   key when a terminal, the composer or the native chrome has focus.
 
 Feature: The desktop shell keeps the keymap
-  The Qt shell runs the commands it owns itself, even when the page or a terminal has
-  focus. A key it has no command for stays with the focused control; the page is never
-  handed one.
+  The Qt shell runs the commands it owns itself, even when a terminal has focus. A key it has
+  no command for stays with the focused control.
 
+  # The embedded page is gone, and with it the keys it forwarded and the focus it held.
+  @dropped
   Rule: A key the page forwards runs natively
 
     Background:
@@ -34,7 +35,8 @@ Feature: The desktop shell keeps the keymap
 
   Rule: Focus decides who takes a key
 
-    @desktop
+    # The desktop has no embedded page to hold focus.
+    @dropped @desktop
     Scenario: A shell command taken from a focused page runs once
       Given the page has keyboard focus
       When the user presses mod+b
@@ -48,15 +50,13 @@ Feature: The desktop shell keeps the keymap
       Then "sidebar.toggle" runs
 
     @desktop
-    Scenario: The native chrome's keys run in the shell, never in the page
+    Scenario: The native chrome's keys run in the shell
       Given the native chrome has keyboard focus
       When the user presses mod+o
       Then "editor.openFavorite" runs
-      And the page is not handed the key
 
     @desktop
     Scenario: A key the shell has no command for stays with the focused control
       Given the composer has keyboard focus
       When the user presses mod+shift+y
       Then the composer receives the key
-      And the page is not handed the key

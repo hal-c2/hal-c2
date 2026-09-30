@@ -1,5 +1,5 @@
 // The shell's route (NavigationController): where the user goes from the
-// shell, where the page reports its own links took it, and the window title
+// shell and the window title
 // (features/desktop/native-navigation.feature), and settings left for the
 // thread it was opened from (settings/search-and-navigation.feature,
 // navigation/focus.feature).
@@ -58,21 +58,6 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("usage.open"), {});
   });
 
-  // The page, following its own links.
-  step(QStringLiteral("the page's own link takes it to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), c[0]}});
-  });
-  step(QStringLiteral("the page goes back to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), c[0]}});
-  });
-  step(QStringLiteral("the page lands on the new draft %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), c[0]}}, true);
-  });
-  step(QStringLiteral("the page reloads"), [](World& world, const Captures&, const Table&) {
-    world.follows.clear();
-    world.bridge().dispatch(QStringLiteral("shell.native.query"), {});
-  });
-
   step(QStringLiteral("the desktop quits and starts again"), [](World& world, const Captures&, const Table&) {
     world.restart();
   });
@@ -126,41 +111,6 @@ const Steps steps([] {
     const QVariant sidebar = world.state(QStringLiteral("sidebar"));
     expect(at(sidebar, QStringLiteral("activeDraftId")) == c[0] && at(sidebar, QStringLiteral("activeThreadKey")).isNull(),
            QStringLiteral("the sidebar is %1").arg(show(sidebar)));
-  });
-  step(QStringLiteral("the page is asked to open the draft %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] {
-      for (const QVariantMap& follow : world.follows) {
-        if (follow.value(QStringLiteral("kind")) == QLatin1String("draft") && follow.value(QStringLiteral("draftId")) == c[0]) return true;
-      }
-      return false;
-    }, [&] { return QStringLiteral("to follow the draft; the page got %1").arg(world.describePage()); });
-  });
-  step(QStringLiteral("the page is asked to open (settings|pull requests|usage|home)"), [](World& world, const Captures& c, const Table&) {
-    const QString kind = c[0] == QLatin1String("pull requests") ? QStringLiteral("pullRequests") : c[0];
-    world.waitFor([&] {
-      for (const QVariantMap& follow : world.follows) {
-        if (follow.value(QStringLiteral("kind")) == kind) return true;
-      }
-      return false;
-    }, [&] { return QStringLiteral("to follow %1; the page got %2").arg(kind, world.describePage()); });
-  });
-  step(QStringLiteral("the page is last asked to open %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.sync();
-    expect(!world.follows.isEmpty() && world.follows.constLast().value(QStringLiteral("threadKey")) == c[0],
-           QStringLiteral("the page got %1").arg(world.describePage()));
-  });
-  // The page follows the draft the window lands on (navigation/landing.feature);
-  // what it is told after that is the scenario's.
-  step(QStringLiteral("the page has followed the window to its new thread"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] {
-      return !world.follows.isEmpty() && world.follows.constLast().value(QStringLiteral("kind")) == QLatin1String("draft") &&
-             world.follows.constLast().value(QStringLiteral("draftId")) == at(world.state(QStringLiteral("route")), QStringLiteral("draftId"));
-    }, [&] { return QStringLiteral("to follow the new thread; the page got %1").arg(world.describePage()); });
-    world.follows.clear();
-  });
-  step(QStringLiteral("the page is not told where to go"), [](World& world, const Captures&, const Table&) {
-    world.sync();
-    expect(world.follows.isEmpty(), QStringLiteral("the page got %1").arg(world.describePage()));
   });
 });
 

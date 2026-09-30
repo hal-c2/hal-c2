@@ -127,15 +127,10 @@ Feature: The desktop shell sends a thread's turns to its node
 
     @desktop
     Scenario: A draft the shell does not keep sends nothing
-      Given the composer shows the draft "draft-1"
+      Given the user opens the draft "draft-1" from the sidebar
       When the user sends "Start"
       Then the node receives no commands
       And the node launches no thread
-      When the desktop quits and starts again
-      And the page's own link takes it to "env-a:t1"
-      And the desktop shell is connected to its node
-      Then the window shows "env-a:t1"
-      And the page is not told where to go
 
   Rule: A new thread started in the background leaves the window on the draft
 

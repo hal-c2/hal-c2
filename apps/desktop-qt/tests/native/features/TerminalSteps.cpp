@@ -8,6 +8,7 @@
 
 #include <optional>
 
+#include "DraftController.h"
 #include "NavigationController.h"
 #include "TerminalController.h"
 #include "Harness.h"
@@ -472,6 +473,14 @@ const Steps steps([] {
       const auto input = terminalAttach(world, c[1], c[0]);
       return input && input->value(QLatin1String("cwd")) == c[2];
     }, QStringLiteral("%1 of %2 to attach in %3").arg(c[0], c[1], c[2]));
+  });
+  step(QStringLiteral("the node attaches %1 of the new thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto draft = world.native().controller<DraftController>()->draft(world.draftId);
+    expect(draft.has_value(), QStringLiteral("the window shows no new thread"));
+    world.waitFor([&] {
+      const auto input = terminalAttach(world, draft->threadId, c[0]);
+      return input && input->value(QLatin1String("cwd")) == c[1];
+    }, QStringLiteral("%1 of the new thread to attach in %2").arg(c[0], c[1]));
   });
   step(QStringLiteral("%1 attaches %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {

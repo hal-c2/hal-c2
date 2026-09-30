@@ -59,7 +59,7 @@ void World::start() {
   m_native->controller<RightPanelController>()->review()->setClipboardWriter(writeClipboard);
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
-                   [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });
+                   [this](const QString& type, const QVariant& payload) { brickActions.append({type, payload.toMap()}); });
   QObject::connect(m_native.get(), &NativeShell::lastWindowClosed, m_native.get(), [this] { ++lastWindowClosed; });
   m_native->restoreWindows();
 }
@@ -92,9 +92,7 @@ void World::restart() {
   m_theme.reset();
   m_native.reset();
   m_bridge.reset();
-  pageActions.clear();
-  follows.clear();
-  pageNative = QVariant();
+  brickActions.clear();
   start();
 }
 
@@ -104,25 +102,16 @@ void World::startNewThread(const QVariantMap& payload) {
   if (route.value(QStringLiteral("kind")) == QLatin1String("draft")) draftId = route.value(QStringLiteral("draftId")).toString();
 }
 
+void World::openDraft(const QString& projectId) {
+  draftId = m_native->controller<DraftController>()->start(node.environmentId, projectId);
+}
+
 QString World::projectKey(const QString& name) const {
   for (const QVariant& project : state(QStringLiteral("sidebar")).toMap().value(QStringLiteral("projects")).toList()) {
     const QVariantMap map = project.toMap();
     if (map.value(QStringLiteral("displayName")).toString() == name) return map.value(QStringLiteral("key")).toString();
   }
   return name;
-}
-
-void World::pageOpens(const QVariantMap& route, bool replace) {
-  QVariantMap payload{
-      {QStringLiteral("kind"), QStringLiteral("home")},
-      {QStringLiteral("threadKey"), QVariant::fromValue(nullptr)},
-      {QStringLiteral("draftId"), QVariant::fromValue(nullptr)},
-      {QStringLiteral("projectKey"), QVariant::fromValue(nullptr)},
-      {QStringLiteral("section"), QVariant::fromValue(nullptr)},
-  };
-  payload.insert(route);
-  payload.insert(QStringLiteral("replace"), replace);
-  m_bridge->dispatch(QStringLiteral("route.open"), payload);
 }
 
 void World::setTime(const QString& iso) {
@@ -170,18 +159,17 @@ void World::sync() {
   waitFor([&done] { return done; }, QStringLiteral("a round trip through the node"));
 }
 
-QList<PageAction> World::actionsOf(const QString& type) const {
-  QList<PageAction> result;
-  for (const PageAction& action : pageActions) {
+QList<BrickAction> World::actionsOf(const QString& type) const {
+  QList<BrickAction> result;
+  for (const BrickAction& action : brickActions) {
     if (action.type == type) result.append(action);
   }
   return result;
 }
 
-QString World::describePage() const {
+QString World::describeBrickActions() const {
   QStringList lines;
-  for (const PageAction& action : pageActions) lines.append(action.type + QLatin1Char(' ') + show(action.payload));
-  for (const QVariantMap& route : follows) lines.append(QStringLiteral("route.follow ") + show(route));
+  for (const BrickAction& action : brickActions) lines.append(action.type + QLatin1Char(' ') + show(action.payload));
   return lines.isEmpty() ? QStringLiteral("(nothing)") : lines.join(QStringLiteral("; "));
 }
 
@@ -191,18 +179,4 @@ QString World::describeCommands() const {
     lines.append(QString::fromUtf8(QJsonDocument(command).toJson(QJsonDocument::Compact)));
   }
   return lines.isEmpty() ? QStringLiteral("(none)") : lines.join(QStringLiteral("; "));
-}
-
-void World::onPageAction(const QString& type, const QVariantMap& payload) {
-  // The page's record of who owns what, not a request for it to act on.
-  if (type == QLatin1String("shell.native")) {
-    pageNative = payload;
-    return;
-  }
-  // Where the page is told to be; the page goes there and says nothing back.
-  if (type == QLatin1String("route.follow")) {
-    follows.append(payload);
-    return;
-  }
-  pageActions.append({type, payload});
 }

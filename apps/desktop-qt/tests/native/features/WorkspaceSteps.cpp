@@ -22,7 +22,6 @@ bool archiveListsOnly(World& world, const QString& title);
 namespace {
 
 const QString kThread = QStringLiteral("t1");
-const QString kDraft = QStringLiteral("draft-1");
 
 // The node's checkouts, by folder: `vcs` status frames, `vcs.listRefs` (the
 // current branch first, the default next, the rest most recently committed
@@ -181,10 +180,7 @@ void open(World& world, const QString& threadKey) {
 }
 
 void openDraft(World& world, const QString& project) {
-  // The page reports the draft it opened, which the shell adopts.
-  world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), kDraft},
-                   {QStringLiteral("environmentId"), world.node.environmentId}, {QStringLiteral("projectId"), project},
-                   {QStringLiteral("threadId"), kDraft}});
+  world.openDraft(project);
   world.waitFor([&] { return workspace(world).value(QStringLiteral("isDraft")).toBool(); },
                 [&] { return QStringLiteral("the header to show the draft; it shows %1").arg(show(workspace(world))); });
 }
@@ -429,7 +425,6 @@ const Steps steps([] {
     dispatch(world, QStringLiteral("workspace.envMode.set"), {{QStringLiteral("mode"), QStringLiteral("worktree")}});
     dispatch(world, QStringLiteral("workspace.branch.search"), {{QStringLiteral("query"), QString()}});
     dispatch(world, QStringLiteral("workspace.branch.select"), {{QStringLiteral("name"), c[0]}});
-    world.draftId = kDraft;
     dispatch(world, QStringLiteral("composer.submit"), {{QStringLiteral("text"), QStringLiteral("Ship the fix")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
   });
   step(QStringLiteral("the user chose a new worktree without a base branch"), [](World& world, const Captures&, const Table&) {
@@ -454,12 +449,9 @@ const Steps steps([] {
   });
   const auto startsIn = [](World& world, const QString& mode, const QString& label) {
     const QVariantMap state = workspace(world);
-    const QList<PageAction> told = world.actionsOf(QStringLiteral("workspace.envMode.set"));
     expect(state.value(QStringLiteral("envMode")) == mode && state.value(QStringLiteral("envModeLabel")) == label &&
-               world.native().controller<WorkspaceController>()->checkout(kDraft).envMode == mode,
+               world.native().controller<WorkspaceController>()->checkout(world.draftId).envMode == mode,
            QStringLiteral("the header shows %1").arg(show(state)));
-    // The page follows, for the background starts it still sends.
-    expect(!told.isEmpty() && told.last().payload.value(QStringLiteral("mode")) == mode, QStringLiteral("the page got %1").arg(world.describePage()));
   };
   step(QStringLiteral("the thread will start in a worktree of its own instead of the project folder"), [startsIn](World& world, const Captures&, const Table&) {
     startsIn(world, QStringLiteral("worktree"), QStringLiteral("New worktree"));
@@ -485,7 +477,6 @@ const Steps steps([] {
     const QVariantMap state = workspace(world);
     expect(state.value(QStringLiteral("activeEnvironmentId")) == c[0] && state.value(QStringLiteral("projectRoot")) == c[1],
            QStringLiteral("the header shows %1").arg(show(state)));
-    expect(!world.actionsOf(QStringLiteral("workspace.environment.set")).isEmpty(), QStringLiteral("the page got %1").arg(world.describePage()));
   });
   step(QStringLiteral("%1 is offered to run the new thread on").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QVariant& choice : workspace(world).value(QStringLiteral("environments")).toList()) {
@@ -538,7 +529,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the composer switches to the previous worktree"), [usesPrevious](World& world, const Captures&, const Table&) {
     usesPrevious(world, QStringLiteral("feature/tax"));
-    expect(!world.actionsOf(QStringLiteral("composer.focus")).isEmpty(), QStringLiteral("the composer did not take the keyboard back: %1").arg(world.describePage()));
+    expect(!world.actionsOf(QStringLiteral("composer.focus")).isEmpty(), QStringLiteral("the composer did not take the keyboard back: %1").arg(world.describeBrickActions()));
   });
 
   // Editors.

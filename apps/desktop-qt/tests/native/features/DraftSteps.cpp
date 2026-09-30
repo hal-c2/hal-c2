@@ -97,30 +97,6 @@ const Steps steps([] {
                                                           });
   });
 
-  // The page.
-  step(QStringLiteral("the page lands on its own draft %1 for the thread %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")},
-                     {QStringLiteral("draftId"), c[0]},
-                     {QStringLiteral("environmentId"), world.node.environmentId},
-                     {QStringLiteral("projectId"), c[2]},
-                     {QStringLiteral("threadId"), c[1]}},
-                    true);
-  });
-  step(QStringLiteral("the page is asked to open the draft for its thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const auto draft = lastDraft(world);
-    expect(draft.has_value(), QStringLiteral("the shell has no draft %1").arg(world.draftId));
-    world.waitFor([&] {
-      for (const QVariantMap& follow : world.follows) {
-        if (follow.value(QStringLiteral("kind")) == QLatin1String("draft") && follow.value(QStringLiteral("draftId")) == draft->id &&
-            follow.value(QStringLiteral("environmentId")) == world.node.environmentId &&
-            follow.value(QStringLiteral("projectId")) == c[0] && follow.value(QStringLiteral("threadId")) == draft->threadId) {
-          return true;
-        }
-      }
-      return false;
-    }, [&] { return QStringLiteral("to follow the draft; the page got %1").arg(world.describePage()); });
-  });
-
   // The node.
   step(QStringLiteral("the node creates the draft's thread"), [](World& world, const Captures&, const Table&) {
     const auto draft = lastDraft(world);

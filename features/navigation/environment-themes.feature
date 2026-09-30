@@ -150,7 +150,7 @@ Feature: Environment themes and the desktop shell theme
     Scenario: Editing the shell theme file recolors the app live
       Given the desktop shell is running
       When a theme manager writes a new canvas color into the shell theme file
-      Then the native chrome and the page both use the new canvas color
+      Then the app uses the new canvas color
 
     @desktop
     Scenario: A malformed shell theme file keeps the last good theme

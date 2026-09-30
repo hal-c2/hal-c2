@@ -64,7 +64,6 @@ PullRequestListController::PullRequestListController(ShellBridge* bridge, NodeCl
 void PullRequestListController::activate() {
   if (m_active) return;
   m_active = true;
-  m_bridge->claimKey(kKey);
   auto* shell = NativeShell::of(this);
   if (auto* settings = shell->controller<SettingsController>()) {
     const QVariantMap kept = settings->deviceValue(kPreferences).toMap();

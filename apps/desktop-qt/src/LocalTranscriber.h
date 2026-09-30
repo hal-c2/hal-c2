@@ -6,7 +6,7 @@
 #include <QTimer>
 
 // Trusted local QML may opt into one explicitly configured transcription
-// helper. This type is not exposed to the hosted page through WebChannel.
+// helper.
 class LocalTranscriber : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString program MEMBER m_program NOTIFY configurationChanged)

@@ -23,7 +23,7 @@ SidebarController::SidebarController(ShellBridge* bridge, NodeClient* client, Sh
                                      QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
   m_minute.setSingleShot(true);
-  // Snoozes wake and "2h" labels tick over on the minute, as the page's nowMinute.
+  // Snoozes wake and "2h" labels tick over on the minute, as the web app's nowMinute.
   connect(&m_minute, &QTimer::timeout, this, &SidebarController::refresh);
   connect(store, &ShellStore::changed, this, &SidebarController::refresh);
 }
@@ -132,8 +132,6 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     m_scope = projectKey.typeId() == QMetaType::QString ? sidebar::Nullable(projectKey.toString())
                                                         : std::nullopt;
     refresh();
-    // The page still walks the list for its thread-traversal keybindings.
-    m_bridge->sendToPage(action, payload);
     return true;
   }
   static const QStringList kRowActions{
@@ -143,11 +141,10 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
   };
   if (!kRowActions.contains(action)) return false;
   const QString key = keyOf(map);
-  // A thread the node's cluster does not know (an environment the page paired
-  // by itself) stays with the page.
+  // A thread the node's cluster does not know has nothing to act on.
   const auto thread = m_store->thread(key);
   if (!thread) return false;
-  // An environment without visit tracking keeps unread and woke markers in the page.
+  // An environment without visit tracking has no unread or woke markers to change.
   if ((action == QLatin1String("thread.markUnread") || action == QLatin1String("thread.wokeDismiss")) &&
       !m_store->capabilities(thread->environmentId).visitedTracking) {
     return false;
@@ -224,7 +221,7 @@ void SidebarController::command(const QString& environmentId, QJsonObject comman
 }
 
 // Settling or snoozing the open thread moves to the next card that stays in
-// the list (or a new thread in the same project), as the page's threadParking.
+// the list (or a new thread in the same project), as the web app's threadParking.
 void SidebarController::park(const QString& key, QJsonObject parkCommand, const QString& failureTitle, Leave leave,
                              std::function<void()> onSuccess) {
   if (m_pending.contains(key)) return;

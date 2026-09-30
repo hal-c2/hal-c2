@@ -19,8 +19,7 @@ class QWebSocket;
 // The shell's own protocol-3 connection to its node (apps/server-ex
 // lib/hal_c2/web/protocol.ex), the C++ twin of client-runtime's ClusterSocket.
 // Subscriptions are multiplexed by id, sent once the node says hello, and
-// sent again after every reconnect or `resync`. The page keeps its own
-// connection; this one carries what the shell's chrome owns.
+// sent again after every reconnect or `resync`.
 class NodeClient : public QObject {
   Q_OBJECT
 
@@ -36,7 +35,7 @@ public:
   // `origin` is the node's http(s) origin; the token is its access token.
   void open(const QUrl& origin, const QString& token);
   void close();
-  // Drops the socket and connects again, as reloading the page does.
+  // Drops the socket and connects again, as reloading the web app does.
   void reconnect() {
     const QUrl origin = m_origin;
     const QString token = m_token;

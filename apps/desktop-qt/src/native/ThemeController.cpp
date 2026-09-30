@@ -24,13 +24,12 @@ const NativeControllerRegistrar<ThemeController> registrar(QStringLiteral("theme
 
 const QString kLight = QStringLiteral("light");
 const QString kDark = QStringLiteral("dark");
-// The standard look's id on the page (packages/shared MOBILE_DEFAULT_THEME_ID):
-// any non-empty id makes it paint the `--app-theme-*` variables it is given.
+// The standard look's id (packages/shared MOBILE_DEFAULT_THEME_ID).
 const QString kStandardId = QStringLiteral("hal-c2");
 
 const QString kSystem = QStringLiteral("system");
 const QString kCustomThemes = QStringLiteral("customThemes");
-// The page's wording (apps/web CommandPalette, ThemeSettings).
+// The web app's wording (apps/web CommandPalette, ThemeSettings).
 const QString kSaveFailed = QStringLiteral("Couldn't save theme selection");
 const QString kRemoveFailed = QStringLiteral("Couldn’t remove theme");
 
@@ -165,8 +164,6 @@ ThemeController::ThemeController(ShellBridge* bridge, NodeClient*, QObject* pare
       // Built before this one: controllers are built in name order.
       m_settings(NativeShell::of(this)->controller<SettingsController>()) {
   Q_ASSERT(m_settings);
-  // The page's theme follows this one from the start, node or no node.
-  m_bridge->claimKey(QStringLiteral("theme"));
   const Qt::ColorScheme scheme = QGuiApplication::styleHints()->colorScheme();
   m_systemDark = scheme == Qt::ColorScheme::Dark;
   connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
@@ -448,7 +445,7 @@ QString ThemeController::saveCustom(const QVariantMap& theme) {
   if (at < 0) saved.append(entry);
   else saved.replace(at, entry);
   device.insert(kCustomThemes, saved);
-  // Saved and applied at once, as the page's editor does.
+  // Saved and applied at once, as the web app's editor does.
   device.insert(QStringLiteral("theme"), id);
   device.remove(QStringLiteral("themeHalves"));
   return save(device) ? id : QString();

@@ -203,9 +203,9 @@ bool called(World& world, const QString& method) {
 }
 
 void openConnections(World& world) {
-  if (!world.state(QStringLiteral("native")).isValid()) {
+  if (!world.native().isActive()) {
     world.connect();
-    world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
   }
   world.bridge().dispatch(QStringLiteral("connections.open"), {});
   world.sync();
@@ -257,10 +257,10 @@ const QStringList kStandardScopes{QStringLiteral("orchestration:read"), QStringL
 const Steps steps([] {
   const QString q = kQuoted;
 
-  // The page and the session.
+  // The node and the session.
   step(QStringLiteral("a running node"), [](World& world, const Captures&, const Table&) {
     world.connect();
-    world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
   });
   step(QStringLiteral("the user has opened the Connections settings"), [](World& world, const Captures&, const Table&) {
     openConnections(world);

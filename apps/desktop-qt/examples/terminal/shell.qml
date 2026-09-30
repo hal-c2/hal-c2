@@ -76,7 +76,7 @@ ShellWindow {
         anchors.fill: parent
         spacing: 0
 
-        // Status line: the wordmark as the page draws it, then a prompt.
+        // Status line: the wordmark as the app draws it, then a prompt.
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 34
@@ -235,28 +235,20 @@ ShellWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         section: root.settingsSection
-                        visible: root.nativeSettingsOpen
+                        visible: root.settingsActive
                     }
 
-                    // The route's thread or draft, drawn by the shell.
+                    // The route's centre: a thread, draft, home, pull requests or usage.
                     CentreHost {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        kind: root.nativeCentreOpen ? root.route.kind : ""
-                        visible: root.nativeCentreOpen
-                    }
-
-
-                    WebSurface {
-                        visible: root.pageOpen
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        url: Shell.pageUrl
+                        kind: root.route?.kind ?? ""
+                        visible: !root.settingsActive
                     }
 
                     Composer {
                         Layout.fillWidth: true
-                        visible: ready && !root.nativeSettingsOpen
+                        visible: ready && !root.settingsActive
                     }
 
                     TerminalDrawer {

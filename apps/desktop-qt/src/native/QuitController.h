@@ -18,7 +18,7 @@ class ShellBridge;
 //   - "double-click": two presses within half a second quit; one says to
 //     press again.
 //   - "direct": one press quits.
-// It watches the application's key events, so the page, a terminal or the
+// It watches the application's key events, so a text field, a terminal or the
 // system menu never sees the shortcut. "Still held" is proven by auto-repeat,
 // as in Electron: without it only two presses quit. Quit (the palette's
 // `app.quit`, the system menu) is immediate.

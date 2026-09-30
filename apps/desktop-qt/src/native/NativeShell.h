@@ -60,7 +60,6 @@ public:
 private:
   friend class NativeShell;
   void activate();
-  void announce();
   bool handle(const QString& action, const QVariant& payload);
 
   NativeShell* m_shell;
@@ -73,17 +72,14 @@ private:
   // This window's and the shared controllers, in name order: who sees an
   // action first.
   std::vector<NativeController*> m_handlers;
-  bool m_active = false;
 };
 
 // The shell's own client of its node: one protocol-3 connection, the shell
 // shape folded into rows, and its windows (NativeWindow), each with its own
-// sidebar and controllers (NativeController.h) that take the composer's turn
-// RPCs, the terminal drawer and whatever moves next off the page, beside the
-// shared ones every window reads alike (settings, alerts, quitting).
-// Until the first shell snapshot lands the page keeps doing everything; after
-// it the sidebar, and every controller, is the shell's, and `native` (and a
-// `shell.native` action to the page) says which keys and actions it owns.
+// sidebar and controllers (NativeController.h): the composer's turn RPCs, the
+// terminal drawer, navigation and the rest, beside the shared ones every
+// window reads alike (settings, alerts, quitting). The controllers start once
+// the first shell snapshot lands.
 // Environments outside the cluster are the node's links (ConnectionsController).
 class NativeShell : public QObject {
   Q_OBJECT
@@ -158,6 +154,8 @@ public:
   // publishes (the shared controllers' and `backendError`).
   const QList<NativeControllerRegistration>& registrations() const { return m_registrations; }
   const QStringList& sharedKeys() const { return m_sharedKeys; }
+  // Whether the node's first snapshot has landed and the controllers started.
+  bool isActive() const { return m_active; }
 
 signals:
   void windowOpened(NativeWindow* window);
@@ -166,7 +164,7 @@ signals:
   // The user closed the one window left, which stays open here: the app
   // quits, or on macOS waits to show it again.
   void lastWindowClosed();
-  // The node's first snapshot arrived and every controller took over: the
+  // The node's first snapshot arrived and every controller started: the
   // windows show the user's projects and threads. Once per run.
   void ready();
 
@@ -191,7 +189,7 @@ private:
   std::vector<std::unique_ptr<NativeWindow>> m_windows;
   NativeWindow* m_activeWindow = nullptr;
   QString m_stateDir;
-  // Whether the controllers have taken over from the page.
+  // Whether the first snapshot has landed and the controllers have started.
   bool m_active = false;
 };
 

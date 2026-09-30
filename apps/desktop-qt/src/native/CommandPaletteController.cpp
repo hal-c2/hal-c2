@@ -450,7 +450,7 @@ void CommandPaletteController::close(bool returnFocus) {
   m_debounce.stop();
   setMode(Mode::Command);
   emit openChanged();
-  if (returnFocus) m_bridge->sendToPage(QStringLiteral("composer.focus"));
+  if (returnFocus) m_bridge->sendToBricks(QStringLiteral("composer.focus"));
 }
 
 void CommandPaletteController::setMode(Mode mode) {

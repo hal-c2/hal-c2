@@ -1,12 +1,11 @@
 # hal_c2_native: the shell's own half, built once for the app and the native
-# tests. Every file in src/native (the node client, the store, the controllers
-# that take pieces off the page, their models) plus ShellBridge, which they
-# publish through. A new file there is picked up on the next build, no list to
+# tests. Every file in src/native (the node client, the store, the
+# controllers, their models) plus ShellBridge, which they publish through. A new file there is picked up on the next build, no list to
 # edit.
 #
 # themes.json, generated from packages/shared, is compiled in as a resource,
-# and so are the settings sections (js/settingsPages.js), which the QML and
-# NavigationController both read.
+# and so are the settings sections (js/settingsPages.js), for the native
+# tests' bricks that import them by URL.
 #
 # A Device tab's H.264 screen is decoded with FFmpeg's libavcodec (and
 # scaled with libswscale): QtMultimedia's player paces and buffers by
@@ -21,13 +20,12 @@
 #
 # Include once per project, then link `hal_c2_native`.
 
-function(hal_c2_add_native_library webchannel_script_url)
+function(hal_c2_add_native_library)
   get_filename_component(_hal_c2_src "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src" ABSOLUTE)
   file(GLOB _sources CONFIGURE_DEPENDS "${_hal_c2_src}/native/*.cpp" "${_hal_c2_src}/native/*.h")
   add_library(hal_c2_native OBJECT ${_sources} "${_hal_c2_src}/ShellBridge.cpp" "${_hal_c2_src}/ShellBridge.h")
   set_target_properties(hal_c2_native PROPERTIES AUTOMOC ON)
   target_include_directories(hal_c2_native PUBLIC "${_hal_c2_src}" "${_hal_c2_src}/native")
-  target_compile_definitions(hal_c2_native PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="${webchannel_script_url}")
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(HAL_C2_FFMPEG REQUIRED libavcodec libavutil libswscale)
   target_include_directories(hal_c2_native PUBLIC ${HAL_C2_FFMPEG_INCLUDE_DIRS})

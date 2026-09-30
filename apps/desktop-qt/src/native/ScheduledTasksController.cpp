@@ -153,7 +153,6 @@ public:
   void activate() override {
     if (m_active) return;
     m_active = true;
-    m_bridge->claimKey(kKey);
     auto* navigation = NativeShell::of(this)->controller<NavigationController>();
     connect(navigation, &NavigationController::changed, this, [this, navigation] {
       const NavigationController::Route& route = navigation->route();

@@ -152,29 +152,20 @@ ShellWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         section: root.settingsSection
-                        visible: root.nativeSettingsOpen
+                        visible: root.settingsActive
                     }
 
-                    // The route's thread or draft, drawn by the shell.
+                    // The route's centre: a thread, draft, home, pull requests or usage.
                     CentreHost {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        kind: root.nativeCentreOpen ? root.route.kind : ""
-                        visible: root.nativeCentreOpen
-                    }
-
-
-                    WebSurface {
-                        visible: root.pageOpen
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        url: Shell.pageUrl
-                        backgroundColor: root.canvas
+                        kind: root.route?.kind ?? ""
+                        visible: !root.settingsActive
                     }
 
                     Composer {
                         Layout.fillWidth: true
-                        visible: ready && !root.nativeSettingsOpen
+                        visible: ready && !root.settingsActive
                         color: "transparent"
                     }
 

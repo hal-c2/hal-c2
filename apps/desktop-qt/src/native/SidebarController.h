@@ -20,12 +20,12 @@ class ShellStore;
 class ToastController;
 
 // Owns the `sidebar` key once the shell has its node's first snapshot: rows
-// and projects come from ShellStore, grouped as the page groups them
+// and projects come from ShellStore, grouped as the web app groups them
 // (sidebar::groupProjects), drafts from DraftController, and the row actions
 // (settle, snooze, wake, mark unread, dismiss the woke pill) and the project
 // scope stay here.
 //
-// As the page's SidebarDraftBlock, a draft is listed only once it holds
+// As the web app's SidebarDraftBlock, a draft is listed only once it holds
 // something (ComposerController::draftPreview), newest first. The draft the
 // window shows keeps the row it had when the window opened it: none for one
 // that was empty then, and the same label however the user types.
@@ -60,7 +60,7 @@ public:
   // The ShellBridge interceptor: true when the action was handled here.
   bool handle(const QString& action, const QVariant& payload);
 
-  // Where a window that showed a parked thread goes, as the page does:
+  // Where a window that showed a parked thread goes, as the web app does:
   // settling and snoozing move to the next card, else a new thread in the
   // project (useThreadParking); archiving to a new thread in the project
   // (useThreadActions archiveThread); deleting to the project's first other

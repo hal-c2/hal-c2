@@ -8,7 +8,7 @@ namespace {
 
 const NativeControllerRegistrar<ToastController> registrar(QStringLiteral("toasts"), {QStringLiteral("toasts")});
 
-// The page's toasts stack at most this many; older ones drop off the bottom.
+// The web app's toasts stack at most this many; older ones drop off the bottom.
 constexpr qsizetype kMaxToasts = 5;
 
 }  // namespace
@@ -28,7 +28,6 @@ bool ToastController::handle(const QString& action, const QVariant& payload) {
     return false;
   }
   const QString id = payload.toMap().value(QStringLiteral("id")).toString();
-  if (!id.startsWith(QLatin1String("native:"))) return false;
   if (action == QLatin1String("notification.action")) {
     const int index = payload.toMap().value(QStringLiteral("actionId")).toString() == QLatin1String("secondary") ? 1 : 0;
     for (const Toast& toast : m_toasts) {

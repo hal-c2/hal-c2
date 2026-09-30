@@ -200,7 +200,8 @@ Feature: Keybindings
         | modelPicker.previousProvider | mod+shift+arrowup   | n/a    | the native picker has its own arrow keys |
         | modelPicker.nextProvider     | mod+shift+arrowdown | n/a    | the native picker has its own arrow keys |
 
-    @desktop
+    # The desktop has no embedded page to hold focus.
+    @dropped @desktop
     Scenario: Window shortcuts stand down while the page has focus
       Given the page has keyboard focus
       When the user presses mod+r

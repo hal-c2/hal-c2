@@ -4,7 +4,7 @@ import HalC2.Shell
 import "../qml/HalC2/Bricks"
 
 // Behaviour scenarios for the native bricks, one Given/When/Then per test,
-// driven through the Shell test double: the page state goes in as
+// driven through the Shell test double: the shell's state goes in as
 // Shell.state and the outcome is what the brick dispatches back.
 Item {
     id: root
@@ -165,7 +165,7 @@ Item {
             verify(typeof lastDispatch().payload.x === "number");
         }
 
-        function test_given_a_hovered_thread_when_settle_is_clicked_then_the_page_settles_it() {
+        function test_given_a_hovered_thread_when_settle_is_clicked_then_the_shell_settles_it() {
             const sidebar = createSidebar({});
             const row = waitForRow(sidebar, "second");
             mouseMove(row, 100, 40);
@@ -177,7 +177,7 @@ Item {
             compare(lastDispatch().payload.key, "second");
         }
 
-        function test_given_a_snoozed_thread_when_wake_is_clicked_then_the_page_unsnoozes_it() {
+        function test_given_a_snoozed_thread_when_wake_is_clicked_then_the_shell_unsnoozes_it() {
             const sidebar = createSidebar({
                 active: [thread("first", qsTr("First"))],
                 snoozed: [thread("sleeper", qsTr("Sleeper"))]
@@ -270,7 +270,7 @@ Item {
             verify(!Shell.dispatchedActions.some(entry => entry.action === "composer.history.step"));
         }
 
-        function test_given_the_page_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens_data() {
+        function test_given_the_shell_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens_data() {
             return [
                 { tag: "effort", command: "composer.effort", picker: "effortPicker" },
                 { tag: "access mode", command: "composer.mode", picker: "runtimeModePicker" },
@@ -280,7 +280,7 @@ Item {
             ];
         }
 
-        function test_given_the_page_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens(data) {
+        function test_given_the_shell_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens(data) {
             const composer = createComposer({
                 options: [{
                     type: "select",
@@ -407,7 +407,7 @@ Item {
             };
         }
 
-        // "the page lists models from Codex and Claude": the catalogue
+        // "the catalogue lists models from Codex and Claude": the catalogue
         // Shell.state.modelPicker carries, with the default chords.
         function codexAndClaude(overrides) {
             return {
@@ -458,7 +458,7 @@ Item {
             return Shell.dispatchedActions.filter(entry => entry.action === "composer.model.select");
         }
 
-        function test_given_the_page_owns_the_model_shortcut_when_it_requests_the_picker_then_the_native_picker_toggles() {
+        function test_given_the_shell_owns_the_model_shortcut_when_it_requests_the_picker_then_the_native_picker_toggles() {
             const picker = createPicker(codexAndClaude());
             togglePicker(picker, true);
             togglePicker(picker, false);
@@ -485,7 +485,7 @@ Item {
             compare(icon.driverKind, "claudeAgent");
         }
 
-        function test_given_codex_and_claude_when_claude_opus_is_chosen_then_the_page_switches_and_the_picker_closes() {
+        function test_given_codex_and_claude_when_claude_opus_is_chosen_then_the_shell_switches_and_the_picker_closes() {
             const picker = createPicker(codexAndClaude());
             togglePicker(picker, true);
             mouseClick(inPicker(picker, "modelPickerProvider:claudeAgent"));

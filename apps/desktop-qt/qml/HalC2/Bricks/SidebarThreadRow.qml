@@ -7,7 +7,7 @@ import HalC2.Shell
 // active threads (project, status or age, title, branch), a slim line for
 // snoozed and settled ones. Hovering or focusing the row swaps the status
 // slot for the section's actions (snooze and settle, wake, un-settle), the
-// same ones the page's sidebar shows on hover.
+// same ones the web app's sidebar shows on hover.
 Item {
     id: row
 
@@ -48,7 +48,7 @@ Item {
     readonly property bool canSnooze: !draft && !parked && item.canSnooze === true
     readonly property bool hasActions: !offline && (parked || canSettle || canSnooze)
     readonly property bool showActions: hasActions && (hover.hovered || focused)
-    // The status word the page's sidebar uses for each state; empty when the
+    // The status word the web app's sidebar uses for each state; empty when the
     // row is at rest, then the slot shows the age (or the wake time).
     readonly property string statusWord: {
         if (row.offline) {
@@ -126,7 +126,7 @@ Item {
     // a human (done, failed, woke) and the one that is open.
     readonly property bool recedes: offline || !active && !woke && item.unread !== true && item.status !== "failed" && item.status !== "limited"
     // Titles keep the prompt's line breaks; the row shows them on one line,
-    // as the page does, so a multi-line title never overflows the card.
+    // as the web app does, so a multi-line title never overflows the card.
     readonly property string oneLineTitle: (item.title ?? "").replace(/\s+/g, " ").trim()
     readonly property string ageLabel: item.wakeLabel ? item.wakeLabel : relativeAge(item.updatedAt, ageNow)
 
@@ -210,7 +210,7 @@ Item {
         onTapped: row.activated()
     }
 
-    // The menu opens on press, anywhere on the row, like the page's.
+    // The menu opens on press, anywhere on the row, like the web app's.
     TapHandler {
         acceptedButtons: Qt.RightButton
         gesturePolicy: TapHandler.WithinBounds

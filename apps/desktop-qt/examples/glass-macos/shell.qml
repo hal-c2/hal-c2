@@ -13,7 +13,7 @@ ShellWindow {
 
     readonly property color canvas: Theme.palette.color("canvas", "#fafafa")
     readonly property color hairline: Theme.palette.color("sidebarBorder", "#00000014")
-    // The page's own breakpoints: the sidebar goes off-canvas under 768 and
+    // The web app's breakpoints: the sidebar goes off-canvas under 768 and
     // the right panel becomes a sheet under 980. Above them both sit beside
     // the content, as in the app.
     readonly property bool compact: width < 768
@@ -101,8 +101,7 @@ ShellWindow {
             // Bound to the animated widths, so the content follows the slide.
             anchors.leftMargin: root.sidebarOverlay ? 0 : navigation.width
             anchors.rightMargin: root.inspectorOverlay ? 0 : inspector.width
-            // The page's last frame keeps its own size until Chromium delivers
-            // the next; clipped, it cannot bleed under a sliding panel.
+            // Clipped, the content cannot bleed under a sliding panel.
             clip: true
             color: root.canvas
             enabled: !root.overlayActive
@@ -173,29 +172,21 @@ ShellWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     section: root.settingsSection
-                    visible: root.nativeSettingsOpen
+                    visible: root.settingsActive
                 }
 
-                // The route's thread or draft, drawn by the shell.
+                // The route's centre: a thread, draft, home, pull requests or usage.
                 CentreHost {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    kind: root.nativeCentreOpen ? root.route.kind : ""
-                    visible: root.nativeCentreOpen
+                    kind: root.route?.kind ?? ""
+                    visible: !root.settingsActive
                 }
 
-
-                WebSurface {
-                    visible: root.pageOpen
-                    Layout.fillHeight: true
-                    Layout.fillWidth: true
-                    backgroundColor: root.canvas
-                    url: Shell.pageUrl
-                }
                 Composer {
                     Layout.fillWidth: true
                     color: root.canvas
-                    visible: ready && !root.nativeSettingsOpen
+                    visible: ready && !root.settingsActive
                 }
                 // The drawer folds open under the composer. It keeps its open
                 // height while the slot around it animates, so the document

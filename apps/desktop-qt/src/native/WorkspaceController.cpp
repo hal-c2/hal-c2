@@ -109,7 +109,6 @@ WorkspaceController::~WorkspaceController() {
 void WorkspaceController::activate() {
   if (m_active) return;
   m_active = true;
-  m_bridge->claimKey(QStringLiteral("workspace"));
   auto* shell = NativeShell::of(this);
   connect(m_store, &ShellStore::changed, this, &WorkspaceController::refresh);
   if (auto* navigation = shell->controller<NavigationController>()) {
@@ -628,7 +627,7 @@ void WorkspaceController::usePreviousWorktree() {
   const std::optional<PreviousWorktree> previous = previousWorktree();
   if (!previous) return;
   setThreadBranch(previous->branch, previous->worktreePath);
-  m_bridge->sendToPage(QStringLiteral("composer.focus"));
+  m_bridge->sendToBricks(QStringLiteral("composer.focus"));
 }
 
 void WorkspaceController::publish() {
@@ -684,14 +683,11 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
     createBranch(args.value(QStringLiteral("name")).toString());
   } else if (action == QLatin1String("workspace.envMode.set")) {
     setEnvMode(args.value(QStringLiteral("mode")).toString());
-    // The page follows, for the background starts it still sends.
-    return false;
   } else if (action == QLatin1String("workspace.startFromOrigin.set")) {
     if (!m_place->draftId.isEmpty()) {
       const bool enabled = args.value(QStringLiteral("enabled")).toBool();
       updateCheckout([enabled](Checkout& checkout) { checkout.startFromOrigin = enabled; });
     }
-    return false;
   } else if (action == QLatin1String("workspace.environment.set")) {
     const QString environmentId = args.value(QStringLiteral("environmentId")).toString();
     QString key = args.value(QStringLiteral("key")).toString();
@@ -705,7 +701,6 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
       }
     }
     setEnvironment(key);
-    return false;
   }
   return true;
 }
@@ -921,7 +916,6 @@ void WorkspaceController::setThreadBranch(const std::optional<QString>& branch,
     checkout.worktreePath = worktreePath;
     checkout.envMode = mode;
   });
-  followCheckout(m_place->draftId);
 }
 
 void WorkspaceController::updateCheckout(const std::function<void(Checkout&)>& edit) {
@@ -932,19 +926,6 @@ void WorkspaceController::updateCheckout(const std::function<void(Checkout&)>& e
 void WorkspaceController::setCheckout(const QString& draftId, const Checkout& checkout) {
   m_checkouts.insert(draftId, checkout);
   refresh();
-  followCheckout(draftId);
-}
-
-// The page follows, for the background starts it still sends.
-void WorkspaceController::followCheckout(const QString& draftId) {
-  const Checkout checkout = m_checkouts.value(draftId);
-  m_bridge->sendToPage(QStringLiteral("workspace.checkout.follow"),
-                       QVariantMap{
-                           {QStringLiteral("draftId"), draftId},
-                           {QStringLiteral("branch"), nullable(checkout.branch)},
-                           {QStringLiteral("worktreePath"), nullable(checkout.worktreePath)},
-                           {QStringLiteral("envMode"), checkout.envMode},
-                       });
 }
 
 void WorkspaceController::refreshGit() {

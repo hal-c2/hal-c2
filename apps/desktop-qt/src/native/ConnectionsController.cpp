@@ -30,7 +30,7 @@ QVariant null() {
   return QVariant::fromValue(nullptr);
 }
 
-// A pairing link as the page's own code field takes it: a host (with or
+// A pairing link as the web app's code field takes it: a host (with or
 // without a scheme) and the code.
 QString pairingUrl(const QString& host, const QString& code) {
   return host + QStringLiteral("/pair#token=") + code;
@@ -56,7 +56,6 @@ ConnectionsController::ConnectionsController(ShellBridge* bridge, NodeClient* cl
 void ConnectionsController::activate() {
   if (m_active) return;
   m_active = true;
-  m_bridge->claimKey(QStringLiteral("connections"));
   updateLinks();
   publish();
   connect(m_store, &ShellStore::changed, this, &ConnectionsController::updateLinks);

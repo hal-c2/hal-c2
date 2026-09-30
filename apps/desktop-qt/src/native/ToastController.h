@@ -13,12 +13,10 @@
 class NodeClient;
 class ShellBridge;
 
-// The shell's own toasts. Controllers call show() directly; the Notifications
-// brick renders `toasts` next to the page's `notifications` (git progress and
-// whatever else the page still produces). Publishes `toasts`: {items}, newest
-// first, each {id, type, title, description, updateKey, actions} as the page's
-// ShellNotification. Ids start with "native:", which is how dismiss and action
-// clicks find their way here instead of to the page.
+// The shell's toasts. Controllers call show() directly; the Notifications
+// brick renders `toasts`. Publishes `toasts`: {items}, newest first, each {id,
+// type, title, description, updateKey, actions} as the web app's
+// ShellNotification. Dismiss and action clicks come back by id.
 class ToastController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -45,7 +43,7 @@ public:
   // "Remove project").
   QString showActions(const QString& type, const QString& title, const QString& description, QList<Action> actions,
                       int timeoutMs);
-  // An error toast, with the page's "An error occurred." for an empty reason.
+  // An error toast, with the web app's "An error occurred." for an empty reason.
   QString error(const QString& title, const QString& description = {});
   void dismiss(const QString& id);
   // Changes a shown toast's text in place (a running action's stage); false

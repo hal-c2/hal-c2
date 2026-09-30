@@ -2,7 +2,7 @@
 
 #include <QFileSystemModel>
 
-// Local, trusted QML only. The hosted page has no filesystem mutation API.
+// Local, trusted QML only.
 class LocalFolderModel : public QFileSystemModel {
   Q_OBJECT
   Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)

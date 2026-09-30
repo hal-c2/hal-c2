@@ -217,7 +217,7 @@ public:
   QStringList panelGroups(const QString& threadKey) const;
   // Closes every terminal of the group (deleting their history).
   void closeGroup(const QString& group);
-  // As the page's runProjectScript: in the active terminal, or a new one when
+  // As the web app's runProjectScript: in the active terminal, or a new one when
   // that one is busy. False without a place or such a script.
   bool runScript(const QString& scriptId);
 

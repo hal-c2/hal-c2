@@ -3,9 +3,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// Built-in layout, laid out like the page's own chrome: sidebar, header
-// strip, timeline, composer. A user's ~/.hal-c2/shell/shell.qml replaces this
-// file wholesale; it is also the fallback when that file fails to load.
+// Built-in layout: sidebar, header strip, timeline, composer. A user's
+// ~/.hal-c2/shell/shell.qml replaces this file wholesale; it is also the
+// fallback when that file fails to load.
 // Frameless windows get their drag handle and window buttons from the
 // sidebar band and the header strip rather than a separate title bar.
 ShellWindow {
@@ -15,7 +15,7 @@ ShellWindow {
     property alias sidebar: sidebarView
     property alias composer: composerView
     property alias workspace: workspaceView
-    property alias webView: primaryView
+    property alias centreView: centreHost
     property alias terminalDrawer: terminalView
     property alias rightPanel: panelView
     property alias toolbar: toolbarLoader.sourceComponent
@@ -101,30 +101,23 @@ ShellWindow {
                     visible: active
                 }
 
-                // The shell's own settings pages take the page's place.
+                // The settings section showing.
                 SettingsHost {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     section: root.settingsSection
-                    visible: root.nativeSettingsOpen
+                    visible: root.settingsActive
                 }
 
-                // The route's thread or draft, drawn by the shell.
+                // The route's centre: a thread, draft, home, pull requests or usage.
                 CentreHost {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    kind: root.nativeCentreOpen ? root.route.kind : ""
-                    visible: root.nativeCentreOpen
-                }
-
-
-                WebSurface {
-                    id: primaryView
+                    id: centreHost
+                    objectName: "centreHost"
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: root.pageOpen
-                    url: Shell.pageUrl
+                    kind: root.route?.kind ?? ""
+                    visible: !root.settingsActive
                 }
 
                 TurnRequests {
@@ -136,7 +129,7 @@ ShellWindow {
                     id: composerView
 
                     Layout.fillWidth: true
-                    visible: ready && !root.nativeSettingsOpen
+                    visible: ready && !root.settingsActive
                 }
 
                 TerminalDrawer {

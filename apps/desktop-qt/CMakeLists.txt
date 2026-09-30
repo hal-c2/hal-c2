@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick WebEngineQuick WebChannel WebSockets)
+find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick WebSockets)
 qt_standard_project_setup(REQUIRES 6.9)
 qt_policy(SET QTP0001 NEW)
 
@@ -45,18 +45,6 @@ if(NOT DEFINED HAL_C2_NODE_ENTRY)
   set(HAL_C2_NODE_ENTRY "$<IF:$<CONFIG:Release>,${_hal_c2_installed_node},node>")
 endif()
 
-# qwebchannel.js is the browser half of Qt WebChannel. Qt installs it as data
-# (share/qt6/webchannel); bundling it makes the injected script independent of
-# whether the runtime Qt exposes it as a qrc resource.
-get_filename_component(_qt_prefix "${QT6_INSTALL_PREFIX}" ABSOLUTE)
-find_file(HAL_C2_QWEBCHANNEL_JS qwebchannel.js
-  HINTS
-    "${_qt_prefix}/${QT6_INSTALL_DATA}/webchannel"
-    "${_qt_prefix}/share/qt6/webchannel"
-    "${_qt_prefix}/share/qt/webchannel"
-    "${_qt_prefix}/../qtwebchannel/share/qt6/webchannel"
-)
-
 qt_add_executable(hal-c2-qt
   src/main.cpp
   src/LocalFolderModel.cpp
@@ -75,8 +63,6 @@ qt_add_executable(hal-c2-qt
   src/StoragePaths.h
   src/ThemeStore.cpp
   src/ThemeStore.h
-  src/WebProfile.cpp
-  src/WebProfile.h
   src/PlatformWindow.h
 )
 
@@ -86,17 +72,8 @@ if(UNIX AND NOT APPLE)
   target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_HAS_DBUS)
 endif()
 
-if(HAL_C2_QWEBCHANNEL_JS)
-  set_source_files_properties("${HAL_C2_QWEBCHANNEL_JS}" PROPERTIES QT_RESOURCE_ALIAS "qwebchannel.js")
-  qt_add_resources(hal-c2-qt "hal_c2_webchannel" PREFIX "/hal-c2" FILES "${HAL_C2_QWEBCHANNEL_JS}")
-  set(_hal_c2_webchannel_url "qrc:/hal-c2/qwebchannel.js")
-else()
-  message(STATUS "qwebchannel.js not found next to Qt; relying on qrc:///qtwebchannel/qwebchannel.js at runtime")
-  set(_hal_c2_webchannel_url "qrc:///qtwebchannel/qwebchannel.js")
-endif()
-
 include(cmake/NativeShell.cmake)
-hal_c2_add_native_library("${_hal_c2_webchannel_url}")
+hal_c2_add_native_library()
 
 # The window icon; packaged builds also install it for the desktop entry.
 set(HAL_C2_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/prod/black-universal-1024.png")
@@ -121,8 +98,6 @@ target_link_libraries(hal-c2-qt PRIVATE
   Qt6::Gui
   Qt6::GuiPrivate
   Qt6::Quick
-  Qt6::WebEngineQuick
-  Qt6::WebChannel
   Qt6::WebSockets
   hal_c2_native
   hal_c2_bricksplugin

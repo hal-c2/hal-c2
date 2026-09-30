@@ -2,18 +2,15 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// Shows a pending context menu when it targets this host's surface, and
-// reports the choice back: the shell's own (MenuController's "menu", in
-// window coordinates, one host per window) or, inside a visible WebSurface,
-// that page's (stateKey "contextMenu", in page coordinates).
+// Shows MenuController's pending context menu when it targets this host's
+// surface, in window coordinates (one host per window), and reports the
+// choice back.
 Item {
     id: host
 
     required property string surfaceId
-    property string stateKey: "menu"
-    property string selectAction: "menu.select"
 
-    readonly property var request: Shell.state[stateKey] ?? null
+    readonly property var request: Shell.state.menu ?? null
     readonly property bool mine: request !== null && request.surfaceId === surfaceId
     property string shownRequestId: ""
 
@@ -49,7 +46,7 @@ Item {
             return;
         }
         const requestId = host.request.requestId;
-        Shell.dispatch(host.selectAction, {
+        Shell.dispatch("menu.select", {
             requestId: requestId,
             id: id
         });

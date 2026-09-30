@@ -24,9 +24,7 @@ class ShellStore;
 // `thread.new {projectKey?}` opens the project's draft (the given logical
 // project, else the scoped one, else the one the window shows, else the first),
 // `draft.menu {draftId, x, y}` offers to delete it and `draft.delete {draftId}`
-// does. The page follows a draft route with the draft's environmentId,
-// projectId and threadId, and reports a draft it opened itself the same way
-// (`route.open`), which adopts it.
+// does.
 //
 // The draft's text is `text`: ComposerController saves the composer's edits
 // on a draft route here, and reopens the draft with it.
@@ -35,7 +33,7 @@ class ShellStore;
 // thread in <project>", listed while the window shows a project) and the
 // thread.newIn menu ("New thread in...", the window's project first).
 //
-// A window with no thread lands on a draft, as the page's index route does:
+// A window with no thread lands on a draft, as the web's index route does:
 // on `home`, once the node's snapshot is in, it opens the draft of the most
 // recently active project (sidebar::mostRecentProject), the same draft every
 // other window landing there opens. With no project it stays home, which
