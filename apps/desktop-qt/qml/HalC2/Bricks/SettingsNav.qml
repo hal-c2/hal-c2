@@ -13,7 +13,7 @@ Rectangle {
 
     // The section showing, from the shell's route.
     readonly property var route: Shell.state.route ?? null
-    readonly property string currentSection: Pages.resolve(route !== null && route.kind === "settings" ? route.section : "")
+    readonly property string currentSection: Pages.current(route !== null && route.kind === "settings" ? route.section : "")
     readonly property string query: search.text.trim().toLowerCase()
     // Every row says whether it is a search result, so a row never reads the
     // other shape while the query and the rows change together.

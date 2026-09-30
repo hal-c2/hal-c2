@@ -75,3 +75,5 @@ SettingsScopeSentence 1.0 SettingsScopeSentence.qml
 StorageSettings 1.0 StorageSettings.qml
 ProjectSettings 1.0 ProjectSettings.qml
 DevicePanel 1.0 DevicePanel.qml
+OpenSourceLicenses 1.0 OpenSourceLicenses.qml
+DiagnosticsSettings 1.0 DiagnosticsSettings.qml

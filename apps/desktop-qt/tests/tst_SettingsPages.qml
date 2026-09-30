@@ -62,6 +62,16 @@ Item {
             compare(labels(Pages.navRows({ cluster: {}, providerSettings: {} })), ["General", "Appearance", "Keybindings", "SnapShots", "Providers", "Cluster"]);
         }
 
+        function test_pagesUnderGeneralKeepItMarked() {
+            compare(Pages.brickFor("/settings/diagnostics"), "DiagnosticsSettings");
+            compare(Pages.brickFor("/settings/open-source-licenses"), "OpenSourceLicenses");
+            verify(!Pages.navRows({}).some(section => section.to === "/settings/open-source-licenses"));
+            compare(Pages.current("/settings/open-source-licenses"), "/settings/general");
+            compare(Pages.current("/settings/diagnostics"), "/settings/general");
+            compare(Pages.current("/settings/appearance"), "/settings/appearance");
+            verify(Pages.searchRows("licenses", {}).some(result => result.targetId === "settingsRow:open-source-licenses"));
+        }
+
         function test_searchFindsSectionsAndTheirSettings() {
             compare(Pages.searchRows("theme", {}).map(section => section.label), ["Theme", "Appearance"]);
             compare(Pages.searchRows("theme", {})[0].targetId, "themes");

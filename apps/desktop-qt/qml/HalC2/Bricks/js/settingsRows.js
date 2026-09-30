@@ -88,6 +88,11 @@ var general = [
       description: "Hold mode also quits on two quick presses.",
       options: [option("direct", "Direct"), option("hold", "Hold"), option("double-click", "Double press")] },
 
+    { section: "Diagnostics" },
+    { id: "diagnostics", link: "/settings/diagnostics", button: "View diagnostics", title: "Diagnostics",
+      description: "Inspect processes, resource use, and logs on this environment." },
+    { id: "open-source-licenses", link: "/settings/open-source-licenses", button: "View licenses", title: "Open source licenses",
+      description: "Notices for dependencies, assets, and optional tools used by HAL-C2." },
     { section: "Legacy features" },
     { key: "planModeEnabled", kind: "switch", title: "Plan mode",
       description: "Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode." },

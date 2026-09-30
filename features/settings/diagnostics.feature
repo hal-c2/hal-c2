@@ -73,13 +73,13 @@ Feature: Diagnostics
     # With tracing on, the file holds what clients send beside the node's own spans.
     Then the node records them in its trace file
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: Force killing a process asks first
     When the user force kills a process
     Then the user is asked to confirm because the process cannot handle it
     And cancelling leaves the process running
 
-  @backlog @desktop
+  @desktop
   Scenario: The user opens the logs folder
     When the user opens the logs folder
     Then it opens in the user's preferred editor

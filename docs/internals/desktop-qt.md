@@ -802,7 +802,10 @@ reads the same file (compiled in as `:/hal-c2/settings/settingsPages.js`), so
 a section with a brick is native to both, except those marked `page` (General
 and Appearance), which still `route.follow` the hidden page because it draws
 with some of their preferences; `settings.navigate` opens any section from
-anywhere.
+anywhere. A section `under` another (Diagnostics and Open
+source licenses, under General, as on the web) is left out of the nav, reached
+by a `link` row of its parent, and keeps the parent marked
+(`settingsPages.current`).
 
 Search is the shell's too. `settingsPages.searchRows` matches sections by
 label and keywords, and a section's settings (its `settingsRows.js` rows and
