@@ -517,6 +517,50 @@ defmodule HalC2.Steps.Connections.Links do
     context |> World.put_client(client) |> Map.put(:config_frame, frame)
   end
 
+  step "a client of the node follows the project clones of {string}",
+       %{args: [label]} = context do
+    shape = %{"type" => "projectClones", "environment" => environment(context, label)}
+    client = context |> World.client() |> Node.sub(9, shape)
+    {_frame, client} = Node.await(client, &(&1["id"] == 9 and &1["t"] == "projectClones"), 10_000)
+    World.put_client(context, client)
+  end
+
+  step "a client of the node starts cloning a repository on {string}",
+       %{args: [label]} = context do
+    id = "p-clone-#{System.unique_integer([:positive])}"
+    dest = Path.join(Machines.home(context, label), "fs/work/cloned-#{id}")
+    # From another socket, so that waiting for the reply skips no projectClones frame.
+    caller = Node.connect(context.node)
+
+    payload = %{
+      "projectId" => id,
+      "title" => Path.basename(dest),
+      "createdAt" => World.iso_from_now(0),
+      # Nothing answers there, so the clone fails, and a failed clone stays reported.
+      "remoteUrl" => "file://" <> Path.join(Machines.home(context, label), "missing.git"),
+      "destinationPath" => dest
+    }
+
+    assert {{:ok, _}, _} =
+             Node.call(caller, environment(context, label), "projectClone.start", payload)
+
+    Map.put(context, :linked_clone, id)
+  end
+
+  step "the client is told of that clone by {string}", context do
+    id = context.linked_clone
+
+    {_frame, client} =
+      Node.await(
+        World.client(context),
+        &(&1["id"] == 9 and &1["t"] == "projectClones" and
+            Enum.any?(&1["clones"], fn clone -> clone["projectId"] == id end)),
+        10_000
+      )
+
+    World.put_client(context, client)
+  end
+
   step "it receives the config of {string} with its providers and editors",
        %{args: [label]} = context do
     id = environment(context, label)

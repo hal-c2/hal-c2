@@ -41,7 +41,11 @@ class ShellStore;
 //     file at the line.
 //   - browse (Add project's Local folder): the query is a path on an
 //     environment (`filesystem.browse`); choosing a folder goes into it, and
-//     Enter with none highlighted adds the path as a project there.
+//     Enter with none highlighted adds the path as a project there. A clone's
+//     destination browses with the repository's folder name pinned to the
+//     path (BrowseOptions).
+//   - ask (a clone's repository): the query is free text, nothing is listed,
+//     and Enter hands it to the asker, which moves the palette on or closes it.
 //
 // Searches against the node wait for typing to pause (kSearchDelayMs) and
 // only the newest answer counts; files and content only while the route
@@ -56,7 +60,7 @@ class ShellStore;
 class CommandPaletteController : public QAbstractListModel, public NativeController {
   Q_OBJECT
   Q_PROPERTY(bool open READ isOpen NOTIFY openChanged)
-  // command, files, content or browse.
+  // command, files, content, browse or ask.
   Q_PROPERTY(QString mode READ mode NOTIFY modeChanged)
   // The submenu shown, empty at the root.
   Q_PROPERTY(QString submenu READ submenu NOTIFY modeChanged)
@@ -106,7 +110,7 @@ public:
 
   bool isOpen() const { return m_open; }
   QString mode() const;
-  QString submenu() const { return m_views.isEmpty() ? QString() : m_views.constLast().title; }
+  QString submenu() const;
   QString placeholder() const;
   QString query() const { return m_query; }
   int highlighted() const { return m_highlighted; }
@@ -154,9 +158,33 @@ public:
   Q_INVOKABLE bool addBrowsedFolder();
   // Opens the palette on the menu `command`'s choices.
   void showMenu(const QString& command);
+  // How browse mode starts and what choosing does: `query` is where it
+  // starts; `pinned`, when set, is a folder name kept at the end of the path
+  // (a clone's "<chosen folder>/<repo>"); `emptyText` replaces the palette's
+  // own; `keepOpen` leaves the palette open when the path is chosen, for the
+  // chooser to close (finish) once it is done.
+  struct BrowseOptions {
+    QString query = QStringLiteral("~/");
+    QString pinned;
+    QString emptyText;
+    bool keepOpen = false;
+  };
   // Browses folders on `environmentId` from the home folder, for a new
   // project; `add` is given the path chosen.
-  void browse(const QString& environmentId, std::function<void(const QString& path)> add);
+  void browse(const QString& environmentId, std::function<void(const QString& path)> add,
+              const BrowseOptions& options);
+  void browse(const QString& environmentId, std::function<void(const QString& path)> add) {
+    browse(environmentId, std::move(add), BrowseOptions());
+  }
+  // Asks for a line of text under `title` (ask mode): Enter gives the query,
+  // trimmed and not empty, to `submit`, which leaves the palette open.
+  void ask(const QString& title, const QString& placeholder, const QString& emptyText,
+           std::function<void(const QString& text)> submit);
+  // Closes it after an ask or a browse that kept it open.
+  void finish() { close(false); }
+  // Reads the submenu shown again from its source, as when what it lists
+  // arrived after it opened.
+  void refreshMenu();
   // The settings sections to offer: [{to, label, keywords, requires?}].
   Q_INVOKABLE void setSettingsSections(const QVariantList& sections);
 
@@ -169,7 +197,7 @@ signals:
   void optionsChanged();
 
 private:
-  enum class Mode { Command, Files, Content, Browse };
+  enum class Mode { Command, Files, Content, Browse, Ask };
   enum class Kind { Action, Thread, Project, Setting, Choice, File, Match, Folder, Up };
 
   struct Entry {
@@ -198,10 +226,12 @@ private:
     QString description;
   };
 
-  // A submenu: the menu's title and its choices when it opened.
+  // A submenu: the menu's title, its choices when it opened, and where they
+  // come from.
   struct View {
     QString title;
     QList<CommandRegistry::Choice> choices;
+    CommandRegistry::Choices source;
   };
 
   // Where files and content are searched: the route thread's environment and
@@ -215,7 +245,7 @@ private:
   void open(Mode mode);
   void close(bool returnFocus);
   void setMode(Mode mode);
-  void pushView(const QString& title, QList<CommandRegistry::Choice> choices);
+  void pushView(const QString& title, CommandRegistry::Choices source);
   // Reads what the palette lists again, while it is open.
   void rebuild();
   void rebuildCommand();
@@ -273,4 +303,10 @@ private:
   QString m_browseParent;
   QJsonArray m_browseEntries;
   std::function<void(const QString&)> m_add;
+  BrowseOptions m_browseOptions;
+  // Ask mode: its title, placeholder, empty text and what Enter does.
+  QString m_askTitle;
+  QString m_askPlaceholder;
+  QString m_askEmpty;
+  std::function<void(const QString&)> m_submit;
 };

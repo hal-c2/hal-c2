@@ -520,7 +520,14 @@ start the new project's draft once its row arrives; a failure is a toast.
 Without a path, `project.add` runs the palette's Add project menu, which
 `ProjectController` registers: an online environment when there is a choice,
 then a folder browsed on that environment (`filesystem.browse`) in the
-palette's browse mode. Cloning is not native yet. Only before the shell has
+palette's browse mode, or a clone (`ProjectCloneController`): a Git URL or a
+hosting provider's repository, asked for in the palette's ask mode, then a
+destination browsed with the repository's folder name pinned. Both browse
+from the environment's `addProjectBaseDirectory` setting, else `~/`. The node
+adds the project at once and clones in the background; each clone an online
+environment reports on its `projectClones` shape (by environment, so a linked
+one's come through the link) is one toast, updated in place, whose Cancel and
+Retry keep it open. Only before the shell has
 its node, or with a path where the page may not reach local folders, does
 `project.add` fall through to the page. `project.remove
 {projectKey}` publishes `projectRemoval {projectKey, title, workspaceRoot,
