@@ -55,10 +55,13 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          # Everything: the web app's packages feed the licence manifest
-          # (third-party-licenses.ts), and the node release bundles the Cursor
-          # sidecar with the workspace root's esbuild (apps/server-ex/mix.exs).
-          run-install: true
+          # The web app's packages feed the licence manifest
+          # (third-party-licenses.ts); the node release bundles the Cursor
+          # sidecar with that package's esbuild (apps/server-ex/mix.exs).
+          run-install: |
+            args:
+              - --filter=@hal-c2/web...
+              - --filter=@hal-c2/cursor-acp...
 
       - uses: jurplel/install-qt-action@v4
         with:

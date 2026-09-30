@@ -65,7 +65,7 @@ defmodule HalC2.MixProject do
     run!("npm", ~w(install --omit=dev --no-audit --no-fund --no-bin-links), target)
 
     run!(
-      Path.join(root, "node_modules/.bin/esbuild"),
+      Path.join(package, "node_modules/.bin/esbuild"),
       ~w(src/main.ts --bundle --platform=node --format=esm --external:@cursor/sdk) ++
         ["--outfile=#{target}/main.mjs"],
       package
