@@ -10,7 +10,9 @@ defmodule HalC2.Orchestration.Recovery do
   server's effect outbox replays pending provider work.
 
   Work a provider left running in the background after its turn (a subagent, a
-  background command) died with the process too, and is ended the same way.
+  background command) died with the process too, and is ended the same way. A
+  task the thread delegated runs in its own thread and is left to settle when
+  that ends (`Delegation.finished/3`).
 
   Only threads whose sidebar row shows an active run or background work are opened.
   """
@@ -145,6 +147,11 @@ defmodule HalC2.Orchestration.Recovery do
   defp changes(state, at) do
     done = %{"status" => "interrupted", "completedAt" => at}
 
+    delegated =
+      for {id, %{"origin" => "app_owned"}} <- StreamState.get(state, "subagent"),
+          into: MapSet.new(),
+          do: id
+
     for {kind, fun} <- [
           {"run",
            fn run ->
@@ -159,13 +166,14 @@ defmodule HalC2.Orchestration.Recovery do
            end},
           {"run-attempt", &if(&1["status"] in @active, do: Map.merge(&1, done))},
           {"provider-turn", &if(&1["status"] in @active, do: Map.merge(&1, done))},
-          {"node", &if(&1["status"] in @active, do: Map.merge(&1, done))},
+          {"node",
+           &if(&1["status"] in @active and &1["id"] not in delegated, do: Map.merge(&1, done))},
           {"subagent",
            &if(&1["origin"] == "provider_native" and &1["status"] in @active,
              do: Map.merge(&1, Map.put(done, "updatedAt", at))
            )},
           {"turn-item",
-           &if(&1["status"] in @active,
+           &if(&1["status"] in @active and &1["nodeId"] not in delegated,
              do:
                Map.merge(&1, %{
                  "status" => "interrupted",
