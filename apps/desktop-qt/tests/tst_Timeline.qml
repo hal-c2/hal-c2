@@ -24,12 +24,36 @@ Item {
             entries: [],
             hiddenCount: 0,
             expanded: false,
-            files: []
+            files: [],
+            time: "",
+            icon: "",
+            intent: "",
+            attribution: ""
         }, fields);
     }
 
     ListModel {
         id: rows
+    }
+
+    // A model that can copy, revert and name its times, like TimelineModel.
+    ListModel {
+        id: actionRows
+        property var copiedRows: []
+        function checkpointOf(rowId) {
+            return rowId === "reply" ? {
+                checkpointId: "checkpoint:1",
+                scopeId: "scope:1",
+                turn: 1
+            } : {};
+        }
+        function copy(rowId) {
+            copiedRows = copiedRows.concat([rowId]);
+            return true;
+        }
+        function timeTitle(rowId, entryId) {
+            return "9:42 AM, 23rd September 2026";
+        }
     }
 
     Component {
@@ -206,6 +230,154 @@ Item {
             tryVerify(() => !visibleIn(findText(list.itemAtIndex(0), "$ bun test cart")), 2000, "the call closes");
         }
 
+        function conversation() {
+            actionRows.clear();
+            actionRows.copiedRows = [];
+            actionRows.append(root.row({
+                rowId: "question",
+                author: "user",
+                text: "Add tax to the cart",
+                time: "9:41 AM"
+            }));
+            actionRows.append(root.row({
+                rowId: "reply",
+                text: "Tax is applied after discounts.",
+                status: "completed",
+                time: "9:42 AM"
+            }));
+        }
+
+        // The opacity a thing is drawn with, through its parents.
+        function shownOpacity(item) {
+            let opacity = 1;
+            for (let current = item; current; current = current.parent)
+                opacity *= current.opacity;
+            return opacity;
+        }
+
+        // Without hover (touch screens), a message's time and actions are
+        // always shown.
+        function test_messageActionsShowWithoutHover() {
+            conversation();
+            const timeline = createTemporaryObject(actionTimelineComponent, root, {
+                alwaysShowMeta: true
+            });
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(1) !== null);
+            const question = list.itemAtIndex(0);
+            const reply = list.itemAtIndex(1);
+            for (const [item, time] of [[question, "9:41 AM"], [reply, "9:42 AM"]]) {
+                const copy = findNamed(item, "copyMessage");
+                verify(visibleIn(copy), "each message offers Copy");
+                compare(shownOpacity(copy), 1, "Copy is shown without the pointer over it");
+                verify(visibleIn(findText(item, time)), "each message shows its time");
+            }
+            const revert = findNamed(reply, "revertToTurn");
+            verify(visibleIn(revert), "the reply offers Revert without the pointer over it");
+            compare(shownOpacity(revert), 1);
+            verify(findNamed(question, "revertToTurn") === null, "a user message has no revert");
+        }
+
+        // With hover, a message's actions keep their place while hidden, so
+        // showing them moves nothing and they still take a tap.
+        function test_hiddenMessageActionsKeepTheirPlace() {
+            conversation();
+            const timeline = createTemporaryObject(actionTimelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(1) !== null);
+            const question = list.itemAtIndex(0);
+            const copy = findNamed(question, "copyMessage");
+            mouseMove(list, list.width / 2, list.height - 2);
+            tryCompare(copy.parent, "opacity", 0, 2000, "Copy is hidden away from the pointer");
+            const height = question.height;
+            mouseMove(question, question.width / 2, 4);
+            tryCompare(copy.parent, "opacity", 1, 2000, "Copy shows with the pointer over the message");
+            compare(question.height, height, "showing the actions moves nothing");
+            mouseClick(copy);
+            compare(actionRows.copiedRows, ["question"]);
+        }
+
+        // Copy turns into a check for a moment once the message is copied.
+        function test_copyShowsItIsDone() {
+            conversation();
+            const timeline = createTemporaryObject(actionTimelineComponent, root, {
+                alwaysShowMeta: true
+            });
+            const spy = createTemporaryObject(signalSpyComponent, root, {
+                target: timeline,
+                signalName: "copied"
+            });
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(1) !== null);
+            const copy = findNamed(list.itemAtIndex(1), "copyMessage");
+            compare(copy.icon, "copy");
+            mouseClick(copy);
+            compare(actionRows.copiedRows, ["reply"]);
+            compare(spy.signalArguments[0][0], "reply");
+            compare(copy.icon, "check", "Copy shows a check once copied");
+            tryCompare(copy, "icon", "copy", 3000, "and goes back to Copy");
+        }
+
+        // Scenario: A tool call's icon says what kind of work it was
+        function test_toolCallsShowTheirIcon() {
+            rows.clear();
+            rows.append(root.row({
+                rowId: "work:1",
+                kind: "work",
+                expanded: true,
+                entries: [
+                    {
+                        id: "command:1",
+                        label: "Ran command",
+                        icon: "terminal",
+                        time: "9:41 AM"
+                    },
+                    {
+                        id: "tool:2",
+                        label: "Called a tool",
+                        icon: "",
+                        time: ""
+                    }
+                ]
+            }));
+            const timeline = createTemporaryObject(timelineComponent, root, {
+                alwaysShowMeta: true
+            });
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(0) !== null);
+            const item = list.itemAtIndex(0);
+            verify(visibleIn(findIcon(item, "terminal")), "a command shows the terminal icon");
+            verify(visibleIn(findIcon(item, "hammer")), "a call without an icon shows the hammer");
+            verify(visibleIn(findText(item, "9:41 AM")), "a call shows its time");
+        }
+
+        // The shown icon of that name.
+        function findIcon(item, name) {
+            if (!item || !item.visible)
+                return null;
+            if (item.name === name && item.size !== undefined)
+                return item;
+            for (let i = 0; i < item.children.length; ++i) {
+                const found = findIcon(item.children[i], name);
+                if (found)
+                    return found;
+            }
+            return null;
+        }
+
+        function findNamed(item, name) {
+            if (!item)
+                return null;
+            if (item.objectName === name)
+                return item;
+            for (let i = 0; i < item.children.length; ++i) {
+                const found = findNamed(item.children[i], name);
+                if (found)
+                    return found;
+            }
+            return null;
+        }
+
         function visibleIn(item) {
             for (let current = item; current; current = current.parent) {
                 if (!current.visible)
@@ -225,6 +397,15 @@ Item {
                     return found;
             }
             return null;
+        }
+    }
+
+    Component {
+        id: actionTimelineComponent
+        Timeline {
+            width: 600
+            height: 400
+            model: actionRows
         }
     }
 
