@@ -263,7 +263,7 @@ void DraftController::promote(const QString& threadKey) {
   if (found != m_drafts.cend()) promote(found->id, threadKey);
 }
 
-void DraftController::promote(const QString& id, const QString& threadKey) {
+void DraftController::promote(QString id, const QString& threadKey) {
   const auto found = std::find_if(m_drafts.cbegin(), m_drafts.cend(), [&id](const Draft& draft) { return draft.id == id; });
   if (found == m_drafts.cend()) return;
   m_drafts.erase(found);

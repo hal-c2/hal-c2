@@ -77,8 +77,8 @@ public:
   // done and every window that showed it shows the thread instead.
   void promote(const QString& threadKey);
   // The same for the draft `id`, whose thread may be on another environment
-  // ("Run on").
-  void promote(const QString& id, const QString& threadKey);
+  // ("Run on"). Takes its own copy of the id: the draft it may name is erased.
+  void promote(QString id, const QString& threadKey);
   void setText(const QString& id, const QString& text);
   // Gives the draft a new thread id and clears its text: its old thread was
   // started in the background and the draft stays for another prompt.
