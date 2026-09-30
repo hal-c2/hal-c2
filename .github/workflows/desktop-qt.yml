@@ -20,6 +20,11 @@ on:
   pull_request:
     paths: *paths
   workflow_dispatch:
+    inputs:
+      macos:
+        description: "Also build and test on macOS"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,13 +34,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-            qt_host: linux
-            qt_arch: linux_gcc_64
-          - os: macos-15
-            qt_host: mac
-            qt_arch: clang_64
+        # macOS runs only when dispatched with `macos`: its minutes cost ten
+        # times Linux's.
+        os: ${{ fromJSON(inputs.macos && '["ubuntu-24.04", "macos-15"]' || '["ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -60,8 +61,8 @@ jobs:
       - uses: jurplel/install-qt-action@v4
         with:
           version: "6.9.*"
-          host: ${{ matrix.qt_host }}
-          arch: ${{ matrix.qt_arch }}
+          host: ${{ runner.os == 'macOS' && 'mac' || 'linux' }}
+          arch: ${{ runner.os == 'macOS' && 'clang_64' || 'linux_gcc_64' }}
           modules: qtwebsockets
           cache: true
 

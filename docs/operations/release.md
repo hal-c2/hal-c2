@@ -17,9 +17,10 @@ a `version` (defaulting to `apps/server/package.json`). Nodes fetch from that re
 
 ## Qt desktop
 
-`.github/workflows/desktop-qt.yml` builds an unsigned Linux AppImage and macOS app bundle on every
-change to `main` and every pull request that touches the desktop, and keeps them as workflow
-artifacts. Nothing publishes them yet.
+`.github/workflows/desktop-qt.yml` builds and tests an unsigned Linux AppImage on every change to
+`main` and every pull request that touches the desktop, and keeps it as a workflow artifact. The
+macOS app bundle is built only when the workflow is dispatched by hand with `macos` checked, since
+macOS runners are expensive. Nothing publishes either yet.
 
 ## HAL-C2 Connect relay
 
