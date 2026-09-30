@@ -2,7 +2,7 @@
 // (features/tui/prompt.feature and composer/*). Assertions read the published
 // `composer` key and what the fake client was asked.
 import { expect } from "bun:test";
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type OrchestrationThread } from "@hal-c2/contracts";
 
@@ -80,7 +80,7 @@ export function prepareHost(ctx: ComposerWorld): void {
     runEditor: async (command, file) => {
       runs.push({ command, file });
       const saves = ctx.editorSaves === undefined ? "Edited in the editor" : ctx.editorSaves;
-      if (saves !== null) await NodeFS.writeFile(file, saves, "utf8");
+      if (saves !== null) await NodeFSP.writeFile(file, saves, "utf8");
     },
     readLocalImage: async (path) => {
       localReads.push(path);

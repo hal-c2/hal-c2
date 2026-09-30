@@ -16,6 +16,9 @@ import { HAL_C2_APP_DIR, HAL_C2_DEV_APP_DIR, resolveHalC2Dirs } from "@hal-c2/sh
 
 import { HostError } from "./hostError.ts";
 
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- The host is a plain Node process with no Effect runtime.
+const hostPlatform = process.platform;
+
 /** The node's own default (apps/server-ex/config/config.exs); scanned upward when taken. */
 const DEFAULT_NODE_PORT = 3780;
 const PORT_SCAN = 100;
@@ -107,7 +110,7 @@ export function nodeDataDir(input: {
   const dirs = resolveHalC2Dirs({
     env: input.env,
     homeDir: input.homeDir ?? NodeOS.homedir(),
-    platform: process.platform,
+    platform: hostPlatform,
     profile: input.launch.cwd === undefined ? HAL_C2_APP_DIR : HAL_C2_DEV_APP_DIR,
   });
   return NodePath.join(dirs.data, "elixir");
@@ -161,7 +164,7 @@ export function findLocalNodeToken(input: {
     const dirs = resolveHalC2Dirs({
       env,
       homeDir: input.homeDir ?? NodeOS.homedir(),
-      platform: process.platform,
+      platform: hostPlatform,
       profile,
     });
     candidates.push({
@@ -246,7 +249,7 @@ export function startNode(input: {
     },
     stdio: ["pipe", "pipe", "pipe"],
     // Its own process group, so stop() reaches the BEAM behind mix or the release script.
-    detached: process.platform !== "win32",
+    detached: hostPlatform !== "win32",
   });
 
   let tail = "";
@@ -279,7 +282,7 @@ export function startNode(input: {
       if (stopped || child.pid === undefined || child.exitCode !== null) return;
       stopped = true;
       try {
-        if (process.platform === "win32") child.kill("SIGTERM");
+        if (hostPlatform === "win32") child.kill("SIGTERM");
         else process.kill(-child.pid, "SIGTERM");
       } catch {
         // Already gone.

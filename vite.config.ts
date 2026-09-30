@@ -135,6 +135,8 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // QML-dialect JS (`.pragma library`) the parser cannot read.
+      "apps/desktop-qt/qml/HalC2/Bricks/js/**",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
     jsPlugins: ["./oxlint-plugin-hal-c2/index.ts", "@shadcn/lint"],
