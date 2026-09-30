@@ -2546,6 +2546,309 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # A thread the first version (the Node server's version 1 orchestrator) logged, with
+  # a user and an agent message and whatever `detail` names; the node's import folds it
+  # (`HalC2.Import.V1Thread`) as the Node server's startup migration does.
+  step ~r/^the first version's thread "(?<title>[^"]+)" had (?<detail>.+)$/,
+       %{args: [title, detail]} = context do
+    id = "v1-" <> (title |> String.downcase() |> String.replace(" ", "-"))
+    {created, extra} = v1_detail(detail, id)
+
+    events =
+      [
+        {"project", "v1-project", "project.created", "2026-08-01T09:00:00.000Z",
+         %{"projectId" => "v1-project", "title" => "legacy shop", "workspaceRoot" => "/tmp/shop"}},
+        {"thread", id, "thread.created", "2026-08-01T10:00:00.000Z",
+         Map.merge(
+           %{
+             "threadId" => id,
+             "projectId" => "v1-project",
+             "title" => title,
+             "createdAt" => "2026-08-01T10:00:00.000Z",
+             "updatedAt" => "2026-08-01T10:00:00.000Z"
+           },
+           created
+         )},
+        v1_message(id, 1, "user", "Fix the cart", v1_attachments(detail)),
+        v1_message(id, 2, "assistant", "Fixed the cart total", [])
+      ] ++ Enum.map(extra, fn {type, at, payload} -> {"thread", id, type, at, payload} end)
+
+    context
+    |> v2_log(events, [title], 1)
+    |> Map.merge(%{v1_thread: id, v1_detail: detail})
+  end
+
+  step "the thread is migrated", context do
+    {log, [title]} = context.v2_log
+    assert {:ok, %{streams: 2}} = HalC2.Import.V2.run(log, HalC2.Store)
+    context = %{context | node: Node.restart(context.node), clients: %{}}
+
+    Map.update(
+      context,
+      :threads,
+      %{title => context.v1_thread},
+      &Map.put(&1, title, context.v1_thread)
+    )
+  end
+
+  step ~r/^"(?<title>[^"]+)" still has (?<detail>its title and project|its agent and model|its permission and interaction modes|its branch and worktree|its archive, settle, snooze and pin state|its linked pull request|its user and agent messages with timestamps|its supported attachments)$/,
+       %{args: [title, detail]} = context do
+    assert detail == context.v1_detail
+    thread = World.thread(context, title)
+    assert thread["historyOrigin"] == "v1_import"
+    v1_kept(detail, context, title, thread)
+    context
+  end
+
+  # Only the conversation comes over: the thread, its messages and their turn items.
+  step ~r/^"(?<title>[^"]+)" does not have (?<detail>a live agent session|checkpoints and diffs|tool activity|pending approvals|plans)$/,
+       %{args: [title, detail]} = context do
+    assert detail == context.v1_detail
+    state = World.stream(context, title)
+    assert state.entities |> Map.keys() |> Enum.sort() == ["message", "thread", "turn-item"]
+
+    assert state |> HalC2.StreamState.list("turn-item") |> Enum.map(& &1["type"]) |> Enum.sort() ==
+             ["assistant_message", "user_message"]
+
+    assert World.thread(context, title)["activeProviderThreadId"] == nil
+    context
+  end
+
+  defp v1_message(id, n, role, text, attachments) do
+    at = "2026-08-01T10:0#{n}:00.000Z"
+
+    {"thread", id, "thread.message-sent", at,
+     %{
+       "threadId" => id,
+       "messageId" => "#{id}-m#{n}",
+       "role" => role,
+       "text" => text,
+       "attachments" => attachments,
+       "turnId" => "#{id}-turn-1",
+       "streaming" => false,
+       "createdAt" => at,
+       "updatedAt" => at
+     }}
+  end
+
+  defp v1_attachments("its supported attachments"),
+    do: [%{"type" => "image", "id" => "img-1", "name" => "cart.png", "mimeType" => "image/png"}]
+
+  defp v1_attachments(_detail), do: []
+
+  @v1_pull_request %{
+    "projectId" => "v1-project",
+    "repository" => "acme/shop",
+    "url" => "https://github.com/acme/shop/pull/7",
+    "number" => 7
+  }
+
+  # `{fields of thread.created, [{type, occurred_at, payload}]}` for each detail.
+  defp v1_detail("its agent and model", _id),
+    do:
+      {%{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6"}}, []}
+
+  defp v1_detail("its permission and interaction modes", id),
+    do:
+      {%{},
+       [
+         {"thread.runtime-mode-set", "2026-08-01T11:00:00.000Z",
+          %{
+            "threadId" => id,
+            "runtimeMode" => "approval-required",
+            "updatedAt" => "2026-08-01T11:00:00.000Z"
+          }},
+         {"thread.interaction-mode-set", "2026-08-01T11:01:00.000Z",
+          %{
+            "threadId" => id,
+            "interactionMode" => "plan",
+            "updatedAt" => "2026-08-01T11:01:00.000Z"
+          }}
+       ]}
+
+  defp v1_detail("its branch and worktree", id),
+    do:
+      {%{},
+       [
+         {"thread.meta-updated", "2026-08-01T11:00:00.000Z",
+          %{
+            "threadId" => id,
+            "branch" => "feature/cart",
+            "worktreePath" => "/tmp/shop-cart",
+            "updatedAt" => "2026-08-01T11:00:00.000Z"
+          }}
+       ]}
+
+  defp v1_detail("its archive, settle, snooze and pin state", id) do
+    at = "2026-08-01T11:00:00.000Z"
+
+    {%{},
+     [
+       {"thread.settled", at, %{"threadId" => id, "settledAt" => at, "updatedAt" => at}},
+       {"thread.snoozed", at,
+        %{
+          "threadId" => id,
+          "snoozedUntil" => "2026-08-02T09:00:00.000Z",
+          "snoozedAt" => at,
+          "updatedAt" => at
+        }},
+       {"thread.pinned", at,
+        %{"threadId" => id, "pinnedAt" => at, "pinOrderKey" => "a0", "updatedAt" => at}},
+       {"thread.archived", at, %{"threadId" => id, "archivedAt" => at, "updatedAt" => at}}
+     ]}
+  end
+
+  defp v1_detail("its linked pull request", id),
+    do:
+      {%{},
+       [
+         {"thread.meta-updated", "2026-08-01T11:00:00.000Z",
+          %{
+            "threadId" => id,
+            "linkedPullRequest" => @v1_pull_request,
+            "updatedAt" => "2026-08-01T11:00:00.000Z"
+          }}
+       ]}
+
+  defp v1_detail("a live agent session", id),
+    do:
+      {%{},
+       [
+         {"thread.session-set", "2026-08-01T10:03:00.000Z",
+          %{
+            "threadId" => id,
+            "session" => %{
+              "threadId" => id,
+              "status" => "running",
+              "providerName" => "codex",
+              "activeTurnId" => "#{id}-turn-1",
+              "updatedAt" => "2026-08-01T10:03:00.000Z"
+            }
+          }}
+       ]}
+
+  defp v1_detail("checkpoints and diffs", id),
+    do:
+      {%{},
+       [
+         {"thread.turn-diff-completed", "2026-08-01T10:03:00.000Z",
+          %{
+            "threadId" => id,
+            "turnId" => "#{id}-turn-1",
+            "checkpointTurnCount" => 1,
+            "checkpointRef" => "refs/hal-c2/checkpoints/#{id}/turn/1",
+            "status" => "ready",
+            "files" => [
+              %{"path" => "cart.ts", "kind" => "modified", "additions" => 2, "deletions" => 1}
+            ],
+            "completedAt" => "2026-08-01T10:03:00.000Z"
+          }}
+       ]}
+
+  defp v1_detail("tool activity", id), do: {%{}, [v1_activity(id, "tool.completed", "Ran tests")]}
+
+  defp v1_detail("pending approvals", id),
+    do:
+      {%{},
+       [
+         v1_activity(id, "approval.requested", "Run npm install?"),
+         {"thread.approval-response-requested", "2026-08-01T10:04:00.000Z",
+          %{"threadId" => id, "requestId" => "approval-1", "decision" => "accept"}}
+       ]}
+
+  defp v1_detail("plans", id),
+    do:
+      {%{},
+       [
+         {"thread.proposed-plan-upserted", "2026-08-01T10:03:00.000Z",
+          %{
+            "threadId" => id,
+            "proposedPlan" => %{
+              "id" => "plan-1",
+              "turnId" => "#{id}-turn-1",
+              "planMarkdown" => "1. Fix the cart",
+              "createdAt" => "2026-08-01T10:03:00.000Z",
+              "updatedAt" => "2026-08-01T10:03:00.000Z"
+            }
+          }}
+       ]}
+
+  # Details every first-version thread has: its title, project and messages.
+  defp v1_detail(_detail, _id), do: {%{}, []}
+
+  defp v1_activity(id, kind, summary),
+    do:
+      {"thread.activity-appended", "2026-08-01T10:03:00.000Z",
+       %{
+         "threadId" => id,
+         "activity" => %{
+           "id" => "activity-#{kind}",
+           "tone" => "tool",
+           "kind" => kind,
+           "summary" => summary,
+           "payload" => %{},
+           "turnId" => "#{id}-turn-1",
+           "createdAt" => "2026-08-01T10:03:00.000Z"
+         }
+       }}
+
+  defp v1_kept("its title and project", context, title, thread) do
+    assert %{"title" => ^title, "projectId" => "v1-project"} = thread
+    assert %{"title" => ^title, "projectId" => "v1-project"} = World.row(context, title)
+    assert {_kind, %{"title" => "legacy shop"}} = HalC2.Shell.row(node(), "v1-project")
+  end
+
+  defp v1_kept("its agent and model", _context, _title, thread) do
+    assert thread["modelSelection"] == %{
+             "instanceId" => "claudeAgent",
+             "model" => "claude-opus-4-6"
+           }
+
+    assert thread["providerInstanceId"] == "claudeAgent"
+  end
+
+  defp v1_kept("its permission and interaction modes", _context, _title, thread),
+    do: assert(%{"runtimeMode" => "approval-required", "interactionMode" => "plan"} = thread)
+
+  defp v1_kept("its branch and worktree", _context, _title, thread),
+    do: assert(%{"branch" => "feature/cart", "worktreePath" => "/tmp/shop-cart"} = thread)
+
+  defp v1_kept("its archive, settle, snooze and pin state", _context, _title, thread) do
+    at = "2026-08-01T11:00:00.000Z"
+
+    assert %{
+             "archivedAt" => ^at,
+             "settledOverride" => "settled",
+             "settledAt" => ^at,
+             "snoozedUntil" => "2026-08-02T09:00:00.000Z",
+             "pinnedAt" => ^at,
+             "pinOrderKey" => "a0"
+           } = thread
+  end
+
+  defp v1_kept("its linked pull request", _context, _title, thread) do
+    assert thread["linkedPullRequest"] == @v1_pull_request
+    assert [%{"number" => 7, "source" => "manual"}] = HalC2.Projection.PullRequests.of(thread)
+  end
+
+  defp v1_kept("its user and agent messages with timestamps", context, title, _thread) do
+    assert context
+           |> World.stream(title)
+           |> HalC2.StreamState.list("message")
+           |> Enum.sort_by(& &1["createdAt"])
+           |> Enum.map(&{&1["role"], &1["text"], &1["createdAt"]}) == [
+             {"user", "Fix the cart", "2026-08-01T10:01:00.000Z"},
+             {"assistant", "Fixed the cart total", "2026-08-01T10:02:00.000Z"}
+           ]
+  end
+
+  defp v1_kept("its supported attachments", context, title, _thread) do
+    messages = context |> World.stream(title) |> HalC2.StreamState.list("message")
+
+    assert [%{"attachments" => [%{"name" => "cart.png"}]}] =
+             Enum.filter(messages, &(&1["role"] == "user"))
+  end
+
   step "the thread {string} has a short conversation on Codex", %{args: [title]} = context do
     context
     |> handoff_thread(title)
@@ -2653,7 +2956,7 @@ defmodule HalC2.Steps.Threads do
 
   # Writes a Node server event log (its `orchestration_events` table) of
   # `{aggregate, stream, type, occurred_at, payload}` events.
-  defp v2_log(context, events, titles) do
+  defp v2_log(context, events, titles, version \\ 2) do
     path = Path.join(context.node.home, "previous-state.sqlite")
     {:ok, db} = Exqlite.Sqlite3.open(path)
 
@@ -2678,7 +2981,7 @@ defmodule HalC2.Steps.Threads do
           type,
           JSON.encode!(payload),
           at,
-          if(agg == "project", do: nil, else: 2)
+          if(agg == "project", do: nil, else: version)
         ])
 
       :done = Exqlite.Sqlite3.step(db, stmt)
