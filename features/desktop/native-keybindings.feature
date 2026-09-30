@@ -57,6 +57,6 @@ Feature: The desktop shell keeps the keymap
     @desktop
     Scenario: A key the shell has no command for stays with the focused control
       Given the composer has keyboard focus
-      When the user presses mod+shift+l
+      When the user presses mod+shift+y
       Then the composer receives the key
       And the page is not handed the key
