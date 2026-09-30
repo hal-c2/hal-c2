@@ -6,9 +6,8 @@
 #include <QStringList>
 #include <QUrl>
 
-// Spawns the Node desktop host and waits for its `ready` line: the URL to hand
-// to the web view and, for the node the host started, where the shell's own
-// client (NodeClient) connects.
+// Spawns the Node desktop host and waits for its `ready` line: where the
+// shell's own client (NodeClient) connects, and its bearer.
 class BackendProcess : public QObject {
   Q_OBJECT
 
@@ -25,10 +24,7 @@ public:
   void stop();
 
 signals:
-  void ready(const QUrl& url);
-  // Emitted before `ready`: where the shell's own client connects and its
-  // bearer. A host that announces a URL that is not a node fails instead.
-  void nodeAvailable(const QUrl& origin, const QString& token);
+  void ready(const QUrl& origin, const QString& token);
   void failed(const QString& message);
 
 private:

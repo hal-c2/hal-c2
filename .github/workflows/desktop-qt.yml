@@ -55,18 +55,17 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
+          # The web app's packages feed the licence manifest (third-party-licenses.ts).
           run-install: |
             args:
               - --filter=@hal-c2/web...
 
-      # Official Qt binaries on every platform so WebEngine is always present
-      # (distro packages often ship without it).
       - uses: jurplel/install-qt-action@v4
         with:
           version: "6.9.*"
           host: ${{ matrix.qt_host }}
           arch: ${{ matrix.qt_arch }}
-          modules: qtwebengine qtwebchannel qtpositioning qtwebsockets
+          modules: qtwebsockets
           cache: true
 
       # FFmpeg's headers build the Device tab's H.264 decoding
@@ -77,8 +76,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libfuse2 \
-            libxcb-cursor0 libnss3 libxcomposite1 libxdamage1 libxrandr2 libasound2t64 \
-            pkg-config libavcodec-dev libavutil-dev libswscale-dev
+            libxcb-cursor0 pkg-config libavcodec-dev libavutil-dev libswscale-dev
 
       - name: Install build tools (macOS)
         if: runner.os == 'macOS'
@@ -103,9 +101,6 @@ jobs:
 
       - name: Build
         run: cmake --build apps/desktop-qt/build/release
-
-      - name: Build web app
-        run: vp run --filter @hal-c2/web build
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1

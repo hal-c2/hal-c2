@@ -233,7 +233,7 @@ int main(int argc, char* argv[]) {
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));
   }
   BackendProcess backend(backendOptions);
-  QObject::connect(&backend, &BackendProcess::nodeAvailable, &native, &NativeShell::open);
+  QObject::connect(&backend, &BackendProcess::ready, &native, &NativeShell::open);
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
     qCritical().noquote() << "[shell]" << message;
     bridge.publish(QStringLiteral("backendError"), message);
