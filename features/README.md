@@ -69,6 +69,9 @@ Tags on a `Feature`, `Rule` or `Examples` table apply to everything under it.
 `@plugin-<id>` marks behaviour a plugin provides, for example `@plugin-claude`. The core must
 work with that plugin absent.
 
+`@priority-high` and `@priority-low` weight a `@backlog` scenario for `mise run features:pick`,
+which picks random backlog scenarios to work on. Low priority still comes up, just less often.
+
 ## Writing rules
 
 - Declarative, in the user's words. "When the user snoozes the thread until tomorrow", not
@@ -98,6 +101,13 @@ Each of these must be named in at least one `# Sources:` block:
 - every command and event in `packages/contracts/src/orchestrationV2.ts` (see `parity/commands.feature`)
 - every keybinding id in `packages/contracts/src/keybindings.ts` (see `navigation/keybindings.feature`)
 - every command palette entry
+
+## Upstream
+
+T3 Code keeps shipping, and its behaviour is ledgered here even though its code is not carried.
+`features/UPSTREAM` is the upstream commit the ledger has been reviewed through, and
+`mise run upstream` digests the pull requests merged after it. The
+[upstream-ledger skill](../.agents/skills/upstream-ledger/SKILL.md) turns them into scenarios.
 
 ## Running
 

@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#MISE description="Digest the upstream T3 Code pull requests merged in a range, for the feature ledger"
+#MISE dir="{{config_root}}"
+#USAGE flag "--limit <n>" help="Only the oldest n pull requests in the range"
+#USAGE flag "--brief" help="One line per pull request, without fetching details"
+#USAGE arg "[range]" help="Upstream commit range; default is features/UPSTREAM..upstream/main"
+# Fetches pingdotgg/t3code main into refs/remotes/upstream/main, reads the (#N) of each
+# squash-merged commit in the range, oldest first, and prints each pull request's
+# description through `gh`. The upstream-ledger skill turns the output into scenarios.
+set -euo pipefail
+
+repo=pingdotgg/t3code
+cursor_file=features/UPSTREAM
+limit="" brief="" range=""
+while (($#)); do
+  case $1 in
+    --limit)
+      [[ ${2:-} =~ ^[0-9]+$ ]] && ((10#$2 > 0)) || { echo "upstream: --limit needs a positive number" >&2; exit 2; }
+      limit=$((10#$2)); shift 2 ;;
+    --brief) brief=1; shift ;;
+    -*) echo "upstream: unknown flag $1" >&2; exit 2 ;;
+    *) range=$1; shift ;;
+  esac
+done
+
+# --no-prune: with fetch.prune set, a URL fetch into a single ref deletes it every other run.
+git fetch --quiet --no-prune --no-tags "https://github.com/$repo.git" "+main:refs/remotes/upstream/main"
+if [[ -z $range ]]; then
+  range="$(grep -v '^#' "$cursor_file" | tr -d '[:space:]')..upstream/main"
+fi
+
+# sha<TAB>subject, oldest first. Upstream squash-merges, so first-parent is one commit per PR.
+log=$(git log --first-parent --reverse --format='%H%x09%s' "$range")
+commits=()
+while IFS= read -r line; do [[ -z $line ]] || commits+=("$line"); done <<<"$log"
+total=${#commits[@]}
+if [[ -n $limit ]] && ((limit < total)); then commits=("${commits[@]:0:limit}"); fi
+if ((${#commits[@]} == 0)); then
+  echo "Nothing new upstream in $range."
+  exit 0
+fi
+through=${commits[${#commits[@]} - 1]%%$'\t'*}
+
+# Scenarios already citing this pull request or commit in a # Sources: block.
+cited() {
+  grep -rlE --include='*.feature' "t3code/pull/$1([^0-9]|\$)|\\b${2:0:9}" features | sort | paste -sd' ' - || true
+}
+
+echo "# Upstream $repo, ${#commits[@]} of $total commits in $range"
+echo
+echo "When each one below is ledgered, set $cursor_file to $through"
+for entry in "${commits[@]}"; do
+  sha=${entry%%$'\t'*} subject=${entry#*$'\t'}
+  pr=""
+  [[ $subject =~ \(#([0-9]+)\)$ || $subject =~ ^Merge\ pull\ request\ \#([0-9]+) ]] && pr=${BASH_REMATCH[1]}
+  refs=$(cited "${pr:-none}" "$sha")
+
+  if [[ -n $brief ]]; then
+    printf '%s %-7s %s%s\n' "${sha:0:9}" "${pr:+#$pr}" "$subject" "${refs:+  [cited: $refs]}"
+    continue
+  fi
+
+  echo
+  if [[ -z $pr ]]; then
+    echo "## ${sha:0:9} $subject (no pull request)"
+    echo "https://github.com/$repo/commit/$sha"
+    echo
+    git log -1 --format=%b "$sha"
+    git show --stat --format= "$sha" | tail -n 1
+  else
+    # Bodies end in review-bot badges and HTML comments, and their headings nest under the
+    # pull request's own. Files are summarised by area.
+    gh pr view "$pr" --repo "$repo" --json number,title,url,mergedAt,labels,body,files --jq "
+      \"## #\(.number) \(.title)\",
+      \"\(.url) · merged \(.mergedAt[:10]) · ${sha:0:9}\" + (if (.labels | length) > 0 then \" · \" + ([.labels[].name] | join(\", \")) else \"\" end),
+      \"Touches: \" + ([.files[].path | split(\"/\") | if length > 2 then .[:2] else .[:1] end | join(\"/\")]
+        | group_by(.) | sort_by(-length) | map(\"\(.[0]) (\(length))\") | join(\", \")),
+      \"\",
+      (.body | gsub(\"<!--[\\\\s\\\\S]*?-->\"; \"\") | gsub(\"<a [\\\\s\\\\S]*?</a>\"; \"\")
+        | gsub(\"\\n\\\\s*\\n\"; \"\\n\\n\") | gsub(\"(?m)^(?<h>#{1,4}) \"; \"##\\(.h) \") | gsub(\"\\\\s*(---\\\\s*)?\$\"; \"\") | if length > 4000 then .[:4000] + \" …(truncated)\" else . end)"
+  fi
+  [[ -z $refs ]] || echo "Already cited in: $refs"
+done
