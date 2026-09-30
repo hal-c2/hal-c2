@@ -8,6 +8,10 @@ to reason about the screenshot.
 SnapShots are off by default and available in the desktop app on macOS, Windows, and Linux with
 Wayland. X11 sessions are not supported.
 
+The new Qt desktop app captures only on Linux with Wayland so far, always through the desktop's
+screenshot portal (see [Other Wayland desktops](#linux-desktops)), with the capture sound as its only
+cue. It does not capture on macOS or Windows yet.
+
 ## Turning it on
 
 Open **Settings** > **SnapShots** and turn the feature on. Setup has two steps: allow capture, then

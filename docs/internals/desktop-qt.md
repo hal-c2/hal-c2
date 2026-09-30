@@ -880,10 +880,16 @@ Project section also carries how new threads start (model, permissions,
 workspace, submodules), which the web splits between it and General, since the
 native General page holds only this device's settings.
 
-SnapShots is still HTML: the desktop has no capture helper. The shell's
-settings navigation and search are its own (`js/settingsPages.js`); picking
-SnapShots sets the route and the page follows it there like any other page
-route. When hosted, `AppSidebarLayout` renders no sidebar on any route.
+SnapShots is native (`SnapShotController`, the `SnapShotSettings` brick), but
+its platform half is only the xdg-desktop-portal backend (`PortalSnapShot`,
+over QtDBus), used on every Wayland desktop (see `linux-snap-shot.md`). On
+macOS, Windows and X11 the section says capture is unavailable; those
+scenarios, and the Electron helpers, are `@backlog-desktop`. The portal gives no
+flash, animation or accessibility tree, so those rows stay locked. A capture
+lands through `ComposerController::attachImage`, shrunk to the attachment
+limit like the web's. The shell's settings navigation and search are its own
+(`js/settingsPages.js`). When hosted, `AppSidebarLayout` renders no sidebar on
+any route.
 
 ### `route`
 
