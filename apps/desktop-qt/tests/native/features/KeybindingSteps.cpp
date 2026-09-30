@@ -30,6 +30,7 @@
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "NavigationController.h"
+#include "RightPanelController.h"
 #include "TerminalController.h"
 #include "World.h"
 
@@ -456,6 +457,21 @@ const Steps steps([] {
     world.waitFor([&world] { return terminals(world)->isOpen() && terminals(world)->tabs()->rowCount() == 1; },
                   QStringLiteral("the thread's first terminal"));
     setFocus(world, {{QStringLiteral("terminal"), true}});
+  });
+  // The desktop's preview is the right panel's Previews tab (preview.toggle).
+  step(QStringLiteral("the user is looking at a thread in the desktop app"), [](World& world, const Captures&, const Table&) {
+    showThread(world);
+    setFocus(world, {});
+  });
+  const auto previewShown = [](World& world) {
+    auto* panel = world.native().controller<RightPanelController>();
+    return panel->isOpen() && panel->activeTab() == QLatin1String("previews");
+  };
+  step(QStringLiteral("the preview is shown"), [previewShown](World& world, const Captures&, const Table&) {
+    expect(previewShown(world), QStringLiteral("%1; the panel is %2").arg(describePress(world), show(world.state(QStringLiteral("panel")))));
+  });
+  step(QStringLiteral("the preview is hidden"), [previewShown](World& world, const Captures&, const Table&) {
+    expect(!previewShown(world), QStringLiteral("%1; the panel is %2").arg(describePress(world), show(world.state(QStringLiteral("panel")))));
   });
   step(QStringLiteral("the user is on (macOS|Linux|Windows)"), [](World& world, const Captures& c, const Table&) {
     setMac(world, c[0] == QLatin1String("macOS"));

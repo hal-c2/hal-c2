@@ -31,7 +31,7 @@
 namespace {
 const NativeControllerRegistrar<ComposerController> registrar(QStringLiteral("composer"),
                                                                {QStringLiteral("turn"), QStringLiteral("composer"),
-                                                                QStringLiteral("modelPicker")});
+                                                                QStringLiteral("modelPicker"), QStringLiteral("composerStash")});
 
 // apps/web/src/proposedPlan.ts PLAN_IMPLEMENTATION_PROMPT_PREFIX.
 const QString kImplementPrefix = QStringLiteral("PLEASE IMPLEMENT THIS PLAN:\n");
@@ -113,6 +113,9 @@ QString imagesSignature(const QJsonObject& targets) {
 QString newId() {
   return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }
+
+// apps/web/src/promptStashStore.ts MAX_STASH_ENTRIES.
+constexpr qsizetype kMaxStashEntries = 20;
 
 }  // namespace
 
@@ -219,6 +222,24 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
 
+  if (action == QLatin1String("composer.stash")) return stash(target);
+  if (action == QLatin1String("composer.stash.restore")) {
+    if (!target.isEmpty()) restoreStash(target, map.value(QStringLiteral("id")).toString());
+    return true;
+  }
+  if (action == QLatin1String("composer.stash.delete")) {
+    const QString id = map.value(QStringLiteral("id")).toString();
+    if (m_kept.stash.removeIf([&](const StashEntry& entry) { return entry.id == id; }) == 0) return true;
+    if (m_kept.stash.isEmpty()) m_stashOpen = false;
+    save();
+    publish();
+    return true;
+  }
+  if (action == QLatin1String("composer.stash.menu")) {
+    setStashOpen(map.contains(QStringLiteral("open")) ? map.value(QStringLiteral("open")).toBool() : !m_stashOpen);
+    return true;
+  }
+
   if (action == QLatin1String("composer.interrupt")) return interrupt();
   if (action == QLatin1String("composer.submit")) return submit(map);
   if (action == QLatin1String("composer.attach")) return attach(map.value(QStringLiteral("files")).toList());
@@ -267,6 +288,89 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     return queueCommand(QStringLiteral("queued-message.promote-to-steer"), runId);
   }
   return false;
+}
+
+// The web's stashCurrentPrompt: the draft goes to the stash and the composer
+// empties; an empty draft brings back the only entry, or opens the list.
+// Nothing while an approval waits; a question waiting opens the list instead.
+bool ComposerController::stash(const QString& target) {
+  if (target.isEmpty()) return true;
+  const QVariantMap turn = turnState();
+  if (!turn.value(QStringLiteral("approvals")).toList().isEmpty()) return true;
+  if (!turn.value(QStringLiteral("questions")).toList().isEmpty()) {
+    setStashOpen(!m_stashOpen);
+    return true;
+  }
+  Draft& kept = m_drafts[target];
+  const QString text = draft(target).trimmed();
+  if (text.isEmpty() && kept.attachments.isEmpty() && kept.terminalContexts.isEmpty()) {
+    if (m_kept.stash.size() == 1) {
+      restoreStash(target, m_kept.stash.constFirst().id);
+    } else {
+      setStashOpen(!m_stashOpen);
+    }
+    return true;
+  }
+  m_kept.stash.prepend({newId(), m_now(), text, kept.attachments, kept.terminalContexts});
+  if (m_kept.stash.size() > kMaxStashEntries) {
+    m_kept.stash.removeLast();
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("Oldest stashed prompt discarded"),
+        QStringLiteral("The stash holds %1 prompts; the oldest was removed to make room.").arg(kMaxStashEntries));
+  }
+  kept.attachments.clear();
+  kept.terminalContexts.clear();
+  // Clearing saves and publishes.
+  setText(target, QString(), 0);
+  save();
+  return true;
+}
+
+// The entry joins what the draft already holds, after a blank line, and
+// leaves the stash (the web's restoreStashEntry).
+void ComposerController::restoreStash(const QString& target, const QString& id) {
+  const auto found = std::find_if(m_kept.stash.cbegin(), m_kept.stash.cend(),
+                                  [&](const StashEntry& entry) { return entry.id == id; });
+  if (found == m_kept.stash.cend()) return;
+  const StashEntry entry = *found;
+  m_kept.stash.removeAt(found - m_kept.stash.cbegin());
+  m_stashOpen = false;
+  Draft& kept = m_drafts[target];
+  kept.attachments.append(entry.attachments);
+  kept.terminalContexts.append(entry.terminalContexts);
+  const QString current = draft(target);
+  const QString text = current.trimmed().isEmpty() ? entry.text : current.trimmed() + QStringLiteral("\n\n") + entry.text;
+  setText(target, text, int(text.size()));
+  save();
+}
+
+void ComposerController::setStashOpen(bool open) {
+  if (open == m_stashOpen) return;
+  m_stashOpen = open;
+  publish();
+}
+
+// apps/web/src/components/chat/ComposerStashMenu.tsx stashEntrySnippet.
+QVariantMap ComposerController::stashState() const {
+  static const QRegularExpression space(QStringLiteral("\\s+"));
+  QVariantList entries;
+  for (const StashEntry& entry : m_kept.stash) {
+    QString snippet = entry.text.trimmed().replace(space, QStringLiteral(" "));
+    if (snippet.size() > 90) {
+      snippet = snippet.left(90) + QStringLiteral("…");
+    } else if (snippet.isEmpty()) {
+      const qsizetype images = entry.attachments.size();
+      snippet = images == 0 ? QStringLiteral("(empty)")
+                            : QStringLiteral("(%1 image%2)").arg(images).arg(images == 1 ? "" : "s");
+    }
+    entries.append(QVariantMap{{QStringLiteral("id"), entry.id},
+                               {QStringLiteral("snippet"), snippet},
+                               {QStringLiteral("createdAt"), entry.createdAt.toString(Qt::ISODateWithMs)}});
+  }
+  return {{QStringLiteral("entries"), entries},
+          {QStringLiteral("open"), m_stashOpen},
+          {QStringLiteral("shortcut"),
+           NativeShell::of(this)->controller<KeybindingController>()->shortcutLabel(QStringLiteral("composer.stash"))}};
 }
 
 // Stops the thread's active run, or the latest one while it still waits on
@@ -985,6 +1089,11 @@ void ComposerController::publish() {
     m_publishedPicker = picker;
     m_bridge->publish(QStringLiteral("modelPicker"), picker);
   }
+  const QVariantMap stash = stashState();
+  if (stash != m_publishedStash) {
+    m_publishedStash = stash;
+    m_bridge->publish(QStringLiteral("composerStash"), stash);
+  }
   // Other windows list the draft by what it holds.
   if (!m_draftId.isEmpty()) {
     for (const auto& window : NativeShell::of(this)->shell()->windows()) window->sidebar()->draftEdited(m_draftId);
@@ -1494,12 +1603,36 @@ QVariantMap ComposerController::pickerState() const {
 // --- Keeping drafts ---------------------------------------------------------------
 
 // Each target's text and choices, as {targets: {<target>: {text, modelSelection,
-// runtimeMode, interactionMode}}}, and their images beside them (imagesPath).
+// runtimeMode, interactionMode}}, stash: [{id, createdAt, text, attachments,
+// terminalContexts}]}, and the drafts' images beside them (imagesPath).
 void ComposerController::setStorePath(const QString& path) {
   m_kept.path = path;
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return;
-  const QJsonObject targets = QJsonDocument::fromJson(file.readAll()).object().value(QLatin1String("targets")).toObject();
+  const QJsonObject stored = QJsonDocument::fromJson(file.readAll()).object();
+  m_kept.stash.clear();
+  for (const QJsonValue& value : stored.value(QLatin1String("stash")).toArray()) {
+    const QJsonObject entry = value.toObject();
+    StashEntry kept{str(entry, QLatin1String("id")),
+                    QDateTime::fromString(str(entry, QLatin1String("createdAt")), Qt::ISODateWithMs),
+                    str(entry, QLatin1String("text")),
+                    {},
+                    {}};
+    for (const QJsonValue& image : entry.value(QLatin1String("attachments")).toArray()) {
+      const QJsonObject a = image.toObject();
+      kept.attachments.append({str(a, QLatin1String("id")), str(a, QLatin1String("name")), str(a, QLatin1String("mimeType")),
+                               qint64(a.value(QLatin1String("sizeBytes")).toDouble()), str(a, QLatin1String("dataUrl")),
+                               a.value(QLatin1String("source")).toObject()});
+    }
+    for (const QJsonValue& context : entry.value(QLatin1String("terminalContexts")).toArray()) {
+      const QJsonObject t = context.toObject();
+      kept.terminalContexts.append({str(t, QLatin1String("id")), str(t, QLatin1String("terminalId")),
+                                    str(t, QLatin1String("terminalLabel")), t.value(QLatin1String("lineStart")).toInt(1),
+                                    t.value(QLatin1String("lineEnd")).toInt(1), str(t, QLatin1String("text"))});
+    }
+    if (!kept.id.isEmpty()) m_kept.stash.append(kept);
+  }
+  const QJsonObject targets = stored.value(QLatin1String("targets")).toObject();
   for (auto it = targets.begin(); it != targets.end(); ++it) {
     const QJsonObject entry = it.value().toObject();
     Draft& kept = m_drafts[it.key()];
@@ -1561,9 +1694,33 @@ void ComposerController::save() const {
     if (!kept.interactionMode.isEmpty()) entry.insert(QStringLiteral("interactionMode"), kept.interactionMode);
     if (!entry.isEmpty()) targets.insert(it.key(), entry);
   }
+  QJsonArray stash;
+  for (const StashEntry& entry : m_kept.stash) {
+    QJsonArray images;
+    for (const Attachment& a : entry.attachments) {
+      QJsonObject image{{QStringLiteral("id"), a.id}, {QStringLiteral("name"), a.name},
+                        {QStringLiteral("mimeType"), a.mimeType}, {QStringLiteral("sizeBytes"), double(a.sizeBytes)},
+                        {QStringLiteral("dataUrl"), a.dataUrl}};
+      if (!a.source.isEmpty()) image.insert(QStringLiteral("source"), a.source);
+      images.append(image);
+    }
+    QJsonArray contexts;
+    for (const TerminalContext& t : entry.terminalContexts) {
+      contexts.append(QJsonObject{{QStringLiteral("id"), t.id}, {QStringLiteral("terminalId"), t.terminalId},
+                                  {QStringLiteral("terminalLabel"), t.terminalLabel}, {QStringLiteral("lineStart"), t.lineStart},
+                                  {QStringLiteral("lineEnd"), t.lineEnd}, {QStringLiteral("text"), t.text}});
+    }
+    stash.append(QJsonObject{{QStringLiteral("id"), entry.id},
+                             {QStringLiteral("createdAt"), entry.createdAt.toString(Qt::ISODateWithMs)},
+                             {QStringLiteral("text"), entry.text},
+                             {QStringLiteral("attachments"), images},
+                             {QStringLiteral("terminalContexts"), contexts}});
+  }
   QFile file(m_kept.path);
   if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-    file.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), targets}}).toJson(QJsonDocument::Compact));
+    QJsonObject stored{{QStringLiteral("targets"), targets}};
+    if (!stash.isEmpty()) stored.insert(QStringLiteral("stash"), stash);
+    file.write(QJsonDocument(stored).toJson(QJsonDocument::Compact));
   }
   // The drafts' images, apart: rewritten only when they change.
   QJsonObject images;

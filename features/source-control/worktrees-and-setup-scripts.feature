@@ -15,7 +15,7 @@
 #   apps/web/src/components/chat/WorktreeSetupCard.tsx
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (checkout mode)
 #   packages/contracts/src/shell.ts (workspace.envMode.set)
-#   apps/desktop-qt/src/native/WorkspaceController.cpp (a new thread's checkout)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (a new thread's checkout, the previous worktree)
 
 Feature: Worktrees and setup scripts
   A thread can start in its own worktree. The node creates it from a base ref, runs the
@@ -204,7 +204,7 @@ Feature: Worktrees and setup scripts
     When the user removes that worktree with force
     Then its folder is gone
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Returning to the previous worktree
     Given the user just finished a thread in the worktree on "feature/tax"
     When the user starts a new thread in "shop"

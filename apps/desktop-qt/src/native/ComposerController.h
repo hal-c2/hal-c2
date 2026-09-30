@@ -73,7 +73,15 @@ class TimelineModel;
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
 // composer.queue.steer {runId?} (the first queued without one),
 // composer.queue.edit {runId?} (the last queued without one),
-// composer.queue.edit.cancel.
+// composer.queue.edit.cancel, composer.stash, composer.stash.restore {id},
+// composer.stash.delete {id}, composer.stash.menu {open?} (toggles without).
+//
+// The stash (the web's promptStashStore) is this machine's, not a thread's:
+// the prompts set aside with composer.stash, newest first, at most 20, kept
+// with the drafts and the same in every window. Stashing an empty draft
+// brings back the only entry, or opens the list. Publishes `composerStash`:
+// {entries: [{id, snippet, createdAt}], open, shortcut}, `open` being this
+// window's.
 //
 // A terminal excerpt is a chip on the draft (`composer.terminalContexts`), as
 // the web's terminal context; a send appends an inline context link for each
@@ -148,6 +156,14 @@ private:
     QList<Attachment> attachments;
     QList<TerminalContext> terminalContexts;
   };
+  // A prompt set aside (composer.stash), with what it carried.
+  struct StashEntry {
+    QString id;
+    QDateTime createdAt;
+    QString text;
+    QList<Attachment> attachments;
+    QList<TerminalContext> terminalContexts;
+  };
   struct Send {
     QString target;
     QString environmentId;
@@ -183,6 +199,10 @@ private:
   // The message text with a context link per excerpt, and their records as
   // its `context`.
   static void withTerminalContexts(QJsonObject& message, const QList<TerminalContext>& contexts);
+  bool stash(const QString& target);
+  void restoreStash(const QString& target, const QString& id);
+  void setStashOpen(bool open);
+  QVariantMap stashState() const;
   bool respond(const QString& requestId, const QJsonObject& fields, const QString& failure);
   bool queueCommand(const QString& type, const QString& runId);
   bool editQueued(const QString& target, QString runId);
@@ -247,6 +267,8 @@ private:
   // What every window's composer keeps.
   struct Kept {
     QHash<QString, Draft> drafts;
+    // Newest first.
+    QList<StashEntry> stash;
     QString path;
     // The images last written beside the drafts (imagesPath), so a keystroke
     // does not rewrite them.
@@ -272,6 +294,9 @@ private:
   QVariantMap m_published;
   QVariant m_publishedComposer;
   QVariantMap m_publishedPicker;
+  QVariantMap m_publishedStash;
+  // This window's stash list is open.
+  bool m_stashOpen = false;
   QList<composer::Instance> m_catalogue;
   // The @ search the menu shows: its target and query, and what came back.
   struct PathSearch {

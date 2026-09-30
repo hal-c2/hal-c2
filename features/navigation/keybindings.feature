@@ -82,6 +82,9 @@ Feature: Keybindings
         | composer.mode                | mod+shift+a         | outside a terminal         | aligned |
         | composer.workspace           | mod+shift+x         | outside a terminal         | aligned |
         | composer.branch              | mod+shift+g         | outside a terminal         | aligned |
+        | composer.stash               | mod+s               | outside a terminal         | aligned |
+        | composer.previousWorktree    | mod+shift+l         | outside a terminal         | aligned |
+        | preview.toggle               | mod+shift+j         | anywhere                   | aligned |
         | thread.jump.1                | mod+1               | anywhere                   | aligned |
         | thread.jump.2                | mod+2               | anywhere                   | aligned |
         | thread.jump.3                | mod+3               | anywhere                   | aligned |
@@ -92,10 +95,11 @@ Feature: Keybindings
         | thread.jump.8                | mod+8               | anywhere                   | aligned |
         | thread.jump.9                | mod+9               | anywhere                   | aligned |
 
+      # preview.refresh, focusUrl and the zoom keys act on the in-app browser, which the
+      # desktop does not have yet.
       @backlog
       Examples: Not yet honoured by the native client
         | command                   | key             | context                           | status  |
-        | preview.toggle            | mod+shift+j     | anywhere                          | backlog |
         | preview.refresh           | mod+r           | in the preview                    | backlog |
         | preview.focusUrl          | mod+l           | in the preview                    | backlog |
         | preview.zoomIn            | mod+=           | in the preview                    | backlog |
@@ -105,8 +109,6 @@ Feature: Keybindings
         | thread.editQueuedMessage  | alt+arrowup     | in the composer                   | backlog |
         | composer.sendAlternate    | mod+enter       | in the composer while a turn runs | backlog |
         | composer.sendBackground   | mod+alt+enter   | in the composer of a new thread   | backlog |
-        | composer.previousWorktree | mod+shift+l     | outside a terminal                | backlog |
-        | composer.stash            | mod+s           | outside a terminal                | backlog |
         | thread.undo               | mod+z           | outside text fields and terminals | backlog |
 
     @desktop
@@ -151,33 +153,36 @@ Feature: Keybindings
       Then "<command>" behaves as it does in the web app
 
       Examples: aligned
-        | command               | key         | status  | note                                      |
-        | chat.new              | mod+n       | aligned | the shell starts a new thread             |
-        | chat.newLocal         | mod+shift+n | aligned | the shell starts a new thread in place    |
-        | commandPalette.toggle | mod+k       | aligned | the shell opens the command palette       |
-        | terminal.toggle       | mod+j       | aligned | the shell toggles the terminal drawer     |
-        | sidebar.toggle        | mod+b       | aligned | the shell toggles the sidebar             |
-        | rightPanel.toggle     | mod+alt+b   | aligned | the shell toggles the right panel         |
-        | diff.toggle           | mod+d       | aligned | the shell toggles the Diff tab            |
-        | navigation.back       | mod+[       | aligned | the shell goes back                       |
-        | navigation.forward    | mod+]       | aligned | the shell goes forward                    |
-        | thread.previous       | mod+shift+[ | aligned | the shell opens the sidebar's previous    |
-        | thread.next           | mod+shift+] | aligned | the shell opens the sidebar's next        |
-        | filePicker.toggle     | mod+p       | aligned | the shell opens the palette on files      |
-        | projectSearch.toggle  | mod+shift+f | aligned | the shell opens the palette's text search |
-        | theme.select          | mod+alt+a   | aligned | the shell opens the palette on themes     |
-        | modelPicker.toggle    | mod+shift+m | aligned | the shell toggles the composer's picker   |
-        | editor.openFavorite   | mod+o       | aligned | the shell opens the preferred editor      |
-        | thread.copyReference  | mod+shift+c | aligned | the shell copies the thread's reference   |
-        | thread.settle         | mod+shift+s | aligned | the shell settles the thread              |
-        | thread.pin            | mod+shift+p | aligned | the shell pins the thread                 |
-        | thread.jump.1         | mod+1       | aligned | the shell opens the sidebar's first       |
-        | thread.jump.9         | mod+9       | aligned | the shell opens the sidebar's ninth       |
-        | composer.effort       | mod+shift+e | aligned | the composer opens its effort picker      |
-        | composer.mode         | mod+shift+a | aligned | the composer opens its mode picker        |
-        | composer.host         | mod+shift+h | aligned | the composer opens its host picker        |
-        | composer.workspace    | mod+shift+x | aligned | the composer opens its workspace picker   |
-        | composer.branch       | mod+shift+g | aligned | the composer opens its branch picker      |
+        | command                   | key         | status  | note                                      |
+        | chat.new                  | mod+n       | aligned | the shell starts a new thread             |
+        | chat.newLocal             | mod+shift+n | aligned | the shell starts a new thread in place    |
+        | commandPalette.toggle     | mod+k       | aligned | the shell opens the command palette       |
+        | terminal.toggle           | mod+j       | aligned | the shell toggles the terminal drawer     |
+        | sidebar.toggle            | mod+b       | aligned | the shell toggles the sidebar             |
+        | rightPanel.toggle         | mod+alt+b   | aligned | the shell toggles the right panel         |
+        | diff.toggle               | mod+d       | aligned | the shell toggles the Diff tab            |
+        | navigation.back           | mod+[       | aligned | the shell goes back                       |
+        | navigation.forward        | mod+]       | aligned | the shell goes forward                    |
+        | thread.previous           | mod+shift+[ | aligned | the shell opens the sidebar's previous    |
+        | thread.next               | mod+shift+] | aligned | the shell opens the sidebar's next        |
+        | filePicker.toggle         | mod+p       | aligned | the shell opens the palette on files      |
+        | projectSearch.toggle      | mod+shift+f | aligned | the shell opens the palette's text search |
+        | theme.select              | mod+alt+a   | aligned | the shell opens the palette on themes     |
+        | modelPicker.toggle        | mod+shift+m | aligned | the shell toggles the composer's picker   |
+        | editor.openFavorite       | mod+o       | aligned | the shell opens the preferred editor      |
+        | thread.copyReference      | mod+shift+c | aligned | the shell copies the thread's reference   |
+        | thread.settle             | mod+shift+s | aligned | the shell settles the thread              |
+        | thread.pin                | mod+shift+p | aligned | the shell pins the thread                 |
+        | thread.jump.1             | mod+1       | aligned | the shell opens the sidebar's first       |
+        | thread.jump.9             | mod+9       | aligned | the shell opens the sidebar's ninth       |
+        | composer.effort           | mod+shift+e | aligned | the composer opens its effort picker      |
+        | composer.mode             | mod+shift+a | aligned | the composer opens its mode picker        |
+        | composer.host             | mod+shift+h | aligned | the composer opens its host picker        |
+        | composer.workspace        | mod+shift+x | aligned | the composer opens its workspace picker   |
+        | composer.branch           | mod+shift+g | aligned | the composer opens its branch picker      |
+        | composer.stash            | mod+s       | aligned | the composer stashes its prompt           |
+        | composer.previousWorktree | mod+shift+l | aligned | the draft takes the previous worktree     |
+        | preview.toggle            | mod+shift+j | aligned | the shell toggles the Previews tab        |
 
       @backlog
       Examples: backlog
@@ -188,9 +193,6 @@ Feature: Keybindings
         | composer.sendAlternate    | mod+enter     | backlog | the window shortcut takes it and loses composer focus |
         | composer.sendBackground   | mod+alt+enter | backlog | the window shortcut takes it and loses composer focus |
         | thread.editQueuedMessage  | alt+arrowup   | backlog | only applies with composer focus                      |
-        | composer.previousWorktree | mod+shift+l   | backlog | the native composer has no worktree history           |
-        | composer.stash            | mod+s         | backlog | the native composer has no stash                      |
-        | preview.toggle            | mod+shift+j   | backlog | needs the in-app preview                              |
 
       @dropped
       Examples: n/a
@@ -332,7 +334,8 @@ Feature: Keybindings
         | mod+d       | a second terminal opens side by side         |
         | mod+shift+d | a second terminal opens stacked below        |
 
-    @backlog @desktop
+    # The desktop's preview is the right panel's Previews tab.
+    @desktop
     Scenario: The preview shortcut shows and hides the preview
       Given the user is looking at a thread in the desktop app
       When the user presses mod+shift+j
@@ -347,6 +350,7 @@ Feature: Keybindings
       Then the user is told "Preview is desktop-only"
       And the user is told to open HAL-C2 in the desktop app to use it
 
+    # These need the in-app browser, which the desktop does not have yet.
     @backlog @desktop
     Scenario Outline: Preview shortcuts act on the focused preview
       Given the preview has keyboard focus at 100% zoom
@@ -361,6 +365,7 @@ Feature: Keybindings
         | mod+- | the page zooms out one step   |
         | mod+0 | the page returns to 100% zoom |
 
+    # These need the in-app browser, which the desktop does not have yet.
     @backlog @desktop
     Scenario: Preview shortcuts do nothing outside the preview
       Given the composer has keyboard focus

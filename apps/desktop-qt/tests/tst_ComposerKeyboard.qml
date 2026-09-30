@@ -60,5 +60,27 @@ Item {
             compare(input.text, "\n");
             compare(Shell.dispatchCount, 0);
         }
+        function test_stashListKeys() {
+            Shell.state = { composer: Shell.defaultComposer(), workspace: null, composerStash: {
+                open: true, shortcut: "Ctrl+S",
+                entries: [{ id: "new", snippet: "newer", createdAt: "" }, { id: "old", snippet: "older", createdAt: "" }]
+            } };
+            let composer = createTemporaryObject(component, root);
+            verify(!!composer, "Component exists");
+            verify(findChild(composer, "stashList").visible);
+            let input = findChild(composer, "input");
+            input.forceActiveFocus();
+            keyClick(Qt.Key_Down);
+            keyClick(Qt.Key_Backspace, Qt.ControlModifier);
+            const deleted = Shell.dispatchedActions.find(entry => entry.action === "composer.stash.delete");
+            compare(deleted.payload.id, "old");
+            keyClick(Qt.Key_Return);
+            const restored = Shell.dispatchedActions.find(entry => entry.action === "composer.stash.restore");
+            compare(restored.payload.id, "old");
+            keyClick(Qt.Key_Escape);
+            const closed = Shell.dispatchedActions.find(entry => entry.action === "composer.stash.menu");
+            compare(closed.payload.open, false);
+            compare(input.text, "");
+        }
     }
 }
