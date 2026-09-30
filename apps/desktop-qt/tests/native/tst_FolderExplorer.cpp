@@ -1,5 +1,6 @@
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QQmlComponent>
 #include <QQmlEngine>
@@ -13,9 +14,15 @@
 #include "ShellBridge.h"
 #include "ThemeStore.h"
 
+// macOS keeps temporary files under /var, a symlink LocalFolderModel refuses as a
+// root; fixtures live under its real path instead.
+static QString plainTempTemplate() {
+  return QFileInfo(QDir::tempPath()).canonicalFilePath() + QStringLiteral("/tst-XXXXXX");
+}
+
 class FolderExplorerTest : public QObject {
   Q_OBJECT
-  QTemporaryDir directory;
+  QTemporaryDir directory{plainTempTemplate()};
   ShellBridge bridge;
   std::unique_ptr<ThemeStore> theme;
   std::unique_ptr<QQmlEngine> engine;
@@ -123,7 +130,7 @@ private slots:
   }
 
   void expandedRowsKeepTheirOwnPathsAndDepths() {
-    QTemporaryDir fixture;
+    QTemporaryDir fixture{plainTempTemplate()};
     QVERIFY(fixture.isValid());
     for (const auto& path : {"archive/interface", "docs", "experiments", "src"}) {
       QVERIFY(QDir(fixture.path()).mkpath(path));

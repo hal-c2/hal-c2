@@ -15,8 +15,15 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     context |> Map.put(:hello, hello) |> World.put_client(client)
   end
 
-  step "the first frame names protocol 3 and the node it reached", context do
-    assert context.hello == %{"t" => "hello", "protocol" => 3, "node" => Atom.to_string(node())}
+  step "the first frame names protocol 3, the node it reached and the environment it serves",
+       context do
+    assert context.hello == %{
+             "t" => "hello",
+             "protocol" => 3,
+             "node" => Atom.to_string(node()),
+             "environment" => context.node.environment
+           }
+
     context
   end
 
@@ -514,15 +521,17 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     follow_thread(context)
   end
 
+  # Scheduled tasks answer from their server, which a suspended process holds up
+  # (settings are read from a table and never wait).
   step "it calls an RPC that takes a long time", context do
-    settings = Node.ensure(HalC2.Settings)
-    :ok = :sys.suspend(settings)
-    ExUnit.Callbacks.on_exit(fn -> resume(settings) end)
+    tasks = Node.ensure(HalC2.ScheduledTasks)
+    :ok = :sys.suspend(tasks)
+    ExUnit.Callbacks.on_exit(fn -> resume(tasks) end)
 
     client =
-      Node.rpc(World.client(context), context.node.environment, 99, "hal-c2.readSettings", %{})
+      Node.rpc(World.client(context), context.node.environment, 99, "scheduledTasks.list", %{})
 
-    context |> Map.put(:settings_pid, settings) |> World.put_client(client)
+    context |> Map.put(:tasks_pid, tasks) |> World.put_client(client)
   end
 
   step "events for the thread keep arriving while the call runs", context do
@@ -534,9 +543,9 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     assert [[^seq | _]] = frame["events"]
     refute Enum.any?(skipped, &(&1["id"] == 99))
 
-    :ok = :sys.resume(context.settings_pid)
+    :ok = :sys.resume(context.tasks_pid)
     {reply, client} = Node.await(client, Node.reply?(99))
-    assert %{"t" => "rpc.result", "result" => %{"version" => _}} = reply
+    assert %{"t" => "rpc.result", "result" => %{"tasks" => _}} = reply
     World.put_client(context, client)
   end
 
@@ -582,20 +591,20 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     # Ten minutes is the default; the scenario shortens it rather than waiting.
     Application.put_env(:hal_c2, :rpc_timeout, 100)
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :rpc_timeout) end)
-    settings = Node.ensure(HalC2.Settings)
-    :ok = :sys.suspend(settings)
-    ExUnit.Callbacks.on_exit(fn -> resume(settings) end)
+    tasks = Node.ensure(HalC2.ScheduledTasks)
+    :ok = :sys.suspend(tasks)
+    ExUnit.Callbacks.on_exit(fn -> resume(tasks) end)
 
     client =
-      Node.rpc(World.client(context), context.node.environment, 7, "hal-c2.readSettings", %{})
+      Node.rpc(World.client(context), context.node.environment, 7, "scheduledTasks.list", %{})
 
-    context |> Map.put(:settings_pid, settings) |> World.put_client(client)
+    context |> Map.put(:tasks_pid, tasks) |> World.put_client(client)
   end
 
   step "it fails after ten minutes", context do
     {reply, client} = Node.await(World.client(context), Node.reply?(7))
-    assert %{"t" => "rpc.error", "error" => "hal-c2.readSettings timed out"} = reply
-    :ok = :sys.resume(context.settings_pid)
+    assert %{"t" => "rpc.error", "error" => "scheduledTasks.list timed out"} = reply
+    :ok = :sys.resume(context.tasks_pid)
     World.put_client(context, client)
   end
 

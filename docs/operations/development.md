@@ -154,16 +154,16 @@ vp run --filter <package> typecheck
 
 Behaviour scenarios run per surface with `mise run features:node <globs>`, `features:tui` and
 `features:desktop`; see [running features](../../features/README.md#running).
-Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
-[ci.yml](../../.github/workflows/ci.yml) for its current jobs.
-The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
-Windows investigation while that suite is not a required gate.
+Use `vp run lint:mobile` for native mobile changes. CI covers the node, the TUI and the Qt desktop
+([ci.yml](../../.github/workflows/ci.yml), [desktop-qt.yml](../../.github/workflows/desktop-qt.yml));
+the legacy Node server, web, Electron and React Native apps have no CI, so check what you touch there
+by hand.
 
 ### Unused code
 
 `vp run knip:check` checks unused files and dependencies across the repo, then
 unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
-`packages/`. CI enforces both checks.
+`packages/`. CI does not run it.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor
 recognizes schema types, including aliases and schema classes; functions that create or decode
 schemas remain checked. Canonical Effect service construction APIs stay exported with an explicit
@@ -240,10 +240,10 @@ rustup target add aarch64-pc-windows-msvc
 
 NSIS is downloaded by electron-builder. WSL support additionally needs the Linux CLI archive
 passed as `--wsl-runtime`; see the
-[release runbook](./release.md#windows-payload-topology-and-update-validation).
+[release runbook](./release.md#windows-payload-topology).
 
 ### Signing and passkeys
 
-Add `--signed` after configuring the platform credentials in the
-[release runbook](./release.md). macOS passkeys need a signed, provisioned app; follow the
+Add `--signed` after setting the platform credentials in the
+[release runbook](./release.md#signing-local-electron-builds). macOS passkeys need a signed, provisioned app; follow the
 [Connect setup](./connect-setup.md#desktop-passkeys) for local signing and renderer HMR.

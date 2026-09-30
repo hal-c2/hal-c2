@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Standalone build script, deliberately Effect-free.
 /**
  * Writes the third-party license manifest the Qt desktop's Open source
  * licenses page reads (src/native/LicensesController): the web app's packages,

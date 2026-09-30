@@ -1,9 +1,10 @@
 name: Deploy HAL-C2 Connect relay
 
+# Manual only: the fork has no production relay stage yet. Run it once the
+# `production` environment below holds the Cloudflare, PlanetScale, Axiom, Clerk
+# and APNs configuration (infra/relay/README.md).
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,7 +18,7 @@ concurrency:
 jobs:
   deploy_relay:
     name: Deploy production relay
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
       name: production

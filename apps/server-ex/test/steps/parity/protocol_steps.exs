@@ -648,7 +648,9 @@ defmodule HalC2.Steps.Parity.Shapes do
         # paired since scopes were kept also lists them.
         link_keys = if form == "links", do: ~w(environment nodes online origin rows)
         link_keys = link_keys || ~w(environment online origin)
-        for link <- frame["links"], do: assert(Enum.sort(Map.keys(link) -- ["scopes"]) == link_keys)
+
+        for link <- frame["links"],
+            do: assert(Enum.sort(Map.keys(link) -- ["scopes"]) == link_keys)
 
       {"stream", [first | _] = frames} ->
         assert first["part"] == 0

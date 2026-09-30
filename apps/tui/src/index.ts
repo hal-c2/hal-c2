@@ -30,6 +30,9 @@ import {
   TUI_RENDERER_CONFIG,
 } from "./terminalStartup.ts";
 
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- @hal-c2/shared/hostProcess imports node:sea, which the Bun-run TUI lacks.
+const hostPlatform = process.platform;
+
 // The Bun entry point. Started by the Node `hal-c2 tui` launcher it gets the
 // server origin and a bearer via env and mints websocket URLs over the IPC
 // channel to the launcher, which answers each request for the whole session.
@@ -69,7 +72,7 @@ async function resolveConnection(): Promise<
     dev: args.dev,
     env: process.env,
     homeDir: NodeOS.homedir(),
-    platform: process.platform,
+    platform: hostPlatform,
   };
   const node =
     args.url === undefined
@@ -120,7 +123,7 @@ async function main(): Promise<void> {
   const configDir = resolveShellConfigDir({
     env: process.env,
     homeDir: NodeOS.homedir(),
-    platform: process.platform,
+    platform: hostPlatform,
   });
   const configWarnings: string[] = [];
   const userConfig = readUserConfig({

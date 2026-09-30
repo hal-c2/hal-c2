@@ -433,12 +433,12 @@ defmodule HalC2.Steps.Terminal.Reconnect do
 
     {:ok, _} = :erpc.call(peer, HalC2.Terminal, :open, [input])
 
-    # Something printed there before anyone attaches.
+    # Something printed there before anyone attaches. It is typed before the
+    # shell's first prompt, so the leading newline keeps it on a line of its own.
     Task.async(fn ->
       {:ok, _} = :erpc.call(peer, HalC2.Terminal, :attach, [input, self()])
-
-      {:ok, nil} =
-        :erpc.call(peer, HalC2.Terminal, :write, [Map.put(input, "data", "echo p''eer-history\n")])
+      data = "printf '\\n%s\\n' p''eer-history\n"
+      {:ok, nil} = :erpc.call(peer, HalC2.Terminal, :write, [Map.put(input, "data", data)])
 
       await_peer_output(line("peer-history"), "")
     end)

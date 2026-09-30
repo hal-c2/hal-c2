@@ -1,5 +1,6 @@
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QMimeData>
@@ -11,12 +12,18 @@
 
 #include "LocalFolderModel.h"
 
+// macOS keeps temporary files under /var, a symlink LocalFolderModel refuses as a
+// root; fixtures live under its real path instead.
+static QString plainTempTemplate() {
+  return QFileInfo(QDir::tempPath()).canonicalFilePath() + QStringLiteral("/tst-XXXXXX");
+}
+
 class LocalFolderModelTest : public QObject {
   Q_OBJECT
 
 private slots:
   void disabledDoesNotBrowseOrMutate() {
-    QTemporaryDir directory;
+    QTemporaryDir directory{plainTempTemplate()};
     QVERIFY(directory.isValid());
     LocalFolderModel model;
     QSignalSpy loaded(&model, &QFileSystemModel::directoryLoaded);
@@ -31,7 +38,7 @@ private slots:
   }
 
   void browseLoadsFilesAndFoldersAndDisablingHidesThem() {
-    QTemporaryDir directory;
+    QTemporaryDir directory{plainTempTemplate()};
     QVERIFY(directory.isValid());
     QVERIFY(QDir(directory.path()).mkdir("child"));
     QFile file(directory.filePath("plain-file"));
@@ -63,8 +70,8 @@ private slots:
   }
 
   void displayedFilesRemainReadOnlyAndPathsStayInsideRoot() {
-    QTemporaryDir directory;
-    QTemporaryDir outside;
+    QTemporaryDir directory{plainTempTemplate()};
+    QTemporaryDir outside{plainTempTemplate()};
     QVERIFY(directory.isValid() && outside.isValid());
     QFile file(directory.filePath("example.txt"));
     QVERIFY(file.open(QIODevice::WriteOnly));
@@ -105,7 +112,7 @@ private slots:
   }
 
   void createRenameAndMovePreserveContents() {
-    QTemporaryDir directory;
+    QTemporaryDir directory{plainTempTemplate()};
     QVERIFY(directory.isValid());
     LocalFolderModel model;
     model.setBrowseRootPath(directory.path());
@@ -129,7 +136,7 @@ private slots:
   }
 
   void namesAndCollisionsNeverOverwrite() {
-    QTemporaryDir directory;
+    QTemporaryDir directory{plainTempTemplate()};
     QVERIFY(directory.isValid());
     LocalFolderModel model;
     model.setBrowseRootPath(directory.path());
@@ -163,8 +170,8 @@ private slots:
   }
 
   void rejectsRootsOutsideFilesSymlinksAndSelfMoves() {
-    QTemporaryDir directory;
-    QTemporaryDir outside;
+    QTemporaryDir directory{plainTempTemplate()};
+    QTemporaryDir outside{plainTempTemplate()};
     QVERIFY(directory.isValid() && outside.isValid());
     LocalFolderModel model;
     model.setBrowseRootPath(directory.path());
@@ -199,8 +206,8 @@ private slots:
 
   void rechecksRootWhenItHasBeenReplacedByASymlink() {
 #ifdef Q_OS_UNIX
-    QTemporaryDir directory;
-    QTemporaryDir outside;
+    QTemporaryDir directory{plainTempTemplate()};
+    QTemporaryDir outside{plainTempTemplate()};
     QVERIFY(directory.isValid() && outside.isValid());
     const auto selectedRoot = directory.filePath("selected-root");
     QVERIFY(QDir().mkdir(selectedRoot));
@@ -222,7 +229,7 @@ private slots:
   }
 
   void protectsProjectRootsAndAncestorsButAllowsOrdinaryChildren() {
-    QTemporaryDir directory;
+    QTemporaryDir directory{plainTempTemplate()};
     QVERIFY(directory.isValid());
     LocalFolderModel model;
     model.setBrowseRootPath(directory.path());
@@ -248,7 +255,7 @@ private slots:
   }
 
   void modelEditAndDropCannotBypassGuards() {
-    QTemporaryDir directory;
+    QTemporaryDir directory{plainTempTemplate()};
     QVERIFY(directory.isValid());
     LocalFolderModel model;
     model.setBrowseRootPath(directory.path());
@@ -268,7 +275,7 @@ private slots:
   }
 
   void trashRequiresExactConfirmationAndPreservesRecoverability() {
-    QTemporaryDir directory;
+    QTemporaryDir directory{plainTempTemplate()};
     QVERIFY(directory.isValid());
     const auto previousDataHome = qgetenv("XDG_DATA_HOME");
     const auto trashHome = directory.filePath("isolated-data");

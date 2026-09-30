@@ -23,7 +23,7 @@ Feature: The protocol 3 WebSocket
   @node
   Scenario: A new connection is greeted with the protocol version and node name
     When the client opens a socket with a valid credential
-    Then the first frame names protocol 3 and the node it reached
+    Then the first frame names protocol 3, the node it reached and the environment it serves
 
   @node
   Scenario: A socket without a credential is refused

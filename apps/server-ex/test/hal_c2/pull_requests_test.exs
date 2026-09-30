@@ -16,7 +16,10 @@ defmodule HalC2.PullRequestsTest do
     System.put_env("FAKE_GH_LOG", Path.join(dir, "gh.log"))
 
     on_exit(fn ->
-      Application.put_env(:hal_c2, :gh_command, previous)
+      if previous,
+        do: Application.put_env(:hal_c2, :gh_command, previous),
+        else: Application.delete_env(:hal_c2, :gh_command)
+
       System.delete_env("FAKE_GH_RULES")
       System.delete_env("FAKE_GH_LOG")
     end)

@@ -18,7 +18,6 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { nodeDataDir, resolveNodeLaunch } from "./elixirNode.ts";
 
 const hostEntry = NodeURL.fileURLToPath(new URL("./main.ts", import.meta.url));
-// oxlint-disable-next-line hal-c2/no-global-process-runtime -- Spawns the host with the Node that runs the tests.
 const nodeBin = process.execPath;
 
 const FAKE_NODE = String.raw`
@@ -164,7 +163,6 @@ function startHost(input: {
   const child = NodeChildProcess.spawn(nodeBin, [hostEntry, ...(input.args ?? [])], {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
-      // oxlint-disable-next-line hal-c2/no-global-process-runtime -- The host inherits the test's PATH.
       ...process.env,
       HAL_C2_NODE_PORT: undefined,
       HAL_C2_HOME: undefined,
@@ -238,7 +236,6 @@ async function runningNode() {
   const release = fakeRelease();
   const port = await freePort();
   const child = NodeChildProcess.spawn(NodePath.join(release, "bin/hal_c2"), ["start"], {
-    // oxlint-disable-next-line hal-c2/no-global-process-runtime -- The fake inherits the test's PATH.
     env: { ...process.env, HAL_C2_BOOTSTRAP_STDIN: "1", XDG_DATA_HOME: temporaryDirectory() },
     stdio: ["pipe", "pipe", "inherit"],
   });
@@ -269,6 +266,7 @@ function writeRuntimeRecord(stateDir: string, origin: string): void {
   );
 }
 
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- The skip decision needs the real host, outside any Effect runtime.
 describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own node", () => {
   describe("Starting the desktop app starts its node and connects to it", () => {
     it("Starting the desktop app starts a node with the desktop's HAL-C2 home", async () => {

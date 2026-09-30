@@ -139,7 +139,11 @@ defmodule HalC2.TerminalTest do
       await_output("1:from-instance:#{home}")
 
       assert {:error, %{"_tag" => "TerminalProviderInstanceNotFoundError"}} =
-               Terminal.open(%{input | "providerInstanceId" => "nobody", "terminalId" => "term-2"})
+               Terminal.open(%{
+                 input
+                 | "providerInstanceId" => "nobody",
+                   "terminalId" => "term-2"
+               })
     end
 
     test "a missing cwd is a contract error", %{input: input} do

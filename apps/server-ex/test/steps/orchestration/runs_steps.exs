@@ -410,7 +410,9 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
-  step "{string} has a running turn with a command still running",
+  # Not a command: Codex's commands still running when a turn completes go on in the
+  # background (recovery-and-idle-sessions.feature).
+  step "{string} has a running turn with a web search still running",
        %{args: [thread]} = context do
     context = World.running_turn(context, thread)
 
@@ -418,11 +420,11 @@ defmodule HalC2.Steps.Orchestration.Runs do
       notify(
         context,
         "item/started",
-        item("commandExecution", "cmd-open", %{"command" => "sleep"})
+        item("webSearch", "search-open", %{"query" => "elixir releases"})
       )
 
     World.await_state(context, thread, fn state ->
-      state.entities["turn-item"]["turn-item:codex:cmd-open"]["status"] == "running"
+      state.entities["turn-item"]["turn-item:codex:search-open"]["status"] == "running"
     end)
 
     context
@@ -436,7 +438,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
           i["runId"] == context.running,
           do: i
 
-    assert Enum.any?(items, &(&1["id"] == "turn-item:codex:cmd-open"))
+    assert Enum.any?(items, &(&1["id"] == "turn-item:codex:search-open"))
 
     assert Enum.all?(items, &(&1["status"] != "running")),
            inspect(Enum.map(items, &{&1["id"], &1["status"]}))

@@ -94,7 +94,8 @@ SnapShotBackend* SnapShotBackend::create(QObject* parent) {
 #ifdef Q_OS_LINUX
   const bool onLinux = true;
 #else
-  const bool onLinux = false;
+  // A test's stand-in environment is a Linux desktop's.
+  const bool onLinux = environmentOverride().has_value();
 #endif
   const Platform platform = detect(environmentOverride().value_or(QProcessEnvironment::systemEnvironment()), onLinux);
   if (!platform.portal) return new UnavailableSnapShot(platform.message, parent);

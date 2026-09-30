@@ -222,7 +222,10 @@ defmodule HalC2.Terminal do
 
   defp put_home(env, _driver, ""), do: env
   defp put_home(env, "codex", home), do: Map.put(env, "CODEX_HOME", Path.expand(home))
-  defp put_home(env, "claudeAgent", home), do: Map.put(env, "CLAUDE_CONFIG_DIR", Path.expand(home))
+
+  defp put_home(env, "claudeAgent", home),
+    do: Map.put(env, "CLAUDE_CONFIG_DIR", Path.expand(home))
+
   defp put_home(env, _driver, _home), do: env
 
   defp check_cwd(cwd) do

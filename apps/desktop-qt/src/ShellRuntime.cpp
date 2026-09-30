@@ -196,9 +196,19 @@ bool ShellRuntime::loadGeneration(const QUrl& rootUrl, QString* errorOut) {
   const auto creationFailed = connect(engine, &QQmlApplicationEngine::objectCreationFailed, this,
                                       [&failed](const QUrl&) { failed = true; });
 
-  engine->load(rootUrl);
+  // A file saved in place keeps its URL, and Qt 6.9 answers a URL the previous
+  // generation still uses with its old compile, clearComponentCache() or not. A
+  // URL of its own per generation compiles the file as it is now.
+  QUrl url = rootUrl;
+  if (url.isLocalFile()) {
+    url.setQuery(QStringLiteral("generation=%1").arg(m_generation + 1));
+  }
+  engine->load(url);
   disconnect(warningsDuringLoad);
   disconnect(creationFailed);
+  for (auto& message : messages) {
+    message.replace(url.toString(), rootUrl.toString());
+  }
   const auto roots = engine->rootObjects();
   bool hasWindow = false;
   for (auto index = previousRootCount; index < roots.size(); ++index) {

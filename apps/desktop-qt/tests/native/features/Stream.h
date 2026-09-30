@@ -77,9 +77,11 @@ inline void change(World& world, const QString& kind, const QString& id, const Q
   }
   const int seq = ++fake.seq;
   if (quiet) return;
+  // QJsonValue keeps the event nested: Apple clang before 20 reads
+  // QJsonArray{QJsonArray{...}} as a copy of the inner array.
   for (const int follower : followers(world, fake.thread)) {
     world.node.send({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), follower}, {QStringLiteral("offset"), seq},
-                     {QStringLiteral("events"), QJsonArray{QJsonArray{seq, kind, id, patch, iso(now())}}}});
+                     {QStringLiteral("events"), QJsonArray{QJsonValue(QJsonArray{seq, kind, id, patch, iso(now())})}}});
   }
   world.sync();
 }

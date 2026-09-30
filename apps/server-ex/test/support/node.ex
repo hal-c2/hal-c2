@@ -4035,7 +4035,9 @@ defmodule HalC2.Test.Node.Terminal do
   def exited(context, text) do
     {_, context} = open!(context)
     {_, context} = attach!(context, "default", Map.delete(context.terminal, "cwd"))
-    context = write(context, "default", "echo #{text}; exit 0\n")
+    # Typed before the shell's first prompt, so the prompt can land ahead of the
+    # output; the leading newline keeps `text` on a line of its own.
+    context = write(context, "default", "printf '\\n%s\\n' '#{text}'; exit 0\n")
     {_, context} = await_event(context, "default", &(&1["type"] == "exited"))
     context
   end

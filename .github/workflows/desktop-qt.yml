@@ -2,10 +2,13 @@ name: desktop-qt
 
 on:
   push:
-    paths:
+    branches:
+      - main
+    paths: &paths
       - "apps/desktop-qt/**"
       - "apps/server-ex/**"
       - "apps/web/**"
+      - "features/**"
       - "packages/**"
       - "patches/**"
       - "assets/prod/black-universal-1024.png"
@@ -15,19 +18,13 @@ on:
       - "vite.config.ts"
       - ".github/workflows/desktop-qt.yml"
   pull_request:
-    paths:
-      - "apps/desktop-qt/**"
-      - "apps/server-ex/**"
-      - "apps/web/**"
-      - "packages/**"
-      - "patches/**"
-      - "assets/prod/black-universal-1024.png"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "vite.config.ts"
-      - ".github/workflows/desktop-qt.yml"
+    paths: *paths
   workflow_dispatch:
+    inputs:
+      macos:
+        description: "Also build and test on macOS"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,13 +34,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-            qt_host: linux
-            qt_arch: linux_gcc_64
-          - os: macos-15
-            qt_host: mac
-            qt_arch: clang_64
+        # macOS runs only when dispatched with `macos`: its minutes cost ten
+        # times Linux's.
+        os: ${{ fromJSON(inputs.macos && '["ubuntu-24.04", "macos-15"]' || '["ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -57,17 +50,19 @@ jobs:
           cache: true
           # The web app's packages feed the licence manifest
           # (third-party-licenses.ts); the node release bundles the Cursor
-          # sidecar with that package's esbuild (apps/server-ex/mix.exs).
+          # sidecar with that package's esbuild (apps/server-ex/mix.exs); the
+          # host's tests and typecheck need its own.
           run-install: |
             args:
               - --filter=@hal-c2/web...
               - --filter=@hal-c2/cursor-acp...
+              - --filter=@hal-c2/desktop-qt...
 
       - uses: jurplel/install-qt-action@v4
         with:
           version: "6.9.*"
-          host: ${{ matrix.qt_host }}
-          arch: ${{ matrix.qt_arch }}
+          host: ${{ runner.os == 'macOS' && 'mac' || 'linux' }}
+          arch: ${{ runner.os == 'macOS' && 'clang_64' || 'linux_gcc_64' }}
           modules: qtwebsockets
           cache: true
 
@@ -79,7 +74,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libfuse2 \
-            libxcb-cursor0 pkg-config libavcodec-dev libavutil-dev libswscale-dev
+            libxcb-cursor0 pkg-config libavcodec-dev libavutil-dev libswscale-dev dbus
 
       - name: Install build tools (macOS)
         if: runner.os == 'macOS'
@@ -120,8 +115,20 @@ jobs:
           mix deps.get --only prod
           mix release --overwrite
 
+      - name: Test native
+        run: |
+          cmake -S apps/desktop-qt/tests/native -B apps/desktop-qt/build/tests/native -G Ninja \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}"
+          cmake --build apps/desktop-qt/build/tests/native
+          ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
+
       - name: Test QML
         run: node apps/desktop-qt/scripts/test-qml.mjs
+
+      - name: Test and typecheck host
+        run: |
+          vp run --filter @hal-c2/desktop-qt test
+          vp run --filter @hal-c2/desktop-qt typecheck
 
       - name: Package (Linux AppImage)
         if: runner.os == 'Linux'

@@ -88,7 +88,7 @@ void send(World& world, const Tracked& thread) {
   if (!thread.environment.isEmpty()) {
     world.node.sendLinkRow(thread.environment, thread.id, thread.row);
   } else if (!thread.peer.isEmpty()) {
-    world.node.sendRows(thread.peer, QJsonArray{QJsonArray{thread.id, QStringLiteral("thread"), thread.row}});
+    world.node.sendRows(thread.peer, QJsonArray{QJsonValue(QJsonArray{thread.id, QStringLiteral("thread"), thread.row})});
   } else {
     world.node.threads.insert(thread.id, thread.row);
     world.node.sendRow(thread.id, thread.row);
