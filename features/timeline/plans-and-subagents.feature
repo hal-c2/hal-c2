@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (plan.updated, subagent.updated, proposed_plan, todo_list, subagent, handoff, fork, compaction, thread_created, delegated_task.request, delegated_task.wake-policy, delegated_task.completion-delivery.acknowledge, delegated_task.completion-delivery.dispose)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (proposed_plan, todo_list)
 #   apps/server-ex/lib/hal_c2/orchestration/delegation.ex (delegate_task, completion wake, no answer)
@@ -134,6 +135,35 @@ Feature: Plans and subagents
     Then the thread says it is a subagent of the parent
     When the user opens the parent thread
     Then the parent thread is shown
+
+  @node @shared @backlog
+  Scenario: A message from another agent says which thread it came from
+    Given a subagent sent a message to its parent
+    When the user reads the message in the parent thread
+    Then it says which thread it came from
+    And the user can open that thread
+
+  @node @shared @backlog
+  Scenario: A subagent shows the model it runs on
+    Given the agent delegated work to a subagent on the model "model-b"
+    When the user looks at the parent's subagents
+    Then the subagent is shown with "model-b"
+    And the parent's model is not shown for it
+
+  @node @shared @backlog
+  Scenario: A finished subagent with work still running is shown as pending
+    Given a subagent returned its result while background work it started is still running
+    When the user looks at the parent thread
+    Then the subagent's result is shown
+    And its background work is still shown as running
+
+  @node @shared @backlog
+  Scenario: A subagent's approval request shows up in the parent thread
+    Given a subagent asks for approval to run a command
+    When the user looks at the parent thread
+    Then the approval is listed there
+    When the user answers it
+    Then the subagent continues with the answer
 
   # TUI: implemented in apps/tui/src/orchestrationV2Adapter.ts
   @shared @backlog-mobile @backlog-tui

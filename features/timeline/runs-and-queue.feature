@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/composer.md (Queued messages, Follow-up behavior)
 #   docs/user/updating.md (Continue threads after restarts)
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, run.interrupt, queue.resume, queued-run.reorder, queued-run.cancel, queued-run.edit, queued-message.promote-to-steer, provider-session.detach, run.created, run.updated, run_interrupt_request, run_interrupt_result)

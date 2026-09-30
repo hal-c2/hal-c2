@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/thread-sidebar.md (Inspect agent work: Limited, Resume at reset, Snooze until reset)
 #   apps/web/src/components/ChatView.tsx (limit recovery)
 #   apps/web/src/components/settings/SettingsPanels.tsx (Auto-resume limited threads, Snooze limited threads)
@@ -43,6 +44,12 @@ Feature: Threads stopped by a usage limit
     Given "Port tests" is scheduled to resume at 14:00
     When the user cancels the scheduled resume
     Then "Port tests" does not continue at 14:00
+
+  @node @backlog
+  Scenario: A rejected automatic resume keeps the reset time
+    Given "Port tests" is scheduled to resume at 14:00
+    When the provider rejects the automatic resume
+    Then "Port tests" still records 14:00 as its reset time
 
   @node
   Scenario Outline: A scheduled resume is dropped when the user moves on
