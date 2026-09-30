@@ -455,7 +455,7 @@ Item {
                             text: row.text ?? ""
                             lineBreaks: true
                             fitWidth: true
-                            textColor: root.textColor
+                            textColor: root.messageTextColor
                             onLinkActivated: link => root.linkActivated(link)
                         }
                     }
