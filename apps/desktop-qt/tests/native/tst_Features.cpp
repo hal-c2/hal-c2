@@ -211,6 +211,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/focus.feature:Leaving settings goes back to the thread"),
     QStringLiteral("navigation/focus.feature:The palette keeps focus while it is open"),
     QStringLiteral("navigation/command-palette.feature"),
+    QStringLiteral("navigation/welcome-wizard.feature"),
     QStringLiteral("threads/search.feature:Searching from the thread list opens the command palette"),
     QStringLiteral("settings/search-and-navigation.feature:Leaving settings returns*"),
     QStringLiteral("settings/search-and-navigation.feature:Moving between sections is one step back"),

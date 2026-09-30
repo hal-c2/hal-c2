@@ -373,13 +373,16 @@ void SettingsController::setDevicePath(const QString& path) {
   }
   m_device = device;
   m_deviceError = error;
+  m_deviceUnreadable = !error.isEmpty();
   emit deviceChanged();
 }
 
 bool SettingsController::setDeviceSettings(const QJsonObject& device) {
   if (device == m_device) return true;
   QString error;
-  if (m_devicePath.isEmpty()) {
+  if (m_deviceUnreadable) {
+    error = QStringLiteral("Cannot read %1").arg(m_devicePath);
+  } else if (m_devicePath.isEmpty()) {
     error = QStringLiteral("This device has nowhere to keep its preferences.");
   } else {
     QDir().mkpath(QFileInfo(m_devicePath).absolutePath());

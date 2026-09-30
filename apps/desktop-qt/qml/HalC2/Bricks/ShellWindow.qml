@@ -123,6 +123,11 @@ Window {
         }
     }
 
+    // The first-run gate: covers the window until setup is done.
+    WelcomeWizard {
+        anchors.fill: parent
+    }
+
     ShellErrorOverlay {
         anchors.fill: parent
     }

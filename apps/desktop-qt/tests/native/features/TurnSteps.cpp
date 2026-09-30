@@ -14,6 +14,7 @@
 #include "Keymap.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "Onboarding.h"
 #include "SettingsController.h"
 #include "Stream.h"
 #include "Turn.h"
@@ -319,6 +320,8 @@ const Steps steps([] {
                                                                                (palette->emptyText() == c[0] || palette->status() == c[0])) {
         return true;
       }
+      // Or the welcome wizard's pairing, setup terminal or import error.
+      if (onboardingTells(world, c[0])) return true;
       return conditionProblem(world) == c[0];
     };
     world.waitFor(told, [&] {

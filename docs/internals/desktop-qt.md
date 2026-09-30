@@ -89,8 +89,9 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
 
 Attach mode (`--url <link>`) starts no node. The shell hands the link to the
 host (`--attach`): a node pairing link (`mix hal_c2.pair`, `mise run node:pair`)
-gets the app served and the shell's own client paired with that node, and any
-other address is loaded as it is. For a node on this machine the host finds its
+gets the app served and the shell's own client paired with that node. The host
+hands any other address back without a node, and the shell refuses it with an
+error rather than load a page it has no client for. For a node on this machine the host finds its
 access token through the runtime record and the page keeps the link. For any
 other node the host spends the link's single-use token on the shell's session,
 then mints the page a fresh link with it; a link without `access:write` cannot

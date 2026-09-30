@@ -113,6 +113,35 @@ defmodule HalC2.TerminalTest do
       assert {:ok, %{"history" => ""}} = Terminal.open(input)
     end
 
+    test "a provider instance's shell has its variables and home, and an unknown one is refused",
+         %{input: input, tmp_dir: dir} do
+      start_supervised!(HalC2.Settings)
+      home = Path.join(dir, "work-claude")
+
+      {:ok, _} =
+        HalC2.Settings.update(fn settings ->
+          Map.put(settings, "providerInstances", %{
+            "claude_work" => %{
+              "driver" => "claudeAgent",
+              "config" => %{"homePath" => home},
+              "environment" => [%{"name" => "WORK_FLAG", "value" => "from-instance"}]
+            }
+          })
+        end)
+
+      input = Map.merge(input, %{"providerInstanceId" => "claude_work", "env" => %{"A" => "1"}})
+      assert {:ok, snapshot} = Terminal.attach(input, self())
+      refute Map.has_key?(snapshot, "env")
+
+      {:ok, nil} =
+        Terminal.write(Map.put(input, "data", "echo \"$A:$WORK_FLAG:$CLAUDE_CONFIG_DIR\"\n"))
+
+      await_output("1:from-instance:#{home}")
+
+      assert {:error, %{"_tag" => "TerminalProviderInstanceNotFoundError"}} =
+               Terminal.open(%{input | "providerInstanceId" => "nobody", "terminalId" => "term-2"})
+    end
+
     test "a missing cwd is a contract error", %{input: input} do
       assert {:error, %{"_tag" => "TerminalCwdNotFoundError"}} =
                Terminal.open(%{input | "cwd" => "/nope/not/here"})

@@ -75,3 +75,5 @@ SettingsScopeSentence 1.0 SettingsScopeSentence.qml
 StorageSettings 1.0 StorageSettings.qml
 ProjectSettings 1.0 ProjectSettings.qml
 DevicePanel 1.0 DevicePanel.qml
+WelcomeWizard 1.0 WelcomeWizard.qml
+OnboardingTerminal 1.0 OnboardingTerminal.qml
