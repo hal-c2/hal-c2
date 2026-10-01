@@ -450,6 +450,53 @@ defmodule HalC2.Steps.Providers.Cursor do
     context
   end
 
+  # Each thread runs its own Cursor agent process, started with the thread's mode.
+  step "a Cursor thread runs in a sandbox and another Cursor thread runs in full access",
+       context do
+    sign_in("cursor")
+    {_, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Sandboxed", "cursor", "hello", mode: "approval-required")
+    Acp.await_runs(ctx.threads["Sandboxed"], 1)
+    ctx = Acp.launch(ctx, "Open", "cursor", "hello", mode: "full-access")
+    Acp.await_runs(ctx.threads["Open"], 1)
+    ctx
+  end
+
+  step "the full-access thread runs and then the sandboxed thread runs again", context do
+    ctx = Acp.follow_up(context, "Open", "carry on in the open")
+    Acp.await_runs(ctx.threads["Open"], 2)
+    ctx = Acp.follow_up(ctx, "Sandboxed", "leave a command running in the sandbox")
+    Acp.await_runs(ctx.threads["Sandboxed"], 2)
+    ctx
+  end
+
+  step "the sandboxed thread still runs in its sandbox", context do
+    sent = fn text ->
+      Enum.find(log(context), &(&1["event"] == "send" and &1["message"] =~ text))
+    end
+
+    agent = fn send -> Enum.find(agents(context), &(&1["agentId"] == send["agentId"])) end
+
+    assert %{"sandbox" => false} = agent.(sent.("carry on in the open"))
+
+    assert %{"sandbox" => true, "autoReview" => true} =
+             agent.(sent.("leave a command running in the sandbox"))
+
+    context
+  end
+
+  step "its tools still work", context do
+    state = Acp.stream(context.threads["Sandboxed"])
+    assert [_, %{"status" => "completed"}] = Acp.runs(context.threads["Sandboxed"])
+
+    assert Enum.any?(
+             HalC2.StreamState.list(state, "turn-item"),
+             &(&1["type"] == "command_execution" and &1["input"] == "npm run dev")
+           )
+
+    context
+  end
+
   # --- text generation -----------------------------------------------------------------------
 
   step "Cursor is picked for text generation", context do

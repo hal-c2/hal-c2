@@ -159,7 +159,6 @@ Feature: Cursor
     Then the command is shown as interrupted
     And it is not shown as a successful command
 
-  @backlog
   Scenario: A full-access Cursor thread does not loosen a sandboxed one
     Given a Cursor thread runs in a sandbox and another Cursor thread runs in full access
     When the full-access thread runs and then the sandboxed thread runs again
