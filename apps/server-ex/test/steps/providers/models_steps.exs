@@ -335,6 +335,38 @@ defmodule HalC2.Steps.Providers.Models do
     context
   end
 
+  step ~r/^the settings for Claude are saved with (?<saved>an empty custom model id|the built-in "claude-haiku-4-5" as custom|the custom model "my-model" twice)$/,
+       %{args: [saved]} = context do
+    models =
+      case saved do
+        "an empty custom model id" -> ["", %{"slug" => "  ", "name" => "Blank"}]
+        "the built-in" <> _ -> ["claude-haiku-4-5"]
+        "the custom model" <> _ -> ["my-model", %{"slug" => "my-model", "name" => "Mine"}]
+      end
+
+    Enum.reduce(models, World.fake_providers(context), &add_custom_model(&2, &1))
+  end
+
+  step "Claude's models have no model with an empty id", context do
+    slugs = claude_slugs(context)
+    assert slugs != []
+    assert Enum.all?(slugs, &(String.trim(&1) != ""))
+    context
+  end
+
+  step ~r/^Claude's models have "(?<slug>[^"]+)" once, still built in$/,
+       %{args: [slug]} = context do
+    assert Enum.count(claude_slugs(context), &(&1 == slug)) == 1
+    refute claude_model(context, slug)["isCustom"]
+    context
+  end
+
+  step ~r/^Claude's models have "(?<slug>[^"]+)" once$/, %{args: [slug]} = context do
+    assert Enum.count(claude_slugs(context), &(&1 == slug)) == 1
+    assert %{"isCustom" => true} = claude_model(context, slug)
+    context
+  end
+
   # --- helpers ------------------------------------------------------------------------------
 
   # Saves a custom model the way the settings panel does: read, add, write back.
@@ -366,6 +398,15 @@ defmodule HalC2.Steps.Providers.Models do
     {providers, _context} = World.provider_list(context)
     claude = Enum.find(providers, &(&1["instanceId"] == "claudeAgent"))
     Enum.find(claude["models"], &(&1["slug"] == slug)) || flunk("#{slug} is not offered")
+  end
+
+  defp claude_slugs(context) do
+    {providers, _context} = World.provider_list(context)
+
+    providers
+    |> Enum.find(&(&1["instanceId"] == "claudeAgent"))
+    |> Map.fetch!("models")
+    |> Enum.map(& &1["slug"])
   end
 
   defp codex_default, do: %{"instanceId" => "codex", "model" => "gpt-5.4"}
