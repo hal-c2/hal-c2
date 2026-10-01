@@ -456,6 +456,82 @@ defmodule HalC2.Steps.Orchestration.Runs do
     })
   end
 
+  step "the provider retries a failed request during a turn of {string}",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+
+    for attempt <- 1..2 do
+      notify(context, "error", %{
+        "error" => %{
+          "message" => "Reconnecting... #{attempt}/5",
+          "codexErrorInfo" => %{"responseStreamDisconnected" => %{"httpStatusCode" => nil}},
+          "additionalDetails" => "stream disconnected before completion"
+        },
+        "willRetry" => true,
+        "turnId" => native_turn(context)
+      })
+    end
+
+    context
+  end
+
+  step "the retry is recorded", context do
+    state =
+      World.await_state(context, context.thread, fn state ->
+        Enum.any?(HalC2.StreamState.list(state, "turn-item"), &(&1["retry"]["attempt"] == 2))
+      end)
+
+    Map.put(
+      context,
+      :retries,
+      for(%{"retry" => %{}} = item <- HalC2.StreamState.list(state, "turn-item"), do: item)
+    )
+  end
+
+  step "the turn's work log shows a provider retry", context do
+    # Both attempts are one item of the running run, which the retry did not fail.
+    assert [
+             %{
+               "type" => "error",
+               "status" => "running",
+               "title" => "Provider retry",
+               "runId" => run_id,
+               "retry" => %{"attempt" => 2, "maxAttempts" => 5, "retryDelayMs" => nil},
+               "failure" => %{
+                 "class" => "transport_error",
+                 "code" => "responseStreamDisconnected",
+                 "message" => "stream disconnected before completion",
+                 "retryable" => true
+               }
+             }
+           ] = context.retries
+
+    assert run_id == context.running
+    assert [%{"status" => "running"}] = World.runs(context, context.thread)
+
+    # The retry item ends with the turn, which completes.
+    notify(context, "turn/completed", %{
+      "turn" => %{"id" => native_turn(context), "status" => "completed"}
+    })
+
+    state =
+      World.await_state(context, context.thread, fn state ->
+        Enum.all?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "completed"))
+      end)
+
+    assert [%{"status" => "completed"}] =
+             for(%{"retry" => %{}} = item <- HalC2.StreamState.list(state, "turn-item"), do: item)
+
+    context
+  end
+
+  step "no second user turn is created", context do
+    state = World.state(context, context.thread)
+    assert [%{"ordinal" => 1}] = HalC2.StreamState.list(state, "run")
+    assert [%{"role" => "user"}] = HalC2.StreamState.list(state, "message")
+    context
+  end
+
   step "the provider session's last error is {string}", %{args: [message]} = context do
     assert session(context, context.thread, "codex")["lastError"] == message
     context

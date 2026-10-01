@@ -187,7 +187,7 @@ Feature: Runs and turns
     Then the partial answer stays in the failed run
     And the run is marked failed
 
-  @node @shared @backlog
+  @node @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A provider retry is recorded as a retry
     Given the provider retries a failed request during a turn of "t1"
     When the retry is recorded

@@ -805,7 +805,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification("error", %{"error" => error} = params, state) do
     cond do
       params["willRetry"] == true ->
-        state
+        retry_item(state, error)
 
       error_code(error["codexErrorInfo"]) in ["usageLimitExceeded", "rateLimitExceeded"] ->
         %{state | failure: usage_limit_message(Map.get(state, :rate_limits), DateTime.utc_now())}
@@ -825,6 +825,70 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp notification(_method, _params, state), do: state
+
+  # Codex retries a failed request itself and reports each attempt: one work-log item
+  # per turn (`terminal-failure:<provider turn>`), updated by every attempt and closed
+  # with the turn. The attempt comes from Codex's own "2/5" when the message has one.
+  defp retry_item(state, error) do
+    native = "terminal-failure:#{state.turn.ids.provider_turn}"
+    message = error["message"] || "Codex is retrying a failed request"
+    code = error_code(error["codexErrorInfo"])
+
+    failure = %{
+      "class" =>
+        cond do
+          code in ["usageLimitExceeded", "rateLimitExceeded"] -> "usage_limit"
+          String.starts_with?(code || "", ["http", "responseStream"]) -> "transport_error"
+          true -> "provider_error"
+        end,
+      "message" =>
+        case String.trim(error["additionalDetails"] || "") do
+          "" -> message
+          details -> details
+        end,
+      "code" => code,
+      "retryable" => true
+    }
+
+    state =
+      state
+      |> flush()
+      |> ensure_item(native, :error, %{"title" => "Provider retry", "failure" => failure})
+
+    %{id: item_id} = state.items[native]
+    at = Entities.now()
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "turn-item", item_id, fn item ->
+          previous = item["retry"] || %{}
+
+          retry =
+            case Regex.run(~r/\b([1-9]\d*)\s*\/\s*([1-9]\d*)\b/, message) do
+              [_, attempt, max] ->
+                %{
+                  "attempt" => String.to_integer(attempt),
+                  "maxAttempts" => String.to_integer(max)
+                }
+
+              nil ->
+                %{
+                  "attempt" => (previous["attempt"] || 0) + 1,
+                  "maxAttempts" => previous["maxAttempts"]
+                }
+            end
+
+          Map.merge(item, %{
+            "failure" => failure,
+            "retry" => Map.put(retry, "retryDelayMs", nil),
+            "updatedAt" => at
+          })
+        end)
+      ]
+    end)
+
+    state
+  end
 
   defp end_turn(state, status, failure) do
     state = flush(state)
