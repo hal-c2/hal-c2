@@ -23,7 +23,7 @@ ColumnLayout {
         Settings.document;
         return Settings.isDefault(spec.key);
     }
-    // Rows the node keeps wait for its document.
+    // Rows the MC keeps wait for its document.
     readonly property bool ready: Settings.onDevice(spec.key) || Settings.ready
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")

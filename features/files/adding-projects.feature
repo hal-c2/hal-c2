@@ -70,7 +70,7 @@ Feature: Adding projects
       Then the user sees an "error" toast "Could not open folder" saying "Disk is read-only"
       And the desktop keeps 0 drafts
 
-    @node
+    @mc
     Scenario: A new project is titled after its folder
       When a client creates a project at "~/code/shop" without a title
       Then the project is titled "shop"
@@ -83,7 +83,7 @@ Feature: Adding projects
       Then the folders "Shared" and "shop" are offered
       And "notes.txt" is not offered
 
-    @node
+    @mc
     Scenario Outline: Browsing shows hidden folders only when asked for
       Given "/home/sam" holds the folders "shop" and ".config"
       When a client browses "<partial path>"
@@ -95,9 +95,9 @@ Feature: Adding projects
         | /home/sam/.c | is listed       |
         | /home/sam/s  | is not listed   |
 
-    @node
+    @mc
     Scenario: Browsing a folder the user cannot read lists nothing
-      Given "/root" cannot be read by the node
+      Given "/root" cannot be read by the MC
       When a client browses "/root/"
       Then an empty list is returned without an error
 
@@ -115,13 +115,13 @@ Feature: Adding projects
       Then no second project is created
       And the thread "Fix checkout" opens
 
-    @node
+    @mc
     Scenario: A folder that does not exist is refused unless the client asks to create it
       When a client creates a project at "/home/sam/missing" without asking to create the folder
-      Then the node answers that "/home/sam/missing" does not exist on this machine
+      Then the MC answers that "/home/sam/missing" does not exist on this machine
       And no project is created
 
-    @node
+    @mc
     Scenario: A folder is created for a new project when the client asks for it
       When a client creates a project at "/home/sam/fresh" and asks to create the folder
       Then the folder "/home/sam/fresh" exists
@@ -139,10 +139,10 @@ Feature: Adding projects
         | Linux with no active project    | ./shop        | Relative paths require an active project in this environment.    |
         | Linux                           |               | Enter a project path.                                             |
 
-    @dropped @node
+    @dropped @mc
     Scenario: The standalone project list, add and remove methods are not carried
       When a client calls the projects list, add or remove method
-      Then the node answers that the method is not served
+      Then the MC answers that the method is not served
       And projects are listed from the shell stream and changed through project mutations
 
   Rule: Dropping a folder on the desktop app
@@ -188,13 +188,13 @@ Feature: Adding projects
 
   Rule: Cloning a repository into a new project
 
-    @node
+    @mc
     Scenario: Starting a clone adds the project at once and clones in the background
       When a client starts cloning "https://example.com/acme/shop.git" into "/home/sam/shop"
       Then the project "shop" is listed for "laptop" immediately
       And the clone is reported as running at the "connecting" stage
 
-    @node
+    @mc
     Scenario Outline: Clone progress follows git's own stages
       Given a clone of "acme/shop" is running
       When git reports "<git line>"
@@ -221,7 +221,7 @@ Feature: Adding projects
       Then the user sees "Cloning acme/shop" with "Receiving objects · 45%"
       And the user can cancel the clone
 
-    @node
+    @mc
     Scenario: A finished clone is forgotten after a short while
       Given a clone of "acme/shop" finished
       When half a minute passes
@@ -235,33 +235,33 @@ Feature: Adding projects
       Then the user sees "Cloned acme/shop" with its destination folder
       And the user can open the project
 
-    @node
+    @mc
     Scenario: A failed clone keeps its error until it is retried
       Given a clone of "acme/shop" failed with "Repository not found."
       Then the clone is reported as failed with "Repository not found."
       And the project "shop" stays, pointing at its empty folder
 
-    @node
+    @mc
     Scenario: Retrying a failed clone starts it again with the same repository and folder
       Given a clone of "acme/shop" failed
       When the user retries the clone
       Then the clone is reported as running at the "connecting" stage
       And it clones into the same folder
 
-    @node
+    @mc
     Scenario: Retrying a clone that is still running changes nothing
       Given a clone of "acme/shop" is running
       When the user retries the clone
-      Then the node answers that nothing was applied
+      Then the MC answers that nothing was applied
 
-    @node
+    @mc
     Scenario: Cancelling a running clone stops git and marks the clone cancelled
       Given a clone of "acme/shop" is running
       When the user cancels the clone
       Then the clone is reported as cancelled
       And git stops cloning
 
-    @node
+    @mc
     Scenario: A cancelled clone can be retried
       Given a clone of "acme/shop" was cancelled
       When the user retries the clone
@@ -273,10 +273,10 @@ Feature: Adding projects
       When the user removes the project from the clone's failure notice
       Then the project "shop" is no longer listed
 
-    @node
+    @mc
     Scenario: A restart forgets clones in flight but keeps their projects
       Given a clone of "acme/shop" is running
-      When the node restarts
+      When the MC restarts
       Then no clone is reported
       And the project "shop" is still listed with its folder
 
@@ -301,7 +301,7 @@ Feature: Adding projects
       Then GitLab is marked as needing setup
       And the user is pointed to source control settings
 
-    @node
+    @mc
     Scenario Outline: Repositories on other hosts can be looked up
       Given the user is signed in to <host> on "laptop"
       When the user looks up the repository "acme/shop" on <host>
@@ -313,7 +313,7 @@ Feature: Adding projects
         | Bitbucket         |
         | Azure DevOps      |
 
-    @node
+    @mc
     Scenario: A repository that cannot be found fails the lookup
       When the user looks up the GitHub repository "acme/missing"
       Then the lookup fails with the host's message

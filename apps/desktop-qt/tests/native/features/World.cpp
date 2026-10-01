@@ -41,7 +41,7 @@ void World::start() {
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
   m_native->controller<ThreadStore>()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
   m_native->setStoreDirs(m_home.filePath(QStringLiteral("state")), m_home.filePath(QStringLiteral("data")));
-  // The shell runs its own local node, so local folders are its to open.
+  // The shell runs its own local MC, so local folders are its to open.
   m_bridge->setLocalFolderImportEnabled(true);
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
   m_theme = std::make_unique<ThemeStore>(configDir());
@@ -104,7 +104,7 @@ void World::startNewThread(const QVariantMap& payload) {
 }
 
 void World::openDraft(const QString& projectId) {
-  draftId = m_native->controller<DraftController>()->start(node.environmentId, projectId);
+  draftId = m_native->controller<DraftController>()->start(mc.environmentId, projectId);
 }
 
 QString World::projectKey(const QString& name) const {
@@ -133,13 +133,13 @@ void World::setTime(const QDateTime& time) {
 }
 
 void World::connect(const QString& token) {
-  m_native->open(node.origin(), token);
+  m_native->open(mc.origin(), token);
   waitFor([this] { return shellSubscriptions() >= 1; }, QStringLiteral("the shell to subscribe"));
 }
 
 int World::shellSubscriptions() const {
   int count = 0;
-  for (const QJsonObject& sub : node.subscriptions) {
+  for (const QJsonObject& sub : mc.subscriptions) {
     if (sub.value(QLatin1String("shape")).toObject().value(QLatin1String("type")) == QLatin1String("shell")) count++;
   }
   return count;
@@ -155,9 +155,9 @@ void World::waitFor(const std::function<bool()>& condition, const QString& what)
 
 void World::sync() {
   bool done = false;
-  m_native->client()->call(m_native.get(), node.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
+  m_native->client()->call(m_native.get(), mc.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                           [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
-  waitFor([&done] { return done; }, QStringLiteral("a round trip through the node"));
+  waitFor([&done] { return done; }, QStringLiteral("a round trip through the MC"));
 }
 
 QList<BrickAction> World::actionsOf(const QString& type) const {
@@ -176,7 +176,7 @@ QString World::describeBrickActions() const {
 
 QString World::describeCommands() const {
   QStringList lines;
-  for (const QJsonObject& command : node.commands) {
+  for (const QJsonObject& command : mc.commands) {
     lines.append(QString::fromUtf8(QJsonDocument(command).toJson(QJsonDocument::Compact)));
   }
   return lines.isEmpty() ? QStringLiteral("(none)") : lines.join(QStringLiteral("; "));

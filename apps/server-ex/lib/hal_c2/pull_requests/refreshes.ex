@@ -1,8 +1,8 @@
 defmodule HalC2.PullRequests.Refreshes do
   @moduledoc """
   A revision that moves whenever a pull request is changed or refreshed through this
-  node (`pullRequests.subscribeRefreshes`). Subscribers get the current revision,
-  then `{:hal_c2_pull_request_refreshes, node, revision}` on every bump, and refetch
+  MC (`pullRequests.subscribeRefreshes`). Subscribers get the current revision,
+  then `{:hal_c2_pull_request_refreshes, mc, revision}` on every bump, and refetch
   what they show.
   """
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs the node under launchd, systemd or a terminal, and starts it again when it
+# Runs the MC under launchd, systemd or a terminal, and starts it again when it
 # stops to finish an update (exit status 75). bin/hal_c2 reads releases/start_erl.data
 # each time, so the relaunch runs the version the update installed. If that version
 # fails to boot, the start_erl.data it replaced is put back and the old one starts.
@@ -8,7 +8,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 
 # `hal-c2-service install|status|restart|uninstall` manages this release with the user's
 # service manager (`HalC2.Service.main/1`); `hal-c2-service cluster ...` the running
-# node's cluster (`HalC2.Cluster.Command`).
+# MC's cluster (`HalC2.Cluster.Command`).
 case "${1:-}" in
   install | status | restart | uninstall) exec "$here/hal_c2" eval "HalC2.Service.main([\"$1\"])" ;;
   cluster) shift && exec "$here/hal_c2" eval "HalC2.Cluster.Command.main(System.argv())" "$@" ;;

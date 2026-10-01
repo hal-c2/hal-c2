@@ -1,0 +1,221 @@
+// What the MC holds (threads, projects) and does (updates, refusals, held
+// answers), and the orchestration commands it receives.
+
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+#include <optional>
+
+#include "Harness.h"
+#include "McClient.h"
+#include "World.h"
+
+namespace {
+
+QJsonObject threadRow(const QStringList& header, const QStringList& cells) {
+  QJsonObject row;
+  for (qsizetype column = 0; column < header.size(); ++column) {
+    const QString& value = cells.value(column);
+    if (value.isEmpty()) continue;
+    QString name = header.at(column);
+    if (name == QLatin1String("project")) name = QStringLiteral("projectId");
+    row.insert(name, value);
+  }
+  if (!row.contains(QLatin1String("createdAt"))) row.insert(QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z"));
+  if (!row.contains(QLatin1String("updatedAt"))) row.insert(QStringLiteral("updatedAt"), row.value(QLatin1String("createdAt")));
+  return row;
+}
+
+QJsonObject projectRow(const QString& id, const QString& title, const QString& workspaceRoot) {
+  return {
+      {QStringLiteral("id"), id},
+      {QStringLiteral("title"), title},
+      {QStringLiteral("workspaceRoot"), workspaceRoot},
+      {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")},
+      {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:00:00Z")},
+      {QStringLiteral("scripts"), QJsonArray()},
+  };
+}
+
+// Before the shell connects the project is in the snapshot; after, it arrives as a row.
+void addProject(World& world, const QJsonObject& row) {
+  const QString id = row.value(QLatin1String("id")).toString();
+  world.mc.projects.insert(id, row);
+  world.mc.sendRow(id, row, QStringLiteral("project"));
+  if (world.native().client()->isReady()) world.sync();
+}
+
+void setField(QJsonObject& row, const QString& name, const QString& value) {
+  // The MC sends the background tasks themselves; only their count matters here.
+  if (name == QLatin1String("pendingBackgroundTasks")) {
+    QJsonArray tasks;
+    for (int task = 0; task < value.toInt(); ++task) tasks.append(QJsonObject{{QStringLiteral("id"), task}});
+    row.insert(name, tasks);
+  } else {
+    row.insert(name, value);
+  }
+}
+
+// Finds the first unchecked command of `type` (for `threadId`, when given).
+std::optional<qsizetype> findCommand(World& world, const QString& type, const QString& threadId = {}) {
+  for (qsizetype index = 0; index < world.mc.commands.size(); ++index) {
+    const QJsonObject& command = world.mc.commands.at(index);
+    if (world.checkedCommands.contains(index)) continue;
+    if (command.value(QLatin1String("type")).toString() != type) continue;
+    if (!threadId.isEmpty() && command.value(QLatin1String("threadId")).toString() != threadId) continue;
+    return index;
+  }
+  return std::nullopt;
+}
+
+void expectField(const QJsonObject& command, const QString& path, const QString& expected) {
+  const QVariant actual = at(command.toVariantMap(), path);
+  expect(actual.toString() == expected, QStringLiteral("expected %1 to be \"%2\" in %3")
+                                            .arg(path, expected, QString::fromUtf8(QJsonDocument(command).toJson(QJsonDocument::Compact))));
+}
+
+const Steps steps([] {
+  const QString q = kQuoted;
+
+  step(QStringLiteral("the MC's environment does not track visits"), [](World& world, const Captures&, const Table&) {
+    world.mc.capabilities.remove(QStringLiteral("threadVisitedTracking"));
+  });
+  step(QStringLiteral("the MC has these threads:"), [](World& world, const Captures&, const Table& table) {
+    for (qsizetype row = 1; row < table.size(); ++row) {
+      const QJsonObject thread = threadRow(table.first(), table.at(row));
+      world.mc.threads.insert(thread.value(QLatin1String("id")).toString(), thread);
+    }
+  });
+
+  // Mc updates.
+  step(QStringLiteral("the MC updates the thread %1 with the title %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject& row = world.mc.threads[c[0]];
+    row.insert(QStringLiteral("title"), c[1]);
+    world.mc.sendRow(c[0], row);
+    world.sync();
+  });
+  step(QStringLiteral("the MC updates the thread %1 with:").arg(q), [](World& world, const Captures& c, const Table& table) {
+    QJsonObject& row = world.mc.threads[c[0]];
+    for (const QStringList& cells : table) setField(row, cells.value(0), cells.value(1));
+    world.mc.sendRow(c[0], row);
+    world.sync();
+  });
+  step(QStringLiteral("the MC deletes the thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject row = world.mc.threads.take(c[0]);
+    row.insert(QStringLiteral("deletedAt"), QStringLiteral("2026-09-23T10:00:00Z"));
+    world.mc.sendRow(c[0], row);
+    world.sync();
+  });
+  step(QStringLiteral("the MC refuses %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.refusals.insert(c[0], c[1]);
+  });
+  step(QStringLiteral("the MC holds its answers"), [](World& world, const Captures&, const Table&) {
+    world.mc.hold(QStringLiteral("answers"));
+  });
+  step(QStringLiteral("the MC answers"), [](World& world, const Captures&, const Table&) {
+    world.sync();  // every held command has reached the MC
+    world.mc.answerHeld();
+    world.sync();
+  });
+
+  // What the MC received.
+  step(QStringLiteral("the MC receives an? %1 command for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return findCommand(world, c[0], c[1]).has_value(); },
+                  [&] { return QStringLiteral("a %1 command for %2; the MC has %3").arg(c[0], c[1], world.describeCommands()); });
+    world.command = findCommand(world, c[0], c[1]);
+    world.checkedCommands.insert(*world.command);
+  });
+  step(QStringLiteral("the command's %1 is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.command.has_value(), QStringLiteral("no command was found before"));
+    expectField(world.mc.commands.at(*world.command), c[0], c[1]);
+  });
+  step(QStringLiteral("the command %1 has %1 %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const QJsonObject& command : world.mc.commands) {
+      if (command.value(QLatin1String("type")).toString() == c[0]) return expectField(command, c[1], c[2]);
+    }
+    fail(QStringLiteral("no %1 command; the MC has %2").arg(c[0], world.describeCommands()));
+  });
+  step(QStringLiteral("the MC receives these commands in order:"), [](World& world, const Captures&, const Table& table) {
+    const qsizetype wanted = table.size() - 1;
+    world.waitFor([&] { return world.mc.commands.size() >= wanted; }, QStringLiteral("%1 commands").arg(wanted));
+    world.sync();
+    expect(world.mc.commands.size() == wanted, QStringLiteral("the MC has %1").arg(world.describeCommands()));
+    for (qsizetype row = 1; row < table.size(); ++row) {
+      const QString type = world.mc.commands.at(row - 1).value(QLatin1String("type")).toString();
+      expect(type == table.at(row).value(0), QStringLiteral("command %1 is %2, not %3").arg(row).arg(type, table.at(row).value(0)));
+      world.checkedCommands.insert(row - 1);
+    }
+  });
+  step(QStringLiteral("the MC receives these messages in order:"), [](World& world, const Captures&, const Table& table) {
+    const auto texts = [&] {
+      QStringList texts;
+      for (const QJsonObject& command : world.mc.commands) {
+        if (command.value(QLatin1String("type")).toString() == QLatin1String("message.dispatch")) {
+          texts.append(command.value(QLatin1String("text")).toString());
+        }
+      }
+      return texts;
+    };
+    QStringList wanted;
+    for (qsizetype row = 1; row < table.size(); ++row) wanted.append(table.at(row).value(0));
+    world.waitFor([&] { return texts().size() >= wanted.size(); }, QStringLiteral("%1 messages").arg(wanted.size()));
+    world.sync();
+    expect(texts() == wanted, QStringLiteral("the MC has the messages %1").arg(texts().join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the MC receives no commands"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(world.mc.commands.isEmpty(), QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  step(QStringLiteral("the MC receives no other commands"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(world.mc.commands.size() == world.checkedCommands.size(),
+           QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+
+  // The MC's projects.
+  step(QStringLiteral("the MC has the project %1 at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.projects.insert(c[0], {{QStringLiteral("id"), c[0]}, {QStringLiteral("title"), c[0]}, {QStringLiteral("workspaceRoot"), c[1]}, {QStringLiteral("scripts"), QJsonArray()}});
+  });
+  step(QStringLiteral("the MC has the project %1 titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    addProject(world, projectRow(c[0], c[1], QStringLiteral("/work/") + c[1]));
+  });
+  step(QStringLiteral("the MC has these projects:"), [](World& world, const Captures&, const Table& table) {
+    const QStringList& header = table.first();
+    for (qsizetype line = 1; line < table.size(); ++line) {
+      QHash<QString, QString> cells;
+      for (qsizetype column = 0; column < header.size(); ++column) cells.insert(header.at(column), table.at(line).value(column));
+      const QString title = cells.value(QStringLiteral("title"));
+      QJsonObject row = projectRow(cells.value(QStringLiteral("id")), title,
+                                   cells.value(QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + title));
+      if (!cells.value(QStringLiteral("createdAt")).isEmpty()) {
+        row.insert(QStringLiteral("createdAt"), cells.value(QStringLiteral("createdAt")));
+        row.insert(QStringLiteral("updatedAt"), cells.value(QStringLiteral("createdAt")));
+      }
+      if (!cells.value(QStringLiteral("repository")).isEmpty()) {
+        row.insert(QStringLiteral("repositoryIdentity"), QJsonObject{
+                                                             {QStringLiteral("canonicalKey"), cells.value(QStringLiteral("repository"))},
+                                                             {QStringLiteral("name"), cells.value(QStringLiteral("repository")).section(u'/', -1)},
+                                                         });
+      }
+      addProject(world, row);
+    }
+  });
+  step(QStringLiteral("the MC removes the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.projects.remove(c[0]);
+    world.mc.sendRow(c[0], QJsonObject{{QStringLiteral("deletedAt"), QStringLiteral("2026-09-23T10:00:00Z")}}, QStringLiteral("project"));
+    world.sync();
+  });
+  step(QStringLiteral("the project %1 has these scripts:").arg(q), [](World& world, const Captures& c, const Table& table) {
+    QJsonArray scripts;
+    for (qsizetype row = 1; row < table.size(); ++row) {
+      QJsonObject script;
+      for (qsizetype column = 0; column < table.first().size(); ++column) script.insert(table.first().at(column), table.at(row).value(column));
+      scripts.append(script);
+    }
+    world.mc.projects[c[0]].insert(QStringLiteral("scripts"), scripts);
+  });
+});
+
+}  // namespace

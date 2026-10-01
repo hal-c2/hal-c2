@@ -1,5 +1,5 @@
 // The Providers section's instances (ProviderSettingsController): adding one
-// with the wizard, and editing, resetting and deleting one where the node
+// with the wizard, and editing, resetting and deleting one where the MC
 // reads it, its `providerInstances` entry (ProviderInstances.h). As the web's
 // AddProviderInstanceDialog, ProviderInstanceCard and ProviderSettingsPanel.
 //
@@ -41,7 +41,7 @@
 
 #include "EnvironmentSettings.h"
 #include "NativeShell.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ProviderCustomModels.h"
 #include "ProviderDrivers.h"
 #include "ProviderInstances.h"

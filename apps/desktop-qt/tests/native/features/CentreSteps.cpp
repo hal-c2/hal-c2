@@ -1,7 +1,7 @@
 // The thread in the window's centre, past its rows: copying a message
 // (TimelineModel::copy), the two ways into a revert, a reply's and the diff
 // panel's, which both ask Panel.diff (ThreadDiff) and so the same question,
-// and following a thread again after its node stopped sending it
+// and following a thread again after its MC stopped sending it
 // (ThreadStore::reload) (timeline/streaming.feature, timeline/checkpoints.feature,
 // and the reply without a checkpoint in features/desktop/native-centre.feature).
 
@@ -27,7 +27,7 @@ struct FakeTurns {
 };
 
 QString threadKey(World& world) {
-  const FakeStreams& fake = world.node.part<FakeStreams>();
+  const FakeStreams& fake = world.mc.part<FakeStreams>();
   return fake.environment + QLatin1Char(':') + fake.thread;
 }
 
@@ -45,7 +45,7 @@ QString rowReading(TimelineModel& model, const QString& text) {
 
 QList<QJsonObject> rollbacks(World& world) {
   QList<QJsonObject> found;
-  for (const QJsonObject& command : std::as_const(world.node.commands)) {
+  for (const QJsonObject& command : std::as_const(world.mc.commands)) {
     if (command.value(QLatin1String("type")) == QLatin1String("checkpoint.rollback")) found.append(command);
   }
   return found;
@@ -57,7 +57,7 @@ const Steps steps([] {
   step(QStringLiteral("a thread in %1 whose first turn left no checkpoint").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtThread(world, c[0]);
     startRun(world, 60);
-    world.node.part<FakeTurns>().replies.append(
+    world.mc.part<FakeTurns>().replies.append(
         addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Turn 1 is done.")}}));
     settleRun(world, QStringLiteral("completed"), 30);
   });
@@ -65,13 +65,13 @@ const Steps steps([] {
   // Copying.
   step(QStringLiteral("the agent has answered"), [](World& world, const Captures&, const Table&) {
     startRun(world, 30);
-    world.node.part<FakeTurns>().replies.append(
+    world.mc.part<FakeTurns>().replies.append(
         addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("The cart adds **tax** now.")}}));
     settleRun(world, QStringLiteral("completed"), 30);
   });
   step(QStringLiteral("the user copies the reply"), [](World& world, const Captures&, const Table&) {
     QGuiApplication::clipboard()->clear();
-    const QString reply = world.node.part<FakeTurns>().replies.value(0);
+    const QString reply = world.mc.part<FakeTurns>().replies.value(0);
     expect(timeline(world).copy(reply), QStringLiteral("the reply cannot be copied; %1").arg(describe(timeline(world))));
   });
   step(QStringLiteral("the reply's markdown is on the clipboard"), [](World&, const Captures&, const Table&) {
@@ -106,31 +106,31 @@ const Steps steps([] {
     world.waitFor([&] { return !diff(world).reverting(); }, QStringLiteral("the revert to finish"));
     world.sync();
   });
-  step(QStringLiteral("the node is asked to leave the files as they are"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return !rollbacks(world).isEmpty(); }, [] { return QStringLiteral("a rewind; the node got none"); });
+  step(QStringLiteral("the MC is asked to leave the files as they are"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !rollbacks(world).isEmpty(); }, [] { return QStringLiteral("a rewind; the MC got none"); });
     const QJsonObject command = rollbacks(world).constLast();
-    expect(command.value(QLatin1String("restoreFiles")) == QJsonValue(false), QStringLiteral("the node was asked %1").arg(show(command.toVariantMap())));
+    expect(command.value(QLatin1String("restoreFiles")) == QJsonValue(false), QStringLiteral("the MC was asked %1").arg(show(command.toVariantMap())));
   });
   step(QStringLiteral("the first turn's reply offers no rewind"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
-    const QString reply = world.node.part<FakeTurns>().replies.value(0);
+    const QString reply = world.mc.part<FakeTurns>().replies.value(0);
     expect(model.checkpointOf(reply).isEmpty(), QStringLiteral("the reply offers %1").arg(show(model.checkpointOf(reply))));
     diff(world).requestRevert(1);
     expect(!diff(world).canRevert() && diff(world).revertTurn() == 0, QStringLiteral("the user is asked to revert"));
   });
 
   // Following again.
-  step(QStringLiteral("the node stops sending the thread"), [](World& world, const Captures&, const Table&) {
-    FakeStreams& fake = world.node.part<FakeStreams>();
+  step(QStringLiteral("the MC stops sending the thread"), [](World& world, const Captures&, const Table&) {
+    FakeStreams& fake = world.mc.part<FakeStreams>();
     fake.offline.insert(fake.environment);
     for (const int id : followers(world, fake.thread)) {
-      world.node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("stream closed")}});
-      world.node.forget(id);
+      world.mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("stream closed")}});
+      world.mc.forget(id);
     }
     world.sync();
   });
-  step(QStringLiteral("the node can send the thread again"), [](World& world, const Captures&, const Table&) {
-    FakeStreams& fake = world.node.part<FakeStreams>();
+  step(QStringLiteral("the MC can send the thread again"), [](World& world, const Captures&, const Table&) {
+    FakeStreams& fake = world.mc.part<FakeStreams>();
     fake.offline.remove(fake.environment);
   });
   step(QStringLiteral("the user retries the thread"), [](World& world, const Captures&, const Table&) {

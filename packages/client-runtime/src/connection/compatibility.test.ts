@@ -52,7 +52,7 @@ describe("orchestration protocol compatibility", () => {
     expect(error?.message).toContain("This client is not supported");
   });
 
-  it("accepts shape-protocol (clustered) nodes", () => {
+  it("accepts shape-protocol (clustered) MCs", () => {
     expect(orchestrationProtocolCompatibilityError(descriptor(SHAPE_PROTOCOL_VERSION))).toBeNull();
   });
 });

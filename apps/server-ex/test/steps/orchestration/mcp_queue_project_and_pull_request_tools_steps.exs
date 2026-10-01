@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   @moduledoc """
-  Steps for `features/node/orchestration/mcp-queue-project-and-pull-request-tools.feature`:
+  Steps for `features/mc/orchestration/mcp-queue-project-and-pull-request-tools.feature`:
   the MCP tools for queued messages, pending questions, projects, worktree handoffs
   and pull request links. Tool outcomes go to `context.mcp_result` (see
   `HalC2.Steps.Orchestration.McpThreadTools`).
@@ -9,7 +9,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @long String.duplicate("x", 20_000)
   @short "second queued message"
@@ -258,7 +258,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     |> Map.put(:reader, caller)
   end
 
-  step "it receives every project of this node that is not deleted, paged", context do
+  step "it receives every project of this MC that is not deleted, paged", context do
     assert {:ok, %{"projects" => [first], "nextCursor" => 1, "total" => 2}} = context.mcp_result
 
     assert {:ok, %{"projects" => [second], "nextCursor" => nil, "total" => 2}} =
@@ -288,7 +288,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "the agent of {string} creates a project for an existing folder",
        %{args: [caller]} = context do
-    folder = HalC2.Test.Node.tmp_dir(context.node, "notes-app")
+    folder = HalC2.Test.Mc.tmp_dir(context.mc, "notes-app")
 
     context
     |> tool(caller, "hal_c2_project_create", %{"workspaceRoot" => folder})
@@ -365,7 +365,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "the agent of {string} clones a repository", %{args: [caller]} = context do
     source = World.git_repo(context, "upstream")
-    destination = Path.join(HalC2.Test.Node.tmp_dir(context.node, "clones"), "upstream")
+    destination = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "clones"), "upstream")
 
     context
     |> tool(caller, "hal_c2_project_clone", %{
@@ -409,7 +409,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "the agent of {string} lists worktrees", %{args: [caller]} = context do
     root = World.project(context, "demo").root
-    worktree = Path.join(HalC2.Test.Node.tmp_dir(context.node, "worktrees"), "topic")
+    worktree = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "worktrees"), "topic")
     World.git!(root, ["worktree", "add", "-q", "-b", "topic", worktree])
 
     context
@@ -551,7 +551,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "{string} already works in a worktree", %{args: [thread]} = context do
     root = World.project(context, "demo").root
-    path = Path.join(HalC2.Test.Node.tmp_dir(context.node, "worktrees"), "existing")
+    path = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "worktrees"), "existing")
     World.git!(root, ["worktree", "add", "-q", "-b", "existing", path])
     move(context, thread, path, "existing")
   end
@@ -578,7 +578,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "origin cannot be fetched", context do
     root = World.project(context, "demo").root
-    World.git!(root, ["remote", "add", "origin", Path.join(context.node.home, "no-such-remote")])
+    World.git!(root, ["remote", "add", "origin", Path.join(context.mc.home, "no-such-remote")])
     context
   end
 
@@ -588,7 +588,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
        %{args: [thread]} = context do
     context = with_origin(context)
     root = World.project(context, "demo").root
-    dir = HalC2.Test.Node.tmp_dir(context.node, "hook")
+    dir = HalC2.Test.Mc.tmp_dir(context.mc, "hook")
     [started, release] = for name <- ["started", "release"], do: Path.join(dir, name)
     for fifo <- [started, release], do: {_, 0} = System.cmd("mkfifo", [fifo])
     hook = Path.join([root, ".git", "hooks", "post-checkout"])
@@ -602,7 +602,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
     # Blocks until the hook runs, inside the handoff's `git worktree add`.
     {"started\n", 0} = System.cmd("cat", [started])
-    path = Path.join(HalC2.Test.Node.tmp_dir(context.node, "worktrees"), "elsewhere")
+    path = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "worktrees"), "elsewhere")
     context = move(context, thread, path, "elsewhere")
     Map.merge(context, %{handoff: task, release: release, race_root: root})
   end
@@ -820,7 +820,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   # An origin holding main as it is now; local main then moves a commit ahead.
   defp with_origin(context) do
     root = World.project(context, "demo").root
-    origin = Path.join(HalC2.Test.Node.tmp_dir(context.node, "origin"), "demo.git")
+    origin = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "origin"), "demo.git")
     World.git!(Path.dirname(origin), ["clone", "-q", "--bare", root, origin])
     World.git!(root, ["remote", "add", "origin", origin])
     World.git!(root, ~w(fetch -q origin))

@@ -6,11 +6,11 @@
 #include <QList>
 #include <QString>
 
-class FakeNode;
+class FakeMc;
 
-// The node's settings document and `config` shape (SettingsSteps.cpp): one
+// The MC's settings document and `config` shape (SettingsSteps.cpp): one
 // versioned document, `hal-c2.readSettings` / `hal-c2.writeSettings` refusing
-// a stale version as the node does, and the config frames for each
+// a stale version as the MC does, and the config frames for each
 // environment's subscribers.
 struct FakeConfig {
   QJsonObject settings;
@@ -20,7 +20,7 @@ struct FakeConfig {
   QHash<QString, QJsonArray> sources;  // usage-limit source snapshots, by environment
   QHash<QString, QJsonObject> elsewhere;  // other environments' ServerConfig, by environment
   // Other environments' settings documents, by environment: read, written and
-  // published as this node's own is.
+  // published as this MC's own is.
   struct Document {
     QJsonObject settings;
     int version = 0;
@@ -38,17 +38,17 @@ struct FakeConfig {
   QHash<QString, QString> secrets;
 };
 
-FakeConfig& fakeConfig(FakeNode& node);
+FakeConfig& fakeConfig(FakeMc& mc);
 // Sends `config.themes` to the environment's config subscribers.
-void publishThemes(FakeNode& node, const QString& environment, const QJsonArray& themes);
+void publishThemes(FakeMc& mc, const QString& environment, const QJsonArray& themes);
 // Another client's save: the document moves on, announced as `config.settings`
 // unless `quietly`.
-void saveElsewhere(FakeNode& node, const QString& key, const QJsonValue& value, bool quietly = false);
-// The same on the environment's document ("" or the node's own for this
-// node's), as the node saves a setting it owns (HalC2.Devices' device.configure).
-void saveOn(FakeNode& node, const QString& environment, const QString& key, const QJsonValue& value);
+void saveElsewhere(FakeMc& mc, const QString& key, const QJsonValue& value, bool quietly = false);
+// The same on the environment's document ("" or the MC's own for this
+// MC's), as the MC saves a setting it owns (HalC2.Devices' device.configure).
+void saveOn(FakeMc& mc, const QString& environment, const QString& key, const QJsonValue& value);
 // Another environment's document, created on first use; its config
 // snapshot carries it.
-FakeConfig::Document& documentOf(FakeNode& node, const QString& environment);
-// The node's providers become `providers`, announced as `config.providers`.
-void publishProviders(FakeNode& node, const QJsonArray& providers);
+FakeConfig::Document& documentOf(FakeMc& mc, const QString& environment);
+// The MC's providers become `providers`, announced as `config.providers`.
+void publishProviders(FakeMc& mc, const QJsonArray& providers);

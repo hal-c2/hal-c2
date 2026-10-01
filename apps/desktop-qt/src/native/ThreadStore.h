@@ -12,11 +12,11 @@
 #include "NativeController.h"
 #include "TimelineModel.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
-// The threads the desktop has open, each followed through the node's `stream`
+// The threads the desktop has open, each followed through the MC's `stream`
 // shape into a TimelineModel. The active thread plus a few recently active
 // ones stay subscribed, so switching back is instant; older ones are dropped.
 //
@@ -24,13 +24,13 @@ class ShellStore;
 //   Threads.timeline                 // the active thread's rows
 //   Threads.close("env-a:thread-1")  // stops following it
 //
-// A thread is addressed by its environment, which the node routes to the
+// A thread is addressed by its environment, which the MC routes to the
 // cluster member serving it or through its link to it. It waits in `loading`
-// until the shell lists it (ShellStore), whose node says when it is online. The
-// NodeClient sends the subscription again after a reconnect or `resync`, and
+// until the shell lists it (ShellStore), whose MC says when it is online. The
+// McClient sends the subscription again after a reconnect or `resync`, and
 // the part-0 snapshot that follows replaces the thread's entities; the rows
-// keep their ids. A node that refuses the stream (offline, gone) leaves the
-// thread `unreachable` with its rows until the node is back.
+// keep their ids. An MC that refuses the stream (offline, gone) leaves the
+// thread `unreachable` with its rows until the MC is back.
 class ThreadStore : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(QString activeThread READ activeThread NOTIFY activeThreadChanged)
@@ -40,7 +40,7 @@ public:
   // Threads kept following besides the active one.
   static constexpr int warmThreads = 3;
 
-  ThreadStore(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  ThreadStore(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
   ~ThreadStore() override;
 
   void activate() override;
@@ -56,7 +56,7 @@ public:
   // was not yet. Empty leaves no thread active; the warm ones stay.
   Q_INVOKABLE void open(const QString& threadKey);
   Q_INVOKABLE void close(const QString& threadKey);
-  // Follows an unreachable thread again now, rather than when its node is
+  // Follows an unreachable thread again now, rather than when its MC is
   // back; `loading` until the snapshot lands.
   Q_INVOKABLE void reload(const QString& threadKey);
 
@@ -74,7 +74,7 @@ private:
   struct Followed {
     QPointer<TimelineModel> model;
     int subscription = 0;
-    // Refused while its node was offline: retried once the node is online.
+    // Refused while its MC was offline: retried once the MC is online.
     bool waitOnline = false;
   };
 
@@ -87,7 +87,7 @@ private:
   void readSettings();
   void configure(TimelineModel* model) const;
 
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   QHash<QString, Followed> m_threads;
   QStringList m_recent;

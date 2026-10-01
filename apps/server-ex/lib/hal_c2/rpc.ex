@@ -1,7 +1,7 @@
 defmodule HalC2.Rpc do
   @moduledoc """
-  Client RPCs a node serves, by the method names of `packages/contracts/src/rpc.ts`.
-  Run on the node that owns the environment (`HalC2.Web.Socket` routes them).
+  Client RPCs an MC serves, by the method names of `packages/contracts/src/rpc.ts`.
+  Run on the MC that owns the environment (`HalC2.Web.Socket` routes them).
   """
 
   # Methods that answer for the calling session (`handle/3`).
@@ -246,11 +246,11 @@ defmodule HalC2.Rpc do
     end
   end
 
-  def handle(method, _payload), do: {:error, "#{method} is not served by this node yet"}
+  def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
   @doc """
   Handles one of `session_methods/0` for `session`, the caller's session id (`nil` for
-  the node's own token, which is no paired client): the twins of `/api/auth/clients*`.
+  the MC's own token, which is no paired client): the twins of `/api/auth/clients*`.
   """
   @spec handle(String.t(), term, String.t() | nil) :: {:ok, term} | {:error, map}
   def handle("hal-c2.clients", _input, session),
@@ -310,7 +310,7 @@ defmodule HalC2.Rpc do
   @spec required_scope(String.t()) :: String.t()
   def required_scope("terminal." <> _), do: "terminal:operate"
   def required_scope("review." <> _), do: "review:write"
-  # A link hands this node's clients whatever its pairing grants on the other side.
+  # A link hands this MC's clients whatever its pairing grants on the other side.
   def required_scope("hal-c2." <> m) when m in ~w(linkEnvironment unlinkEnvironment),
     do: "access:write"
 

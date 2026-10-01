@@ -13,7 +13,7 @@ constexpr qsizetype kMaxToasts = 5;
 
 }  // namespace
 
-ToastController::ToastController(ShellBridge* bridge, NodeClient*, QObject* parent)
+ToastController::ToastController(ShellBridge* bridge, McClient*, QObject* parent)
     : QObject(parent), m_bridge(bridge) {
   m_timer.setSingleShot(true);
   connect(&m_timer, &QTimer::timeout, this, &ToastController::expire);

@@ -12,9 +12,9 @@
 #   packages/contracts/src/rpc.ts (provider.install.start, provider.install.cancel, provider.install.remove, provider.install.subscribe, provider.auth.complete)
 #   packages/contracts/src/providerSetup.ts (ProviderInstallState)
 
-@plugin-antigravity @node
+@plugin-antigravity @mc
 Feature: Antigravity
-  Antigravity runs Google's official Antigravity ACP agent. The node downloads and
+  Antigravity runs Google's official Antigravity ACP agent. The MC downloads and
   verifies the runtime itself, keeps a private Google profile for each instance, and
   finishes browser sign-in even when the browser is on another device.
 
@@ -156,7 +156,7 @@ Feature: Antigravity
 
   Scenario: A server restart keeps the Google sign-in
     Given the user is signed in to Antigravity
-    When the node restarts
+    When the MC restarts
     Then Antigravity still shows the saved account
 
   Scenario: Reverting an Antigravity thread is not offered

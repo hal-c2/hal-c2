@@ -2,7 +2,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
   @moduledoc """
   Steps for `features/providers/antigravity.feature`. Google's runtime is played by
   the scripted fake (`HalC2.Test.FakeAcp` with `googleAuth`, see
-  `test/support/fake_google_auth.py`): the release the node downloads is a zip of
+  `test/support/fake_google_auth.py`): the release the MC downloads is a zip of
   the fake's wrapper and a helper script, fetched from disk through the
   `:antigravity_fetch` seam, and Google's sign-in page is the fake's loopback
   listener. Nothing reaches the network.
@@ -16,8 +16,8 @@ defmodule HalC2.Steps.Providers.Antigravity do
 
   alias HalC2.Acp.Antigravity
   alias HalC2.Acp.Antigravity.Installation
-  alias HalC2.Test.{FakeAcp, Node}
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.{FakeAcp, Mc}
+  alias HalC2.Test.Mc.World
 
   @version "agy_acp_server_1.1.1"
   @old "agy_acp_server_1.1.0"
@@ -55,13 +55,13 @@ defmodule HalC2.Steps.Providers.Antigravity do
     # The managed runtime, not the fake's wrapper, is what the instance runs.
     FakeAcp.settings(&put_in(&1, ["providers", @instance], %{"enabled" => true}))
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.ProviderAuth.Registry},
         id: :provider_auth_registry
       )
     )
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec(
         {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one},
         id: :provider_auth_supervisor
@@ -147,7 +147,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
 
   step "the client disconnects and reconnects", context do
     Mint.HTTP.close(World.client(context).conn)
-    client = Node.connect(context.node)
+    client = Mc.connect(context.mc)
     context = context |> World.put_client(client) |> Map.delete(:install_sub) |> watch_install()
     Map.put(context, :install_snapshot, context.install_first)
   end
@@ -411,7 +411,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
 
   step "the user started sign-in from a phone connected to a remote environment", context do
     context
-    |> World.put_client("phone", Node.connect(context.node))
+    |> World.put_client("phone", Mc.connect(context.mc))
     |> start_sign_in(@instance, "phone")
   end
 
@@ -595,8 +595,8 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   step "the environment has a Gemini API key in its variables", context do
-    HalC2.Test.Node.Terminal.put_env("GEMINI_API_KEY", "ambient-key")
-    HalC2.Test.Node.Terminal.put_env("GOOGLE_CLOUD_PROJECT", "ambient-project")
+    HalC2.Test.Mc.Terminal.put_env("GEMINI_API_KEY", "ambient-key")
+    HalC2.Test.Mc.Terminal.put_env("GOOGLE_CLOUD_PROJECT", "ambient-project")
     context
   end
 
@@ -759,7 +759,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   step "Antigravity still shows the saved account", context do
-    # A restarted node has read nothing from the agent yet.
+    # A restarted MC has read nothing from the agent yet.
     HalC2.Acp.forget(@instance)
     :persistent_term.erase({HalC2.Acp, @instance, :unauthenticated})
     await_signed_in(context, @instance)
@@ -839,7 +839,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
       end
 
     context = context |> signed_in() |> FakeAcp.thread("Work")
-    dir = Path.join(context.node.home, "attachments")
+    dir = Path.join(context.mc.home, "attachments")
     File.mkdir_p!(dir)
 
     attachments =
@@ -892,7 +892,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
   step ~r/^the project has the skill "(?<name>[^"]+)" in both \.gemini\/skills and \.agents\/skills$/,
        %{args: [name]} = context do
     # The user's own skill folders are empty.
-    HalC2.Test.Node.Host.home(context)
+    HalC2.Test.Mc.Host.home(context)
     root = World.project(context).root
 
     for {dir, from} <- [{".gemini/skills", "gemini"}, {".agents/skills", "agents"}] do
@@ -1060,7 +1060,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
   step "the user signs in from the mobile app's provider accounts", context do
     context =
       context
-      |> World.put_client("mobile", Node.connect(context.node))
+      |> World.put_client("mobile", Mc.connect(context.mc))
       |> start_sign_in(@instance, "mobile")
 
     # The phone cannot reach the environment's loopback address: it pastes the return.
@@ -1071,10 +1071,10 @@ defmodule HalC2.Steps.Providers.Antigravity do
 
   # A release zip of the fake's wrapper and a helper, as Google publishes it.
   defp build_release(context, version) do
-    dir = Node.tmp_dir(context.node, "agy-release")
+    dir = Mc.tmp_dir(context.mc, "agy-release")
     File.cp!(FakeAcp.fake(context, @instance).bin, Path.join(dir, "agy_acp_server.par"))
     File.write!(Path.join(dir, "localharness_external"), "#!/bin/sh\nexit 0\n")
-    archive = Path.join(Node.tmp_dir(context.node, "agy-archive"), "runtime.zip")
+    archive = Path.join(Mc.tmp_dir(context.mc, "agy-archive"), "runtime.zip")
 
     {:ok, _} =
       :zip.create(
@@ -1169,7 +1169,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
   # runtime is this one.
   @doc false
   def installer(context) do
-    Node.ensure(Installation)
+    Mc.ensure(Installation)
     context
   end
 
@@ -1213,13 +1213,13 @@ defmodule HalC2.Steps.Providers.Antigravity do
 
     client =
       World.client(context)
-      |> Node.sub(id, %{
+      |> Mc.sub(id, %{
         "type" => "providerInstall",
-        "node" => Atom.to_string(node()),
+        "mc" => Atom.to_string(node()),
         "instanceId" => @instance
       })
 
-    {frame, client} = Node.await(client, &(&1["t"] == "providerInstall" and &1["id"] == id))
+    {frame, client} = Mc.await(client, &(&1["t"] == "providerInstall" and &1["id"] == id))
 
     context
     |> World.put_client(client)
@@ -1231,7 +1231,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
     id = context.install_sub
 
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["t"] == "providerInstall" and &1["id"] == id),
         15_000
@@ -1246,7 +1246,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   defp manual_folder(context, helper?) do
-    folder = Node.tmp_dir(context.node, "antigravity-manual")
+    folder = Mc.tmp_dir(context.mc, "antigravity-manual")
     exe = Path.join(folder, "agy_acp_server.par")
     File.cp!(FakeAcp.fake(context, @instance).bin, exe)
     File.chmod!(exe, 0o755)
@@ -1332,13 +1332,13 @@ defmodule HalC2.Steps.Providers.Antigravity do
 
         client =
           World.client(context, name)
-          |> Node.sub(id, %{
+          |> Mc.sub(id, %{
             "type" => "providerAuth",
-            "node" => Atom.to_string(node()),
+            "mc" => Atom.to_string(node()),
             "instanceId" => instance
           })
 
-        {_frame, client} = Node.await(client, &(&1["t"] == "providerAuth" and &1["id"] == id))
+        {_frame, client} = Mc.await(client, &(&1["t"] == "providerAuth" and &1["id"] == id))
 
         context =
           context
@@ -1381,7 +1381,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
       Map.put(context, :auth_seen, context.auth)
     else
       {frame, client} =
-        Node.await(
+        Mc.await(
           World.client(context, name),
           &(&1["t"] == "providerAuth" and &1["id"] == id and &1["state"]["phase"] in phases),
           15_000

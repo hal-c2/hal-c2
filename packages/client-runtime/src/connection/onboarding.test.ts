@@ -35,7 +35,7 @@ function pairingHttpLayer(
   calls: Array<{ readonly url: string; readonly init: RequestInit }>,
   options?: {
     readonly failDescriptor?: boolean;
-    /** The node serves plain HTTP only: an HTTPS request cannot connect. */
+    /** The MC serves plain HTTP only: an HTTPS request cannot connect. */
     readonly plainHttpOnly?: boolean;
     readonly protocolVersion?: number;
     readonly cluster?: ReadonlyArray<{ readonly environmentId: string; readonly label: string }>;
@@ -92,7 +92,7 @@ function pairingHttpLayer(
 }
 
 describe("connection onboarding", () => {
-  it.effect("pairing one clustered node registers every machine in its cluster", () =>
+  it.effect("pairing one clustered MC registers every machine in its cluster", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
       const { registration, cluster } = yield* preparePairingRegistrations({
@@ -114,7 +114,7 @@ describe("connection onboarding", () => {
       );
 
       expect(registration.target.environmentId).toBe("environment-paired");
-      // The sibling is reached through the paired node, with the same credential.
+      // The sibling is reached through the paired MC, with the same credential.
       expect(cluster).toHaveLength(1);
       expect(cluster[0]).toMatchObject({
         target: {
@@ -229,7 +229,7 @@ describe("connection onboarding", () => {
     }),
   );
 
-  it.effect("a host typed without a scheme reaches a plain-HTTP node over HTTP", () =>
+  it.effect("a host typed without a scheme reaches a plain-HTTP MC over HTTP", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
       const registration = yield* preparePairingRegistration({

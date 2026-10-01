@@ -1,10 +1,10 @@
 defmodule HalC2.Steps.Orchestration.PullRequestLinks do
-  @moduledoc "Steps for features/node/orchestration/pull-request-links.feature."
+  @moduledoc "Steps for features/mc/orchestration/pull-request-links.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.Projection.PullRequests
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   # --- arranging --------------------------------------------------------------------
 
@@ -41,7 +41,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     |> ok!()
   end
 
-  step "the node discovered pull request {string} for the branch of {string}",
+  step "the MC discovered pull request {string} for the branch of {string}",
        %{args: [pr, thread]} = context do
     context |> discover(thread, pr) |> ok!()
   end
@@ -52,7 +52,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     context
   end
 
-  step "the node started discovering the pull request for {string}",
+  step "the MC started discovering the pull request for {string}",
        %{args: [thread]} = context do
     Map.put(context, :expected, expected(context, thread))
   end
@@ -62,7 +62,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
   end
 
   step "the thread's worktree changed before discovery finished", context do
-    worktree = HalC2.Test.Node.tmp_dir(context.node, "worktree")
+    worktree = HalC2.Test.Mc.tmp_dir(context.mc, "worktree")
 
     context
     |> command(context.thread, "thread.metadata.update", %{"worktreePath" => worktree})
@@ -71,7 +71,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
 
   step "the project's workspace root changed before discovery finished", context do
     project = World.project(context)
-    root = HalC2.Test.Node.tmp_dir(context.node, "moved")
+    root = HalC2.Test.Mc.tmp_dir(context.mc, "moved")
 
     {:ok, _} =
       HalC2.Projects.mutate(%{
@@ -122,7 +122,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     |> ok!()
   end
 
-  step "the node syncs the host state of {string} as merged", %{args: [pr]} = context do
+  step "the MC syncs the host state of {string} as merged", %{args: [pr]} = context do
     snapshot = %{"state" => "merged", "title" => "PR", "syncedAt" => World.iso_from_now(0)}
 
     context
@@ -130,13 +130,13 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     |> ok!()
   end
 
-  step "the node syncs the host state of {string} for {string}",
+  step "the MC syncs the host state of {string} for {string}",
        %{args: [pr, thread]} = context do
     snapshot = %{"state" => "open", "title" => "PR", "syncedAt" => World.iso_from_now(0)}
     command(context, thread, "thread.pull-request-link.sync", sync(pr, snapshot))
   end
 
-  step "the node discovers pull request {string} for the branch of {string}",
+  step "the MC discovers pull request {string} for the branch of {string}",
        %{args: [pr, thread]} = context do
     context |> discover(thread, pr) |> ok!()
   end
@@ -145,7 +145,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     discover(context, context.thread, "acme/app#7", context.expected)
   end
 
-  step "the node applies a discovered pull request for {string}", %{args: [thread]} = context do
+  step "the MC applies a discovered pull request for {string}", %{args: [thread]} = context do
     discover(context, thread, "acme/app#7")
   end
 

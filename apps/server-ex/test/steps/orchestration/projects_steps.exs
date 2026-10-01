@@ -1,15 +1,15 @@
 defmodule HalC2.Steps.Orchestration.Projects do
   @moduledoc """
-  Steps for `features/node/orchestration/projects.feature`. Clients change projects
+  Steps for `features/mc/orchestration/projects.feature`. Clients change projects
   over the socket (`projects.mutate`) and the reply is `context.reply`. Folders under
   `~` live in a scenario home: `$HOME` points at a temporary folder for the scenario,
-  as the node expands `~` from it, and is restored afterwards.
+  as the MC expands `~` from it, and is restored afterwards.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @old "2020-01-01T00:00:00.000Z"
 
@@ -71,7 +71,7 @@ defmodule HalC2.Steps.Orchestration.Projects do
   step "project {string} exists with title {string} and the folder expanded to a full path",
        %{args: [id, title]} = context do
     assert {:ok, %{"id" => ^id, "title" => ^title, "workspaceRoot" => root}} = context.reply
-    assert root == Path.join(Node.Host.home(context), "code/app")
+    assert root == Path.join(Mc.Host.home(context), "code/app")
     assert stored(id)["workspaceRoot"] == root
     context
   end
@@ -236,7 +236,7 @@ defmodule HalC2.Steps.Orchestration.Projects do
 
   step "thread {string} of project {string} works in a worktree outside the project folder",
        %{args: [thread, project]} = context do
-    worktree = Node.tmp_dir(context.node, "worktree")
+    worktree = Mc.tmp_dir(context.mc, "worktree")
     context = World.create_project(context, project)
     refute String.starts_with?(worktree, World.project(context, project).root)
 
@@ -289,7 +289,7 @@ defmodule HalC2.Steps.Orchestration.Projects do
       "updatedAt" => @old
     }
 
-    source = Path.join(Node.tmp_dir(context.node, "node-log"), "state.sqlite")
+    source = Path.join(Mc.tmp_dir(context.mc, "mc-log"), "state.sqlite")
 
     World.node_log(source, [
       {"project", "imported", "project.created", payload, 1_577_836_800_000}
@@ -297,15 +297,15 @@ defmodule HalC2.Steps.Orchestration.Projects do
 
     {:ok, _} = HalC2.Import.V2.run(source)
 
-    # Imports run before a node serves anyone.
-    %{context | node: Node.restart(context.node), clients: %{}}
+    # Imports run before an MC serves anyone.
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
   step "a client reads it", context do
     Map.put(context, :read, shell_row(context, "imported"))
   end
 
-  step "it has the same shape as a project created on the node", context do
+  step "it has the same shape as a project created on the MC", context do
     context =
       World.create_project(context, "Native", %{
         "projectId" => "native",
@@ -408,7 +408,7 @@ defmodule HalC2.Steps.Orchestration.Projects do
   end
 
   # What `HalC2.Hot.reload/2` does to a process whose module changed.
-  step "the node loads new code in place", context do
+  step "the MC loads new code in place", context do
     :ok = :sys.suspend(HalC2.Shell)
     :ok = :sys.change_code(HalC2.Shell, HalC2.Shell, nil, :hot)
     :ok = :sys.resume(HalC2.Shell)
@@ -468,7 +468,7 @@ defmodule HalC2.Steps.Orchestration.Projects do
   }
 
   defp update(context, id, "folder") do
-    root = Node.tmp_dir(context.node, "moved")
+    root = Mc.tmp_dir(context.mc, "moved")
     do_update(context, id, "workspaceRoot", root)
   end
 
@@ -508,7 +508,7 @@ defmodule HalC2.Steps.Orchestration.Projects do
       "runOnWorktreeCreate" => false
     }
 
-  # The project as stored on the node, or nil.
+  # The project as stored on the MC, or nil.
   defp stored(id) do
     HalC2.StreamState.get(HalC2.StreamState.load(HalC2.Store.path(), id), "project")[id]
   end
@@ -529,17 +529,17 @@ defmodule HalC2.Steps.Orchestration.Projects do
   defp shell_row(context, id) do
     HalC2.Streams.flush_shell(id)
     :sys.get_state(HalC2.Shell)
-    client = Node.sub(World.client(context), 900, %{"type" => "shell"})
-    {frame, client} = Node.await(client, &(&1["t"] == "shell"))
-    Node.unsub(client, 900)
-    assert [row] = for([_node, ^id, "project", row] <- frame["rows"], do: row)
+    client = Mc.sub(World.client(context), 900, %{"type" => "shell"})
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell"))
+    Mc.unsub(client, 900)
+    assert [row] = for([_mc, ^id, "project", row] <- frame["rows"], do: row)
     row
   end
 
-  # `~` is the scenario's `$HOME` (`HalC2.Test.Node.Host`), set once for the scenario, as
-  # the node expands it.
-  defp home(context), do: tap(context, &Node.Host.home/1)
+  # `~` is the scenario's `$HOME` (`HalC2.Test.Mc.Host`), set once for the scenario, as
+  # the MC expands it.
+  defp home(context), do: tap(context, &Mc.Host.home/1)
 
-  defp path(context, "~/" <> _ = path), do: Node.Host.path(context, path)
+  defp path(context, "~/" <> _ = path), do: Mc.Host.path(context, path)
   defp path(_context, path), do: path
 end

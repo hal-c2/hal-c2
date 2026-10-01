@@ -38,8 +38,8 @@ add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProces
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME BackendProcess COMMAND tst_BackendProcess)
-# The native scenarios of features/, against a fake node: the harness, the fake
-# node, and one steps file per domain (features/*.cpp, picked up on the next build).
+# The native scenarios of features/, against a fake MC: the harness, the fake
+# MC, and one steps file per domain (features/*.cpp, picked up on the next build).
 file(GLOB _feature_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/features/*.h")
 # Windows are closed as the user closes them, through their ShellRuntime.
 add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp ../../src/ShellRuntime.cpp ../../src/ShellWindows.cpp)

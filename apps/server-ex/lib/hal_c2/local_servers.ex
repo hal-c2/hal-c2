@@ -3,7 +3,7 @@ defmodule HalC2.LocalServers do
   Web servers listening on this host (`subscribeDiscoveredLocalServers`), for the
   preview panel's suggestions. While anyone watches, `lsof` lists listening TCP
   ports every few seconds and each new one is asked for a page; those answering
-  with HTML are the list. Watchers get `{:hal_c2_local_servers, node, list}` when it
+  with HTML are the list. Watchers get `{:hal_c2_local_servers, mc, list}` when it
   changes.
   """
 
@@ -128,7 +128,7 @@ defmodule HalC2.LocalServers do
           _ -> []
         end
       end)
-      # This node's own port is not a suggestion.
+      # This MC's own port is not a suggestion.
       |> Enum.reject(fn {port, _, _, _} -> port == Application.get_env(:hal_c2, :port, 3780) end)
       |> Enum.group_by(&elem(&1, 0))
       # A port bound on both stacks is asked over IPv4.

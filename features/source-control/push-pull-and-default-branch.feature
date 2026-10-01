@@ -19,7 +19,7 @@ Feature: Pushing, pulling and guarding the default branch
   Background:
     Given a connected environment with a thread in the git project "shop" with the remote "origin"
 
-  @node @desktop @tui
+  @mc @desktop @tui
   Scenario: Pushing a branch that tracks an upstream
     Given "feature/tax" tracks "origin/feature/tax" and is 1 commit ahead
     When the user pushes
@@ -27,25 +27,25 @@ Feature: Pushing, pulling and guarding the default branch
     # Both servers name only the upstream for a plain push: "Pushed to origin/feature/tax" (GitManager.ts, git_actions.ex).
     And the user is told where the branch was pushed
 
-  @node
+  @mc
   Scenario: The first push sets the upstream on the primary remote
     Given "feature/tax" has never been pushed
     When the user pushes
     Then the branch is pushed to "origin/feature/tax" and tracks it from now on
 
-  @node
+  @mc
   Scenario: Pushing an up to date branch does nothing
     Given "feature/tax" is level with its upstream
     When the user pushes
     Then nothing is pushed and the push step is reported as already up to date
 
-  @node
+  @mc
   Scenario: The result of a push offers the next step
     Given "feature/tax" is not the default branch and has no pull request
     When the user pushes
     Then the result offers to create a pull request
 
-  @node
+  @mc
   Scenario: The result of a commit offers to push it
     When the user commits on a branch with an upstream
     Then the result offers to push the commit
@@ -56,7 +56,7 @@ Feature: Pushing, pulling and guarding the default branch
     Then the user is told what was pushed
     And the message goes away by itself after a while
 
-  @node @desktop @tui
+  @mc @desktop @tui
   Scenario: Pulling fast-forwards the branch
     Given "feature/tax" is 2 commits behind its upstream and has no local commits
     When the user pulls
@@ -65,17 +65,17 @@ Feature: Pushing, pulling and guarding the default branch
   @desktop
   Scenario: A refused pull is reported
     Given "feature/tax" is 2 commits behind its upstream and has no local commits
-    And the node refuses to pull with "Cannot fast-forward."
+    And the MC refuses to pull with "Cannot fast-forward."
     When the user pulls
     Then the user sees an "error" toast "Pull failed" saying "Cannot fast-forward."
 
-  @node
+  @mc
   Scenario: Pulling a diverged branch is refused
     Given "feature/tax" is 1 commit ahead and 1 behind its upstream
     When the user pulls
     Then the pull fails without merging or rebasing anything
 
-  @node
+  @mc
   Scenario Outline: Pulling is refused when there is nothing to pull from
     Given the checkout <state>
     When the user pulls
@@ -125,18 +125,18 @@ Feature: Pushing, pulling and guarding the default branch
     When the user runs "Commit & push"
     Then the user is asked to confirm before anything reaches "main"
 
-  @node
-  Scenario: A project set to pull automatically is brought up to date when the node starts
+  @mc
+  Scenario: A project set to pull automatically is brought up to date when the MC starts
     Given "shop" is set to pull automatically
     And its checkout is clean on "main" and 2 commits behind "origin/main"
-    When the node starts
+    When the MC starts
     Then "main" is fast-forwarded to "origin/main"
 
-  @node
+  @mc
   Scenario Outline: Pulling at start skips a checkout that <situation>
     Given "shop" is set to pull automatically
     And its checkout <situation>
-    When the node starts
+    When the MC starts
     Then the checkout is left as it was
 
     Examples:
@@ -147,16 +147,16 @@ Feature: Pushing, pulling and guarding the default branch
       | has commits of its own to push         |
       | has nothing new to pull                |
 
-  @node
+  @mc
   Scenario: Projects sharing a checkout pull it once at start
     Given two projects set to pull automatically share one checkout that is behind its upstream
-    When the node starts
+    When the MC starts
     Then the checkout is pulled once
 
-  @node
-  Scenario: A failed pull at start is logged and does not stop the node
+  @mc
+  Scenario: A failed pull at start is logged and does not stop the MC
     Given "shop" is set to pull automatically and is behind its upstream
     And the pull fails
-    When the node starts
-    Then the failure is written to the node's log
-    And the node finishes starting
+    When the MC starts
+    Then the failure is written to the MC's log
+    And the MC finishes starting

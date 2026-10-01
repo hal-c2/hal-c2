@@ -112,14 +112,14 @@ Feature: Moving through a thread and following links
       | has been edited            | the earlier reply is shown with "The quoted text has changed"                |
       | is no longer in the thread | the quote is still readable and "Could not open the cited response" is shown |
 
-  @node
+  @mc
   Scenario: A client following a thread receives its live updates
     Given a client is following the thread
     When the agent writes more of its reply
     Then the client receives the new text without asking again
     And a burst of streamed text arrives as one update
 
-  @node
+  @mc
   Scenario: A client that falls behind catches up from where it was
     Given a client is following a thread whose agent streams faster than the client reads
     When the client falls too far behind

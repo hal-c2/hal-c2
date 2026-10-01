@@ -2,7 +2,7 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   # Codex's requests and notifications are delivered to the thread's Codex runtime as
   # if the (fake) app-server sent them; its answers reach the fake, which says what it

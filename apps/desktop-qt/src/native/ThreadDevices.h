@@ -9,13 +9,13 @@
 
 #include "DeviceStream.h"
 
-class NodeClient;
+class McClient;
 
 // The Device tabs of a thread's right panel (the web's DevicePanel): the
 // picker (`device`) lists the thread's environment's simulators and
 // emulators, and a device tab (`device:<host>:<device>`, both percent-encoded)
 // streams one the thread has open. The environment's DeviceServiceState is
-// followed through the node's `devices` shape when a cluster node serves it,
+// followed through the MC's `devices` shape when a cluster MC serves it,
 // and read with `device.list` otherwise (and each time a Device tab shows).
 //
 // open() is `device.open` for the thread; once it answers, opened() asks the
@@ -47,12 +47,12 @@ public:
   static QString tabIdOf(const QString& hostId, const QString& deviceId);
   static std::pair<QString, QString> targetOf(const QString& tabId);
 
-  explicit ThreadDevices(NodeClient* client, QObject* parent = nullptr);
+  explicit ThreadDevices(McClient* client, QObject* parent = nullptr);
   ~ThreadDevices() override;
 
-  // The thread shown, and the node whose events carry its environment's
+  // The thread shown, and the MC whose events carry its environment's
   // devices (empty when none does).
-  void setThread(const QString& environmentId, const QString& threadId, const QString& node);
+  void setThread(const QString& environmentId, const QString& threadId, const QString& mc);
   // The panel's active tab while it shows a Device tab (`device` or a
   // device tab), else empty: a device tab streams only while shown.
   void setTab(const QString& tabId);
@@ -93,11 +93,11 @@ private:
   void retarget();
   void publish();
 
-  NodeClient* m_client;
+  McClient* m_client;
   DeviceStream m_stream;
   QString m_environment;
   QString m_thread;
-  QString m_node;
+  QString m_mc;
   QString m_tab;
   int m_subscription = -1;
   // Replies for another environment are dropped.

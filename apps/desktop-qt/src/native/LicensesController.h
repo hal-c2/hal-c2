@@ -7,13 +7,13 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 
 // Settings → Open source licenses (the web's OpenSourceLicenses): the
 // third-party notices this app ships, read from the manifest staged beside it
 // (scripts/third-party-licenses.ts writes it; setManifestPath says where). No
-// node is asked, so it reads with none connected. The manifest is read when
+// MC is asked, so it reads with none connected. The manifest is read when
 // the page opens, and again on retry.
 //
 // Publishes `licenses`: {status: loading | ready | error, message, query,
@@ -28,7 +28,7 @@ class LicensesController : public QObject, public NativeController {
 public:
   static inline const QString kSection = QStringLiteral("/settings/open-source-licenses");
 
-  LicensesController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  LicensesController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
   // Where every window reads the manifest from (main.cpp, and each scenario).
   static void setManifestPath(const QString& path) { manifestPath() = path; }

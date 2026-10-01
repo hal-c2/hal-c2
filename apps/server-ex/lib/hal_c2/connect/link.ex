@@ -1,14 +1,14 @@
 defmodule HalC2.Connect.Link do
   @moduledoc """
   The link an operator asked for from the command line (`hal-c2 connect link`),
-  carried out when the node starts, and given back when it stops.
+  carried out when the MC starts, and given back when it stops.
 
-  At start, a saved desired link makes the node link itself through the relay
+  At start, a saved desired link makes the MC link itself through the relay
   (`HalC2.Connect.reconcile/1`). Failures the relay calls temporary (408, 429, 5xx,
   unreachable) are retried with exponential backoff, from one second up to thirty,
   for ten minutes; others stop at once, with the relay's recovery hint in
   `status/0`. A normal stop releases the managed tunnel (`HalC2.Connect.release/0`)
-  so the account shows the node offline and the next start keeps its address.
+  so the account shows the MC offline and the next start keeps its address.
 
   The backoff is app env `:connect_retry_delays` (`[initial, max]` in ms).
   """

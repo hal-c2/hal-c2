@@ -15,7 +15,7 @@
 #include "NativeController.h"
 
 class NativeWindow;
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 class SnapShotBackend;
@@ -52,7 +52,7 @@ class SnapShotController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  SnapShotController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  SnapShotController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
   ~SnapShotController() override;
 
   void activate() override;

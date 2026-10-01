@@ -9,7 +9,7 @@
 #include <functional>
 #include <optional>
 
-class NodeClient;
+class McClient;
 
 // A setting across the selected environments (the web's scopedSettings.ts):
 // the settings documents of a few environments, read as one value that may
@@ -50,7 +50,7 @@ public:
     int known = 0;
   };
 
-  explicit EnvironmentSettings(NodeClient* client, QObject* parent = nullptr);
+  explicit EnvironmentSettings(McClient* client, QObject* parent = nullptr);
   ~EnvironmentSettings() override;
 
   // Follows these environments' settings, and nothing else; in the order a
@@ -86,7 +86,7 @@ private:
   };
   void attempt(const QString& environmentId, const Edit& edit, int retries, std::function<void(std::optional<QString>)> done);
 
-  NodeClient* m_client;
+  McClient* m_client;
   QStringList m_targets;
   QHash<QString, Target> m_followed;
 };

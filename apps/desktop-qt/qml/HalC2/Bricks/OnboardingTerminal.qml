@@ -3,7 +3,7 @@ import Ghostty
 import HalC2.Shell
 
 // The welcome wizard's setup terminal: `Onboarding.terminal`, the session the
-// node runs as the provider instance, with the install or sign-in command
+// MC runs as the provider instance, with the install or sign-in command
 // typed and waiting for Enter. Loaded by WelcomeWizard only while it is ready,
 // so the QML tests never need Ghostty.
 Rectangle {

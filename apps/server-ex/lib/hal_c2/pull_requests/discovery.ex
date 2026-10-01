@@ -61,7 +61,7 @@ defmodule HalC2.PullRequests.Discovery do
   def handle_info(:run, state),
     do: {:noreply, synchronize(%{state | pending: %{}}, state.pending, false)}
 
-  def handle_info({:hal_c2_shell, {:rows, node, rows}}, state) when node == node() do
+  def handle_info({:hal_c2_shell, {:rows, mc, rows}}, state) when mc == node() do
     {seen, pending} =
       for {id, {"thread", row}} <- rows, reduce: {state.seen, state.pending} do
         {seen, pending} ->
@@ -105,8 +105,8 @@ defmodule HalC2.PullRequests.Discovery do
   end
 
   defp threads do
-    for {{node, _}, {"thread", row}} <- HalC2.Shell.rows(),
-        node == node() and row["deletedAt"] == nil,
+    for {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
+        mc == node() and row["deletedAt"] == nil,
         do: row
   end
 

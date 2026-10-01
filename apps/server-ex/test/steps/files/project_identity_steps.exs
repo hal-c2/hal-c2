@@ -1,15 +1,15 @@
 defmodule HalC2.Steps.Files.ProjectIdentity do
   @moduledoc """
   Steps for `features/files/project-identity.feature`: a project's icon through a
-  `project-favicon` asset URL fetched over HTTP, and the themes a node publishes
+  `project-favicon` asset URL fetched over HTTP, and the themes an MC publishes
   from `<home>/themes` in its config subscription (`config.themes` frames). The ids
   a client was last offered go in `context.offered`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @config 8101
 
@@ -46,7 +46,7 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
     context
   end
 
-  step "the node answers that there is no icon", context do
+  step "the MC answers that there is no icon", context do
     assert {404, _} = context.icon
     context
   end
@@ -103,7 +103,7 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
 
   step "the themes folder has a link to a theme elsewhere", context do
     bad(context, "linked", fn path ->
-      elsewhere = Path.join(Node.tmp_dir(context.node, "elsewhere"), "linked.json")
+      elsewhere = Path.join(Mc.tmp_dir(context.mc, "elsewhere"), "linked.json")
       write(elsewhere, valid("Linked"))
       File.ln_s!(elsewhere, path)
     end)
@@ -124,7 +124,7 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
     end)
   end
 
-  step "the node reads its themes", context do
+  step "the MC reads its themes", context do
     connect(context)
   end
 
@@ -154,7 +154,7 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
       for n <- 1..div(kb, 20) do
         id = "t#{pad(n)}"
         body = JSON.encode!(%{valid(id) | "name" => id}) <> String.duplicate(" ", 20 * 1024)
-        write(Path.join([context.node.home, "themes", "#{id}.json"]), body)
+        write(Path.join([context.mc.home, "themes", "#{id}.json"]), body)
         {id, byte_size(body)}
       end
 
@@ -179,13 +179,13 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
 
   defp theme(context, file) do
     id = Path.basename(file, ".json")
-    write(Path.join(context.node.home, file), valid(String.capitalize(id)))
+    write(Path.join(context.mc.home, file), valid(String.capitalize(id)))
   end
 
   # A rule-breaking file next to one good theme, "dawn".
   defp bad(context, id, write_bad) do
     theme(context, "themes/dawn.json")
-    write_bad.(Path.join([context.node.home, "themes", "#{id}.json"]))
+    write_bad.(Path.join([context.mc.home, "themes", "#{id}.json"]))
     Map.put(context, :bad_theme, id)
   end
 
@@ -200,13 +200,13 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
     # The folder is checked often so a change reaches clients quickly.
     Application.put_env(:hal_c2, :theme_check_ms, 50)
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :theme_check_ms) end)
-    Node.ensure(HalC2.Settings)
-    Node.ensure(HalC2.EnvironmentThemes)
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.EnvironmentThemes)
 
     client =
-      Node.sub(Node.connect(context.node), @config, %{
+      Mc.sub(Mc.connect(context.mc), @config, %{
         "type" => "config",
-        "node" => Atom.to_string(node())
+        "mc" => Atom.to_string(node())
       })
 
     context = World.put_client(context, "themes", client)
@@ -215,7 +215,7 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
 
   defp await_themes(context, fun) do
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context, "themes"),
         &(&1["t"] == "config.themes" and &1["id"] == @config and fun.(ids(&1))),
         5_000
@@ -230,7 +230,7 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
     :inets.start()
 
     {:ok, {{_, status, _}, _headers, body}} =
-      :httpc.request(:get, {~c"http://127.0.0.1:#{context.node.port}#{url}", []}, [],
+      :httpc.request(:get, {~c"http://127.0.0.1:#{context.mc.port}#{url}", []}, [],
         body_format: :binary
       )
 

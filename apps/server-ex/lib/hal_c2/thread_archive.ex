@@ -34,7 +34,7 @@ defmodule HalC2.ThreadArchive do
   # --- export --------------------------------------------------------------------
 
   @doc """
-  The archive of a thread on this node, by id or title. `opts[:session]` false
+  The archive of a thread on this MC, by id or title. `opts[:session]` false
   leaves the agent's session out.
   """
   @spec build(String.t(), keyword) :: {:ok, archive} | {:error, String.t()}
@@ -102,12 +102,12 @@ defmodule HalC2.ThreadArchive do
   end
 
   @doc """
-  Imports an archive (its JSON or decoded map) onto this node. `opts[:project]` names
+  Imports an archive (its JSON or decoded map) onto this MC. `opts[:project]` names
   the project (title or id); without it the thread goes into the one project that is a
   checkout of the same repository. Returns `%{thread, title, project, notes}`, where
   `notes` are what the user should be told (checkpoints left behind, say).
 
-  `opts[:replace]` true lets the archive replace this node's copy of the thread,
+  `opts[:replace]` true lets the archive replace this MC's copy of the thread,
   which a move back uses; otherwise a thread that is already here is refused.
   """
   @spec import_archive(binary | map, keyword) :: {:ok, map} | {:error, String.t()}
@@ -208,7 +208,7 @@ defmodule HalC2.ThreadArchive do
     do:
       {:error, "The file is damaged: #{what} does not match its checksum. Nothing was imported."}
 
-  # A thread that is already here is refused, unless this node only keeps a forwarding
+  # A thread that is already here is refused, unless this MC only keeps a forwarding
   # record for it (it moved away and is coming back) or the caller replaces it.
   defp not_here(%{"thread" => %{"id" => id} = meta}, opts) do
     replace? = opts[:replace] == true
@@ -265,7 +265,7 @@ defmodule HalC2.ThreadArchive do
 
   defp candidates(projects, archive), do: same_repository(projects, archive)
 
-  @doc "This node's projects that are checkouts of the archive's repository."
+  @doc "This MC's projects that are checkouts of the archive's repository."
   def same_repository(projects \\ local_projects(), archive) do
     case archive["thread"]["repository"] || repository(archive["thread"]["projectRoot"]) do
       nil -> []
@@ -273,7 +273,7 @@ defmodule HalC2.ThreadArchive do
     end
   end
 
-  @doc "This node's projects that are not deleted, as their project rows."
+  @doc "This MC's projects that are not deleted, as their project rows."
   def local_projects do
     for {"project", row} <- local_rows(), row["deletedAt"] == nil, do: row
   end
@@ -370,7 +370,7 @@ defmodule HalC2.ThreadArchive do
 
   defp with_session(row, _carried), do: row
 
-  # Every entity as a patch from what this node has (nothing, or a forwarding record
+  # Every entity as a patch from what this MC has (nothing, or a forwarding record
   # and the copy it left behind), so a thread coming back does not repeat anything.
   defp changes(id, entities, at) do
     current = state(id)
@@ -742,7 +742,7 @@ defmodule HalC2.ThreadArchive do
 
   defp sha256(data), do: :crypto.hash(:sha256, data) |> Base.encode16(case: :lower)
 
-  @doc "A thread on this node by id, or by title when only one has it."
+  @doc "A thread on this MC by id, or by title when only one has it."
   def find_thread(ref) do
     threads = for {"thread", row} <- local_rows(), do: row
 
@@ -755,10 +755,10 @@ defmodule HalC2.ThreadArchive do
     end
   end
 
-  # This node's sidebar rows as stored, which a stream writes before it tells the shell.
+  # This MC's sidebar rows as stored, which a stream writes before it tells the shell.
   defp local_rows, do: for({_id, kind, row} <- Store.list_shell(Store.path()), do: {kind, row})
 
-  @doc "This node's thread entity for `id`, or `nil` when it has none."
+  @doc "This MC's thread entity for `id`, or `nil` when it has none."
   def local_thread(id) do
     if id in Enum.map(Store.list_streams(Store.path()), & &1.id),
       do: StreamState.get(state(id), "thread")[id]

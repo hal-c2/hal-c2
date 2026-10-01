@@ -1,13 +1,13 @@
 defmodule HalC2.Test.Storage do
   @moduledoc """
   The scenario's user and their HAL-C2 directories, for
-  `features/node/platform/storage-layout.feature`, `storage-migration.feature` and
-  the storage scenarios of `node-startup.feature`.
+  `features/mc/platform/storage-layout.feature`, `storage-migration.feature` and
+  the storage scenarios of `mc-startup.feature`.
 
-  `user/2` makes the scenario's `/home/sam` (`HalC2.Test.Node.Host`) the user's home
-  and clears every XDG, HAL-C2 and old-home variable, so the node resolves its
+  `user/2` makes the scenario's `/home/sam` (`HalC2.Test.Mc.Host`) the user's home
+  and clears every XDG, HAL-C2 and old-home variable, so the MC resolves its
   directories as a release would for that user and never reaches the real user's
-  files. `start/2` then starts the node as a release (or a checkout) starts it,
+  files. `start/2` then starts the MC as a release (or a checkout) starts it,
   migrating on the way, and refuses to start if any directory it could write or
   read is outside the scenario.
   """
@@ -15,16 +15,16 @@ defmodule HalC2.Test.Storage do
   import ExUnit.Assertions
 
   alias HalC2.Paths
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.{Host, World}
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.{Host, World}
 
   @env ~w(XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR
-          HAL_C2_HOME HAL_C2_NODE_HOME HALC2_HOME T3CODE_HOME T3_HOME HAL_C2_NO_MIGRATE
+          HAL_C2_HOME HAL_C2_MC_HOME HALC2_HOME T3CODE_HOME T3_HOME HAL_C2_NO_MIGRATE
           APPDATA LOCALAPPDATA)
 
   @doc """
   A `platform` ("Linux", "macOS" or "Windows") user with no XDG variables and no
-  HAL-C2 home; idempotent. Captures the node's log (info and up, from the test
+  HAL-C2 home; idempotent. Captures the MC's log (info and up, from the test
   process, where the migration runs).
   """
   def user(context, platform \\ "Linux")
@@ -45,8 +45,8 @@ defmodule HalC2.Test.Storage do
     context = World.capture_log(context)
     log_info()
     ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({HalC2.Environment, :id}) end)
-    node = Map.merge(context.node, %{spec: nil, migration: [copy_file: &copy/2]})
-    Map.merge(context, %{storage_user: %{platform: platform, home: home}, node: node})
+    mc = Map.merge(context.mc, %{spec: nil, migration: [copy_file: &copy/2]})
+    Map.merge(context, %{storage_user: %{platform: platform, home: home}, mc: mc})
   end
 
   # Migration reports at info, below the test config's level: the scenario's log
@@ -73,12 +73,12 @@ defmodule HalC2.Test.Storage do
   def path(context, path), do: Host.path(context, path)
 
   @doc """
-  Where the node keeps a feature's path in HAL-C2's own directories: the node's
+  Where the MC keeps a feature's path in HAL-C2's own directories: the MC's
   files are under an `elixir` level in each kind (`HalC2.Paths`), so
-  `~/.local/state/hal-c2/migrated-from.json` is the node's
+  `~/.local/state/hal-c2/migrated-from.json` is the MC's
   `~/.local/state/hal-c2/elixir/migrated-from.json`.
   """
-  def node_path(context, feature_path) do
+  def mc_path(context, feature_path) do
     real = path(context, feature_path)
     app = app_dirs()
 
@@ -94,7 +94,7 @@ defmodule HalC2.Test.Storage do
     end)
   end
 
-  @doc "HAL-C2's own directories for the node's current `:home` and environment."
+  @doc "HAL-C2's own directories for the MC's current `:home` and environment."
   def app_dirs do
     env = System.get_env()
 
@@ -105,7 +105,7 @@ defmodule HalC2.Test.Storage do
     end
   end
 
-  @doc "The `:hal_c2` config a node boots with in `env` (`:dev` a checkout, `:prod` a release)."
+  @doc "The `:hal_c2` config an MC boots with in `env` (`:dev` a checkout, `:prod` a release)."
   def boot_config(env, project_dir \\ project_dir()) do
     config = Path.join(project_dir, "config")
     base = Config.Reader.read!(Path.join(config, "config.exs"), env: env, target: :host)
@@ -120,10 +120,10 @@ defmodule HalC2.Test.Storage do
   def release_spec, do: boot_config(:prod)[:home]
 
   @doc """
-  Starts the node as `boot` (`:release`, or a `boot_config/2` keyword list) would
-  start it, as the scenario's user: migrating if the build allows, then the node's
+  Starts the MC as `boot` (`:release`, or a `boot_config/2` keyword list) would
+  start it, as the scenario's user: migrating if the build allows, then the MC's
   services. The scenario's files are snapshotted first (once) so steps can tell
-  what the node wrote.
+  what the MC wrote.
   """
   def start(context, boot \\ :release) do
     context = user(context)
@@ -133,36 +133,36 @@ defmodule HalC2.Test.Storage do
     guard!(context, spec)
     context = Map.put_new_lazy(context, :baseline, fn -> snapshot(fs(context)) end)
     Process.put({__MODULE__, :copies}, [])
-    node = Node.restart(%{context.node | spec: spec})
-    %{context | node: node, clients: %{}}
+    mc = Mc.restart(%{context.mc | spec: spec})
+    %{context | mc: mc, clients: %{}}
   end
 
-  @doc "`start/2` for a node that has no data directory of its own yet."
+  @doc "`start/2` for an MC that has no data directory of its own yet."
   def first_start(context, boot \\ :release) do
     context = user(context)
     refute File.exists?(app_dirs().data), "HAL-C2 already has a data directory"
     start(context, boot)
   end
 
-  @doc "Restarts the node on the same `:home`; the copies list starts over."
+  @doc "Restarts the MC on the same `:home`; the copies list starts over."
   def restart(context) do
     Process.put({__MODULE__, :copies}, [])
-    %{context | node: Node.restart(context.node), clients: %{}}
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
-  # Every directory the node may write to or migrate from is inside the scenario.
+  # Every directory the MC may write to or migrate from is inside the scenario.
   defp guard!(context, spec) do
     fs = fs(context) <> "/"
     home = Paths.user_home()
     assert String.starts_with?(home, fs), "HOME is #{home}"
     env = System.get_env()
 
-    for dir <- Map.values(Paths.node_dirs(spec, env, home)) ++ Paths.legacy_candidates(env, home),
+    for dir <- Map.values(Paths.mc_dirs(spec, env, home)) ++ Paths.legacy_candidates(env, home),
         do: assert(String.starts_with?(dir, fs), "#{dir} is outside the scenario")
   end
 
   @doc "The scenario's filesystem root (`/` of `Host.path/2`)."
-  def fs(context), do: Path.join(context.node.home, "fs")
+  def fs(context), do: Path.join(context.mc.home, "fs")
 
   @doc "The migration's file copy: records each source, then copies."
   def copy(from, to) do
@@ -171,7 +171,7 @@ defmodule HalC2.Test.Storage do
     :ok
   end
 
-  @doc "Every file the migration copied since the node last started, oldest first."
+  @doc "Every file the migration copied since the MC last started, oldest first."
   def copies, do: Enum.reverse(Process.get({__MODULE__, :copies}, []))
 
   @doc """
@@ -225,23 +225,23 @@ defmodule HalC2.Test.Storage do
   end
 
   @doc """
-  Runs `fun` against a node with every file in `dir` (the layout tests use), as an
-  old install or an already running HAL-C2 left it. The scenario's node is stopped
+  Runs `fun` against an MC with every file in `dir` (the layout tests use), as an
+  old install or an already running HAL-C2 left it. The scenario's MC is stopped
   meanwhile and stays stopped; threads and projects `fun` makes stay known by title.
   """
-  def seed_node(context, dir, fun) do
+  def seed_mc(context, dir, fun) do
     old_spec = Application.get_env(:hal_c2, :home)
-    Node.stop(context.node)
+    Mc.stop(context.mc)
     :persistent_term.erase({HalC2.Environment, :id})
-    seeded = Node.start(dir) |> Map.put(:home, context.node.home)
-    seed = fun.(%{context | node: seeded, clients: %{}})
-    Node.stop(seeded)
+    seeded = Mc.start(dir) |> Map.put(:home, context.mc.home)
+    seed = fun.(%{context | mc: seeded, clients: %{}})
+    Mc.stop(seeded)
     :persistent_term.erase({HalC2.Environment, :id})
     Application.put_env(:hal_c2, :home, old_spec)
     Map.merge(context, Map.take(seed, [:projects, :threads, :worktree, :fakes]))
   end
 
-  @doc "Asserts `real` is as the scenario left it before the node started (or absent)."
+  @doc "Asserts `real` is as the scenario left it before the MC started (or absent)."
   def assert_untouched(context, real) do
     case context[:baseline] do
       nil ->
@@ -257,7 +257,7 @@ defmodule HalC2.Test.Storage do
   end
 
   @doc """
-  Starts the node from a checkout of this app (its config files, as a developer's
+  Starts the MC from a checkout of this app (its config files, as a developer's
   checkout has them) under the user's home, as `mix hal_c2.server` starts it there:
   the main checkout (`:checkout`) or a linked worktree of it (`:worktree`).
   """
@@ -297,7 +297,7 @@ defmodule HalC2.Test.Storage do
   def service_manager(%{service_tools: log} = _context), do: log
 
   def service_manager(context) do
-    bin = Node.tmp_dir(context.node, "service-bin")
+    bin = Mc.tmp_dir(context.mc, "service-bin")
     log = fake_service_manager(bin)
     World.put_os_env("PATH", bin <> ":" <> System.get_env("PATH"))
     log
@@ -377,7 +377,7 @@ defmodule HalC2.Test.Storage do
 
   @doc """
   Runs `hal-c2 service <command>` as the scenario's user would from an installed
-  release: the unit goes under their home, and the node resolves its directories
+  release: the unit goes under their home, and the MC resolves its directories
   from the environment. The output is `context.service_output`.
   """
   def service(context, command) do
@@ -387,7 +387,7 @@ defmodule HalC2.Test.Storage do
     Map.merge(context, %{service_output: text, service_tools: log})
   end
 
-  @doc "Runs `fun` with the node's directories resolved as an installed release's."
+  @doc "Runs `fun` with the MC's directories resolved as an installed release's."
   def as_release(fun) do
     previous = Application.get_env(:hal_c2, :home)
     Application.put_env(:hal_c2, :home, release_spec())

@@ -131,7 +131,7 @@ step("turn {int} only answered a question", (ctx: World, turn: number) => {
   });
 });
 
-step("the node cannot read the checkpoints of {string}", (ctx: World) => {
+step("the MC cannot read the checkpoints of {string}", (ctx: World) => {
   scm(ctx).diffs.set("all", new Error("checkpoint ref is missing"));
 });
 

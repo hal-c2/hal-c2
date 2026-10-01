@@ -26,7 +26,7 @@ class FakeSocket {
 function setup() {
   const sockets: FakeSocket[] = [];
   const socket = new ClusterSocket({
-    url: "ws://node/ws",
+    url: "ws://mc/ws",
     createSocket: () => {
       const fake = new FakeSocket();
       sockets.push(fake);
@@ -44,7 +44,7 @@ describe("ClusterSocket", () => {
     const frames: ShapeFrame[] = [];
     socket.subscribe({ type: "shell" }, (frame) => frames.push(frame));
     const [first] = sockets;
-    first!.serve({ t: "hello", node: "hal_c2@a", protocol: 3 });
+    first!.serve({ t: "hello", mc: "hal_c2@a", protocol: 3 });
     expect(first!.sent).toEqual([{ t: "sub", id: 1, shape: { type: "shell" }, offset: null }]);
 
     first!.serve({ t: "shell", id: 1, rows: [] });
@@ -56,27 +56,27 @@ describe("ClusterSocket", () => {
   it("reconnects and resumes each stream from the last offset it saw", async () => {
     vi.useFakeTimers();
     const { socket, sockets } = setup();
-    const shape = { type: "stream", node: "hal_c2@b", stream: "thread-1" } as const;
+    const shape = { type: "stream", mc: "hal_c2@b", stream: "thread-1" } as const;
     socket.subscribe(shape, () => {});
-    sockets[0]!.serve({ t: "hello", node: "hal_c2@a" });
+    sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
     sockets[0]!.serve({ t: "live", id: 1, offset: 40 });
     sockets[0]!.serve({ t: "events", id: 1, offset: 42, events: [] });
 
     sockets[0]!.close();
     await vi.advanceTimersByTimeAsync(10);
-    sockets[1]!.serve({ t: "hello", node: "hal_c2@a" });
+    sockets[1]!.serve({ t: "hello", mc: "hal_c2@a" });
     expect(sockets[1]!.sent).toEqual([{ t: "sub", id: 1, shape, offset: 42 }]);
     socket.close();
     vi.useRealTimers();
   });
 
-  it("a resync resubscribes from the offset the node names", () => {
+  it("a resync resubscribes from the offset the MC names", () => {
     const { socket, sockets } = setup();
     const frames: ShapeFrame[] = [];
-    socket.subscribe({ type: "stream", node: "hal_c2@b", stream: "thread-1" }, (frame) =>
+    socket.subscribe({ type: "stream", mc: "hal_c2@b", stream: "thread-1" }, (frame) =>
       frames.push(frame),
     );
-    sockets[0]!.serve({ t: "hello", node: "hal_c2@a" });
+    sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
     sockets[0]!.serve({ t: "resync", id: 1, offset: 7 });
     expect(sockets[0]!.sent.at(-1)).toMatchObject({ t: "sub", id: 1, offset: 7 });
     expect(frames).toEqual([]);

@@ -2,7 +2,7 @@ defmodule HalC2.Web.Socket do
   @moduledoc """
   One client connection. See `HalC2.Web.Protocol` for the wire format.
 
-  Stream subscriptions may live on any node in the cluster; the owning node's stream
+  Stream subscriptions may live on any MC in the cluster; the owning MC's stream
   server sends straight to this process. Incoming events are buffered and flushed
   once the mailbox is drained, merged per entity, so a burst of streaming tokens
   becomes one frame. A subscription whose unsent buffer passes `@max_buffered` is
@@ -34,7 +34,7 @@ defmodule HalC2.Web.Socket do
     state = %{
       v: @state_version,
       session: session,
-      # What the session may do; the node's own token may do anything.
+      # What the session may do; the MC's own token may do anything.
       scopes: session_scopes(session),
       subs: %{},
       by_stream: %{},
@@ -49,7 +49,7 @@ defmodule HalC2.Web.Socket do
      Protocol.encode(%{
        "t" => "hello",
        "protocol" => Protocol.version(),
-       "node" => Atom.to_string(node()),
+       "mc" => Atom.to_string(node()),
        "environment" => HalC2.Environment.id()
      }), state}
   end
@@ -60,7 +60,7 @@ defmodule HalC2.Web.Socket do
       do: handle_in(frame, migrate(state))
 
   def handle_in({frame, [opcode: :text]}, state) do
-    case Protocol.decode(frame, known_nodes()) do
+    case Protocol.decode(frame, known_mcs()) do
       {:ok, :ping} ->
         {:push, Protocol.encode(%{"t" => "pong"}), state}
 
@@ -157,9 +157,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_server_update, node, event}, state) do
+  def handle_info({:hal_c2_server_update, mc, event}, state) do
     case state.by_terminal do
-      %{{:server_update, ^node} => id} ->
+      %{{:server_update, ^mc} => id} ->
         case event do
           {:error, detail} ->
             frame =
@@ -185,9 +185,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_relay_client_install, node, event}, state) do
+  def handle_info({:hal_c2_relay_client_install, mc, event}, state) do
     case state.by_terminal do
-      %{{:relay_client_install, ^node} => id} ->
+      %{{:relay_client_install, ^mc} => id} ->
         case event do
           {:error, detail} ->
             frame = Map.put(error_frame(id, detail["reason"]), "detail", detail)
@@ -211,12 +211,12 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # The node moved to another version in place; clients watching it see its new
+  # The MC moved to another version in place; clients watching it see its new
   # descriptor as a `ready`.
-  def handle_info({:hal_c2_upgraded, node, outcome}, state) do
-    case remote(node, HalC2.Environment, :descriptor, []) do
+  def handle_info({:hal_c2_upgraded, mc, outcome}, state) do
+    case remote(mc, HalC2.Environment, :descriptor, []) do
       {:ok, descriptor} ->
-        config_push(state, node, fn id ->
+        config_push(state, mc, fn id ->
           %{
             "t" => "config.ready",
             "id" => id,
@@ -245,34 +245,34 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_settings, node, settings}, state) do
+  def handle_info({:hal_c2_settings, mc, settings}, state) do
     # Settings can add, remove, or enable providers.
-    if config_ids(state, node) != [], do: send(self(), {:hal_c2_providers_changed, node})
-    config_push(state, node, &%{"t" => "config.settings", "id" => &1, "settings" => settings})
+    if config_ids(state, mc) != [], do: send(self(), {:hal_c2_providers_changed, mc})
+    config_push(state, mc, &%{"t" => "config.settings", "id" => &1, "settings" => settings})
   end
 
-  def handle_info({:hal_c2_themes, node, themes}, state),
-    do: config_push(state, node, &%{"t" => "config.themes", "id" => &1, "themes" => themes})
+  def handle_info({:hal_c2_themes, mc, themes}, state),
+    do: config_push(state, mc, &%{"t" => "config.themes", "id" => &1, "themes" => themes})
 
-  def handle_info({:hal_c2_usage_limit_sources, node, sources}, state) do
-    state = remember_sources(state, node, sources)
+  def handle_info({:hal_c2_usage_limit_sources, mc, sources}, state) do
+    state = remember_sources(state, mc, sources)
 
     config_push(
       state,
-      node,
+      mc,
       &%{"t" => "config.usageLimitSources", "id" => &1, "sources" => sources}
     )
   end
 
-  def handle_info({:hal_c2_keybindings, node, rules}, state),
-    do: config_push(state, node, &%{"t" => "config.keybindings", "id" => &1, "rules" => rules})
+  def handle_info({:hal_c2_keybindings, mc, rules}, state),
+    do: config_push(state, mc, &%{"t" => "config.keybindings", "id" => &1, "rules" => rules})
 
-  def handle_info({:hal_c2_providers_changed, node}, state),
-    do: push_providers(state, node, config_ids(state, node))
+  def handle_info({:hal_c2_providers_changed, mc}, state),
+    do: push_providers(state, mc, config_ids(state, mc))
 
   # The hubs now cover other drivers: only `/usage-limits` clients see a change.
-  def handle_info({:hal_c2_usage_limits_command, node}, state),
-    do: push_providers(state, node, Enum.filter(config_ids(state, node), &command?(state, &1)))
+  def handle_info({:hal_c2_usage_limits_command, mc}, state),
+    do: push_providers(state, mc, Enum.filter(config_ids(state, mc), &command?(state, &1)))
 
   def handle_info({:hal_c2_auth_access, event}, state) do
     case state.by_terminal do
@@ -285,9 +285,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_resource_telemetry, node, snapshot}, state) do
+  def handle_info({:hal_c2_resource_telemetry, mc, snapshot}, state) do
     case state.by_terminal do
-      %{{:resource_telemetry, ^node} => id} ->
+      %{{:resource_telemetry, ^mc} => id} ->
         {:push,
          Protocol.encode(%{"t" => "resourceTelemetry", "id" => id, "snapshot" => snapshot}),
          state}
@@ -297,12 +297,12 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_preview_automation, node, client_id, event}, state) do
+  def handle_info({:hal_c2_preview_automation, mc, client_id, event}, state) do
     case state.by_terminal do
-      %{{:preview_automation, ^node, ^client_id} => id} when event == :end ->
+      %{{:preview_automation, ^mc, ^client_id} => id} when event == :end ->
         {:push, Protocol.encode(%{"t" => "end", "id" => id}), unsubscribe(state, id)}
 
-      %{{:preview_automation, ^node, ^client_id} => id} ->
+      %{{:preview_automation, ^mc, ^client_id} => id} ->
         {:push, Protocol.encode(%{"t" => "previewAutomation", "id" => id, "event" => event}),
          state}
 
@@ -311,9 +311,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_preview, node, event}, state) do
+  def handle_info({:hal_c2_preview, mc, event}, state) do
     case state.by_terminal do
-      %{{:preview, ^node} => id} ->
+      %{{:preview, ^mc} => id} ->
         {:push, Protocol.encode(%{"t" => "preview", "id" => id, "event" => event}), state}
 
       _ ->
@@ -321,9 +321,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_local_servers, node, list}, state) do
+  def handle_info({:hal_c2_local_servers, mc, list}, state) do
     case state.by_terminal do
-      %{{:local_servers, ^node} => id} ->
+      %{{:local_servers, ^mc} => id} ->
         {:push, Protocol.encode(%{"t" => "localServers", "id" => id, "list" => list}), state}
 
       _ ->
@@ -331,9 +331,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_devices, node, device_state}, state) do
+  def handle_info({:hal_c2_devices, mc, device_state}, state) do
     case state.by_terminal do
-      %{{:devices, ^node} => id} ->
+      %{{:devices, ^mc} => id} ->
         {:push, Protocol.encode(%{"t" => "devices", "id" => id, "state" => device_state}), state}
 
       _ ->
@@ -341,9 +341,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_project_clones, node, clones}, state) do
+  def handle_info({:hal_c2_project_clones, mc, clones}, state) do
     case state.by_terminal do
-      %{{:project_clones, ^node} => id} ->
+      %{{:project_clones, ^mc} => id} ->
         {:push, Protocol.encode(%{"t" => "projectClones", "id" => id, "clones" => clones}), state}
 
       _ ->
@@ -351,9 +351,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_scheduled_tasks, node, tasks}, state) do
+  def handle_info({:hal_c2_scheduled_tasks, mc, tasks}, state) do
     case state.by_terminal do
-      %{{:scheduled_tasks, ^node} => id} ->
+      %{{:scheduled_tasks, ^mc} => id} ->
         {:push, Protocol.encode(%{"t" => "scheduledTasks", "id" => id, "tasks" => tasks}), state}
 
       _ ->
@@ -361,9 +361,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_background_policy, node, policy}, state) do
+  def handle_info({:hal_c2_background_policy, mc, policy}, state) do
     case state.by_terminal do
-      %{{:background_policy, ^node} => id} ->
+      %{{:background_policy, ^mc} => id} ->
         frame = %{"t" => "backgroundPolicy", "id" => id, "policy" => policy}
         {:push, Protocol.encode(frame), state}
 
@@ -372,9 +372,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_pull_request_refreshes, node, revision}, state) do
+  def handle_info({:hal_c2_pull_request_refreshes, mc, revision}, state) do
     case state.by_terminal do
-      %{{:pull_request_refreshes, ^node} => id} ->
+      %{{:pull_request_refreshes, ^mc} => id} ->
         frame = %{"t" => "pullRequestRefreshes", "id" => id, "revision" => revision}
         {:push, Protocol.encode(frame), state}
 
@@ -425,9 +425,9 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_terminals, node, event}, state) do
+  def handle_info({:hal_c2_terminals, mc, event}, state) do
     case state.by_terminal do
-      %{{:terminals, ^node} => id} ->
+      %{{:terminals, ^mc} => id} ->
         {:push, Protocol.encode(%{"t" => "terminals", "id" => id, "event" => event}), state}
 
       _ ->
@@ -474,7 +474,7 @@ defmodule HalC2.Web.Socket do
     :ok
   end
 
-  # Runs a client RPC on the node that owns the environment, off this process so a
+  # Runs a client RPC on the MC that owns the environment, off this process so a
   # slow command never holds up streaming.
   # Each method needs the scope the contract declares for it (`HalC2.Rpc.required_scope/1`).
   defp rpc(state, id, environment, method, payload) do
@@ -498,8 +498,8 @@ defmodule HalC2.Web.Socket do
   @session_elsewhere %{
     "_tag" => "EnvironmentOperationForbiddenError",
     "code" => "operation_forbidden",
-    "reason" => "session_on_another_node",
-    "message" => "paired clients are managed on the node the caller's session belongs to"
+    "reason" => "session_on_another_mc",
+    "message" => "paired clients are managed on the MC the caller's session belongs to"
   }
 
   defp run_rpc(state, id, environment, method, payload) do
@@ -519,8 +519,8 @@ defmodule HalC2.Web.Socket do
           :link ->
             HalC2.Links.rpc(environment, method, payload || %{}, timeout)
 
-          {:node, node} ->
-            call_node(state, socket, node, method, payload, timeout)
+          {:mc, mc} ->
+            call_mc(state, socket, mc, method, payload, timeout)
         end
 
       send(socket, {:rpc_reply, id, reply})
@@ -530,19 +530,19 @@ defmodule HalC2.Web.Socket do
   end
 
   # Activity leases belong to this socket and its session.
-  defp call_node(state, socket, node, "server.reportClientActivity", payload, _timeout) do
+  defp call_mc(state, socket, mc, "server.reportClientActivity", payload, _timeout) do
     args = [state.session, socket, payload || %{}]
-    :erpc.cast(node, HalC2.BackgroundPolicy, :report_client_activity, args)
+    :erpc.cast(mc, HalC2.BackgroundPolicy, :report_client_activity, args)
     {:ok, nil}
   end
 
-  # The paired-clients methods answer for this socket's session, which only this node
+  # The paired-clients methods answer for this socket's session, which only this MC
   # knows: on another member every session would be "other".
-  defp call_node(_state, _socket, node, method, _payload, _timeout)
-       when node != node() and method in @session_methods,
+  defp call_mc(_state, _socket, mc, method, _payload, _timeout)
+       when mc != node() and method in @session_methods,
        do: {:error, @session_elsewhere}
 
-  defp call_node(state, _socket, node, method, payload, timeout) do
+  defp call_mc(state, _socket, mc, method, payload, timeout) do
     args =
       if method in @session_methods,
         do: [method, payload || %{}, state.session],
@@ -551,10 +551,10 @@ defmodule HalC2.Web.Socket do
     try do
       # Each call runs in its own task; some (a provider update, a scheduled task run)
       # take minutes.
-      :erpc.call(node, HalC2.Rpc, :handle, args, timeout)
+      :erpc.call(mc, HalC2.Rpc, :handle, args, timeout)
     catch
       :error, {:erpc, :timeout} -> {:error, "#{method} timed out"}
-      :error, {:erpc, reason} -> {:error, "node unavailable: #{reason}"}
+      :error, {:erpc, reason} -> {:error, "MC unavailable: #{reason}"}
       kind, reason -> {:error, Exception.format(kind, reason)}
     end
   end
@@ -563,15 +563,15 @@ defmodule HalC2.Web.Socket do
 
   defp subscribe(state, id, shell, _offset) when shell in [:shell, {:shell, :links}] do
     :ok = HalC2.Shell.subscribe(self())
-    online = MapSet.new(HalC2.Shell.online_nodes())
+    online = MapSet.new(HalC2.Shell.online_mcs())
 
     rows =
-      for {{node, stream}, {kind, row}} <- HalC2.Shell.rows(),
-          do: [Atom.to_string(node), stream, kind, row]
+      for {{mc, stream}, {kind, row}} <- HalC2.Shell.rows(),
+          do: [Atom.to_string(mc), stream, kind, row]
 
-    nodes =
-      for {node, descriptor} <- HalC2.Shell.environments() do
-        %{"node" => Atom.to_string(node), "online" => node in online, "environment" => descriptor}
+    mcs =
+      for {mc, descriptor} <- HalC2.Shell.environments() do
+        %{"mc" => Atom.to_string(mc), "online" => mc in online, "environment" => descriptor}
       end
 
     links =
@@ -579,24 +579,24 @@ defmodule HalC2.Web.Socket do
         do: with(:ok <- HalC2.Links.subscribe(self()), do: HalC2.Links.list()),
         else: HalC2.Links.subscribe_rows(self())
 
-    frame = %{"t" => "shell", "id" => id, "nodes" => nodes, "rows" => rows, "links" => links}
+    frame = %{"t" => "shell", "id" => id, "mcs" => mcs, "rows" => rows, "links" => links}
 
     {:push, Protocol.encode(frame), put_in(state.subs[id], shell)}
   end
 
-  defp subscribe(state, id, {:config, node}, offset),
-    do: subscribe(state, id, {:config, node, nil}, offset)
+  defp subscribe(state, id, {:config, mc}, offset),
+    do: subscribe(state, id, {:config, mc, nil}, offset)
 
-  # The node's config, then its settings as they change. A client that answers
+  # The MC's config, then its settings as they change. A client that answers
   # `/usage-limits` itself (`:usage_limits_command`) gets providers that offer it.
-  defp subscribe(state, id, {:config, node, command}, _offset) do
-    shape = {:config, node}
+  defp subscribe(state, id, {:config, mc, command}, _offset) do
+    shape = {:config, mc}
 
-    with {:ok, :ok} <- remote(node, HalC2.Settings, :watch, [self()]),
-         {:ok, config} <- remote(node, HalC2.Environment, :server_config, []) do
+    with {:ok, :ok} <- remote(mc, HalC2.Settings, :watch, [self()]),
+         {:ok, config} <- remote(mc, HalC2.Environment, :server_config, []) do
       # Published themes follow the snapshot, as the Node server streams them.
       themes =
-        case remote(node, HalC2.EnvironmentThemes, :current, []) do
+        case remote(mc, HalC2.EnvironmentThemes, :current, []) do
           {:ok, themes} when is_list(themes) -> themes
           _ -> []
         end
@@ -605,7 +605,7 @@ defmodule HalC2.Web.Socket do
 
       # So do usage-limit source snapshots.
       sources =
-        case remote(node, HalC2.UsageLimitSources, :current, []) do
+        case remote(mc, HalC2.UsageLimitSources, :current, []) do
           {:ok, sources} when is_list(sources) -> sources
           _ -> []
         end
@@ -616,21 +616,21 @@ defmodule HalC2.Web.Socket do
         %{
           state
           | subs: Map.put(state.subs, id, shape),
-            # One node's config may be watched by several subscriptions (config, lifecycle).
+            # One MC's config may be watched by several subscriptions (config, lifecycle).
             by_terminal:
               state.by_terminal
-              |> Map.update({:settings, node}, [id], &[id | &1])
-              |> Map.put({:usage_limit_sources, node}, sources)
+              |> Map.update({:settings, mc}, [id], &[id | &1])
+              |> Map.put({:usage_limit_sources, mc}, sources)
         }
 
       state = if command, do: update_commands(state, &MapSet.put(&1, id)), else: state
 
-      config = Map.update(config, "providers", [], &providers_for(state, node, id, &1))
-      frame = %{"t" => "config", "id" => id, "node" => Atom.to_string(node), "config" => config}
+      config = Map.update(config, "providers", [], &providers_for(state, mc, id, &1))
+      frame = %{"t" => "config", "id" => id, "mc" => Atom.to_string(mc), "config" => config}
 
-      # How the node's last update went, so a client reconnecting after one can tell.
+      # How the MC's last update went, so a client reconnecting after one can tell.
       frame =
-        case remote(node, HalC2.Upgrade, :outcome, []) do
+        case remote(mc, HalC2.Upgrade, :outcome, []) do
           {:ok, %{} = outcome} -> Map.put(frame, "updateOutcome", outcome)
           _ -> frame
         end
@@ -643,12 +643,12 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:stream, node, stream_id} = shape, offset) do
+  defp subscribe(state, id, {:stream, mc, stream_id} = shape, offset) do
     if Map.has_key?(state.by_stream, stream_id) do
       {:push, Protocol.encode(error_frame(id, "already subscribed")), state}
     else
-      # The owning node may be gone or slow; the client retries when it is back.
-      case remote(node, HalC2.Streams, :subscribe, [stream_id, self(), offset]) do
+      # The owning MC may be gone or slow; the client retries when it is back.
+      case remote(mc, HalC2.Streams, :subscribe, [stream_id, self(), offset]) do
         {:ok, :ok} ->
           # Until `live`, events are the stream's replay from `offset`: bounded by the
           # stream, and resyncing on them would only ask for the same replay again.
@@ -666,13 +666,13 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # A shape named by environment: its node form on this node or the cluster member that
-  # serves it, else through this node's link, whose frames arrive as
+  # A shape named by environment: its MC form on this MC or the cluster member that
+  # serves it, else through this MC's link, whose frames arrive as
   # `{:hal_c2_link, ref, frame}`.
   defp subscribe(state, id, {:environment, environment_id, shape}, offset) do
     case HalC2.Links.route(environment_id) do
-      {:node, node} ->
-        {:ok, local} = Protocol.at_node(shape, node)
+      {:mc, mc} ->
+        {:ok, local} = Protocol.at_mc(shape, mc)
         subscribe(state, id, local, offset)
 
       :link ->
@@ -694,18 +694,18 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # A terminal lives on the node that owns its thread; its events come straight here.
-  defp subscribe(state, id, {:terminal, node, input}, _offset) do
+  # A terminal lives on the MC that owns its thread; its events come straight here.
+  defp subscribe(state, id, {:terminal, mc, input}, _offset) do
     key = {input["threadId"], input["terminalId"]}
 
-    case remote(node, HalC2.Terminal, :attach, [input, self()]) do
+    case remote(mc, HalC2.Terminal, :attach, [input, self()]) do
       {:ok, {:ok, snapshot}} ->
         frame = %{"type" => "snapshot", "snapshot" => snapshot}
 
         {:push, Protocol.encode(%{"t" => "terminal", "id" => id, "event" => frame}),
          %{
            state
-           | subs: Map.put(state.subs, id, {:terminal, node, key}),
+           | subs: Map.put(state.subs, id, {:terminal, mc, key}),
              by_terminal: Map.put(state.by_terminal, key, id)
          }}
 
@@ -717,8 +717,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:terminals, node} = shape, _offset) do
-    case remote(node, HalC2.Terminal.Hub, :watch, [self()]) do
+  defp subscribe(state, id, {:terminals, mc} = shape, _offset) do
+    case remote(mc, HalC2.Terminal.Hub, :watch, [self()]) do
       {:ok, terminals} ->
         event = %{"type" => "snapshot", "terminals" => terminals}
 
@@ -734,8 +734,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:vcs, node, cwd} = shape, _offset) do
-    case remote(node, HalC2.Vcs.Watch, :subscribe, [cwd, self()]) do
+  defp subscribe(state, id, {:vcs, mc, cwd} = shape, _offset) do
+    case remote(mc, HalC2.Vcs.Watch, :subscribe, [cwd, self()]) do
       {:ok, snapshot} ->
         {:push, Protocol.encode(%{"t" => "vcs", "id" => id, "event" => snapshot}),
          %{
@@ -749,7 +749,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # Only an administrative session (or the node's own token) sees who is paired;
+  # Only an administrative session (or the MC's own token) sees who is paired;
   # `shape_scope/1` asks for access:read.
   defp subscribe(state, id, :auth_access, _offset) do
     {:ok, revision, snapshot} = HalC2.Auth.subscribe(self())
@@ -769,15 +769,15 @@ defmodule HalC2.Web.Socket do
      }}
   end
 
-  defp subscribe(state, id, {:resource_telemetry, node} = shape, _offset) do
-    case remote(node, HalC2.Diagnostics, :subscribe, [self()]) do
+  defp subscribe(state, id, {:resource_telemetry, mc} = shape, _offset) do
+    case remote(mc, HalC2.Diagnostics, :subscribe, [self()]) do
       {:ok, {:ok, snapshot}} ->
         {:push,
          Protocol.encode(%{"t" => "resourceTelemetry", "id" => id, "snapshot" => snapshot}),
          %{
            state
            | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:resource_telemetry, node}, id)
+             by_terminal: Map.put(state.by_terminal, {:resource_telemetry, mc}, id)
          }}
 
       {:error, reason} ->
@@ -785,10 +785,10 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:preview_automation, node, host}, _offset) do
-    key = {:preview_automation, node, host["clientId"]}
+  defp subscribe(state, id, {:preview_automation, mc, host}, _offset) do
+    key = {:preview_automation, mc, host["clientId"]}
 
-    case remote(node, HalC2.PreviewAutomation, :connect, [host, self()]) do
+    case remote(mc, HalC2.PreviewAutomation, :connect, [host, self()]) do
       {:ok, {:ok, _connection_id}} ->
         {:ok,
          %{
@@ -802,14 +802,14 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:preview, node} = shape, _offset) do
-    case remote(node, HalC2.Preview, :subscribe, [self()]) do
+  defp subscribe(state, id, {:preview, mc} = shape, _offset) do
+    case remote(mc, HalC2.Preview, :subscribe, [self()]) do
       {:ok, :ok} ->
         {:ok,
          %{
            state
            | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:preview, node}, id)
+             by_terminal: Map.put(state.by_terminal, {:preview, mc}, id)
          }}
 
       {:error, reason} ->
@@ -817,14 +817,14 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:local_servers, node} = shape, _offset) do
-    case remote(node, HalC2.LocalServers, :subscribe, [self()]) do
+  defp subscribe(state, id, {:local_servers, mc} = shape, _offset) do
+    case remote(mc, HalC2.LocalServers, :subscribe, [self()]) do
       {:ok, {:ok, list}} ->
         {:push, Protocol.encode(%{"t" => "localServers", "id" => id, "list" => list}),
          %{
            state
            | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:local_servers, node}, id)
+             by_terminal: Map.put(state.by_terminal, {:local_servers, mc}, id)
          }}
 
       {:error, reason} ->
@@ -832,8 +832,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:devices, node} = shape, _offset) do
-    case remote(node, HalC2.Devices, :subscribe, [self()]) do
+  defp subscribe(state, id, {:devices, mc} = shape, _offset) do
+    case remote(mc, HalC2.Devices, :subscribe, [self()]) do
       {:ok, {:ok, device_state}} ->
         {:push, Protocol.encode(%{"t" => "devices", "id" => id, "state" => device_state}),
          %{
@@ -847,14 +847,14 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:project_clones, node} = shape, _offset) do
-    case remote(node, HalC2.ProjectClones, :subscribe, [self()]) do
+  defp subscribe(state, id, {:project_clones, mc} = shape, _offset) do
+    case remote(mc, HalC2.ProjectClones, :subscribe, [self()]) do
       {:ok, {:ok, clones}} ->
         {:push, Protocol.encode(%{"t" => "projectClones", "id" => id, "clones" => clones}),
          %{
            state
            | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:project_clones, node}, id)
+             by_terminal: Map.put(state.by_terminal, {:project_clones, mc}, id)
          }}
 
       {:error, reason} ->
@@ -862,14 +862,14 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:scheduled_tasks, node} = shape, _offset) do
-    case remote(node, HalC2.ScheduledTasks, :subscribe, [self()]) do
+  defp subscribe(state, id, {:scheduled_tasks, mc} = shape, _offset) do
+    case remote(mc, HalC2.ScheduledTasks, :subscribe, [self()]) do
       {:ok, {:ok, tasks}} ->
         {:push, Protocol.encode(%{"t" => "scheduledTasks", "id" => id, "tasks" => tasks}),
          %{
            state
            | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:scheduled_tasks, node}, id)
+             by_terminal: Map.put(state.by_terminal, {:scheduled_tasks, mc}, id)
          }}
 
       {:error, reason} ->
@@ -877,8 +877,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:background_policy, node} = shape, _offset) do
-    case remote(node, HalC2.BackgroundPolicy, :subscribe, [self()]) do
+  defp subscribe(state, id, {:background_policy, mc} = shape, _offset) do
+    case remote(mc, HalC2.BackgroundPolicy, :subscribe, [self()]) do
       {:ok, {:ok, policy}} ->
         {:push, Protocol.encode(%{"t" => "backgroundPolicy", "id" => id, "policy" => policy}),
          %{
@@ -892,15 +892,15 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:pull_request_refreshes, node} = shape, _offset) do
-    case remote(node, HalC2.PullRequests.Refreshes, :subscribe, [self()]) do
+  defp subscribe(state, id, {:pull_request_refreshes, mc} = shape, _offset) do
+    case remote(mc, HalC2.PullRequests.Refreshes, :subscribe, [self()]) do
       {:ok, {:ok, revision}} ->
         {:push,
          Protocol.encode(%{"t" => "pullRequestRefreshes", "id" => id, "revision" => revision}),
          %{
            state
            | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:pull_request_refreshes, node}, id)
+             by_terminal: Map.put(state.by_terminal, {:pull_request_refreshes, mc}, id)
          }}
 
       {:error, reason} ->
@@ -908,8 +908,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:worktree_setup, node, thread_id} = shape, _offset) do
-    case remote(node, HalC2.WorktreeSetup, :subscribe, [thread_id, self()]) do
+  defp subscribe(state, id, {:worktree_setup, mc, thread_id} = shape, _offset) do
+    case remote(mc, HalC2.WorktreeSetup, :subscribe, [thread_id, self()]) do
       {:ok, snapshot} ->
         {:push, Protocol.encode(%{"t" => "worktreeSetup", "id" => id, "event" => snapshot}),
          %{
@@ -923,8 +923,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:provider_auth, node, instance} = shape, _offset) do
-    case remote(node, HalC2.ProviderAuth, :subscribe, [instance, self()]) do
+  defp subscribe(state, id, {:provider_auth, mc, instance} = shape, _offset) do
+    case remote(mc, HalC2.ProviderAuth, :subscribe, [instance, self()]) do
       {:ok, {:ok, auth}} ->
         {:push, Protocol.encode(%{"t" => "providerAuth", "id" => id, "state" => auth}),
          %{
@@ -944,8 +944,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:provider_install, node, instance} = shape, _offset) do
-    case remote(node, HalC2.Acp.Antigravity.Installation, :subscribe, [instance, self()]) do
+  defp subscribe(state, id, {:provider_install, mc, instance} = shape, _offset) do
+    case remote(mc, HalC2.Acp.Antigravity.Installation, :subscribe, [instance, self()]) do
       {:ok, {:ok, install}} ->
         {:push, Protocol.encode(%{"t" => "providerInstall", "id" => id, "state" => install}),
          %{
@@ -965,15 +965,15 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # Runs on the checkout's node; its events come straight here.
-  defp subscribe(state, id, {:server_update, node, input} = shape, _) do
-    case remote(node, HalC2.Upgrade, :start, [input, self()]) do
+  # Runs on the checkout's MC; its events come straight here.
+  defp subscribe(state, id, {:server_update, mc, input} = shape, _) do
+    case remote(mc, HalC2.Upgrade, :start, [input, self()]) do
       {:ok, :ok} ->
         {:ok,
          %{
            state
            | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:server_update, node}, id)
+             by_terminal: Map.put(state.by_terminal, {:server_update, mc}, id)
          }}
 
       {:error, reason} ->
@@ -982,7 +982,7 @@ defmodule HalC2.Web.Socket do
   end
 
   # Installing software on the host is for sessions that may change its relay setup.
-  defp subscribe(state, id, {:relay_client_install, node} = shape, _) do
+  defp subscribe(state, id, {:relay_client_install, mc} = shape, _) do
     allowed =
       state.session == nil or
         Enum.any?(
@@ -990,7 +990,7 @@ defmodule HalC2.Web.Socket do
           &(&1["sessionId"] == state.session and "relay:write" in &1["scopes"])
         )
 
-    case allowed && remote(node, HalC2.Connect.RelayClient, :start_install, [self()]) do
+    case allowed && remote(mc, HalC2.Connect.RelayClient, :start_install, [self()]) do
       false ->
         {:push, Protocol.encode(error_frame(id, "relay:write is required")), state}
 
@@ -999,7 +999,7 @@ defmodule HalC2.Web.Socket do
          %{
            state
            | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:relay_client_install, node}, id)
+             by_terminal: Map.put(state.by_terminal, {:relay_client_install, mc}, id)
          }}
 
       {:error, reason} ->
@@ -1007,8 +1007,8 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  defp subscribe(state, id, {:git_action, node, %{"actionId" => action_id} = input} = shape, _) do
-    case remote(node, HalC2.GitActions, :start, [input, self()]) do
+  defp subscribe(state, id, {:git_action, mc, %{"actionId" => action_id} = input} = shape, _) do
+    case remote(mc, HalC2.GitActions, :start, [input, self()]) do
       {:ok, :ok} ->
         {:ok,
          %{
@@ -1022,23 +1022,23 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # Calls a node without ever taking this socket down: an unreachable node, or one
+  # Calls an MC without ever taking this socket down: an unreachable MC, or one
   # without the feature (an older version), fails only the one subscription.
-  # Connected nodes plus members the shell has seen that are offline now, so a
-  # subscription to a node that went away fails as unavailable, not unknown.
-  defp known_nodes do
+  # Connected MCs plus members the shell has seen that are offline now, so a
+  # subscription to an MC that went away fails as unavailable, not unknown.
+  defp known_mcs do
     shell = if Process.whereis(HalC2.Shell), do: HalC2.Shell.environments(), else: []
     Enum.uniq([node() | Node.list()] ++ Enum.map(shell, &elem(&1, 0)))
   end
 
-  defp remote(node, module, fun, args) do
-    {:ok, :erpc.call(node, module, fun, args, 15_000)}
+  defp remote(mc, module, fun, args) do
+    {:ok, :erpc.call(mc, module, fun, args, 15_000)}
   catch
     :error, {:erpc, reason} ->
-      {:error, "node unavailable: #{reason}"}
+      {:error, "MC unavailable: #{reason}"}
 
     kind, reason ->
-      {:error, "#{node} cannot serve this: #{Exception.format_banner(kind, reason)}"}
+      {:error, "#{mc} cannot serve this: #{Exception.format_banner(kind, reason)}"}
   end
 
   # Marks this socket's own session in an access event.
@@ -1057,11 +1057,11 @@ defmodule HalC2.Web.Socket do
 
   defp mark(client, state), do: %{client | "current" => client["sessionId"] == state.session}
 
-  # Version 1: a node's config may be watched by several subscriptions.
+  # Version 1: an MC's config may be watched by several subscriptions.
   defp migrate(state) when not is_map_key(state, :v) do
     by_terminal =
       Map.new(state.by_terminal, fn
-        {{:settings, _node} = key, id} when is_integer(id) -> {key, [id]}
+        {{:settings, _mc} = key, id} when is_integer(id) -> {key, [id]}
         entry -> entry
       end)
 
@@ -1089,9 +1089,9 @@ defmodule HalC2.Web.Socket do
   # The scope each shape needs, as the Node server's subscribe methods declare it.
   defp shape_scope({:terminal, _, _}), do: "terminal:operate"
   defp shape_scope({:terminals, _}), do: "terminal:operate"
-  # By environment, as its node form needs, wherever it is served.
+  # By environment, as its MC form needs, wherever it is served.
   defp shape_scope({:environment, _, shape}) do
-    {:ok, local} = Protocol.at_node(shape, node())
+    {:ok, local} = Protocol.at_mc(shape, node())
     shape_scope(local)
   end
 
@@ -1102,28 +1102,28 @@ defmodule HalC2.Web.Socket do
 
   defp shape_scope(_shape), do: "orchestration:read"
 
-  defp config_ids(state, node), do: Map.get(state.by_terminal, {:settings, node}, [])
+  defp config_ids(state, mc), do: Map.get(state.by_terminal, {:settings, mc}, [])
 
-  # A frame for each subscription watching `node`'s config, built by `frame.(id)`.
-  defp config_push(state, node, frame) do
-    case config_ids(state, node) do
+  # A frame for each subscription watching `mc`'s config, built by `frame.(id)`.
+  defp config_push(state, mc, frame) do
+    case config_ids(state, mc) do
       [] -> {:ok, state}
       ids -> {:push, Enum.map(ids, &Protocol.encode(frame.(&1))), state}
     end
   end
 
-  # `config.providers` for the subscriptions `ids` watching `node`.
-  defp push_providers(state, _node, []), do: {:ok, state}
+  # `config.providers` for the subscriptions `ids` watching `mc`.
+  defp push_providers(state, _mc, []), do: {:ok, state}
 
-  defp push_providers(state, node, ids) do
-    case remote(node, HalC2.Environment, :providers, []) do
+  defp push_providers(state, mc, ids) do
+    case remote(mc, HalC2.Environment, :providers, []) do
       {:ok, providers} ->
         frames =
           for id <- ids do
             Protocol.encode(%{
               "t" => "config.providers",
               "id" => id,
-              "providers" => providers_for(state, node, id, providers)
+              "providers" => providers_for(state, mc, id, providers)
             })
           end
 
@@ -1142,29 +1142,29 @@ defmodule HalC2.Web.Socket do
     %{state | by_terminal: Map.put(state.by_terminal, :usage_limits_command, commands)}
   end
 
-  defp providers_for(state, node, id, providers) do
+  defp providers_for(state, mc, id, providers) do
     if command?(state, id) do
-      sources = Map.get(state.by_terminal, {:usage_limit_sources, node}, [])
+      sources = Map.get(state.by_terminal, {:usage_limit_sources, mc}, [])
       HalC2.ProviderUsageLimits.with_command(providers, sources)
     else
       providers
     end
   end
 
-  # Keeps `node`'s latest usage-limit sources for the `/usage-limits` providers, and
+  # Keeps `mc`'s latest usage-limit sources for the `/usage-limits` providers, and
   # has those re-sent when the drivers the sources cover change.
-  defp remember_sources(state, node, sources) do
-    case config_ids(state, node) do
+  defp remember_sources(state, mc, sources) do
+    case config_ids(state, mc) do
       [] ->
         state
 
       ids ->
-        key = {:usage_limit_sources, node}
+        key = {:usage_limit_sources, mc}
         before = HalC2.ProviderUsageLimits.command_coverage(Map.get(state.by_terminal, key, []))
 
         if Enum.any?(ids, &command?(state, &1)) and
              before != HalC2.ProviderUsageLimits.command_coverage(sources),
-           do: send(self(), {:hal_c2_usage_limits_command, node})
+           do: send(self(), {:hal_c2_usage_limits_command, mc})
 
         %{state | by_terminal: Map.put(state.by_terminal, key, sources)}
     end
@@ -1182,100 +1182,100 @@ defmodule HalC2.Web.Socket do
         :ok = HalC2.Links.unsubscribe_rows(self())
         %{state | subs: subs}
 
-      {{:terminal, node, {thread_id, terminal_id} = key}, subs} ->
-        :erpc.cast(node, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
+      {{:terminal, mc, {thread_id, terminal_id} = key}, subs} ->
+        :erpc.cast(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
 
-      {{:vcs, node, cwd}, subs} ->
-        :erpc.cast(node, HalC2.Vcs.Watch, :unsubscribe, [cwd, self()])
+      {{:vcs, mc, cwd}, subs} ->
+        :erpc.cast(mc, HalC2.Vcs.Watch, :unsubscribe, [cwd, self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:vcs, cwd})}
 
-      {{:server_update, node, _input}, subs} ->
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:server_update, node})}
+      {{:server_update, mc, _input}, subs} ->
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:server_update, mc})}
 
-      {{:relay_client_install, node}, subs} ->
+      {{:relay_client_install, mc}, subs} ->
         %{
           state
           | subs: subs,
-            by_terminal: Map.delete(state.by_terminal, {:relay_client_install, node})
+            by_terminal: Map.delete(state.by_terminal, {:relay_client_install, mc})
         }
 
-      {{:git_action, _node, %{"actionId" => action_id}}, subs} ->
+      {{:git_action, _mc, %{"actionId" => action_id}}, subs} ->
         %{
           state
           | subs: subs,
             by_terminal: Map.delete(state.by_terminal, {:git_action, action_id})
         }
 
-      {{:config, node}, subs} ->
+      {{:config, mc}, subs} ->
         state = update_commands(state, &MapSet.delete(&1, id))
 
-        case List.delete(config_ids(state, node), id) do
+        case List.delete(config_ids(state, mc), id) do
           [] ->
-            :erpc.cast(node, HalC2.Settings, :unwatch, [self()])
+            :erpc.cast(mc, HalC2.Settings, :unwatch, [self()])
 
             by_terminal =
-              Map.drop(state.by_terminal, [{:settings, node}, {:usage_limit_sources, node}])
+              Map.drop(state.by_terminal, [{:settings, mc}, {:usage_limit_sources, mc}])
 
             %{state | subs: subs, by_terminal: by_terminal}
 
           ids ->
-            %{state | subs: subs, by_terminal: Map.put(state.by_terminal, {:settings, node}, ids)}
+            %{state | subs: subs, by_terminal: Map.put(state.by_terminal, {:settings, mc}, ids)}
         end
 
       {:auth_access, subs} ->
         HalC2.Auth.unsubscribe(self())
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, :auth_access)}
 
-      {{:resource_telemetry, node}, subs} ->
+      {{:resource_telemetry, mc}, subs} ->
         # A direct cast keeps order with this socket's later frames.
-        GenServer.cast({HalC2.Diagnostics, node}, {:unsubscribe, self()})
+        GenServer.cast({HalC2.Diagnostics, mc}, {:unsubscribe, self()})
 
         %{
           state
           | subs: subs,
-            by_terminal: Map.delete(state.by_terminal, {:resource_telemetry, node})
+            by_terminal: Map.delete(state.by_terminal, {:resource_telemetry, mc})
         }
 
-      {{:preview_automation, node, client_id} = key, subs} ->
-        :erpc.cast(node, HalC2.PreviewAutomation, :disconnect, [client_id, self()])
+      {{:preview_automation, mc, client_id} = key, subs} ->
+        :erpc.cast(mc, HalC2.PreviewAutomation, :disconnect, [client_id, self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
 
-      {{:preview, node}, subs} ->
-        :erpc.cast(node, HalC2.Preview, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:preview, node})}
+      {{:preview, mc}, subs} ->
+        :erpc.cast(mc, HalC2.Preview, :unsubscribe, [self()])
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:preview, mc})}
 
-      {{:local_servers, node}, subs} ->
-        :erpc.cast(node, HalC2.LocalServers, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:local_servers, node})}
+      {{:local_servers, mc}, subs} ->
+        :erpc.cast(mc, HalC2.LocalServers, :unsubscribe, [self()])
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:local_servers, mc})}
 
-      {{:devices, node} = shape, subs} ->
-        :erpc.cast(node, HalC2.Devices, :unsubscribe, [self()])
+      {{:devices, mc} = shape, subs} ->
+        :erpc.cast(mc, HalC2.Devices, :unsubscribe, [self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
-      {{:project_clones, node}, subs} ->
-        :erpc.cast(node, HalC2.ProjectClones, :unsubscribe, [self()])
-        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:project_clones, node})}
+      {{:project_clones, mc}, subs} ->
+        :erpc.cast(mc, HalC2.ProjectClones, :unsubscribe, [self()])
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:project_clones, mc})}
 
-      {{:scheduled_tasks, node}, subs} ->
-        :erpc.cast(node, HalC2.ScheduledTasks, :unsubscribe, [self()])
+      {{:scheduled_tasks, mc}, subs} ->
+        :erpc.cast(mc, HalC2.ScheduledTasks, :unsubscribe, [self()])
 
         %{
           state
           | subs: subs,
-            by_terminal: Map.delete(state.by_terminal, {:scheduled_tasks, node})
+            by_terminal: Map.delete(state.by_terminal, {:scheduled_tasks, mc})
         }
 
-      {{:background_policy, node} = shape, subs} ->
-        :erpc.cast(node, HalC2.BackgroundPolicy, :unsubscribe, [self()])
+      {{:background_policy, mc} = shape, subs} ->
+        :erpc.cast(mc, HalC2.BackgroundPolicy, :unsubscribe, [self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
-      {{:pull_request_refreshes, node} = shape, subs} ->
-        :erpc.cast(node, HalC2.PullRequests.Refreshes, :unsubscribe, [self()])
+      {{:pull_request_refreshes, mc} = shape, subs} ->
+        :erpc.cast(mc, HalC2.PullRequests.Refreshes, :unsubscribe, [self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
-      {{:worktree_setup, node, thread_id}, subs} ->
-        :erpc.cast(node, HalC2.WorktreeSetup, :unsubscribe, [thread_id, self()])
+      {{:worktree_setup, mc, thread_id}, subs} ->
+        :erpc.cast(mc, HalC2.WorktreeSetup, :unsubscribe, [thread_id, self()])
 
         %{
           state
@@ -1283,8 +1283,8 @@ defmodule HalC2.Web.Socket do
             by_terminal: Map.delete(state.by_terminal, {:worktree_setup, thread_id})
         }
 
-      {{:provider_install, node, instance}, subs} ->
-        :erpc.cast(node, HalC2.Acp.Antigravity.Installation, :unsubscribe, [instance, self()])
+      {{:provider_install, mc, instance}, subs} ->
+        :erpc.cast(mc, HalC2.Acp.Antigravity.Installation, :unsubscribe, [instance, self()])
 
         %{
           state
@@ -1292,8 +1292,8 @@ defmodule HalC2.Web.Socket do
             by_terminal: Map.delete(state.by_terminal, {:provider_install, instance})
         }
 
-      {{:provider_auth, node, instance}, subs} ->
-        :erpc.cast(node, HalC2.ProviderAuth, :unsubscribe, [instance, self()])
+      {{:provider_auth, mc, instance}, subs} ->
+        :erpc.cast(mc, HalC2.ProviderAuth, :unsubscribe, [instance, self()])
 
         %{
           state
@@ -1301,16 +1301,16 @@ defmodule HalC2.Web.Socket do
             by_terminal: Map.delete(state.by_terminal, {:provider_auth, instance})
         }
 
-      {{:terminals, node} = shape, subs} ->
-        :erpc.cast(node, HalC2.Terminal.Hub, :unwatch, [self()])
+      {{:terminals, mc} = shape, subs} ->
+        :erpc.cast(mc, HalC2.Terminal.Hub, :unwatch, [self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
       {{:link, environment_id, ref}, subs} ->
         HalC2.Links.unwatch(environment_id, ref)
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:link, ref})}
 
-      {{:stream, node, stream_id}, subs} ->
-        :erpc.cast(node, HalC2.Streams, :unsubscribe, [stream_id, self()])
+      {{:stream, mc, stream_id}, subs} ->
+        :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self()])
 
         %{
           state
@@ -1438,36 +1438,36 @@ defmodule HalC2.Web.Socket do
   @link_frames %{
     "shell.rows" => "shell.linkRows",
     "shell.environment" => "shell.linkEnvironment",
-    "shell.node" => "shell.linkNode"
+    "shell.mc" => "shell.linkMc"
   }
 
-  # A linked environment's shell change; its node names are its own strings.
+  # A linked environment's shell change; its MC names are its own strings.
   defp link_message(id, environment_id, message) do
     frame = shell_message(id, message)
     %{frame | "t" => @link_frames[frame["t"]]} |> Map.put("link", environment_id)
   end
 
-  defp shell_message(id, {:rows, node, rows}),
+  defp shell_message(id, {:rows, mc, rows}),
     do: %{
       "t" => "shell.rows",
       "id" => id,
-      "node" => to_string(node),
+      "mc" => to_string(mc),
       "rows" => for({sid, {kind, row}} <- rows, do: [sid, kind, row])
     }
 
-  defp shell_message(id, {:environment, node, descriptor}),
+  defp shell_message(id, {:environment, mc, descriptor}),
     do: %{
       "t" => "shell.environment",
       "id" => id,
-      "node" => to_string(node),
+      "mc" => to_string(mc),
       "environment" => descriptor
     }
 
-  defp shell_message(id, {:node, node, status}),
+  defp shell_message(id, {:mc, mc, status}),
     do: %{
-      "t" => "shell.node",
+      "t" => "shell.mc",
       "id" => id,
-      "node" => to_string(node),
+      "mc" => to_string(mc),
       "online" => status in [:up, true]
     }
 end

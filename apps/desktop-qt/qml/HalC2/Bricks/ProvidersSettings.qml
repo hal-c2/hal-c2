@@ -410,7 +410,7 @@ Rectangle {
 
                     objectName: "label"
                     Layout.fillWidth: true
-                    // Set only when the node's value changes, so a republish of
+                    // Set only when the MC's value changes, so a republish of
                     // anything else leaves what is being typed alone.
                     readonly property string committed: wizardCard.wizard.label
                     text: committed
@@ -436,7 +436,7 @@ Rectangle {
 
                     objectName: "instanceId"
                     Layout.fillWidth: true
-                    // Set only when the node's value changes, so a republish of
+                    // Set only when the MC's value changes, so a republish of
                     // anything else leaves what is being typed alone.
                     readonly property string committed: wizardCard.wizard.instanceId
                     text: committed
@@ -697,7 +697,7 @@ Rectangle {
                     text: runtimeSection.runtime ? runtimeSection.runtime.status : ""
                 }
 
-                // Download progress: a static bar, redrawn only as the node reports.
+                // Download progress: a static bar, redrawn only as the MC reports.
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 4

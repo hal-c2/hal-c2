@@ -131,7 +131,7 @@ Feature: Terminal layout at every size
   Scenario: A long status message is cut to 32 cells
     Given the terminal client is open on a thread with focus in the prompt
     And the user types "Fix the build"
-    When the user sends it and the node rejects the message
+    When the user sends it and the MC rejects the message
     Then the status at the end of the bottom row is cut to 32 cells with "…" in the error colour
 
   @tui

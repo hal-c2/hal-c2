@@ -10,18 +10,18 @@
 #include <optional>
 #include <variant>
 
-class NodeClient;
+class McClient;
 class ShellStore;
 
 // The Pull requests tab: the pull requests linked to a thread, read from its
 // shell row (`pullRequests`; dismissed stack layers hidden), so their state,
-// checks and review follow the node's sync as rows change. Nothing is loaded
-// here: the node's snapshots arrive with the row.
+// checks and review follow the MC's sync as rows change. Nothing is loaded
+// here: the MC's snapshots arrive with the row.
 //
 // Actions go to the thread's environment: link(text) takes a pull request URL
 // or a number on the thread's own repository (`thread.pull-request.link`, as
 // the user's), unlink(key) is its way back (`thread.pull-request.unlink`; a
-// stack layer is dismissed instead), refresh() asks the node to read every
+// stack layer is dismissed instead), refresh() asks the MC to read every
 // listed one from its host again (`pullRequests.invalidate`). While the
 // environment is offline the rows stay as last synced and nothing is sent.
 class ThreadPullRequests : public QAbstractListModel {
@@ -75,7 +75,7 @@ public:
   using Notify = std::function<void(const QString& type, const QString& title, const QString& description)>;
   using Open = std::function<void(const QUrl& url)>;
 
-  ThreadPullRequests(NodeClient* client, ShellStore* store, Notify notify, Open open, QObject* parent = nullptr);
+  ThreadPullRequests(McClient* client, ShellStore* store, Notify notify, Open open, QObject* parent = nullptr);
 
   // The thread shown ("<environment>:<thread id>"); reads its row again, so
   // it is also how a changed row lands. Rows only change when the links do.
@@ -127,7 +127,7 @@ private:
   const QJsonObject* find(const QString& key) const;
   void setProblem(const QString& problem);
 
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   Notify m_notify;
   Open m_open;

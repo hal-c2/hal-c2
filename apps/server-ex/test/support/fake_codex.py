@@ -4,7 +4,7 @@
 # creates the file NAME ("edit NAME" reports a change to it; "indent", "fill", "fail" and "say" are below;
 # steering with "say ..." ends a waiting turn with that answer). "where are we" says which native thread
 # the turn ran on and whether handed-off history or merged work came with the message; "exit before
-# starting" makes the process exit on turn/start. With FAKE_CODEX_LOG set, every request the node sends
+# starting" makes the process exit on turn/start. With FAKE_CODEX_LOG set, every request the MC sends
 # is appended to that file as one JSON line, and every answer to our own requests as
 # {"method": "response", "params": {"id": ..., "result": ...}}; while the file FAKE_CODEX_REJECT_STEER
 # names exists, turn/steer is refused. "stream ..." turns pace themselves by gate files
@@ -161,7 +161,7 @@ for line in sys.stdin:
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": status, "aggregatedOutput": "", "exitCode": 0}}})
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
         continue
-    # An answer to a request a test delivered to the node as if from Codex: while a turn
+    # An answer to a request a test delivered to the MC as if from Codex: while a turn
     # waits, say what was received (item "msg-received-<id>", text "received <json>").
     if not method:
         ctx = globals().get("waiting_ctx")
@@ -207,7 +207,7 @@ for line in sys.stdin:
         turns += 1
         turn_id = f"native-turn-{turns}"
         prompt = params["input"][0]["text"]
-        # The script plays from the user's message, not from the context the node hands
+        # The script plays from the user's message, not from the context the MC hands
         # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).
         text = re.sub(r"\A(?:<(\w+)>\n.*?\n</\1>\n\n)+", "", prompt, flags=re.S)
         rollout_append({"type": "turn_context", "payload": {"cwd": params.get("cwd"), "model": params.get("model")}})

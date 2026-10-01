@@ -1,17 +1,17 @@
 defmodule HalC2.Steps.Orchestration.McpThreadTools do
   @moduledoc """
-  Steps for `features/node/orchestration/mcp-thread-tools.feature`, and the MCP
+  Steps for `features/mc/orchestration/mcp-thread-tools.feature`, and the MCP
   caller setup and failure steps the other MCP features share.
 
   MCP tool calls keep their outcome in `context.mcp_result`: `{:ok, result}` or
-  `{:error, code, message}` (see `HalC2.Test.Node.World.mcp_tool/5`). Turns run on the
+  `{:error, code, message}` (see `HalC2.Test.Mc.World.mcp_tool/5`). Turns run on the
   fake Codex CLI: "wait" keeps one running, steering it with "say X" ends it.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @fake_text Path.expand("../../support/fake_text_cli.py", __DIR__)
   @active ~w(preparing starting running waiting)
@@ -695,7 +695,7 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     caller = World.thread_id(context, "caller")
 
     batch =
-      for {{_node, id}, {"thread", _row}} <- HalC2.Shell.rows(),
+      for {{_mc, id}, {"thread", _row}} <- HalC2.Shell.rows(),
           String.starts_with?(id, "thread:mcp:#{caller}:"),
           do: id
 
@@ -743,7 +743,7 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     assert message =~ "20"
     caller = World.thread_id(context, "caller")
 
-    refute Enum.any?(HalC2.Shell.rows(), fn {{_node, id}, {kind, _row}} ->
+    refute Enum.any?(HalC2.Shell.rows(), fn {{_mc, id}, {kind, _row}} ->
              kind == "thread" and String.starts_with?(id, "thread:mcp:#{caller}:")
            end)
 
@@ -1341,7 +1341,7 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   end
 
   defp use_fake_text(context) do
-    log = Path.join(context.node.home, "text-calls.jsonl")
+    log = Path.join(context.mc.home, "text-calls.jsonl")
     System.put_env("FAKE_TEXT_LOG", log)
     previous = Application.get_env(:hal_c2, :text_codex_command)
     Application.put_env(:hal_c2, :text_codex_command, @fake_text)
@@ -1355,7 +1355,7 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   end
 
   defp text_calls(context) do
-    case File.read(Path.join(context.node.home, "text-calls.jsonl")) do
+    case File.read(Path.join(context.mc.home, "text-calls.jsonl")) do
       {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
       {:error, :enoent} -> []
     end
@@ -1371,7 +1371,7 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
         "driver" => "opencode",
         "enabled" => true,
         "environment" => [
-          %{"name" => "FAKE_AUTH_FILE", "value" => Path.join(context.node.home, "signed-in")}
+          %{"name" => "FAKE_AUTH_FILE", "value" => Path.join(context.mc.home, "signed-in")}
         ]
       }
     }

@@ -13,7 +13,7 @@
 
 #include <functional>
 
-// One thread's timeline: the node's `stream` shape folded into its entities
+// One thread's timeline: the MC's `stream` shape folded into its entities
 // (packages/client-runtime/src/v3/threadShape.ts) and projected into rows
 // (apps/tui/src/timeline.ts, apps/web/src/components/chat/MessagesTimeline.logic.ts).
 //
@@ -61,7 +61,7 @@ public:
     // When the row happened, as the web's formatDayAwareTimestamp reads it in
     // the device's timestampFormat: "9:41 AM", "yesterday at 9:41 AM",
     // "9/20 9:41 AM". A reply's once it has finished streaming; empty when
-    // the node sent no time.
+    // the MC sent no time.
     TimeRole,
     // The lucide icon of a marker, error or subagent row (a call's is its
     // entry's `icon`), after the web's workEntryIconName.
@@ -85,7 +85,7 @@ public:
 
   QString threadKey() const { return m_threadKey; }
   // loading until the first snapshot lands, live, or unreachable (with the
-  // node's reason in `problem`). Rows stay while it reloads or is unreachable.
+  // MC's reason in `problem`). Rows stay while it reloads or is unreachable.
   QString status() const { return m_status; }
   QString problem() const { return m_problem; }
   void setStatus(const QString& status, const QString& problem = {});

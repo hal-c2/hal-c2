@@ -3,64 +3,64 @@
 #   packages/contracts/src/keybindings.ts (limits, forward-compatible decoding, KeybindingsConfigParseError)
 #   packages/shared/src/keybindings.ts (when-expression evaluation)
 #   apps/server-ex/lib/hal_c2/keybindings.ex (server.upsertKeybinding, server.removeKeybinding)
-#   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop merges config.keybindings over its defaults, as the node changes them)
-#   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake node)
+#   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop merges config.keybindings over its defaults, as the MC changes them)
+#   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake MC)
 #   apps/web/src/routes/__root.tsx (the "Keybindings updated" toast, KEYBINDINGS_SUCCESS_TOAST_COOLDOWN_MS)
 
 Feature: Customising keybindings
   Custom rules live in keybindings.json in the HAL-C2 home. Each rule names a key, a command and
-  an optional condition. The node stores the rules; clients merge them over the defaults.
+  an optional condition. The MC stores the rules; clients merge them over the defaults.
 
-  Rule: The node stores custom rules
+  Rule: The MC stores custom rules
 
-    @node
+    @mc
     Scenario: Adding a rule saves it
-      Given the node has no custom keybindings
+      Given the MC has no custom keybindings
       When a client adds the rule "mod+shift+t" for "terminal.new"
-      Then the node's keybindings include that rule
+      Then the MC's keybindings include that rule
       And keybindings.json contains that rule
 
-    @node
+    @mc
     Scenario: Adding an identical rule replaces it instead of duplicating it
-      Given the node has the rule "mod+shift+t" for "terminal.new"
+      Given the MC has the rule "mod+shift+t" for "terminal.new"
       When a client adds the rule "mod+shift+t" for "terminal.new" again
-      Then the node has exactly one such rule
+      Then the MC has exactly one such rule
 
-    @node
+    @mc
     Scenario: Rebinding replaces the rule it names
-      Given the node has the rule "mod+shift+t" for "terminal.new"
+      Given the MC has the rule "mod+shift+t" for "terminal.new"
       When a client adds the rule "mod+alt+t" for "terminal.new" replacing the old rule
-      Then the node's keybindings include "mod+alt+t" for "terminal.new"
+      Then the MC's keybindings include "mod+alt+t" for "terminal.new"
       And they no longer include "mod+shift+t" for "terminal.new"
 
-    @node
+    @mc
     Scenario: Removing a rule deletes it
-      Given the node has the rule "mod+shift+t" for "terminal.new"
+      Given the MC has the rule "mod+shift+t" for "terminal.new"
       When a client removes that rule
-      Then the node's keybindings no longer include it
+      Then the MC's keybindings no longer include it
 
-    @node
+    @mc
     Scenario: Only the newest 256 rules are kept
-      Given the node has 256 custom rules
+      Given the MC has 256 custom rules
       When a client adds one more rule
-      Then the node keeps 256 rules
+      Then the MC keeps 256 rules
       And the oldest rule is gone
 
-    @node
+    @mc
     Scenario: Other clients learn about a change
-      Given two clients are connected to the node
+      Given two clients are connected to the MC
       When one client adds a keybinding rule
       Then the other client receives the updated keybindings
 
-    @node
+    @mc
     Scenario: A write never leaves a half-written file
       When a client adds a keybinding rule
       Then keybindings.json is replaced in one step
 
-    @node
+    @mc
     Scenario: Entries that are not rules are skipped
       Given keybindings.json contains a rule and a bare string
-      When the node reads the keybindings
+      When the MC reads the keybindings
       Then only the rule is returned
 
   Rule: Clients merge custom rules with the defaults
@@ -99,23 +99,23 @@ Feature: Customising keybindings
       Then the "test" script runs
 
     @desktop
-    Scenario: A rule the node pushes applies at once
+    Scenario: A rule the MC pushes applies at once
       Given no custom keybindings
-      When the node adds the rule mod+alt+g for "diff.toggle"
+      When the MC adds the rule mod+alt+g for "diff.toggle"
       And the user presses mod+alt+g
       Then "diff.toggle" runs
 
     @desktop
     Scenario: A reload of the keybindings is confirmed
       Given no custom keybindings
-      When the node adds the rule mod+alt+g for "diff.toggle"
+      When the MC adds the rule mod+alt+g for "diff.toggle"
       Then the user sees a "success" toast "Keybindings updated" saying "Keybindings configuration reloaded successfully."
 
     @desktop
     Scenario: Reloads close together are confirmed once
       Given no custom keybindings
-      When the node adds the rule mod+alt+g for "diff.toggle"
-      And the node adds the rule mod+alt+h for "diff.toggle"
+      When the MC adds the rule mod+alt+g for "diff.toggle"
+      And the MC adds the rule mod+alt+h for "diff.toggle"
       Then the user sees the toast "Keybindings updated" once
 
     @desktop
@@ -125,13 +125,13 @@ Feature: Customising keybindings
       Then the user sees no toast
 
     @desktop
-    Scenario: A rule the node removes stops applying
+    Scenario: A rule the MC removes stops applying
       Given "diff.toggle" is bound to mod+alt+g
-      When the node removes every custom rule
+      When the MC removes every custom rule
       And the user presses mod+alt+g
       Then "diff.toggle" does not run
 
-    @node
+    @mc
     Scenario Outline: Rules beyond the limits are rejected
       When a client adds a rule whose <part> is <size>
       Then the rule is rejected

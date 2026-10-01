@@ -455,7 +455,7 @@ void TimelineModel::unplace(const QString& itemId) {
   m_order.removeOne(itemId);
 }
 
-// Turn items are shown in ordinal order, as the node sends them.
+// Turn items are shown in ordinal order, as the MC sends them.
 void TimelineModel::sortItems() {
   const QHash<QString, QJsonObject> items = m_entities.value(QStringLiteral("turn-item"));
   m_order = items.keys();
@@ -761,7 +761,7 @@ QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   const auto checkpoints = m_entities.value(QStringLiteral("checkpoint"));
   for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
     if (text(*it, QLatin1String("runId")) != runId || text(*it, QLatin1String("status")) != QLatin1String("ready")) continue;
-    // The node's turn number (the diff panel's), else the turn's number among
+    // The MC's turn number (the diff panel's), else the turn's number among
     // the runs still shown.
     int turn = it->value(QLatin1String("appRunOrdinal")).toInt();
     if (turn <= 0) {

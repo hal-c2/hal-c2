@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Orchestration.AutoSettle do
   @moduledoc """
-  Steps for `features/node/orchestration/auto-settle.feature`. The settlement
+  Steps for `features/mc/orchestration/auto-settle.feature`. The settlement
   service starts, without its timer, only once a step sweeps (or changes the
   settings), so the Given steps build a thread without a change-driven sweep
   settling it halfway through.
@@ -9,14 +9,14 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
   import ExUnit.Assertions
 
   alias HalC2.Orchestration.Settlement
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @hour 60 * 60 * 1_000
 
   step "auto-settle after {int} days and auto-settle on merge are on",
        %{args: [days]} = context do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
 
     write_settings(context, %{
       "sidebarAutoSettleAfterDays" => days,
@@ -37,7 +37,7 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
   end
 
   step "the user changes auto-settle to {int} day(s)", %{args: [days]} = context do
-    Node.ensure({Settlement, interval: nil})
+    Mc.ensure({Settlement, interval: nil})
     write_settings(context, %{"sidebarAutoSettleAfterDays" => days})
   end
 
@@ -190,8 +190,8 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
     context |> link("t1") |> sync("t1", "merged", 0)
   end
 
-  step "the node sweeps for threads to settle", context do
-    Node.ensure({Settlement, interval: nil})
+  step "the MC sweeps for threads to settle", context do
+    Mc.ensure({Settlement, interval: nil})
     :ok = Settlement.sweep()
     Map.put(context, :settle_swept, true)
   end
@@ -222,7 +222,7 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
   # schedule, and "a minute passes" is the tick that schedule delivers. Backdating
   # the message changes no field the service watches, so no sweep starts by itself.
   step "thread {string} becomes eligible to settle", %{args: [thread]} = context do
-    pid = Node.ensure({Settlement, interval: 60_000})
+    pid = Mc.ensure({Settlement, interval: 60_000})
     context = ensure_thread(context, thread)
     :ok = Settlement.sweep()
     at = World.iso_from_now(-World.days(4))
@@ -244,7 +244,7 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
     Map.put(context, :settle_swept, true)
   end
 
-  step "the node decided to settle {string} from a snapshot", %{args: [thread]} = context do
+  step "the MC decided to settle {string} from a snapshot", %{args: [thread]} = context do
     context = finished(context, thread, -World.days(4))
     Map.put(context, :auto_settle, auto_settle(context, thread))
   end
@@ -284,7 +284,7 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
 
   step "thread {string} was auto-settled", %{args: [thread]} = context do
     context = finished(context, thread, -World.days(4))
-    Node.ensure({Settlement, interval: nil})
+    Mc.ensure({Settlement, interval: nil})
     :ok = Settlement.sweep()
     World.await_row(World.thread_id(context, thread), &(&1["settledOverride"] == "settled"))
     context

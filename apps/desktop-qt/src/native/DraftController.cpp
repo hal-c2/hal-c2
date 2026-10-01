@@ -31,7 +31,7 @@ QString newId() {
 
 }  // namespace
 
-DraftController::DraftController(ShellBridge* bridge, NodeClient*, ShellStore* store, QObject* parent)
+DraftController::DraftController(ShellBridge* bridge, McClient*, ShellStore* store, QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
       m_store(store),

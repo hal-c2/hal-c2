@@ -36,7 +36,7 @@ handoff is also a good choice when the old conversation contains conflicting ins
 
 ## Copying a thread to another machine
 
-The Elixir node can write one thread to a file and read it on another machine, for machines that
+The MC can write one thread to a file and read it on another machine, for machines that
 are not in one cluster:
 
 ```sh

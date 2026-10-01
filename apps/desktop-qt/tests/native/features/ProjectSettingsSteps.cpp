@@ -11,7 +11,7 @@
 #include "Harness.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "SettingsScopeController.h"
 #include "SidebarController.h"
@@ -40,7 +40,7 @@ QString checkoutId(const QString& project, const QString& environment) {
 // A checkout of `project` on the linked machine `environment`, one repository
 // wherever it is so its checkouts are one project.
 void addCheckout(World& world, const QString& project, const QString& environment) {
-  world.node.sendLinkRow(environment, checkoutId(project, environment),
+  world.mc.sendLinkRow(environment, checkoutId(project, environment),
                          QJsonObject{{QStringLiteral("id"), checkoutId(project, environment)},
                                      {QStringLiteral("title"), project},
                                      {QStringLiteral("workspaceRoot"), QStringLiteral("/home/%1/%2").arg(environment, project)},
@@ -54,20 +54,20 @@ void addCheckout(World& world, const QString& project, const QString& environmen
 }
 
 void removeCheckout(World& world, const QString& project, const QString& environment) {
-  world.node.sendLinkRow(environment, checkoutId(project, environment),
+  world.mc.sendLinkRow(environment, checkoutId(project, environment),
                          QJsonObject{{QStringLiteral("deletedAt"), QStringLiteral("2026-09-23T10:00:00Z")}}, QStringLiteral("project"));
 }
 
 QJsonObject checkout(World& world, const QString& project, const QString& environment) {
-  const QJsonArray entry = world.node.linkedRows.value(environment).value(checkoutId(project, environment));
+  const QJsonArray entry = world.mc.linkedRows.value(environment).value(checkoutId(project, environment));
   return entry.isEmpty() ? QJsonObject() : entry.at(2).toObject();
 }
 
-// Another machine the node is linked to, with its own settings.
+// Another machine the MC is linked to, with its own settings.
 void linkMachine(World& world, const QString& name) {
-  documentOf(world.node, name);
-  world.node.linkLabels.insert(name, name);
-  world.node.link(name);
+  documentOf(world.mc, name);
+  world.mc.linkLabels.insert(name, name);
+  world.mc.link(name);
 }
 
 void openProjects(World& world) {
@@ -170,8 +170,8 @@ QJsonObject provider(const QString& instanceId, const QString& name, const QStri
 
 // The environment's saved value of `key`.
 QJsonValue savedOn(World& world, const QString& environment, const QString& key) {
-  const QJsonObject settings = environment == world.node.environmentId ? fakeConfig(world.node).settings
-                                                                        : documentOf(world.node, environment).settings;
+  const QJsonObject settings = environment == world.mc.environmentId ? fakeConfig(world.mc).settings
+                                                                        : documentOf(world.mc, environment).settings;
   return settings.value(key);
 }
 
@@ -200,9 +200,9 @@ const Steps steps([] {
          expectStatus(world, QStringLiteral("pick"), QStringLiteral("Choose a project to manage its name, icon, checkouts and actions."));
        });
   step(QStringLiteral("the user has no projects"), [](World& world, const Captures&, const Table&) {
-    for (const QString& environment : world.node.linked) {
-      for (const QString& id : world.node.linkedRows.value(environment).keys()) {
-        world.node.sendLinkRow(environment, id, QJsonObject{{QStringLiteral("deletedAt"), QStringLiteral("2026-09-23T10:00:00Z")}},
+    for (const QString& environment : world.mc.linked) {
+      for (const QString& id : world.mc.linkedRows.value(environment).keys()) {
+        world.mc.sendLinkRow(environment, id, QJsonObject{{QStringLiteral("deletedAt"), QStringLiteral("2026-09-23T10:00:00Z")}},
                                QStringLiteral("project"));
       }
     }
@@ -216,7 +216,7 @@ const Steps steps([] {
     manage(world, c[0]);
   });
   step(QStringLiteral("%1 is removed on another device").arg(q), [](World& world, const Captures& c, const Table&) {
-    for (const QString& environment : world.node.linked) removeCheckout(world, c[0], environment);
+    for (const QString& environment : world.mc.linked) removeCheckout(world, c[0], environment);
     world.sync();
   });
   step(QStringLiteral("the user is told this project is no longer available"), [](World& world, const Captures&, const Table&) {
@@ -267,15 +267,15 @@ const Steps steps([] {
   });
   step(QStringLiteral("the name stays %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(world.node.part<FakeProjects>().mutations.isEmpty() && panel(world).value(QStringLiteral("name")) == c[0],
+    expect(world.mc.part<FakeProjects>().mutations.isEmpty() && panel(world).value(QStringLiteral("name")) == c[0],
            QStringLiteral("nothing to be renamed; the panel is %1").arg(show(panel(world))));
   });
   step(QStringLiteral("the user is told to connect %1 and try again").arg(q), [](World& world, const Captures& c, const Table&) {
     expectToast(world, QStringLiteral("Failed to rename project"), QStringLiteral("Connect %1 and try again.").arg(c[0]));
-    expect(world.node.part<FakeProjects>().mutations.isEmpty(), QStringLiteral("no checkout to be renamed"));
+    expect(world.mc.part<FakeProjects>().mutations.isEmpty(), QStringLiteral("no checkout to be renamed"));
   });
   step(QStringLiteral("renaming fails on %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<FakeProjects>().refusedOn.insert(c[0], QStringLiteral("disk full"));
+    world.mc.part<FakeProjects>().refusedOn.insert(c[0], QStringLiteral("disk full"));
   });
   step(QStringLiteral("the user is told the rename failed on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectToast(world, QStringLiteral("Failed to rename project on %1").arg(c[0]), QStringLiteral("disk full"));
@@ -288,7 +288,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 shows %1 on every checkout").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
-      for (const QString& environment : world.node.linked) {
+      for (const QString& environment : world.mc.linked) {
         if (checkout(world, c[0], environment).value(QLatin1String("projectIcon")).toObject().value(QLatin1String("emoji")) != c[1]) return false;
       }
       return at(panel(world).value(QStringLiteral("icon")), QStringLiteral("label")) == c[1];
@@ -299,7 +299,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 shows its automatic icon").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
-      for (const QString& environment : world.node.linked) {
+      for (const QString& environment : world.mc.linked) {
         if (!checkout(world, c[0], environment).value(QLatin1String("projectIcon")).isNull()) return false;
       }
       return !at(panel(world).value(QStringLiteral("icon")), QStringLiteral("custom")).toBool();
@@ -340,15 +340,15 @@ const Steps steps([] {
   });
   step(QStringLiteral("no files are deleted on either machine"), [](World& world, const Captures&, const Table&) {
     // Only the entries go: nothing asks a machine to delete a folder.
-    for (const QJsonObject& mutation : world.node.part<FakeProjects>().mutations) {
+    for (const QJsonObject& mutation : world.mc.part<FakeProjects>().mutations) {
       expect(mutation.value(QLatin1String("type")) == QLatin1String("project.delete") && !mutation.contains(QLatin1String("deleteFiles")),
-             QStringLiteral("the node was asked to %1").arg(show(mutation.toVariantMap())));
+             QStringLiteral("the MC was asked to %1").arg(show(mutation.toVariantMap())));
     }
   });
   step(QStringLiteral("the %1 checkout of %1 has (\\d+) threads").arg(q), [](World& world, const Captures& c, const Table&) {
     for (int index = 1; index <= c[2].toInt(); ++index) {
       const QString id = QStringLiteral("%1-thread-%2").arg(c[0]).arg(index);
-      world.node.sendLinkRow(c[0], id,
+      world.mc.sendLinkRow(c[0], id,
                              QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("projectId"), checkoutId(c[1], c[0])},
                                          {QStringLiteral("title"), QStringLiteral("Thread %1").arg(index)},
                                          {QStringLiteral("createdAt"), kAt}, {QStringLiteral("updatedAt"), kAt}});
@@ -379,18 +379,18 @@ const Steps steps([] {
 
   // project-defaults.feature
   step(QStringLiteral("a connected environment %1 with the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.environmentId = c[0];
-    world.node.label = c[0];
-    world.node.projects.insert(c[1], QJsonObject{{QStringLiteral("id"), c[1]}, {QStringLiteral("title"), c[1]},
+    world.mc.environmentId = c[0];
+    world.mc.label = c[0];
+    world.mc.projects.insert(c[1], QJsonObject{{QStringLiteral("id"), c[1]}, {QStringLiteral("title"), c[1]},
                                                  {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[1]},
                                                  {QStringLiteral("createdAt"), kAt}, {QStringLiteral("updatedAt"), kAt},
                                                  {QStringLiteral("scripts"), QJsonArray()}});
-    publishProviders(world.node, {provider(QStringLiteral("claudeAgent"), QStringLiteral("Claude"), {QStringLiteral("Sonnet")})});
+    publishProviders(world.mc, {provider(QStringLiteral("claudeAgent"), QStringLiteral("Claude"), {QStringLiteral("Sonnet")})});
     world.connect();
     world.sync();
   });
   step(QStringLiteral("neither %1 nor %1 sets a default model").arg(q), [](World& world, const Captures&, const Table&) {
-    expect(!fakeConfig(world.node).settings.contains(QLatin1String("defaultModelSelection")), QStringLiteral("no default model"));
+    expect(!fakeConfig(world.mc).settings.contains(QLatin1String("defaultModelSelection")), QStringLiteral("no default model"));
   });
   step(QStringLiteral("the user looks at the project defaults of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     manage(world, c[0]);
@@ -411,10 +411,10 @@ const Steps steps([] {
   step(QStringLiteral("the user is told the default model was not saved because it is unavailable on %1").arg(q),
        [](World& world, const Captures& c, const Table&) {
          expectToast(world, QStringLiteral("Default model not saved"), QStringLiteral("This model is unavailable on %1.").arg(c[0]));
-         expect(fakeConfig(world.node).writes.isEmpty(), QStringLiteral("nothing to be written"));
+         expect(fakeConfig(world.mc).writes.isEmpty(), QStringLiteral("nothing to be written"));
        });
   step(QStringLiteral("%1 has no providers").arg(q), [](World& world, const Captures&, const Table&) {
-    publishProviders(world.node, {});
+    publishProviders(world.mc, {});
   });
   step(QStringLiteral("the user is told no providers are available"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return row(world, QStringLiteral("model")).value(QStringLiteral("none")).toBool(); },
@@ -429,8 +429,8 @@ const Steps steps([] {
                   [&] { return QStringLiteral("both environments to be selected; the scope is %1").arg(show(scope(world))); });
   });
   step(QStringLiteral("their default workspaces differ"), [](World& world, const Captures&, const Table&) {
-    saveOn(world.node, world.node.environmentId, QStringLiteral("defaultThreadEnvMode"), QStringLiteral("worktree"));
-    saveOn(world.node, world.node.linked.first(), QStringLiteral("defaultThreadEnvMode"), QStringLiteral("local"));
+    saveOn(world.mc, world.mc.environmentId, QStringLiteral("defaultThreadEnvMode"), QStringLiteral("worktree"));
+    saveOn(world.mc, world.mc.linked.first(), QStringLiteral("defaultThreadEnvMode"), QStringLiteral("local"));
   });
   step(QStringLiteral("the user looks at the default workspace"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return row(world, QStringLiteral("workspace")).value(QStringLiteral("mixed")).toBool(); },
@@ -443,15 +443,15 @@ const Steps steps([] {
   // "the user picks" is SidebarSteps.cpp's, which picks the workspace here.
   step(QStringLiteral("both environments use %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
-      return savedOn(world, world.node.environmentId, QStringLiteral("defaultThreadEnvMode")) == QJsonValue(c[0]) &&
-             savedOn(world, world.node.linked.first(), QStringLiteral("defaultThreadEnvMode")) == QJsonValue(c[0]) &&
+      return savedOn(world, world.mc.environmentId, QStringLiteral("defaultThreadEnvMode")) == QJsonValue(c[0]) &&
+             savedOn(world, world.mc.linked.first(), QStringLiteral("defaultThreadEnvMode")) == QJsonValue(c[0]) &&
              !row(world, QStringLiteral("workspace")).value(QStringLiteral("mixed")).toBool();
     }, [&] { return QStringLiteral("%1 on both; the panel is %2").arg(c[0], show(panel(world))); });
   });
   step(QStringLiteral("no environment is connected"), [](World& world, const Captures&, const Table&) {
     openProjects(world);
-    world.node.stopAccepting();
-    world.node.drop();
+    world.mc.stopAccepting();
+    world.mc.drop();
     world.waitFor([&world] { return !world.native().client()->isReady(); }, QStringLiteral("the shell to see the drop"));
   });
   step(QStringLiteral("the user looks at the project defaults"), [](World&, const Captures&, const Table&) {});

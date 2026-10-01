@@ -1,4 +1,4 @@
-// Projects (ProjectController and the sidebar's grouping): the node's
+// Projects (ProjectController and the sidebar's grouping): the MC's
 // `projects.mutate`, adding a local folder, asking before removing, and the
 // domain's thread-list scenarios (files/adding-projects.feature,
 // files/removing-and-listing-projects.feature, threads/sidebar-list.feature,
@@ -19,7 +19,7 @@
 #include "FakeProjects.h"
 #include "Harness.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "World.h"
 
 namespace {
@@ -30,27 +30,27 @@ QJsonObject deleted() {
   return {{QStringLiteral("deletedAt"), QStringLiteral("2026-09-23T10:00:00Z")}};
 }
 
-// The node answers before the row arrives, which the shell must not trip on.
-const FakeNode::Extension projects([](FakeNode& node) {
-  node.onRpc(QStringLiteral("projects.mutate"), [&node](const FakeNode::Rpc& rpc) {
-    FakeProjects& fake = node.part<FakeProjects>();
+// The MC answers before the row arrives, which the shell must not trip on.
+const FakeMc::Extension projects([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("projects.mutate"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeProjects& fake = mc.part<FakeProjects>();
     fake.mutations.append(rpc.payload);
     if (!fake.refusal.isEmpty()) {
-      node.refuse(rpc, fake.refusal);
+      mc.refuse(rpc, fake.refusal);
       return;
     }
     const QString type = rpc.payload.value(QLatin1String("type")).toString();
     const QString id = rpc.payload.value(QLatin1String("projectId")).toString();
-    const QString environment = rpc.environment.isEmpty() ? node.environmentId : rpc.environment;
+    const QString environment = rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
     if (fake.refusedOn.contains(environment)) {
-      node.refuse(rpc, fake.refusedOn.value(environment));
+      mc.refuse(rpc, fake.refusedOn.value(environment));
       return;
     }
     // A linked environment's projects are its link rows.
-    if (environment != node.environmentId) {
-      const QJsonArray entry = node.linkedRows.value(environment).value(id);
+    if (environment != mc.environmentId) {
+      const QJsonArray entry = mc.linkedRows.value(environment).value(id);
       if (entry.isEmpty() || (type != QLatin1String("project.update") && type != QLatin1String("project.delete"))) {
-        node.refuse(rpc, type + QStringLiteral(" of ") + id + QStringLiteral(" is not supported"));
+        mc.refuse(rpc, type + QStringLiteral(" of ") + id + QStringLiteral(" is not supported"));
         return;
       }
       QJsonObject row = entry.at(2).toObject();
@@ -61,22 +61,22 @@ const FakeNode::Extension projects([](FakeNode& node) {
           if (it.key() != QLatin1String("type") && it.key() != QLatin1String("projectId")) row.insert(it.key(), it.value());
         }
       }
-      node.reply(rpc, QJsonObject());
-      node.sendLinkRow(environment, id, row, QStringLiteral("project"));
+      mc.reply(rpc, QJsonObject());
+      mc.sendLinkRow(environment, id, row, QStringLiteral("project"));
       return;
     }
     if (type == QLatin1String("project.update")) {
-      if (!node.projects.contains(id)) {
-        node.refuse(rpc, QStringLiteral("unknown project ") + id);
+      if (!mc.projects.contains(id)) {
+        mc.refuse(rpc, QStringLiteral("unknown project ") + id);
         return;
       }
-      QJsonObject row = node.projects.value(id);
+      QJsonObject row = mc.projects.value(id);
       for (auto it = rpc.payload.begin(); it != rpc.payload.end(); ++it) {
         if (it.key() != QLatin1String("type") && it.key() != QLatin1String("projectId")) row.insert(it.key(), it.value());
       }
-      node.projects.insert(id, row);
-      node.reply(rpc, row);
-      node.sendRow(id, row, QStringLiteral("project"));
+      mc.projects.insert(id, row);
+      mc.reply(rpc, row);
+      mc.sendRow(id, row, QStringLiteral("project"));
     } else if (type == QLatin1String("project.create")) {
       const QString root = rpc.payload.value(QLatin1String("workspaceRoot")).toString();
       const QJsonObject row{
@@ -87,38 +87,38 @@ const FakeNode::Extension projects([](FakeNode& node) {
           {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T10:00:00Z")},
           {QStringLiteral("scripts"), QJsonArray()},
       };
-      node.reply(rpc, row);
-      node.projects.insert(id, row);
-      node.sendRow(id, row, QStringLiteral("project"));
+      mc.reply(rpc, row);
+      mc.projects.insert(id, row);
+      mc.sendRow(id, row, QStringLiteral("project"));
     } else if (type == QLatin1String("project.delete")) {
-      if (!node.projects.contains(id)) {
-        node.refuse(rpc, QStringLiteral("unknown project ") + id);
+      if (!mc.projects.contains(id)) {
+        mc.refuse(rpc, QStringLiteral("unknown project ") + id);
         return;
       }
       QStringList threads;
-      for (auto it = node.threads.cbegin(); it != node.threads.cend(); ++it) {
+      for (auto it = mc.threads.cbegin(); it != mc.threads.cend(); ++it) {
         if (it->value(QLatin1String("projectId")).toString() == id) threads.append(it.key());
       }
       if (!threads.isEmpty() && !rpc.payload.value(QLatin1String("force")).toBool()) {
-        node.refuse(rpc, QStringLiteral("Project %1 is not empty.").arg(id));
+        mc.refuse(rpc, QStringLiteral("Project %1 is not empty.").arg(id));
         return;
       }
       for (const QString& thread : std::as_const(threads)) {
-        node.threads.remove(thread);
-        node.sendRow(thread, deleted());
+        mc.threads.remove(thread);
+        mc.sendRow(thread, deleted());
       }
-      node.projects.remove(id);
-      node.sendRow(id, deleted(), QStringLiteral("project"));
-      node.reply(rpc, QJsonObject());
+      mc.projects.remove(id);
+      mc.sendRow(id, deleted(), QStringLiteral("project"));
+      mc.reply(rpc, QJsonObject());
     } else {
-      node.refuse(rpc, type + QStringLiteral(" is not supported"));
+      mc.refuse(rpc, type + QStringLiteral(" is not supported"));
     }
   });
 });
 
 QList<QJsonObject> mutations(World& world, const QString& type) {
   QList<QJsonObject> result;
-  for (const QJsonObject& mutation : world.node.part<FakeProjects>().mutations) {
+  for (const QJsonObject& mutation : world.mc.part<FakeProjects>().mutations) {
     if (mutation.value(QLatin1String("type")) == type) result.append(mutation);
   }
   return result;
@@ -135,7 +135,7 @@ QString makeFolder(World& world, const QString& path) {
   return QFileInfo(local).canonicalFilePath();
 }
 
-// A project row on the node (in the snapshot, or as a row once connected).
+// A project row on the MC (in the snapshot, or as a row once connected).
 void addProject(World& world, const QString& id, const QString& title, const QString& root) {
   const QJsonObject row{
       {QStringLiteral("id"), id},
@@ -145,8 +145,8 @@ void addProject(World& world, const QString& id, const QString& title, const QSt
       {QStringLiteral("updatedAt"), kAt},
       {QStringLiteral("scripts"), QJsonArray()},
   };
-  world.node.projects.insert(id, row);
-  world.node.sendRow(id, row, QStringLiteral("project"));
+  world.mc.projects.insert(id, row);
+  world.mc.sendRow(id, row, QStringLiteral("project"));
   if (world.native().client()->isReady()) world.sync();
 }
 
@@ -154,8 +154,8 @@ void addThread(World& world, const QString& id, QJsonObject row) {
   row.insert(QStringLiteral("id"), id);
   if (!row.contains(QLatin1String("createdAt"))) row.insert(QStringLiteral("createdAt"), kAt);
   if (!row.contains(QLatin1String("updatedAt"))) row.insert(QStringLiteral("updatedAt"), row.value(QLatin1String("createdAt")));
-  world.node.threads.insert(id, row);
-  world.node.sendRow(id, row);
+  world.mc.threads.insert(id, row);
+  world.mc.sendRow(id, row);
   if (world.native().client()->isReady()) world.sync();
 }
 
@@ -196,7 +196,7 @@ void askToRemove(World& world, const QString& name) {
 }
 
 void connectAs(World& world, const QString& environmentId) {
-  world.node.environmentId = environmentId;
+  world.mc.environmentId = environmentId;
   world.connect();
   world.sync();
 }
@@ -210,7 +210,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("a connected environment with the projects %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QString& name : c) addProject(world, name, name, QStringLiteral("/work/") + name);
-    connectAs(world, world.node.environmentId);
+    connectAs(world, world.mc.environmentId);
   });
   step(QStringLiteral("a connected environment %1 with the project %1 at %1").arg(q), [](World& world, const Captures& c, const Table&) {
     addProject(world, c[1], c[1], c[2]);
@@ -245,12 +245,12 @@ const Steps steps([] {
   });
   step(QStringLiteral("the environments %1 and %1 both have a project %1").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QString& environment : {c[0], c[1]}) {
-      const QString node = QStringLiteral("node-") + environment;
-      world.node.join(node, environment);
-      world.node.send({
+      const QString mc = QStringLiteral("mc-") + environment;
+      world.mc.join(mc, environment);
+      world.mc.send({
           {QStringLiteral("t"), QStringLiteral("shell.rows")},
-          {QStringLiteral("id"), world.node.subscribers(QStringLiteral("shell")).value(0)},
-          {QStringLiteral("node"), node},
+          {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
+          {QStringLiteral("mc"), mc},
           {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{
                                        c[2], QStringLiteral("project"),
                                        QJsonObject{{QStringLiteral("id"), c[2]}, {QStringLiteral("title"), c[2]},
@@ -261,18 +261,18 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the environment refuses to change projects with %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<FakeProjects>().refusal = c[0];
+    world.mc.part<FakeProjects>().refusal = c[0];
   });
   step(QStringLiteral("the local environment is disconnected"), [](World& world, const Captures&, const Table&) {
-    world.node.stopAccepting();
-    world.node.drop();
+    world.mc.stopAccepting();
+    world.mc.drop();
     world.waitFor([&world] { return !world.native().client()->isReady(); }, QStringLiteral("the shell to see the drop"));
   });
   step(QStringLiteral("the shell may not open local folders"), [](World& world, const Captures&, const Table&) {
     world.bridge().setLocalFolderImportEnabled(false);
   });
-  step(QStringLiteral("the shell's node runs on another machine"), [](World& world, const Captures&, const Table&) {
-    world.bridge().setNodeOrigin(QUrl(QStringLiteral("https://node-b.example.ts.net")));
+  step(QStringLiteral("the shell's MC runs on another machine"), [](World& world, const Captures&, const Table&) {
+    world.bridge().setMcOrigin(QUrl(QStringLiteral("https://mc-b.example.ts.net")));
   });
   step(QStringLiteral("the user asks to add a project without a folder"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap());
@@ -290,7 +290,7 @@ const Steps steps([] {
                                                    {QStringLiteral("latestUserMessageAt"), QStringLiteral("2026-09-23T09:10:00Z")}});
   });
   step(QStringLiteral("the agent in %1 started a helper agent thread").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString project = world.node.projects.firstKey();
+    const QString project = world.mc.projects.firstKey();
     addThread(world, QStringLiteral("t-parent"), {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), c[0]}});
     addThread(world, QStringLiteral("t-helper"),
               {{QStringLiteral("projectId"), project},
@@ -305,7 +305,7 @@ const Steps steps([] {
 
   step(QStringLiteral("%1 has no projects").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(world.node.environmentId == c[0] && projectNames(world).isEmpty(),
+    expect(world.mc.environmentId == c[0] && projectNames(world).isEmpty(),
            QStringLiteral("%1 lists the projects %2").arg(c[0], projectNames(world).join(QStringLiteral(", "))));
   });
 
@@ -339,7 +339,7 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("project.folder.open"), QVariantMap{{QStringLiteral("path"), makeFolder(world, c[0])}});
   });
   step(QStringLiteral("the user adds the local folder of %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString root = world.node.projects.value(c[0]).value(QLatin1String("workspaceRoot")).toString();
+    const QString root = world.mc.projects.value(c[0]).value(QLatin1String("workspaceRoot")).toString();
     world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap{{QStringLiteral("path"), root}});
   });
   step(QStringLiteral("the user asks to remove %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -371,17 +371,17 @@ const Steps steps([] {
 
   // What the user sees.
   step(QStringLiteral("the (?:project )?%1 is listed for %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return projectEnvironments(world, c[0]).contains(world.node.environmentId); },
+    world.waitFor([&] { return projectEnvironments(world, c[0]).contains(world.mc.environmentId); },
                   [&] { return QStringLiteral("%1 to be listed; the sidebar lists %2").arg(c[0], projectNames(world).join(u", ")); });
   });
   step(QStringLiteral("%1 is still listed for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(projectEnvironments(world, c[0]).contains(world.node.environmentId),
+    expect(projectEnvironments(world, c[0]).contains(world.mc.environmentId),
            QStringLiteral("the sidebar lists %1").arg(projectNames(world).join(u", ")));
   });
   step(QStringLiteral("%1 is no longer listed for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(!projectEnvironments(world, c[0]).contains(world.node.environmentId),
+    expect(!projectEnvironments(world, c[0]).contains(world.mc.environmentId),
            QStringLiteral("the sidebar lists %1").arg(projectNames(world).join(u", ")));
   });
   step(QStringLiteral("the sidebar lists the projects %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -418,7 +418,7 @@ const Steps steps([] {
   step(QStringLiteral("no (?:second )?project is created"), [](World& world, const Captures&, const Table&) {
     world.sync();
     const QList<QJsonObject> created = mutations(world, QStringLiteral("project.create"));
-    expect(created.isEmpty(), QStringLiteral("the node was asked to create %1 project(s)").arg(created.size()));
+    expect(created.isEmpty(), QStringLiteral("the MC was asked to create %1 project(s)").arg(created.size()));
   });
   step(QStringLiteral("the user is told the folder could not be opened"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] {

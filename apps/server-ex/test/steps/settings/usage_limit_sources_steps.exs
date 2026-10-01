@@ -2,13 +2,13 @@ defmodule HalC2.Steps.Settings.UsageLimitSources do
   @moduledoc """
   Settings → Usage providers: CLIProxyAPI hubs added as usage limit sources
   (`usageLimitSources` in settings, `HalC2.UsageLimitSources`). A local fake hub serves
-  the management API the node reads; hub URLs in the scenarios stand for it.
+  the management API the MC reads; hub URLs in the scenarios stand for it.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
   alias HalC2.UsageLimitSources
 
   @marker "••••••"
@@ -76,7 +76,7 @@ defmodule HalC2.Steps.Settings.UsageLimitSources do
           {s.drop, %{s | requests: s.requests ++ [id], redeemed: Map.put(s.redeemed, id, credit)}}
         end)
 
-      # The hub redeemed the credit, but the answer never reaches the node.
+      # The hub redeemed the credit, but the answer never reaches the MC.
       if drop?, do: Process.exit(self(), :kill)
       %{"code" => "reset"}
     end
@@ -127,12 +127,12 @@ defmodule HalC2.Steps.Settings.UsageLimitSources do
     end
   end
 
-  # An admin is a client on the node's own token: it may read auth access.
-  step "a node the user administers", context do
-    Node.ensure(HalC2.Settings)
-    Node.ensure(UsageLimitSources)
-    client = context |> World.client() |> Node.sub(90, %{"type" => "authAccess"})
-    {_, client} = Node.await(client, &(&1["t"] == "authAccess" and &1["id"] == 90))
+  # An admin is a client on the MC's own token: it may read auth access.
+  step "an MC the user administers", context do
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure(UsageLimitSources)
+    client = context |> World.client() |> Mc.sub(90, %{"type" => "authAccess"})
+    {_, client} = Mc.await(client, &(&1["t"] == "authAccess" and &1["id"] == 90))
     World.put_client(context, client)
   end
 
@@ -150,12 +150,12 @@ defmodule HalC2.Steps.Settings.UsageLimitSources do
     add_source(context, "http://127.0.0.1:1")
   end
 
-  step "the node reads its usage sources", context do
+  step "the MC reads its usage sources", context do
     :ok = UsageLimitSources.refresh()
-    client = Node.sub(World.client(context), 91, config_shape())
+    client = Mc.sub(World.client(context), 91, config_shape())
 
     {%{"sources" => sources}, client} =
-      Node.await(client, &(&1["t"] == "config.usageLimitSources" and &1["id"] == 91))
+      Mc.await(client, &(&1["t"] == "config.usageLimitSources" and &1["id"] == 91))
 
     context |> World.put_client(client) |> Map.put(:sources, sources)
   end
@@ -271,5 +271,5 @@ defmodule HalC2.Steps.Settings.UsageLimitSources do
     })
   end
 
-  defp config_shape, do: %{"type" => "config", "node" => Atom.to_string(node())}
+  defp config_shape, do: %{"type" => "config", "mc" => Atom.to_string(node())}
 end

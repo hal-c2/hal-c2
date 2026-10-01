@@ -41,7 +41,7 @@ export function isHostedStaticApp(url?: URL): boolean {
   }
 
   // The Qt desktop shell serves this bundle from its own loopback origin and
-  // pairs it with an Elixir node, which serves no app: there is no same-origin
+  // pairs it with an MC, which serves no app: there is no same-origin
   // server, every environment is remote (apps/desktop-qt/host/webBundle.ts).
   if (typeof window !== "undefined" && window.halC2Shell !== undefined) {
     return true;

@@ -10,12 +10,12 @@
 #include "Keybindings.h"
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 
 // The shell's keymap, as the `Keybindings` QML singleton: the web defaults
-// with the user's rules from the node's keybindings.json merged over them
-// (the `keybindingRules` of the node's config), resolved the way the web
+// with the user's rules from the MC's keybindings.json merged over them
+// (the `keybindingRules` of the MC's config), resolved the way the web
 // resolves them, and run natively where the shell has the command.
 //
 // ShellWindow registers one window shortcut per sequence in `shortcuts` and
@@ -32,8 +32,8 @@ class ShellBridge;
 //   - The application menu's accelerators (mod+, for settings, the app zoom)
 //     come after every keymap binding, and are not rows in Settings.
 //
-// Settings → Keybindings edits the rules through the node (`bindings`,
-// save/remove/reset); the node pushes the new rules back to every client.
+// Settings → Keybindings edits the rules through the MC (`bindings`,
+// save/remove/reset); the MC pushes the new rules back to every client.
 class KeybindingController : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(CommandRegistry* commands READ commands CONSTANT)
@@ -44,16 +44,16 @@ class KeybindingController : public QObject, public NativeController {
   // key, keyLabel, when, source (Default, Custom or Project), defaultKey,
   // defaultWhen, conflicts (command labels), canReset, canRemove, search}.
   Q_PROPERTY(QVariantList bindings READ bindings NOTIFY bindingsChanged)
-  // A save or removal is on its way to the node.
+  // A save or removal is on its way to the MC.
   Q_PROPERTY(bool saving READ saving NOTIFY savingChanged)
 
 public:
   // The appearance toggle's command, which ThemeController registers.
   static inline const QString kAppearanceCycle = QStringLiteral("appearance.cycle");
 
-  KeybindingController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  KeybindingController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
-  // Registers the native commands and follows the node's rules.
+  // Registers the native commands and follows the MC's rules.
   void activate() override;
   // Keys reach it through press(), never as actions.
   bool handle(const QString&, const QVariant&) override { return false; }
@@ -115,7 +115,7 @@ private:
   void call(const QString& method, const QJsonObject& input, const QString& failureTitle, const QString& failure);
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   bool m_active = false;
 #ifdef Q_OS_MACOS
   bool m_mac = true;

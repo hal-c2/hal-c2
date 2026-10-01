@@ -1,17 +1,17 @@
 defmodule HalC2.Steps.Orchestration.WorkflowScripts do
   @moduledoc """
-  Steps for `features/node/orchestration/workflow-scripts.feature`: the Claude
+  Steps for `features/mc/orchestration/workflow-scripts.feature`: the Claude
   projects folder is a temporary one (`:workflow_scripts_root`), and clients ask
   over the socket (`orchestration.getWorkflowScript`) for `context.script`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
-  step "a node whose Claude projects folder exists", context do
-    root = Node.tmp_dir(context.node, "claude-projects")
+  step "an MC whose Claude projects folder exists", context do
+    root = Mc.tmp_dir(context.mc, "claude-projects")
     File.mkdir_p!(Path.join(root, "p"))
     World.put_app_env(:workflow_scripts_root, root)
     assert File.dir?(root)
@@ -22,7 +22,7 @@ defmodule HalC2.Steps.Orchestration.WorkflowScripts do
        %{args: [kb]} = context do
     contents = "// workflow\n" |> String.duplicate(kb * 1024) |> binary_part(0, kb * 1024)
     path = script(context, "#{kb}kb.js", contents)
-    # Asked for by a roundabout path: the node answers with the real one.
+    # Asked for by a roundabout path: the MC answers with the real one.
     asked = Path.join([context.root, "p", "..", "p", "#{kb}kb.js"])
     Map.merge(context, %{script: asked, real: path, contents: contents})
   end
@@ -119,7 +119,7 @@ defmodule HalC2.Steps.Orchestration.WorkflowScripts do
   end
 
   defp outside(context, name) do
-    path = Path.join(Node.tmp_dir(context.node, "elsewhere"), name)
+    path = Path.join(Mc.tmp_dir(context.mc, "elsewhere"), name)
     File.write!(path, "secret")
     path
   end

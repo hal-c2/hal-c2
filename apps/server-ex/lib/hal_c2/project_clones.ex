@@ -6,7 +6,7 @@ defmodule HalC2.ProjectClones do
   finished clone is dropped after a short while, a failed one stays until it is
   retried, and a restart forgets them (the project keeps its folder).
 
-  Watchers (client sockets) get `{:hal_c2_project_clones, node, snapshots}` on changes.
+  Watchers (client sockets) get `{:hal_c2_project_clones, mc, snapshots}` on changes.
   """
 
   use GenServer

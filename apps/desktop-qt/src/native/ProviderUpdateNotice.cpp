@@ -9,7 +9,7 @@
 
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "ToastController.h"
 
@@ -129,7 +129,7 @@ QString list(const QList<QJsonObject>& providers) {
 
 }  // namespace
 
-ProviderUpdateNotice::ProviderUpdateNotice(ShellBridge*, NodeClient* client, QObject* parent)
+ProviderUpdateNotice::ProviderUpdateNotice(ShellBridge*, McClient* client, QObject* parent)
     : QObject(parent), m_client(client) {}
 
 void ProviderUpdateNotice::activate() {
@@ -159,7 +159,7 @@ void ProviderUpdateNotice::evaluate() {
   if (!m_active || !settings) return;
   const QJsonArray providers = settings->config().value(QLatin1String("providers")).toArray();
 
-  // An update the user started reports once the node says how it went.
+  // An update the user started reports once the MC says how it went.
   if (m_update) {
     QJsonArray followed;
     for (const QJsonValue& value : providers) {

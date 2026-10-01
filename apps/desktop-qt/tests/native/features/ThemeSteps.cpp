@@ -1,4 +1,4 @@
-// The theme the shell resolves and draws, the themes the node publishes, and
+// The theme the shell resolves and draws, the themes the MC publishes, and
 // the shell theme file over them (features/desktop/native-settings.feature,
 // navigation/environment-themes.feature, navigation/appearance.feature); this
 // device's own themes as Settings → Appearance edits them
@@ -60,11 +60,11 @@ void drawn(World& world, const QString& appearance) {
 
 void ensureConnected(World& world) {
   if (settings(world)->ready()) return;
-  if (world.node.connections.isEmpty()) world.connect();
-  world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the node's settings"));
+  if (world.mc.connections.isEmpty()) world.connect();
+  world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the MC's settings"));
 }
 
-// The node's published themes in the short form (a canvas and an accent).
+// The MC's published themes in the short form (a canvas and an accent).
 QJsonObject published(const QString& id, const QString& canvas) {
   return {{QStringLiteral("id"), id},
           {QStringLiteral("name"), id},
@@ -74,8 +74,8 @@ QJsonObject published(const QString& id, const QString& canvas) {
 }
 
 void publish(World& world, const QString& environment, const QJsonArray& list) {
-  publishThemes(world.node, environment, list);
-  if (environment == world.node.environmentId) {
+  publishThemes(world.mc, environment, list);
+  if (environment == world.mc.environmentId) {
     world.waitFor([&] { return settings(world)->themes() == list; }, QStringLiteral("the shell to hear of the published themes"));
   }
 }
@@ -214,31 +214,31 @@ const Steps steps([] {
   });
 
   // Published themes.
-  step(QStringLiteral("the (?:server|node) publishes %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the (?:server|MC) publishes %1").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureConnected(world);
-    publish(world, world.node.environmentId, {published(c[0], QStringLiteral("#111111"))});
+    publish(world, world.mc.environmentId, {published(c[0], QStringLiteral("#111111"))});
   });
   step(QStringLiteral("the user selected the published theme %1").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureConnected(world);
-    publish(world, world.node.environmentId, {published(c[0], QStringLiteral("#111111"))});
+    publish(world, world.mc.environmentId, {published(c[0], QStringLiteral("#111111"))});
     // A dark theme, seen in the dark.
     themes(world)->setSystemDark(true);
     choose(world, c[0]);
     usesTheme(world, c[0]);
   });
   step(QStringLiteral("the server updates %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    publish(world, world.node.environmentId, {published(c[0], QStringLiteral("#222233"))});
+    publish(world, world.mc.environmentId, {published(c[0], QStringLiteral("#222233"))});
   });
   step(QStringLiteral("the server stops publishing %1").arg(q), [](World& world, const Captures&, const Table&) {
-    publish(world, world.node.environmentId, {});
+    publish(world, world.mc.environmentId, {});
   });
   step(QStringLiteral("the app shows the updated colors"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return drawnCanvas(world) == QColor(QStringLiteral("#222233")); }, [&] { return describe(world); });
   });
   step(QStringLiteral("the app uses the published %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the node's settings again"));
+    world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the MC's settings again"));
     usesTheme(world, c[0]);
-    const QJsonArray list = fakeConfig(world.node).themes.value(world.node.environmentId);
+    const QJsonArray list = fakeConfig(world.mc).themes.value(world.mc.environmentId);
     expect(drawnCanvas(world) == QColor(list.first().toObject().value(QLatin1String("canvas")).toString()), describe(world));
   });
   step(QStringLiteral("the user saved a custom theme with the id %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -255,7 +255,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user connected a second environment that publishes %1").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureConnected(world);
-    world.node.link(QStringLiteral("env-b"));
+    world.mc.link(QStringLiteral("env-b"));
     publish(world, QStringLiteral("env-b"), {published(c[0], QStringLiteral("#444444"))});
     world.sync();
   });
@@ -314,7 +314,7 @@ const Steps steps([] {
   step(QStringLiteral("the user's saved theme choice is unchanged"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(!QFile::exists(QDir(world.configDir()).filePath(QStringLiteral("preferences.json"))) &&
-               settings(world)->deviceSettings().isEmpty() && fakeConfig(world.node).writes.isEmpty(),
+               settings(world)->deviceSettings().isEmpty() && fakeConfig(world.mc).writes.isEmpty(),
            QStringLiteral("this device holds %1").arg(show(settings(world)->deviceSettings().toVariantMap())));
   });
   // Settings → Appearance and the appearance shortcut.

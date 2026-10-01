@@ -25,7 +25,7 @@
 
 #include "MenuController.h"
 #include "NativeShell.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ProviderSettingsController.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -141,7 +141,7 @@ bool ProviderSettingsController::handleAcp(const QString& action, const QVariant
       if (value.toObject().value(QLatin1String("sessionId")).toString() == sessionId) session = value.toObject();
     }
     if (session.isEmpty()) return true;
-    // An imported session goes with its thread first (the node refuses it too).
+    // An imported session goes with its thread first (the MC refuses it too).
     if (session.value(QLatin1String("importedThreadId")).isString()) {
       toast(this, QStringLiteral("error"), QStringLiteral("Could not delete ACP session"),
             QStringLiteral("Delete the imported HAL-C2 thread before deleting its native ACP session."));

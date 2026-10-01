@@ -1,9 +1,9 @@
 /**
  * Stages what the packaged hal-c2-qt runs next to the binary:
  *   host/*.ts       the desktop host (Node built-ins only, no dependencies)
- *   hal-c2-node/    the Elixir node release (apps/server-ex/_build/prod/rel/hal_c2,
- *                   or HAL_C2_NODE_RELEASE); the host runs its bin/hal_c2
- *   bin/node        the Node that runs the host and the node's JavaScript sidecars
+ *   hal-c2-mc/    the Elixir MC release (apps/server-ex/_build/prod/rel/hal_c2,
+ *                   or HAL_C2_MC_RELEASE); the host runs its bin/hal_c2
+ *   bin/node        the Node that runs the host and the MC's JavaScript sidecars
  *   licenses/       Node's LICENSE, and the third-party notices the licenses page
  *                   reads (third-party-licenses.ts)
  *
@@ -29,8 +29,8 @@ if (destinationArg === undefined) {
 
 const destination = NodePath.resolve(destinationArg);
 const hostDir = NodePath.join(repoRoot, "apps/desktop-qt/host");
-const nodeRelease = NodePath.resolve(
-  process.env.HAL_C2_NODE_RELEASE?.trim() ||
+const mcRelease = NodePath.resolve(
+  process.env.HAL_C2_MC_RELEASE?.trim() ||
     NodePath.join(repoRoot, "apps/server-ex/_build/prod/rel/hal_c2"),
 );
 const nodePrefix = NodePath.resolve(NodePath.dirname(process.execPath), "..");
@@ -41,7 +41,7 @@ function requireFile(path, hint) {
   if (!NodeFS.existsSync(path)) throw new Error(`${path} is missing. ${hint}`);
 }
 requireFile(
-  NodePath.join(nodeRelease, "bin/hal_c2"),
+  NodePath.join(mcRelease, "bin/hal_c2"),
   "Build it in apps/server-ex with `MIX_ENV=prod mix release`.",
 );
 requireFile(nodeLicense, "Run with a Node install that ships its LICENSE.");
@@ -60,7 +60,7 @@ await Promise.all([
   ...hostModules.map((name) =>
     NodeFSP.copyFile(NodePath.join(hostDir, name), NodePath.join(destination, "host", name)),
   ),
-  NodeFSP.cp(nodeRelease, NodePath.join(destination, "hal-c2-node"), {
+  NodeFSP.cp(mcRelease, NodePath.join(destination, "hal-c2-mc"), {
     recursive: true,
     verbatimSymlinks: true,
   }),

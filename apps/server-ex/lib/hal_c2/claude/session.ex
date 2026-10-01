@@ -19,7 +19,7 @@ defmodule HalC2.Claude.Session do
 
   @state_version 1
 
-  # The dialogs the node can show; Claude sends no other kind. `resume_return` asks
+  # The dialogs the MC can show; Claude sends no other kind. `resume_return` asks
   # whether to compact a long, old conversation before continuing it.
   @dialog_kinds ["resume_return"]
 

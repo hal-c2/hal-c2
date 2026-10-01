@@ -98,7 +98,7 @@ QString desktopName(const QString& desktop) {
 
 }  // namespace
 
-SnapShotController::SnapShotController(ShellBridge* bridge, NodeClient*, ShellStore* store, QObject* parent)
+SnapShotController::SnapShotController(ShellBridge* bridge, McClient*, ShellStore* store, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_store(store), m_now([] { return QDateTime::currentDateTimeUtc(); }) {}
 
 SnapShotController::~SnapShotController() {

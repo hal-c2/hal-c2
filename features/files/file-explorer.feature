@@ -22,43 +22,43 @@ Feature: Exploring project files
     Given a connected environment with the project "shop"
     And "shop" holds "src/app.ts", "src/lib/cart.ts", "README.md" and an ignored "node_modules" folder
 
-  @node
+  @mc
   Scenario: Listing a folder returns its immediate children including ignored ones
     When a client lists the folder "" of "shop"
     Then "src", "README.md" and "node_modules" are returned
     And "node_modules" is marked as ignored
 
-  @node
+  @mc
   Scenario: Listing a folder never shows git's own folder
     When a client lists the top folder of "shop"
     Then ".git" is not returned
 
-  @node
+  @mc
   Scenario: Asking to list git's own folder is refused
     When a client lists the folder ".git" of "shop"
-    Then the node answers with a folder listing failure
+    Then the MC answers with a folder listing failure
 
-  @node
+  @mc
   Scenario: Listing the whole project walks its tracked and untracked files
     Given "shop" is a git repository with an untracked "draft.md"
     When a client lists every entry of "shop"
     Then "src/lib/cart.ts" and "draft.md" are returned
     And nothing under "node_modules" is returned
 
-  @node
+  @mc
   Scenario: Listing a folder that is not a repository skips build and dependency folders
     Given "shop" is not a git repository and holds "dist/app.js" and "_build/x.beam"
     When a client lists every entry of "shop"
     Then nothing under "dist" or "_build" is returned
 
-  @node
+  @mc
   Scenario: A very large project lists a capped set and says so
     Given "shop" holds more than 25,000 files
     When a client lists every entry of "shop"
     Then 25,000 entries are returned
     And the result is marked as truncated
 
-  @node
+  @mc
   Scenario: A written file shows up in the next listing
     When a client writes "src/new.ts" in "shop"
     And a client lists every entry of "shop"

@@ -30,7 +30,7 @@ export type StartupPresentation = typeof StartupPresentation.Type;
 
 /**
  * ServerDerivedPaths - Where the server keeps each file, sorted by XDG kind
- * (`features/node/platform/storage-layout.feature`).
+ * (`features/mc/platform/storage-layout.feature`).
  *
  * - config: what the user edits (settings, keybindings, themes)
  * - data:   what cannot be got back (database, secrets, attachments, worktrees)

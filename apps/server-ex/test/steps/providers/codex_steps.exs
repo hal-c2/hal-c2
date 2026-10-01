@@ -1,27 +1,27 @@
 defmodule HalC2.Steps.Providers.Codex do
   @moduledoc """
   Steps for `features/providers/codex.feature`. Codex runs on `fake_codex.py` (see
-  `HalC2.Test.Node.World.fake_providers/2`), which plays scripted turns from trigger
+  `HalC2.Test.Mc.World.fake_providers/2`), which plays scripted turns from trigger
   words in the message and logs every app-server message it reads.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @thread "Codex work"
 
   # --- install, models and updates ----------------------------------------------------
 
-  step "the codex command is installed on the node", context do
+  step "the codex command is installed on the MC", context do
     context = World.fake_providers(context)
     assert System.find_executable(hd(Application.get_env(:hal_c2, :codex_command)))
     context
   end
 
-  step "the codex command is not installed on the node", context do
+  step "the codex command is not installed on the MC", context do
     context = World.fake_providers(context)
     World.put_app_env(:codex_command, ["hal-c2-test-no-codex"])
     World.reset_provider_caches()
@@ -46,7 +46,7 @@ defmodule HalC2.Steps.Providers.Codex do
     Map.put(context, :codex_models, [first, second])
   end
 
-  step "the node has read the Codex model list", context do
+  step "the MC has read the Codex model list", context do
     :ok = HalC2.Codex.Provider.load()
     {providers, context} = World.provider_list(context)
     Map.put(context, :models, codex(providers)["models"])
@@ -64,8 +64,8 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
-  step "the node has just started and has not read the Codex model list yet", context do
-    # A fresh node has only started the background read; the fake has no list to give.
+  step "the MC has just started and has not read the Codex model list yet", context do
+    # A fresh MC has only started the background read; the fake has no list to give.
     World.fake_providers(context)
   end
 
@@ -446,7 +446,7 @@ defmodule HalC2.Steps.Providers.Codex do
 
   # --- feedback --------------------------------------------------------------------------
 
-  step "a Codex thread has run at least one turn on this node", context do
+  step "a Codex thread has run at least one turn on this MC", context do
     context = context |> World.fake_providers() |> World.launch_on(@thread, "codex", "hello")
     World.await_runs(context, @thread, ["completed"])
     :ok = HalC2.Shell.subscribe(self())
@@ -652,11 +652,11 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
-  step "the Codex CLI on the node is not signed in", context do
+  step "the Codex CLI on the MC is not signed in", context do
     context = World.fake_providers(context)
     System.put_env("FAKE_CODEX_ACCOUNT", "none")
-    # The node reads the account when it checks the provider.
-    Node.ensure(HalC2.ProviderUsageLimits)
+    # The MC reads the account when it checks the provider.
+    Mc.ensure(HalC2.ProviderUsageLimits)
     :ok = HalC2.ProviderUsageLimits.refresh(["codex"])
     :sys.get_state(HalC2.ProviderUsageLimits)
     context
@@ -670,7 +670,7 @@ defmodule HalC2.Steps.Providers.Codex do
   end
 
   step "Codex's usage has been checked", context do
-    Node.ensure(HalC2.ProviderUsageLimits)
+    Mc.ensure(HalC2.ProviderUsageLimits)
     :ok = HalC2.ProviderUsageLimits.refresh(["codex"])
     # The account arrives as a cast the probe sent; this call lands after it.
     :sys.get_state(HalC2.ProviderUsageLimits)

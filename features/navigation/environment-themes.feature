@@ -6,44 +6,44 @@
 #   apps/server/src/cli/theme.ts (hal-c2 theme set, clear, show)
 #   docs/internals/desktop-qt.md (theme.json ricing contract)
 #   apps/desktop-qt/src/ThemeStore.cpp
-#   apps/desktop-qt/src/native/ThemeController.cpp (follows the themes its own node publishes)
+#   apps/desktop-qt/src/native/ThemeController.cpp (follows the themes its own MC publishes)
 
 Feature: Environment themes and the desktop shell theme
   A machine can publish themes for the clients it serves, and set a default that connected
   clients switch to. The desktop shell also follows a theme file that theme managers write.
 
-  Rule: Publishing themes from the node
+  Rule: Publishing themes from the MC
 
-    @node
+    @mc
     Scenario: A theme file in the themes folder is published
-      Given the node's themes folder is empty
+      Given the MC's themes folder is empty
       When "nightfall.json" with a dark palette is written into the themes folder
-      Then within a few seconds the node publishes a theme with the id "nightfall"
+      Then within a few seconds the MC publishes a theme with the id "nightfall"
 
-    @node
-    Scenario: Clients watching the node receive the new set
-      Given a client is watching the node's configuration
+    @mc
+    Scenario: Clients watching the MC receive the new set
+      Given a client is watching the MC's configuration
       When a theme file is added to the themes folder
       Then the client receives the updated list of published themes
 
-    @node
+    @mc
     Scenario: Updating a theme file republishes its colors
-      Given the node publishes "nightfall"
+      Given the MC publishes "nightfall"
       When the user changes the accent in "nightfall.json"
       Then the published "nightfall" has the new accent
 
-    @node
+    @mc
     Scenario: Removing a theme file stops publishing it
-      Given the node publishes "nightfall"
+      Given the MC publishes "nightfall"
       When "nightfall.json" is deleted
       Then "nightfall" is no longer published
 
-    @node
+    @mc
     Scenario: The short format names only canvas and accent
       When a theme file gives only a name, an appearance, a canvas and an accent
       Then the theme is published
 
-    @node
+    @mc
     Scenario Outline: Unusable theme files are skipped without an error
       When a theme file that is <problem> is written into the themes folder
       Then it is not published
@@ -59,7 +59,7 @@ Feature: Environment themes and the desktop shell theme
         | named after a built-in theme         |
         | named with capital letters           |
 
-    @node
+    @mc
     Scenario: Only a bounded number of themes is published
       When 40 valid theme files are written into the themes folder
       Then at most 32 themes are published
@@ -93,8 +93,8 @@ Feature: Environment themes and the desktop shell theme
     @desktop
     Scenario: A published theme stays chosen across a reconnect
       Given the user selected the published theme "nightfall"
-      When the node drops the connection
-      And the desktop reconnects to the node
+      When the MC drops the connection
+      And the desktop reconnects to the MC
       Then the app uses the published "nightfall"
 
     @desktop
@@ -104,40 +104,40 @@ Feature: Environment themes and the desktop shell theme
 
   Rule: A default theme set on the server
 
-    @node
+    @mc
     Scenario: Setting a default switches connected clients
       Given two clients are connected
       When the server operator runs "hal-c2 theme set nightfall"
       Then both clients switch to "nightfall"
 
-    @node
+    @mc
     Scenario: An offline client applies the default when it reconnects
       Given a client is offline
       When the server operator runs "hal-c2 theme set nightfall"
       And the client reconnects
       Then the client switches to "nightfall"
 
-    @node
+    @mc
     Scenario: A client applies a default only once
       Given the server default is "nightfall" and the client applied it
       When the user chooses "Nord"
       And the client reconnects
       Then the client keeps "Nord"
 
-    @node
+    @mc
     Scenario: Setting the same default again reapplies it
       Given the server default is "nightfall" and the user switched to "Nord"
       When the server operator runs "hal-c2 theme set nightfall" again
       Then the client switches to "nightfall"
 
-    @node
+    @mc
     Scenario: Clearing the default leaves current themes alone
       Given the server default is "nightfall"
       When the server operator runs "hal-c2 theme clear"
       Then no default is set
       And every client keeps its current theme
 
-    @node
+    @mc
     Scenario: Showing the default and published themes
       # A default is set first so the listing has something to show.
       Given the server default is "nightfall"

@@ -162,7 +162,7 @@ interface BuildCliInput {
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
   readonly wslRuntime: Option.Option<string>;
-  readonly elixirNode: Option.Option<string>;
+  readonly elixirMc: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -920,7 +920,7 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslRuntime: string | undefined;
-  readonly elixirNode: string | undefined;
+  readonly elixirMc: string | undefined;
 }
 
 interface StagePackageJson {
@@ -967,8 +967,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/windows-server/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
-  "!apps/desktop/prod-resources/elixir-node",
-  "!apps/desktop/prod-resources/elixir-node/**/*",
+  "!apps/desktop/prod-resources/elixir-mc",
+  "!apps/desktop/prod-resources/elixir-mc/**/*",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
 ] as const;
@@ -1071,17 +1071,17 @@ export const bundlesWslRuntime = (input: {
   readonly runtimeArchivePath: string | undefined;
 }): boolean => input.platform === "win" && input.runtimeArchivePath !== undefined;
 
-// An Elixir node release (`--elixir-node`) ships as resources/hal-c2-node, which the
+// An MC release (`--elixir-mc`) ships as resources/hal-c2-mc, which the
 // packaged app finds and runs as its backend instead of the Node server. Releases
 // start through a shell script, so this is macOS and Linux only.
-export const bundlesElixirNode = (input: {
+export const bundlesElixirMc = (input: {
   readonly platform: typeof BuildPlatform.Type;
   readonly releaseDir: string | undefined;
 }): boolean => input.platform !== "win" && input.releaseDir !== undefined;
 
-export const ELIXIR_NODE_EXTRA_RESOURCE = {
-  from: "apps/desktop/prod-resources/elixir-node",
-  to: "hal-c2-node",
+export const ELIXIR_MC_EXTRA_RESOURCE = {
+  from: "apps/desktop/prod-resources/elixir-mc",
+  to: "hal-c2-mc",
 } as const;
 
 export const WSL_RUNTIME_EXTRA_RESOURCES = [
@@ -1604,9 +1604,9 @@ const BuildEnvConfig = Config.all({
   // by the build_linux_cli CI job. The Windows build embeds it verbatim as the
   // WSL runtime.
   wslRuntime: Config.String("HAL_C2_DESKTOP_WSL_RUNTIME").pipe(Config.option),
-  // Directory of an Elixir node release (apps/server-ex, `mix release`) to ship as
+  // Directory of an MC release (apps/server-ex, `mix release`) to ship as
   // the app's own backend. macOS and Linux only.
-  elixirNode: Config.String("HAL_C2_DESKTOP_ELIXIR_NODE").pipe(Config.option),
+  elixirMc: Config.String("HAL_C2_DESKTOP_MC").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1700,8 +1700,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const wslRuntime =
     Option.getOrUndefined(input.wslRuntime) ?? Option.getOrUndefined(env.wslRuntime);
-  const elixirNode =
-    Option.getOrUndefined(input.elixirNode) ?? Option.getOrUndefined(env.elixirNode);
+  const elixirMc = Option.getOrUndefined(input.elixirMc) ?? Option.getOrUndefined(env.elixirMc);
 
   return {
     platform,
@@ -1716,7 +1715,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslRuntime,
-    elixirNode,
+    elixirMc,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -2693,8 +2692,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
-  // True only when an Elixir node release was staged (see bundlesElixirNode).
-  elixirNodeBundled = false,
+  // True only when an MC release was staged (see bundlesElixirMc).
+  elixirMcBundled = false,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -2725,7 +2724,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
-      ...(elixirNodeBundled ? [ELIXIR_NODE_EXTRA_RESOURCE] : []),
+      ...(elixirMcBundled ? [ELIXIR_MC_EXTRA_RESOURCE] : []),
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
@@ -3720,7 +3719,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
-      bundlesElixirNode({ platform: options.platform, releaseDir: options.elixirNode }),
+      bundlesElixirMc({ platform: options.platform, releaseDir: options.elixirMc }),
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -3796,13 +3795,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   if (
-    options.elixirNode !== undefined &&
-    bundlesElixirNode({ platform: options.platform, releaseDir: options.elixirNode })
+    options.elixirMc !== undefined &&
+    bundlesElixirMc({ platform: options.platform, releaseDir: options.elixirMc })
   ) {
-    yield* Effect.log(
-      `[desktop-artifact] Staging Elixir node release from ${options.elixirNode}...`,
-    );
-    yield* fs.copy(options.elixirNode, path.join(stageAppDir, ELIXIR_NODE_EXTRA_RESOURCE.from));
+    yield* Effect.log(`[desktop-artifact] Staging MC release from ${options.elixirMc}...`);
+    yield* fs.copy(options.elixirMc, path.join(stageAppDir, ELIXIR_MC_EXTRA_RESOURCE.from));
   }
 
   // electron-builder treats several set-but-empty variables (e.g. CSC_LINK="")
@@ -3987,9 +3984,9 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.withDescription("Mock update server port (env: HAL_C2_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
     Flag.optional,
   ),
-  elixirNode: Flag.String("elixir-node").pipe(
+  elixirMc: Flag.String("elixir-mc").pipe(
     Flag.withDescription(
-      "Directory of an Elixir node release (apps/server-ex/_build/prod/rel/hal_c2) to ship as the app's own backend; macOS and Linux (env: HAL_C2_DESKTOP_ELIXIR_NODE).",
+      "Directory of an MC release (apps/server-ex/_build/prod/rel/hal_c2) to ship as the app's own backend; macOS and Linux (env: HAL_C2_DESKTOP_MC).",
     ),
     Flag.optional,
   ),

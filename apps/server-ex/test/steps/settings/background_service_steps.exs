@@ -2,7 +2,7 @@ defmodule HalC2.Steps.Settings.BackgroundService do
   @moduledoc """
   Steps for features/settings/background-service.feature: the background activity
   profile (`HalC2.BackgroundPolicy`), clients' activity leases, and the service that
-  starts the node again after an update restart (the release from
+  starts the MC again after an update restart (the release from
   `HalC2.Steps.Settings.HotCodeUpgrade`).
 
   Leases arrive over `server.reportClientActivity`, which the socket casts to the
@@ -15,7 +15,7 @@ defmodule HalC2.Steps.Settings.BackgroundService do
 
   alias HalC2.BackgroundPolicy
   alias HalC2.Steps.Settings.HotCodeUpgrade
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
   alias HalC2.Test.Storage
 
   @provider_status %{"type" => "provider-status", "instanceId" => "codex"}
@@ -74,7 +74,7 @@ defmodule HalC2.Steps.Settings.BackgroundService do
     %{context | clients: %{}}
   end
 
-  step "the node stops fetching git for {string}", %{args: [_title]} = context do
+  step "the MC stops fetching git for {string}", %{args: [_title]} = context do
     refute BackgroundPolicy.run_scope_work?(vcs_status(context))
     assert BackgroundPolicy.snapshot()["leases"] == []
     context
@@ -93,7 +93,7 @@ defmodule HalC2.Steps.Settings.BackgroundService do
   end
 
   # The lease went on its own; the client's socket is still open.
-  step "the node stops checking provider health for it", context do
+  step "the MC stops checking provider health for it", context do
     refute BackgroundPolicy.run_scope_work?(@provider_status)
     {policy, context} = World.call!(context, "server.getBackgroundPolicy")
     assert policy["leases"] == []
@@ -103,7 +103,7 @@ defmodule HalC2.Steps.Settings.BackgroundService do
 
   # --- the service -------------------------------------------------------------------------
 
-  step "the node stops to finish an update", context do
+  step "the MC stops to finish an update", context do
     context =
       context
       |> HotCodeUpgrade.cached_bundle("1.4.0", :native)
@@ -227,7 +227,7 @@ defmodule HalC2.Steps.Settings.BackgroundService do
 
   # A foreground web client's report on `scopes`, once the policy has it.
   defp report_activity(context, scopes, extra \\ %{}) do
-    policy = HalC2.Test.Node.ensure(BackgroundPolicy)
+    policy = HalC2.Test.Mc.ensure(BackgroundPolicy)
     :erlang.trace(policy, true, [:receive])
 
     report =

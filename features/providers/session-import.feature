@@ -9,7 +9,7 @@
 # ACP session panel in features/settings/providers-panel.feature; this file is the provider side.
 # Carrying a native session to another machine is specified in providers/portable-sessions.feature.
 
-@node
+@mc
 Feature: Importing native agent sessions
   Conversations the user had with an agent outside HAL-C2 can become HAL-C2 threads. Each
   provider plugin that keeps its own history says where it lives and how to resume it;
@@ -20,7 +20,7 @@ Feature: Importing native agent sessions
 
   Scenario Outline: Native history is found and grouped by the directory it ran in
     Given <provider> has sessions in "~/code/shop" and "~/code/blog"
-    When the node scans for agent history
+    When the MC scans for agent history
     Then "shop" and "blog" are offered as projects with their session counts from <provider>
 
     Examples:
@@ -30,12 +30,12 @@ Feature: Importing native agent sessions
 
   Scenario: A custom agent home is scanned
     Given CLAUDE_CONFIG_DIR points at "~/work-claude"
-    When the node scans for agent history
+    When the MC scans for agent history
     Then Claude sessions under "~/work-claude" are found
 
   Scenario Outline: Directories that should not become projects are not offered
     Given Codex has sessions in <directory>
-    When the node scans for agent history
+    When the MC scans for agent history
     Then that directory is not offered
 
     Examples:
@@ -49,12 +49,12 @@ Feature: Importing native agent sessions
 
   Scenario: A directory that is already a project is marked as imported
     Given the project "shop" is rooted at "~/code/shop"
-    When the node scans for agent history
+    When the MC scans for agent history
     Then "shop" is offered as already imported
 
   Scenario: Very large histories are scanned in part and say so
     Given Codex has more sessions than a scan reads
-    When the node scans for agent history
+    When the MC scans for agent history
     Then the newest sessions are offered
     And the scan says it was truncated
 
@@ -119,9 +119,9 @@ Feature: Importing native agent sessions
     When the user deletes the thread and then the native session
     Then the native session is deleted
 
-  Scenario: ACP sessions for a project on another node are refused
-    When the user lists an ACP agent's sessions for a project that is not on this node
-    Then the user is told "The project is not on this node."
+  Scenario: ACP sessions for a project on another MC are refused
+    When the user lists an ACP agent's sessions for a project that is not on this MC
+    Then the user is told "The project is not on this MC."
 
   @backlog
   Scenario Outline: Other providers' native history can be imported
@@ -140,5 +140,5 @@ Feature: Importing native agent sessions
   @backlog
   Scenario: A provider plugin declares where its history lives
     Given a provider plugin that declares a history location and a resume method
-    When the node scans for agent history
+    When the MC scans for agent history
     Then that plugin's sessions are offered alongside Claude and Codex

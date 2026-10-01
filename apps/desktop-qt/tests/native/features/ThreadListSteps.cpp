@@ -11,7 +11,7 @@
 
 #include "Harness.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ThreadList.h"
 #include "World.h"
 
@@ -33,8 +33,8 @@ void putThread(World& world, const QString& id, QJsonObject row) {
   row.insert(QStringLiteral("id"), id);
   if (!row.contains(QLatin1String("createdAt"))) row.insert(QStringLiteral("createdAt"), kAt);
   if (!row.contains(QLatin1String("updatedAt"))) row.insert(QStringLiteral("updatedAt"), row.value(QLatin1String("createdAt")));
-  world.node.threads.insert(id, row);
-  world.node.sendRow(id, row);
+  world.mc.threads.insert(id, row);
+  world.mc.sendRow(id, row);
   if (world.native().client()->isReady()) world.sync();
 }
 
@@ -43,17 +43,17 @@ QString titleId(const QString& title) {
 }
 
 bool hasThread(World& world, const QString& title) {
-  for (const QJsonObject& row : std::as_const(world.node.threads)) {
+  for (const QJsonObject& row : std::as_const(world.mc.threads)) {
     if (row.value(QLatin1String("title")).toString() == title) return true;
   }
   return false;
 }
 
 // The thread the scenario names, in `projectId` (the first project when
-// empty) unless the node already has it.
+// empty) unless the MC already has it.
 QString ensureThread(World& world, const QString& title, QString projectId = {}) {
   if (!hasThread(world, title)) {
-    if (projectId.isEmpty()) projectId = world.node.projects.firstKey();
+    if (projectId.isEmpty()) projectId = world.mc.projects.firstKey();
     putThread(world, titleId(title), {{QStringLiteral("projectId"), projectId}, {QStringLiteral("title"), title}});
   }
   return threadKeyOf(world, title);
@@ -122,7 +122,7 @@ const Steps steps([] {
 
   // Backgrounds and the list's contents.
   step(QStringLiteral("a connected environment with the thread %1 on Claude").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.projects.insert(QStringLiteral("shop"), {{QStringLiteral("id"), QStringLiteral("shop")}, {QStringLiteral("title"), QStringLiteral("shop")},
+    world.mc.projects.insert(QStringLiteral("shop"), {{QStringLiteral("id"), QStringLiteral("shop")}, {QStringLiteral("title"), QStringLiteral("shop")},
                                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")}, {QStringLiteral("scripts"), QJsonArray()},
                                                         {QStringLiteral("createdAt"), kAt}, {QStringLiteral("updatedAt"), kAt}});
     world.connect();
@@ -153,22 +153,22 @@ const Steps steps([] {
     sectionsProject() = world.projectKey(project);
   });
   step(QStringLiteral("%1 was created before %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    putThread(world, titleId(c[0]), {{QStringLiteral("projectId"), world.node.projects.firstKey()}, {QStringLiteral("title"), c[0]},
+    putThread(world, titleId(c[0]), {{QStringLiteral("projectId"), world.mc.projects.firstKey()}, {QStringLiteral("title"), c[0]},
                                      {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T08:00:00Z")}});
-    putThread(world, titleId(c[1]), {{QStringLiteral("projectId"), world.node.projects.firstKey()}, {QStringLiteral("title"), c[1]},
+    putThread(world, titleId(c[1]), {{QStringLiteral("projectId"), world.mc.projects.firstKey()}, {QStringLiteral("title"), c[1]},
                                      {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
   });
   step(QStringLiteral("there are (\\d+) settled threads"), [](World& world, const Captures& c, const Table&) {
     for (int index = 0; index < c[0].toInt(); ++index) {
       const QString at = iso(world.now().addSecs(-60 * (index + 1)));
       putThread(world, QStringLiteral("t-settled-%1").arg(index),
-                {{QStringLiteral("projectId"), world.node.projects.firstKey()}, {QStringLiteral("title"), QStringLiteral("Settled %1").arg(index)},
+                {{QStringLiteral("projectId"), world.mc.projects.firstKey()}, {QStringLiteral("title"), QStringLiteral("Settled %1").arg(index)},
                  {QStringLiteral("settledOverride"), QStringLiteral("settled")}, {QStringLiteral("settledAt"), at}});
     }
   });
   step(QStringLiteral("%1 settled after %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // Created the other way round, so only when they settled orders them.
-    const QString project = world.node.projects.firstKey();
+    const QString project = world.mc.projects.firstKey();
     putThread(world, titleId(c[0]), {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), c[0]}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T08:00:00Z")},
                                      {QStringLiteral("settledOverride"), QStringLiteral("settled")}, {QStringLiteral("settledAt"), QStringLiteral("2026-09-23T09:50:00Z")}});
     putThread(world, titleId(c[1]), {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), c[1]}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
@@ -188,7 +188,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user scopes the thread list to (all projects|%1)").arg(q), [](World& world, const Captures& c, const Table&) {
     // A thread in each project, so the scope has something to leave out.
-    for (const QString& project : world.node.projects.keys()) ensureThread(world, QStringLiteral("Work in ") + project, project);
+    for (const QString& project : world.mc.projects.keys()) ensureThread(world, QStringLiteral("Work in ") + project, project);
     const QVariant scope = c.value(1).isEmpty() ? QVariant::fromValue(nullptr) : QVariant(world.projectKey(c[1]));
     world.bridge().dispatch(QStringLiteral("sidebar.scope"), QVariantMap{{QStringLiteral("projectKey"), scope}});
   });
@@ -306,7 +306,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 is settled").arg(q), [](World& world, const Captures& c, const Table&) {
     // Another thread began since, so un-settling has to lift it above one.
-    putThread(world, QStringLiteral("t-newer"), {{QStringLiteral("projectId"), world.node.projects.firstKey()}, {QStringLiteral("title"), QStringLiteral("Newer")},
+    putThread(world, QStringLiteral("t-newer"), {{QStringLiteral("projectId"), world.mc.projects.firstKey()}, {QStringLiteral("title"), QStringLiteral("Newer")},
                                                  {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:30:00Z")}});
     updateThreadRow(world, idOf(threadKeyOf(world, c[0])), [](QJsonObject& row) {
       row.insert(QStringLiteral("settledOverride"), QStringLiteral("settled"));
@@ -322,8 +322,8 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("%1 on top; the active threads are %2").arg(key, show(sidebar(world).value(QStringLiteral("active")))); });
   });
   step(QStringLiteral("the pull request is merged on GitHub"), [](World& world, const Captures&, const Table&) {
-    // The node settles a thread whose pull request merged (HalC2.Orchestration.Settlement).
-    const QString id = world.node.threads.firstKey();
+    // The MC settles a thread whose pull request merged (HalC2.Orchestration.Settlement).
+    const QString id = world.mc.threads.firstKey();
     updateThreadRow(world, id, [&](QJsonObject& row) {
       row.insert(QStringLiteral("settledOverride"), QStringLiteral("settled"));
       row.insert(QStringLiteral("settledAt"), iso(world.now()));
@@ -331,8 +331,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 moves to the settled section without the user settling it").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForSection(world, c[0], QStringLiteral("settled"));
-    for (const QJsonObject& command : std::as_const(world.node.commands)) {
-      expect(command.value(QLatin1String("type")) != QLatin1String("thread.settle"), QStringLiteral("the node has %1").arg(world.describeCommands()));
+    for (const QJsonObject& command : std::as_const(world.mc.commands)) {
+      expect(command.value(QLatin1String("type")) != QLatin1String("thread.settle"), QStringLiteral("the MC has %1").arg(world.describeCommands()));
     }
   });
 

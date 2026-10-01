@@ -1,16 +1,16 @@
 defmodule HalC2.Steps.Orchestration.McpServer do
   @moduledoc """
-  Steps for `features/node/orchestration/mcp-server.feature`: the `hal-c2` MCP
+  Steps for `features/mc/orchestration/mcp-server.feature`: the `hal-c2` MCP
   server, driven through `HalC2.Mcp.handle/2` as the agent of a thread would call it.
 
   Raw answers are kept in `context.mcp_response` (`{status, body}`); tool outcomes in
-  `context.mcp_result` (see `HalC2.Test.Node.World.mcp_tool/5`). What the fake Codex CLI
+  `context.mcp_result` (see `HalC2.Test.Mc.World.mcp_tool/5`). What the fake Codex CLI
   was given for a session comes from `World.codex_sessions/1`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @claude_thread "claude work"
 
@@ -200,7 +200,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     assert {200, %{"result" => %{"tools" => tools}}} = context.mcp_response
 
     exported =
-      for file <- ~w(mcp_tools.json mcp_node_tools.json),
+      for file <- ~w(mcp_tools.json mcp_mc_tools.json),
           tool <-
             Application.app_dir(:hal_c2, Path.join("priv", file))
             |> File.read!()
@@ -389,7 +389,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
       case change do
         "creates a project" ->
           {"hal_c2_project_create",
-           %{"workspaceRoot" => HalC2.Test.Node.tmp_dir(context.node, "new-project")}}
+           %{"workspaceRoot" => HalC2.Test.Mc.tmp_dir(context.mc, "new-project")}}
 
         "launches a thread" ->
           {"hal_c2_thread_launch", %{"title" => "Child", "message" => "say hi"}}

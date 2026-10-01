@@ -1,19 +1,19 @@
 /**
  * Dev loop for the Qt shell:
  *   1. configure + build apps/desktop-qt with CMake (incremental after the first run)
- *   2. mint a pairing link for the Elixir node `mise run node` runs (`mix hal_c2.pair`)
+ *   2. mint a pairing link for the Elixir MC `mise run mc` runs (`mix hal_c2.pair`)
  *   3. launch hal-c2-qt --url <pairing link>; its desktop host pairs the shell
- *      with that node
+ *      with that MC
  *
  * Flags the script consumes:
  *   --home-dir <dir>   the shell's HAL-C2 home (HAL_C2_HOME for hal-c2-qt): where it
  *                      rices from (<dir>/config/shell), and the home a --standalone
- *                      node gets. Defaults to the checkout's
+ *                      MC gets. Defaults to the checkout's
  *                      .hal-c2 (the shell has no development profile, so it does not
- *                      share `mise run node`'s hal-c2-dev).
- *   --url <url>        skip pairing and attach to the node this pairing link names
- *   --standalone       no pairing: the shell starts its own node from source, as the
- *                      installed app does. Do not run it next to `mise run node` on
+ *                      share `mise run mc`'s hal-c2-dev).
+ *   --url <url>        skip pairing and attach to the MC this pairing link names
+ *   --standalone       no pairing: the shell starts its own MC from source, as the
+ *                      installed app does. Do not run it next to `mise run mc` on
  *                      the same home.
  *   --release          build with CMAKE_BUILD_TYPE=Release (no disk QML loading)
  *   --configure-only   stop after the CMake build
@@ -23,7 +23,7 @@
  * work from `mise run desktop` too. A bare `--` forwards the rest verbatim.
  * Environment:
  *   QT_PREFIX / CMAKE_PREFIX_PATH   where Qt 6 lives (defaults: qmake6 on PATH, then Homebrew)
- *   HAL_C2_NODE_PORT                the running node's port (default 3780)
+ *   HAL_C2_MC_PORT                the running MC's port (default 3780)
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -33,7 +33,7 @@ import * as NodeURL from "node:url";
 
 const appDir = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const checkoutDir = NodePath.resolve(appDir, "../..");
-const nodeDir = NodePath.join(checkoutDir, "apps/server-ex");
+const mcDir = NodePath.join(checkoutDir, "apps/server-ex");
 
 function fail(message) {
   process.stderr.write(`[dev-qt] ${message}\n`);
@@ -46,8 +46,8 @@ function usage() {
       "Usage: mise run desktop [--home-dir <dir>] [--url <url> | --standalone] [--release] [--configure-only] [-- <hal-c2-qt args>]",
       "",
       "  --home-dir <dir>   the shell's HAL-C2 home (default: the checkout's .hal-c2)",
-      "  --url <url>        attach to this node pairing link instead of pairing",
-      "  --standalone       start the shell's own node from source instead of pairing with `mise run node`",
+      "  --url <url>        attach to this MC pairing link instead of pairing",
+      "  --standalone       start the shell's own MC from source instead of pairing with `mise run mc`",
       "  --release          Release build (no disk QML loading)",
       "  --configure-only   build, do not launch",
       "",
@@ -182,13 +182,13 @@ function binaryPath() {
   return found ?? fail(`built binary not found under ${buildDir}`);
 }
 
-/** The running node's address, as `mix hal_c2.pair` and `mise run node` resolve it. */
-function nodeOrigin() {
-  const port = process.env.HAL_C2_NODE_PORT?.trim() || "3780";
+/** The running MC's address, as `mix hal_c2.pair` and `mise run mc` resolve it. */
+function mcOrigin() {
+  const port = process.env.HAL_C2_MC_PORT?.trim() || "3780";
   return `http://127.0.0.1:${port}`;
 }
 
-async function nodeIsRunning(origin) {
+async function mcIsRunning(origin) {
   try {
     const response = await fetch(new URL("/.well-known/hal-c2/environment", origin), {
       signal: AbortSignal.timeout(2_000),
@@ -200,16 +200,16 @@ async function nodeIsRunning(origin) {
   }
 }
 
-/** A one-time pairing link (5 minutes) for the node `mise run node` runs. */
-async function pairWithNode() {
-  const origin = nodeOrigin();
-  if (!(await nodeIsRunning(origin))) {
+/** A one-time pairing link (5 minutes) for the MC `mise run mc` runs. */
+async function pairWithMc() {
+  const origin = mcOrigin();
+  if (!(await mcIsRunning(origin))) {
     return fail(
-      `no node answers at ${origin}. Start \`mise run node\` in another terminal first (set HAL_C2_NODE_PORT if it runs elsewhere), pass --url <pairing link>, or use --standalone.`,
+      `no MC answers at ${origin}. Start \`mise run mc\` in another terminal first (set HAL_C2_MC_PORT if it runs elsewhere), pass --url <pairing link>, or use --standalone.`,
     );
   }
   const result = NodeChildProcess.spawnSync("mix", ["hal_c2.pair", origin], {
-    cwd: nodeDir,
+    cwd: mcDir,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
   });
@@ -224,7 +224,7 @@ build();
 if (options.configureOnly) process.exit(0);
 
 const root = resolveRoot();
-const url = options.standalone ? undefined : (options.url ?? (await pairWithNode()));
+const url = options.standalone ? undefined : (options.url ?? (await pairWithMc()));
 const binary = binaryPath();
 const binaryArgs = [...(url === undefined ? [] : ["--url", url]), ...shellArgs];
 process.stderr.write(`[dev-qt] root ${root}\n`);

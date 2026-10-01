@@ -3,7 +3,7 @@
 #   apps/desktop-qt/src/ThemeStore.cpp (the palette the shell draws)
 #   apps/desktop-qt/scripts/gen-themes.mjs (the built-in palettes, from packages/shared/src/themePalettes.ts)
 #   apps/web/src/components/settings/themePalette.ts (getThemeDefinition, resolveThemeAppearance: what the shell mirrors)
-#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
+#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   settings/saving-settings.feature has the desktop's settings document and device preferences.
 
 Feature: The desktop shell draws its own theme
@@ -11,7 +11,7 @@ Feature: The desktop shell draws its own theme
   the published themes.
 
   Background:
-    Given the desktop's node "node-a" serves the environment "env-a"
+    Given the desktop's MC "mc-a" serves the environment "env-a"
 
   Rule: The shell draws the chosen theme
     # Choosing and resolving the theme is navigation/appearance.feature's and

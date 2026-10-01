@@ -1,6 +1,6 @@
 defmodule HalC2.Streams do
   @moduledoc """
-  Runs one `HalC2.Streams.Server` per active stream on this node.
+  Runs one `HalC2.Streams.Server` per active stream on this MC.
 
   A stream process starts on first use and stops after it has been idle with no
   subscribers, so inactive threads cost nothing but a row in the shell index.

@@ -26,24 +26,24 @@ Feature: Reviewing a pull request
     Given a connected environment with the GitHub project "acme/shop"
     And the open pull request 42 by "octocat"
 
-  @node
+  @mc
   Scenario: Reading a pull request
     When the user opens pull request 42
     Then the user sees its title, description, branches, author, labels, reviewers and mergeability
     And whether its branch is behind the base
 
-  @node
+  @mc
   Scenario: Reading the conversation
     When the user opens the conversation of pull request 42
     Then comments, reviews and events are listed in order
 
-  @node
+  @mc
   Scenario: Outdated review threads are kept apart
     Given a review thread on pull request 42 refers to code that has since changed
     When the user reads the review threads
     Then that thread is listed among the outdated ones
 
-  @node
+  @mc
   Scenario Outline: Checks report their state
     Given a check on pull request 42 is <state>
     When the user reads the checks of pull request 42
@@ -59,35 +59,35 @@ Feature: Reviewing a pull request
       | neutral         |
       | cancelled       |
 
-  @node
+  @mc
   Scenario: Commenting on a pull request
     When the user comments "Looks good" on pull request 42
     Then the comment appears in the conversation
 
-  @node
+  @mc
   Scenario: An empty comment is refused
     When the user comments with only spaces on pull request 42
     Then the user is told "A comment cannot be empty."
 
-  @node
+  @mc
   Scenario: Editing one's own comment
     Given the user commented "Looks god" on pull request 42
     # "edits it to" is the composer's queued-message step; this one edits a PR comment.
     When the user edits the comment to "Looks good"
     Then the comment reads "Looks good"
 
-  @node
+  @mc
   Scenario: Editing the title and description
     Given the user may edit pull request 42
     When the user changes its title to "Add tax to the cart"
     Then pull request 42 has the new title
 
-  @node
+  @mc
   Scenario: Saving an edit without changes
     When the user saves the title and description of pull request 42 unchanged
     Then the user is told "Nothing was changed."
 
-  @node
+  @mc
   Scenario Outline: Submitting a review with line comments
     Given the user left a comment on line 12 of "src/cart.ts" in pull request 42
     When the user submits the review as <verdict>
@@ -99,58 +99,58 @@ Feature: Reviewing a pull request
       | approve         |
       | request changes |
 
-  @node
+  @mc
   Scenario: A review needs something to say
     When the user submits a comment review with no summary and no line comments
     Then the user is told "A review needs a summary or at least one comment."
 
-  @node
+  @mc
   Scenario: Replying to a review thread
     Given a review thread on line 12 of "src/cart.ts"
     When the user replies "Fixed"
     Then the reply is added to that thread
 
-  @node
+  @mc
   Scenario: Resolving a review thread
     Given an unresolved review thread
     When the user resolves it
     Then the thread is resolved
 
-  @node
+  @mc
   Scenario: Reopening a resolved review thread
     Given a resolved review thread
     When the user unresolves it
     Then the thread is open again
 
-  @node
+  @mc
   Scenario: Adding a reaction
     When the user reacts with a heart to the description of pull request 42
     Then the heart count goes up by one and includes the user
 
-  @node
+  @mc
   Scenario: Removing a reaction
     Given the user reacted with a heart to the description of pull request 42
     When the user reacts with a heart again
     Then the user's heart is removed
 
-  @node
+  @mc
   Scenario: Marking a file viewed on GitHub
     When the user marks "src/cart.ts" viewed in pull request 42
     Then GitHub records "src/cart.ts" as viewed for the user
 
-  @node
+  @mc
   Scenario: Unmarking a viewed file
     Given "src/cart.ts" is marked viewed in pull request 42
     When the user marks it not viewed
     Then GitHub records "src/cart.ts" as not viewed
 
-  @node
+  @mc
   Scenario: A viewed file that changed again is flagged
     Given "src/cart.ts" is marked viewed in pull request 42
     When the author pushes a change to "src/cart.ts"
     Then the file is reported as changed since it was viewed
 
-  @backlog @node
+  @backlog @mc
   Scenario: Hosts without viewed marks keep them in the environment
     Given a GitLab project with the open merge request 5
     When the user marks "src/cart.ts" viewed in merge request 5
@@ -158,24 +158,24 @@ Feature: Reviewing a pull request
     And the file reads as viewed in HAL-C2
 
   # Blocked: needs "Hosts without viewed marks keep them in the environment" first.
-  @backlog @blocked @node
+  @backlog @blocked @mc
   Scenario: A file missing from the host's answer is not treated as deleted
     Given the user marked "src/cart.ts" viewed in a GitLab merge request
     When the host answers without "src/cart.ts"
     Then the mark is kept
 
-  @node
+  @mc
   Scenario: A large diff arrives in slices
     Given pull request 42 changes 450 files
     When the user opens its code
     Then the files arrive in slices and every file's line counts are known
 
-  @node
+  @mc
   Scenario: Reviewing the code of one commit
     When the user scopes the code of pull request 42 to one of its commits
     Then only that commit's changes are shown
 
-  @node
+  @mc
   Scenario: Reading a whole changed file
     When the user expands the unchanged lines around a change in "src/cart.ts"
     Then the file's contents on both sides are shown
@@ -254,9 +254,9 @@ Feature: Reviewing a pull request
     When the user opens pull request 42 on the phone
     Then the conversation and checks are shown without the diff
 
-  @backlog @node
-  Scenario: Images in a private pull request are fetched by the node
+  @backlog @mc
+  Scenario: Images in a private pull request are fetched by the MC
     Given the description of pull request 42 holds an image uploaded to GitHub
     When the user reads the description
-    Then the node fetches the image with its GitHub credentials
+    Then the MC fetches the image with its GitHub credentials
     And the client never receives the GitHub token

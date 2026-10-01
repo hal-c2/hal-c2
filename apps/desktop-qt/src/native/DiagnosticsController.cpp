@@ -1,6 +1,6 @@
 // Settings → Diagnostics, natively (the web's DiagnosticsSettings): what this
-// node started and how much it uses, its resource history, and its recent
-// trace failures, from the node's `server.getProcessDiagnostics`,
+// MC started and how much it uses, its resource history, and its recent
+// trace failures, from the MC's `server.getProcessDiagnostics`,
 // `server.getProcessResourceHistory`, `server.getTraceDiagnostics` and
 // `server.signalProcess` (apps/server-ex HalC2.Diagnostics). Read when the
 // page opens and on refresh.
@@ -32,7 +32,7 @@
 #include "NativeController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ToastController.h"
@@ -115,7 +115,7 @@ QVariant nullable(const QString& value) {
 
 class DiagnosticsController : public QObject, public NativeController {
 public:
-  DiagnosticsController(ShellBridge* bridge, NodeClient* client, QObject* parent)
+  DiagnosticsController(ShellBridge* bridge, McClient* client, QObject* parent)
       : QObject(parent), m_bridge(bridge), m_client(client) {}
 
   void activate() override {
@@ -252,7 +252,7 @@ private:
     return settings()->config().value(QLatin1String("observability")).toObject().value(QLatin1String("logsDirectoryPath")).toString();
   }
 
-  // The web's openLogsDirectory: the editor last used when the node has it,
+  // The web's openLogsDirectory: the editor last used when the MC has it,
   // else the first it has.
   void openLogs() {
     const QString path = logsPath();
@@ -393,7 +393,7 @@ private:
   }
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   bool m_active = false;
   bool m_open = false;
   int m_windowMs = 15 * 60'000;

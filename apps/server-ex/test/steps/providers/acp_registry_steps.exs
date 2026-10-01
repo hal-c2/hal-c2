@@ -13,8 +13,8 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   import ExUnit.Assertions
 
   alias HalC2.Test.AcpFixtures, as: Acp
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @browser %{"id" => "acme-login", "name" => "Log in with Acme"}
   @terminal %{
@@ -47,7 +47,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx
   end
 
-  defp tools(ctx, id \\ "acme"), do: Path.join([ctx.node.home, "tools", id])
+  defp tools(ctx, id \\ "acme"), do: Path.join([ctx.mc.home, "tools", id])
 
   defp installed(ctx),
     do: Path.join([tools(ctx), "2.0.0", HalC2.Acp.Catalog.platform(), "bin", "acme"])
@@ -55,7 +55,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   defp ops(ctx) do
     if Map.has_key?(ctx.clients, "ops"),
       do: ctx,
-      else: World.put_client(ctx, "ops", Node.connect(ctx.node))
+      else: World.put_client(ctx, "ops", Mc.connect(ctx.mc))
   end
 
   defp prepare(ctx, id \\ "acme") do
@@ -126,12 +126,12 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     sub = 3000 + System.unique_integer([:positive])
 
     client =
-      Node.sub(World.client(ctx, name), sub, %{
+      Mc.sub(World.client(ctx, name), sub, %{
         "type" => "config",
-        "node" => Atom.to_string(node())
+        "mc" => Atom.to_string(node())
       })
 
-    {_, client} = Node.await(client, &(&1["t"] == "config" and &1["id"] == sub), 5_000)
+    {_, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == sub), 5_000)
 
     ctx
     |> World.put_client(name, client)
@@ -143,7 +143,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     sub = ctx.config_subs[name]
 
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(ctx, name),
         fn frame ->
           frame["t"] == "config.providers" and frame["id"] == sub and
@@ -287,7 +287,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     end)
   end
 
-  step "{string} is installed under the node's tools folder at the registry's version",
+  step "{string} is installed under the MC's tools folder at the registry's version",
        %{args: [id]} = context do
     assert id == "acme"
     assert File.regular?(installed(context))
@@ -335,9 +335,9 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     Acp.publish(ctx, [agent(ctx, id, "Acme", npx("@acme/agent@2.0.0"))])
   end
 
-  step "npm is not installed on the node", context do
+  step "npm is not installed on the MC", context do
     # `AcpFixtures.ready/1` puts PATH back after the scenario.
-    empty = Path.join(context.node.home, "empty-bin")
+    empty = Path.join(context.mc.home, "empty-bin")
     File.mkdir_p!(empty)
     System.put_env("PATH", empty)
     assert System.find_executable("npm") == nil
@@ -394,7 +394,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx
   end
 
-  step "the node has never fetched the registry", context do
+  step "the MC has never fetched the registry", context do
     ctx = Acp.ready(context)
     refute File.exists?(Path.join([HalC2.Paths.cache_dir(), "acp-registry", "registry.json"]))
     assert :persistent_term.get({HalC2.Acp.Catalog, :index}, nil) == nil
@@ -402,7 +402,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   end
 
   step "the registry cannot be reached", context do
-    # `AcpFixtures.ready/1` points the node at a closed loopback port.
+    # `AcpFixtures.ready/1` points the MC at a closed loopback port.
     assert Application.get_env(:hal_c2, :acp_registry_url) =~ "127.0.0.1:1/"
     context
   end
@@ -417,18 +417,18 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     context
   end
 
-  step "the node fetched the registry an hour ago", context do
+  step "the MC fetched the registry an hour ago", context do
     ctx = Acp.publish(context)
     {:ok, [_]} = HalC2.Acp.Catalog.index(true)
     assert Acp.registry_requests(ctx) == ["registry.json"]
     cache = Path.join([HalC2.Paths.cache_dir(), "acp-registry", "registry.json"])
     File.touch!(cache, System.os_time(:second) - 3600)
-    # A node that starts now has only the file.
+    # An MC that starts now has only the file.
     :persistent_term.erase({HalC2.Acp.Catalog, :index})
     ctx
   end
 
-  step "the node needs registry data without a search", context do
+  step "the MC needs registry data without a search", context do
     Map.put(context, :described, HalC2.Acp.Catalog.describe("acme"))
   end
 
@@ -467,7 +467,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "the instance of {string} has an executable override", %{args: [id]} = context do
     ctx = Acp.publish(context)
-    local = Acp.wrapper(ctx, Path.join([ctx.node.home, "local", "acme-dev"]), id)
+    local = Acp.wrapper(ctx, Path.join([ctx.mc.home, "local", "acme-dev"]), id)
 
     Acp.add_registry_instance(id, id, %{
       "config" => %{"agentId" => id, "commandPath" => local}
@@ -501,7 +501,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     acme(context, %{"auth" => "file", "methods" => [@browser]})
   end
 
-  step "the node checks {string}", %{args: [id]} = context do
+  step "the MC checks {string}", %{args: [id]} = context do
     Map.put(context, :entry, Acp.check(id))
   end
 
@@ -526,7 +526,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     end
   end
 
-  step "the agent's login runs in a terminal on the node that the user can type into",
+  step "the agent's login runs in a terminal on the MC that the user can type into",
        context do
     assert %{"type" => "terminal", "id" => "terminal"} = context.interaction
     # The login is the agent's own command with the method's arguments.
@@ -718,7 +718,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx =
       context
       |> acme()
-      |> World.put_client("second", Node.connect(context.node))
+      |> World.put_client("second", Mc.connect(context.mc))
       |> watch_providers("default")
       |> watch_providers("second")
       |> run_on_acme("hello")
@@ -1080,14 +1080,14 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "the user picks a provider for thread titles", context do
     ctx = acme(context)
-    # Loaded as the node's status check does, so the entry is complete.
+    # Loaded as the MC's status check does, so the entry is complete.
     assert Acp.check("acme")["models"] != []
     sub = 4000 + System.unique_integer([:positive])
 
     client =
-      Node.sub(World.client(ctx), sub, %{"type" => "config", "node" => Atom.to_string(node())})
+      Mc.sub(World.client(ctx), sub, %{"type" => "config", "mc" => Atom.to_string(node())})
 
-    {frame, client} = Node.await(client, &(&1["t"] == "config" and &1["id"] == sub), 5_000)
+    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == sub), 5_000)
     ctx |> World.put_client(client) |> Map.put(:providers, frame["config"]["providers"])
   end
 

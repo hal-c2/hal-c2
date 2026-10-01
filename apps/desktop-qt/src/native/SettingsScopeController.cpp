@@ -6,7 +6,7 @@
 
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "SidebarController.h"
@@ -25,7 +25,7 @@ const QStringList kScopedSections{QStringLiteral("/settings/storage"), QStringLi
 
 }  // namespace
 
-SettingsScopeController::SettingsScopeController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+SettingsScopeController::SettingsScopeController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_documents(new EnvironmentSettings(client, this)) {
   connect(m_documents, &EnvironmentSettings::frame, this, [this](const QString& environmentId, const QJsonObject& frame) {
     const QString type = frame.value(QLatin1String("t")).toString();
@@ -56,7 +56,7 @@ void SettingsScopeController::activate() {
   };
   connect(navigation, &NavigationController::changed, this, follow);
   connect(NativeShell::of(this)->sidebar(), &SidebarController::grouped, this, &SettingsScopeController::update);
-  connect(m_client, &NodeClient::readyChanged, this, &SettingsScopeController::update);
+  connect(m_client, &McClient::readyChanged, this, &SettingsScopeController::update);
   // Projects and environments that come and go change what the scope covers.
   connect(m_store, &ShellStore::changed, this, [this] {
     // After the sidebar has grouped the projects anew.

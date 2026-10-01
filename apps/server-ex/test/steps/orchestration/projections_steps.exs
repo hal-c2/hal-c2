@@ -1,10 +1,10 @@
 defmodule HalC2.Steps.Orchestration.Projections do
-  @moduledoc "Steps for features/node/orchestration/projections.feature."
+  @moduledoc "Steps for features/mc/orchestration/projections.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # --- run status ----------------------------------------------------------------------
 
@@ -286,7 +286,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
 
   step ~r/^"(?<thread>[^"]+)" ran on "(?<first>[^"]+)" and then "(?<second>[^"]+)", and delegated a task to "(?<child>[^"]+)"$/,
        %{args: [thread, first, second, child]} = context do
-    [{first, nil, -3}, {second, nil, -2}, {child, "node-subagent", -1}]
+    [{first, nil, -3}, {second, nil, -2}, {child, "mc-subagent", -1}]
     |> Enum.with_index(1)
     |> Enum.reduce(context, fn {{instance, owner, minutes}, i}, context ->
       provider_thread = %{
@@ -499,7 +499,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
 
   step ~r/^it subscribes to "(?<thread>[^"]+)" after sequence (?<seq>\d+)$/,
        %{args: [thread, seq]} = context do
-    shape = %{"type" => "stream", "node" => Atom.to_string(node()), "stream" => thread}
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => thread}
     client = World.client(context)
 
     client =
@@ -527,7 +527,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
   end
 
   defp until_live(client, acc) do
-    {frame, client} = Node.await(client, &(&1["id"] == 41))
+    {frame, client} = Mc.await(client, &(&1["id"] == 41))
 
     if frame["t"] == "live",
       do: {Enum.reverse([frame | acc]), client},

@@ -1,5 +1,5 @@
 // The pull requests page on the desktop (PullRequestListController), and the
-// node's side of it: the @desktop scenarios of
+// MC's side of it: the @desktop scenarios of
 // features/source-control/pull-request-list.feature.
 
 #include <QJsonArray>
@@ -12,7 +12,7 @@ namespace {
 
 const QString kViewer = QStringLiteral("sam");
 
-// The pull requests the node lists, as apps/server-ex HalC2.PullRequests
+// The pull requests the MC lists, as apps/server-ex HalC2.PullRequests
 // answers `pullRequests.*` for its own environment. A linked environment has
 // none of them.
 struct FakePullRequests {
@@ -50,14 +50,14 @@ QJsonObject entry(const QString& project, int number, const QString& title, cons
   };
 }
 
-QJsonObject list(FakeNode& node, const FakeNode::Rpc& rpc) {
-  const FakePullRequests& fake = node.part<FakePullRequests>();
+QJsonObject list(FakeMc& mc, const FakeMc::Rpc& rpc) {
+  const FakePullRequests& fake = mc.part<FakePullRequests>();
   const QString state = rpc.payload.value(QLatin1String("state")).toString();
   const QString involvement = rpc.payload.value(QLatin1String("involvement")).toString();
   const QString draft = rpc.payload.value(QLatin1String("filters")).toObject().value(QLatin1String("draft")).toString();
   const QString project = rpc.payload.value(QLatin1String("projectId")).toString();
   QJsonArray entries;
-  if (rpc.environment == node.environmentId) {
+  if (rpc.environment == mc.environmentId) {
     for (const QJsonValue& value : fake.entries) {
       const QJsonObject pr = value.toObject();
       const bool isDraft = pr.value(QLatin1String("isDraft")).toBool();
@@ -78,37 +78,37 @@ QJsonObject list(FakeNode& node, const FakeNode::Rpc& rpc) {
           {QStringLiteral("nextCursors"), QJsonObject()}};
 }
 
-void sendRevision(FakeNode& node, int id) {
-  node.send({{QStringLiteral("t"), QStringLiteral("pullRequestRefreshes")},
+void sendRevision(FakeMc& mc, int id) {
+  mc.send({{QStringLiteral("t"), QStringLiteral("pullRequestRefreshes")},
              {QStringLiteral("id"), id},
-             {QStringLiteral("revision"), node.part<FakePullRequests>().revision}});
+             {QStringLiteral("revision"), mc.part<FakePullRequests>().revision}});
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
-  node.onRpc(QStringLiteral("pullRequests."), [&node](const FakeNode::Rpc& rpc) {
-    FakePullRequests& fake = node.part<FakePullRequests>();
+const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("pullRequests."), [&mc](const FakeMc::Rpc& rpc) {
+    FakePullRequests& fake = mc.part<FakePullRequests>();
     fake.calls.append({rpc.method, rpc.payload});
     if (rpc.method == QLatin1String("pullRequests.list")) {
-      if (!fake.refusal.isEmpty() && rpc.environment == node.environmentId) {
-        node.refuse(rpc, fake.refusal, {{QStringLiteral("_tag"), QStringLiteral("PullRequestUnavailableError")}});
+      if (!fake.refusal.isEmpty() && rpc.environment == mc.environmentId) {
+        mc.refuse(rpc, fake.refusal, {{QStringLiteral("_tag"), QStringLiteral("PullRequestUnavailableError")}});
         return;
       }
-      node.reply(rpc, list(node, rpc));
+      mc.reply(rpc, list(mc, rpc));
     } else if (rpc.method == QLatin1String("pullRequests.invalidate")) {
       ++fake.revision;
-      node.reply(rpc, QJsonObject());
-      for (const int id : node.subscribers(QStringLiteral("pullRequestRefreshes"))) sendRevision(node, id);
+      mc.reply(rpc, QJsonObject());
+      for (const int id : mc.subscribers(QStringLiteral("pullRequestRefreshes"))) sendRevision(mc, id);
     } else if (rpc.method == QLatin1String("pullRequests.linkedThreads")) {
-      node.reply(rpc, QJsonObject{{QStringLiteral("threads"), fake.linked.value(rpc.payload.value(QLatin1String("number")).toInt())}});
+      mc.reply(rpc, QJsonObject{{QStringLiteral("threads"), fake.linked.value(rpc.payload.value(QLatin1String("number")).toInt())}});
     } else {
-      node.reply(rpc, QJsonValue::Null);
+      mc.reply(rpc, QJsonValue::Null);
     }
   });
-  node.onShape(QStringLiteral("pullRequestRefreshes"), [&node](int id, const QJsonObject&) { sendRevision(node, id); });
+  mc.onShape(QStringLiteral("pullRequestRefreshes"), [&mc](int id, const QJsonObject&) { sendRevision(mc, id); });
 });
 
 FakePullRequests& fake(World& world) {
-  return world.node.part<FakePullRequests>();
+  return world.mc.part<FakePullRequests>();
 }
 
 QVariantMap page(World& world) {
@@ -165,7 +165,7 @@ const Steps steps([] {
 
   step(QStringLiteral("a connected environment with the GitHub projects %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QString& name : c) {
-      world.node.projects.insert(name, {{QStringLiteral("id"), name},
+      world.mc.projects.insert(name, {{QStringLiteral("id"), name},
                                         {QStringLiteral("title"), name},
                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + name},
                                         {QStringLiteral("scripts"), QJsonArray()}});
@@ -179,7 +179,7 @@ const Steps steps([] {
     world.connect();
     world.sync();
   });
-  // The node's own gh is the fake's; nothing to set up on the desktop.
+  // The MC's own gh is the fake's; nothing to set up on the desktop.
   step(QStringLiteral("the GitHub CLI is installed and signed in"), [](World&, const Captures&, const Table&) {});
 
   step(QStringLiteral("the user opens the pull requests page"), [](World& world, const Captures&, const Table&) {
@@ -257,10 +257,10 @@ const Steps steps([] {
   });
 
   // Environments and failures.
-  step(QStringLiteral("the node cannot list pull requests, saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC cannot list pull requests, saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).refusal = c[0];
   });
-  step(QStringLiteral("the node can list pull requests again"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC can list pull requests again"), [](World& world, const Captures&, const Table&) {
     fake(world).refusal.clear();
   });
   step(QStringLiteral("the pull requests page shows the error %1 with a retry").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -272,11 +272,11 @@ const Steps steps([] {
   step(QStringLiteral("the user (?:refreshes|retries) the pull requests page"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("pullRequestList.refresh"), {});
   });
-  step(QStringLiteral("the node forgets what it knew and the list is read again"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC forgets what it knew and the list is read again"), [](World& world, const Captures&, const Table&) {
     const int before = calls(world, QStringLiteral("pullRequests.list"));
     world.waitFor([&] { return calls(world, QStringLiteral("pullRequests.list")) > before; },
                   [&] { return QStringLiteral("the list to be read again"); });
-    expect(calls(world, QStringLiteral("pullRequests.invalidate")) >= 1, QStringLiteral("the node was not asked to forget"));
+    expect(calls(world, QStringLiteral("pullRequests.invalidate")) >= 1, QStringLiteral("the MC was not asked to forget"));
   });
   step(QStringLiteral("a pull request is merged from HAL-C2"), [](World& world, const Captures&, const Table&) {
     fake(world).calls.clear();
@@ -285,7 +285,7 @@ const Steps steps([] {
     QJsonObject merged = pulls.entries.at(0).toObject();
     merged.insert(QStringLiteral("state"), QStringLiteral("merged"));
     pulls.entries.replace(0, merged);
-    for (const int id : world.node.subscribers(QStringLiteral("pullRequestRefreshes"))) sendRevision(world.node, id);
+    for (const int id : world.mc.subscribers(QStringLiteral("pullRequestRefreshes"))) sendRevision(world.mc, id);
   });
   step(QStringLiteral("the page lists it no longer"), [](World& world, const Captures&, const Table&) {
     expectListed(world, {QStringLiteral("acme/api#7"), QStringLiteral("acme/api#9")});
@@ -295,7 +295,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the desktop stops listening for pull request changes"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return world.node.subscribers(QStringLiteral("pullRequestRefreshes")).isEmpty(); },
+    world.waitFor([&] { return world.mc.subscribers(QStringLiteral("pullRequestRefreshes")).isEmpty(); },
                   QStringLiteral("the pull request changes to be unsubscribed"));
   });
 
@@ -306,8 +306,8 @@ const Steps steps([] {
                              {QStringLiteral("title"), c[0]},
                              {QStringLiteral("createdAt"), QStringLiteral("2026-09-20T10:00:00Z")},
                              {QStringLiteral("updatedAt"), QStringLiteral("2026-09-20T10:00:00Z")}};
-    world.node.threads.insert(thread.value(QLatin1String("id")).toString(), thread);
-    world.node.sendRow(thread.value(QLatin1String("id")).toString(), thread);
+    world.mc.threads.insert(thread.value(QLatin1String("id")).toString(), thread);
+    world.mc.sendRow(thread.value(QLatin1String("id")).toString(), thread);
     fake(world).linked[c[1].toInt()].append(QJsonObject{{QStringLiteral("id"), QStringLiteral("thread-") + c[0]},
                                                         {QStringLiteral("projectId"), QStringLiteral("acme/shop")},
                                                         {QStringLiteral("title"), c[0]},

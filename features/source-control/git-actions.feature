@@ -150,13 +150,13 @@ Feature: Recommended git action and the git menu
   @desktop
   Scenario: A refused initialization is reported
     Given the checkout is not a repository
-    And the node refuses to initialize Git with "Permission denied"
+    And the MC refuses to initialize Git with "Permission denied"
     When the user initializes Git
     Then the user sees an "error" toast "Git initialization failed" saying "Permission denied"
 
   @desktop
   Scenario: A link that is down says why its git actions cannot run
-    Given the node is linked to "env-c"
+    Given the MC is linked to "env-c"
     And "env-c" has the thread "t7" titled "Deploy" in "shop" on the branch "feature/tax"
     And "env-c" becomes unreachable
     When the user goes to "env-c:t7"
@@ -174,7 +174,7 @@ Feature: Recommended git action and the git menu
       When the user runs the recommended action
       Then the publish dialog is open
       When the user publishes "acme/shop" as a private GitHub repository
-      Then the node published "acme/shop" to "origin" as private on github
+      Then the MC published "acme/shop" to "origin" as private on github
       And the publish dialog is closed
       And the user sees a "success" toast "Published acme/shop" saying "Pushed feature/tax to origin."
       When the user chooses "Open repository" on the toast "Published acme/shop"
@@ -182,7 +182,7 @@ Feature: Recommended git action and the git menu
 
     @desktop
     Scenario: A refused publish keeps the dialog open with the reason
-      Given the node refuses to publish with "Repository already exists"
+      Given the MC refuses to publish with "Repository already exists"
       When the user runs the recommended action
       And the user publishes "acme/shop" as a public GitHub repository
       Then the publish dialog says "Repository already exists"

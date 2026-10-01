@@ -266,7 +266,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("authorizes a cluster member through the node that serves it", () =>
+  it.effect("authorizes a cluster member through the MC that serves it", () =>
     Effect.gen(function* () {
       const memberId = EnvironmentId.make("environment-laptop");
       const harness = yield* makeHarness({
@@ -294,7 +294,7 @@ describe("RemoteEnvironmentAuthorization", () => {
         });
       }).pipe(Effect.provide(harness.layer));
 
-      // The connection is for the member, not the node that carries it.
+      // The connection is for the member, not the MC that carries it.
       expect(prepared).toMatchObject({ environmentId: memberId, label: "laptop" });
     }),
   );

@@ -1,10 +1,10 @@
 defmodule HalC2.Steps.Platform.Diagnostics do
-  @moduledoc "Steps for features/node/platform/diagnostics.feature."
+  @moduledoc "Steps for features/mc/platform/diagnostics.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
   alias HalC2.Test.WsClient
 
   @hour 3_600_000
@@ -21,7 +21,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
   # The services a provider turn, a terminal and the sampler need.
   defp services do
     World.provider_services()
-    Node.ensure(HalC2.Diagnostics)
+    Mc.ensure(HalC2.Diagnostics)
   end
 
   defp fake_codex(context) do
@@ -45,9 +45,9 @@ defmodule HalC2.Steps.Platform.Diagnostics do
   defp server_config(context) do
     client =
       World.client(context)
-      |> Node.sub(9, %{"type" => "config", "environment" => context.node.environment})
+      |> Mc.sub(9, %{"type" => "config", "environment" => context.mc.environment})
 
-    {frame, client} = Node.await(client, &(&1["t"] == "config" and &1["id"] == 9))
+    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 9))
     {frame["config"], World.put_client(context, client)}
   end
 
@@ -59,12 +59,12 @@ defmodule HalC2.Steps.Platform.Diagnostics do
   end
 
   defp follow(context) do
-    client = World.client(context) |> Node.sub(7, telemetry_shape())
-    {frame, client} = Node.await(client, &(&1["t"] == "resourceTelemetry" and &1["id"] == 7))
+    client = World.client(context) |> Mc.sub(7, telemetry_shape())
+    {frame, client} = Mc.await(client, &(&1["t"] == "resourceTelemetry" and &1["id"] == 7))
     context |> World.put_client(client) |> Map.put(:telemetry, frame["snapshot"])
   end
 
-  defp telemetry_shape, do: %{"type" => "resourceTelemetry", "node" => Atom.to_string(node())}
+  defp telemetry_shape, do: %{"type" => "resourceTelemetry", "mc" => Atom.to_string(node())}
 
   # OTLP JSON for one client span.
   defp otlp_spans(name) do
@@ -104,7 +104,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
 
   defp post_spans(context, name) do
     response =
-      Node.request(context.node, :post, "/api/observability/v1/traces",
+      Mc.request(context.mc, :post, "/api/observability/v1/traces",
         bearer: context.access_token,
         json: otlp_spans(name)
       )
@@ -114,7 +114,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
 
   defp paired(context) do
     {:ok, access, _expires, _scopes} =
-      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{"label" => "Web"})
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.mc.store), %{"label" => "Web"})
 
     Map.put(context, :access_token, access)
   end
@@ -135,7 +135,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
 
   # A provider process speaking JSON-RPC, scripted in Python, logged for `thread`.
   defp scripted_provider(context, script) do
-    path = Path.join(Node.tmp_dir(context.node, "provider"), "provider.py")
+    path = Path.join(Mc.tmp_dir(context.mc, "provider"), "provider.py")
     File.write!(path, script)
 
     {:ok, conn} =
@@ -162,7 +162,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
 
   # --- background ------------------------------------------------------------------
 
-  step "a running node that started a provider and a terminal", context do
+  step "a running MC that started a provider and a terminal", context do
     context =
       context
       |> fake_codex()
@@ -179,7 +179,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
         "cwd" => World.project(context, "widgets").root
       })
 
-    # The node samples what it started.
+    # The MC samples what it started.
     snapshot = snapshot()
     categories = Enum.map(snapshot["processes"], & &1["category"])
     assert "provider-root" in categories and "terminal-root" in categories
@@ -194,17 +194,17 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     context
   end
 
-  step "the node samples the processes under it every fifteen seconds", context do
+  step "the MC samples the processes under it every fifteen seconds", context do
     assert snapshot()["sampleIntervalMs"] == 15_000
     assert timer_ms() in 2_001..15_000
     context
   end
 
-  step "a client follows the node's resource telemetry", context do
+  step "a client follows the MC's resource telemetry", context do
     follow(context)
   end
 
-  step "the node samples every two seconds", context do
+  step "the MC samples every two seconds", context do
     assert context.telemetry["sampleIntervalMs"] == 2_000
     assert timer_ms() in 1..2_000
     context
@@ -214,21 +214,21 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     # The next tick of the sampler, without waiting two seconds for it.
     send(HalC2.Diagnostics, :sample)
     client = World.client(context)
-    {frame, client} = Node.await(client, &(&1["t"] == "resourceTelemetry" and &1["id"] == 7))
+    {frame, client} = Mc.await(client, &(&1["t"] == "resourceTelemetry" and &1["id"] == 7))
     assert frame["snapshot"]["readAt"] >= context.telemetry["readAt"]
     assert frame["snapshot"]["processes"] != []
     World.put_client(context, client)
   end
 
   step "it stops following", context do
-    client = World.client(context) |> Node.unsub(7)
+    client = World.client(context) |> Mc.unsub(7)
     # The socket handles frames in order, so the pong means the unsubscribe landed.
     client = WsClient.send_json(client, %{"t" => "ping"})
-    {_pong, client} = Node.await(client, &(&1["t"] == "pong"))
+    {_pong, client} = Mc.await(client, &(&1["t"] == "pong"))
     World.put_client(context, client)
   end
 
-  step "the node goes back to sampling every fifteen seconds", context do
+  step "the MC goes back to sampling every fifteen seconds", context do
     assert :sys.get_state(HalC2.Diagnostics).watchers == %{}
     assert snapshot()["sampleIntervalMs"] == 15_000
     assert timer_ms() > 2_000
@@ -237,7 +237,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
 
   # --- process list and history ----------------------------------------------------
 
-  step "a client asks for the node's process diagnostics", context do
+  step "a client asks for the MC's process diagnostics", context do
     {processes, context} = processes(context)
     Map.put(context, :processes, processes)
   end
@@ -265,7 +265,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     context
   end
 
-  step "the node has run for two hours", context do
+  step "the MC has run for two hours", context do
     now = System.system_time(:millisecond)
 
     :sys.replace_state(HalC2.Diagnostics, fn %{samples: [{_, rows} | _] = samples} = state ->
@@ -339,14 +339,14 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     context
   end
 
-  step "a client asks the node to retry resource telemetry", context do
+  step "a client asks the MC to retry resource telemetry", context do
     before = :sys.get_state(HalC2.Diagnostics).samples |> length()
     asked = DateTime.utc_now()
     {result, context} = rpc!(context, "server.retryResourceTelemetry")
     Map.merge(context, %{retry: result, samples_before: before, asked_at: asked})
   end
 
-  step "the node takes a sample immediately", context do
+  step "the MC takes a sample immediately", context do
     assert context.retry["accepted"] == true
     {:ok, read_at, _} = DateTime.from_iso8601(context.retry["snapshot"]["readAt"])
     assert DateTime.compare(read_at, DateTime.truncate(context.asked_at, :second)) != :lt
@@ -355,7 +355,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
   end
 
   step ~r/^a client reads a process sample on a platform that does not count I\/O$/, context do
-    put_env(:proc_dir, Node.tmp_dir(context.node, "no-proc"))
+    put_env(:proc_dir, Mc.tmp_dir(context.mc, "no-proc"))
     {result, context} = rpc!(context, "server.retryResourceTelemetry")
     Map.put(context, :sample, provider_process(result["snapshot"]["processes"]))
   end
@@ -417,7 +417,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     context
   end
 
-  step "a client signals a process id that is not under the node", context do
+  step "a client signals a process id that is not under the MC", context do
     {result, context} =
       rpc!(context, "server.signalProcess", %{
         "pid" => 1,
@@ -428,10 +428,10 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     Map.put(context, :signal, result)
   end
 
-  step "the node refuses", context do
+  step "the MC refuses", context do
     assert context.signal["signaled"] == false
 
-    assert %{"_tag" => "Some", "value" => "That process is not one this node started."} =
+    assert %{"_tag" => "Some", "value" => "That process is not one this MC started."} =
              context.signal["message"]
 
     context
@@ -455,7 +455,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     Map.put(context, :signal, result)
   end
 
-  step "the node refuses because it is no longer the same process", context do
+  step "the MC refuses because it is no longer the same process", context do
     assert context.signal["signaled"] == false
 
     assert %{"_tag" => "Some", "value" => "That process has already exited."} =
@@ -473,26 +473,26 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     Map.put(context, :traces, result)
   end
 
-  step "the node answers that it does not record traces", context do
+  step "the MC answers that it does not record traces", context do
     assert %{
              "_tag" => "Some",
              "value" => %{"kind" => "trace-file-not-found", "message" => message}
            } =
              context.traces["error"]
 
-    assert message == "This node does not record traces."
+    assert message == "This MC does not record traces."
     assert context.traces["recordCount"] == 0
     context
   end
 
-  step "a client reads the node's server config", context do
+  step "a client reads the MC's server config", context do
     {config, context} = server_config(context)
     Map.put(context, :server_config, config)
   end
 
-  step "it names the directory the node writes its logs to", context do
+  step "it names the directory the MC writes its logs to", context do
     assert context.server_config["observability"]["logsDirectoryPath"] ==
-             Path.join(context.node.home, "logs")
+             Path.join(context.mc.home, "logs")
 
     context
   end
@@ -504,7 +504,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     context
   end
 
-  step "tracing is enabled on the node", context do
+  step "tracing is enabled on the MC", context do
     put_env(:trace, true)
     context
   end
@@ -525,7 +525,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     assert traces["recordCount"] >= 3
 
     turn =
-      context.node.home
+      context.mc.home
       |> Path.join("logs/server.trace.ndjson")
       |> File.read!()
       |> String.split("\n", trim: true)
@@ -543,18 +543,18 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     paired(context)
   end
 
-  step "a client exports spans to its node", context do
+  step "a client exports spans to its MC", context do
     post_spans(context, "chat.render")
   end
 
-  step "the node accepts them instead of answering not found", context do
+  step "the MC accepts them instead of answering not found", context do
     assert {204, _, _} = context.response
     {traces, _context} = rpc!(context, "server.getTraceDiagnostics")
     assert "chat.render" in Enum.map(traces["topSpansByCount"], & &1["name"])
     context
   end
 
-  step "an OTLP collector is configured on the node", context do
+  step "an OTLP collector is configured on the MC", context do
     {:ok, server} = Bandit.start_link(plug: Collector, port: 0, ip: :loopback, startup_log: false)
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
     put_env(:test_collector, [self()])
@@ -567,7 +567,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     post_spans(context, "composer.submit")
   end
 
-  step "the node forwards them to the collector", context do
+  step "the MC forwards them to the collector", context do
     assert {204, _, _} = context.response
     assert_receive {:collected, body, ["hal_c2"]}, 5_000
     assert %{"resourceSpans" => [%{"scopeSpans" => [%{"spans" => [span]}]}]} = JSON.decode!(body)

@@ -7,7 +7,7 @@
 
 #include <vector>
 
-// A unified git patch (the node's `orchestration.getTurnDiff`) as rows a
+// A unified git patch (the MC's `orchestration.getTurnDiff`) as rows a
 // ListView draws one line at a time: a header per file, and under an
 // expanded file its hunks and lines. The patch is kept whole and rows point
 // into it, so a 10 MB diff costs one scan (files and counts) up front and a

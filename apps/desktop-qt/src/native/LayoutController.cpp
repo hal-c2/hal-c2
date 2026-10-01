@@ -23,9 +23,9 @@ constexpr double kMaxZoomLevel = 8.5;
 
 }  // namespace
 
-// The layout needs no node, so it shows before the first snapshot: as soon
+// The layout needs no MC, so it shows before the first snapshot: as soon
 // as main.cpp has given the settings their file.
-LayoutController::LayoutController(ShellBridge* bridge, NodeClient*, QObject* parent)
+LayoutController::LayoutController(ShellBridge* bridge, McClient*, QObject* parent)
     : QObject(parent), m_bridge(bridge) {
   QMetaObject::invokeMethod(this, &LayoutController::load, Qt::QueuedConnection);
 }

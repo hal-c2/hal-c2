@@ -5,7 +5,7 @@
 
 #include <memory>
 
-#include "NodeClient.h"
+#include "McClient.h"
 
 namespace {
 
@@ -14,7 +14,7 @@ constexpr int kStaleRetries = 3;
 
 }  // namespace
 
-EnvironmentSettings::EnvironmentSettings(NodeClient* client, QObject* parent) : QObject(parent), m_client(client) {}
+EnvironmentSettings::EnvironmentSettings(McClient* client, QObject* parent) : QObject(parent), m_client(client) {}
 
 EnvironmentSettings::~EnvironmentSettings() {
   for (const Target& target : std::as_const(m_followed)) {

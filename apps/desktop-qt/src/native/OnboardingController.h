@@ -16,7 +16,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 class SettingsController;
@@ -25,7 +25,7 @@ class TerminalSession;
 // The first-run gate and the welcome wizard (the web's FirstRunGate and
 // WelcomeWizard). Whether setup is done is this device's
 // `onboardingCompletedAt`; a device without it that already has projects or
-// threads counts as done, which is saved quietly. Until the node's first
+// threads counts as done, which is saved quietly. Until the MC's first
 // snapshot the gate is pending, and after 4 s it offers to reconnect.
 // Preferences that cannot be read stop it before anything else.
 //
@@ -53,20 +53,20 @@ class TerminalSession;
 // rest after a partial import).
 //
 // The setup terminal is `Onboarding.terminal` in QML, a TerminalSession the
-// node runs with the provider instance's own env and home.
+// MC runs with the provider instance's own env and home.
 class OnboardingController : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(QObject* terminal READ terminal NOTIFY terminalChanged)
 
 public:
-  OnboardingController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  OnboardingController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
   ~OnboardingController() override;
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
 
   QObject* terminal() const;
-  // How long the gate waits for the node before offering to reconnect.
+  // How long the gate waits for the MC before offering to reconnect.
   void setDecisionTimeout(int ms);
   // Tests pin the clock; the app uses the system's.
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
@@ -121,7 +121,7 @@ private:
   void publish();
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   QTimer m_timeout;

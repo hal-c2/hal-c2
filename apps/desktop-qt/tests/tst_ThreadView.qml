@@ -221,13 +221,13 @@ Item {
             verify(!visibleIn(findChild(view, "threadTimeline")), "a draft has no conversation yet");
         }
 
-        function test_aThreadWhoseNodeCannotBeReachedOffersARetry() {
+        function test_aThreadWhoseMcCannotBeReachedOffersARetry() {
             rows.status = "unreachable";
             rows.problem = "stream closed";
             const view = openThread();
             const problem = findChild(view, "threadProblem");
             verify(visibleIn(problem));
-            verify(findText(problem, "This thread's node cannot be reached: stream closed") !== null);
+            verify(findText(problem, "This thread's MC cannot be reached: stream closed") !== null);
             mouseClick(findChild(view, "threadRetry"));
             compare(Threads.reloads, ["env-1:thread-1"]);
         }

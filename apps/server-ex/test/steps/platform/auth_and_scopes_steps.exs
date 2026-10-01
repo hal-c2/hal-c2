@@ -1,19 +1,19 @@
 defmodule HalC2.Steps.Platform.AuthAndScopes do
-  @moduledoc "Steps for features/node/platform/auth-and-scopes.feature."
+  @moduledoc "Steps for features/mc/platform/auth-and-scopes.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @standard ~w(orchestration:read orchestration:operate terminal:operate review:write relay:read)
   @admin @standard ++ ~w(access:read access:write relay:write)
 
   # --- helpers -------------------------------------------------------------------
 
-  # Runs SQL against the node's store, as an older node or the clock would have left it.
+  # Runs SQL against the MC's store, as an older MC or the clock would have left it.
   defp sql(context, statement, args \\ []) do
-    {:ok, db} = Exqlite.Sqlite3.open(context.node.store)
+    {:ok, db} = Exqlite.Sqlite3.open(context.mc.store)
 
     try do
       {:ok, stmt} = Exqlite.Sqlite3.prepare(db, statement)
@@ -30,11 +30,11 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   # Pairs over `/oauth/token` and returns the access token.
   defp pair!(context, token, fields \\ %{}) do
-    assert {200, %{"access_token" => access}} = Node.exchange(context.node, token, fields)
+    assert {200, %{"access_token" => access}} = Mc.exchange(context.mc, token, fields)
     access
   end
 
-  defp standard!(context), do: pair!(context, HalC2.Auth.create_pairing_token(context.node.store))
+  defp standard!(context), do: pair!(context, HalC2.Auth.create_pairing_token(context.mc.store))
 
   defp admin!(context) do
     {:ok, link} = HalC2.Auth.create_pairing_link(%{"scopes" => @admin, "label" => "Admin"})
@@ -56,19 +56,19 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
   # A socket opened the way clients open one: a ticket bought with the session.
   defp socket!(context, access) do
     assert {200, _, %{"ticket" => ticket}} =
-             Node.request(context.node, :post, "/api/auth/websocket-ticket", bearer: access)
+             Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: access)
 
-    Node.connect(context.node, "wsTicket=#{ticket}")
+    Mc.connect(context.mc, "wsTicket=#{ticket}")
   end
 
-  # Starts the node again with the desktop app's bootstrap token (as `HalC2.Desktop` sets it).
+  # Starts the MC again with the desktop app's bootstrap token (as `HalC2.Desktop` sets it).
   defp desktop_boot(context, token) do
     Application.put_env(:hal_c2, :desktop_token, token)
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :desktop_token) end)
-    %{context | node: Node.restart(context.node), clients: %{}}
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
-  # Moves the node's boot time so its desktop token expires `ms_left` from now.
+  # Moves the MC's boot time so its desktop token expires `ms_left` from now.
   defp desktop_expires_in(ms_left),
     do: :sys.replace_state(HalC2.Auth, &put_in(&1.desktop.expires_at, now() + ms_left))
 
@@ -98,7 +98,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     input <> "." <> b64.(<<r::256, s::256>>)
   end
 
-  defp url(context, path), do: "http://127.0.0.1:#{context.node.port}#{path}"
+  defp url(context, path), do: "http://127.0.0.1:#{context.mc.port}#{path}"
 
   # Runs a mix task and returns what it printed.
   defp mix_output(task, args) do
@@ -127,49 +127,49 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
     case action do
       "create a pairing link" ->
-        Node.request(context.node, :post, "/api/auth/pairing-token", [json: %{}] ++ opts)
+        Mc.request(context.mc, :post, "/api/auth/pairing-token", [json: %{}] ++ opts)
 
       "list pairing links" ->
-        Node.request(context.node, :get, "/api/auth/pairing-links", opts)
+        Mc.request(context.mc, :get, "/api/auth/pairing-links", opts)
 
       "revoke a pairing link" ->
-        Node.request(
-          context.node,
+        Mc.request(
+          context.mc,
           :post,
           "/api/auth/pairing-links/revoke",
           [json: %{"id" => "pairing-0"}] ++ opts
         )
 
       "list authorized clients" ->
-        Node.request(context.node, :get, "/api/auth/clients", opts)
+        Mc.request(context.mc, :get, "/api/auth/clients", opts)
 
       "revoke a client" ->
-        Node.request(
-          context.node,
+        Mc.request(
+          context.mc,
           :post,
           "/api/auth/clients/revoke",
           [json: %{"sessionId" => "session-0"}] ++ opts
         )
 
       "revoke every other client" ->
-        Node.request(context.node, :post, "/api/auth/clients/revoke-others", [json: %{}] ++ opts)
+        Mc.request(context.mc, :post, "/api/auth/clients/revoke-others", [json: %{}] ++ opts)
     end
   end
 
   # --- pairing -------------------------------------------------------------------
 
-  step "a pairing token minted on the node", context do
-    Map.put(context, :token, HalC2.Auth.create_pairing_token(context.node.store))
+  step "a pairing token minted on the MC", context do
+    Map.put(context, :token, HalC2.Auth.create_pairing_token(context.mc.store))
   end
 
   step "a pairing token that a client already exchanged", context do
-    token = HalC2.Auth.create_pairing_token(context.node.store)
+    token = HalC2.Auth.create_pairing_token(context.mc.store)
     pair!(context, token)
     Map.put(context, :token, token)
   end
 
   step "a pairing token minted six minutes ago", context do
-    token = HalC2.Auth.create_pairing_token(context.node.store)
+    token = HalC2.Auth.create_pairing_token(context.mc.store)
     six_minutes_ago = now() - :timer.minutes(6)
 
     sql(
@@ -187,7 +187,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "a client exchanges it with its label, device type and OS", context do
     grant =
-      Node.exchange(context.node, context.token, %{
+      Mc.exchange(context.mc, context.token, %{
         "client_label" => "Work laptop",
         "client_device_type" => "desktop",
         "client_os" => "macOS"
@@ -197,7 +197,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
   end
 
   step ~r/^(?:a client|another client|the desktop app) exchanges (?:it|that token)$/, context do
-    Map.put(context, :grant, Node.exchange(context.node, context.token))
+    Map.put(context, :grant, Mc.exchange(context.mc, context.token))
   end
 
   step "the client receives a bearer access token that lasts 30 days", context do
@@ -227,9 +227,9 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     context
   end
 
-  step "the node is running", context do
+  step "the MC is running", context do
     assert {200, _, %{"authenticated" => false}} =
-             Node.request(context.node, :get, "/api/auth/session")
+             Mc.request(context.mc, :get, "/api/auth/session")
 
     context
   end
@@ -251,10 +251,10 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     Map.put(context, :token, token)
   end
 
-  step "the running node accepts it", context do
-    assert {200, %{"scope" => scope}} = Node.exchange(context.node, context.token)
+  step "the running MC accepts it", context do
+    assert {200, %{"scope" => scope}} = Mc.exchange(context.mc, context.token)
     assert String.split(scope) == @standard
-    assert {400, %{"error" => "invalid_grant"}} = Node.exchange(context.node, context.token)
+    assert {400, %{"error" => "invalid_grant"}} = Mc.exchange(context.mc, context.token)
     context
   end
 
@@ -263,7 +263,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     {context, token} =
       case credential do
         "a command-line pairing token" ->
-          {context, HalC2.Auth.create_pairing_token(context.node.store)}
+          {context, HalC2.Auth.create_pairing_token(context.mc.store)}
 
         "the desktop bootstrap token" ->
           {desktop_boot(context, "desktop-bootstrap-token"), "desktop-bootstrap-token"}
@@ -284,27 +284,27 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     expected =
       case scopes do
         "the standard scopes plus access:read, access:write and relay:write" -> @admin
-        "only the named scopes the node knows" -> ["orchestration:read", "relay:write"]
+        "only the named scopes the MC knows" -> ["orchestration:read", "relay:write"]
         "only " <> scope -> [scope]
         list -> String.split(list, ", ")
       end
 
     assert {200, _, %{"authenticated" => true, "scopes" => ^expected}} =
-             Node.request(context.node, :get, "/api/auth/session", bearer: context.access)
+             Mc.request(context.mc, :get, "/api/auth/session", bearer: context.access)
 
     context
   end
 
   # --- the desktop bootstrap token -------------------------------------------------
 
-  step "the desktop app started the node with a bootstrap token", context do
+  step "the desktop app started the MC with a bootstrap token", context do
     context = desktop_boot(context, "desktop-token")
     Map.merge(context, %{token: "desktop-token", access: pair!(context, "desktop-token")})
   end
 
   step "its window exchanges the token again an hour later", context do
     desktop_expires_in(:timer.hours(23))
-    Map.put(context, :grant, Node.exchange(context.node, context.token))
+    Map.put(context, :grant, Mc.exchange(context.mc, context.token))
   end
 
   step "it receives another administrative session", context do
@@ -315,7 +315,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     context
   end
 
-  step "the node booted more than 24 hours ago with a bootstrap token", context do
+  step "the MC booted more than 24 hours ago with a bootstrap token", context do
     context = desktop_boot(context, "desktop-token")
     desktop_expires_in(-1)
     Map.put(context, :token, "desktop-token")
@@ -348,7 +348,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "it asks for a socket ticket", context do
     response =
-      Node.request(context.node, :post, "/api/auth/websocket-ticket", bearer: context.access)
+      Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: context.access)
 
     Map.put(context, :response, response)
   end
@@ -362,32 +362,32 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "the long-lived token never appears in the socket URL", context do
     assert context.ticket != context.access
-    client = Node.connect(context.node, "wsTicket=#{context.ticket}")
+    client = Mc.connect(context.mc, "wsTicket=#{context.ticket}")
     # The ticket works once, and the access token is no ticket.
     assert {:error, 401} =
-             Node.ws_client().connect(context.node.port, "/ws?wsTicket=#{context.ticket}")
+             Mc.ws_client().connect(context.mc.port, "/ws?wsTicket=#{context.ticket}")
 
     assert {:error, 401} =
-             Node.ws_client().connect(context.node.port, "/ws?wsTicket=#{context.access}")
+             Mc.ws_client().connect(context.mc.port, "/ws?wsTicket=#{context.access}")
 
     World.put_client(context, "ticketed", client)
   end
 
-  # --- the node's access token on HTTP ---------------------------------------------
+  # --- the MC's access token on HTTP ---------------------------------------------
 
-  step "a local tool that read the node's access token", context do
+  step "a local tool that read the MC's access token", context do
     Map.put(context, :access, File.read!(Path.join(HalC2.Paths.data_dir(), "access-token")))
   end
 
-  step "it asks the node about its session with that token as a bearer", context do
+  step "it asks the MC about its session with that token as a bearer", context do
     Map.put(
       context,
       :response,
-      Node.request(context.node, :get, "/api/auth/session", bearer: context.access)
+      Mc.request(context.mc, :get, "/api/auth/session", bearer: context.access)
     )
   end
 
-  step "the node says it is authenticated with the administrative scopes", context do
+  step "the MC says it is authenticated with the administrative scopes", context do
     assert {200, _, %{"authenticated" => true, "scopes" => @admin} = body} = context.response
     assert body["sessionMethod"] == "bearer-access-token"
     context
@@ -395,29 +395,27 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "the tool can buy a socket ticket with that token", context do
     assert {200, _, %{"ticket" => ticket}} =
-             Node.request(context.node, :post, "/api/auth/websocket-ticket",
-               bearer: context.access
-             )
+             Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: context.access)
 
     Map.put(context, :ticket, ticket)
   end
 
-  step "a socket opened with that ticket may do anything the node's own token may", context do
+  step "a socket opened with that ticket may do anything the MC's own token may", context do
     assert {:ok, @admin} = HalC2.Auth.ticket_scopes(context.ticket)
-    client = Node.connect(context.node, "wsTicket=#{context.ticket}")
-    # The node's own token may watch the access list, which needs access:read.
-    client = Node.sub(client, 1, %{"type" => "authAccess"})
-    assert {%{"t" => "authAccess", "id" => 1}, client} = Node.await(client, &(&1["id"] == 1))
+    client = Mc.connect(context.mc, "wsTicket=#{context.ticket}")
+    # The MC's own token may watch the access list, which needs access:read.
+    client = Mc.sub(client, 1, %{"type" => "authAccess"})
+    assert {%{"t" => "authAccess", "id" => 1}, client} = Mc.await(client, &(&1["id"] == 1))
     World.put_client(context, "local", client)
   end
 
-  step "a local tool bought a socket ticket with the node's access token", context do
+  step "a local tool bought a socket ticket with the MC's access token", context do
     access = File.read!(Path.join(HalC2.Paths.data_dir(), "access-token"))
 
     assert {200, _, %{"ticket" => ticket}} =
-             Node.request(context.node, :post, "/api/auth/websocket-ticket", bearer: access)
+             Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: access)
 
-    World.put_client(context, "local", Node.connect(context.node, "wsTicket=#{ticket}"))
+    World.put_client(context, "local", Mc.connect(context.mc, "wsTicket=#{ticket}"))
   end
 
   step "an administrator lists the authorized clients", context do
@@ -428,7 +426,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     )
   end
 
-  step "the node's access token is not among them", context do
+  step "the MC's access token is not among them", context do
     # Only the administrator who asked is listed.
     assert {200, _, [%{"current" => true} = admin]} = context.response
     assert admin["sessionId"] != nil
@@ -437,20 +435,20 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "a client asks for a socket ticket with an unknown bearer token", context do
     response =
-      Node.request(context.node, :post, "/api/auth/websocket-ticket", bearer: "not-a-session")
+      Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: "not-a-session")
 
     Map.put(context, :response, response)
   end
 
-  step "it asks the node about its session", context do
+  step "it asks the MC about its session", context do
     Map.put(
       context,
       :response,
-      Node.request(context.node, :get, "/api/auth/session", bearer: context.access)
+      Mc.request(context.mc, :get, "/api/auth/session", bearer: context.access)
     )
   end
 
-  step "the node says it is authenticated with its scopes and expiry", context do
+  step "the MC says it is authenticated with its scopes and expiry", context do
     assert {200, _, %{"authenticated" => true, "scopes" => @standard} = body} = context.response
     assert body["sessionMethod"] == "bearer-access-token"
     {:ok, expires, _} = DateTime.from_iso8601(body["expiresAt"])
@@ -458,9 +456,9 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     context
   end
 
-  step "without a credential the node says it is not authenticated", context do
+  step "without a credential the MC says it is not authenticated", context do
     assert {200, _, %{"authenticated" => false} = body} =
-             Node.request(context.node, :get, "/api/auth/session")
+             Mc.request(context.mc, :get, "/api/auth/session")
 
     refute Map.has_key?(body, "scopes")
     context
@@ -479,18 +477,18 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "the client asks for a socket ticket with it", context do
     response =
-      Node.request(context.node, :post, "/api/auth/websocket-ticket", bearer: context.access)
+      Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: context.access)
 
     Map.put(context, :response, response)
   end
 
   step "the client's session still works", context do
     assert {200, _, %{"ticket" => ticket}} =
-             Node.request(context.node, :post, "/api/auth/websocket-ticket",
+             Mc.request(context.mc, :post, "/api/auth/websocket-ticket",
                bearer: context.access_token
              )
 
-    client = Node.connect(context.node, "wsTicket=#{ticket}")
+    client = Mc.connect(context.mc, "wsTicket=#{ticket}")
     World.put_client(context, "restarted", client)
   end
 
@@ -508,9 +506,9 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     case action do
       "write to a terminal" ->
         {reply, client} =
-          Node.call(
+          Mc.call(
             World.client(context, "device"),
-            context.node.environment,
+            context.mc.environment,
             "terminal.write",
             %{
               "threadId" => "thread-1",
@@ -526,7 +524,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     end
   end
 
-  step ~r/^the node refuses saying (?<scope>\S+) is required$/, %{args: [scope]} = context do
+  step ~r/^the MC refuses saying (?<scope>\S+) is required$/, %{args: [scope]} = context do
     case context do
       %{refusal: refusal} ->
         assert {:error, _,
@@ -549,7 +547,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     Map.put(context, :response, access_request(context, "list authorized clients", nil))
   end
 
-  step "the node answers that a credential is missing", context do
+  step "the MC answers that a credential is missing", context do
     assert {401, _,
             %{
               "_tag" => "EnvironmentAuthInvalidError",
@@ -562,7 +560,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "an administrator sends an access request with an invalid body", context do
     response =
-      Node.request(context.node, :post, "/api/auth/clients/revoke",
+      Mc.request(context.mc, :post, "/api/auth/clients/revoke",
         bearer: admin!(context),
         body: "{not json"
       )
@@ -570,18 +568,18 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     Map.put(context, :response, response)
   end
 
-  step "the node answers that the request is invalid", context do
+  step "the MC answers that the request is invalid", context do
     assert {400, _, %{"_tag" => "EnvironmentRequestInvalidError"}} = context.response
     context
   end
 
-  step "an administrator follows the node's access list", context do
+  step "an administrator follows the MC's access list", context do
     access = admin!(context)
     client = socket!(context, access)
-    client = Node.sub(client, 40, %{"type" => "authAccess"})
+    client = Mc.sub(client, 40, %{"type" => "authAccess"})
 
     {snapshot, client} =
-      Node.await(client, &(&1["t"] == "authAccess" and &1["event"]["type"] == "snapshot"))
+      Mc.await(client, &(&1["t"] == "authAccess" and &1["event"]["type"] == "snapshot"))
 
     context
     |> World.put_client("admin", client)
@@ -590,13 +588,13 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "a pairing link is created and then revoked", context do
     assert {200, _, %{"id" => id, "credential" => credential}} =
-             Node.request(context.node, :post, "/api/auth/pairing-token",
+             Mc.request(context.mc, :post, "/api/auth/pairing-token",
                bearer: context.admin,
                json: %{"label" => "Tablet"}
              )
 
     assert {200, _, %{"revoked" => true}} =
-             Node.request(context.node, :post, "/api/auth/pairing-links/revoke",
+             Mc.request(context.mc, :post, "/api/auth/pairing-links/revoke",
                bearer: context.admin,
                json: %{"id" => id}
              )
@@ -618,9 +616,9 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
       &(&1["t"] == "authAccess" and &1["event"]["type"] == type and match.(&1["event"]["payload"]))
     end
 
-    {up, client} = Node.await(client, event.("pairingLinkUpserted", &(&1["id"] == link)))
-    {down, client} = Node.await(client, event.("pairingLinkRemoved", &(&1["id"] == link)))
-    {paired, client} = Node.await(client, event.("clientUpserted", &(&1["sessionId"] == device)))
+    {up, client} = Mc.await(client, event.("pairingLinkUpserted", &(&1["id"] == link)))
+    {down, client} = Mc.await(client, event.("pairingLinkRemoved", &(&1["id"] == link)))
+    {paired, client} = Mc.await(client, event.("clientUpserted", &(&1["sessionId"] == device)))
     revisions = for frame <- [up, down, paired], do: frame["event"]["revision"]
     assert revisions == Enum.sort(revisions)
     assert up["event"]["payload"]["label"] == "Tablet"
@@ -628,7 +626,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
   end
 
   step "the revoked link no longer pairs", context do
-    assert {400, %{"error" => "invalid_grant"}} = Node.exchange(context.node, context.token)
+    assert {400, %{"error" => "invalid_grant"}} = Mc.exchange(context.mc, context.token)
     context
   end
 
@@ -638,22 +636,22 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
   end
 
   step "it asks to follow the access list", context do
-    client = Node.sub(World.client(context, "device"), 41, %{"type" => "authAccess"})
+    client = Mc.sub(World.client(context, "device"), 41, %{"type" => "authAccess"})
     World.put_client(context, "device", client)
   end
 
   step "only that subscription fails saying access:read is required", context do
     {frame, client} =
-      Node.await(World.client(context, "device"), &(&1["t"] == "error" and &1["id"] == 41))
+      Mc.await(World.client(context, "device"), &(&1["t"] == "error" and &1["id"] == 41))
 
     assert frame["reason"] == "access:read is required"
     World.put_client(context, "device", client)
   end
 
   step "the rest of its socket keeps working", context do
-    client = Node.config(World.client(context, "device"), 42)
-    client = Node.ws_client().send_json(client, %{"t" => "ping"})
-    {_, client} = Node.await(client, &(&1["t"] == "pong"))
+    client = Mc.config(World.client(context, "device"), 42)
+    client = Mc.ws_client().send_json(client, %{"t" => "ping"})
+    {_, client} = Mc.await(client, &(&1["t"] == "pong"))
     World.put_client(context, "device", client)
   end
 
@@ -676,7 +674,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     device = context.device
 
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context, "admin"),
         &(&1["t"] == "authAccess" and &1["event"]["type"] == "clientUpserted" and
             &1["event"]["payload"]["sessionId"] == device and &1["event"]["payload"]["connected"])
@@ -698,13 +696,13 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     for {label, agent} <- agents do
       form = %{
         "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
-        "subject_token" => HalC2.Auth.create_pairing_token(context.node.store),
+        "subject_token" => HalC2.Auth.create_pairing_token(context.mc.store),
         "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
         "client_label" => label
       }
 
       assert {200, _, _} =
-               Node.request(context.node, :post, "/oauth/token",
+               Mc.request(context.mc, :post, "/oauth/token",
                  form: form,
                  headers: [{"user-agent", agent}]
                )
@@ -713,7 +711,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     context
   end
 
-  step "the node records each as mobile, tablet and desktop", context do
+  step "the MC records each as mobile, tablet and desktop", context do
     types = Map.new(HalC2.Auth.clients(), &{&1["client"]["label"], &1["client"]["deviceType"]})
     assert types == %{"Phone" => "mobile", "Tablet" => "tablet", "Desktop" => "desktop"}
     context
@@ -723,7 +721,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     admin = admin!(context)
 
     assert {200, _, link} =
-             Node.request(context.node, :post, "/api/auth/pairing-token",
+             Mc.request(context.mc, :post, "/api/auth/pairing-token",
                bearer: admin,
                json: %{"label" => "Kitchen tablet", "scopes" => ["orchestration:read"]}
              )
@@ -735,7 +733,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     Map.put(
       context,
       :response,
-      Node.request(context.node, :get, "/api/auth/pairing-links", bearer: context.admin)
+      Mc.request(context.mc, :get, "/api/auth/pairing-links", bearer: context.admin)
     )
   end
 
@@ -766,7 +764,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     admin = admin!(context)
 
     response =
-      Node.request(context.node, :post, "/api/auth/clients/revoke",
+      Mc.request(context.mc, :post, "/api/auth/clients/revoke",
         bearer: admin,
         json: %{"sessionId" => session_id(admin)}
       )
@@ -774,7 +772,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     Map.merge(context, %{admin: admin, response: response})
   end
 
-  step "the node refuses because the current session cannot be revoked", context do
+  step "the MC refuses because the current session cannot be revoked", context do
     assert {403, _,
             %{
               "_tag" => "EnvironmentOperationForbiddenError",
@@ -791,7 +789,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "an administrator revokes every other client", context do
     response =
-      Node.request(context.node, :post, "/api/auth/clients/revoke-others", bearer: context.admin)
+      Mc.request(context.mc, :post, "/api/auth/clients/revoke-others", bearer: context.admin)
 
     Map.put(context, :response, response)
   end
@@ -802,14 +800,14 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     context
   end
 
-  step "the node reports how many it revoked", context do
+  step "the MC reports how many it revoked", context do
     assert {200, _, %{"revokedCount" => 2}} = context.response
     context
   end
 
   # --- access over the socket ------------------------------------------------------
 
-  step ~r/^it calls (?<method>hal-c2\.\w+) on the node$/, %{args: [method]} = context do
+  step ~r/^it calls (?<method>hal-c2\.\w+) on the MC$/, %{args: [method]} = context do
     {reply, context} = World.call(context, method, %{}, "device")
     Map.put(context, :refusal, reply)
   end
@@ -911,8 +909,8 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
   end
 
   # A member as its environment reaches the shell; nothing answers there, so a call
-  # that got past the node would fail as unavailable instead.
-  step "another member of the node's cluster", context do
+  # that got past the MC would fail as unavailable instead.
+  step "another member of the MC's cluster", context do
     member = %{"environmentId" => "env-member", "label" => "Member"}
     GenServer.cast(HalC2.Shell, {:peer_environment, :member@nowhere, member})
     :sys.get_state(HalC2.Shell)
@@ -924,15 +922,15 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     [first, _] = context.others
     payload = %{"sessionId" => session_id(first)}
     client = World.client(context, "admin")
-    {reply, client} = Node.call(client, context.member, method, payload)
+    {reply, client} = Mc.call(client, context.member, method, payload)
     context |> World.put_client("admin", client) |> Map.put(:refusal, reply)
   end
 
-  step "the call is refused because the caller's session lives on another node", context do
+  step "the call is refused because the caller's session lives on another MC", context do
     assert {:error, _,
             %{
               "_tag" => "EnvironmentOperationForbiddenError",
-              "reason" => "session_on_another_node"
+              "reason" => "session_on_another_mc"
             }} =
              context.refusal
 
@@ -950,7 +948,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   # --- older stores --------------------------------------------------------------
 
-  step "a node store written before client metadata was recorded", context do
+  step "an MC store written before client metadata was recorded", context do
     ExUnit.Callbacks.stop_supervised(HalC2.Auth)
     sql(context, "DROP TABLE auth_pairing")
     sql(context, "DROP TABLE auth_sessions")
@@ -965,7 +963,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
       created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)
     """)
 
-    access = "an-access-token-from-an-older-node"
+    access = "an-access-token-from-an-older-mc"
 
     sql(context, "INSERT INTO auth_pairing VALUES (?1, ?2)", [sha("old-pairing"), now() + 60_000])
 
@@ -1022,7 +1020,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "an administrator revokes that client", context do
     assert {200, _, %{"revoked" => true}} =
-             Node.request(context.node, :post, "/api/auth/clients/revoke",
+             Mc.request(context.mc, :post, "/api/auth/clients/revoke",
                bearer: admin!(context),
                json: %{"sessionId" => context.device}
              )
@@ -1031,15 +1029,13 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
   end
 
   step "the client's socket is closed as revoked", context do
-    assert {:close, 4401, "session revoked"} = Node.await_close(World.client(context, "device"))
+    assert {:close, 4401, "session revoked"} = Mc.await_close(World.client(context, "device"))
     context
   end
 
   step "it cannot reconnect with its old session", context do
     assert {401, _, _} =
-             Node.request(context.node, :post, "/api/auth/websocket-ticket",
-               bearer: context.access
-             )
+             Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: context.access)
 
     context
   end
@@ -1053,11 +1049,11 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "a client exchanges it asking only for orchestration:read", context do
     assert {200, %{"scope" => "orchestration:read", "access_token" => access}} =
-             Node.exchange(context.node, context.token, %{"scope" => "orchestration:read"})
+             Mc.exchange(context.mc, context.token, %{"scope" => "orchestration:read"})
 
     # Asking for a scope the credential does not grant is refused.
     assert {400, %{"error" => "invalid_scope"}} =
-             Node.exchange(context.node, HalC2.Auth.create_pairing_token(context.node.store), %{
+             Mc.exchange(context.mc, HalC2.Auth.create_pairing_token(context.mc.store), %{
                "scope" => "access:write"
              })
 
@@ -1066,7 +1062,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "a client that paired with a DPoP key", context do
     key = dpop_key()
-    token = HalC2.Auth.create_pairing_token(context.node.store)
+    token = HalC2.Auth.create_pairing_token(context.mc.store)
     proof = dpop_proof(key, "POST", url(context, "/oauth/token"))
 
     form = %{
@@ -1076,7 +1072,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     }
 
     assert {200, _, %{"token_type" => "DPoP", "access_token" => access, "expires_in" => 3600}} =
-             Node.request(context.node, :post, "/oauth/token",
+             Mc.request(context.mc, :post, "/oauth/token",
                form: form,
                headers: [{"dpop", proof}]
              )
@@ -1088,14 +1084,14 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     proof = dpop_proof(context.key, "GET", url(context, "/api/auth/session"), context.access)
 
     response =
-      Node.request(context.node, :get, "/api/auth/session",
+      Mc.request(context.mc, :get, "/api/auth/session",
         headers: [{"authorization", "DPoP #{context.access}"}, {"dpop", proof}]
       )
 
     Map.put(context, :response, response)
   end
 
-  step "the node accepts it", context do
+  step "the MC accepts it", context do
     assert {200, _,
             %{
               "authenticated" => true,
@@ -1114,24 +1110,24 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     forged = dpop_proof(dpop_key(), "POST", url(context, path), context.access)
 
     assert {401, _, %{"reason" => "invalid_credential", "dpopFailureReason" => "key_mismatch"}} =
-             Node.request(context.node, :post, path,
+             Mc.request(context.mc, :post, path,
                headers: [{"authorization", "DPoP #{context.access}"}, {"dpop", forged}]
              )
 
     # No proof at all, and the same token as a plain bearer.
     assert {401, _, _} =
-             Node.request(context.node, :post, path,
+             Mc.request(context.mc, :post, path,
                headers: [{"authorization", "DPoP #{context.access}"}]
              )
 
-    assert {401, _, _} = Node.request(context.node, :post, path, bearer: context.access)
+    assert {401, _, _} = Mc.request(context.mc, :post, path, bearer: context.access)
     # A proof is good once.
     proof = dpop_proof(context.key, "POST", url(context, path), context.access)
     headers = [{"authorization", "DPoP #{context.access}"}, {"dpop", proof}]
-    assert {200, _, %{"ticket" => _}} = Node.request(context.node, :post, path, headers: headers)
+    assert {200, _, %{"ticket" => _}} = Mc.request(context.mc, :post, path, headers: headers)
 
     assert {401, _, %{"dpopFailureReason" => "replay"}} =
-             Node.request(context.node, :post, path, headers: headers)
+             Mc.request(context.mc, :post, path, headers: headers)
 
     context
   end
@@ -1141,20 +1137,20 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     Application.put_env(:hal_c2, :dev_auth_token, token)
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :dev_auth_token) end)
 
-    %{context | node: Node.restart(context.node), clients: %{}}
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
     |> Map.put(:token, token)
   end
 
-  step "a browser presents it to a development node", context do
-    Map.put(context, :grant, Node.exchange(context.node, context.token))
+  step "a browser presents it to a development MC", context do
+    Map.put(context, :grant, Mc.exchange(context.mc, context.token))
   end
 
-  step "the node grants an administrative session", context do
+  step "the MC grants an administrative session", context do
     assert {200, %{"access_token" => access, "scope" => scope}} = context.grant
     assert String.split(scope) == @admin
     # The credential is itself a session, usable as a bearer.
     assert {200, _, %{"authenticated" => true, "scopes" => @admin}} =
-             Node.request(context.node, :get, "/api/auth/session", bearer: context.token)
+             Mc.request(context.mc, :get, "/api/auth/session", bearer: context.token)
 
     Map.put(context, :access, access)
   end
@@ -1163,29 +1159,29 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     dev = "dev-auth-" <> sha(context.token)
 
     assert {200, _, %{"revoked" => true}} =
-             Node.request(context.node, :post, "/api/auth/clients/revoke",
+             Mc.request(context.mc, :post, "/api/auth/clients/revoke",
                bearer: context.access,
                json: %{"sessionId" => dev}
              )
 
-    assert {400, %{"error" => "invalid_grant"}} = Node.exchange(context.node, context.token)
+    assert {400, %{"error" => "invalid_grant"}} = Mc.exchange(context.mc, context.token)
 
-    # Another worktree's node, with its own store and the same credential.
-    other = Node.restart(%{context.node | home: Node.tmp_dir(context.node, "worktree")})
-    assert {200, %{"scope" => scope}} = Node.exchange(other, context.token)
+    # Another worktree's MC, with its own store and the same credential.
+    other = Mc.restart(%{context.mc | home: Mc.tmp_dir(context.mc, "worktree")})
+    assert {200, %{"scope" => scope}} = Mc.exchange(other, context.token)
     assert String.split(scope) == @admin
-    %{context | node: other, clients: %{}}
+    %{context | mc: other, clients: %{}}
   end
 
   # --- the command line ------------------------------------------------------------
 
-  step "an operator lists sessions from the node's command line", context do
+  step "an operator lists sessions from the MC's command line", context do
     Map.put(context, :listed, mix_output(Mix.Tasks.HalC2.Auth, ["session", "list"]))
   end
 
   step "it sees the same clients as Connections settings", context do
     assert {200, _, clients} =
-             Node.request(context.node, :get, "/api/auth/clients", bearer: context.admin)
+             Mc.request(context.mc, :get, "/api/auth/clients", bearer: context.admin)
 
     listed = for line <- context.listed, do: line |> String.split("\t") |> hd()
     assert Enum.sort(listed) == Enum.sort(for c <- clients, do: c["sessionId"])
@@ -1199,7 +1195,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     assert ["Revoked " <> _] = mix_output(Mix.Tasks.HalC2.Auth, ["session", "revoke", id])
 
     assert {401, _, _} =
-             Node.request(context.node, :post, "/api/auth/websocket-ticket", bearer: other)
+             Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: other)
 
     listed = mix_output(Mix.Tasks.HalC2.Auth, ["session", "list"])
     refute Enum.any?(listed, &String.starts_with?(&1, id))

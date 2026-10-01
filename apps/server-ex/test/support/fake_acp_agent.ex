@@ -7,15 +7,15 @@ defmodule HalC2.Test.FakeAcp do
 
   `install/4` gives an instance its own fake: a directory with the script's
   `config.json` and `log.jsonl`, and an executable wrapper the instance's
-  `binaryPath` points at, so the node builds the command line itself. The fake is
+  `binaryPath` points at, so the MC builds the command line itself. The fake is
   kept under `context.fakes[instance]`; `context.provider` names the instance the
   scenario is about.
   """
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @script Path.expand("fake_acp_scripted.py", __DIR__)
   @pi_script Path.expand("fake_pi_rpc.py", __DIR__)
@@ -154,7 +154,7 @@ defmodule HalC2.Test.FakeAcp do
     for id <- @instances, do: HalC2.Acp.forget(id)
     ExUnit.Callbacks.on_exit(fn -> for id <- @instances, do: HalC2.Acp.forget(id) end)
 
-    dir = Node.tmp_dir(context.node, "fake-#{instance}")
+    dir = Mc.tmp_dir(context.mc, "fake-#{instance}")
     # OpenCode reports a version HAL-C2 supports unless the scenario says otherwise.
     config =
       if instance == "opencode", do: Map.put_new(config, "version", "1.14.19"), else: config
@@ -193,41 +193,41 @@ defmodule HalC2.Test.FakeAcp do
     install(context, "pi", config, Keyword.merge([script: @pi_script, turns: @pi_turns], opts))
   end
 
-  @doc "The services an ACP thread needs besides the node's own."
+  @doc "The services an ACP thread needs besides the MC's own."
   def services do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry},
         id: :acp_registry
       )
     )
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Pi.Registry}, id: :pi_registry)
     )
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Codex.Registry},
         id: :codex_registry
       )
     )
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Claude.Registry},
         id: :claude_registry
       )
     )
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec(
         {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
         id: :codex_supervisor
       )
     )
 
-    Node.ensure(HalC2.Acp.UrlAuth)
-    Node.ensure(HalC2.Orchestration.TurnWatch)
+    Mc.ensure(HalC2.Acp.UrlAuth)
+    Mc.ensure(HalC2.Orchestration.TurnWatch)
     :ok
   end
 
@@ -372,7 +372,7 @@ defmodule HalC2.Test.FakeAcp do
     context
   end
 
-  @doc "The provider entry of `instance` in the node's provider list, or nil."
+  @doc "The provider entry of `instance` in the MC's provider list, or nil."
   def entry(instance),
     do: Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
 
@@ -383,7 +383,7 @@ defmodule HalC2.Test.FakeAcp do
   end
 
   @doc """
-  Subscribes the scenario's socket to the node's config and returns
+  Subscribes the scenario's socket to the MC's config and returns
   `{providers, context}` from its first snapshot.
   """
   def open_config(context) do
@@ -391,9 +391,9 @@ defmodule HalC2.Test.FakeAcp do
 
     client =
       World.client(context)
-      |> Node.sub(id, %{"type" => "config", "node" => Atom.to_string(node())})
+      |> Mc.sub(id, %{"type" => "config", "mc" => Atom.to_string(node())})
 
-    {frame, client} = Node.await(client, &(&1["t"] == "config" and &1["id"] == id))
+    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == id))
     providers = frame["config"]["providers"]
 
     {providers,
@@ -412,7 +412,7 @@ defmodule HalC2.Test.FakeAcp do
       {context.providers, context}
     else
       {frame, client} =
-        Node.await(
+        Mc.await(
           World.client(context),
           &(&1["t"] == "config.providers" and &1["id"] == id and fun.(&1["providers"])),
           timeout

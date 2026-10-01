@@ -26,7 +26,7 @@ import {
   type ThreadWorld,
 } from "../threadWorld.ts";
 import { pressKey, snapshot } from "../world.ts";
-import { expectNodeReconnected } from "./launch.steps.ts";
+import { expectMcReconnected } from "./launch.steps.ts";
 
 type World = ReconnectWorld & ThreadWorld & LaunchWorld;
 
@@ -65,8 +65,8 @@ step("the client asks its launcher for a new socket ticket", async (ctx: World) 
 });
 
 step("it reconnects without the user doing anything", async (ctx: World) => {
-  // A client started on its own against a node (launch.feature).
-  if (ctx.node) return expectNodeReconnected(ctx);
+  // A client started on its own against an MC (launch.feature).
+  if (ctx.mc) return expectMcReconnected(ctx);
   const conn = connection(ctx);
   await conn.connected(2);
   expect(conn.phases).toEqual(["connecting", "connected", "reconnecting", "connected"]);

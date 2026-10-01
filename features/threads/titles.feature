@@ -40,39 +40,39 @@ Feature: Thread titles
     Then the title stays "Fix login"
     And the user is told "Failed to rename thread"
 
-  @node
+  @mc
   Scenario: The first message gives the thread a title
     Given a new thread titled "New thread"
     When the user sends "The login page loops after OAuth callback"
     Then the thread gets a generated title describing the login loop
 
-  @node
+  @mc
   Scenario: Title generation retries before giving up
     Given the title generator fails twice and then succeeds
     When the user sends the first message of a new thread
     Then the thread gets the generated title
     And no error is shown to the user
 
-  @node
+  @mc
   Scenario: A generated placeholder title is ignored
     Given the title generator answers "New thread"
     When the user sends the first message of a new thread
     Then the thread keeps its previous title
 
-  @node
+  @mc
   Scenario: Regenerating a title from the conversation
     Given "Fix login" has a conversation about rate limiting
     When the user asks for a new title
     Then the thread gets a title describing rate limiting
 
-  @node
+  @mc
   Scenario: Regenerating a title that comes out the same ends the regeneration
     Given the title generator answers "Fix login"
     When the user asks for a new title
     Then the thread keeps the title "Fix login"
     And the thread is no longer marked as regenerating
 
-  @node
+  @mc
   Scenario: Regenerating the title of an empty conversation does nothing
     Given the thread has no messages
     When the user asks for a new title
@@ -97,13 +97,13 @@ Feature: Thread titles
     When the user regenerates titles for the selection
     Then titles are regenerated for the two eligible threads
 
-  @node
+  @mc
   Scenario: The agent renames the thread it is working in
     Given the agent is working in "Fix login"
     When the agent renames its thread to "Fix OAuth callback loop"
     Then the thread is listed as "Fix OAuth callback loop"
 
-  @node
+  @mc
   Scenario: A rename that races a worktree move is rejected
     Given the thread's worktree changed after the client last saw it
     When a client updates the thread expecting the old worktree

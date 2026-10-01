@@ -2,7 +2,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   @moduledoc """
   Steps for `features/providers/provider-setup.feature`: status checks that never
   set anything up, updates run by the installer that owns a provider, and ACP
-  sign-in (`provider.auth.*`) shared by every client of the node.
+  sign-in (`provider.auth.*`) shared by every client of the MC.
 
   The ACP agent that signs in is Grok run as the fake agent of
   `HalC2.Test.AcpFixtures`; it asks the user to open a sign-in page
@@ -14,8 +14,8 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
   alias HalC2.Steps.Providers.Antigravity
   alias HalC2.Test.AcpFixtures, as: Acp
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @login [%{"id" => "acme-login", "name" => "Log in with Acme"}]
 
@@ -54,12 +54,12 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     sub = 2000 + System.unique_integer([:positive])
 
     client =
-      Node.sub(World.client(ctx, name), sub, %{
+      Mc.sub(World.client(ctx, name), sub, %{
         "type" => "config",
-        "node" => Atom.to_string(node())
+        "mc" => Atom.to_string(node())
       })
 
-    {frame, client} = Node.await(client, &(&1["t"] == "config" and &1["id"] == sub), 5_000)
+    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == sub), 5_000)
     {frame["config"]["providers"], World.put_client(ctx, name, client)}
   end
 
@@ -84,7 +84,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   # `homebrew/<name>.hold` is a pipe nobody wrote to, and moves the version to
   # `homebrew/<name>.upgrade` when that exists; `npm` logs it ran.
   defp homebrew(ctx, name, app_key, fake, format, version) do
-    home = ctx.node.home
+    home = ctx.mc.home
     brew = Path.join(home, "homebrew")
     fake = Path.expand("../../support/#{fake}", __DIR__)
     version_file = Path.join(brew, "#{name}.version")
@@ -130,7 +130,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   end
 
   defp brew_log(ctx) do
-    case File.read(Path.join(ctx.node.home, "brew.log")) do
+    case File.read(Path.join(ctx.mc.home, "brew.log")) do
       {:ok, text} -> String.split(text, "\n", trim: true)
       {:error, :enoent} -> []
     end
@@ -166,7 +166,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     signed_out_grok(context)
   end
 
-  step "the node checks its providers in the background", context do
+  step "the MC checks its providers in the background", context do
     HalC2.Acp.load()
     Map.put(context, :providers, HalC2.Environment.providers())
   end
@@ -180,7 +180,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
     assert Acp.requests(context, "grok", "authenticate") == []
     assert Acp.auth_server("grok") == nil
-    refute File.exists?(Path.join(context.node.home, "tools"))
+    refute File.exists?(Path.join(context.mc.home, "tools"))
     context
   end
 
@@ -204,7 +204,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     context |> homebrew_codex() |> Map.put(:compatibility, status)
   end
 
-  # The title is the client's label for the status the node reports.
+  # The title is the client's label for the status the MC reports.
   step "the provider shows {string}", %{args: [title]} = context do
     status = context.compatibility
     assert {status, title} in Map.values(@compatibility)
@@ -227,7 +227,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   step "Codex was installed with Homebrew and is outdated", context do
     ctx = homebrew_codex(context)
     # Its upgrade brings it to the latest release.
-    File.write!(Path.join(context.node.home, "homebrew/codex.upgrade"), "0.2.0")
+    File.write!(Path.join(context.mc.home, "homebrew/codex.upgrade"), "0.2.0")
     ctx
   end
 
@@ -251,7 +251,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
   step "a Claude update is running", context do
     ctx = homebrew_codex(context)
-    home = context.node.home
+    home = context.mc.home
     File.write!(Path.join(home, "homebrew/codex.upgrade"), "0.2.0")
     homebrew(ctx, "claude-code", :claude_command, "fake_claude.py", "%s (Claude Code)", "1.0.0")
 
@@ -329,8 +329,8 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     # The check offered Homebrew's upgrade.
     assert Acp.provider("codex")["versionAdvisory"]["updateCommand"] == "brew upgrade codex"
 
-    # Then Codex was installed again with npm, which the node has not reported yet.
-    home = context.node.home
+    # Then Codex was installed again with npm, which the MC has not reported yet.
+    home = context.mc.home
     real = Path.join(home, "npm/lib/node_modules/@openai/codex/bin/codex.js")
     File.mkdir_p!(Path.dirname(real))
     File.cp!(Path.join(home, "homebrew/Cellar/codex/0.1.0/bin/codex"), real)
@@ -359,7 +359,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
   step "no update command is offered for Claude", context do
     advisory = context.claude["versionAdvisory"]
-    # The node knows Claude is behind; it only has no updater to run.
+    # The MC knows Claude is behind; it only has no updater to run.
     assert advisory["status"] == "behind_latest"
     assert advisory["updateCommand"] == nil
     assert advisory["canUpdate"] == false
@@ -489,7 +489,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     Map.put(ctx, :sign_in, state)
   end
 
-  # The mobile app is another client of the node, answering over `provider.auth.respond`.
+  # The mobile app is another client of the MC, answering over `provider.auth.respond`.
   step "the user sends a response from the mobile app", context do
     %{"flowId" => flow_id, "interaction" => interaction} = context.sign_in
 
@@ -509,7 +509,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     ctx
   end
 
-  step "the response reaches the sign-in terminal on the node", context do
+  step "the response reaches the sign-in terminal on the MC", context do
     flow_id = context.sign_in["flowId"]
 
     {_, ctx} =
@@ -568,7 +568,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
   # --- managed runtimes ---------------------------------------------------------------
   #
-  # Antigravity is the provider whose runtime the node installs itself; its release,
+  # Antigravity is the provider whose runtime the MC installs itself; its release,
   # download and the older runtime already active come from antigravity_steps.exs.
 
   step "the user installs a managed provider runtime on one client", context do
@@ -649,12 +649,12 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
     shape = %{
       "type" => "providerInstall",
-      "node" => Atom.to_string(node()),
+      "mc" => Atom.to_string(node()),
       "instanceId" => "antigravity"
     }
 
-    client = Node.sub(World.client(ctx, name), sub, shape)
-    {_, client} = Node.await(client, &(&1["t"] == "providerInstall" and &1["id"] == sub))
+    client = Mc.sub(World.client(ctx, name), sub, shape)
+    {_, client} = Mc.await(client, &(&1["t"] == "providerInstall" and &1["id"] == sub))
 
     ctx
     |> World.put_client(name, client)
@@ -665,7 +665,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   defp install_states(ctx, name, done?, acc \\ []) do
     sub = ctx.install_subs[name]
     match = &(&1["t"] == "providerInstall" and &1["id"] == sub)
-    {frame, client} = Node.await(World.client(ctx, name), match, 15_000)
+    {frame, client} = Mc.await(World.client(ctx, name), match, 15_000)
     ctx = World.put_client(ctx, name, client)
     acc = [frame["state"] | acc]
 

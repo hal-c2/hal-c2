@@ -22,17 +22,17 @@ Feature: Project and environment identity
 
   Rule: Project icons
 
-    @node
+    @mc
     Scenario: A project's own favicon is served as its icon
       Given the checkout of "shop" has "public/favicon.svg"
       When a client asks for the icon of "shop"
       Then the favicon is served
 
-    @node
+    @mc
     Scenario: A project without a favicon has no icon to serve
       Given the checkout of "shop" has no favicon
       When a client asks for the icon of "shop"
-      Then the node answers that there is no icon
+      Then the MC answers that there is no icon
 
     @backlog @desktop @mobile
     Scenario Outline: A project without an icon shows a two-character monogram
@@ -116,28 +116,28 @@ Feature: Project and environment identity
 
   Rule: Environment themes
 
-    @node
+    @mc
     Scenario: Theme files in the environment's themes folder are offered to clients
       Given the HAL-C2 home of "laptop" has the theme file "themes/dusk.json"
       When a client connects to "laptop"
       Then the theme "dusk" is offered
 
-    @node
+    @mc
     Scenario: A new or changed theme file reaches connected clients
       Given a client is connected to "laptop"
       When the user adds the theme file "themes/sunset.json"
       Then the client is offered the theme "sunset" within a few seconds
 
-    @node
+    @mc
     Scenario: Removing a theme file withdraws the theme
       Given the theme "dusk" is offered
       When the user deletes "themes/dusk.json"
       Then "dusk" is no longer offered
 
-    @node
+    @mc
     Scenario Outline: Theme files that break the rules are skipped without an error
       Given the themes folder has <file>
-      When the node reads its themes
+      When the MC reads its themes
       Then that theme is not offered
       And the other themes are offered
 
@@ -151,10 +151,10 @@ Feature: Project and environment identity
         | a theme with the colour "red" instead of hex |
         | a theme without colours                    |
 
-    @node
+    @mc
     Scenario Outline: The themes folder is read only up to its limits
       Given the themes folder has <files>
-      When the node reads its themes
+      When the MC reads its themes
       Then <offered>
 
       Examples:

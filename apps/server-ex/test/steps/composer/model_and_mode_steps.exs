@@ -3,7 +3,7 @@ defmodule HalC2.Steps.Composer.ModelAndMode do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   # The runtime mode each permission level is, and what Codex is told for it.
   @modes %{

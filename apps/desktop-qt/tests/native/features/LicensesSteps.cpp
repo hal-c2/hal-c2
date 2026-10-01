@@ -65,14 +65,14 @@ void writeManifest(World& world) {
 }
 
 // Whether the scenario's manifest is missing ("the license list cannot be
-// loaded"), kept on the scenario's node.
+// loaded"), kept on the scenario's MC.
 struct Fixture {
   bool broken = false;
   bool written = false;
 };
 
 Fixture& fixture(World& world) {
-  return world.node.part<Fixture>();
+  return world.mc.part<Fixture>();
 }
 
 QVariantMap licenses(World& world) {
@@ -103,7 +103,7 @@ void open(World& world) {
     fixture(world).written = true;
   }
   if (world.shellSubscriptions() == 0) {
-    // The shell starts once a node has answered, even one since gone.
+    // The shell starts once an MC has answered, even one since gone.
     world.connect();
     world.sync();
   }

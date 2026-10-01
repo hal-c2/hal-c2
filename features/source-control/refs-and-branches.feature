@@ -19,7 +19,7 @@ Feature: Picking, switching and creating branches
   Background:
     Given a connected environment with a thread in the git project "shop" on the branch "feature/tax"
 
-  @node @desktop
+  @mc @desktop
   Scenario: The current and default branches come first
     Given "shop" has the branches "main", "feature/tax" and "feature/old"
     When the user opens the branch list
@@ -27,7 +27,7 @@ Feature: Picking, switching and creating branches
     And "main" is marked default and listed next
     And the other branches follow, most recently committed first
 
-  @node @desktop
+  @mc @desktop
   Scenario: Searching narrows the branch list
     # The scenario needs "feature/old" to exist before it can find it.
     Given "shop" has the branches "main", "feature/tax" and "feature/old"
@@ -46,50 +46,50 @@ Feature: Picking, switching and creating branches
     When the user scrolls to the end of the branch list
     Then the next page of branches is loaded
 
-  @node
+  @mc
   Scenario: Remote branches that mirror a local one are hidden unless asked for
     Given "main" and "origin/main" point at the same place
     When the user lists all refs
     Then "origin/main" is not listed on its own
     But it is listed when the user asks for matching remote refs too
 
-  @node
+  @mc
   Scenario: A branch checked out in another worktree says where
     Given "feature/old" is checked out in another worktree
     When the user lists branches
     Then "feature/old" is marked with that worktree's path
 
-  @node @desktop
+  @mc @desktop
   Scenario: Switching to a local branch
     When the user switches the thread to "main"
     Then the checkout is on "main"
     And the thread's branch reads "main"
 
-  @node
+  @mc
   Scenario: Switching to a remote branch makes a tracking branch
     Given "origin/feature/pay" exists and there is no local "feature/pay"
     When the user switches to "origin/feature/pay"
     Then a local "feature/pay" tracking "origin/feature/pay" is checked out
 
-  @node
+  @mc
   Scenario: A stale ref is never mistaken for a file
     Given a file is named "feature/gone" and the branch "feature/gone" no longer exists
     When the user switches to "feature/gone"
     Then the switch fails and the file is left as it was
 
-  @node @desktop
+  @mc @desktop
   Scenario: Creating a branch from the search text
     Given the user searched the branch list for "feature/pay"
     And no ref matches
     When the user creates it
     Then "feature/pay" is created and the checkout switches to it
 
-  @node
+  @mc
   Scenario: Creating a branch without switching to it
     When the user creates the branch "spike" without switching
     Then "spike" exists and the checkout stays on "feature/tax"
 
-  @node
+  @mc
   Scenario: A switch that would lose changes fails and says why
     Given uncommitted changes in "src/cart.ts" conflict with "main"
     When the user switches the thread to "main"
@@ -98,7 +98,7 @@ Feature: Picking, switching and creating branches
 
   @desktop
   Scenario: A switch that fails keeps the branch and says why
-    Given the node cannot switch the checkout: "Your local changes would be overwritten"
+    Given the MC cannot switch the checkout: "Your local changes would be overwritten"
     When the user switches the thread to "main"
     Then the user sees an "error" toast "Failed to switch ref." saying "Your local changes would be overwritten"
     And the checkout is on "feature/tax"

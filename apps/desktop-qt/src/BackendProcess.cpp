@@ -29,7 +29,7 @@ BackendProcess::BackendProcess(Options options, QObject* parent)
     }
     const QString how = status == QProcess::CrashExit ? QStringLiteral("crashed")
                                                        : QStringLiteral("normal exit");
-    // A host that dies after announcing took the node it started with it; say
+    // A host that dies after announcing took the MC it started with it; say
     // so instead of letting the shell reconnect forever.
     emit failed(m_announced
                     ? QStringLiteral("Desktop host exited (code %1, %2). Restart HAL-C2 to reconnect.")
@@ -53,7 +53,7 @@ void BackendProcess::stop() {
     return;
   }
   // Closing stdin is the host's signal that its parent is going away; it
-  // stops the node itself. Escalate only if it does not.
+  // stops the MC itself. Escalate only if it does not.
   m_process.closeWriteChannel();
   m_process.terminate();
   if (!m_process.waitForFinished(2000)) {
@@ -84,12 +84,12 @@ void BackendProcess::handleLine(const QByteArray& line) {
   const QString type = message.value(QStringLiteral("type")).toString();
   if (type == QStringLiteral("ready") && !m_announced) {
     m_announced = true;
-    const QJsonObject node = message.value(QStringLiteral("node")).toObject();
-    const QUrl origin(node.value(QStringLiteral("origin")).toString());
-    const QString token = node.value(QStringLiteral("token")).toString();
+    const QJsonObject mc = message.value(QStringLiteral("mc")).toObject();
+    const QUrl origin(mc.value(QStringLiteral("origin")).toString());
+    const QString token = mc.value(QStringLiteral("token")).toString();
     if (!origin.isValid() || origin.isEmpty() || token.isEmpty()) {
       m_reportedError = true;
-      emit failed(QStringLiteral("Desktop host announced no node to connect to."));
+      emit failed(QStringLiteral("Desktop host announced no MC to connect to."));
       return;
     }
     emit ready(origin, token);

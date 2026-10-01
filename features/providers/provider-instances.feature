@@ -16,7 +16,7 @@
 #   packages/contracts/src/rpc.ts (server.refreshProviders)
 #   apps/desktop-qt/src/native/ProviderSettingsInstances.cpp (rename, accent), ComposerModel.cpp (the picker's name and colour)
 
-@node
+@mc
 Feature: Provider instances
   A provider instance is one configured copy of a provider driver on an environment:
   its own name, account, environment variables and settings. Threads remember the
@@ -47,8 +47,8 @@ Feature: Provider instances
     When the user refreshes the provider "grok_work"
     Then only "grok_work" is checked again
 
-  Scenario: Provider changes reach every client of the node
-    Given two clients are connected to the node
+  Scenario: Provider changes reach every client of the MC
+    Given two clients are connected to the MC
     When the user enables Grok on one client
     Then the other client lists Grok as enabled
 
@@ -74,13 +74,13 @@ Feature: Provider instances
       | 9lives          | Instance ID must start with a letter and use only letters, digits, '-', or '_'. |
       | codex           | An instance named 'codex' already exists.                                 |
 
-  @desktop @mobile @backlog-mobile @backlog-node
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: An instance can be renamed and given an accent colour
     Given the instance "claudeAgent_work"
     When the user renames it to "Work Claude" and picks a green accent
     Then the model picker shows "Work Claude" in green
 
-  @desktop @mobile @backlog-mobile @backlog-node
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: Clearing the accent colour goes back to the default
     Given the instance "claudeAgent_work" has a green accent
     When the user clears the accent colour
@@ -101,15 +101,15 @@ Feature: Provider instances
   # Today apps/server-ex orchestration.ex driver_for/1 runs any unknown non-ACP instance on the
   # Codex runtime instead of refusing the turn.
   @backlog
-  Scenario: An instance whose driver this node does not have is kept and shown as unavailable
-    Given the settings contain the instance "acme_work" for a driver this node does not have
+  Scenario: An instance whose driver this MC does not have is kept and shown as unavailable
+    Given the settings contain the instance "acme_work" for a driver this MC does not have
     When the user opens the provider list
     Then "acme_work" is listed as unavailable with its configuration preserved
     And sending a message on "acme_work" is refused with a clear error
 
   Scenario: Sensitive environment variables are stored separately and never sent back
     When the user adds the sensitive variable "ANTHROPIC_AUTH_TOKEN" to a Claude instance
-    Then the value is stored in the node's secrets
+    Then the value is stored in the MC's secrets
     And clients only see that a value is set
 
   Scenario: A secret variable renamed without a new value has no value
@@ -147,7 +147,7 @@ Feature: Provider instances
     When the user picks "laptop" in provider settings
     Then the user is told to reconnect that device or pick another one
 
-  # The node honours providerHealthRefreshInterval (background_policy.ex, provider_usage_limits.ex
+  # The MC honours providerHealthRefreshInterval (background_policy.ex, provider_usage_limits.ex
   # interval/0); the settings row that edits it is @backlog in settings/providers-panel.feature.
   Scenario: The background health check interval can be changed or turned off
     When the user sets the provider health check interval to 0
@@ -227,7 +227,7 @@ Feature: Provider instances
   @backlog
   Scenario Outline: A second instance's checks read its own binary path
     Given a second <provider> instance "<instance>" with the binary path "<path>"
-    When the node checks the version, update and usage of "<instance>"
+    When the MC checks the version, update and usage of "<instance>"
     Then each check runs "<path>"
     And none runs the default instance's executable
 

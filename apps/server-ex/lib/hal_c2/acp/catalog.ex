@@ -1,6 +1,6 @@
 defmodule HalC2.Acp.Catalog do
   @moduledoc """
-  The official ACP Registry: searching it, and installing its agents into the node's
+  The official ACP Registry: searching it, and installing its agents into the MC's
   tools directory so `acpRegistry` provider instances can run them.
 
   The index is cached in `<home>/cache/acp-registry/registry.json`, refreshed on

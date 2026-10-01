@@ -1,6 +1,6 @@
 defmodule HalC2.Web.Wire do
   @moduledoc """
-  Thread entities as they go to clients. The node keeps the whole of a command's
+  Thread entities as they go to clients. The MC keeps the whole of a command's
   output, a file change's diff, and a handoff's history, but clients never show
   them, so they stay off the socket, as they do on the Node server
   (`WireProjection.ts`). A failed command keeps the fact that it failed. Subagent

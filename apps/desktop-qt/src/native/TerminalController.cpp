@@ -7,7 +7,7 @@
 #include <algorithm>
 
 #include "NativeShell.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -21,7 +21,7 @@ const NativeControllerRegistrar<TerminalController> registrar(QStringLiteral("te
 // TerminalWriteInput's limit.
 constexpr qsizetype kMaxWrite = 65536;
 // What the transcript keeps for a late Terminal, as the other clients cap their
-// buffers (docs/internals/terminal-runtime.md); the node keeps the full history.
+// buffers (docs/internals/terminal-runtime.md); the MC keeps the full history.
 constexpr qsizetype kMaxTranscript = 512 * 1024;
 
 int terminalNumber(const QString& terminalId) {
@@ -31,7 +31,7 @@ int terminalNumber(const QString& terminalId) {
   return match.hasMatch() ? match.captured(1).toInt() : -1;
 }
 
-// packages/shared terminalLabels: the node's label, else "Terminal N".
+// packages/shared terminalLabels: the MC's label, else "Terminal N".
 QString terminalLabel(const QString& terminalId, const QString& label) {
   if (!label.trimmed().isEmpty()) return label.trimmed();
   const int number = terminalNumber(terminalId);
@@ -67,7 +67,7 @@ QJsonObject TerminalPlace::launchInput(const QString& terminalId) const {
 
 // --- TerminalSession -------------------------------------------------------------
 
-TerminalSession::TerminalSession(NodeClient* client, const TerminalPlace& place, const QString& terminalId,
+TerminalSession::TerminalSession(McClient* client, const TerminalPlace& place, const QString& terminalId,
                                  QSize size, QObject* parent)
     : QObject(parent),
       m_client(client),
@@ -97,7 +97,7 @@ TerminalSession::~TerminalSession() {
 void TerminalSession::onFrame(const QJsonObject& frame) {
   const QString type = frame.value(QLatin1String("t")).toString();
   if (type == QLatin1String("error")) {
-    // The node refused the attach and forgot the shape.
+    // The MC refused the attach and forgot the shape.
     m_client->unsubscribe(m_subscription);
     m_subscription = 0;
     note(frame.value(QLatin1String("reason")).toString());
@@ -181,7 +181,7 @@ void TerminalSession::flushWrites() {
                    if (!self) return;
                    self->m_writing = false;
                    if (error) {
-                     // Typing into an ended shell, or no node: what was typed is gone.
+                     // Typing into an ended shell, or no MC: what was typed is gone.
                      self->m_pendingWrite.clear();
                      return;
                    }
@@ -315,7 +315,7 @@ void TerminalTabs::clear() {
 
 // --- TerminalController ------------------------------------------------------------
 
-TerminalController::TerminalController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+TerminalController::TerminalController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_tabs(this) {
   connect(store, &ShellStore::changed, this, &TerminalController::refresh);
@@ -431,7 +431,7 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
 }
 
 // Where the route's thread (a draft too) runs its terminals: its project root,
-// worktree and scripts, on an environment the node reaches.
+// worktree and scripts, on an environment the MC reaches.
 std::optional<TerminalPlace> TerminalController::placeOfWorkspace() const {
   auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
   if (!workspace || !workspace->place()) return std::nullopt;
@@ -496,7 +496,7 @@ void TerminalController::syncTabs() {
     it = it->terminals.isEmpty() ? ui.groups.erase(it) : std::next(it);
   }
   const QStringList drawer = drawerIds(ui, ids);
-  // The node closed the last one (here or elsewhere): the drawer hides.
+  // The MC closed the last one (here or elsewhere): the drawer hides.
   if (ui.open && m_attached && drawer.isEmpty()) ui.open = false;
   if (!drawer.contains(ui.active)) ui.active = drawer.isEmpty() ? QString() : drawer.constLast();
   const bool panel = drawer.size() < ids.size();
@@ -786,7 +786,7 @@ bool TerminalController::runScript(const QString& scriptId) {
 }
 
 // The lowest free `term-N`, as packages/shared nextTerminalId; ids still
-// closing stay taken until the node lets go of them.
+// closing stay taken until the MC lets go of them.
 QString TerminalController::nextTerminalId() const {
   QSet<int> used;
   for (const QString& id : terminalIds()) used.insert(terminalNumber(id));

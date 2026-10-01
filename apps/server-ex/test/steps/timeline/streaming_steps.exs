@@ -2,18 +2,18 @@ defmodule HalC2.Steps.Timeline.Streaming do
   @moduledoc """
   Steps for `features/timeline/streaming.feature`. The fake Codex writes its reply in
   pieces ("stream paragraphs", "stream a reply") and waits at a gate between pieces
-  until the step has seen what the node wrote so far, so every intermediate state of
+  until the step has seen what the MC wrote so far, so every intermediate state of
   the reply is observed without timers.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   step ~r/^the project streams responses by (?<mode>paragraph|turn)$/,
        %{args: [mode]} = context do
-    HalC2.Test.Node.ensure(HalC2.Settings)
+    HalC2.Test.Mc.ensure(HalC2.Settings)
     {settings, version} = HalC2.Settings.get()
     project = World.project(context).id
     overrides = %{project => %{"responseStreamingMode" => mode}}

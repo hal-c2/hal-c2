@@ -262,7 +262,7 @@ defmodule HalC2.WorktreeSetup do
     status.("checkout", "running", %{})
 
     # A client may name the worktree's temporary branch itself (the terminal client
-    # does); it is renamed like the node's own.
+    # does); it is renamed like the MC's own.
     temporary =
       case strategy["branch"] do
         nil -> temporary_branch(root, nil)

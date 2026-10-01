@@ -1,4 +1,4 @@
-// The thread menu (ThreadMenuController) and the node's side of its actions:
+// The thread menu (ThreadMenuController) and the MC's side of its actions:
 // features/threads/menu-actions.feature, and the thread menu's
 // scenarios in threads/menu-and-selection.feature, threads/archive-delete.feature,
 // threads/pinning-and-order.feature, threads/titles.feature and
@@ -19,9 +19,9 @@
 
 namespace {
 
-// What the node does with the menu's commands and moves.
+// What the MC does with the menu's commands and moves.
 struct FakeThreadMenu {
-  // Whether the node's rows follow the thread commands it accepts, as the real
+  // Whether the MC's rows follow the thread commands it accepts, as the real
   // projection does; scenarios about the list turn it on.
   bool project = false;
   // hal-c2.moveDestinations' answer, and how hal-c2.moveThread answers.
@@ -34,12 +34,12 @@ struct FakeThreadMenu {
   bool confirmAsked = false;  // the scenario turned the question on itself
 };
 
-void projectCommand(FakeNode& node, const QJsonObject& command) {
-  if (!node.part<FakeThreadMenu>().project) return;
+void projectCommand(FakeMc& mc, const QJsonObject& command) {
+  if (!mc.part<FakeThreadMenu>().project) return;
   const QString type = command.value(QLatin1String("type")).toString();
   const QString id = command.value(QLatin1String("threadId")).toString();
-  if (!node.threads.contains(id)) return;
-  QJsonObject& row = node.threads[id];
+  if (!mc.threads.contains(id)) return;
+  QJsonObject& row = mc.threads[id];
   const QString now = QStringLiteral("2026-09-23T10:00:00Z");
   if (type == QLatin1String("thread.pin")) {
     row.insert(QStringLiteral("pinnedAt"), now);
@@ -66,50 +66,50 @@ void projectCommand(FakeNode& node, const QJsonObject& command) {
   } else if (type == QLatin1String("thread.unarchive")) {
     row.remove(QStringLiteral("archivedAt"));
   } else if (type == QLatin1String("thread.delete")) {
-    QJsonObject gone = node.threads.take(id);
+    QJsonObject gone = mc.threads.take(id);
     gone.insert(QStringLiteral("deletedAt"), now);
-    node.sendRow(id, gone);
+    mc.sendRow(id, gone);
     return;
   } else {
     return;
   }
-  node.sendRow(id, row);
+  mc.sendRow(id, row);
 }
 
-const FakeNode::Extension threadMenu([](FakeNode& node) {
-  node.effects.append([&node](const QJsonObject& command) { projectCommand(node, command); });
-  node.onRpc(QStringLiteral("hal-c2.moveDestinations"), [&node](const FakeNode::Rpc& rpc) {
-    node.reply(rpc, node.part<FakeThreadMenu>().destinations);
+const FakeMc::Extension threadMenu([](FakeMc& mc) {
+  mc.effects.append([&mc](const QJsonObject& command) { projectCommand(mc, command); });
+  mc.onRpc(QStringLiteral("hal-c2.moveDestinations"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.reply(rpc, mc.part<FakeThreadMenu>().destinations);
   });
-  node.onRpc(QStringLiteral("hal-c2.moveThread"), [&node](const FakeNode::Rpc& rpc) {
-    FakeThreadMenu& fake = node.part<FakeThreadMenu>();
+  mc.onRpc(QStringLiteral("hal-c2.moveThread"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeThreadMenu& fake = mc.part<FakeThreadMenu>();
     fake.moves.append(rpc.payload);
-    if (!fake.refusal.isEmpty()) return node.refuse(rpc, fake.refusal);
+    if (!fake.refusal.isEmpty()) return mc.refuse(rpc, fake.refusal);
     if (!fake.confirmNote.isEmpty() && !rpc.payload.value(QLatin1String("confirmed")).toBool()) {
-      return node.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("confirm")},
+      return mc.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("confirm")},
                                          {QStringLiteral("message"), QStringLiteral("Confirm the move")},
                                          {QStringLiteral("notes"), QJsonArray{fake.confirmNote}}});
     }
     const QString id = rpc.payload.value(QLatin1String("threadId")).toString();
     const QString machine = rpc.payload.value(QLatin1String("machine")).toString();
-    const QString title = node.threads.value(id).value(QLatin1String("title")).toString();
-    node.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("moved")},
+    const QString title = mc.threads.value(id).value(QLatin1String("title")).toString();
+    mc.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("moved")},
                                 {QStringLiteral("threadId"), id},
                                 {QStringLiteral("machine"), machine},
-                                {QStringLiteral("environmentId"), node.peers.key(machine)},
+                                {QStringLiteral("environmentId"), mc.peers.key(machine)},
                                 {QStringLiteral("message"), QStringLiteral("%1 moved to %2.").arg(title, machine)}});
   });
 });
 
 FakeThreadMenu& fake(World& world) {
-  return world.node.part<FakeThreadMenu>();
+  return world.mc.part<FakeThreadMenu>();
 }
 
 // A thread by key (`env-a:t1`) or by title.
 QString keyOf(World& world, const QString& thread) {
   if (thread.contains(QLatin1Char(':'))) return thread;
-  for (auto row = world.node.threads.cbegin(); row != world.node.threads.cend(); ++row) {
-    if (row.value().value(QLatin1String("title")).toString() == thread) return world.node.environmentId + QLatin1Char(':') + row.key();
+  for (auto row = world.mc.threads.cbegin(); row != world.mc.threads.cend(); ++row) {
+    if (row.value().value(QLatin1String("title")).toString() == thread) return world.mc.environmentId + QLatin1Char(':') + row.key();
   }
   fail(QStringLiteral("no thread is titled \"%1\"").arg(thread));
 }
@@ -145,7 +145,7 @@ void pick(World& world, const QString& id) {
 }
 
 void answer(World& world, bool accepted) {
-  world.sync();  // the node's answer can ask it
+  world.sync();  // the MC's answer can ask it
   const QVariant question = world.state(QStringLiteral("confirmation"));
   expect(question.typeId() == QMetaType::QVariantMap, QStringLiteral("no question is asked"));
   world.bridge().dispatch(QStringLiteral("confirmation.answer"),
@@ -188,9 +188,9 @@ QJsonObject project(const QString& id) {
 }
 
 void updateRow(World& world, const QString& id, const std::function<void(QJsonObject&)>& change) {
-  QJsonObject& row = world.node.threads[id];
+  QJsonObject& row = world.mc.threads[id];
   change(row);
-  world.node.sendRow(id, row);
+  world.mc.sendRow(id, row);
   world.sync();
 }
 
@@ -218,29 +218,29 @@ const Steps steps([] {
 
   // Backgrounds.
   step(QStringLiteral("a connected environment with the thread %1 on the branch %1 in the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.projects.insert(c[2], project(c[2]));
-    world.node.projects.insert(QStringLiteral("docs"), project(QStringLiteral("docs")));
+    world.mc.projects.insert(c[2], project(c[2]));
+    world.mc.projects.insert(QStringLiteral("docs"), project(QStringLiteral("docs")));
     QJsonObject row = thread(QStringLiteral("t1"), c[0], c[2], QStringLiteral("2026-09-23T09:00:00Z"));
     row.insert(QStringLiteral("branch"), c[1]);
-    world.node.threads.insert(QStringLiteral("t1"), row);
-    world.node.threads.insert(QStringLiteral("t9"), thread(QStringLiteral("t9"), QStringLiteral("Write docs"), QStringLiteral("docs"), QStringLiteral("2026-09-23T08:00:00Z")));
+    world.mc.threads.insert(QStringLiteral("t1"), row);
+    world.mc.threads.insert(QStringLiteral("t9"), thread(QStringLiteral("t9"), QStringLiteral("Write docs"), QStringLiteral("docs"), QStringLiteral("2026-09-23T08:00:00Z")));
     world.connect();
-    view(world, keyOf(world, QStringLiteral("t1").prepend(world.node.environmentId + QLatin1Char(':'))));
+    view(world, keyOf(world, QStringLiteral("t1").prepend(world.mc.environmentId + QLatin1Char(':'))));
   });
   step(QStringLiteral("a connected environment with the idle thread %1(?: in the project %1)?").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).project = true;
     const QString projectId = c.value(1).isEmpty() ? QStringLiteral("shop") : c[1];
-    world.node.projects.insert(projectId, project(projectId));
-    world.node.threads.insert(QStringLiteral("t1"), thread(QStringLiteral("t1"), c[0], projectId, QStringLiteral("2026-09-23T09:00:00Z")));
+    world.mc.projects.insert(projectId, project(projectId));
+    world.mc.threads.insert(QStringLiteral("t1"), thread(QStringLiteral("t1"), c[0], projectId, QStringLiteral("2026-09-23T09:00:00Z")));
     world.connect();
-    view(world, world.node.environmentId + QStringLiteral(":t1"));
+    view(world, world.mc.environmentId + QStringLiteral(":t1"));
   });
   step(QStringLiteral("a connected environment with the active threads %1, %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).project = true;
-    world.node.projects.insert(QStringLiteral("shop"), project(QStringLiteral("shop")));
+    world.mc.projects.insert(QStringLiteral("shop"), project(QStringLiteral("shop")));
     for (int index = 0; index < 3; ++index) {
       const QString id = QStringLiteral("t%1").arg(index + 1);
-      world.node.threads.insert(id, thread(id, c[index], QStringLiteral("shop"), QStringLiteral("2026-09-23T09:0%1:00Z").arg(5 - index)));
+      world.mc.threads.insert(id, thread(id, c[index], QStringLiteral("shop"), QStringLiteral("2026-09-23T09:0%1:00Z").arg(5 - index)));
     }
     world.connect();
     world.sync();
@@ -288,12 +288,12 @@ const Steps steps([] {
   });
   step(QStringLiteral("the environment does not support (snoozing or pinning|title regeneration)"), [](World& world, const Captures& c, const Table&) {
     if (c[0] == QLatin1String("title regeneration")) {
-      world.node.capabilities.insert(QStringLiteral("threadTitleRegeneration"), false);
+      world.mc.capabilities.insert(QStringLiteral("threadTitleRegeneration"), false);
     } else {
-      world.node.capabilities.insert(QStringLiteral("threadSnooze"), false);
-      world.node.capabilities.insert(QStringLiteral("threadPinning"), false);
+      world.mc.capabilities.insert(QStringLiteral("threadSnooze"), false);
+      world.mc.capabilities.insert(QStringLiteral("threadPinning"), false);
     }
-    world.node.sendSnapshot();
+    world.mc.sendSnapshot();
     world.sync();
   });
   step(QStringLiteral("snoozing and pinning are not offered"), [](World& world, const Captures&, const Table&) {
@@ -348,11 +348,11 @@ const Steps steps([] {
     expect(world.clipboard == expected, QStringLiteral("the clipboard holds \"%1\"").arg(world.clipboard));
   });
   step(QStringLiteral("%1 has no workspace path").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString projectId = world.node.threads.value(idOf(world, c[0])).value(QLatin1String("projectId")).toString();
-    QJsonObject row = world.node.projects.value(projectId);
+    const QString projectId = world.mc.threads.value(idOf(world, c[0])).value(QLatin1String("projectId")).toString();
+    QJsonObject row = world.mc.projects.value(projectId);
     row.insert(QStringLiteral("workspaceRoot"), QString());
-    world.node.projects.insert(projectId, row);
-    world.node.sendRow(projectId, row, QStringLiteral("project"));
+    world.mc.projects.insert(projectId, row);
+    world.mc.sendRow(projectId, row, QStringLiteral("project"));
     world.sync();
   });
   step(QStringLiteral("the clipboard cannot be written"), [](World& world, const Captures&, const Table&) {
@@ -374,7 +374,7 @@ const Steps steps([] {
     pick(world, QStringLiteral("filter-by-project"));
   });
   step(QStringLiteral("the user shows all projects again"), [](World& world, const Captures&, const Table&) {
-    openMenu(world, QStringLiteral("env-a:t1").replace(QStringLiteral("env-a"), world.node.environmentId));
+    openMenu(world, QStringLiteral("env-a:t1").replace(QStringLiteral("env-a"), world.mc.environmentId));
     const auto entry = item(world, QStringLiteral("filter-by-project"));
     expect(entry && entry->value(QStringLiteral("label")) == QLatin1String("Show all projects"), QStringLiteral("the menu is %1").arg(show(items(world))));
     pick(world, QStringLiteral("filter-by-project"));
@@ -438,8 +438,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 stays pinned until the user confirms").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(world.node.commands.isEmpty() && sectionOf(world, keyOf(world, c[0])) == QLatin1String("pinned"),
-           QStringLiteral("the node has %1").arg(world.describeCommands()));
+    expect(world.mc.commands.isEmpty() && sectionOf(world, keyOf(world, c[0])) == QLatin1String("pinned"),
+           QStringLiteral("the MC has %1").arg(world.describeCommands()));
     answer(world, true);
     world.waitFor([&] { return sectionOf(world, keyOf(world, c[0])) == QLatin1String("active"); }, QStringLiteral("the thread to be unpinned"));
   });
@@ -455,19 +455,19 @@ const Steps steps([] {
                   [&] { return QStringLiteral("%1 in %2; it is in \"%3\"").arg(c[0], section, sectionOf(world, keyOf(world, c[0]))); });
   });
   step(QStringLiteral("every connected device shows %1 as pinned").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(world.node.threads.value(idOf(world, c[0])).contains(QLatin1String("pinnedAt")), QStringLiteral("the node's row is not pinned"));
+    expect(world.mc.threads.value(idOf(world, c[0])).contains(QLatin1String("pinnedAt")), QStringLiteral("the MC's row is not pinned"));
   });
   step(QStringLiteral("%1 is the top remaining thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString projectId = world.node.threads.value(QStringLiteral("t1")).value(QLatin1String("projectId")).toString();
+    const QString projectId = world.mc.threads.value(QStringLiteral("t1")).value(QLatin1String("projectId")).toString();
     const QJsonObject row = thread(QStringLiteral("t2"), c[0], projectId, QStringLiteral("2026-09-23T08:00:00Z"));
-    world.node.threads.insert(QStringLiteral("t2"), row);
-    world.node.sendRow(QStringLiteral("t2"), row);
+    world.mc.threads.insert(QStringLiteral("t2"), row);
+    world.mc.sendRow(QStringLiteral("t2"), row);
     world.sync();
   });
   step(QStringLiteral("%1 is an older thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonObject row = thread(QStringLiteral("t3"), c[0], c[1], QStringLiteral("2026-09-23T07:00:00Z"));
-    world.node.threads.insert(QStringLiteral("t3"), row);
-    world.node.sendRow(QStringLiteral("t3"), row);
+    world.mc.threads.insert(QStringLiteral("t3"), row);
+    world.mc.sendRow(QStringLiteral("t3"), row);
     world.sync();
   });
   step(QStringLiteral("%1 opens").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -521,10 +521,10 @@ const Steps steps([] {
     world.setTime(world.now().addSecs(5));
   });
   step(QStringLiteral("the change can no longer be undone"), [](World& world, const Captures&, const Table&) {
-    const qsizetype before = world.node.commands.size();
+    const qsizetype before = world.mc.commands.size();
     world.native().controller<ThreadMenuController>()->undo();
     world.sync();
-    expect(world.node.commands.size() == before, QStringLiteral("the node has %1").arg(world.describeCommands()));
+    expect(world.mc.commands.size() == before, QStringLiteral("the MC has %1").arg(world.describeCommands()));
   });
 
   // Viewing, renaming, forking.
@@ -538,24 +538,24 @@ const Steps steps([] {
       return state.value(QStringLiteral("threadTitle")) == c[0] && state.value(QStringLiteral("renameRequestId")).toInt() > 0;
     }, [&] { return QStringLiteral("the header is %1").arg(show(world.state(QStringLiteral("workspace")))); });
   });
-  step(QStringLiteral("the node is asked to fork %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to fork %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    for (const QJsonObject& command : std::as_const(world.node.commands)) {
+    for (const QJsonObject& command : std::as_const(world.mc.commands)) {
       if (command.value(QLatin1String("type")) == QLatin1String("thread.fork") &&
           command.value(QLatin1String("sourceThreadId")) == c[0] &&
           at(command.toVariantMap(), QStringLiteral("sourcePoint.type")) == QLatin1String("latest_stable")) {
         return;
       }
     }
-    fail(QStringLiteral("the node has %1").arg(world.describeCommands()));
+    fail(QStringLiteral("the MC has %1").arg(world.describeCommands()));
   });
   step(QStringLiteral("the window shows the fork"), [](World& world, const Captures&, const Table&) {
     world.sync();
     QString target;
-    for (const QJsonObject& command : std::as_const(world.node.commands)) {
+    for (const QJsonObject& command : std::as_const(world.mc.commands)) {
       if (command.value(QLatin1String("type")) == QLatin1String("thread.fork")) target = command.value(QLatin1String("targetThreadId")).toString();
     }
-    const QString key = world.node.environmentId + QLatin1Char(':') + target;
+    const QString key = world.mc.environmentId + QLatin1Char(':') + target;
     expect(!target.isEmpty() && world.native().controller<NavigationController>()->threadKey() == key,
            QStringLiteral("the route is %1").arg(show(world.state(QStringLiteral("route")))));
   });
@@ -589,9 +589,9 @@ const Steps steps([] {
   });
 
   // Moving.
-  step(QStringLiteral("the node can move %1 to %1(?: and to %1, which is offline)?(?: once told %1)?(?: but refuses with %1)?").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC can move %1 to %1(?: and to %1, which is offline)?(?: once told %1)?(?: but refuses with %1)?").arg(q), [](World& world, const Captures& c, const Table&) {
     FakeThreadMenu& move = fake(world);
-    move.destinations.append(QJsonObject{{QStringLiteral("machine"), c[1]}, {QStringLiteral("environmentId"), world.node.peers.key(c[1])},
+    move.destinations.append(QJsonObject{{QStringLiteral("machine"), c[1]}, {QStringLiteral("environmentId"), world.mc.peers.key(c[1])},
                                          {QStringLiteral("online"), true}, {QStringLiteral("projects"), QJsonArray()}});
     if (!c.value(2).isEmpty()) {
       move.destinations.append(QJsonObject{{QStringLiteral("machine"), c[2]}, {QStringLiteral("environmentId"), QStringLiteral("env-c")},
@@ -600,7 +600,7 @@ const Steps steps([] {
     move.confirmNote = c.value(3);
     move.refusal = c.value(4);
   });
-  step(QStringLiteral("the node is asked to move %1 to %1( confirmed)?").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to move %1 to %1( confirmed)?").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
       for (const QJsonObject& move : std::as_const(fake(world).moves)) {
         if (move.value(QLatin1String("threadId")) == c[0] && move.value(QLatin1String("machine")) == c[1] &&

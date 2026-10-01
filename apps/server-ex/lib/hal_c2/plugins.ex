@@ -1,6 +1,6 @@
 defmodule HalC2.Plugins do
   @moduledoc """
-  Node plugins: Elixir source files in `<home>/plugins/*.ex` whose modules implement
+  MC plugins: Elixir source files in `<home>/plugins/*.ex` whose modules implement
   one of the plugin behaviours (`HalC2.Plugins.Kind`): provider adapters, MCP tool
   packs, git hosts, notification channels and text-generation backends.
 
@@ -10,7 +10,7 @@ defmodule HalC2.Plugins do
   warning.
 
   A plugin is off until the user enables it. What is enabled, and each plugin's
-  settings, live in the node's settings document under `plugins.<id>`
+  settings, live in the MC's settings document under `plugins.<id>`
   (`%{"enabled", "settings"}`), so they survive restarts and reach every client
   with the settings push; secret fields sit in `<home>/secrets` with a marker in
   the document. An enabled plugin runs under its own supervisor: a crash restarts
@@ -27,13 +27,13 @@ defmodule HalC2.Plugins do
   A plugin's manifest may ask for `permissions` (`[%{id, label}]`); enabling it
   grants them, recorded under `plugins.<id>.granted` and shown in the listing.
 
-  Watchers (`subscribe/1`) get `{:hal_c2_plugins, node, list}` whenever the list changes.
+  Watchers (`subscribe/1`) get `{:hal_c2_plugins, mc, list}` whenever the list changes.
   """
 
   use GenServer
   require Logger
 
-  # The plugin API this node offers; a plugin's manifest names the one it was built for.
+  # The plugin API this MC offers; a plugin's manifest names the one it was built for.
   @api_version 1
   @marker "••••••"
   @max_restarts 3
@@ -51,7 +51,7 @@ defmodule HalC2.Plugins do
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  @doc "The plugin API version this node offers."
+  @doc "The plugin API version this MC offers."
   def api_version, do: @api_version
 
   @doc "Serves `plugins.<method>` (`HalC2.Rpc`)."
@@ -64,9 +64,9 @@ defmodule HalC2.Plugins do
   def handle("saveSettings", %{"id" => id, "settings" => %{} = settings}),
     do: GenServer.call(__MODULE__, {:save_settings, id, settings})
 
-  def handle(method, _input), do: {:error, "plugins.#{method} is not served by this node yet"}
+  def handle(method, _input), do: {:error, "plugins.#{method} is not served by this MC yet"}
 
-  @doc "Sends `{:hal_c2_plugins, node, list}` to `pid` on every change; returns the list."
+  @doc "Sends `{:hal_c2_plugins, mc, list}` to `pid` on every change; returns the list."
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
 
   # --- contributions ------------------------------------------------------------------
@@ -133,7 +133,7 @@ defmodule HalC2.Plugins do
   @doc """
   The provider adapter behind a provider instance: `{:ok, driver, module}`,
   `{:missing, driver}` when no running plugin serves its driver, `:none` when no
-  provider plugin runs at all, or nil when plugins are not running (the node's
+  provider plugin runs at all, or nil when plugins are not running (the MC's
   built-in routing applies). ACP agents share the bundled "acp" adapter, and their
   driver is the instance's own id.
   """
@@ -255,7 +255,7 @@ defmodule HalC2.Plugins do
 
   # As the TS server shows an instance whose driver this build lacks.
   defp unavailable(id, driver, config) do
-    reason = "The provider plugin for \"#{driver}\" is not installed or not enabled on this node."
+    reason = "The provider plugin for \"#{driver}\" is not installed or not enabled on this MC."
 
     %{
       "instanceId" => id,
@@ -339,7 +339,7 @@ defmodule HalC2.Plugins do
   defp json(value), do: value |> JSON.encode!() |> JSON.decode!()
 
   @doc false
-  # The plugin's process, started by its supervisor; the node watches it for crashes.
+  # The plugin's process, started by its supervisor; the MC watches it for crashes.
   def start_worker(id, module, settings) do
     with {:ok, pid} <- module.start_link(settings) do
       GenServer.cast(__MODULE__, {:worker, id, pid})
@@ -455,7 +455,7 @@ defmodule HalC2.Plugins do
 
   @impl true
   # A client may turn plugins on or off by writing the settings document itself.
-  def handle_info({:hal_c2_settings, _node, _settings}, state),
+  def handle_info({:hal_c2_settings, _mc, _settings}, state),
     do: {:noreply, state |> reconcile() |> push()}
 
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
@@ -627,11 +627,11 @@ defmodule HalC2.Plugins do
 
             is_integer(api) and api < @api_version ->
               {:incompatible,
-               "Built for plugin API #{api}, which this node no longer offers (it offers #{@api_version})."}
+               "Built for plugin API #{api}, which this MC no longer offers (it offers #{@api_version})."}
 
             true ->
               {:incompatible,
-               "Needs plugin API #{inspect(api)}. Update the node first (it offers #{@api_version})."}
+               "Needs plugin API #{inspect(api)}. Update the MC first (it offers #{@api_version})."}
           end
 
         %{

@@ -33,7 +33,7 @@ before the cursor moves past it:
 - **carry**: new or changed behaviour HAL-C2 should have. Write or edit scenarios.
 - **covered**: the ledger already says it. Add the PR URL to that file's `# Sources:`. If
   upstream changed the behaviour, change the scenario, and mark it `@backlog` only if the
-  node or QML no longer does what it now says.
+  the MC or QML no longer does what it now says.
 - **drop**: behaviour HAL-C2 decides not to have. Write it as a `@dropped` scenario with the
   reason in a comment, so the decision can be reviewed.
 - **skip**: nothing user-observable. CI, release and build tooling, tests, refactors,
@@ -52,14 +52,14 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
   behaviour lives (`threads/`, `providers/claude.feature`, ...). No `upstream-*.feature`.
 - **Search before writing.** `grep -rn` the ledger for the behaviour's nouns. Re-adding a
   scenario that already passes, tagged `@backlog`, makes the ledger contradict itself.
-- **One behaviour per scenario.** Do not bundle an invariant the node already passes with a
+- **One behaviour per scenario.** Do not bundle an invariant the MC already passes with a
   new one; the combined scenario gets the wrong status. Split it.
 - **Status from evidence.** A new or changed scenario is `@backlog` unless it tags only
-  `@node` and `mise run features:node <file>` runs it and passes. Client scenarios stay
+  `@mc` and `mise run features:mc <file>` runs it and passes. Client scenarios stay
   `@backlog` here: no runner covers every surface `@shared` names (there is no mobile runner,
   and the desktop one reads only its own files), so the backlog job clears them per surface.
 - **Every surface tag that applies.** Anything a user sees needs client tags (`@shared`, or
-  `@desktop` / `@mobile` / `@tui`), not only `@node`, or the client runners never select it.
+  `@desktop` / `@mobile` / `@tui`), not only `@mc`, or the client runners never select it.
 - **Existing plugin ids only.** `grep -rhoE '@plugin-[a-z0-9-]+' features | sort -u` lists
   them. Provider-specific behaviour carries its plugin tag; do not invent a family tag.
 - **Declarative.** What the user does and observes, never widgets or layout, per the README.
@@ -71,9 +71,9 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
 ## Finish
 
 1. Write the digest's commit to `features/UPSTREAM`.
-2. Run `mise run features:node <each touched file>`, and `mise run features:tui <file>` for
+2. Run `mise run features:mc <each touched file>`, and `mise run features:tui <file>` for
    files with `@tui` or `@shared` scenarios. They parse the files and keep passing scenarios
-   passing. If mix deps are missing, `mise run install:node` first.
+   passing. If mix deps are missing, `mise run install:mc` first.
 3. Commit as `test(features): ledger upstream T3 Code through <short sha>`. When asked for a
    PR, its description is one table row per digest entry: pull request or commit and title,
    disposition, and the scenario or reason in a few words.

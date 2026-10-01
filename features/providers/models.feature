@@ -11,7 +11,7 @@
 #   packages/contracts/src/model.ts (ModelSelection, CustomModelEntry, defaults, aliases)
 #   packages/contracts/src/server.ts (ServerProvider models, optionDescriptors)
 
-@node
+@mc
 Feature: Models
   Each provider reports the models it can run. The user picks a model and its options
   per thread, can set defaults, and can add model ids the provider does not list.
@@ -59,32 +59,32 @@ Feature: Models
     Then Claude writes the commit message
 
   Scenario: The bundled model manifest works offline
-    Given the node has never fetched the model manifest
-    When the node starts without network access
+    Given the MC has never fetched the model manifest
+    When the MC starts without network access
     Then models are listed from the bundled manifest
 
   @backlog
   Scenario: A newer manifest is fetched and used
     Given a newer model manifest is published
-    When the node refreshes the manifest
+    When the MC refreshes the manifest
     Then the newer models and defaults are offered
 
   @backlog
   Scenario: An invalid manifest download keeps the last usable manifest
-    When the node downloads a manifest that is not valid
+    When the MC downloads a manifest that is not valid
     Then the last usable manifest is kept
 
   @backlog
   Scenario: A bundled manifest newer than the cached one wins
-    Given the node was updated with a manifest newer than its cached copy
-    When the node starts
+    Given the MC was updated with a manifest newer than its cached copy
+    When the MC starts
     Then the bundled manifest is used
 
   @backlog
   Scenario: A fetched compatibility policy replaces the bundled one for its provider only
     Given the bundled manifest has compatibility policies for OpenCode and another provider
     And a newer manifest changes only OpenCode's policy
-    When the node refreshes the manifest
+    When the MC refreshes the manifest
     Then OpenCode's versions are judged by the fetched policy
     And the other provider keeps its bundled policy
 

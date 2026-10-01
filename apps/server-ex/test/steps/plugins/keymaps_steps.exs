@@ -1,17 +1,17 @@
 defmodule HalC2.Steps.Plugins.Keymaps do
   @moduledoc """
-  Steps for the node's part of `features/plugins/keymaps.feature`: the node stores
+  Steps for the MC's part of `features/plugins/keymaps.feature`: the MC stores
   the user's keybinding rules in `<home>/keybindings.json` and pushes them to every
-  config watcher. Defaults are not the node's; clients merge the stored rules over
+  config watcher. Defaults are not the MC's; clients merge the stored rules over
   `@hal-c2/shared/keybindings`, so a key without a stored rule does its default.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
-  # The built-in keymap belongs to each client; the node starts with no rules of its
+  # The built-in keymap belongs to each client; the MC starts with no rules of its
   # own, so what a client does with a key the user never bound is its built-in.
   step "the built-in keymap binds {string} to {string} and {string} to {string}",
        %{args: [key, command, other_key, other_command]} = context do
@@ -61,7 +61,7 @@ defmodule HalC2.Steps.Plugins.Keymaps do
     context
   end
 
-  step "the node's keybindings file contains one valid rule and one entry without a command",
+  step "the MC's keybindings file contains one valid rule and one entry without a command",
        context do
     valid = %{"key" => "ctrl+shift+n", "command" => "thread.new"}
     file = Path.join(Application.fetch_env!(:hal_c2, :home), "keybindings.json")
@@ -70,9 +70,9 @@ defmodule HalC2.Steps.Plugins.Keymaps do
   end
 
   step "a client reads the keybindings", context do
-    Node.ensure(HalC2.Settings)
-    client = Node.sub(World.client(context, "reader"), 1, config_shape())
-    {%{"config" => config}, client} = Node.await(client, &(&1["t"] == "config"))
+    Mc.ensure(HalC2.Settings)
+    client = Mc.sub(World.client(context, "reader"), 1, config_shape())
+    {%{"config" => config}, client} = Mc.await(client, &(&1["t"] == "config"))
 
     context
     |> World.put_client("reader", client)
@@ -84,18 +84,18 @@ defmodule HalC2.Steps.Plugins.Keymaps do
     context
   end
 
-  # A client subscribed to the node's config, past its snapshot.
+  # A client subscribed to the MC's config, past its snapshot.
   defp watch(context, name) do
-    Node.ensure(HalC2.Settings)
-    World.put_client(context, name, Node.config(World.client(context, name), 1))
+    Mc.ensure(HalC2.Settings)
+    World.put_client(context, name, Mc.config(World.client(context, name), 1))
   end
 
   defp pushed(context, name) do
     {%{"rules" => rules}, client} =
-      Node.await(World.client(context, name), &(&1["t"] == "config.keybindings"))
+      Mc.await(World.client(context, name), &(&1["t"] == "config.keybindings"))
 
     {rules, World.put_client(context, name, client)}
   end
 
-  defp config_shape, do: %{"type" => "config", "node" => Atom.to_string(node())}
+  defp config_shape, do: %{"type" => "config", "mc" => Atom.to_string(node())}
 end

@@ -7,7 +7,7 @@ defmodule Mix.Tasks.HalC2.Thread.Export do
       mix hal_c2.thread.export THREAD FILE
 
   `THREAD` is the thread's id or title. Import the file on another machine with
-  `mix hal_c2.thread.import`. The node need not be stopped.
+  `mix hal_c2.thread.import`. The MC need not be stopped.
   """
 
   use Mix.Task

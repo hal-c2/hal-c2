@@ -1,9 +1,9 @@
 defmodule HalC2.Steps.Orchestration.ProviderHandoff do
-  @moduledoc "Steps for features/node/orchestration/provider-handoff.feature."
+  @moduledoc "Steps for features/mc/orchestration/provider-handoff.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @models %{"codex" => "gpt-5.4", "claudeAgent" => "claude-haiku"}
   @history_start "<conversation_history>\nThis conversation started in another agent session. Continue from it.\n\n"

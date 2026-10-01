@@ -6,13 +6,13 @@
 #     thread events, projection rows, attachments and terminal logs as base64 with sha256; target
 #     project inferred from the workspace root or the only project, else named)
 #   apps/server-ex/lib/hal_c2/streams.ex, apps/server-ex/lib/hal_c2/stream_state.ex (a thread is one
-#     event stream owned by one node)
+#     event stream owned by one MC)
 #   apps/server-ex/lib/hal_c2/shell.ex, apps/server-ex/lib/hal_c2/cluster.ex (cluster-wide sidebar keyed
-#     by node, offline members keep their rows)
+#     by MC, offline members keep their rows)
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (checkpoints are hidden commits under
 #     refs/hal-c2/orchestration-v2/checkpoints/... in the project's repository)
-#   apps/server-ex/lib/hal_c2/attachments.ex (attachments live in the node's data, served by the
-#     node that owns the thread)
+#   apps/server-ex/lib/hal_c2/attachments.ex (attachments live in the MC's data, served by the
+#     MC that owns the thread)
 #   apps/server-ex/lib/hal_c2/terminal/history.ex (a terminal's scrollback)
 #   apps/server-ex/lib/hal_c2/agent_sessions.ex (a remote URL as host/owner/repo, shared by every clone)
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (native session when the provider can, else a
@@ -21,7 +21,7 @@
 #   Shared domain: providers/portable-sessions.feature owns how each provider's native session is
 #   carried; threads/migration-and-handoffs.feature owns the transcript handoff and its budget;
 #   connections/cluster.feature owns forming the cluster and the shared sidebar;
-#   node/orchestration/checkpoints-and-rollback.feature owns capturing checkpoints.
+#   mc/orchestration/checkpoints-and-rollback.feature owns capturing checkpoints.
 #
 # Decisions recorded here:
 #   - A move keeps the thread's id. The machine it left keeps only a forwarding record, so links,
@@ -36,7 +36,7 @@
 #     leaves the thread on the source; the user decides what to do with it there.
 #   - An agent that moves its own thread cannot stop its running turn to do it, so the move waits
 #     for the turn to end. Moving another thread needs the same full-access, default-mode caller
-#     as other environment-wide changes (node/orchestration/mcp-server.feature).
+#     as other environment-wide changes (mc/orchestration/mcp-server.feature).
 #   - Proposed names: palette entry action:move-thread, agent tool hal_c2_thread_move, CLI tasks
 #     mix hal_c2.thread.export and mix hal_c2.thread.import, archive extension .hal-c2-thread
 #     (format "hal-c2-thread-export" version 2; version 1 is the previous server's).
@@ -75,7 +75,7 @@ Feature: Moving a thread and its agent to another machine
       Then moving to another machine is not offered
       And exporting "Alpha" to a file is offered
 
-    @node
+    @mc
     Scenario Outline: The destination project is a checkout of the same repository
       Given "desktop" instead has <projects>
       When the user moves "Alpha" to "desktop"
@@ -87,21 +87,21 @@ Feature: Moving a thread and its agent to another machine
         | two projects that are checkouts of the same repository | the user is asked which of the two to move "Alpha" into     |
         | no checkout of the repository                          | the user is asked to pick a project or add one on "desktop" |
 
-    @node
+    @mc
     Scenario: A checkout of the same repository is recognised by its remote
       Given "shop" on "laptop" is at "~/code/shop" with the remote "git@github.com:acme/shop.git"
       And "desktop" has "~/src/shop-app" with the remote "https://github.com/acme/shop"
       When the user moves "Alpha" to "desktop"
       Then "Alpha" moves into the project at "~/src/shop-app"
 
-    @node
+    @mc
     Scenario: The user can choose a project that is not the same repository
       Given "desktop" instead has no checkout of the repository of "shop"
       When the user moves "Alpha" to "desktop" into the project "scratch"
       Then "Alpha" moves into "scratch"
       And the user is told checkpoints stay behind because "scratch" is a different repository
 
-    @node
+    @mc
     Scenario: A worktree thread gets its own worktree on the destination
       Given "Alpha" works in its own worktree on the branch "feature/cart"
       When the user moves "Alpha" to "desktop"
@@ -109,14 +109,14 @@ Feature: Moving a thread and its agent to another machine
       And the branch has the commits it had on "laptop", including ones never pushed
       And the worktree holds the files as they were at the end of the last run of "Alpha"
 
-    @node
+    @mc
     Scenario: A thread working in the project's own checkout does not touch the destination's files
       Given "Alpha" works directly in the checkout of "shop" with uncommitted changes
       When the user moves "Alpha" to "desktop"
       Then the checkout of "shop" on "desktop" is left as it was
       And the user is told the uncommitted changes stayed on "laptop"
 
-    @node
+    @mc
     Scenario: The source's worktree is left for the user
       Given "Alpha" works in its own worktree on "laptop"
       When "Alpha" moves to "desktop"
@@ -125,7 +125,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: What travels with the thread
 
-    @node
+    @mc
     Scenario Outline: The thread keeps who it is
       Given "Alpha" has <detail>
       When "Alpha" moves to "desktop"
@@ -141,7 +141,7 @@ Feature: Moving a thread and its agent to another machine
         | its unread state                                   |
         | a pending merge-back from one of its forks         |
 
-    @node
+    @mc
     Scenario Outline: The thread keeps what happened in it
       Given "Alpha" has <history>
       When "Alpha" moves to "desktop"
@@ -155,27 +155,27 @@ Feature: Moving a thread and its agent to another machine
         | its attachments                                 |
         | the scrollback of its terminals                 |
 
-    @node
+    @mc
     Scenario: Attachments are served by the machine the thread now lives on
       Given "Alpha" has an image attachment
       When "Alpha" moves to "desktop"
       And a client opens the image in "Alpha"
       Then "desktop" serves the image
 
-    @node
+    @mc
     Scenario: Checkpoints are carried into the destination's repository
       Given "Alpha" has checkpoints for runs 1 to 3
       When "Alpha" moves to "desktop"
       Then the checkpoints of runs 1 to 3 exist in the repository of "shop" on "desktop"
       And the diff of each of those runs is the same as it was on "laptop"
 
-    @node
+    @mc
     Scenario: A moved thread can be rewound to a run from before the move
       Given "Alpha" had runs 1 to 3 on "laptop" and moved to "desktop"
       When the user rewinds "Alpha" to run 1
       Then the workspace of "Alpha" on "desktop" is as it was after run 1
 
-    @node
+    @mc
     Scenario: Checkpoints stay behind when the destination is a different repository
       Given "Alpha" has checkpoints for runs 1 to 3
       When "Alpha" moves to "desktop" into a project that is not the same repository
@@ -183,7 +183,7 @@ Feature: Moving a thread and its agent to another machine
       And "Alpha" cannot be rewound to a run from before the move
       And the user was told this before the move began
 
-    @node
+    @mc
     Scenario: Running terminals stay on the source and are closed
       Given "Alpha" has a terminal running a development server
       When the user moves "Alpha" to "desktop"
@@ -191,7 +191,7 @@ Feature: Moving a thread and its agent to another machine
       And after the move the terminal on "laptop" is closed
       And its scrollback is readable in "Alpha" on "desktop"
 
-    @node
+    @mc
     Scenario: Forks and subagent threads stay where they are and keep their lineage
       Given "Beta" on "laptop" is a fork of "Alpha"
       When "Alpha" moves to "desktop"
@@ -201,7 +201,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: The agent continues on the destination
 
-    @node
+    @mc
     Scenario: The agent's own session moves with the thread
       Given "Alpha" runs on an agent whose provider can carry its session
       When "Alpha" moves to "desktop"
@@ -209,7 +209,7 @@ Feature: Moving a thread and its agent to another machine
       Then the agent on "desktop" continues its own session from "laptop"
       And it receives no transcript of the earlier conversation
 
-    @node
+    @mc
     Scenario: An agent whose session cannot be carried gets the conversation handed over
       Given "Alpha" runs on an agent whose provider cannot carry its session
       When "Alpha" moves to "desktop"
@@ -228,7 +228,7 @@ Feature: Moving a thread and its agent to another machine
         | can    | Alpha moved to desktop. The agent continues its own session there.              |
         | cannot | Alpha moved to desktop. The agent there will get a summary of the conversation. |
 
-    @node
+    @mc
     Scenario: A carried session that fails to resume falls back to the handoff
       Given "Alpha" moved to "desktop" with its agent's session
       And the agent on "desktop" cannot open the carried session
@@ -236,7 +236,7 @@ Feature: Moving a thread and its agent to another machine
       Then a new agent session starts with the trimmed account of the conversation
       And the user is told the agent could not continue its own session
 
-    @node
+    @mc
     Scenario: The agent is told where the project now lives
       Given "shop" is at "~/code/shop" on "laptop" and at "~/src/shop-app" on "desktop"
       And "Alpha" moved to "desktop"
@@ -253,7 +253,7 @@ Feature: Moving a thread and its agent to another machine
       Then "Alpha" is listed under "laptop" with the work done on "desktop"
       And the agent on "laptop" continues the session as it was on "desktop"
 
-    @node
+    @mc
     Scenario: Moving back does not bring back an old copy
       Given "Alpha" went from "laptop" to "desktop" and back to "laptop"
       When the user opens "Alpha" on "laptop"
@@ -276,14 +276,14 @@ Feature: Moving a thread and its agent to another machine
       When the user opens the notification
       Then "Alpha" opens on "desktop"
 
-    @node
+    @mc
     Scenario: A link to a moved thread works while the machine it left is offline
       Given "Alpha" moved from "laptop" to "desktop"
       And "laptop" is asleep
       When a client asks for "Alpha" by its id
       Then it is served by "desktop"
 
-    @node
+    @mc
     Scenario: A thread that moved and was then deleted is reported as deleted
       Given "Alpha" moved to "desktop" and was deleted there
       When the user follows an old link to "Alpha"
@@ -313,14 +313,14 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: A move that cannot happen changes nothing
 
-    @node
+    @mc
     Scenario: A thread with a turn running is not moved
       Given the agent is working in "Alpha"
       When the user moves "Alpha" to "desktop"
       Then the user is told "Alpha is running. Stop it or wait for it to finish before moving it."
       And "Alpha" stays on "laptop" and keeps running
 
-    @node
+    @mc
     Scenario: A thread waiting for an answer is not moved
       Given the agent in "Alpha" is waiting for the user to approve a command
       When the user moves "Alpha" to "desktop"
@@ -341,7 +341,7 @@ Feature: Moving a thread and its agent to another machine
       Then the message is kept as a draft
       And it can be sent once "Alpha" has arrived on "desktop"
 
-    @node
+    @mc
     Scenario Outline: A move the destination cannot take is refused before anything is copied
       Given <situation>
       When the user moves "Alpha" to "desktop"
@@ -364,28 +364,28 @@ Feature: Moving a thread and its agent to another machine
       Then "Alpha" moves to "desktop" on Codex
       And the next message hands the conversation over to Codex
 
-    @node
+    @mc
     Scenario: A move that breaks off part way leaves the thread on the source
       Given "Alpha" is being copied to "desktop"
       When "desktop" goes offline before it has confirmed the thread
       Then "Alpha" stays on "laptop" and can be used again
       And the user is told the move did not finish and can be tried again
 
-    @node
+    @mc
     Scenario: A destination that comes back after a broken-off move discards its partial copy
       Given a move of "Alpha" to "desktop" broke off part way
       When "desktop" comes back online
       Then "desktop" does not list "Alpha"
       And the space used by the partial copy is freed
 
-    @node
+    @mc
     Scenario: The source going offline after the destination confirmed does not undo the move
       Given "desktop" has confirmed it holds "Alpha"
       When "laptop" goes offline before it has let go of "Alpha"
       Then "Alpha" lives on "desktop"
       And when "laptop" comes back it lists "Alpha" only under "desktop"
 
-    @node
+    @mc
     Scenario: A thread cannot be moved twice at once
       Given the cluster also has the machine "server"
       And "Alpha" is moving to "desktop"
@@ -414,7 +414,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Agents can move threads
 
-    @node
+    @mc
     Scenario: An agent moves another thread
       Given the thread "caller" runs in full-access mode
       And "Alpha" is idle
@@ -422,19 +422,19 @@ Feature: Moving a thread and its agent to another machine
       Then "Alpha" moves to "desktop"
       And the agent receives where "Alpha" now lives and whether its session was carried
 
-    @node
+    @mc
     Scenario: An agent moving its own thread moves once its turn ends
       Given the agent is working in "Alpha"
       When the agent of "Alpha" moves its own thread to "desktop"
       Then the agent is told the move will happen when its turn ends
       And when the turn ends "Alpha" moves to "desktop"
 
-    @node
+    @mc
     Scenario: An agent can list the machines a thread can move to
       When the agent of "Alpha" asks where "Alpha" can move
       Then it receives each machine with whether it is online and which of its projects can take "Alpha"
 
-    @node
+    @mc
     Scenario Outline: An agent's move that cannot be made
       Given <situation>
       When the agent of "caller" moves "Alpha" to <machine>
@@ -443,26 +443,26 @@ Feature: Moving a thread and its agent to another machine
       Examples:
         | situation                          | machine   | code               |
         | "Alpha" has a turn running         | "desktop" | thread_not_movable |
-        | "desktop" is offline               | "desktop" | node_unavailable   |
+        | "desktop" is offline               | "desktop" | mc_unavailable     |
         | the cluster has no machine "attic" | "attic"   | invalid_request    |
         | "caller" runs in plan mode         | "desktop" | capability_denied  |
 
   Rule: Moving between machines outside a cluster
 
-    @node
+    @mc
     Scenario: Exporting a thread from the command line
       When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
       Then the file holds the thread with its history, attachments, terminal scrollback, checkpoints and the agent's session
       And "Alpha" stays on "laptop" unchanged
 
-    @node
+    @mc
     Scenario: Importing a thread from the command line into a chosen project
       Given "desktop" has left the cluster
       And the file "alpha.hal-c2-thread" was exported from "laptop"
       When the user imports the file on "desktop" into the project "shop"
       Then "Alpha" is listed under "desktop" in "shop" with everything a move carries
 
-    @node
+    @mc
     Scenario Outline: Importing without naming a project
       Given "desktop" instead has <projects>
       When the user imports "alpha.hal-c2-thread" on "desktop" without naming a project
@@ -474,28 +474,28 @@ Feature: Moving a thread and its agent to another machine
         | two projects that are checkouts of the same repository | the import is refused and asks the user to name one       |
         | no checkout of the repository                          | the import is refused and asks the user to name a project |
 
-    @node
+    @mc
     Scenario: Importing the same file twice finds the thread already there
       Given "alpha.hal-c2-thread" was imported on "desktop"
       When the user imports it on "desktop" again
       Then the user is told "Alpha" is already on "desktop"
       And there is still one "Alpha"
 
-    @node
+    @mc
     Scenario: A file from a newer HAL-C2 is refused
       Given "alpha.hal-c2-thread" was exported by a newer HAL-C2 in a format "desktop" does not know
       When the user imports it on "desktop"
       Then the user is told the file needs a newer HAL-C2
       And nothing is imported
 
-    @node
+    @mc
     Scenario: A file exported by the previous server is imported without the agent's session
       Given a thread file exported by the previous server
       When the user imports it on "desktop"
       Then the thread is listed with its history, attachments and terminal scrollback
       And its next message hands the conversation over to the agent
 
-    @node
+    @mc
     Scenario: A damaged file is refused
       Given one of the attachments in "alpha.hal-c2-thread" does not match its checksum
       When the user imports it on "desktop"

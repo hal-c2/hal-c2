@@ -13,7 +13,7 @@
 #include "DraftController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ProjectController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -95,7 +95,7 @@ QString errorText(const std::optional<QString>& error) {
 
 }  // namespace
 
-ProjectCloneController::ProjectCloneController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+ProjectCloneController::ProjectCloneController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                                QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
   connect(store, &ShellStore::changed, this, [this] {
@@ -414,7 +414,7 @@ void ProjectCloneController::reconcile(const QString& environmentId, const QJson
                     cloneAction(environmentId, QStringLiteral("projectClone.retry"), projectId, tr("Failed to retry clone"));
                   },
                   true},
-                 // The node drops the clone with its project, which takes the toast.
+                 // The MC drops the clone with its project, which takes the toast.
                  {tr("Remove project"), [this, environmentId, projectId] { removeProject(environmentId, projectId); }, true}};
     }
     if (found != tracked.cend() && toasts->replace(found->toastId, type, title, description, actions, timeoutMs)) {
@@ -423,7 +423,7 @@ void ProjectCloneController::reconcile(const QString& environmentId, const QJson
       tracked[projectId] = {toasts->showActions(type, title, description, actions, timeoutMs), shown, phase};
     }
   }
-  // A clone the node stopped reporting takes its toast, unless it finished:
+  // A clone the MC stopped reporting takes its toast, unless it finished:
   // that toast goes in its own time.
   for (auto it = tracked.begin(); it != tracked.end();) {
     if (seen.contains(it.key())) {
@@ -437,7 +437,7 @@ void ProjectCloneController::reconcile(const QString& environmentId, const QJson
 
 void ProjectCloneController::cloneAction(const QString& environmentId, const QString& method, const QString& projectId,
                                          const QString& failure) {
-  // The toast follows the node's clone; a request that never got there says so.
+  // The toast follows the MC's clone; a request that never got there says so.
   m_client->call(this, environmentId, method, QJsonObject{{QStringLiteral("projectId"), projectId}},
                  [this, failure](const QJsonValue&, const std::optional<QString>& error) {
                    if (error) NativeShell::of(this)->controller<ToastController>()->error(failure, errorText(error));

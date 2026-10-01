@@ -2,8 +2,8 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   @moduledoc """
   Steps for `features/threads/moving-between-machines.feature`.
 
-  The first machine of the Background ("laptop") is the scenario's node in this VM;
-  the others are peers running the whole node (`HalC2.Test.Machines`). Each machine's
+  The first machine of the Background ("laptop") is the scenario's MC in this VM;
+  the others are peers running the whole MC (`HalC2.Test.Machines`). Each machine's
   "shop" is its own clone of one repository whose origin names GitHub. The thread
   file is `HalC2.ThreadArchive`'s: exports run `mix hal_c2.thread.export` here, and
   imports call `HalC2.ThreadArchive.import_file/2` (the task's body) on the machine.
@@ -11,8 +11,8 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.{Machines, Node}
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.{Machines, Mc}
+  alias HalC2.Test.Mc.World
 
   @repository "acme/shop"
   @history_start "<conversation_history>"
@@ -262,7 +262,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
           "status" => "idle",
           "nativeThreadRef" => %{
             "driver" => "codex",
-            "nativeId" => "thr-node",
+            "nativeId" => "thr-mc",
             "strength" => "strong"
           },
           "firstRunOrdinal" => 1
@@ -290,7 +290,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
       ]
     }
 
-    file = Path.join(Node.tmp_dir(context.node, "legacy"), "legacy.hal-c2-thread")
+    file = Path.join(Mc.tmp_dir(context.mc, "legacy"), "legacy.hal-c2-thread")
     File.write!(file, JSON.encode!(archive))
 
     context
@@ -872,7 +872,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
   step "{string} serves the image", %{args: [machine]} = context do
     assert context.opened_at["machine"] == machine
-    assert context.opened_at["node"] == Atom.to_string(Machines.node_of(context, machine))
+    assert context.opened_at["mc"] == Atom.to_string(Machines.mc_of(context, machine))
     path = Machines.on(context, machine, HalC2.Attachments, :path, [%{"id" => context.image}])
     assert File.read!(path) == <<0x89, "PNG cart">>
     context
@@ -1240,7 +1240,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
   step "{string} is asleep", %{args: [machine]} = context do
     assert Machines.machine(context, machine) == :local
-    Node.stop(context.node)
+    Mc.stop(context.mc)
     context
   end
 
@@ -1342,12 +1342,12 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
        %{args: [machine, title]} = context do
     assert Machines.machine(context, machine) == :local
     id = World.thread_id(context, title)
-    dest = Machines.node_of(context, context.move_to)
+    dest = Machines.mc_of(context, context.move_to)
     Task.shutdown(context.held.task, :brutal_kill)
     Application.delete_env(:hal_c2, :thread_move_hook)
-    context = %{context | node: Node.restart(context.node)}
+    context = %{context | mc: Mc.restart(context.mc)}
     :ok = HalC2.Shell.subscribe(self())
-    Node.ensure(HalC2.ThreadMove)
+    Mc.ensure(HalC2.ThreadMove)
     :sys.get_state(HalC2.ThreadMove)
 
     # Back online, it has the sidebar of the machine it moved the thread to.
@@ -1374,13 +1374,13 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     assert Machines.machine(context, machine) == :local
     id = World.thread_id(context, title)
     assert %{"label" => ^dest} = World.thread(context, title)["movedTo"]
-    dest_node = Machines.node_of(context, dest)
+    dest_mc = Machines.mc_of(context, dest)
 
-    assert [^dest_node] =
+    assert [^dest_mc] =
              for(
-               {{node, ^id}, {"thread", row}} <- HalC2.Shell.rows(),
+               {{mc, ^id}, {"thread", row}} <- HalC2.Shell.rows(),
                row["movedTo"] == nil,
-               do: node
+               do: mc
              )
 
     context
@@ -1456,7 +1456,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
   step "the agent of {string} moves its own thread to {string}",
        %{args: [caller, to]} = context do
-    Node.ensure(HalC2.ThreadMove)
+    Mc.ensure(HalC2.ThreadMove)
     result = World.mcp_tool(context, caller, "hal_c2_thread_move", %{"machine" => to})
     Map.merge(context, %{mcp_result: result, move_to: to, mover: caller})
   end
@@ -1555,7 +1555,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   # The thread works in a new worktree of "shop" on `branch`, with a commit that was
   # never pushed.
   def own_worktree(context, title, branch) do
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry},
         id: HalC2.Vcs.Registry
       )
@@ -1720,8 +1720,8 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     here = Atom.to_string(node())
 
     case HalC2.ThreadMove.locate(id) do
-      {:ok, %{"node" => node}} when node != here ->
-        :erpc.call(String.to_atom(node), HalC2.ThreadMove, :move, [id, to, opts], 60_000)
+      {:ok, %{"mc" => mc}} when mc != here ->
+        :erpc.call(String.to_atom(mc), HalC2.ThreadMove, :move, [id, to, opts], 60_000)
 
       _ ->
         HalC2.ThreadMove.move(id, to, opts)
@@ -1752,7 +1752,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
   # A clone of the scenario's repository on `machine`, added there as a project.
   defp clone(context, machine, title, id) do
-    root = Path.join(Node.tmp_dir(context.node, "#{machine}-checkouts"), World.slug(title))
+    root = Path.join(Mc.tmp_dir(context.mc, "#{machine}-checkouts"), World.slug(title))
     World.git!(Path.dirname(root), ["clone", "-q", context.bare, root])
     World.git!(root, ["remote", "set-url", "origin", "git@github.com:#{@repository}.git"])
     Machines.on(context, machine, Machines, :create_project, [id, title, root])
@@ -1799,8 +1799,8 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   end
 
   defp export(context, title, file) do
-    path = Path.join(Node.tmp_dir(context.node, "exports"), file)
-    assert [line] = Node.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path])
+    path = Path.join(Mc.tmp_dir(context.mc, "exports"), file)
+    assert [line] = Mc.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path])
     assert line =~ "Exported #{title} to #{path}"
     Map.put(context, :thread_file, path)
   end
@@ -1885,7 +1885,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   # Sends `text` on `machine` with the thread's agent (Codex unless it runs on Claude or
   # a fake ACP agent) and returns the prompt that agent was given.
   defp remote_turn(context, machine, id, text) do
-    node = Machines.node_of(context, machine)
+    mc = Machines.mc_of(context, machine)
 
     {selection, inputs} =
       case context[:handoff] do
@@ -1902,11 +1902,11 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
            Path.join(Machines.home(context, machine), "codex-inputs.jsonl")}
       end
 
-    :ok = :erpc.call(node, HalC2.Streams, :subscribe, [id, self(), nil])
+    :ok = :erpc.call(mc, HalC2.Streams, :subscribe, [id, self(), nil])
     finished = length(finished_runs(context, machine, id))
 
     {:ok, _} =
-      :erpc.call(node, HalC2.Orchestration, :dispatch, [
+      :erpc.call(mc, HalC2.Orchestration, :dispatch, [
         %{
           "type" => "message.dispatch",
           "commandId" => "cmd-#{System.unique_integer([:positive])}",

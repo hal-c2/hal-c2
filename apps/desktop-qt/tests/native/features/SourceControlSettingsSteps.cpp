@@ -2,7 +2,7 @@
 // the @desktop scenarios of features/settings/source-control.feature and
 // source-control-writing.feature. The fake answers
 // `server.discoverSourceControl` with the tools a scenario gives the machine;
-// what the node does with a setting is its own scenarios', so these check
+// what the MC does with a setting is its own scenarios', so these check
 // what the section saves.
 
 #include <QHash>
@@ -13,7 +13,7 @@
 
 #include "FakeConfig.h"
 #include "FakeSourceControl.h"
-#include "FakeNode.h"
+#include "FakeMc.h"
 #include "Harness.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -78,21 +78,21 @@ struct FakeSourceControl {
   }
 };
 
-const FakeNode::Extension discovery([](FakeNode& node) {
-  node.onRpc(QStringLiteral("server.discoverSourceControl"), [&node](const FakeNode::Rpc& rpc) {
-    const FakeSourceControl& fake = node.part<FakeSourceControl>();
+const FakeMc::Extension discovery([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("server.discoverSourceControl"), [&mc](const FakeMc::Rpc& rpc) {
+    const FakeSourceControl& fake = mc.part<FakeSourceControl>();
     if (!fake.refusal.isEmpty()) {
-      node.refuse(rpc, fake.refusal);
+      mc.refuse(rpc, fake.refusal);
       return;
     }
     QJsonArray hosts;
     for (const QJsonObject& entry : fake.hosts) hosts.append(entry);
-    node.reply(rpc, QJsonObject{{QStringLiteral("versionControlSystems"), fake.versionControl}, {QStringLiteral("sourceControlProviders"), hosts}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("versionControlSystems"), fake.versionControl}, {QStringLiteral("sourceControlProviders"), hosts}});
   });
 });
 
 FakeSourceControl& fake(World& world) {
-  return world.node.part<FakeSourceControl>();
+  return world.mc.part<FakeSourceControl>();
 }
 
 QJsonObject provider(const QString& instanceId, const QString& name, const QString& model, bool enabled = true) {
@@ -147,11 +147,11 @@ QJsonObject style(const QJsonObject& settings) {
 }
 
 QJsonObject saved(World& world) {
-  return fakeConfig(world.node).settings;
+  return fakeConfig(world.mc).settings;
 }
 
 void open(World& world) {
-  FakeConfig& config = fakeConfig(world.node);
+  FakeConfig& config = fakeConfig(world.mc);
   config.config.insert(QStringLiteral("providers"), QJsonArray{provider(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("codex-model")),
                                                                provider(QStringLiteral("claude"), QStringLiteral("Claude"), QStringLiteral("claude-model"))});
   world.connect();
@@ -302,7 +302,7 @@ const Steps steps([] {
                 QStringLiteral("to be told nothing was detected; the section shows %1").arg(show(discovery)));
        });
   step(QStringLiteral("the scan fails"), [](World& world, const Captures&, const Table&) {
-    fake(world).refusal = QStringLiteral("The node could not run the scan.");
+    fake(world).refusal = QStringLiteral("The MC could not run the scan.");
   });
   step(QStringLiteral("hosts HAL-C2 cannot use yet are marked \"Coming Soon\""), [](World& world, const Captures&, const Table&) {
     expect(listed(world, QStringLiteral("jj")).value(QStringLiteral("comingSoon")).toBool() &&
@@ -349,7 +349,7 @@ const Steps steps([] {
               QStringLiteral("the %1 style to be saved").arg(mode));
   });
   step(QStringLiteral("the writing style is Custom instructions"), [](World& world, const Captures&, const Table&) {
-    saveElsewhere(world.node, QStringLiteral("sourceControlWritingStyle"), QJsonObject{{QStringLiteral("mode"), QStringLiteral("custom")}});
+    saveElsewhere(world.mc, QStringLiteral("sourceControlWritingStyle"), QJsonObject{{QStringLiteral("mode"), QStringLiteral("custom")}});
     world.waitFor([&] { return part(world, QStringLiteral("writingStyle")).value(QStringLiteral("mode")) == QLatin1String("custom"); },
                   [&] { return QStringLiteral("the custom style to show; it is %1").arg(show(part(world, QStringLiteral("writingStyle")))); });
   });
@@ -363,10 +363,10 @@ const Steps steps([] {
   });
   step(QStringLiteral("the settings scope covers two environments"), [](World& world, const Captures&, const Table&) {
     // A server whose style differs, so the instructions are one for both.
-    FakeConfig::Document& server = documentOf(world.node, QStringLiteral("server"));
+    FakeConfig::Document& server = documentOf(world.mc, QStringLiteral("server"));
     server.settings.insert(QStringLiteral("sourceControlWritingStyle"), QJsonObject{{QStringLiteral("mode"), QStringLiteral("conventional_commits")}});
-    world.node.linkLabels.insert(QStringLiteral("server"), QStringLiteral("server"));
-    world.node.link(QStringLiteral("server"));
+    world.mc.linkLabels.insert(QStringLiteral("server"), QStringLiteral("server"));
+    world.mc.link(QStringLiteral("server"));
     world.waitFor([&] { return world.state(QStringLiteral("settingsScope")).toMap().value(QStringLiteral("environments")).toList().size() == 2; },
                   [&] { return QStringLiteral("two environments; the scope is %1").arg(show(world.state(QStringLiteral("settingsScope")))); });
     world.bridge().dispatch(QStringLiteral("settingsScope.environment"), QVariantMap{{QStringLiteral("id"), QString()}});
@@ -382,9 +382,9 @@ const Steps steps([] {
     const auto custom = [](const QJsonObject& settings) {
       return style(settings).value(QLatin1String("mode")) == QLatin1String("custom") && style(settings).value(QLatin1String("customInstructions")) == kInstructions;
     };
-    world.waitFor([&] { return custom(saved(world)) && custom(documentOf(world.node, QStringLiteral("server")).settings); }, [&] {
+    world.waitFor([&] { return custom(saved(world)) && custom(documentOf(world.mc, QStringLiteral("server")).settings); }, [&] {
       return QStringLiteral("both to use the instructions; here %1, the server %2")
-          .arg(show(saved(world).toVariantMap()), show(documentOf(world.node, QStringLiteral("server")).settings.toVariantMap()));
+          .arg(show(saved(world).toVariantMap()), show(documentOf(world.mc, QStringLiteral("server")).settings.toVariantMap()));
     });
   });
   step(QStringLiteral("following change request templates is shown on"), [](World& world, const Captures&, const Table&) {
@@ -392,7 +392,7 @@ const Steps steps([] {
                   [&] { return QStringLiteral("templates to be shown followed; the row is %1").arg(show(part(world, QStringLiteral("templates")))); });
   });
   step(QStringLiteral("the environment's settings leave templates followed"), [](World& world, const Captures&, const Table&) {
-    // Absent means followed: the node writes to a repository's template unless told not to.
+    // Absent means followed: the MC writes to a repository's template unless told not to.
     expect(style(saved(world)).value(QLatin1String("followChangeRequestTemplates")).toBool(true),
            QStringLiteral("the environment to follow templates; its settings are %1").arg(show(saved(world).toVariantMap())));
   });
@@ -415,7 +415,7 @@ const Steps steps([] {
               QStringLiteral("Claude to write source control text"));
   });
   step(QStringLiteral("a separate source control writer model is on"), [](World& world, const Captures&, const Table&) {
-    saveElsewhere(world.node, QStringLiteral("sourceControlWriterModelSelection"),
+    saveElsewhere(world.mc, QStringLiteral("sourceControlWriterModelSelection"),
                   QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("codex-model")}});
     world.waitFor([&] { return part(world, QStringLiteral("writerModel")).value(QStringLiteral("on")).toBool(); },
                   [&] { return QStringLiteral("the writer model to be on; it is %1").arg(show(part(world, QStringLiteral("writerModel")))); });
@@ -428,7 +428,7 @@ const Steps steps([] {
               QStringLiteral("the writer model to be off"));
   });
   step(QStringLiteral("the provider of a model is turned off"), [](World& world, const Captures&, const Table&) {
-    publishProviders(world.node, QJsonArray{provider(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("codex-model")),
+    publishProviders(world.mc, QJsonArray{provider(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("codex-model")),
                                             provider(QStringLiteral("claude"), QStringLiteral("Claude"), QStringLiteral("claude-model"), false)});
   });
   step(QStringLiteral("the user looks at the writer model choices"), [](World& world, const Captures&, const Table&) {
@@ -445,13 +445,13 @@ const Steps steps([] {
       if (model.toMap().value(QStringLiteral("key")) == QLatin1String("claude:claude-model")) reason = model.toMap().value(QStringLiteral("reason")).toString();
     }
     expect(reason == QLatin1String("Claude is turned off."), QStringLiteral("Claude's model to say why; it says \"%1\"").arg(reason));
-    const int writes = fakeConfig(world.node).writes.size();
+    const int writes = fakeConfig(world.mc).writes.size();
     send(world, QStringLiteral("pickWriterModel"), {{QStringLiteral("key"), QStringLiteral("claude:claude-model")}});
     world.sync();
-    expect(fakeConfig(world.node).writes.size() == writes, QStringLiteral("picking it to save nothing"));
+    expect(fakeConfig(world.mc).writes.size() == writes, QStringLiteral("picking it to save nothing"));
   });
   step(QStringLiteral("saving settings fails"), [](World& world, const Captures&, const Table&) {
-    fakeConfig(world.node).refuseWrites = QStringLiteral("The settings file is read-only.");
+    fakeConfig(world.mc).refuseWrites = QStringLiteral("The settings file is read-only.");
   });
   step(QStringLiteral("the user picks a writer model"), [](World& world, const Captures&, const Table&) {
     send(world, QStringLiteral("pickWriterModel"), {{QStringLiteral("key"), QStringLiteral("codex:codex-model")}});
@@ -460,7 +460,7 @@ const Steps steps([] {
 
 }  // namespace
 
-void setSourceControlHost(FakeNode& node, const QString& kind, bool ready) {
+void setSourceControlHost(FakeMc& mc, const QString& kind, bool ready) {
   static const QHash<QString, QPair<QString, QString>> known{
       {QStringLiteral("github"), {QStringLiteral("GitHub"), QStringLiteral("gh")}},
       {QStringLiteral("gitlab"), {QStringLiteral("GitLab"), QStringLiteral("glab")}},
@@ -469,7 +469,7 @@ void setSourceControlHost(FakeNode& node, const QString& kind, bool ready) {
   const auto [label, executable] = known.value(kind);
   const QJsonObject entry = hostItem(kind, label, executable, ready, ready ? QStringLiteral("authenticated") : QStringLiteral("unknown"),
                                      ready ? QStringLiteral("sam") : QString());
-  FakeSourceControl& fake = node.part<FakeSourceControl>();
+  FakeSourceControl& fake = mc.part<FakeSourceControl>();
   for (QJsonObject& host : fake.hosts) {
     if (host.value(QLatin1String("kind")) == kind) {
       host = entry;

@@ -7,20 +7,20 @@
 
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ShellBridge.h"
 
 namespace {
 
 // What the loopback hint tells the user to do instead (as the TUI's clusterState.ts).
 const QString kLocalOnlyHint =
-    QStringLiteral("Only this machine can open it: the node listens on loopback. Invite over Tailscale instead.");
+    QStringLiteral("Only this machine can open it: the MC listens on loopback. Invite over Tailscale instead.");
 
 const NativeControllerRegistrar<ClusterController> registrar(QStringLiteral("cluster"), {QStringLiteral("cluster")});
 
 }  // namespace
 
-ClusterController::ClusterController(ShellBridge* bridge, NodeClient* client, QObject* parent)
+ClusterController::ClusterController(ShellBridge* bridge, McClient* client, QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
       m_client(client),

@@ -7,7 +7,7 @@
 #include <QUrl>
 
 // Spawns the Node desktop host and waits for its `ready` line: where the
-// shell's own client (NodeClient) connects, and its bearer.
+// shell's own client (McClient) connects, and its bearer.
 class BackendProcess : public QObject {
   Q_OBJECT
 

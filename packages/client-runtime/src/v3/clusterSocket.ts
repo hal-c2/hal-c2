@@ -2,71 +2,71 @@
 /* oxlint-disable unicorn/prefer-add-event-listener -- The socket owns its handlers. */
 
 /**
- * One WebSocket to a protocol-3 node, shared by every environment of its cluster.
+ * One WebSocket to a protocol-3 MC, shared by every environment of its cluster.
  *
  * Subscriptions are multiplexed by id. On reconnect every stream subscription is
- * sent again with the last offset it saw, so the node replays only what was
+ * sent again with the last offset it saw, so the MC replays only what was
  * missed; the shell is always re-sent whole because it is small. A `resync` from
- * the node (this client fell too far behind) is handled the same way.
+ * the MC (this client fell too far behind) is handled the same way.
  */
 
 export type ShellShape = { readonly type: "shell" };
 export type StreamShape = {
   readonly type: "stream";
-  readonly node: string;
+  readonly mc: string;
   readonly stream: string;
 };
 // `usageLimitsCommand`: the client answers `/usage-limits` itself, so providers with
 // limits offer it.
 export type ConfigShape = (
-  | { readonly type: "config"; readonly node: string }
+  | { readonly type: "config"; readonly mc: string }
   | { readonly type: "config"; readonly environment: string }
 ) & { readonly usageLimitsCommand?: true };
 export type TerminalShape = {
   readonly type: "terminal";
-  readonly node: string;
+  readonly mc: string;
   readonly input: Readonly<Record<string, unknown>>;
 };
-export type TerminalsShape = { readonly type: "terminals"; readonly node: string };
-export type VcsShape = { readonly type: "vcs"; readonly node: string; readonly cwd: string };
+export type TerminalsShape = { readonly type: "terminals"; readonly mc: string };
+export type VcsShape = { readonly type: "vcs"; readonly mc: string; readonly cwd: string };
 export type ProviderAuthShape = {
   readonly type: "providerAuth";
-  readonly node: string;
+  readonly mc: string;
   readonly instanceId: string;
 };
 export type WorktreeSetupShape = {
   readonly type: "worktreeSetup";
-  readonly node: string;
+  readonly mc: string;
   readonly threadId: string;
 };
-export type ScheduledTasksShape = { readonly type: "scheduledTasks"; readonly node: string };
-/** Pairing links and clients of the node the socket is connected to. */
+export type ScheduledTasksShape = { readonly type: "scheduledTasks"; readonly mc: string };
+/** Pairing links and clients of the MC the socket is connected to. */
 export type AuthAccessShape = { readonly type: "authAccess" };
-export type ProjectClonesShape = { readonly type: "projectClones"; readonly node: string };
-export type PreviewShape = { readonly type: "preview"; readonly node: string };
-export type ResourceTelemetryShape = { readonly type: "resourceTelemetry"; readonly node: string };
-export type LocalServersShape = { readonly type: "localServers"; readonly node: string };
-/** A node's simulators, emulators and open device sessions, whole on every change. */
-export type DevicesShape = { readonly type: "devices"; readonly node: string };
-/** This client as a node's browser automation host; the node ends it when it drops the host. */
+export type ProjectClonesShape = { readonly type: "projectClones"; readonly mc: string };
+export type PreviewShape = { readonly type: "preview"; readonly mc: string };
+export type ResourceTelemetryShape = { readonly type: "resourceTelemetry"; readonly mc: string };
+export type LocalServersShape = { readonly type: "localServers"; readonly mc: string };
+/** An MC's simulators, emulators and open device sessions, whole on every change. */
+export type DevicesShape = { readonly type: "devices"; readonly mc: string };
+/** This client as an MC's browser automation host; the MC ends it when it drops the host. */
 export type PreviewAutomationShape = {
   readonly type: "previewAutomation";
-  readonly node: string;
+  readonly mc: string;
   readonly host: Readonly<Record<string, unknown>>;
 };
 export type PullRequestRefreshesShape = {
   readonly type: "pullRequestRefreshes";
-  readonly node: string;
+  readonly mc: string;
 };
 export type GitActionShape = {
   readonly type: "gitAction";
-  readonly node: string;
+  readonly mc: string;
   readonly input: Readonly<Record<string, unknown>>;
 };
-/** Moves the node to another version (`HalC2.Upgrade`), streaming progress, then ends. */
+/** Moves the MC to another version (`HalC2.Upgrade`), streaming progress, then ends. */
 export type ServerUpdateShape = {
   readonly type: "serverUpdate";
-  readonly node: string;
+  readonly mc: string;
   readonly input: Readonly<Record<string, unknown>>;
 };
 export type Shape =
@@ -104,7 +104,7 @@ export type ShapeFrame = Record<string, unknown> & { readonly t: string };
 
 export interface ClusterSocketStatus {
   readonly connected: boolean;
-  readonly node: string | null;
+  readonly mc: string | null;
 }
 
 interface Subscription {
@@ -121,7 +121,7 @@ type SocketLike = Pick<WebSocket, "send" | "close" | "readyState"> & {
 };
 
 export interface ClusterSocketOptions {
-  /** `ws(s)://host/ws?token=...` of any node in the cluster. */
+  /** `ws(s)://host/ws?token=...` of any MC in the cluster. */
   readonly url: string;
   readonly createSocket?: (url: string) => SocketLike;
   readonly onStatus?: (status: ClusterSocketStatus) => void;
@@ -145,11 +145,11 @@ export class ClusterSocket {
   >();
   private nextId = 1;
   private attempt = 0;
-  private node: string | null = null;
+  private mc: string | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
-  // Subscriptions go out only after the node's hello; until then they are queued.
+  // Subscriptions go out only after the MC's hello; until then they are queued.
   private ready = false;
   private readonly options: ClusterSocketOptions;
 
@@ -159,8 +159,8 @@ export class ClusterSocket {
   }
 
   /**
-   * Runs an RPC on the node that serves `environment`. Rejects with a
-   * `ClusterRpcError` from the node, or when the socket is not connected or drops
+   * Runs an RPC on the MC that serves `environment`. Rejects with a
+   * `ClusterRpcError` from the MC, or when the socket is not connected or drops
    * before the reply.
    */
   call(environment: string, method: string, payload: unknown): Promise<unknown> {
@@ -172,9 +172,9 @@ export class ClusterSocket {
     });
   }
 
-  /** The node this socket is connected to, once it said hello. */
-  connectedNode(): string | null {
-    return this.node;
+  /** The MC this socket is connected to, once it said hello. */
+  connectedMc(): string | null {
+    return this.mc;
   }
 
   /** Subscribes to a shape; returns the unsubscribe function. */
@@ -213,10 +213,10 @@ export class ClusterSocket {
     if (frame.t === "hello") {
       this.ready = true;
       this.attempt = 0;
-      this.node = typeof frame.node === "string" ? frame.node : null;
+      this.mc = typeof frame.mc === "string" ? frame.mc : null;
       this.startPing();
       for (const id of this.subscriptions.keys()) this.sendSub(id);
-      this.options.onStatus?.({ connected: true, node: this.node });
+      this.options.onStatus?.({ connected: true, mc: this.mc });
       return;
     }
     if (frame.t === "pong") return;
@@ -235,7 +235,7 @@ export class ClusterSocket {
       this.sendSub(id);
       return;
     }
-    // The node ended the shape and already forgot it.
+    // The MC ended the shape and already forgot it.
     if (frame.t === "end") this.subscriptions.delete(id);
     if ((frame.t === "events" || frame.t === "live") && typeof frame.offset === "number") {
       subscription.offset = frame.offset;
@@ -250,7 +250,7 @@ export class ClusterSocket {
     for (const call of this.calls.values()) call.reject(new Error("disconnected"));
     this.calls.clear();
     this.stopPing();
-    this.options.onStatus?.({ connected: false, node: this.node });
+    this.options.onStatus?.({ connected: false, mc: this.mc });
     if (this.closed || this.options.reconnect === false) return;
     const delays = this.options.retryDelaysMs ?? [500, 1_000, 2_000, 4_000, 8_000];
     const delay = delays[Math.min(this.attempt, delays.length - 1)] ?? 8_000;

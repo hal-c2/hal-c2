@@ -10,7 +10,7 @@
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "SettingsScopeController.h"
 #include "ShellBridge.h"
@@ -42,7 +42,7 @@ QString archivedAt(const QJsonObject& thread) {
 
 }  // namespace
 
-ArchivedThreadsController::ArchivedThreadsController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+ArchivedThreadsController::ArchivedThreadsController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                                      QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
 

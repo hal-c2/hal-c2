@@ -3,7 +3,7 @@
 #MISE dir="{{config_root}}/features"
 #USAGE arg "[filter]" var=#true help="A count (default 1), @tag to require (@blocked to include blocked work), -@tag to exclude, or a file, directory or glob under features/"
 # A scenario is backlog work when it is @backlog, or @backlog-<surface> for a surface it has.
-# Asking for a surface (@node, @desktop, @mobile, @tui) keeps only work still missing there;
+# Asking for a surface (@mc, @desktop, @mobile, @tui) keeps only work still missing there;
 # @shared counts as each client. @blocked work is left out unless @blocked is asked for. A
 # high-priority scenario is four times as likely as a low one and twice a plain one, so
 # low-priority work still comes up. Prints file:line, the comment above the scenario, the
@@ -30,7 +30,7 @@ find "${paths[@]}" -name '*.feature' | sed 's|^\./||' | sort -u | xargs awk -v w
   BEGIN {
     srand(seed); n = split(want, wanted, " "); m = split(skip, skipped, " ")
     for (i = 1; i <= n; i++) {
-      if (wanted[i] ~ /^@(node|desktop|mobile|tui)$/) surfaces = surfaces " " substr(wanted[i], 2)
+      if (wanted[i] ~ /^@(mc|desktop|mobile|tui)$/) surfaces = surfaces " " substr(wanted[i], 2)
       if (wanted[i] == "@blocked") blocked_too = 1
     }
   }
@@ -67,7 +67,7 @@ find "${paths[@]}" -name '*.feature' | sed 's|^\./||' | sort -u | xargs awk -v w
   function trimmed(   line) { line = $0; sub(/^[[:space:]]*/, "", line); return line }
   function backlogged(tags,   i, sv) {
     if (tags ~ / @backlog /) return 1
-    if (surfaces == "") return tags ~ / @backlog-(node|desktop|mobile|tui) /
+    if (surfaces == "") return tags ~ / @backlog-(mc|desktop|mobile|tui) /
     for (i = split(surfaces, sv, " "); i > 0; i--) if (index(tags, " @backlog-" sv[i] " ")) return 1
     return 0
   }

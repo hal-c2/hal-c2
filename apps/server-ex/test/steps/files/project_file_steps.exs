@@ -8,8 +8,8 @@ defmodule HalC2.Steps.Files.ProjectFile do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   step "the checkout's hal-c2.json asks for {string} submodules", %{args: [mode]} = context do
     context |> submodules() |> commit_hal_c2_json(JSON.encode!(%{"worktreeSubmodules" => mode}))
@@ -97,8 +97,8 @@ defmodule HalC2.Steps.Files.ProjectFile do
   defp submodules(%{submodules: true} = context), do: context
 
   defp submodules(context) do
-    Node.ensure(HalC2.Settings)
-    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
     allow_file_submodules()
     inner = World.git_repo(context, "inner")
     middle = World.git_repo(context, "middle")
@@ -107,7 +107,7 @@ defmodule HalC2.Steps.Files.ProjectFile do
     Map.put(context, :submodules, true)
   end
 
-  # Local submodules need the file protocol, for the node's git as much as ours.
+  # Local submodules need the file protocol, for the MC's git as much as ours.
   defp allow_file_submodules do
     previous =
       for key <- ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0),

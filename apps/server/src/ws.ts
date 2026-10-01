@@ -2595,7 +2595,7 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "cloud" },
           ),
-        // Only nodes cluster (apps/server-ex `HalC2.Cluster`).
+        // Only MCs cluster (apps/server-ex `HalC2.Cluster`).
         ...(Object.fromEntries(
           [
             WS_METHODS.clusterStatus,
@@ -2608,7 +2608,7 @@ const makeWsRpcLayer = (
               Effect.fail(
                 new ClusterError({
                   reason: "unsupported",
-                  message: "This server does not cluster; run the HAL-C2 node.",
+                  message: "This server does not cluster; run the HAL-C2 MC.",
                 }),
               ),
           ]),

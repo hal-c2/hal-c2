@@ -11,9 +11,9 @@
 #   apps/tui/src/orchestrationV2Adapter.ts (Thinking)
 #   apps/tui/src/components/MessagesTimeline.tsx
 #   apps/tui/src/components/WorkingIndicator.tsx
-#   apps/server-ex/lib/hal_c2/web/socket.ex (stream snapshot after a reconnect, resync, unknown node)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (stream snapshot after a reconnect, resync, unknown MC)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (stream shape by environment, through a link)
-#   apps/desktop-qt/src/native/ThreadStore.cpp (reload, retrying a thread its node stopped sending)
+#   apps/desktop-qt/src/native/ThreadStore.cpp (reload, retrying a thread its MC stopped sending)
 
 Feature: Streaming the agent's reply
   While a turn runs, the agent's text and reasoning arrive as they are written. When the
@@ -23,14 +23,14 @@ Feature: Streaming the agent's reply
     Given a connected environment with the project "shop"
     And the user is looking at a thread in "shop"
 
-  @node
+  @mc
   Scenario: Paragraph streaming writes whole paragraphs as they finish
     Given the project streams responses by paragraph
     When the agent writes a reply of three paragraphs
     Then each paragraph appears once it is finished
     And an unfinished code block is held back until it closes
 
-  @node
+  @mc
   Scenario: Turn streaming holds the reply until the turn reaches a boundary
     Given the project streams responses by turn
     When the agent writes a reply
@@ -141,50 +141,50 @@ Feature: Streaming the agent's reply
   @shared @backlog-mobile @backlog-tui
   Scenario: A reply that finishes while the connection is down is caught up
     Given the agent is writing a reply
-    And the node drops the connection
+    And the MC drops the connection
     When the agent finishes the reply while the shell is disconnected
-    And the shell reconnects to the node
+    And the shell reconnects to the MC
     Then the whole reply is shown
     And the rows shown before are kept
 
   @shared @backlog-mobile @backlog-tui
-  Scenario: A thread that falls behind is caught up from the node
+  Scenario: A thread that falls behind is caught up from the MC
     Given the agent is writing a reply
     When the agent writes more than the shell has read
-    And the node tells the shell to resync the thread
+    And the MC tells the shell to resync the thread
     Then the whole reply is shown
     And the rows shown before are kept
 
   @shared @backlog-mobile @backlog-tui
-  Scenario: A thread whose node leaves the cluster says so until the node returns
-    Given the user is looking at a thread on another node of the cluster
+  Scenario: A thread whose MC leaves the cluster says so until the MC returns
+    Given the user is looking at a thread on another MC of the cluster
     And the agent has answered "Use the tax table."
-    When that node leaves the cluster
-    Then the thread says its node cannot be reached
+    When that MC leaves the cluster
+    Then the thread says its MC cannot be reached
     And the answer "Use the tax table." is still shown
-    When that node rejoins the cluster
-    Then the thread follows its node again
+    When that MC rejoins the cluster
+    Then the thread follows its MC again
     And the answer "Use the tax table." is still shown
 
   @shared @backlog-mobile @backlog-tui
-  Scenario: A thread on an environment the node is linked to says so while the link is down
-    Given the user is looking at a thread on an environment the node is linked to
+  Scenario: A thread on an environment the MC is linked to says so while the link is down
+    Given the user is looking at a thread on an environment the MC is linked to
     And the agent has answered "Deploy when green."
     When that environment becomes unreachable
-    Then the thread says its node cannot be reached
+    Then the thread says its MC cannot be reached
     And the answer "Deploy when green." is still shown
     When that environment is reachable again
-    Then the thread follows its node again
+    Then the thread follows its MC again
     And the answer "Deploy when green." is still shown
 
   @desktop
-  Scenario: Retrying follows the thread again once its node sends it
+  Scenario: Retrying follows the thread again once its MC sends it
     Given the agent has answered "The cart has tax."
-    When the node stops sending the thread
-    Then the thread says its node cannot be reached
+    When the MC stops sending the thread
+    Then the thread says its MC cannot be reached
     When the user retries the thread
     Then the thread is still unreachable
-    When the node can send the thread again
+    When the MC can send the thread again
     And the user retries the thread
-    Then the thread follows its node again
+    Then the thread follows its MC again
     And the answer "The cart has tax." is still shown

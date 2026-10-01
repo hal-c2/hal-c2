@@ -11,7 +11,7 @@
 #   docs/user/providers-claude.md, docs/user/providers-codex.md, docs/user/providers-opencode.md,
 #   docs/user/providers-pi.md, docs/user/providers-antigravity.md, docs/user/providers-acp.md, docs/user/cursor.md
 
-@node
+@mc
 Feature: Provider capabilities
   Providers differ in what they can do mid-conversation. Each provider plugin declares
   its capabilities, and HAL-C2 degrades the same way for every provider that lacks one:
@@ -36,7 +36,7 @@ Feature: Provider capabilities
 
   Scenario: A steer that arrives after the turn ended is sent as a normal message
     Given a Codex thread whose turn is finishing
-    When the user's steer reaches the node after the turn ended
+    When the user's steer reaches the MC after the turn ended
     Then the message starts the next turn
 
   Scenario Outline: A fork continues the provider's own conversation where it can

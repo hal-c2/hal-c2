@@ -1,9 +1,9 @@
 defmodule HalC2.Steps.Platform.StorageMigration do
   @moduledoc """
-  Steps for features/node/platform/storage-migration.feature: the node's one-shot copy
+  Steps for features/mc/platform/storage-migration.feature: the MC's one-shot copy
   from `~/.t3` or `~/.hal-c2` (`HalC2.Migration`).
 
-  Old homes are made inside the scenario (`HalC2.Test.Storage`): a node run flat in
+  Old homes are made inside the scenario (`HalC2.Test.Storage`): an MC run flat in
   `<old home>/elixir`, as an install from before left it, or a marker home. Every file
   the migration copies goes through `HalC2.Test.Storage.copy/2`, so "reads nothing
   from" is what was copied, and "unchanged" is a byte-for-byte snapshot of the old home
@@ -14,7 +14,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
 
   alias HalC2.Paths
   alias HalC2.Test.Storage
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   # --- old homes -----------------------------------------------------------------------
 
@@ -55,7 +55,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
     context
   end
 
-  step "{string} holds state for the installed app, a development server and the node",
+  step "{string} holds state for the installed app, a development server and the MC",
        %{args: [home]} = context do
     root = Storage.path(context, home)
 
@@ -143,7 +143,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
       Storage.copy(from, to)
     end
 
-    put_in(context, [:node, :migration], copy_file: watch)
+    put_in(context, [:mc, :migration], copy_file: watch)
   end
 
   step "a thread in project {string} works in the worktree {string}",
@@ -151,7 +151,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
     real = Storage.path(context, path)
 
     context =
-      Storage.seed_node(context, Path.join(context.old_home, "elixir"), fn ctx ->
+      Storage.seed_mc(context, Path.join(context.old_home, "elixir"), fn ctx ->
         ctx =
           World.create_project(ctx, project, %{"workspaceRoot" => World.git_repo(ctx, project)})
 
@@ -197,7 +197,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
   end
 
   step "the user then renamed a thread in T3 Code", context do
-    Storage.seed_node(context, Path.join(context.old_home, "elixir"), fn ctx ->
+    Storage.seed_mc(context, Path.join(context.old_home, "elixir"), fn ctx ->
       {:ok, _} =
         HalC2.Orchestration.dispatch(%{
           "type" => "thread.metadata.update",
@@ -214,19 +214,19 @@ defmodule HalC2.Steps.Platform.StorageMigration do
   end
 
   step "HAL-C2's data directory already holds {string}", %{args: [path]} = context do
-    real = Storage.node_path(context, path)
+    real = Storage.mc_path(context, path)
     File.mkdir_p!(Path.dirname(real))
     File.write!(real, "")
     context
   end
 
   step "the user deletes {string} and HAL-C2 restarts", %{args: [path]} = context do
-    File.rm_rf!(Storage.node_path(context, path))
+    File.rm_rf!(Storage.mc_path(context, path))
     Storage.start(context)
   end
 
   step "the user deletes {string} and {string}", %{args: paths} = context do
-    for path <- paths, do: File.rm_rf!(Storage.node_path(context, path))
+    for path <- paths, do: File.rm_rf!(Storage.mc_path(context, path))
     context
   end
 
@@ -257,7 +257,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
       end
     end
 
-    put_in(context, [:node, :migration], copy_file: full)
+    put_in(context, [:mc, :migration], copy_file: full)
   end
 
   step "a file in the old home cannot be read", context do
@@ -276,7 +276,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
 
   step "HAL-C2 was stopped partway through copying from the old home", context do
     # What a start that crashed mid-copy leaves: a staging directory with part of it.
-    data = Paths.node_dirs(nil, System.get_env(), Paths.user_home()).data
+    data = Paths.mc_dirs(nil, System.get_env(), Paths.user_home()).data
     staging = data <> ".migrating-99999"
     File.mkdir_p!(staging)
     File.write!(Path.join(staging, "environment-id"), "partial")
@@ -329,12 +329,12 @@ defmodule HalC2.Steps.Platform.StorageMigration do
   end
 
   step "a copy is at {string}", %{args: [path]} = context do
-    real = Storage.node_path(context, path)
+    real = Storage.mc_path(context, path)
     old = context.old_item
 
     cond do
       String.ends_with?(real, ".sqlite") ->
-        # A whole database with the old node's threads in it.
+        # A whole database with the old MC's threads in it.
         assert World.thread(context, "Old work")["title"] == "Old work"
         assert HalC2.Store.home_path() == real
 
@@ -434,7 +434,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
   end
 
   step "the worktree is created under {string}", %{args: [path]} = context do
-    under = Storage.node_path(context, path)
+    under = Storage.mc_path(context, path)
     assert String.starts_with?(context.worktree.path, under <> "/")
     assert File.dir?(context.worktree.path)
     context
@@ -442,7 +442,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
 
   step "{string} names {string}, when it ran and what it copied",
        %{args: [record, home]} = context do
-    record = Storage.node_path(context, record) |> File.read!() |> JSON.decode!()
+    record = Storage.mc_path(context, record) |> File.read!() |> JSON.decode!()
     assert record["source"] == Storage.path(context, home)
     assert {:ok, _, _} = DateTime.from_iso8601(record["at"])
     assert "elixir/hal-c2.sqlite" in record["copied"]
@@ -574,7 +574,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
   end
 
   step "it runs from the XDG directories", context do
-    xdg = Paths.node_dirs(nil, System.get_env(), Paths.user_home())
+    xdg = Paths.mc_dirs(nil, System.get_env(), Paths.user_home())
     assert Paths.dirs() == xdg
     assert HalC2.Store.home_path() == Path.join(xdg.data, "hal-c2.sqlite")
     assert String.starts_with?(xdg.data, Storage.path(context, "~/.local/share/hal-c2/"))
@@ -600,7 +600,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
   step "the service definition names no HAL-C2 home", context do
     env = unit_env(context)
 
-    for name <- ~w(HAL_C2_HOME HAL_C2_NODE_HOME HALC2_HOME T3CODE_HOME T3_HOME),
+    for name <- ~w(HAL_C2_HOME HAL_C2_MC_HOME HALC2_HOME T3CODE_HOME T3_HOME),
         do: refute(env[name])
 
     context
@@ -623,14 +623,14 @@ defmodule HalC2.Steps.Platform.StorageMigration do
 
   step "the service definition names no HAL-C2 home and no T3CODE_HOME", context do
     env = unit_env(context)
-    for name <- ~w(HAL_C2_HOME HAL_C2_NODE_HOME HALC2_HOME T3CODE_HOME), do: refute(env[name])
+    for name <- ~w(HAL_C2_HOME HAL_C2_MC_HOME HALC2_HOME T3CODE_HOME), do: refute(env[name])
     refute File.exists?(context.old_unit)
     context
   end
 
   # --- helpers -------------------------------------------------------------------------
 
-  # A home from before holding a node's marker files, so a copy says where it came from.
+  # A home from before holding an MC's marker files, so a copy says where it came from.
   defp marker_home(context, home) do
     root = Storage.path(context, home)
     dir = Path.join(root, "elixir")
@@ -646,7 +646,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
 
   defp env_id(root), do: File.read!(Path.join([root, "elixir", "environment-id"]))
 
-  # The old home as a node from before left it: a database with a project and a
+  # The old home as an MC from before left it: a database with a project and a
   # thread, settings, a secret, an attachment, logs, and a link back into the home.
   defp old_home(context, home) do
     context = Storage.user(context)
@@ -654,7 +654,7 @@ defmodule HalC2.Steps.Platform.StorageMigration do
     dir = Path.join(root, "elixir")
 
     context =
-      Storage.seed_node(context, dir, fn ctx ->
+      Storage.seed_mc(context, dir, fn ctx ->
         ctx
         |> World.create_project("Old project")
         |> World.create_thread("Old work", "Old project")

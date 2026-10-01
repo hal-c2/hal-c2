@@ -230,7 +230,7 @@ describe("ConnectionResolver", () => {
     }),
   );
 
-  it.effect("reaches a cluster member through the node it was paired with", () =>
+  it.effect("reaches a cluster member through the MC it was paired with", () =>
     Effect.gen(function* () {
       const cluster = [
         { environmentId: ENVIRONMENT_ID, label: "Compatible environment" },

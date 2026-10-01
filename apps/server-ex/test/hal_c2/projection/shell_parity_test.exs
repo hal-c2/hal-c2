@@ -2,7 +2,7 @@ defmodule HalC2.Projection.ShellParityTest do
   @moduledoc """
   Compares `thread_shell/1` with shells the Node server produced for the same log.
 
-      HAL_C2_PARITY_DB=node-state.sqlite HAL_C2_PARITY_GOLDEN=shells.json \\
+      HAL_C2_PARITY_DB=mc-state.sqlite HAL_C2_PARITY_GOLDEN=shells.json \\
         mix test --include parity test/hal_c2/projection/shell_parity_test.exs
 
   The golden file maps thread id to the encoded `OrchestrationV2ThreadShell`. Both

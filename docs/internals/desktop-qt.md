@@ -3,7 +3,7 @@
 `apps/desktop-qt` is the desktop client, replacing the legacy Electron app. It
 is a compiled Qt 6 / QML binary (`hal-c2-qt`) whose window, chrome, layout and
 colours are QML "bricks" a user can rearrange and restyle from
-`~/.config/hal-c2/shell/`, fed by the shell's own connection to the node. It
+`~/.config/hal-c2/shell/`, fed by the shell's own connection to the MC. It
 embeds no web content. Nothing in `apps/web` or `apps/server-ex` may become
 Qt-specific.
 
@@ -12,48 +12,48 @@ Qt-specific.
 ```text
 hal-c2-qt (C++/QML, the shell)
   └─ spawns ─► node apps/desktop-qt/host/main.ts  (the desktop host)
-                 └─ spawns ─► bin/hal_c2 start | mix hal_c2.server  (the Elixir node)
-NativeShell (NodeClient) ── WebSocket (protocol 3) ──────────────────► node
+                 └─ spawns ─► bin/hal_c2 start | mix hal_c2.server  (the MC)
+NativeShell (McClient) ── WebSocket (protocol 3) ──────────────────► MC
 ```
 
-- **The shell talks to the node itself.** `NativeShell` holds its own
-  protocol-3 connection (`NodeClient`), and its C++ controllers own the state
+- **The shell talks to the MC itself.** `NativeShell` holds its own
+  protocol-3 connection (`McClient`), and its C++ controllers own the state
   of every piece of the window.
-- **The Node desktop host** owns everything TypeScript-owned: the node's
+- **The Node desktop host** owns everything TypeScript-owned: the MC's
   lifecycle today; SSH, Tailscale, secrets and updates as they are ported from
   `apps/desktop`. It reports to the shell over its stdout as newline-delimited
-  JSON (`ready {node: {origin, token}}`, `error {message}`, `exit {code}`); the
+  JSON (`ready {mc: {origin, token}}`, `error {message}`, `exit {code}`); the
   shell closes the host's stdin when it exits, which is the host's cue to stop
-  the node it started.
-- **The node is started the way Electron starts it.** A release
-  (`HAL_C2_NODE_RELEASE`, else the bundled `hal-c2-node/`) runs `bin/hal_c2
+  the MC it started.
+- **The MC is started the way Electron starts it.** A release
+  (`HAL_C2_MC_RELEASE`, else the bundled `hal-c2-mc/`) runs `bin/hal_c2
 start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   Either gets `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON line on stdin (port, host
   `127.0.0.1`, `halC2Home` from `--base-dir`; `HalC2.Desktop`), and
-  `HAL_C2_NODE_COMMAND` names the host's Node for the node's JavaScript
-  sidecars. The node runs in its own process group so a stop reaches the BEAM
-  behind `mix` and the release script. The shell connects with the node's own
-  access token, which the node writes into its data directory at boot.
+  `HAL_C2_NODE_COMMAND` names the host's Node for the MC's JavaScript
+  sidecars. The MC runs in its own process group so a stop reaches the BEAM
+  behind `mix` and the release script. The shell connects with the MC's own
+  access token, which the MC writes into its data directory at boot.
 - **QML reads `Shell.state`; controllers fill it.** Controllers publish view
   models (`ShellBridge::publish(key, value)` → `Shell.state[key]`), and bricks
   act with `Shell.dispatch(action, payload)`, which the controllers take in
   turn. An action none of them handles reaches the bricks as
   `Shell.actionRequested`, as does what native code asks of a brick (focus the
   composer, open its model picker) through `sendToBricks`.
-- **The shell's own node client** does what the TUI's does. The host's
-  `ready` line carries the node's origin and access token, and `NativeShell`
-  opens one protocol-3 socket (`NodeClient`) and folds the `shell` snapshot and
+- **The shell's own MC client** does what the TUI's does. The host's
+  `ready` line carries the MC's origin and access token, and `NativeShell`
+  opens one protocol-3 socket (`McClient`) and folds the `shell` snapshot and
   row deltas (`ShellStore`, projects and threads). The controllers start on
   the first snapshot (`NativeShell::isActive`, `ready`); nothing is sent to the
-  node before it. Environments outside the node's cluster are reached
-  through the node's links (`ConnectionsController`). The shell subscribes
+  MC before it. Environments outside the MC's cluster are reached
+  through the MC's links (`ConnectionsController`). The shell subscribes
   with `{"type":"shell","links":true}`, and `ShellStore` keeps each linked
-  node's rows beside the cluster's under a key of link and node (a linked
-  environment's node names can collide with the cluster's), so everything
+  MC's rows beside the cluster's under a key of link and MC (a linked
+  environment's MC names can collide with the cluster's), so everything
   that reads rows lists linked threads without special casing. A link that
-  leaves `shell.links` takes its rows; one that drops keeps them, its nodes
-  offline, and the sidebar rows and header say `offline`. The hello frame names the environment the node
-  serves, which is where the shell sends calls about the node itself (its
+  leaves `shell.links` takes its rows; one that drops keeps them, its MCs
+  offline, and the sidebar rows and header say `offline`. The hello frame names the environment the MC
+  serves, which is where the shell sends calls about the MC itself (its
   cluster). The scenarios are `features/desktop/native-*.feature` and the
   `@desktop` and `@shared` ones in the files `tests/native/tst_Features.cpp`
   lists, run by the native `tst_Features`.
@@ -65,13 +65,13 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   native controller's registration for the ones it owns; a rice can read any
   of them, but a new key must be declared before a binding will follow it.
 
-Attach mode (`--url <link>`) starts no node. The shell hands the link to the
-host (`--attach`), which needs a node pairing link (`mix hal_c2.pair`,
-`mise run node:pair`) and refuses any other address. For a node on this
+Attach mode (`--url <link>`) starts no MC. The shell hands the link to the
+host (`--attach`), which needs an MC pairing link (`mix hal_c2.pair`,
+`mise run mc:pair`) and refuses any other address. For an MC on this
 machine the host finds its access token through the runtime record. For any
-other node it spends the link's single-use token on the shell's session.
-Quitting leaves the attached node running. `mise run desktop` attaches this way
-to the node `mise run node` runs.
+other MC it spends the link's single-use token on the shell's session.
+Quitting leaves the attached MC running. `mise run desktop` attaches this way
+to the MC `mise run mc` runs.
 
 ## Source layout
 
@@ -82,13 +82,13 @@ to the node `mise run node` runs.
 | `src/ShellBridge.*`      | The `Shell` QML singleton: published state and dispatched actions    |
 | `src/ThemeStore.*`       | `theme.json` loader + watcher, `Theme` QML singleton                 |
 | `src/BackendProcess.*`   | Spawns the Node desktop host, waits for `ready`                      |
-| `src/native/`            | The shell's node client and the controllers that take keys over      |
+| `src/native/`            | The shell's MC client and the controllers that take keys over        |
 | `src/native/themes.json` | Built-in palettes, generated by `scripts/gen-themes.mjs`             |
 | `qml/HalC2/Bricks/`      | Pure-QML bricks (see below)                                          |
 | `scripts/gen-icons.mjs`  | Regenerates `js/lucide.js`, the icon paths `ShellIcon` draws         |
 | `scripts/gen-themes.mjs` | Regenerates `src/native/themes.json` from `packages/shared` palettes |
-| `host/main.ts`           | Node desktop host: starts or attaches a node                         |
-| `scripts/dev-qt.mjs`     | Build, pair with the running node, launch                            |
+| `host/main.ts`           | Node desktop host: starts or attaches an MC                          |
+| `scripts/dev-qt.mjs`     | Build, pair with the running MC, launch                              |
 | `examples/`              | Starter `theme.json` and `shell.qml`                                 |
 
 QML modules: `HalC2.Shell` is C++-only (`Shell`, `Theme` and `Runtime`
@@ -141,34 +141,34 @@ Requirements: CMake ≥ 3.21, Ninja, a C++20 compiler, Qt ≥ 6.9 with
 - CI/release builds use `aqtinstall` on every platform for reproducibility.
 
 ```sh
-mise run node       # terminal 1: the Elixir node on 3780 (HAL_C2_NODE_PORT)
+mise run mc       # terminal 1: the MC on 3780 (HAL_C2_MC_PORT)
 mise run desktop    # terminal 2: cmake build, `mix hal_c2.pair`, launch with --url
 ```
 
 `mise run desktop` runs `scripts/dev-qt.mjs`. It uses `--home-dir`, else the
 checkout's `.hal-c2`, as the shell's `HAL_C2_HOME`, so the shell rices from `<root>/config/shell/`
 and keeps its state under `<root>`. Its other flags are `--url` (attach to that link
-instead of pairing), `--standalone` (start the shell's own node from source, as
-the installed app does; not next to `mise run node` on the same home),
+instead of pairing), `--standalone` (start the shell's own MC from source, as
+the installed app does; not next to `mise run mc` on the same home),
 `--release` (no disk QML loading) and `--configure-only` (build, do not
 launch, which `mise run desktop:build` runs); everything else is forwarded to
 the binary, so `mise run desktop -- --screenshot out.png --action
 rightPanel.toggle` works. Build output lands in
 `apps/desktop-qt/build/<debug|release>` (gitignored).
 
-Standalone: run the binary with no `--url`; the host starts the node for the
+Standalone: run the binary with no `--url`; the host starts the MC for the
 shell's home.
 
 CLI: `--url`, `--home-dir`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
-(grab the window once the node's first snapshot is in, or with the error when the start fails, then quit with
+(grab the window once the MC's first snapshot is in, or with the error when the start fails, then quit with
 0, or 2 on a failure; PR evidence without a screen-recording permission, and with
 `QT_QPA_PLATFORM=offscreen` without a window at all), `--action name[=json]` (repeatable; dispatch shell
 actions after that snapshot, e.g. `--action rightPanel.toggle`), `--key <chord>`
 (repeatable; press a key chord after it, e.g. `--key Ctrl+1`, portable
 `QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
 apart, so a key test can open a thread first); env `HAL_C2_HOME`,
-`HAL_C2_QML_DIR`, `HAL_C2_NODE_BIN`, and for the host `HAL_C2_NODE_RELEASE`
-(a node release or its `bin/hal_c2`) and `HAL_C2_NODE_PORT` (a fixed port; a
+`HAL_C2_QML_DIR`, `HAL_C2_NODE_BIN`, and for the host `HAL_C2_MC_RELEASE`
+(an MC release or its `bin/hal_c2`) and `HAL_C2_MC_PORT` (a fixed port; a
 taken one is an error rather than a silent move).
 
 ## Ricing contract
@@ -267,8 +267,8 @@ unread state.
 `ProjectFolderDrop` imports one existing directory through `ProjectController`
 (`projects.mutate`). It does not create, rename, move, or delete directories.
 `ShellBridge::localFolders` decides whether this machine's folders are the
-node's: the shell's own backend, or explicit `--allow-local-folder-import` for
-an attached URL, and a node origin on loopback. Do not enable that flag for an
+MC's: the shell's own backend, or explicit `--allow-local-folder-import` for
+an attached URL, and an MC origin on loopback. Do not enable that flag for an
 SSH-forwarded backend with a different filesystem; its loopback origin looks
 local.
 
@@ -288,7 +288,7 @@ only while the explorer is visible, the primary loopback environment is
 connected, and native local-folder permission allows access.
 
 `sidebar.localProjects` lists every checkout of the environment the shell's
-node serves, independently of grouped sidebar representatives. "Remove from
+MC serves, independently of grouped sidebar representatives. "Remove from
 HAL-C2" sends `project.remove {projectKey}` for one physical checkout, which
 opens the shell's own confirmation (below). Confirming permanently deletes
 that entry's conversation history, including archived threads, and its
@@ -300,7 +300,7 @@ workaround for renaming or moving a registered project root.
 `window.new` (the palette's "New window", or `Shell.dispatch("window.new",
 {id})` from a layout) opens another native window: its own QML engine
 (`ShellRuntime`) on its own `ShellBridge`, loading the same `shell.qml`. The
-node connection, the shell store and the shared controllers
+MC connection, the shell store and the shared controllers
 (`NativeControllerScope::Shared`: settings, alerts and quitting) are one per
 process in `NativeShell`; everything a window shows (route, composer,
 panels, terminals, palette, toasts, sidebar) is a `NativeWindow`'s. Unsent
@@ -389,7 +389,7 @@ What each `Shell.state` key carries and which actions its controller takes.
 
 ### `sidebar`
 
-`SidebarController` publishes `ShellSidebarState` from the shell's node rows
+`SidebarController` publishes `ShellSidebarState` from the shell's MC rows
 (`SidebarModel`, a port of the web sidebar's logic): project groups, the
 current scope, the drafts, and the thread list already bucketed
 (`pinned`/`active`/`snoozed`/`settled`), sorted, and annotated with status,
@@ -414,11 +414,11 @@ then a folder browsed on that environment (`filesystem.browse`) in the
 palette's browse mode, or a clone (`ProjectCloneController`): a Git URL or a
 hosting provider's repository, asked for in the palette's ask mode, then a
 destination browsed with the repository's folder name pinned. Both browse
-from the environment's `addProjectBaseDirectory` setting, else `~/`. The node
+from the environment's `addProjectBaseDirectory` setting, else `~/`. The MC
 adds the project at once and clones in the background; each clone an online
 environment reports on its `projectClones` shape (by environment, so a linked
 one's come through the link) is one toast, updated in place, whose Cancel and
-Retry keep it open. A path does nothing when the node is not on this
+Retry keep it open. A path does nothing when the MC is not on this
 machine, whose folders it cannot reach. `project.remove
 {projectKey}` publishes `projectRemoval {projectKey, title, workspaceRoot,
 threadCount}`, which `ProjectRemovalDialog` asks about; `project.remove.confirm`
@@ -475,7 +475,7 @@ buttons are not Tab stops; the thread menu carries the same actions.
 the composer of the thread or new-thread draft the route shows. Each thread keeps its draft (text, caret, model,
 options, modes, images) in the controller, saved on this machine; a new
 thread's text is `DraftController`'s. It sends, queues, steers, stops,
-answers approvals and questions and implements the plan with node RPCs, and
+answers approvals and questions and implements the plan with MC RPCs, and
 publishes the route thread's pending state as `turn` (see
 `ComposerController.h`), which the `Composer` brick stacks above its prompt
 (`TurnRequests`), so a shell that hosts the composer needs nothing more to answer them. A new thread's first send launches it
@@ -512,7 +512,7 @@ restored failure) still land. Switching targets resets the pending revision.
 `@file`, `$skill` and `/command` suggestions are computed from the raw prompt
 and caret: `/` lists the provider's commands (and skills, with
 `showSkillsInSlashMenu`) plus `/model`, `/plan` and `/default`, which switch
-without sending; `$` the provider's skills; `@` asks the node's workspace
+without sending; `$` the provider's skills; `@` asks the MC's workspace
 search (`WorkspaceFiles`, the Files tab's) for the route's checkout. Selecting
 sends the item id back and the controller applies the replacement.
 
@@ -527,7 +527,7 @@ Terminal excerpts (`composer.terminalContext.add`, from a terminal's
 right-click Add to chat or the web's terminal document) are chips on the
 draft, not inline links as in the web's editor: the Qt editor is plain text.
 A send appends one inline context link per excerpt to the message text and
-carries the excerpts as `context` records, because the node only hands the
+carries the excerpts as `context` records, because the MC only hands the
 provider records whose link is in the text (`HalC2.ComposerContext`). The
 Ghostty `Terminal` does not say where its selection is, so the brick counts
 the lines at the selection's last occurrence in the terminal's text. Excerpts
@@ -548,7 +548,7 @@ The native `Panel` controller (`src/native/RightPanelController.cpp`) owns
 the right panel: open or closed and which tab shows, per thread, published as
 `panel`. The Diff and Files tabs are native bricks (`DiffPanel`, `FilesPanel`)
 over the controller's `ThreadDiff` and `WorkspaceFiles`, which call the
-node's `orchestration.getTurnDiff`, `getFullThreadDiff` and `projects.*` RPCs
+MC's `orchestration.getTurnDiff`, `getFullThreadDiff` and `projects.*` RPCs
 on the thread's own environment. The Agents tab (`AgentsPanel` over
 `AgentsModel`) needs no RPC: it reads the `subagent` entities and running
 `command_execution` items the thread's stream already carries, and its
@@ -579,7 +579,7 @@ titled "PR #n") is `PullRequestReviewPanel` over the controller's
 requests row's menu (`rightPanel.review {key}`) and reads the pull request
 through the thread's environment: `pullRequests.detail` and `.activity` over
 the socket, and the code over HTTP (`POST /api/pull-requests/diff`, one
-`nextCursor` slice at a time, with `NodeClient::post`), which lands in a
+`nextCursor` slice at a time, with `McClient::post`), which lands in a
 `DiffModel` that `DiffPanel` draws. Comments, reviews, thread resolutions and
 viewed marks go back through the same environment, and the pull request is
 read again once each lands. A viewed mark the host refuses is taken back.
@@ -592,7 +592,7 @@ rows: the environment and whether it is reachable, the project, the checkout
 and branch, and the lineage parent and children. Changing the checkout stays
 with the composer's strip.
 
-Device tabs (`ThreadDevices`, `DeviceStream`) follow the node's `devices`
+Device tabs (`ThreadDevices`, `DeviceStream`) follow the MC's `devices`
 shape and stream through its device-hub proxy with the shell's bearer token,
 decoding H.264 with FFmpeg's libavcodec (headers at build time, the libraries
 loaded at run time; see [Devices](devices.md#the-viewers-decode-both-vendored-protocols)).
@@ -608,8 +608,8 @@ line, for the timeline's links.
 
 ### `workspace`
 
-`WorkspaceController` builds `workspace` from the node: the thread and its project are `ShellStore` rows,
-the git summary the node's `vcs` shape for the checkout, the refs
+`WorkspaceController` builds `workspace` from the MC: the thread and its project are `ShellStore` rows,
+the git summary the MC's `vcs` shape for the checkout, the refs
 `vcs.listRefs`, the editors each environment's `config`. It keeps
 `useThreadBranchSelection`'s rules (optimistic branch, `switchRef` /
 `createRef`, then `thread.metadata.update` with the new branch and worktree),
@@ -635,21 +635,21 @@ linked, are watched while it is online.
 The terminal drawer is native: `TerminalDrawer` draws each of the thread's
 terminals with [qml-ghostty](https://github.com/hal-c2/qml-ghostty)'s
 `Terminal` item (libghostty-vt, built as described in the app's README), and
-`TerminalController` (the `Terminals` singleton) talks to the node for it over
-the shell's own `NodeClient`, as the sidebar and composer do. It takes the thread (drafts included), its
+`TerminalController` (the `Terminals` singleton) talks to the MC for it over
+the shell's own `McClient`, as the sidebar and composer do. It takes the thread (drafts included), its
 project root, worktree and scripts from `WorkspaceController::place()`, and
 the header's run pill (`workspace.runScript`, handled by the workspace) types
 into a drawer terminal it launched itself. Its shapes name the
-environment, not a node, so the node routes them to the cluster member that serves
+environment, not an MC, so the MC routes them to the cluster member that serves
 it or through a link (`HalC2.Links`) to an environment outside the cluster; the
 drawer is available wherever the header is, cluster and linked environments
 alike (`features/terminal/drawer.feature`).
-Environments outside the cluster are paired natively, as node links (see
+Environments outside the cluster are paired natively, as MC links (see
 `connections` below).
 
 - **Launch context.** Every attach and open sends the thread's cwd (worktree,
   else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables as the
-  web client. The node restarts a shell whose launch env changed, so the shell
+  web client. The MC restarts a shell whose launch env changed, so the shell
   must send the same env every time.
 - **Replay.** A session keeps the transcript it attached with plus what has
   arrived since (capped like other clients' buffers), so a tab created late replays
@@ -694,7 +694,7 @@ each bump, so opening the same result twice scrolls back to it.
 General and Appearance are rows over `Settings` (`js/settingsRows.js`: a key,
 a kind and the web's wording). Each key's store and default are
 `SettingsController`'s row table: `setting`, `defaultOf`, `isDefault`,
-`onDevice`, `set` and `reset` read and write it wherever it lives. The node
+`onDevice`, `set` and `reset` read and write it wherever it lives. The MC
 leaves defaults out of its document, and a null `sidebarAutoSettleAfterDays`
 means off. Appearance also draws the theme choice and this device's own
 themes (`ThemeEditor`); errors are the shell's toasts.
@@ -702,12 +702,12 @@ themes (`ThemeEditor`); errors are the shell's toasts.
 Each other native section is a controller publishing one key, whose header
 documents the shape and actions:
 
-- **Cluster** (`ClusterController`, `cluster`) calls the node's `cluster.*`
+- **Cluster** (`ClusterController`, `cluster`) calls the MC's `cluster.*`
   RPCs.
 - **Connections** (`ConnectionsController`, `connections`). Other
-  environments are the node's links from the `shell` shape; adding one is
+  environments are the MC's links from the `shell` shape; adding one is
   `hal-c2.linkEnvironment` with a pairing link, or a host and code (a host
-  without a scheme tries HTTPS, then HTTP), and the node has no rename for a
+  without a scheme tries HTTPS, then HTTP), and the MC has no rename for a
   link. While open it follows the `authAccess` shape and calls the `hal-c2.*`
   access RPCs, which need `access:read`/`access:write`, so a session paired
   with standard scopes sees one explanation in place of the list. A created
@@ -717,23 +717,23 @@ documents the shape and actions:
 - **Providers** (`ProviderSettingsController`, `providerSettings`) shows one
   environment at a time: its `config` shape brings the providers, and each
   provider that signs in from HAL-C2 has its `providerAuth` shape followed.
-  That shape is node-addressed, so signing in works only on environments a
-  cluster node serves. Turning a provider off is a settings edit on that
+  That shape is MC-addressed, so signing in works only on environments a
+  cluster MC serves. Turning a provider off is a settings edit on that
   environment, read back and retried on `StaleSettings` like the shell's own
   settings. Instances, custom models and a registry agent's sessions and model
   providers are edited through the same model; the ACP Registry search and a
-  registry agent's sessions, model providers and logout are node RPCs asked
+  registry agent's sessions, model providers and logout are MC RPCs asked
   from the followed environment, and their answers are held only while the
   section shows.
 - **Archive** (`ArchivedThreadsController`, `archivedThreads`) is fetched,
   not streamed (`features/parity/rpc.feature`): opening it, refreshing, an
   action landing, or the online environments changing asks each one for
   `orchestration.getArchivedShellSnapshot`, which covers only the rows of the
-  node that answers.
+  MC that answers.
 
 Home, the pull requests page and usage are routes of their own, drawn by
 `HomePage`, `PullRequestsPage` and `UsagePage` over `PullRequestListController`
-and `UsageController`; they too follow node shapes only while open. Home is
+and `UsageController`; they too follow MC shapes only while open. Home is
 never where a window with projects stays: once every environment has
 reported, `DraftController::land` replaces it with the most recent project's
 draft (`sidebar::mostRecentProject`, the web's "updated_at" order), reusing
@@ -791,22 +791,22 @@ it on the last thread.
 `NativeShell::controller<SettingsController>()`) holds two stores. The API is
 documented in its header.
 
-- The node's settings document, shared by every client of the environment:
+- The MC's settings document, shared by every client of the environment:
   `hal-c2.readSettings` gives `{settings, version}`, and `hal-c2.writeSettings`
   saves a whole document at the version it was read at. A change is an edit
   function (`change(edit, done)`, or `Settings.write(path, value)` from QML).
-  When another client saved first, the node refuses the write as
+  When another client saved first, the MC refuses the write as
   `StaleSettings`. The store then reads again and applies the same edit to what
-  the node holds, a few times before it reports the failure, so a stale copy
-  never overwrites a newer one. It subscribes to the node's `config` shape
+  the MC holds, a few times before it reports the failure, so a stale copy
+  never overwrites a newer one. It subscribes to the MC's `config` shape
   (the snapshot, `config.settings`, `config.providers`, `config.themes`) and
-  reads again on each snapshot. A reconnect may reach a restarted node whose
+  reads again on each snapshot. A reconnect may reach a restarted MC whose
   versions start over.
 - This device's preferences, in `<config>/preferences.json` next to
   `theme.json`: anything that belongs to this desktop and no other client
   (appearance, theme choice, saved custom themes, the client settings rows).
   They are available before
-  the node is. A save that fails sets `deviceError` and leaves them as they
+  the MC is. A save that fails sets `deviceError` and leaves them as they
   were.
 
 ### `theme`
@@ -815,7 +815,7 @@ documented in its header.
 resolves as `theme`. The choice lives in this device's preferences: `appearance`
 (`system`, `light`, `dark`), `theme`, `themeHalves` (a theme per appearance)
 and `customThemes`. An id is looked up among the built-ins first, then this
-device's saved themes, then the themes the shell's own node publishes. Themes
+device's saved themes, then the themes the shell's own MC publishes. Themes
 from linked environments are never offered. The lookup mirrors the web's
 `getThemeDefinition`: missing roles come from the T3 Chat palette, and a
 theme with one appearance takes that half only. An id that is no longer found
@@ -843,7 +843,7 @@ fast it is pressed).
 
 The shell owns whether the thread list is hidden: `LayoutController`
 publishes `layout {sidebarCollapsed}`, remembers it in the device's
-`preferences.json`, and publishes it before the node's first snapshot so a
+`preferences.json`, and publishes it before the MC's first snapshot so a
 restart does not flash the list. `sidebar.toggle` (action and keybinding
 command, Mod+B by default) flips it. The `Workspace` brick shows a toggle when
 its `sidebarToggle` property is bound (it takes the sidebar's place at the
@@ -880,7 +880,7 @@ because most rices bring their own title bar.
 
 `KeybindingController` (the `Keybindings` singleton) keeps the keymap. It
 merges `src/native/Keybindings.cpp`'s copy of the web defaults with the rules
-the node pushes as `config.keybindings` (a custom rule for a command replaces
+the MC pushes as `config.keybindings` (a custom rule for a command replaces
 that command's defaults, the newest match wins, rules naming an unknown
 command are dropped) and evaluates `when` against the shell's own context:
 terminal and composer focus, the drawer, `isDesktop`. Commands the shell can
@@ -911,7 +911,7 @@ and cluster threads alike), the sidebar's projects, the settings sections
 and, from two characters, threads whose messages match. Go to file
 (`filePicker.toggle`) and project search (`projectSearch.toggle`) are modes of
 the same list against the route thread's environment, only while it is
-online; node searches wait for typing to pause and only the newest answer
+online; MC searches wait for typing to pause and only the newest answer
 counts. It is its own list model and filters in C++, moving only the rows a
 keystroke or an answer changes, never resetting the list. Dismissing it sends
 `composer.focus` to the composer. The singleton is not `Palette`, which
@@ -952,7 +952,7 @@ Settings → Keybindings (`KeybindingsSettings`, route
 `/settings/keybindings`) lists the merged rows, records chords with
 `Keybindings.recordKey`, and saves through `hal-c2.upsertKeybinding` and
 `hal-c2.removeKeybinding` on the shell's own environment. The rows refresh
-from the node's push, not from the reply.
+from the MC's push, not from the reply.
 
 ### `notifications`
 
@@ -1012,9 +1012,9 @@ requests (PR, MR). Actions: `git.quick`, `git.menu {id}`, `git.commit
 `git.refresh`.
 
 A stacked action is one `gitAction` subscription; its stage and last hook line
-update one loading toast in place, and the node's result toast (with its
+update one loading toast in place, and the MC's result toast (with its
 next-step CTA) replaces it. The subscription is dropped, not resent, when the
-connection drops, since the node would run the action twice. `gitAction`
+connection drops, since the MC would run the action twice. `gitAction`
 names the environment, so a linked thread's actions run through its link. While
 an environment is offline the brick publishes `available: false`, with the
 link's message (`EnvironmentUnreachableError`) as the `unavailableReason` it
@@ -1049,23 +1049,23 @@ X11 `WM_CLASS`, so compositor rules can target the window — on Hyprland:
 macOS with the official Qt 6.9 binaries (`jurplel/install-qt-action`) and
 packages an AppImage (`scripts/package-linux.sh`, linuxdeploy + its Qt
 plugin) and a macOS bundle (`macdeployqt`). `scripts/stage-runtime.mjs` stages
-the host's TypeScript, the node release
-(`hal-c2-node/`, from `mix release`) and the Node executable that runs the
-host and the node's sidecars. The Linux path was
+the host's TypeScript, the MC release
+(`hal-c2-mc/`, from `mix release`) and the Node executable that runs the
+host and the MC's sidecars. The Linux path was
 written against the documented tooling but has only been exercised in CI, not
 on this machine.
 
 ## Adding a feature
 
 A feature is a native controller (`src/native/`, registered with
-`NativeControllerRegistrar`) that builds its state from the shell's own node
+`NativeControllerRegistrar`) that builds its state from the shell's own MC
 client, a brick the layouts place that renders it, and `@desktop` scenarios
 run by `tst_Features`. Web content the desktop cannot draw opens in the
 user's browser.
 
 ### Thread store and timeline
 
-`ThreadStore` (`Threads`) follows each open thread through the node's `stream`
+`ThreadStore` (`Threads`) follows each open thread through the MC's `stream`
 shape, folded into a `TimelineModel` per thread: the active one plus a few
 recently active ones stay subscribed. The fold is
 `packages/client-runtime/src/v3/threadShape.ts` in C++; the rows follow the
@@ -1074,9 +1074,9 @@ brick draws them as the web's `MessagesTimeline` does. A message's time and
 actions fade in on hover but keep their place while hidden, so hovering never
 re-lays out the list; `Timeline.alwaysShowMeta` shows them where there is no
 hover (on by default on Android and iOS). A thread is
-addressed by its environment (`ThreadStore::streamShape`), which the node
+addressed by its environment (`ThreadStore::streamShape`), which the MC
 routes to a cluster member or through a link; a stream that errors waits for
-the shell to list the thread's node online again. A part-0 snapshot after a reconnect or `resync` replaces the
+the shell to list the thread's MC online again. A part-0 snapshot after a reconnect or `resync` replaces the
 entities but not the rows: row ids are stable, streamed text only emits
 `dataChanged` for its row, and structural changes are applied as inserts,
 moves and removes, so the `Timeline` brick keeps its scroll position. The
@@ -1086,7 +1086,7 @@ Which brick draws each route in the window's centre is one list,
 `Bricks/js/centreViews.js`, which `CentreHost` loads from; every layout
 places it the way it does `SettingsHost`. Thread and draft routes load `ThreadView`: the route's
 timeline, a quiet loading line, the draft's opening line with its project and
-checkout, and Retry (`Threads.reload`) for a thread whose node stopped sending
+checkout, and Retry (`Threads.reload`) for a thread whose MC stopped sending
 it. Links in a reply open in the browser or, for a path, in the right panel
 (`panel.open {tab: "files", path, line?}`); a reply's changed file opens the
 diff on its turn. There is one revert, `Panel.diff` (`ThreadDiff`), which
@@ -1094,7 +1094,7 @@ follows the route's thread whether or not the panel is open: a reply's Revert
 (on the turn `TimelineModel::checkpointOf` finds for its run) and the Diff
 tab's both go through `requestRevert`, and `RevertDialog` asks before
 `confirmRevert` sends `checkpoint.rollback`, keeping or restoring the files.
-The node marks the later runs `rolled_back` and the fold drops them. Scroll to
+The MC marks the later runs `rolled_back` and the fold drops them. Scroll to
 end is also the `timeline.jumpToLatest` command.
 
 What the shell still lacks next to web and mobile is tracked as Gherkin, not
@@ -1107,5 +1107,5 @@ the shell. Add a new gap there, and turn a backlog scenario into a real test
 ## Release targets
 
 Linux AppImage and macOS `.app` first, Windows later. Release staging bundles
-the build's Node executable and license beside the host runtime, and the node
+the build's Node executable and license beside the host runtime, and the MC
 release, which carries its own Erlang runtime.

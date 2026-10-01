@@ -8,8 +8,8 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # tool => {label, version line, auth rule (nil for version control), account host}
   @tools %{
@@ -59,12 +59,12 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
 
   # --- discovery -----------------------------------------------------------------
 
-  step "git is installed and signed in on the node's machine", context do
+  step "git is installed and signed in on the MC's machine", context do
     {version, 0} = System.cmd("git", ["--version"])
     Map.merge(context, %{tool: "Git", version: String.trim(version), account: nil})
   end
 
-  step ~r/^(?<tool>jj|gh|glab|tea|az) is installed and signed in on the node's machine$/,
+  step ~r/^(?<tool>jj|gh|glab|tea|az) is installed and signed in on the MC's machine$/,
        %{args: [tool]} = context do
     {label, version, auth, host} = Map.fetch!(@tools, tool)
 
@@ -129,7 +129,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     context
   end
 
-  step "the node was started with a Bitbucket access token in its environment", context do
+  step "the MC was started with a Bitbucket access token in its environment", context do
     Shared.fake_bitbucket(context)
   end
 
@@ -147,7 +147,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   step ~r/^both fj and tea are installed and fj holds a login for "(?<server>[^"]+)"$/,
        %{args: [server]} = context do
     server = if server == "codeberg.org", do: "127.0.0.1:1", else: server
-    keys = Path.join(Node.tmp_dir(context.node, "forgejo-cli"), "keys.json")
+    keys = Path.join(Mc.tmp_dir(context.mc, "forgejo-cli"), "keys.json")
 
     File.write!(
       keys,
@@ -194,7 +194,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     bare = World.git_remote(context, World.git_repo(context, "shop"))
     urls = %{"sshUrl" => bare, "url" => "file://" <> bare}
     context = World.cli_rules(context, lookup_rule(repository, urls))
-    dest = Path.join(Node.tmp_dir(context.node, "clones"), "shop")
+    dest = Path.join(Mc.tmp_dir(context.mc, "clones"), "shop")
 
     {reply, context} =
       World.call(context, "sourceControl.cloneRepository", %{
@@ -217,7 +217,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   end
 
   step "the user clones without naming a repository or address", context do
-    dest = Path.join(Node.tmp_dir(context.node, "clones"), "nothing")
+    dest = Path.join(Mc.tmp_dir(context.mc, "clones"), "nothing")
 
     {reply, context} =
       World.call(context, "sourceControl.cloneRepository", %{"destinationPath" => dest})
@@ -368,7 +368,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   end
 
   step "the project {string} is a git repository with no commits", %{args: [title]} = context do
-    root = Node.tmp_dir(context.node, World.slug(title))
+    root = Mc.tmp_dir(context.mc, World.slug(title))
     World.git!(root, ~w(init -q -b main))
     context = World.create_project(context, title, %{"workspaceRoot" => root})
     Map.put(context, :cwd, root)
@@ -379,7 +379,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     visibility = List.first(rest) || "private"
     provider = Shared.provider(host)
     repository = "acme/" <> World.slug(title)
-    bare = Path.join(Node.tmp_dir(context.node, "published"), "#{World.slug(title)}.git")
+    bare = Path.join(Mc.tmp_dir(context.mc, "published"), "#{World.slug(title)}.git")
     exe = if provider == "github", do: "gh", else: "glab"
 
     context =
@@ -467,10 +467,10 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
 
   # Starts a project clone of `source` into a new folder, following its snapshots.
   defp start_clone(context, source) do
-    Node.ensure(HalC2.ProjectClones)
+    Mc.ensure(HalC2.ProjectClones)
     {:ok, _} = HalC2.ProjectClones.subscribe(self())
     id = "clone-#{System.unique_integer([:positive])}"
-    dest = Path.join(Node.tmp_dir(context.node, "clones"), id)
+    dest = Path.join(Mc.tmp_dir(context.mc, "clones"), id)
 
     {reply, context} =
       World.call(
@@ -492,7 +492,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   end
 
   defp failed_clone(context, repository) do
-    bare = Path.join(Node.tmp_dir(context.node, "unreachable"), "shop.git")
+    bare = Path.join(Mc.tmp_dir(context.mc, "unreachable"), "shop.git")
 
     context =
       World.cli_rules(context, lookup_rule(repository, %{"url" => bare, "sshUrl" => bare}))

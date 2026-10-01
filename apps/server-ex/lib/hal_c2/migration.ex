@@ -1,10 +1,10 @@
 defmodule HalC2.Migration do
   @moduledoc """
-  The one-shot copy from an old home into the node's own directories
-  (`features/node/platform/storage-migration.feature`).
+  The one-shot copy from an old home into the MC's own directories
+  (`features/mc/platform/storage-migration.feature`).
 
   A user coming from T3 Code has `~/.t3`, an early HAL-C2 user `~/.hal-c2`. The first
-  time the node starts with no database of its own and no migration record, it copies
+  time the MC starts with no database of its own and no migration record, it copies
   what the user cannot get back from `<old home>/elixir` into its config, data and
   state directories (`HalC2.Paths`). The old home is chosen by
   `HalC2.Paths.legacy_candidates/3`, first one that exists.
@@ -17,7 +17,7 @@ defmodule HalC2.Migration do
 
   Everything is copied into `<dir>.migrating-<pid>` beside each directory and moved
   into place only when the whole copy succeeded, the database last. A copy that fails
-  leaves nothing behind, logs a warning and the node starts fresh; one cut short by a
+  leaves nothing behind, logs a warning and the MC starts fresh; one cut short by a
   crash leaves a staging directory the next start removes before copying again.
 
   `<state>/migrated-from.json` records the source, when it ran and what was copied, so

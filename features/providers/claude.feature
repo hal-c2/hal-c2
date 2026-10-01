@@ -11,21 +11,21 @@
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
 #   apps/server/src/provider/Layers/claudeUsageLimits.ts
 
-@plugin-claude @node
+@plugin-claude @mc
 Feature: Claude
-  Claude Code runs as a bundled provider plugin. The node drives the local claude CLI,
+  Claude Code runs as a bundled provider plugin. The MC drives the local claude CLI,
   so sign-in, subscription and API keys stay with the CLI on the machine that runs it.
 
   Background:
     Given a connected environment with the project "shop"
 
-  Scenario: Claude is offered when the claude command is on the node's path
-    Given the claude command is installed on the node
+  Scenario: Claude is offered when the claude command is on the MC's path
+    Given the claude command is installed on the MC
     When the user opens the provider list
     Then Claude is listed as ready with its installed version
 
   Scenario: Claude is not offered when the claude command is missing
-    Given the claude command is not installed on the node
+    Given the claude command is not installed on the MC
     When the user opens the provider list
     Then Claude is not offered as a provider
 
@@ -40,7 +40,7 @@ Feature: Claude
     Then Claude updates itself and the new version is shown
 
   Scenario: Claude that no installer owns can only be updated by hand
-    Given Claude was installed in a way the node cannot identify
+    Given Claude was installed in a way the MC cannot identify
     When the user opens the update details for Claude
     Then the user is told to update Claude by hand
 
@@ -189,7 +189,7 @@ Feature: Claude
 
   @backlog
   Scenario: A resumed Claude subagent keeps its continuation in its own thread
-    Given Claude resumed a subagent after the node restarted
+    Given Claude resumed a subagent after the MC restarted
     When the user opens the subagent's thread
     Then the thread shows the message that resumed it
     And the parent thread does not
@@ -224,7 +224,7 @@ Feature: Claude
     Then the revert is refused until the turn ends
 
   Scenario: A signed-out Claude CLI explains how to sign in
-    Given the Claude CLI on the node is not signed in
+    Given the Claude CLI on the MC is not signed in
     When the user sends a message to Claude
     Then the turn fails saying to run the Claude sign-in command on that machine
 

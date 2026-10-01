@@ -4,7 +4,7 @@ defmodule HalC2.Mcp do
   can work with HAL-C2 itself: read and message threads, launch new ones, and manage
   the queue, projects, and schedule (`HalC2.Mcp.Tools`).
 
-  It is served at `POST /mcp` on the node, as JSON-RPC over HTTP (MCP's
+  It is served at `POST /mcp` on the MC, as JSON-RPC over HTTP (MCP's
   streamable HTTP transport, answered with plain JSON). Each thread has its own
   bearer credential (`server/2`), given to that thread's agent, so every tool call
   acts as the thread that made it. A credential lapses after a day without MCP

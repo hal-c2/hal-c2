@@ -456,7 +456,7 @@ defmodule HalC2.Mcp.Tools.Threads do
   end
 
   # The provider and model a new thread runs on: the caller's unless the target
-  # names another, which must be one this node can run.
+  # names another, which must be one this MC can run.
   defp target(parent, providers, target) do
     target = target || %{}
     inherited = parent["modelSelection"] || %{}

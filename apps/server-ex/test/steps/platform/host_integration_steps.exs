@@ -1,10 +1,10 @@
 defmodule HalC2.Steps.Platform.HostIntegration do
-  @moduledoc "Steps for features/node/platform/host-integration.feature."
+  @moduledoc "Steps for features/mc/platform/host-integration.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @editors %{
     "VS Code" => {"code", "vscode"},
@@ -19,7 +19,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   defp bin(context) do
     case context[:bin] do
       nil ->
-        dir = Node.tmp_dir(context.node, "bin")
+        dir = Mc.tmp_dir(context.mc, "bin")
         World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
         Map.put(context, :bin, dir)
 
@@ -90,13 +90,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   defp server_config(context) do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
 
     client =
       World.client(context)
-      |> Node.sub(9, %{"type" => "config", "environment" => context.node.environment})
+      |> Mc.sub(9, %{"type" => "config", "environment" => context.mc.environment})
 
-    {frame, client} = Node.await(client, &(&1["t"] == "config" and &1["id"] == 9))
+    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 9))
     context |> World.put_client(client) |> Map.put(:server_config, frame["config"])
   end
 
@@ -121,11 +121,11 @@ defmodule HalC2.Steps.Platform.HostIntegration do
        %{args: [file, line, column, editor]} = context do
     {command, id} = Map.fetch!(@editors, editor)
     context = install(context, command)
-    target = Path.join(Node.tmp_dir(context.node, "project"), file) <> ":#{line}:#{column}"
+    target = Path.join(Mc.tmp_dir(context.mc, "project"), file) <> ":#{line}:#{column}"
     context |> Map.put(:target, target) |> open(%{"cwd" => target, "editor" => id})
   end
 
-  step ~r/^the node launches (?<editor>.+) the way it takes a line and column$/,
+  step ~r/^the MC launches (?<editor>.+) the way it takes a line and column$/,
        %{args: [editor]} = context do
     {command, _id} = Map.fetch!(@editors, editor)
     [path, _line, _column] = String.split(context.target, ":")
@@ -153,7 +153,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
   step "a client opens a project folder in the file manager", context do
     context = with_display(context)
-    folder = Node.tmp_dir(context.node, "project")
+    folder = Mc.tmp_dir(context.mc, "project")
     context |> Map.put(:target, folder) |> open(%{"cwd" => folder, "editor" => "file-manager"})
   end
 
@@ -170,20 +170,20 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "a client opens a folder in the file manager", context do
-    open(context, %{"cwd" => Node.tmp_dir(context.node, "project"), "editor" => "file-manager"})
+    open(context, %{"cwd" => Mc.tmp_dir(context.mc, "project"), "editor" => "file-manager"})
   end
 
-  step "the node fails saying the file manager is unsupported", context do
+  step "the MC fails saying the file manager is unsupported", context do
     refused(context, "ExternalLauncherUnsupportedEditorError")
   end
 
-  step "the node runs on macOS", context do
+  step "the MC runs on macOS", context do
     World.put_app_env(:os_type, {:unix, :darwin})
     install(context, "open")
   end
 
   step "a client reveals a file in the file manager", context do
-    file = Path.join(Node.tmp_dir(context.node, "project"), "README.md")
+    file = Path.join(Mc.tmp_dir(context.mc, "project"), "README.md")
     File.write!(file, "# hi\n")
 
     context
@@ -199,24 +199,24 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  step "a client opens a folder in an editor id the node does not know", context do
-    open(context, %{"cwd" => Node.tmp_dir(context.node, "project"), "editor" => "notepad"})
+  step "a client opens a folder in an editor id the MC does not know", context do
+    open(context, %{"cwd" => Mc.tmp_dir(context.mc, "project"), "editor" => "notepad"})
   end
 
-  step "the node fails saying the editor is unknown", context do
+  step "the MC fails saying the editor is unknown", context do
     refused(context, "ExternalLauncherUnknownEditorError")
   end
 
   step "Zed is not installed on the host", context do
-    World.put_os_env("PATH", Node.tmp_dir(context.node, "empty-bin"))
+    World.put_os_env("PATH", Mc.tmp_dir(context.mc, "empty-bin"))
     context
   end
 
   step "a client opens a folder in Zed", context do
-    open(context, %{"cwd" => Node.tmp_dir(context.node, "project"), "editor" => "zed"})
+    open(context, %{"cwd" => Mc.tmp_dir(context.mc, "project"), "editor" => "zed"})
   end
 
-  step "the node fails naming the command it could not find", context do
+  step "the MC fails naming the command it could not find", context do
     context = refused(context, "ExternalLauncherCommandNotFoundError")
     assert inspect(context.reply) =~ ~s("command" => "zed")
     context
@@ -245,17 +245,17 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Enum.map(entries, & &1["name"])
   end
 
-  # Under the scenario's `$HOME` (`HalC2.Test.Node.Host`); `context.user_home` names it.
+  # Under the scenario's `$HOME` (`HalC2.Test.Mc.Host`); `context.user_home` names it.
   step "the home folder has a dev folder holding api, tests, tools, .tmp, .trash and a file todo.txt",
        context do
-    dev = HalC2.Test.Node.Host.path(context, "~/dev")
+    dev = HalC2.Test.Mc.Host.path(context, "~/dev")
 
     for dir <- ~w(tools tests api .tmp .trash), do: File.mkdir_p!(Path.join(dev, dir))
     File.write!(Path.join(dev, "todo.txt"), "")
-    Map.put(context, :user_home, HalC2.Test.Node.Host.home(context))
+    Map.put(context, :user_home, HalC2.Test.Mc.Host.home(context))
   end
 
-  step "the node lists folders in {string} whose names start with {string}",
+  step "the MC lists folders in {string} whose names start with {string}",
        %{args: ["~/dev", "t"]} = context do
     assert entries(context) == ["tests", "tools"]
     context
@@ -267,7 +267,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  step "the node lists every folder in {string}, hidden ones included",
+  step "the MC lists every folder in {string}, hidden ones included",
        %{args: ["~/dev"]} = context do
     # Every folder, and only folders: `todo.txt` is not one.
     assert entries(context) == [".tmp", ".trash", "api", "tests", "tools"]
@@ -275,10 +275,10 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "a client browses a path whose parent does not exist", context do
-    browse(context, Path.join(Node.tmp_dir(context.node, "user-home"), "missing/t"))
+    browse(context, Path.join(Mc.tmp_dir(context.mc, "user-home"), "missing/t"))
   end
 
-  step "the node fails without listing anything", context do
+  step "the MC fails without listing anything", context do
     assert {:error, error, _} = context.reply
     assert error =~ "missing"
     context
@@ -311,10 +311,10 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   defp follow_local_servers(context) do
-    Node.ensure(HalC2.LocalServers)
-    shape = %{"type" => "localServers", "node" => Atom.to_string(node())}
-    client = World.client(context) |> Node.sub(11, shape)
-    {frame, client} = Node.await(client, &(&1["t"] == "localServers" and &1["id"] == 11), 10_000)
+    Mc.ensure(HalC2.LocalServers)
+    shape = %{"type" => "localServers", "mc" => Atom.to_string(node())}
+    client = World.client(context) |> Mc.sub(11, shape)
+    {frame, client} = Mc.await(client, &(&1["t"] == "localServers" and &1["id"] == 11), 10_000)
     context |> World.put_client(client) |> Map.put(:servers, ports(frame))
   end
 
@@ -349,7 +349,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
     # The next scan (every three seconds while someone watches) pushes the new list.
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["t"] == "localServers" and &1["id"] == 11 and port not in ports(&1)),
         10_000
@@ -360,11 +360,11 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "nobody follows the host's local servers", context do
-    Node.ensure(HalC2.LocalServers)
+    Mc.ensure(HalC2.LocalServers)
     context
   end
 
-  step "the node does not scan the host's ports", context do
+  step "the MC does not scan the host's ports", context do
     state = :sys.get_state(HalC2.LocalServers)
     assert state.watchers == %{}
     assert state.timer == nil
@@ -375,13 +375,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   # --- paths and pipes ---------------------------------------------------------------
 
   step "a project path that loops through symlinks", context do
-    dir = Node.tmp_dir(context.node, "loop")
+    dir = Mc.tmp_dir(context.mc, "loop")
     File.ln_s!(Path.join(dir, "b"), Path.join(dir, "a"))
     File.ln_s!(Path.join(dir, "a"), Path.join(dir, "b"))
     Map.put(context, :path, Path.join(dir, "a/project"))
   end
 
-  step "the node resolves it", context do
+  step "the MC resolves it", context do
     Map.put(context, :resolved, HalC2.Paths.real(context.path))
   end
 
@@ -390,13 +390,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  step "a provider process writing output faster than the node reads it", context do
+  step "a provider process writing output faster than the MC reads it", context do
     {:ok, sub} = HalC2.Subprocess.start(["yes", "a line of provider output"])
     assert_receive {:subprocess_lines, reader, lines}, 5_000
     Map.merge(context, %{sub: sub, reader: reader, first: lines})
   end
 
-  step "the node applies backpressure through the process's pipe", context do
+  step "the MC applies backpressure through the process's pipe", context do
     # Until the owner acknowledges a batch, the reader does not read again ...
     refute_receive {:subprocess_lines, _, _}, 300
     # ... so the writer blocks on the full pipe.

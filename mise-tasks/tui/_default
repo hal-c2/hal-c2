@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="Open the terminal client on the running Elixir node (this checkout's mise run node, --base-dir <root>, or --url <pairing link> for a remote one)"
+#MISE description="Open the terminal client on the running MC (this checkout's mise run mc, --base-dir <root>, or --url <pairing link> for a remote one)"
 #MISE dir="{{config_root}}"
 #MISE depends=["tui:build"]
 set -euo pipefail
 args=("$@")
-if [[ " $* " != *" --base-dir"* && -z ${HAL_C2_NODE_HOME:-} ]]; then
-  # `mise run node` keeps its runtime record and access token in the XDG hal-c2-dev
+if [[ " $* " != *" --base-dir"* && -z ${HAL_C2_MC_HOME:-} ]]; then
+  # `mise run mc` keeps its runtime record and access token in the XDG hal-c2-dev
   # profile (apps/server-ex/config/config.exs).
   args=(--dev ${args[@]+"${args[@]}"})
 fi

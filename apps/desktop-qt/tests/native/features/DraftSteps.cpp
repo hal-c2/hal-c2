@@ -97,8 +97,8 @@ const Steps steps([] {
                                                           });
   });
 
-  // The node.
-  step(QStringLiteral("the node creates the draft's thread"), [](World& world, const Captures&, const Table&) {
+  // The MC.
+  step(QStringLiteral("the MC creates the draft's thread"), [](World& world, const Captures&, const Table&) {
     const auto draft = lastDraft(world);
     expect(draft.has_value(), QStringLiteral("the shell has no draft %1").arg(world.draftId));
     const QJsonObject row{
@@ -108,8 +108,8 @@ const Steps steps([] {
         {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:59:00Z")},
         {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:59:00Z")},
     };
-    world.node.threads.insert(draft->threadId, row);
-    world.node.sendRow(draft->threadId, row);
+    world.mc.threads.insert(draft->threadId, row);
+    world.mc.sendRow(draft->threadId, row);
     world.sync();
   });
 
@@ -140,10 +140,10 @@ const Steps steps([] {
     world.sync();
     const QVariant route = world.state(QStringLiteral("route"));
     expect(at(route, QStringLiteral("kind")) == QLatin1String("thread") && !lastDraft(world) &&
-               at(route, QStringLiteral("threadKey")).toString().startsWith(world.node.environmentId + QLatin1Char(':')),
+               at(route, QStringLiteral("threadKey")).toString().startsWith(world.mc.environmentId + QLatin1Char(':')),
            QStringLiteral("the route is %1").arg(show(route)));
     const QString threadKey = at(route, QStringLiteral("threadKey")).toString();
-    expect(world.node.threads.value(threadKey.section(u':', 1)).value(QLatin1String("title")) == QLatin1String("Started"),
+    expect(world.mc.threads.value(threadKey.section(u':', 1)).value(QLatin1String("title")) == QLatin1String("Started"),
            QStringLiteral("the window shows %1, not the draft's thread").arg(threadKey));
   });
   step(QStringLiteral("the sidebar marks the draft as open"), [](World& world, const Captures&, const Table&) {

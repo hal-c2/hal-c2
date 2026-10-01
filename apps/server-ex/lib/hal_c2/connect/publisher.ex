@@ -1,9 +1,9 @@
 defmodule HalC2.Connect.Publisher do
   @moduledoc """
-  Publishes what this node's agents are doing to the HAL-C2 Connect relay, so the
+  Publishes what this MC's agents are doing to the HAL-C2 Connect relay, so the
   user's phone gets alerts and live activity (`AgentAwarenessRelay.ts`).
 
-  It follows this node's thread rows in `HalC2.Shell` and turns each into the relay's
+  It follows this MC's thread rows in `HalC2.Shell` and turns each into the relay's
   activity state (`projectThreadAwarenessV2`): a phase, headline, project, thread,
   model and deep link, or nil when there is nothing to show. A state is signed by
   the environment key (`hal-c2-env-activity+jwt`) and published only when it differs
@@ -12,7 +12,7 @@ defmodule HalC2.Connect.Publisher do
   The last published states are kept in the secret store, so a turn cut off by a
   restart (settled as interrupted before this starts) is withdrawn. A failed
   publish is retried after 1, 2, 4, 8 and 16 seconds, and any newer change to the
-  thread publishes afresh. Nothing is published unless the node is linked and
+  thread publishes afresh. Nothing is published unless the MC is linked and
   publishing is on (`HalC2.Connect.publish_target/0`).
   """
 
@@ -35,7 +35,7 @@ defmodule HalC2.Connect.Publisher do
   """
   def drain do
     # The shell has sent every notification queued before this call once it answers.
-    HalC2.Shell.online_nodes()
+    HalC2.Shell.online_mcs()
     GenServer.call(__MODULE__, :drain, 30_000)
   end
 
@@ -79,11 +79,11 @@ defmodule HalC2.Connect.Publisher do
   end
 
   # Threads that show activity now, and those last published live, which may have
-  # ended while the node was stopped.
+  # ended while the MC was stopped.
   @impl true
   def handle_continue(:snapshot, state) do
     ids =
-      for({{node, id}, {"thread", _}} <- HalC2.Shell.rows(), node == node(), do: id) ++
+      for({{mc, id}, {"thread", _}} <- HalC2.Shell.rows(), mc == node(), do: id) ++
         Map.keys(state.published)
 
     {:noreply, ids |> Enum.uniq() |> Enum.reduce(state, &publish/2)}
@@ -93,7 +93,7 @@ defmodule HalC2.Connect.Publisher do
   def handle_call(:drain, _from, state), do: {:reply, :ok, state}
 
   @impl true
-  def handle_info({:hal_c2_shell, {:rows, node, rows}}, state) when node == node() do
+  def handle_info({:hal_c2_shell, {:rows, mc, rows}}, state) when mc == node() do
     ids = for {id, {"thread", _}} <- rows, do: id
     {:noreply, Enum.reduce(ids, state, &publish(&1, cancel_retry(&2, &1)))}
   end

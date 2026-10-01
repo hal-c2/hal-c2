@@ -5,7 +5,7 @@
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ShellBridge.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
@@ -19,7 +19,7 @@ QString keyOf(const QVariantMap& payload) {
 
 }  // namespace
 
-SidebarController::SidebarController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+SidebarController::SidebarController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                      QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
   m_minute.setSingleShot(true);
@@ -53,7 +53,7 @@ void SidebarController::refresh() {
   if (!m_active) return;
   readSettings();
   const QList<sidebar::Thread> threads = m_store->threads();
-  const QString ownEnvironment = m_store->environmentOf(m_client->node());
+  const QString ownEnvironment = m_store->environmentOf(m_client->mc());
   const auto shape = [this] {
     QStringList keys;
     for (const sidebar::ProjectGroup& group : m_groups) keys.append(group.key + QLatin1Char('=') + group.memberKeys.join(QLatin1Char(',')));
@@ -141,7 +141,7 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
   };
   if (!kRowActions.contains(action)) return false;
   const QString key = keyOf(map);
-  // A thread the node's cluster does not know has nothing to act on.
+  // A thread the MC's cluster does not know has nothing to act on.
   const auto thread = m_store->thread(key);
   if (!thread) return false;
   // An environment without visit tracking has no unread or woke markers to change.

@@ -1,16 +1,16 @@
 defmodule HalC2.Test.FakeRelay do
   @moduledoc """
-  The HAL-C2 Connect relay as a node sees it, served on a loopback port: environment
+  The HAL-C2 Connect relay as an MC sees it, served on a loopback port: environment
   links (challenge, link, tunnel release, deregistering), the account's environment
   list and device connections, agent activity, relay client downloads, and the
   account's OAuth sign-in (authorization code with PKCE, device code, refresh). It
-  signs with its own Ed25519 mint key, so steps can play the relay towards the node
+  signs with its own Ed25519 mint key, so steps can play the relay towards the MC
   (`sign/2`), and tells `owner` about every request it takes as
   `{:fake_relay, method, path, body}`.
 
   Its tunnel edge (`edge` in the handle) is a second loopback listener that passes
-  each connection, byte for byte, to the origin of the account's linked node while
-  that node's connector runs (a relay client under this VM holding the link's
+  each connection, byte for byte, to the origin of the account's linked MC while
+  that MC's connector runs (a relay client under this VM holding the link's
   connector token), and answers 530 otherwise. It tells `owner`
   `{:fake_relay_edge, env}` for each connection it passes.
 
@@ -30,7 +30,7 @@ defmodule HalC2.Test.FakeRelay do
 
   @doc "Starts a relay under the test supervisor; returns its handle."
   def start(owner \\ self()) do
-    # Supervised, so it outlives the services started after it (a node releasing its tunnel).
+    # Supervised, so it outlives the services started after it (an MC releasing its tunnel).
     state =
       ExUnit.Callbacks.start_supervised!(
         Supervisor.child_spec(
@@ -95,7 +95,7 @@ defmodule HalC2.Test.FakeRelay do
   def set(%{state: state}, changes), do: Agent.update(state, &Map.merge(&1, Map.new(changes)))
   def get(%{state: state}, key), do: Agent.get(state, &Map.get(&1, key))
 
-  @doc "The relay's mint public key, as it hands it to a node (SPKI PEM)."
+  @doc "The relay's mint public key, as it hands it to an MC (SPKI PEM)."
   def mint_public_pem(relay), do: HalC2.Connect.Jwt.public_pem(relay.public)
 
   @doc "A JWT signed by the relay with header `typ`."
@@ -138,7 +138,7 @@ defmodule HalC2.Test.FakeRelay do
   end
 
   @doc """
-  Plays the relay towards a node at `base` (its HTTP origin): a signed health check
+  Plays the relay towards an MC at `base` (its HTTP origin): a signed health check
   (`:health`) or credential request for the device key thumbprint `jkt` (`{:mint, jkt}`).
   `claims` override the request's own. Returns `{status, body, claims}`.
   """
@@ -306,7 +306,7 @@ defmodule HalC2.Test.FakeRelay do
     end
   end
 
-  # The node gives its tunnel back as it stops: the link stays, shown offline.
+  # The MC gives its tunnel back as it stops: the link stays, shown offline.
   defp route(
          conn,
          "DELETE",
@@ -349,8 +349,8 @@ defmodule HalC2.Test.FakeRelay do
     json(conn, 200, %{"environments" => environments})
   end
 
-  # A device asks for access: the relay has the node mint a credential for the
-  # device's key, through the node's tunnel, and hands it on.
+  # A device asks for access: the relay has the MC mint a credential for the
+  # device's key, through the MC's tunnel, and hands it on.
   defp route(conn, "POST", ["v1", "environments", env, "connect"], body, _state, s) do
     jkt = body["clientProofKeyThumbprint"] || body["clientKeyThumbprint"]
 
@@ -504,7 +504,7 @@ defmodule HalC2.Test.FakeRelay do
     do: conn |> put_resp_content_type("application/json") |> send_resp(status, JSON.encode!(body))
 
   defp iso(seconds), do: DateTime.utc_now() |> DateTime.add(seconds) |> DateTime.to_iso8601()
-  # The link reply: the node's credential, the relay's mint key, and the tunnel it runs.
+  # The link reply: the MC's credential, the relay's mint key, and the tunnel it runs.
   defp linked(conn, s, body, link) do
     runtime =
       if body["managedTunnelsEnabled"],
@@ -559,7 +559,7 @@ defmodule HalC2.Test.FakeRelay do
     end
   end
 
-  # Passes one connection to the linked node's origin while its connector runs.
+  # Passes one connection to the linked MC's origin while its connector runs.
   defp edge(socket, state) do
     s = Agent.get(state, & &1)
 

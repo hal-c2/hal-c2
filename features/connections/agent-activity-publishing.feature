@@ -13,22 +13,22 @@
 Feature: Publishing agent activity
   A linked environment can sign and publish what its agents are doing so the user's phone
   gets alerts and live activity through HAL-C2 Connect. Phones register with the relay, not with
-  the node.
+  the MC.
 
   Background:
-    Given a node linked to HAL-C2 Connect
+    Given an MC linked to HAL-C2 Connect
 
-  @node
+  @mc
   Scenario: Publishing is off until the user turns it on
     Given agent activity publishing is off
     When an agent finishes a turn
-    Then the node publishes nothing to the relay
+    Then the MC publishes nothing to the relay
 
-  @node
-  Scenario Outline: The node publishes each phase of an agent's work
+  @mc
+  Scenario Outline: The MC publishes each phase of an agent's work
     Given agent activity publishing is on
     When an agent <event>
-    Then the node publishes the thread's activity as "<phase>"
+    Then the MC publishes the thread's activity as "<phase>"
     And the update names the project, thread, model and a link to the thread
 
     Examples:
@@ -40,52 +40,52 @@ Feature: Publishing agent activity
       | completes its turn             | completed            |
       | fails its turn                 | failed               |
 
-  @node
-  # Neither server publishes a "stale" phase: the node settles the cut-off turn as
+  @mc
+  # Neither server publishes a "stale" phase: the MC settles the cut-off turn as
   # interrupted when it starts, and an interrupted turn shows no activity.
   Scenario: Activity left behind by a restart is withdrawn
     Given a published thread that was running
-    When the node restarts without finishing it
-    Then the node withdraws the thread's activity
+    When the MC restarts without finishing it
+    Then the MC withdraws the thread's activity
 
-  @node
+  @mc
   Scenario: A deleted thread's activity is withdrawn
     Given a published thread
     When the thread is deleted
-    Then the node publishes an empty state for it
+    Then the MC publishes an empty state for it
 
-  @node
-  Scenario: Every update is signed by the node
+  @mc
+  Scenario: Every update is signed by the MC
     Given agent activity publishing is on
-    When the node publishes an update
-    Then the update carries the node's signed proof for that thread and state
+    When the MC publishes an update
+    Then the update carries the MC's signed proof for that thread and state
 
-  @node
+  @mc
   Scenario: The relay refuses a replayed update
     Given an update the relay already accepted
     When it is sent again
     Then the relay refuses it as a replay
 
-  @node
+  @mc
   Scenario: Turning publishing off stops alerts
     Given agent activity publishing is on
     When the user turns it off
     Then later agent activity is not published
 
-  @node
+  @mc
   Scenario: Removing the tunnel keeps publishing on
     Given agent activity publishing is on
     When the managed tunnel is removed
     Then publishing stays on
 
-  @node
+  @mc
   Scenario: A directly paired environment cannot publish
-    Given a node paired directly and not linked to HAL-C2 Connect
+    Given an MC paired directly and not linked to HAL-C2 Connect
     Then the user cannot turn on agent activity publishing
 
-  @node
+  @mc
   Scenario: A failed publish does not disturb the turn
     Given the relay cannot be reached
     When an agent completes its turn
     Then the turn completes as usual
-    And the node tries the next update when it happens
+    And the MC tries the next update when it happens

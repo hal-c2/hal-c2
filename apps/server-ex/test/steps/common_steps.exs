@@ -1,15 +1,15 @@
 defmodule HalC2.Steps.Common do
   @moduledoc """
   Steps shared by more than one feature directory: the environment a scenario
-  starts from, its projects and threads, and the node's lifecycle. A step that
+  starts from, its projects and threads, and the MC's lifecycle. A step that
   appears in several directories belongs here; one directory's steps live in
   its own file.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # --- environments, projects and threads ---------------------------------------
 
@@ -64,42 +64,42 @@ defmodule HalC2.Steps.Common do
     |> then(&World.put_client(&1, World.client(&1)))
   end
 
-  step("a node", context, do: context)
-  step("a running node", context, do: context)
+  step("an MC", context, do: context)
+  step("a running MC", context, do: context)
 
-  step "a node with a project {string}", %{args: [title]} = context do
+  step "an MC with a project {string}", %{args: [title]} = context do
     World.create_project(context, title)
   end
 
-  step "two clients are connected to the node", context do
+  step "two clients are connected to the MC", context do
     context
-    |> World.put_client("first", Node.connect(context.node))
-    |> World.put_client("second", Node.connect(context.node))
+    |> World.put_client("first", Mc.connect(context.mc))
+    |> World.put_client("second", Mc.connect(context.mc))
   end
 
   step "a paired client", context do
     {:ok, access, _expires, _scopes} =
-      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.mc.store), %{
         "label" => "Phone"
       })
 
     {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
-    client = Node.connect(context.node, "wsTicket=#{ticket}")
+    client = Mc.connect(context.mc, "wsTicket=#{ticket}")
     context |> Map.put(:access_token, access) |> World.put_client("paired", client)
   end
 
-  # --- the node's lifecycle ----------------------------------------------------------
+  # --- the MC's lifecycle ----------------------------------------------------------
 
-  step "the node restarts", context do
-    %{context | node: Node.restart(context.node), clients: %{}}
+  step "the MC restarts", context do
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
-  step "the node starts again", context do
-    %{context | node: Node.restart(context.node), clients: %{}}
+  step "the MC starts again", context do
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
-  step "the node starts", context do
-    %{context | node: Node.restart(context.node), clients: %{}}
+  step "the MC starts", context do
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
   # --- shared outcomes -----------------------------------------------------------------
@@ -121,8 +121,8 @@ defmodule HalC2.Steps.Common do
   # --- added by W4 (files) ---
 
   step "a client browses {string}", %{args: [partial]} = context do
-    # `~` goes to the node as typed, with the scenario's home as its `$HOME`.
-    real = HalC2.Test.Node.Host.path(context, partial)
+    # `~` goes to the MC as typed, with the scenario's home as its `$HOME`.
+    real = HalC2.Test.Mc.Host.path(context, partial)
     partial = if String.starts_with?(partial, "~"), do: partial, else: real
     {reply, context} = World.call(context, "filesystem.browse", %{"partialPath" => partial})
 
@@ -136,7 +136,7 @@ defmodule HalC2.Steps.Common do
   end
 
   step "the folder {string} exists", %{args: [path]} = context do
-    real = HalC2.Test.Node.Host.path(context, path)
+    real = HalC2.Test.Mc.Host.path(context, path)
 
     # Before the scenario acts this sets the folder up; once a request was
     # answered it is the outcome to check.
@@ -176,7 +176,7 @@ defmodule HalC2.Steps.Common do
     context
   end
 
-  step "the node answers {string}", %{args: [message]} = context do
+  step "the MC answers {string}", %{args: [message]} = context do
     assert {:error, error, _detail} = context.reply,
            "expected an error, got #{inspect(context.reply)}"
 
@@ -189,8 +189,8 @@ defmodule HalC2.Steps.Common do
   # thread's run ended without a turn.
   # --- added by W4 (terminal) ---
 
-  step "a cluster of two nodes", context do
-    peer = HalC2.Test.Node.start_peer(context.node)
+  step "a cluster of two MCs", context do
+    peer = HalC2.Test.Mc.start_peer(context.mc)
     assert peer in :erlang.nodes()
     Map.put(context, :peer, peer)
   end
@@ -474,14 +474,14 @@ defmodule HalC2.Steps.Common do
 
   step "two clients are connected to the same environment", context do
     context
-    |> World.put_client("first", Node.connect(context.node))
-    |> World.put_client("second", Node.connect(context.node))
+    |> World.put_client("first", Mc.connect(context.mc))
+    |> World.put_client("second", Mc.connect(context.mc))
   end
 
   # --- added by W3-D ---
 
   # A follow-up while `context.running` (`%{thread, run}`) has a turn going, sent
-  # as the composer sends it; the node steers or queues it by the provider.
+  # as the composer sends it; the MC steers or queues it by the provider.
   step "the user sends a follow-up message", context do
     if World.fakes_feature?(context) do
       title = World.current_thread(context)
@@ -507,7 +507,7 @@ defmodule HalC2.Steps.Common do
     end
   end
 
-  # Node plugins (`HalC2.Plugins`) turned on or off as a client does; other features'
+  # MC plugins (`HalC2.Plugins`) turned on or off as a client does; other features'
   # "enables"/"disables" steps can extend these by what the name refers to.
   step "the user enables {string}", %{args: [id]} = context do
     {result, context} = World.call!(context, "plugins.enable", %{"id" => id})
@@ -516,21 +516,21 @@ defmodule HalC2.Steps.Common do
 
   # --- added by W3-A ---
 
-  # "the node answers not found" and "the node answers {int}": the one HTTP status step below.
+  # "the MC answers not found" and "the MC answers {int}": the one HTTP status step below.
 
   # --- added by W2 ---
 
   # A step that performs a user action over RPC stores its reply in `context.reply`
   # (`{:ok, result}` or `{:error, error, detail}`, as `World.call/4` returns it). The
   # message the user sees is the error (with its detail) or a message in the result.
-  # Opening a settings page is a client connected to a node whose settings are served.
+  # Opening a settings page is a client connected to an MC whose settings are served.
   step "the user has opened the General settings", context do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
     World.put_client(context, World.client(context))
   end
 
   step "the user is connected to an environment and opens Settings, Source Control", context do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
     World.put_client(context, World.client(context))
   end
 
@@ -558,7 +558,7 @@ defmodule HalC2.Steps.Common do
   # it is asserted deleted. A thread cut off mid-turn (`context.cut_off`) is deleted
   # as stored data, as "{string} is archived" archives it.
   step "{string} is deleted", %{args: [name]} = context do
-    theme = Path.join([context.node.home, "themes", name])
+    theme = Path.join([context.mc.home, "themes", name])
 
     cond do
       File.exists?(theme) ->
@@ -622,13 +622,13 @@ defmodule HalC2.Steps.Common do
     Map.put(context, :request, request)
   end
 
-  # The default socket drops and connects again. A scenario that follows the node
+  # The default socket drops and connects again. A scenario that follows the MC
   # over the socket says how it resumes with `context.after_reconnect`.
   step "the client reconnects", context do
     context = World.disconnect(context)
 
     case context[:after_reconnect] do
-      nil -> World.put_client(context, Node.connect(context.node))
+      nil -> World.put_client(context, Mc.connect(context.mc))
       reconnect -> reconnect.(context)
     end
   end
@@ -654,9 +654,9 @@ defmodule HalC2.Steps.Common do
   end
 
   # Storage cleanup: settings/storage.feature, and the same texts in
-  # node/platform/background-and-cleanup.feature. `context.worktree` is the
+  # mc/platform/background-and-cleanup.feature. `context.worktree` is the
   # worktree the scenario is about (`World.worktree_thread/4`).
-  step("the node sweeps storage", context, do: World.sweep_storage(context))
+  step("the MC sweeps storage", context, do: World.sweep_storage(context))
 
   # With `context.control` (a worktree the same sweep had to remove), also that the
   # sweep did run.
@@ -697,7 +697,7 @@ defmodule HalC2.Steps.Common do
   # takes it without replying, so the step waits until the policy has it.
   step ~r/^the host reports it is (?<state>locked|on low power|on battery)$/,
        %{args: [state]} = context do
-    policy = Node.ensure(HalC2.BackgroundPolicy)
+    policy = Mc.ensure(HalC2.BackgroundPolicy)
     :erlang.trace(policy, true, [:receive])
     flag = &to_string(state == &1)
 
@@ -726,13 +726,13 @@ defmodule HalC2.Steps.Common do
     Map.put(context, :reply, reply)
   end
 
-  # The node shuts down; `the node starts again` / `the node restarts` bring it back.
-  step "the node stops", context do
-    %{context | node: Node.stop(context.node), clients: %{}}
+  # The MC shuts down; `the MC starts again` / `the MC restarts` bring it back.
+  step "the MC stops", context do
+    %{context | mc: Mc.stop(context.mc), clients: %{}}
   end
 
   # `server.refreshProviders` for every provider; the reply is `context.reply`, and the
-  # `config.providers` the node pushes first stays to be received.
+  # `config.providers` the MC pushes first stays to be received.
   # `server.prepareAcpRegistryAgent`; the reply is `context.reply`.
   step "the user adds the registry agent {string}", %{args: [agent]} = context do
     {reply, context} =
@@ -821,21 +821,21 @@ defmodule HalC2.Steps.Common do
     end
   end
 
-  # An rpc answered by the catch-all for methods outside what the node carries.
-  step "the node answers that the method is not served", context do
+  # An rpc answered by the catch-all for methods outside what the MC carries.
+  step "the MC answers that the method is not served", context do
     assert {:error, error, _detail} = context.reply
-    assert error =~ "is not served by this node yet"
+    assert error =~ "is not served by this MC yet"
     context
   end
 
-  step "the node answers with a pong", context do
+  step "the MC answers with a pong", context do
     {frame, client} = HalC2.Test.WsClient.recv(World.client(context), 1_000)
     assert frame == %{"t" => "pong"}
     World.put_client(context, client)
   end
 
-  # A frame the node refuses; the refusal frame is `context.refusal`.
-  step ~r/^the client sends (?<case>text that is not JSON|a frame of an unknown type|a frame with an unknown or missing type|a subscription to an unknown shape|a subscription to a shape type the node does not know|a subscription naming an unknown node|a subscription naming a node outside the cluster|a config subscription for an unknown environment|a stream subscription for an unknown environment|an authAccess subscription from a session without access:read|an RPC for an unknown environment|an rpc for an unknown environment|an rpc whose node has gone away)$/,
+  # A frame the MC refuses; the refusal frame is `context.refusal`.
+  step ~r/^the client sends (?<case>text that is not JSON|a frame of an unknown type|a frame with an unknown or missing type|a subscription to an unknown shape|a subscription to a shape type the MC does not know|a subscription naming an unknown MC|a subscription naming an MC outside the cluster|a config subscription for an unknown environment|a stream subscription for an unknown environment|an authAccess subscription from a session without access:read|an RPC for an unknown environment|an rpc for an unknown environment|an rpc whose MC has gone away)$/,
        %{args: [refused]} = context do
     alias HalC2.Test.WsClient
     client = World.client(context)
@@ -843,22 +843,22 @@ defmodule HalC2.Steps.Common do
     client =
       case refused do
         "text that is not JSON" ->
-          Node.send_text(client, "not json {")
+          Mc.send_text(client, "not json {")
 
         "a frame " <> _ ->
           WsClient.send_json(client, %{"t" => "nope", "id" => 40})
 
         "a subscription to " <> _ ->
-          Node.sub(client, 41, %{"type" => "nope"})
+          Mc.sub(client, 41, %{"type" => "nope"})
 
         "a subscription naming " <> _ ->
-          Node.sub(client, 42, %{"type" => "stream", "node" => "nobody@nowhere", "stream" => "x"})
+          Mc.sub(client, 42, %{"type" => "stream", "mc" => "nobody@nowhere", "stream" => "x"})
 
         "a config subscription" <> _ ->
-          Node.sub(client, 43, %{"type" => "config", "environment" => "env-missing"})
+          Mc.sub(client, 43, %{"type" => "config", "environment" => "env-missing"})
 
         "a stream subscription" <> _ ->
-          Node.sub(client, 47, %{
+          Mc.sub(client, 47, %{
             "type" => "stream",
             "environment" => "env-missing",
             "stream" => "x"
@@ -876,20 +876,20 @@ defmodule HalC2.Steps.Common do
 
           {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
 
-          Node.sub(Node.connect(context.node, "wsTicket=#{ticket}"), 44, %{"type" => "authAccess"})
+          Mc.sub(Mc.connect(context.mc, "wsTicket=#{ticket}"), 44, %{"type" => "authAccess"})
 
-        "an rpc whose node has gone away" ->
+        "an rpc whose MC has gone away" ->
           # A peer the shell knows by its environment, but no longer reachable.
           gone = :"gone@127.0.0.1"
           GenServer.cast(HalC2.Shell, {:peer_environment, gone, %{"environmentId" => "env-gone"}})
           assert_receive {:hal_c2_shell, {:environment, ^gone, _}}, 1_000
-          Node.rpc(client, "env-gone", 46, "hal-c2.readSettings", %{})
+          Mc.rpc(client, "env-gone", 46, "hal-c2.readSettings", %{})
 
         _unknown_environment ->
-          Node.rpc(client, "env-missing", 45, "hal-c2.readSettings", %{})
+          Mc.rpc(client, "env-missing", 45, "hal-c2.readSettings", %{})
       end
 
-    {frame, client} = Node.await(client, &(&1["t"] in ["error", "rpc.error"]))
+    {frame, client} = Mc.await(client, &(&1["t"] in ["error", "rpc.error"]))
     context |> World.put_client(client) |> Map.put(:refusal, frame)
   end
 
@@ -970,7 +970,7 @@ defmodule HalC2.Steps.Common do
 
   # A second worktree of the checkout under test holds `branch`, made from HEAD when new.
   step "{string} is checked out in another worktree", %{args: [branch]} = context do
-    path = HalC2.Test.Node.tmp_dir(context.node, "worktree")
+    path = HalC2.Test.Mc.tmp_dir(context.mc, "worktree")
     File.rmdir!(path)
     exists? = World.git!(context.cwd, ["branch", "--list", branch]) != ""
     args = if exists?, do: [path, branch], else: ["-b", branch, path]
@@ -983,14 +983,14 @@ defmodule HalC2.Steps.Common do
     HalC2.Steps.SourceControl.Shared.expand_review_file(context, path)
   end
 
-  # The scenario's node is the remote environment `name`; the default client is the
+  # The scenario's MC is the remote environment `name`; the default client is the
   # user's local one. Starts with no GitHub account believed yet.
   step "the user is connected to the local environment and the remote environment {string}",
        %{args: [name]} = context do
     HalC2.PullRequests.invalidate(%{})
     context = World.put_client(context, World.client(context))
-    assert [{_node, %{"environmentId" => id}}] = HalC2.Shell.environments()
-    assert id == context.node.environment
+    assert [{_mc, %{"environmentId" => id}}] = HalC2.Shell.environments()
+    assert id == context.mc.environment
     Map.put(context, :remote, name)
   end
 
@@ -1138,7 +1138,7 @@ defmodule HalC2.Steps.Common do
 
   step "the user refreshes the status of every provider", context do
     ctx = HalC2.Test.AcpFixtures.ready(context)
-    Node.ensure(HalC2.ProviderUsageLimits)
+    Mc.ensure(HalC2.ProviderUsageLimits)
     # The boot probe has finished once this returns.
     :ok = HalC2.ProviderUsageLimits.refresh([])
     before = Map.new(["codex", "claudeAgent"], &{&1, HalC2.ProviderUsageLimits.get(&1)})
@@ -1164,7 +1164,7 @@ defmodule HalC2.Steps.Common do
     end
   end
 
-  step "Claude was installed in a way the node cannot identify", context do
+  step "Claude was installed in a way the MC cannot identify", context do
     if World.fakes_feature?(context) do
       # A plain executable no installer's layout matches, behind the latest release.
       context = World.fake_providers(context)
@@ -1179,7 +1179,7 @@ defmodule HalC2.Steps.Common do
       # An executable outside every installer's layout, behind the latest release.
       ctx = HalC2.Test.AcpFixtures.ready(context)
       fake_claude = Path.expand("../support/fake_claude.py", __DIR__)
-      path = Path.join(context.node.home, "odd/bin/claude")
+      path = Path.join(context.mc.home, "odd/bin/claude")
       File.mkdir_p!(Path.dirname(path))
 
       File.write!(path, """
@@ -1202,7 +1202,7 @@ defmodule HalC2.Steps.Common do
 
   # ACP Registry steps shared with `features/plugins/plugin-catalog.feature` (and, for
   # cancelling, approving and stopping, other provider features). They leave the
-  # node's answer in `context.reply`.
+  # MC's answer in `context.reply`.
 
   step "the user searches the ACP registry for {string}", %{args: [query]} = context do
     alias HalC2.Test.AcpFixtures, as: Acp
@@ -1256,7 +1256,7 @@ defmodule HalC2.Steps.Common do
   # `context.auth_client` so the others see it end.
   # The pending request of the turn on `context.thread`.
   # A model provider of an ACP Registry agent (`context.model_provider`), or else a
-  # node plugin.
+  # MC plugin.
   step "the user disables {string}", %{args: [id]} = context do
     if context[:model_provider] == id do
       {result, ctx} =
@@ -1280,7 +1280,7 @@ defmodule HalC2.Steps.Common do
     instance = context.model_instance
 
     {_, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         fn frame ->
           frame["t"] == "config.providers" and frame["id"] == sub and
@@ -1296,7 +1296,7 @@ defmodule HalC2.Steps.Common do
   end
 
   # The union's W11 section defines the same step; keep one.
-  # The provider list a client receives when it subscribes to the node's config.
+  # The provider list a client receives when it subscribes to the MC's config.
   # Starts the thread a Given described (`context.pending_launch`: `instance`, and
   # `fields` such as "runtimeMode") with a message, and waits for its turn to end.
   # Without one, sends "Hello" to the scenario's existing FakeAcp thread.
@@ -1374,7 +1374,7 @@ defmodule HalC2.Steps.Common do
     World.working_thread(context, thread)
   end
 
-  # Shared by threads/archive-delete, node/orchestration/mcp-thread-tools and
+  # Shared by threads/archive-delete, mc/orchestration/mcp-thread-tools and
   # projections: the thread is archived (a running turn keeps running), or,
   # after it was archived, still is. A thread cut off mid-turn (`context.cut_off`,
   # recovery-and-idle-sessions.feature) is archived as stored data, leaving its run
@@ -1472,7 +1472,7 @@ defmodule HalC2.Steps.Common do
 
   # A file below the HAL-C2 home (files/project-identity) or a thread or project.
   step "the user deletes {string}", %{args: [name]} = context do
-    path = Path.join(context.node.home, name)
+    path = Path.join(context.mc.home, name)
 
     if File.exists?(path) do
       File.rm!(path)
@@ -1489,7 +1489,7 @@ defmodule HalC2.Steps.Common do
         do: World.iso_from_now(-60 * 60 * 1_000),
         else: World.local_time(context, until)
 
-    # node/orchestration/thread-organization.feature compares a refused snooze with this.
+    # mc/orchestration/thread-organization.feature compares a refused snooze with this.
     context
     |> Map.put(:snooze_before, World.thread(context, thread))
     |> client_command("thread.snooze", thread, &(&1["snoozedUntil"] == until), %{
@@ -1540,7 +1540,7 @@ defmodule HalC2.Steps.Common do
       {id, _} when is_binary(id) ->
         client_command(context, "thread.delete", name, &(&1["deletedAt"] != nil))
 
-      # node/orchestration/projects.feature also deletes projects it never created.
+      # mc/orchestration/projects.feature also deletes projects it never created.
       {nil, project} ->
         mutation = %{
           "type" => "project.delete",
@@ -1602,7 +1602,7 @@ defmodule HalC2.Steps.Common do
 
   # --- added by W14 ---
 
-  # A node plugin replaced by its newer version, as a client's update does: the
+  # An MC plugin replaced by its newer version, as a client's update does: the
   # plugin file a step staged in `context.plugin_updates` goes into the plugins
   # directory (`HalC2.Plugins` picks it up on the rescan). Without a staged plugin it
   # is a provider CLI update (`server.updateProvider`); the reply is `context.reply`
@@ -1620,17 +1620,17 @@ defmodule HalC2.Steps.Common do
         Map.put(context, :reply, reply)
 
       source ->
-        path = Path.join([context.node.home, "plugins", "#{id}.ex"])
+        path = Path.join([context.mc.home, "plugins", "#{id}.ex"])
         File.mkdir_p!(Path.dirname(path))
         File.write!(path, source)
-        Node.ensure(HalC2.Settings)
-        Node.ensure(HalC2.Plugins)
+        Mc.ensure(HalC2.Settings)
+        Mc.ensure(HalC2.Plugins)
         {:ok, _} = HalC2.Plugins.handle("rescan", %{})
         context
     end
   end
 
-  # The provider list a client last read (`context.providers`), or the node's.
+  # The provider list a client last read (`context.providers`), or the MC's.
   step ~r/^(Codex|Claude) is not offered as a provider$/, %{args: [name]} = context do
     driver = %{"Codex" => "codex", "Claude" => "claudeAgent"}[name]
     providers = context[:providers] || HalC2.Environment.providers()
@@ -1674,7 +1674,7 @@ defmodule HalC2.Steps.Common do
 
   # --- added by W7 ---
 
-  step "a node with a project {string} rooted at a git repository", %{args: [title]} = context do
+  step "an MC with a project {string} rooted at a git repository", %{args: [title]} = context do
     World.create_project(context, title)
   end
 
@@ -1683,7 +1683,7 @@ defmodule HalC2.Steps.Common do
     World.named_thread(context, thread, project)
   end
 
-  # Shared by node/orchestration/thread-organization.feature (setup: the user settled
+  # Shared by mc/orchestration/thread-organization.feature (setup: the user settled
   # it) and auto-settle.feature (outcome after a sweep, flagged by `:settle_swept`).
   step "thread {string} is settled", %{args: [thread]} = context do
     id = World.thread_id(context, thread)
@@ -1702,7 +1702,7 @@ defmodule HalC2.Steps.Common do
     |> Map.put(:settle_swept, false)
   end
 
-  # Shared with other node/orchestration features; the step before it leaves the
+  # Shared with other mc/orchestration features; the step before it leaves the
   # RPC reply in `context.reply` as `{:error, message, detail}`. The message is the
   # refusal or a part of it.
   step "it fails with {string}", %{args: [message]} = context do
@@ -1750,13 +1750,13 @@ defmodule HalC2.Steps.Common do
     )
   end
 
-  # Also used by node/orchestration/threads.feature.
+  # Also used by mc/orchestration/threads.feature.
   step "thread {string} is titled {string}", %{args: [thread, title]} = context do
     assert World.thread(context, thread)["title"] == title
     context
   end
 
-  # Shared with node/orchestration/queue-and-steering.feature and runs.feature: some
+  # Shared with mc/orchestration/queue-and-steering.feature and runs.feature: some
   # run of the scenario's thread (`context.thread`) for message `text` has started
   # (it may have finished already) and is out of the queue.
   step "a run for {string} starts", %{args: [text]} = context do
@@ -1772,7 +1772,7 @@ defmodule HalC2.Steps.Common do
     context
   end
 
-  # Shared with node/orchestration/runs.feature: the scenario's run (`context.running`),
+  # Shared with mc/orchestration/runs.feature: the scenario's run (`context.running`),
   # else the latest run of `context.thread`, ends with `status`.
   step ~r/^the run is (?<status>failed|interrupted)$/, %{args: [status]} = context do
     World.await_state(context, context.thread, fn state ->
@@ -1792,8 +1792,8 @@ defmodule HalC2.Steps.Common do
   # --- added by W6 ---
 
   # An HTTP answer a previous step stored as `context.response`: `{status, headers,
-  # body}` as `HalC2.Test.Node.request/4` returns it, or a map with a `:status`.
-  step ~r/^the node answers (?<status>not found|unauthorized|service unavailable|bad gateway|\d{3})$/,
+  # body}` as `HalC2.Test.Mc.request/4` returns it, or a map with a `:status`.
+  step ~r/^the MC answers (?<status>not found|unauthorized|service unavailable|bad gateway|\d{3})$/,
        %{args: [status]} = context do
     expected =
       case status do
@@ -1839,14 +1839,14 @@ defmodule HalC2.Steps.Common do
     context
   end
 
-  # Five minutes on the node's clock: its five-minute timers fire, as their message
+  # Five minutes on the MC's clock: its five-minute timers fire, as their message
   # arrives (the idle session check, `HalC2.Orchestration.IdleSessions`).
   step "five minutes pass", context do
     if World.fakes_feature?(context) do
       World.run_periodic_checks()
       context
     else
-      pid = Node.ensure(HalC2.Orchestration.IdleSessions)
+      pid = Mc.ensure(HalC2.Orchestration.IdleSessions)
       send(pid, :check)
       # The check has run once the server answers the next call.
       _ = :sys.get_state(pid)
@@ -1858,14 +1858,14 @@ defmodule HalC2.Steps.Common do
   # Providers run on the test fakes (`World.fake_providers/2`); the thread a step
   # means is the one the scenario last started (`World.current_thread/1`).
 
-  # The provider list after the node read every provider's quota again
+  # The provider list after the MC read every provider's quota again
   # (`HalC2.ProviderUsageLimits`). The ACP provider features (Grok, OpenCode) run their
   # own `HalC2.Test.FakeAcp`; Codex and Claude then probe only a missing CLI, never the
   # machine's own.
   step "the user opens the limits view", context do
     if World.fakes_feature?(context) do
       context = World.fake_providers(context)
-      Node.ensure(HalC2.ProviderUsageLimits)
+      Mc.ensure(HalC2.ProviderUsageLimits)
       :ok = HalC2.ProviderUsageLimits.refresh()
       # Accounts arrive as casts the probes sent; this call lands after them.
       :sys.get_state(HalC2.ProviderUsageLimits)
@@ -1878,7 +1878,7 @@ defmodule HalC2.Steps.Common do
           Application.get_env(:hal_c2, key) == nil,
           do: World.put_app_env(key, ["hal-c2-test-no-#{key}"])
 
-      Node.ensure(HalC2.ProviderUsageLimits)
+      Mc.ensure(HalC2.ProviderUsageLimits)
       :ok = HalC2.ProviderUsageLimits.refresh()
       :sys.get_state(HalC2.ProviderUsageLimits)
       {providers, context} = HalC2.Test.FakeAcp.open_config(context)
@@ -1888,7 +1888,7 @@ defmodule HalC2.Steps.Common do
 
   step "the user reverts to the end of the first turn", context do
     # The thread works in the project root, which only an isolated worktree may reset:
-    # this rewinds the conversation, as the node offers for a shared checkout.
+    # this rewinds the conversation, as the MC offers for a shared checkout.
     World.rollback(context, context[:current_thread] || context.thread, 1, %{
       "restoreFiles" => false
     })
@@ -1934,9 +1934,9 @@ defmodule HalC2.Steps.Common do
 
   # --- added by W13 ---
 
-  # A provider's own subagent: a subagent node under the run's root node, with its
+  # A provider's own subagent: a subagent MC under the run's root MC, with its
   # turn item, and its work (the prompt, then its answer) in a child thread of this
-  # one, forked from that node. `:subagent_prompt` / `:subagent_answer` in the context,
+  # one, forked from that MC. `:subagent_prompt` / `:subagent_answer` in the context,
   # when set, are the texts the child thread must hold.
   step "the subagent's work is grouped under the step that started it", context do
     thread_id = World.thread_id(context, context.thread)

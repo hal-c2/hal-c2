@@ -3,7 +3,7 @@
  * Where HAL-C2 keeps its files: the XDG Base Directory layout, or one root.
  *
  * Every client and server resolves its directories through this module so
- * they agree on the same five places (`features/node/platform/storage-layout.feature`):
+ * they agree on the same five places (`features/mc/platform/storage-layout.feature`):
  *
  * - config: settings, keybindings, themes, the user's shell
  * - data:   the database, secrets, attachments, worktrees; what cannot be got back

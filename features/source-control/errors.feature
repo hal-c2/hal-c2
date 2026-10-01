@@ -17,7 +17,7 @@ Feature: When source control goes wrong
   Background:
     Given a connected environment with a thread in the git project "shop"
 
-  @node
+  @mc
   Scenario Outline: A git action refuses what it cannot do
     Given <condition>
     When the user runs "<action>"
@@ -32,33 +32,33 @@ Feature: When source control goes wrong
       | the working tree has uncommitted changes      | Create PR        | Commit local changes before creating a PR.                       |
       | the GitHub CLI is not installed               | Create PR        | Creating a PR needs the GitHub CLI (gh).                         |
 
-  @node
+  @mc
   Scenario: A pull request description that cannot be written stops the action
     Given the writer model is unreachable
     When the user runs "Create PR"
     Then the action fails with a message starting "Could not write the PR description:"
     And no pull request is opened
 
-  @node
+  @mc
   Scenario: The host refusing a new pull request is reported
     Given GitHub refuses to open the pull request
     When the user runs "Create PR"
     Then the action fails saying the pull request could not be created, with GitHub's reason
 
-  @node
+  @mc
   Scenario: A failed action still refreshes the status
     Given the push will be rejected by the remote
     When the user runs "Commit & push"
     Then the commit is kept and the status shows the branch ahead of its upstream
     And the failure is reported with the push step that failed
 
-  @node
+  @mc
   Scenario: A failed git command keeps its command and exit code
     Given git exits with an error while initializing "shop"
     When the user initializes Git for "shop"
     Then the error names the git command, the folder and the exit code
 
-  @backlog @node
+  @backlog @mc
   Scenario Outline: Host failures are named for what they are
     Given the host answers a push with <condition>
     When the user pushes
@@ -72,7 +72,7 @@ Feature: When source control goes wrong
       | a missing pull request     | Pull request not found.     |
       | a missing merge request    | Merge request not found.    |
 
-  @backlog @node
+  @backlog @mc
   Scenario Outline: Runaway git commands are stopped
     Given a git command <condition>
     When status is read for "shop"
@@ -103,7 +103,7 @@ Feature: When source control goes wrong
     When the user pushes
     Then the failure stays visible until the user dismisses it
 
-  @node
+  @mc
   Scenario: A repository that cannot be looked up is reported per host
     When the user looks up "acme/missing" on GitHub
     Then the user is told the repository could not be found on GitHub

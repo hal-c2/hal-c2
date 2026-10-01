@@ -13,13 +13,13 @@ Feature: Toasts
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
-    And the desktop's node "node-a" serves the environment "env-a"
-    And the node has these threads:
+    And the desktop's MC "mc-a" serves the environment "env-a"
+    And the MC has these threads:
       | id | project | title | createdAt            |
       | t1 | p1      | First | 2026-09-23T09:50:00Z |
-    And the node has the project "p1" titled "proj-1"
-    And the desktop shell is connected to its node
-    And the node refuses "thread.settle" with "No"
+    And the MC has the project "p1" titled "proj-1"
+    And the desktop shell is connected to its MC
+    And the MC refuses "thread.settle" with "No"
 
   @desktop
   Scenario: A toast goes away on its own after five seconds
@@ -39,6 +39,6 @@ Feature: Toasts
 
   @desktop
   Scenario: A failure without a reason still says something went wrong
-    Given the node refuses "thread.settle" with ""
+    Given the MC refuses "thread.settle" with ""
     When the user settles "env-a:t1"
     Then the user sees an "error" toast "Failed to settle thread" saying "An error occurred."

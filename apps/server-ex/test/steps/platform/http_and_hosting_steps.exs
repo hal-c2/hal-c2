@@ -1,17 +1,17 @@
 defmodule HalC2.Steps.Platform.HttpAndHosting do
-  @moduledoc "Steps for features/node/platform/http-and-hosting.feature."
+  @moduledoc "Steps for features/mc/platform/http-and-hosting.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @fake_gh Path.expand("../../support/fake_gh.py", __DIR__)
   @patch "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n"
 
   # A project whose origin is on `remote`, with `gh` answered by `rules` (fake_gh.py).
   defp pull_request_project(context, remote, rules) do
-    home = context.node.home
+    home = context.mc.home
     World.put_app_env(:gh_command, @fake_gh)
     System.put_env("FAKE_GH_RULES", Path.join(home, "gh-rules.json"))
     System.put_env("FAKE_GH_LOG", Path.join(home, "gh.log"))
@@ -36,7 +36,7 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
     }
 
     response =
-      Node.request(context.node, :post, "/api/pull-requests/diff",
+      Mc.request(context.mc, :post, "/api/pull-requests/diff",
         bearer: context.access,
         json: ref
       )
@@ -46,7 +46,7 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
 
   step "a browser on another origin sends a preflight request", context do
     response =
-      Node.request(context.node, :options, "/api/auth/websocket-ticket",
+      Mc.request(context.mc, :options, "/api/auth/websocket-ticket",
         headers: [
           {"origin", "https://elsewhere.example"},
           {"access-control-request-method", "POST"},
@@ -57,7 +57,7 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
     Map.put(context, :response, response)
   end
 
-  step "the node answers it with no content and allows the request", context do
+  step "the MC answers it with no content and allows the request", context do
     assert {204, headers, body} = context.response
     assert body in ["", nil]
     headers = Map.new(headers)
@@ -67,31 +67,31 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
     context
   end
 
-  step "anyone asks the node's well-known environment route", context do
+  step "anyone asks the MC's well-known environment route", context do
     Map.put(
       context,
       :response,
-      Node.request(context.node, :get, "/.well-known/hal-c2/environment")
+      Mc.request(context.mc, :get, "/.well-known/hal-c2/environment")
     )
   end
 
-  step "it answers with the environment descriptor and node name", context do
+  step "it answers with the environment descriptor and MC name", context do
     assert {200, _, descriptor} = context.response
-    assert descriptor["environmentId"] == context.node.environment
+    assert descriptor["environmentId"] == context.mc.environment
     assert is_binary(descriptor["label"])
-    assert descriptor["node"] == Atom.to_string(node())
+    assert descriptor["mc"] == Atom.to_string(node())
     context
   end
 
   step "the list of cluster members", context do
     assert {200, _, %{"cluster" => cluster}} = context.response
     assert [%{"environmentId" => id, "label" => _}] = cluster
-    assert id == context.node.environment
+    assert id == context.mc.environment
     context
   end
 
-  step "a browser opens the node's root address", context do
-    Map.put(context, :response, Node.request(context.node, :get, "/"))
+  step "a browser opens the MC's root address", context do
+    Map.put(context, :response, Mc.request(context.mc, :get, "/"))
   end
 
   step "it shows how to paste a pairing link into Add environment", context do
@@ -108,12 +108,12 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
     context
   end
 
-  step "a client requests a route the node does not have", context do
-    Map.put(context, :response, Node.request(context.node, :get, "/api/no-such-route"))
+  step "a client requests a route the MC does not have", context do
+    Map.put(context, :response, Mc.request(context.mc, :get, "/api/no-such-route"))
   end
 
   step "a thread's agent with its MCP bearer", context do
-    Node.ensure(HalC2.Mcp)
+    Mc.ensure(HalC2.Mcp)
     context = context |> World.create_project("Work") |> World.create_thread("Agent work")
 
     %{authorization: authorization} =
@@ -126,7 +126,7 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
     request = %{"jsonrpc" => "2.0", "id" => 7, "method" => "tools/list"}
 
     response =
-      Node.request(context.node, :post, "/mcp",
+      Mc.request(context.mc, :post, "/mcp",
         headers: [{"authorization", context.mcp}],
         json: request
       )
@@ -134,14 +134,14 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
     Map.put(context, :response, response)
   end
 
-  step "the node answers it on the same request", context do
+  step "the MC answers it on the same request", context do
     assert {200, _, %{"jsonrpc" => "2.0", "id" => 7, "result" => %{"tools" => tools}}} =
              context.response
 
     assert tools != []
     # Another bearer is not an agent's.
     assert {401, _, _} =
-             Node.request(context.node, :post, "/mcp",
+             Mc.request(context.mc, :post, "/mcp",
                bearer: "not-an-agent",
                json: %{"jsonrpc" => "2.0", "id" => 8, "method" => "tools/list"}
              )
@@ -150,22 +150,22 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
   end
 
   step "an agent opens the MCP route for streaming", context do
-    Map.put(context, :response, Node.request(context.node, :get, "/mcp"))
+    Map.put(context, :response, Mc.request(context.mc, :get, "/mcp"))
   end
 
-  step "the node answers that the method is not allowed", context do
+  step "the MC answers that the method is not allowed", context do
     assert {405, _, _} = context.response
     context
   end
 
   step "ending an MCP session always succeeds", context do
-    assert {200, _, _} = Node.request(context.node, :delete, "/mcp")
+    assert {200, _, _} = Mc.request(context.mc, :delete, "/mcp")
     context
   end
 
   step "a client with orchestration:read", context do
     assert {200, %{"access_token" => access, "scope" => scope}} =
-             Node.exchange(context.node, HalC2.Auth.create_pairing_token(context.node.store))
+             Mc.exchange(context.mc, HalC2.Auth.create_pairing_token(context.mc.store))
 
     assert "orchestration:read" in String.split(scope)
     Map.put(context, :access, access)
@@ -179,7 +179,7 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
     |> ask_diff()
   end
 
-  step "the project's node answers with the diff", context do
+  step "the project's MC answers with the diff", context do
     assert {200, _, %{"patch" => @patch, "truncated" => false}} = context.response
     context
   end

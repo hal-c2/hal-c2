@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
   @moduledoc """
-  Steps for `features/node/orchestration/checkpoints-and-rollback.feature`: real turns
+  Steps for `features/mc/orchestration/checkpoints-and-rollback.feature`: real turns
   on the fake Codex CLI (`test/support/fake_codex.py`: "write NAME", "indent NAME",
   "fill NAME", "fail") capture real checkpoints in a git worktree of the thread's own.
   """
@@ -10,8 +10,8 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
 
   alias HalC2.Checkpoint
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # --- setup ---------------------------------------------------------------------
 
@@ -26,7 +26,7 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
 
   step "thread {string} works in a folder that is not a git repository",
        %{args: [thread]} = context do
-    folder = Path.join(context.node.home, "plain-#{thread}")
+    folder = Path.join(context.mc.home, "plain-#{thread}")
     File.mkdir_p!(folder)
     refute Checkpoint.repo?(folder)
 
@@ -151,7 +151,7 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
   step "the host loses power right after the capture", context do
     # Git flushes checkpoint objects and refs before publishing them; what is on
     # disk now is what a machine that lost power comes back to.
-    %{context | node: Node.restart(context.node), clients: %{}}
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
   # --- checkpoints ---------------------------------------------------------------
@@ -196,7 +196,7 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
     context
   end
 
-  step "the checkpoint ref is readable after the node restarts", context do
+  step "the checkpoint ref is readable after the MC restarts", context do
     %{"ref" => ref} = checkpoint(context, "t1", 1)
     assert Checkpoint.exists?(cwd(context, "t1"), ref)
 
@@ -588,7 +588,7 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
   # A git worktree of the project's repository on a branch named after the thread.
   defp worktree(context, project, thread) do
     root = World.project(context, project).root
-    path = Path.join(context.node.home, "worktrees/#{thread}")
+    path = Path.join(context.mc.home, "worktrees/#{thread}")
     World.git!(root, ["worktree", "add", "-q", "-b", thread, path])
     {path, thread}
   end
@@ -691,13 +691,13 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
   end
 
   defp watch(cwd) do
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry},
         id: HalC2.Vcs.Registry
       )
     )
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec(
         {DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one},
         id: HalC2.Vcs.Supervisor

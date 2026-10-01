@@ -8,7 +8,7 @@ import type {
 } from "@cursor/sdk";
 
 /**
- * Cursor as an Agent Client Protocol agent, so a HAL-C2 node runs it like any other ACP
+ * Cursor as an Agent Client Protocol agent, so a HAL-C2 MC runs it like any other ACP
  * agent. Each ACP session is a local Cursor agent; a prompt is one Cursor run whose
  * deltas become `session/update` notifications. Signing in is Cursor's browser
  * login, whose URL goes to the client as a URL elicitation.

@@ -16,78 +16,78 @@
 
 Feature: Agents drive the preview browser
   An agent can open, read and operate the thread's browser tabs through its preview tools. The
-  node routes each action to a desktop that is showing the thread's browser, so the agent works
+  MC routes each action to a desktop that is showing the thread's browser, so the agent works
   in the same browser the user can watch.
 
-  Rule: The node routes each action to one browser host
+  Rule: The MC routes each action to one browser host
 
-    @node
+    @mc
     Scenario: A desktop registers as a browser host
-      When a desktop offers its browser to the node
-      Then the node confirms the connection
+      When a desktop offers its browser to the MC
+      Then the MC confirms the connection
       And the desktop receives the agent's browser actions from then on
 
-    @node
+    @mc
     Scenario: An agent's actions stay in the browser it last used
       Given an agent has already acted in the browser of one desktop
       And a second desktop is also available
       When the agent takes another browser action
       Then the action goes to the same desktop as before
 
-    @node
+    @mc
     Scenario: A new agent session goes to the most capable, focused browser
       Given two desktops offer their browsers
       And only one of them has its window focused
       When an agent takes its first browser action
       Then the action goes to the desktop that can do the most, preferring the focused one
 
-    @node
+    @mc
     Scenario: An action nobody can host fails with guidance
       Given no desktop is offering its browser
       When an agent asks to take a snapshot
       Then the tool fails with "No preview automation host is available for snapshot. Open HAL-C2's desktop app with this thread's browser panel available."
 
-    @node
+    @mc
     Scenario: A browser that cannot do an action is not swapped for another mid-task
       Given an agent is working in a desktop browser that cannot record
       When the agent asks to start a recording
       Then the tool fails saying no host is available for that action
       And the agent's later actions still go to the same browser
 
-    @node
+    @mc
     Scenario: A browser that does not answer in time is dropped
       Given an agent is working in a desktop browser
       When the desktop does not answer an action within its time limit
       Then the tool fails with "Preview automation click timed out after 15000ms."
-      And the node drops that desktop so it has to register again
+      And the MC drops that desktop so it has to register again
       And the action is not tried a second time
 
-    @node
+    @mc
     Scenario: A browser that disconnects fails its unanswered actions
       Given an agent is waiting on an action in a desktop browser
       When that desktop disconnects
       Then the tool fails saying the client disconnected during the action
 
-    @node
+    @mc
     Scenario: A desktop that registers again replaces its old connection
       Given a desktop is registered as a browser host
       When the same desktop registers again
       Then only the new connection receives actions
       And actions pending on the old connection fail as disconnected
 
-    @node
+    @mc
     Scenario: The tab an agent last touched is its current tab
       Given an agent navigated a specific browser tab
       When the agent takes a snapshot without naming a tab
       Then the snapshot is of the tab the agent last touched
 
-    @node
+    @mc
     Scenario: A background page check does not move the agent's current tab
       Given an agent's current tab is its first browser tab
-      When the node checks another tab's page for a tool result
+      When the MC checks another tab's page for a tool result
       Then the agent's current tab stays the first one
 
-    @node
+    @mc
     Scenario Outline: Browser failures reach the agent in plain words
       Given the desktop browser answers the agent's action with <failure>
       Then the tool fails with "<message>"
@@ -101,42 +101,42 @@ Feature: Agents drive the preview browser
 
   Rule: Agents use the preview tools
 
-    @node
+    @mc
     Scenario: An agent opens a preview and it follows the user's preference
       When an agent opens a preview without saying whether to show it
       Then whether the browser comes to the front follows the user's desktop preference
       And an existing tab for the same page is reused
 
-    @node
+    @mc
     Scenario: An agent asks to show the preview
       When an agent opens a preview and asks to show it
       Then the browser comes to the front with the page
 
-    @node
+    @mc
     Scenario: An action reports the page it left the tab on
       Given an agent's current tab shows "http://localhost:5173/cart"
       When the agent clicks a button on the page
       Then the tool result names the page "http://localhost:5173/cart"
 
-    @node
+    @mc
     Scenario: A page that is not a website is not named in the result
       Given an agent's current tab shows a blank page
       When the agent presses a key on the page
       Then the tool result does not name a page
 
-    @node
+    @mc
     Scenario: A snapshot returns the page text and a screenshot
       Given an agent's current tab shows a page
       When the agent takes a snapshot
       Then the tool returns the page's address, its text and its interactive elements
       And the tool returns the page's screenshot
 
-    @node
+    @mc
     Scenario: An agent takes a snapshot without the image
       When an agent takes a snapshot and asks for no image
       Then the tool returns the page's text without the screenshot
 
-    @node
+    @mc
     Scenario Outline: A large snapshot is cut down and says what was left out
       Given the page has <content>
       When an agent takes a snapshot
@@ -150,33 +150,33 @@ Feature: Agents drive the preview browser
         | 100 console messages                     | the newest 40 console messages             |
         | an accessibility tree                    | the interactive elements without the tree  |
 
-    @node
+    @mc
     Scenario: A snapshot without a screenshot fails
       Given the desktop sends a snapshot with no screenshot
       Then the tool fails with "Preview snapshot failed: the page sent no screenshot."
 
-    @node
+    @mc
     Scenario: An agent saves a screenshot to disk
       Given an agent's current tab shows "https://example.com"
       When the agent takes a snapshot and asks to save it
-      Then the screenshot is saved under the node's browser artifacts named for "example-com"
+      Then the screenshot is saved under the MC's browser artifacts named for "example-com"
       And the tool result gives the saved file's path
 
-    @node
+    @mc
     Scenario: A screenshot that cannot be saved fails the snapshot
-      Given the node cannot write its browser artifacts folder
+      Given the MC cannot write its browser artifacts folder
       When an agent takes a snapshot and asks to save it
       Then the tool fails saying it could not save the preview screenshot to that path
 
-    @node
+    @mc
     Scenario: A stopped recording becomes a thread attachment
       Given an agent is recording the preview
       When the agent stops the recording
       Then the recording is attached to the thread
       And the tool result gives the attachment's path
 
-    @node
-    Scenario Outline: A recording that cannot be brought to the node fails clearly
+    @mc
+    Scenario Outline: A recording that cannot be brought to the MC fails clearly
       Given an agent is recording the preview
       And <situation>
       When the agent stops the recording
@@ -187,7 +187,7 @@ Feature: Agents drive the preview browser
         | the recording upload cannot be claimed  | The preview recording could not be transferred to this environment. |
         | the desktop app is too old to upload it | Update HAL-C2's desktop app to transfer preview recordings.        |
 
-    @node
+    @mc
     Scenario Outline: An agent's request to <action> reaches the browser
       Given an agent's current tab shows a page
       When the agent asks to <action>
@@ -206,11 +206,11 @@ Feature: Agents drive the preview browser
         | evaluate a script in the page          | an evaluation         |
         | start a recording                      | a recording start     |
 
-    @node
+    @mc
     Scenario Outline: A slow <action> may wait as long as the agent allows
       Given an agent's current tab shows a slow page
       When the agent asks to <action> allowing 30 seconds
-      Then the node waits up to 30 seconds for the desktop browser to answer
+      Then the MC waits up to 30 seconds for the desktop browser to answer
 
       Examples:
         | action                  |
@@ -220,14 +220,14 @@ Feature: Agents drive the preview browser
         | type text into a field  |
         | wait for text to appear |
 
-    @node
+    @mc
     Scenario: An agent pages through the thread's preview tabs
       Given the thread has 25 browser tabs
       When an agent lists the thread's preview tabs
       Then it receives the first 20 tabs and a cursor for the rest
       And listing again from that cursor returns the last 5 with no further cursor
 
-    @node
+    @mc
     Scenario: An agent closes a preview tab
       Given the thread has a browser tab the agent opened
       When the agent closes that tab

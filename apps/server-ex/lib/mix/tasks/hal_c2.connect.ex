@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.HalC2.Connect do
-  @shortdoc "Sets up, shows or turns off this node's HAL-C2 Connect link"
+  @shortdoc "Sets up, shows or turns off this MC's HAL-C2 Connect link"
   @moduledoc """
   The operator's side of HAL-C2 Connect on the host (`hal-c2 connect`, `apps/server/src/cli/connect.ts`):
 
@@ -7,14 +7,14 @@ defmodule Mix.Tasks.HalC2.Connect do
       mix hal_c2.connect login      # sign in only
       mix hal_c2.connect link       # sign in and link on next start
       mix hal_c2.connect status     # the saved sign-in and link settings
-      mix hal_c2.connect unlink     # stops exposing the node; the sign-in stays
+      mix hal_c2.connect unlink     # stops exposing the MC; the sign-in stays
       mix hal_c2.connect logout     # unlinks and forgets the sign-in
 
   Signing in opens the hosted app in a browser on this machine; over SSH, or with
   `--headless`, it prints a link and a short code to approve on another device
-  (`HalC2.Connect.OAuth`). The node links itself with the saved sign-in when it starts.
-  `status` reads what is saved; it does not test whether the node is reachable.
-  `unlink` and `logout` stop a running node's tunnel through its own
+  (`HalC2.Connect.OAuth`). The MC links itself with the saved sign-in when it starts.
+  `status` reads what is saved; it does not test whether the MC is reachable.
+  `unlink` and `logout` stop a running MC's tunnel through its own
   `/api/connect/unlink`, revoke the link at the relay, and clear the saved link.
   """
 
@@ -181,7 +181,7 @@ defmodule Mix.Tasks.HalC2.Connect do
   end
 
   # `offerServiceDuringOnboarding` (`apps/server/src/cli/service.ts`): true once the
-  # node runs as a background service.
+  # MC runs as a background service.
   defp offer_service do
     status = HalC2.Service.status()
 
@@ -342,7 +342,7 @@ defmodule Mix.Tasks.HalC2.Connect do
         )
   end
 
-  # A node running on this host stops its tunnel through its own API, as the
+  # An MC running on this host stops its tunnel through its own API, as the
   # operator, with a session minted from its store.
   defp live_unlink do
     base = "http://127.0.0.1:#{Application.get_env(:hal_c2, :port, 3780)}"

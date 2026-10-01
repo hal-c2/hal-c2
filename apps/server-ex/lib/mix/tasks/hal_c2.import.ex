@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.HalC2.Import do
-  @shortdoc "Imports a Node server state.sqlite into this node's store"
+  @shortdoc "Imports a Node server state.sqlite into this MC's store"
   @moduledoc """
-  Imports the event log of a Node HAL-C2 server into the Elixir node's store.
+  Imports the event log of a Node HAL-C2 server into the Elixir MC's store.
 
       mix hal_c2.import PATH/TO/state.sqlite
 

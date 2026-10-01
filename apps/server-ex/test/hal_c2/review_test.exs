@@ -78,7 +78,7 @@ defmodule HalC2.ReviewTest do
              })
   end
 
-  test "only this node's projects can be reviewed", %{tmp_dir: dir} do
+  test "only this MC's projects can be reviewed", %{tmp_dir: dir} do
     assert {:error, %{"_tag" => "VcsRepositoryDetectionError"}} =
              Review.diff_preview(%{"cwd" => dir})
   end

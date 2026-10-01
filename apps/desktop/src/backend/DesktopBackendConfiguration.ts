@@ -513,9 +513,9 @@ const buildObservabilityFragment = (observabilitySettings: BackendObservabilityS
   }),
 });
 
-// An Elixir node release reads the same bootstrap as one JSON line on stdin; it
+// An MC release reads the same bootstrap as one JSON line on stdin; it
 // has no telemetry fds. It keeps its state under `<halC2Home>/elixir`.
-const elixirNodeStartConfig = (
+const mcStartConfig = (
   releaseBin: string,
   bootstrap: DesktopBackendManager.DesktopBackendStartConfig["bootstrap"],
   httpBaseUrl: URL,
@@ -540,13 +540,13 @@ const elixirNodeStartConfig = (
 });
 
 // A configured release wins. A packaged macOS or Linux app built with
-// `--elixir-node` ships one in resources/hal-c2-node and runs it as its backend.
-const resolveElixirNodeRelease = Effect.gen(function* () {
+// `--elixir-mc` ships one in resources/hal-c2-mc and runs it as its backend.
+const resolveMcRelease = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  if (Option.isSome(environment.elixirNodeRelease)) return environment.elixirNodeRelease;
+  if (Option.isSome(environment.mcRelease)) return environment.mcRelease;
   if (!environment.isPackaged || environment.platform === "win32") return Option.none<string>();
   const fileSystem = yield* FileSystem.FileSystem;
-  const bundled = environment.path.join(environment.resourcesPath, "hal-c2-node", "bin", "hal_c2");
+  const bundled = environment.path.join(environment.resourcesPath, "hal-c2-mc", "bin", "hal_c2");
   const exists = yield* fileSystem.exists(bundled).pipe(Effect.orElseSucceed(() => false));
   return exists ? Option.some(bundled) : Option.none<string>();
 });
@@ -555,7 +555,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   function* (
     input: SharedBootstrapInput & {
       readonly resourceMonitorPath: Option.Option<string>;
-      readonly elixirNodeRelease: Option.Option<string>;
+      readonly mcRelease: Option.Option<string>;
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -588,13 +588,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       ...buildObservabilityFragment(input.observabilitySettings),
     };
 
-    if (Option.isSome(input.elixirNodeRelease)) {
+    if (Option.isSome(input.mcRelease)) {
       const { desktopTelemetryFd: _fd, desktopTelemetryControlFd: _controlFd, ...rest } = bootstrap;
-      return elixirNodeStartConfig(
-        input.elixirNodeRelease.value,
-        rest,
-        backendExposure.httpBaseUrl,
-      );
+      return mcStartConfig(input.mcRelease.value, rest, backendExposure.httpBaseUrl);
     }
 
     return {
@@ -915,14 +911,14 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    const elixirNodeRelease = yield* resolveElixirNodeRelease.pipe(
+    const mcRelease = yield* resolveMcRelease.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
     return yield* resolvePrimaryStartConfig({
       ...shared,
       resourceMonitorPath,
-      elixirNodeRelease,
+      mcRelease,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),

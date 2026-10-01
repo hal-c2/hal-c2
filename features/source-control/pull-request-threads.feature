@@ -27,7 +27,7 @@ Feature: Threads that work on or link pull requests
   Background:
     Given a connected environment with the GitHub project "acme/shop"
 
-  @node
+  @mc
   Scenario Outline: A pull request can be named in several ways
     When the user asks to work on the pull request <reference>
     Then pull request 42 of "acme/shop" is resolved with its title, branches and state
@@ -38,43 +38,43 @@ Feature: Threads that work on or link pull requests
       | #42                                       |
       | https://github.com/acme/shop/pull/42      |
 
-  @node
+  @mc
   Scenario: A pull request that does not exist
     When the user asks to work on the pull request 9999
     Then the user is told the pull request was not found
 
-  @node
+  @mc
   Scenario: Working on a pull request in the local checkout
     When the user starts a thread on pull request 42 in the local checkout
     Then the project's checkout switches to the pull request's branch
     And the new thread is linked to pull request 42
 
-  @node
+  @mc
   Scenario: Working on a pull request in its own worktree
     When the user starts a thread on pull request 42 in a new worktree
     Then the pull request's head is fetched into a worktree of its own
     And the new thread works in that worktree
 
-  @node
+  @mc
   Scenario: A pull request from a fork gets a branch of its own
     Given pull request 42 comes from the fork branch "tax"
     When the user starts a thread on pull request 42 in a new worktree
     Then the worktree is on the branch "hal-c2/pr-42/tax" with no upstream
 
-  @node
+  @mc
   Scenario: An existing worktree for the pull request is reused
     Given a worktree for pull request 42 exists with local commits
     When the user starts a thread on pull request 42 in a new worktree
     Then the existing worktree is reused
     And the user is told the checkout is not on the pull request's head
 
-  @node
+  @mc
   Scenario: A pull request branch already in the main checkout cannot get a worktree
     Given the main checkout is on pull request 42's branch
     When the user starts a thread on pull request 42 in a new worktree
     Then the user is told to use the local checkout or switch the main checkout off that branch
 
-  @node
+  @mc
   Scenario: Pull request worktrees do not run the setup script
     Given "acme/shop" has a setup script for new worktrees
     When the user starts a thread on pull request 42 in a new worktree
@@ -85,59 +85,59 @@ Feature: Threads that work on or link pull requests
     When the user pastes "https://github.com/acme/shop/pull/42" to start a pull request thread
     Then the user sees the pull request's title and branches before choosing local or worktree
 
-  @node @desktop
+  @mc @desktop
   Scenario: Linking a pull request to a thread
     Given the thread "Tax work" has no linked pull request
     When the user links pull request 42 to "Tax work"
     Then "Tax work" lists pull request 42 with its current state
 
-  @node @desktop
+  @mc @desktop
   Scenario: Unlinking a pull request from a thread
     Given pull request 42 is linked to "Tax work"
     When the user unlinks pull request 42
     Then "Tax work" no longer lists pull request 42
 
-  @node @desktop
+  @mc @desktop
   Scenario: A thread links several pull requests across repositories
     When the user links "acme/shop" pull request 42 and "acme/api" pull request 7 to "Tax work"
     Then "Tax work" lists both pull requests
 
-  @node
+  @mc
   Scenario: The agent links the pull request it opened
     When the agent in "Tax work" opens pull request 43 and links it with its tool
     Then "Tax work" lists pull request 43
 
-  @node
+  @mc
   Scenario: Creating a pull request from a thread links it
     When the user creates a pull request from "Tax work"
     Then "Tax work" lists the new pull request
 
-  @node
+  @mc
   Scenario: The branch's pull request is discovered on its own
     Given "Tax work" is on the branch "feature/tax" with no linked pull request
     When someone opens a pull request for "feature/tax" on GitHub
     Then within a minute "Tax work" shows that pull request as its branch's
 
-  @node
+  @mc
   Scenario: A merged link moves to the branch's open pull request
     Given "Tax work" shows pull request 40 which has merged
     And "feature/tax" now has the open pull request 44
     When the thread's pull requests are checked again
     Then "Tax work" shows pull request 44
 
-  @node @desktop
+  @mc @desktop
   Scenario: Linked pull requests stay current
     Given pull request 42 is linked to "Tax work"
     When a review is submitted on pull request 42 on GitHub
     Then "Tax work" shows the new review state after the next sync
 
-  @node
+  @mc
   Scenario: Merged links are left alone
     Given pull request 42 is linked to "Tax work" and has merged
     When the sync sweep runs
     Then pull request 42 is not read again
 
-  @node
+  @mc
   Scenario: A pull request lists every thread linked to it, archived ones included
     Given pull request 42 is linked to "Tax work" and to the archived thread "Old tax"
     When the user asks which threads are linked to pull request 42
@@ -150,7 +150,7 @@ Feature: Threads that work on or link pull requests
     Then "Tax work" lists pull request 42
 
   # Links are decided by host, as the web's usePullRequestLinking and
-  # findProjectOnChangeRequestHost do: any project on a host lends the node its
+  # findProjectOnChangeRequestHost do: any project on a host lends the MC its
   # credentials there, so a repository nobody has checked out still links.
   @desktop @mobile @backlog-mobile
   Scenario: A pull request from another repository on a host a project reads
@@ -173,9 +173,9 @@ Feature: Threads that work on or link pull requests
     Then "Tax work" lists pull request 1 of "acme/shop/_git/web"
 
   @desktop @mobile @backlog-mobile
-  Scenario: A pull request the node does not link says why
+  Scenario: A pull request the MC does not link says why
     Given the thread "Tax work" has no linked pull request
-    And the node refuses to link pull requests to "Tax work"
+    And the MC refuses to link pull requests to "Tax work"
     When the user links pull request 42 to "Tax work"
     Then the user is told pull request 42 could not be linked
     And "Tax work" lists no pull requests

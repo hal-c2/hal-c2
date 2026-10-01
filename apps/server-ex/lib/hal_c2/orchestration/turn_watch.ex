@@ -5,7 +5,7 @@ defmodule HalC2.Orchestration.TurnWatch do
   `TurnWriter.finish/3`. If it crashes first, whatever the provider or plugin, the
   turn ends as failed from what the thread recorded (`TurnWriter.abandon/4`) and the
   thread's next message starts. A process that stops (`:normal`, `:shutdown`) leaves
-  its turn alone: a node shutting down settles its turns at boot
+  its turn alone: an MC shutting down settles its turns at boot
   (`HalC2.Orchestration.Recovery`), and a stop on a turn nothing drives ends it.
   """
 
@@ -31,7 +31,7 @@ defmodule HalC2.Orchestration.TurnWatch do
   def release(run_id), do: GenServer.cast(__MODULE__, {:release, run_id})
 
   @doc """
-  Whether a live process drives run `run_id`. A node upgraded in place, where this
+  Whether a live process drives run `run_id`. An MC upgraded in place, where this
   process has not started yet, assumes one does.
   """
   def driven?(run_id) do

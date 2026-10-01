@@ -1,5 +1,5 @@
 // Settings → Storage, natively (the web's StorageSettingsPanel): the cleanup
-// rules the node sweeps by (HalC2.StorageCleanup), across the settings scope
+// rules the MC sweeps by (HalC2.StorageCleanup), across the settings scope
 // (SettingsScopeController). At a project scope only the worktree rules show,
 // as the project's `worktreeCleanup` override: inherited, off, or its own
 // rules.
@@ -27,7 +27,7 @@
 
 class StorageSettingsController : public QObject, public NativeController {
 public:
-  StorageSettingsController(ShellBridge* bridge, NodeClient*, QObject* parent) : QObject(parent), m_bridge(bridge) {}
+  StorageSettingsController(ShellBridge* bridge, McClient*, QObject* parent) : QObject(parent), m_bridge(bridge) {}
 
   void activate() override {
     if (m_active) return;

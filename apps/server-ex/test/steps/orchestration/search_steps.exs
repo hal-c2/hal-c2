@@ -1,13 +1,13 @@
 defmodule HalC2.Steps.Orchestration.Search do
   @moduledoc """
-  Steps for `features/node/orchestration/search.feature`: messages are committed to
+  Steps for `features/mc/orchestration/search.feature`: messages are committed to
   thread streams (which indexes the finished ones), and clients search over the
   socket (`orchestration.searchThreads`). Threads are named by id (`"t1"`).
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   # --- threads and messages ------------------------------------------------------------
 
@@ -86,7 +86,7 @@ defmodule HalC2.Steps.Orchestration.Search do
     |> Map.put(:word, word)
   end
 
-  step "threads written by a node that had no search index", context do
+  step "threads written by an MC that had no search index", context do
     context =
       context
       |> ensure_thread("t1")
@@ -94,9 +94,9 @@ defmodule HalC2.Steps.Orchestration.Search do
       |> ensure_thread("t2")
       |> World.add_message("t2", "assistant", "the ledger is migrated")
 
-    # The index as an older node left it: no rows and never backfilled.
+    # The index as an older MC left it: no rows and never backfilled.
     settle(context)
-    {:ok, db} = Exqlite.Sqlite3.open(context.node.store)
+    {:ok, db} = Exqlite.Sqlite3.open(context.mc.store)
     :ok = Exqlite.Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
     :ok = Exqlite.Sqlite3.execute(db, "DELETE FROM messages")
     :ok = Exqlite.Sqlite3.execute(db, "DELETE FROM meta WHERE key = 'messages_indexed'")

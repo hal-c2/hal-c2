@@ -8,10 +8,10 @@ QtObject {
     property var device: ({})
     property var document: ({})
     property var defaults: ({})
-    property var nodeKeys: []
+    property var mcKeys: []
 
     function store(key) {
-        return nodeKeys.indexOf(key) >= 0 ? document : device;
+        return mcKeys.indexOf(key) >= 0 ? document : device;
     }
     function setting(key) {
         const values = store(key);
@@ -24,14 +24,14 @@ QtObject {
         return defaults[key];
     }
     function onDevice(key) {
-        return nodeKeys.indexOf(key) < 0;
+        return mcKeys.indexOf(key) < 0;
     }
     function set(key, value) {
-        const node = nodeKeys.indexOf(key) >= 0;
-        const next = Object.assign({}, node ? document : device);
+        const mc = mcKeys.indexOf(key) >= 0;
+        const next = Object.assign({}, mc ? document : device);
         if (value === defaults[key]) delete next[key];
         else next[key] = value;
-        if (node) document = next;
+        if (mc) document = next;
         else device = next;
     }
     function reset(key) {
@@ -52,6 +52,6 @@ QtObject {
         device = {};
         document = {};
         defaults = {};
-        nodeKeys = [];
+        mcKeys = [];
     }
 }

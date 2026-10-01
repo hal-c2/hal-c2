@@ -35,29 +35,29 @@ QJsonObject withCapabilities(QJsonObject config, const QJsonObject& capabilities
 
 // This machine, supporting storage cleanup unless told otherwise.
 void supportHere(World& world, const QJsonObject& capabilities = kSupported) {
-  FakeConfig& fake = fakeConfig(world.node);
+  FakeConfig& fake = fakeConfig(world.mc);
   fake.config = withCapabilities(fake.config, capabilities);
 }
 
-// Another machine the node is linked to, named `name`, with its own settings.
+// Another machine the MC is linked to, named `name`, with its own settings.
 void linkMachine(World& world, const QString& name, const QJsonObject& capabilities = kSupported) {
-  FakeConfig& fake = fakeConfig(world.node);
+  FakeConfig& fake = fakeConfig(world.mc);
   fake.elsewhere.insert(name, withCapabilities(fake.elsewhere.value(name), capabilities));
-  documentOf(world.node, name);
-  world.node.linkLabels.insert(name, name);
-  world.node.link(name);
+  documentOf(world.mc, name);
+  world.mc.linkLabels.insert(name, name);
+  world.mc.link(name);
 }
 
 void setCleanup(World& world, const QString& environment, const QString& key, const QJsonValue& value) {
-  FakeConfig::Document& document = documentOf(world.node, environment);
+  FakeConfig::Document& document = documentOf(world.mc, environment);
   QJsonObject cleanup = document.settings.value(QLatin1String("storageCleanup")).toObject();
   cleanup.insert(key, value);
   document.settings.insert(QStringLiteral("storageCleanup"), cleanup);
 }
 
 QJsonValue cleanupOf(World& world, const QString& environment, const QString& key) {
-  const QJsonObject settings = environment == world.node.environmentId ? fakeConfig(world.node).settings
-                                                                        : documentOf(world.node, environment).settings;
+  const QJsonObject settings = environment == world.mc.environmentId ? fakeConfig(world.mc).settings
+                                                                        : documentOf(world.mc, environment).settings;
   return settings.value(QLatin1String("storageCleanup")).toObject().value(key);
 }
 
@@ -123,9 +123,9 @@ const Steps steps([] {
   const QString q = kQuoted;
 
   // storage.feature
-  step(QStringLiteral("a node with a project %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("an MC with a project %1").arg(q), [](World& world, const Captures& c, const Table&) {
     supportHere(world);
-    world.node.projects.insert(c[0], QJsonObject{{QStringLiteral("id"), c[0]},
+    world.mc.projects.insert(c[0], QJsonObject{{QStringLiteral("id"), c[0]},
                                                  {QStringLiteral("title"), c[0]},
                                                  {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[0]},
                                                  {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")},
@@ -168,8 +168,8 @@ const Steps steps([] {
     for (const QString& name : {c[0], c[1]}) linkMachine(world, name);
   });
   step(QStringLiteral("the project %1 has a checkout on each environment").arg(q), [](World& world, const Captures& c, const Table&) {
-    for (const QString& environment : world.node.linked) {
-      world.node.sendLinkRow(environment, c[0] + QLatin1Char('-') + environment,
+    for (const QString& environment : world.mc.linked) {
+      world.mc.sendLinkRow(environment, c[0] + QLatin1Char('-') + environment,
                              QJsonObject{{QStringLiteral("id"), c[0] + QLatin1Char('-') + environment},
                                          {QStringLiteral("title"), c[0]},
                                          {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[0]},
@@ -183,7 +183,7 @@ const Steps steps([] {
                              QStringLiteral("project"));
     }
     // And another project, only here.
-    world.node.projects.insert(QStringLiteral("docs"), QJsonObject{{QStringLiteral("id"), QStringLiteral("docs")},
+    world.mc.projects.insert(QStringLiteral("docs"), QJsonObject{{QStringLiteral("id"), QStringLiteral("docs")},
                                                                    {QStringLiteral("title"), QStringLiteral("docs")},
                                                                    {QStringLiteral("workspaceRoot"), QStringLiteral("/work/docs")},
                                                                    {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")},
@@ -247,7 +247,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user is editing settings across all environments"), [](World& world, const Captures&, const Table&) {
     // The ledger's two other machines, when the feature has linked none.
-    if (world.node.linked.isEmpty()) {
+    if (world.mc.linked.isEmpty()) {
       supportHere(world);
       for (const QString& name : {QStringLiteral("Laptop"), QStringLiteral("Build box")}) linkMachine(world, name);
     }
@@ -256,7 +256,7 @@ const Steps steps([] {
     waitReady(world, 3);
   });
   step(QStringLiteral("saving on %1 fails").arg(q), [](World& world, const Captures& c, const Table&) {
-    documentOf(world.node, c[0]).refuseWrites = QStringLiteral("disk full");
+    documentOf(world.mc, c[0]).refuseWrites = QStringLiteral("disk full");
   });
   const auto change = [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("storageSettings.set"),
@@ -268,7 +268,7 @@ const Steps steps([] {
     world.waitFor([&] {
       return cleanupOf(world, c[0], QStringLiteral("worktreeOnMerge")) == QJsonValue(true) &&
              cleanupOf(world, c[1], QStringLiteral("worktreeOnMerge")) == QJsonValue(true) &&
-             cleanupOf(world, world.node.environmentId, QStringLiteral("worktreeOnMerge")) == QJsonValue(true);
+             cleanupOf(world, world.mc.environmentId, QStringLiteral("worktreeOnMerge")) == QJsonValue(true);
     }, QStringLiteral("merged worktree cleanup to be saved on every environment"));
   });
   step(QStringLiteral("the user is told the setting saved on some environments and could not update %1").arg(q),
@@ -295,11 +295,11 @@ const Steps steps([] {
   });
   step(QStringLiteral("the setting cannot be changed"), [](World& world, const Captures&, const Table&) {
     expect(!scope(world).value(QStringLiteral("editable")).toBool(), QStringLiteral("the setting to be locked"));
-    const qsizetype writes = fakeConfig(world.node).writes.size();
+    const qsizetype writes = fakeConfig(world.mc).writes.size();
     world.bridge().dispatch(QStringLiteral("storageSettings.set"),
                             QVariantMap{{QStringLiteral("key"), QStringLiteral("worktreeOnMerge")}, {QStringLiteral("value"), true}});
     world.sync();
-    expect(fakeConfig(world.node).writes.size() == writes, QStringLiteral("nothing to be written"));
+    expect(fakeConfig(world.mc).writes.size() == writes, QStringLiteral("nothing to be written"));
   });
   step(QStringLiteral("the user is told to reconnect the selected environment to change it"), [](World& world, const Captures&, const Table&) {
     expect(scope(world).value(QStringLiteral("disabledReason")) == QLatin1String("Reconnect the selected environment to change this setting."),

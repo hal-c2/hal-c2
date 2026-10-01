@@ -15,7 +15,7 @@
 #   apps/mobile/src/features/connection/ConnectionsRouteScreen.tsx, LocalEnvironmentList.tsx,
 #     ConnectionEnvironmentRow.tsx, environmentSections.ts, CloudEnvironmentRows.tsx
 #   apps/tui/src/features.backlog.test.ts (environment-connections)
-#   Shared domain: connections/cluster.feature holds the node cluster and its sidebar;
+#   Shared domain: connections/cluster.feature holds the MC cluster and its sidebar;
 #   settings/connections.feature holds the desktop Connections page (remove, switch off, icon, WSL);
 #   settings/local-environment.feature and settings/load-balancing.feature hold those controls;
 #   mobile/pairing-and-environments.feature holds managing environments from a phone.
@@ -27,24 +27,24 @@ Feature: Managing environments on a client
   Background:
     Given a client paired with two environments
 
-  @node
-  Scenario: A node describes itself for the environment list
-    When a client reads the node's descriptor
+  @mc
+  Scenario: An MC describes itself for the environment list
+    When a client reads the MC's descriptor
     Then it names the environment id, label, platform and detected machine kind
 
-  @node
-  Scenario: A chosen environment icon persists on the node
+  @mc
+  Scenario: A chosen environment icon persists on the MC
     Given a paired administrator's client
     When it sets the environment icon to "mac-studio"
-    And the node restarts
-    Then the node's settings still name "mac-studio" as the environment icon
+    And the MC restarts
+    Then the MC's settings still name "mac-studio" as the environment icon
 
-  @node
+  @mc
   Scenario: Clearing the environment icon returns to the detected machine
     Given an environment icon was chosen
     When a client clears the environment icon
-    Then the node's settings name no icon
-    And the descriptor still names the machine the node detected
+    Then the MC's settings name no icon
+    And the descriptor still names the machine the MC detected
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).
@@ -124,14 +124,14 @@ Feature: Managing environments on a client
   Scenario: Choosing a WSL distro runs the local environment inside it
     Given the machine runs Windows with a WSL distro that has the provider CLIs installed
     When the user chooses that distro for the local environment
-    Then HAL-C2 installs its own node runtime in the distro without further steps
+    Then HAL-C2 installs its own MC runtime in the distro without further steps
     And agents and projects run inside the distro with the provider CLIs installed there
 
   @backlog @desktop
   Scenario: The first launch after an app update prepares the distro again
     Given the local environment runs in a WSL distro
     When the app starts for the first time after an update
-    Then the node runtime in the distro is brought up to the app's version before it connects
+    Then the MC runtime in the distro is brought up to the app's version before it connects
 
   @backlog @desktop
   Scenario: The user switches the WSL distro

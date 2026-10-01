@@ -16,7 +16,7 @@
 #include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -71,7 +71,7 @@ QString planTitle(const QString& markdown) {
   return title.isEmpty() ? QStringLiteral("Proposed plan") : title;
 }
 
-// A respond failure that means the request is gone (the node's, and the
+// A respond failure that means the request is gone (the MC's, and the
 // providers' words apps/tui/src/staleRequest.ts lists): the request closes.
 bool staleRequest(const QString& error) {
   const QString normalized = error.toLower();
@@ -119,7 +119,7 @@ constexpr qsizetype kMaxStashEntries = 20;
 
 }  // namespace
 
-ComposerController::ComposerController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+ComposerController::ComposerController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                        QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
@@ -432,7 +432,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
                                   bool fromDraft) {
   const auto thread = m_store->thread(target);
   if (!thread) return false;
-  // Nothing leaves while the node is out of reach: the draft stays as it is.
+  // Nothing leaves while the MC is out of reach: the draft stays as it is.
   if (!m_client->isReady() || !m_store->threadOnline(target)) {
     NativeShell::of(this)->controller<ToastController>()->show(
         QStringLiteral("warning"), QStringLiteral("Not connected: message not sent"),
@@ -448,8 +448,8 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const bool implement = planFollowUp && trimmed.isEmpty();
 
   const QString createdAt = sidebar::formatIso(m_now());
-  // Only a mode the user changed is set; a thread the node has no mode for
-  // keeps the node's default.
+  // Only a mode the user changed is set; a thread the MC has no mode for
+  // keeps the MC's default.
   const QString runtimeMode = m_drafts.value(target).runtimeMode;
   QString interactionMode = interactionModeOf(target);
   if (planFollowUp) interactionMode = implement ? QStringLiteral("default") : QStringLiteral("plan");
@@ -487,7 +487,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
     message.insert(QStringLiteral("sourcePlanRef"),
                    QJsonObject{{QStringLiteral("threadId"), thread->id}, {QStringLiteral("planId"), str(plan, QLatin1String("id"))}});
   }
-  // client-runtime startThreadTurn with a node that resolves the context.
+  // client-runtime startThreadTurn with an MC that resolves the context.
   if (mode == QLatin1String("queue")) {
     message.insert(QStringLiteral("dispatchMode"), QJsonObject{{QStringLiteral("type"), QStringLiteral("queue_after_active")}});
   } else {
@@ -516,7 +516,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
 
 // A new thread's first send, as the web's: its images are stored, then the
 // thread is launched with the message in the draft's checkout. The draft (its
-// text and images) stays until the node confirms; the window then shows the
+// text and images) stays until the MC confirms; the window then shows the
 // thread in its place. A background send (mod+alt+Enter) leaves the window on
 // the draft, emptied for another prompt.
 bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& payload) {
@@ -693,7 +693,7 @@ void ComposerController::sendNext(const QString& target) {
   const auto finish = [this, target](const std::optional<QString>& error) {
     if (error) {
       toast(QStringLiteral("Failed to send message"), *error);
-      // The sends queued behind it would reach the node out of order, so they
+      // The sends queued behind it would reach the MC out of order, so they
       // stop too and come back with it.
       const QList<Send> unsent = m_queues.take(target);
       QStringList prompts;
@@ -716,7 +716,7 @@ void ComposerController::sendNext(const QString& target) {
       publish();
       return;
     }
-    // A draft's first turn makes it a thread (a no-op for a thread the node
+    // A draft's first turn makes it a thread (a no-op for a thread the MC
     // already has).
     NativeShell::of(this)->controller<DraftController>()->promote(target);
     QList<Send>& queue = m_queues[target];
@@ -855,7 +855,7 @@ std::optional<QString> ComposerController::draftPreview(const QString& target) c
 
 // As the web's composer: each excerpt is an inline link in the text
 // (formatTerminalContextReference) and a record in `context`
-// (terminalContextRecord); the node swaps the links for the excerpts when it
+// (terminalContextRecord); the MC swaps the links for the excerpts when it
 // hands the message to the provider.
 void ComposerController::withTerminalContexts(QJsonObject& message, const QList<TerminalContext>& contexts) {
   if (contexts.isEmpty()) return;
@@ -895,7 +895,7 @@ void ComposerController::withTerminalContexts(QJsonObject& message, const QList<
 }
 
 // Answers one of the route thread's requests: a decision, answers, or (with
-// neither) dismissing the questions. A request the node says is gone closes;
+// neither) dismissing the questions. A request the MC says is gone closes;
 // any other failure leaves it open to answer again.
 bool ComposerController::respond(const QString& requestId, const QJsonObject& fields, const QString& failure) {
   const auto thread = m_store->thread(m_thread);
@@ -1023,7 +1023,7 @@ QString ComposerController::openDraft() const {
 
 // A thread's own model; for a draft the project's default, as the web's
 // deriveComposerModelSelection: this device's project override, the
-// project's, then the default for new threads. Empty lets the node choose.
+// project's, then the default for new threads. Empty lets the MC choose.
 QJsonObject ComposerController::baseSelection(const QString& key) const {
   if (const auto thread = m_store->thread(key)) return thread->modelSelection;
   auto* shell = NativeShell::of(this);
@@ -1361,7 +1361,7 @@ QList<composer::Suggestion> ComposerController::suggestions(const QString& targe
   return {};
 }
 
-// The @ menu asks the node's workspace search (the Files tab's) for the
+// The @ menu asks the MC's workspace search (the Files tab's) for the
 // route's checkout; the answer counts only while it is still the question.
 void ComposerController::searchPaths(const QString& target) {
   const std::optional<composer::Trigger> trigger = composer::trigger(draft(target), m_drafts.value(target).cursor);

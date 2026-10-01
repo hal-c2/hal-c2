@@ -22,7 +22,7 @@ Feature: Browsing pull requests
     Given a connected environment with the GitHub projects "acme/shop" and "acme/api"
     And the GitHub CLI is installed and signed in
 
-  @node
+  @mc
   Scenario Outline: Listing by involvement
     When the user lists pull requests <involvement>
     Then only pull requests <which> are listed
@@ -33,7 +33,7 @@ Feature: Browsing pull requests
       | the user is reviewing | where the user's review is requested    |
       | the user authored     | the user opened                         |
 
-  @node
+  @mc
   Scenario Outline: Listing by state
     When the user lists <state> pull requests
     Then every listed pull request is <state>
@@ -44,7 +44,7 @@ Feature: Browsing pull requests
       | closed |
       | merged |
 
-  @node
+  @mc
   Scenario Outline: Narrowing the list with filters
     When the user lists open pull requests with <filter>
     Then only pull requests matching <filter> are listed
@@ -61,30 +61,30 @@ Feature: Browsing pull requests
       | the author "octocat"           |
       | the author being the user      |
 
-  @node
+  @mc
   Scenario: Searching every host
     When the user searches pull requests for "tax label:bug"
     Then the search runs on GitHub for each project
     And matching pull requests are listed
 
-  @node
+  @mc
   Scenario: A long list carries on where it left off
     Given "acme/shop" has 200 open pull requests
     When the user loads more pull requests
     Then the next pull requests follow without repeating any
 
-  @node
+  @mc
   Scenario: Diff sizes and review counts arrive after the list
     When the user lists open pull requests
     Then the rows arrive first and their line counts follow
 
-  @node
+  @mc
   Scenario: A project on another host is shown as not browsable yet
     Given the project "infra" has its remote on GitLab
     When the user lists pull requests
     Then GitLab is listed as not configured with "This host cannot be browsed here yet."
 
-  @backlog @node
+  @backlog @mc
   Scenario Outline: Listing change requests on other hosts
     Given the project "infra" has its remote on <host>
     When the user lists open pull requests
@@ -97,7 +97,7 @@ Feature: Browsing pull requests
       | Azure DevOps |
       | Bitbucket    |
 
-  @node
+  @mc
   Scenario Outline: The list explains why a host cannot be read
     Given <condition>
     When the user lists pull requests
@@ -108,23 +108,23 @@ Feature: Browsing pull requests
       | the GitHub CLI is not installed         | the GitHub CLI is required and how to install it |
       | the GitHub CLI is not signed in         | the user should run gh auth login and retry     |
 
-  @node
+  @mc
   Scenario: One failing project does not hide the others
     Given "acme/api" cannot be read
     When the user lists pull requests
     Then the pull requests of "acme/shop" are listed
     And "acme/api" reports its own error
 
-  @node
+  @mc
   Scenario: Clients hear when the list changed
     Given the user is looking at the pull request list
     When someone merges a pull request from HAL-C2
     Then the client is told to refresh the list
 
-  @node
+  @mc
   Scenario: Forgetting cached answers
     When the user refreshes the pull request list by hand
-    Then the node reads the pull requests afresh
+    Then the MC reads the pull requests afresh
 
   @desktop @mobile @backlog-mobile
   Scenario: The pull requests page with its filters
@@ -164,11 +164,11 @@ Feature: Browsing pull requests
     And the pull requests page says "env-lab cannot be reached; its pull requests are not listed."
 
   @desktop
-  Scenario: A list the node cannot read can be retried
-    Given the node cannot list pull requests, saying "gh auth login is required."
+  Scenario: A list the MC cannot read can be retried
+    Given the MC cannot list pull requests, saying "gh auth login is required."
     When the user opens the pull requests page
     Then the pull requests page shows the error "gh auth login is required." with a retry
-    When the node can list pull requests again
+    When the MC can list pull requests again
     And the user retries the pull requests page
     Then the open pull requests are listed
 
@@ -176,7 +176,7 @@ Feature: Browsing pull requests
   Scenario: Refreshing the page asks the hosts afresh
     Given the user is on the pull requests page
     When the user refreshes the pull requests page
-    Then the node forgets what it knew and the list is read again
+    Then the MC forgets what it knew and the list is read again
 
   @desktop
   Scenario: The page follows changes made from HAL-C2

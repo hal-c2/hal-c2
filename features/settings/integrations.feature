@@ -86,36 +86,36 @@ Feature: Integrations settings
 
   Rule: The device hub
 
-    @node
+    @mc
     Scenario: Turning on the device hub stores it and lists devices
-      When the user turns on the device hub for this node
+      When the user turns on the device hub for this MC
       Then device support is stored as on
-      And the node lists the simulators and emulators on its machine
+      And the MC lists the simulators and emulators on its machine
 
-    @node
+    @mc
     Scenario: Turning off the device hub stores it with agent device access off
       Given the device hub and agent device access are on
       When a client turns off the device hub and agent device access together
       Then device support is stored as off
       And agent device access is stored as off
 
-    @node
+    @mc
     Scenario: Checking device tool versions installs nothing
-      When the user checks device tool versions on this node
+      When the user checks device tool versions on this MC
       Then the installed and required versions are reported
       And no tool is installed and no device is started
 
-    @node
+    @mc
     Scenario: Updating a device tool installs its required version
       Given the device hub tool is older than the required version
       When the user updates the device hub tool
       Then the required version is installed
 
-    @node
+    @mc
     Scenario: A device tool update without network access fails
       # An update only reaches the network when the installed tool is behind the pinned version.
       Given the device hub tool is older than the required version
-      And this node has no network access
+      And this MC has no network access
       When the user updates the device hub tool
       Then the update fails with a device tool error
 
@@ -127,7 +127,7 @@ Feature: Integrations settings
       Then the device hub is stored as off
       And agent device access is stored as off
 
-    # What agents may then do is the node's: connections/device-hub.feature
+    # What agents may then do is the MC's: connections/device-hub.feature
     # (Agent device access needs every prerequisite).
     @desktop
     Scenario: Agent device access can be granted and taken away

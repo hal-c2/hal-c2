@@ -1,10 +1,10 @@
 # Sources:
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the keymap and its native commands)
-#   apps/desktop-qt/src/native/Keybindings.cpp (defaults, when expressions, merging the node's rules)
+#   apps/desktop-qt/src/native/Keybindings.cpp (defaults, when expressions, merging the MC's rules)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused terminal)
-#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
+#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   Shared domain: navigation/keybindings.feature and navigation/keybinding-customisation.feature
-#   own what each binding does, including the thread shortcuts and the node's rules;
+#   own what each binding does, including the thread shortcuts and the MC's rules;
 #   composer/queue-and-steer.feature owns the stop shortcut. This file owns only who takes a
 #   key when a terminal, the composer or the native chrome has focus.
 
@@ -18,14 +18,14 @@ Feature: The desktop shell keeps the keymap
 
     Background:
       Given the time is "2026-09-23T10:00:00Z"
-      And the desktop's node "node-a" serves the environment "env-a"
-      And the node has these threads:
+      And the desktop's MC "mc-a" serves the environment "env-a"
+      And the MC has these threads:
         | id | project | title  | createdAt            |
         | t1 | p1      | First  | 2026-09-23T09:50:00Z |
         | t2 | p1      | Second | 2026-09-23T09:40:00Z |
         | t3 | p1      | Third  | 2026-09-23T09:30:00Z |
-      And the node has the project "p1" titled "proj-1"
-      And the desktop shell is connected to its node
+      And the MC has the project "p1" titled "proj-1"
+      And the desktop shell is connected to its MC
 
     @desktop
     Scenario: A key the page forwards runs the shell's command

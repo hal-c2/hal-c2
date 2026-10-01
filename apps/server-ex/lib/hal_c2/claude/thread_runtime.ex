@@ -18,7 +18,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   thread lists them as background work (`HalC2.Projection.BackgroundWork`), which
   keeps the idle reaper from stopping the process.
 
-  When background work ends between the node's turns, Claude answers its notification
+  When background work ends between the MC's turns, Claude answers its notification
   with a turn of its own (a "wake"). Its messages wait for a run of their own, which
   the runtime asks the thread for (`wake/2`); that run replays them and follows the
   rest to Claude's `result`.
@@ -423,7 +423,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   def handle_info(_other, state), do: {:noreply, state}
 
   # The process runs the background work, so it ends with it: released when idle, or
-  # stopped with its thread. Its writes may fail when the node itself is stopping; the
+  # stopped with its thread. Its writes may fail when the MC itself is stopping; the
   # next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do
@@ -782,7 +782,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # Claude runs one turn at a time and ends each with one `result`, so which turn a
   # result ends follows from the order: a wake Claude is running when a user's turn
-  # starts ends first (`take_wake/2`), and between the node's turns every result is a
+  # starts ends first (`take_wake/2`), and between the MC's turns every result is a
   # wake's.
   defp receive_message(message, %{turn: nil, wake: %{buffer: buffer} = wake} = state)
        when is_list(buffer) do

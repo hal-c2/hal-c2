@@ -25,7 +25,7 @@ constexpr int kModifierKey = Qt::Key_Control;
 
 }  // namespace
 
-QuitController::QuitController(ShellBridge* bridge, NodeClient*, QObject* parent) : QObject(parent), m_bridge(bridge) {
+QuitController::QuitController(ShellBridge* bridge, McClient*, QObject* parent) : QObject(parent), m_bridge(bridge) {
   m_clock = [timer = std::make_shared<QElapsedTimer>()] {
     if (!timer->isValid()) timer->start();
     // Never 0, which means "no press yet".
@@ -41,7 +41,7 @@ QuitController::QuitController(ShellBridge* bridge, NodeClient*, QObject* parent
     m_hint.clear();
     publish();
   });
-  // From the start: quitting needs no node.
+  // From the start: quitting needs no MC.
   if (QCoreApplication* app = QCoreApplication::instance()) app->installEventFilter(this);
 }
 

@@ -1,7 +1,7 @@
 defmodule HalC2.Acp.Antigravity.Installation do
   @moduledoc """
-  Installs Google's Antigravity runtime on this node (`provider.install.*`) and
-  keeps the node's Antigravity instances in step with their settings.
+  Installs Google's Antigravity runtime on this MC (`provider.install.*`) and
+  keeps the MC's Antigravity instances in step with their settings.
 
   One install runs at a time, in a linked worker: download with progress, size
   and SHA-256 check, extraction of exactly the executable and its helper, a
@@ -286,7 +286,7 @@ defmodule HalC2.Acp.Antigravity.Installation do
      })}
   end
 
-  def handle_info({:hal_c2_settings, _node, settings}, state) do
+  def handle_info({:hal_c2_settings, _mc, settings}, state) do
     seen = seen(settings)
 
     changed =

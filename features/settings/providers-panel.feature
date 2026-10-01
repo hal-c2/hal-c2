@@ -72,10 +72,10 @@ Feature: Providers settings panel
       When the user leaves the Providers settings
       Then no provider or sign-in is followed for the panel
 
-    @node
+    @mc
     Scenario: Refreshing providers reads their status and models again
       When the user refreshes provider status
-      Then the node reads each provider's installation, sign-in and models again
+      Then the MC reads each provider's installation, sign-in and models again
       And every connected client receives the new provider list
 
     @desktop
@@ -83,7 +83,7 @@ Feature: Providers settings panel
       Given Codex was checked 10 minutes ago and Claude 2 minutes ago
       Then the panel says providers were last checked by the latest of them
 
-    # The node already honours the interval (providers/provider-instances.feature and
+    # The MC already honours the interval (providers/provider-instances.feature and
     # settings/background-service.feature); only this settings row is backlog.
     @desktop
     Scenario Outline: The health check interval controls background refreshes
@@ -96,7 +96,7 @@ Feature: Providers settings panel
         | 0       | never               |
 
   # Instance ids are derived as "<driver>_<label slug>" (AddProviderInstanceDialog.tsx
-  # deriveInstanceId); Claude's driver is "claudeAgent". The node side of instances, and the
+  # deriveInstanceId); Claude's driver is "claudeAgent". The MC side of instances, and the
   # same id rules, are in providers/provider-instances.feature.
   Rule: Adding a provider instance
 
@@ -138,7 +138,7 @@ Feature: Providers settings panel
 
   Rule: Adding an agent from the ACP Registry
 
-    @node
+    @mc
     Scenario: Searching the ACP Registry lists compatible agents best first
       When the user searches the ACP Registry for "gemini"
       Then the compatible agents matching "gemini" are listed best first
@@ -148,10 +148,10 @@ Feature: Providers settings panel
       When the user searches the ACP Registry for "zzzz"
       Then the user is told no compatible agents were found and to try a broader search
 
-    @node
+    @mc
     Scenario: Choosing a registry agent installs its current version
       When the user adds the registry agent "gemini-cli"
-      Then the node prepares the agent's current version for this machine
+      Then the MC prepares the agent's current version for this machine
 
     @desktop
     Scenario: An agent already added is marked instead of offered again
@@ -189,33 +189,33 @@ Feature: Providers settings panel
       When the user moves on without choosing an agent
       Then the user is asked to select an ACP or configure one manually
 
-    @node
+    @mc
     Scenario: A registry agent still in use cannot be uninstalled
       Given a provider instance uses the registry agent "gemini-cli"
-      When the node is asked to uninstall "gemini-cli"
+      When the MC is asked to uninstall "gemini-cli"
       Then the uninstall is refused
 
   Rule: Native ACP sessions and model providers
 
-    @node @desktop
+    @mc @desktop
     Scenario: Importing a native session continues it as a thread
       Given the agent "gemini" has a native session for the project "hal-c2"
       When the user imports that session
       Then a thread continuing the session is created in "hal-c2"
 
-    @node @desktop
+    @mc @desktop
     Scenario: An imported session cannot be deleted before its thread
       Given a native session was imported as a thread
       When the user deletes the native session
       Then the user is told to delete the imported thread first
 
-    @node @desktop
+    @mc @desktop
     Scenario: Deleting a native session that was not imported
       Given the agent "gemini" has a native session that was not imported
       When the user deletes it and confirms
       Then the session is deleted by the agent
 
-    @node @desktop
+    @mc @desktop
     Scenario: Pointing an agent's model provider at an API and disabling it
       When the user sets the agent's model provider to "https://api.example.com" with an authorization header
       Then the agent uses that base URL
@@ -232,7 +232,7 @@ Feature: Providers settings panel
         | {not json           | Headers must be valid JSON.                      |
         | {"Authorization": 1} | Headers must be a JSON object with string values. |
 
-    @node @desktop
+    @mc @desktop
     Scenario: Logging out of an ACP agent
       When the user logs out of the agent "gemini"
       Then the agent is signed out and its status is read again
@@ -306,8 +306,8 @@ Feature: Providers settings panel
       When the user hides it again
       Then it is scrambled again
 
-  # Antigravity is the one provider whose runtime the node installs itself; the
-  # node's side is in providers/provider-setup.feature.
+  # Antigravity is the one provider whose runtime the MC installs itself; the
+  # MC's side is in providers/provider-setup.feature.
   Rule: The managed Antigravity runtime
 
     @desktop @plugin-antigravity
@@ -330,7 +330,7 @@ Feature: Providers settings panel
       Then the environment removes it
       And the card offers installing Antigravity again
 
-  # Sign-in is node-addressed (provider.auth.*), so only environments a cluster node serves
+  # Sign-in is MC-addressed (provider.auth.*), so only environments a cluster MC serves
   # sign in from the panel. Signing out is in providers/provider-setup.feature.
   Rule: Signing in
 
@@ -433,15 +433,15 @@ Feature: Providers settings panel
       When the user pastes "http://localhost:1455/callback?code=abc" as the final sign-in address
       Then the environment finishes the sign-in with "http://localhost:1455/callback?code=abc"
 
-  # Node behaviour of provider updates and version advisories is owned by settings/updates.feature
+  # MC behaviour of provider updates and version advisories is owned by settings/updates.feature
   # and providers/provider-setup.feature; this rule holds what the panel adds.
   Rule: Updates
 
-    @node
+    @mc
     Scenario: Updating a provider runs its updater and reports providers again
       Given "Codex" has an update available
       When the user updates "Codex"
-      Then the node runs the Codex updater
+      Then the MC runs the Codex updater
       And the provider list is reported again
 
     @desktop

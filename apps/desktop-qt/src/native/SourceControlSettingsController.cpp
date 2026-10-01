@@ -1,5 +1,5 @@
 // Settings → Source Control, natively (the web's SourceControlSettingsPanel):
-// the repository defaults, the version control and hosting tools the node
+// the repository defaults, the version control and hosting tools the MC
 // finds (`server.discoverSourceControl`), Git's background fetch interval, and
 // how source control text is written. The settings rows follow the settings
 // scope (SettingsScopeController), a project's as its overrides; discovery
@@ -40,7 +40,7 @@
 #include "NativeController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsScopeController.h"
 #include "ShellBridge.h"
 #include "ToastController.h"
@@ -67,7 +67,7 @@ QString option(const QJsonValue& value) {
   return value.toString().trimmed();
 }
 
-// The node's background activity presets' Git fetch intervals
+// The MC's background activity presets' Git fetch intervals
 // (HalC2.BackgroundPolicy), in seconds.
 int presetFetchSeconds(const QString& profile) {
   if (profile == QLatin1String("performance")) return 15;
@@ -177,7 +177,7 @@ QString keyOf(const QJsonObject& selection) {
 
 class SourceControlSettingsController : public QObject, public NativeController {
 public:
-  SourceControlSettingsController(ShellBridge* bridge, NodeClient* client, QObject* parent)
+  SourceControlSettingsController(ShellBridge* bridge, McClient* client, QObject* parent)
       : QObject(parent), m_bridge(bridge), m_client(client) {}
 
   void activate() override {
@@ -611,7 +611,7 @@ private:
   };
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   bool m_active = false;
   bool m_open = false;
   QHash<QString, Discovery> m_discovery;

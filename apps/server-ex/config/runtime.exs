@@ -1,7 +1,7 @@
 import Config
 
-# Where the node keeps its files (`HalC2.Paths`). `HAL_C2_NODE_HOME` is a root for the
-# node alone; `HAL_C2_HOME` is the HAL-C2 root shared with the TypeScript server, which
+# Where the MC keeps its files (`HalC2.Paths`). `HAL_C2_MC_HOME` is a root for the
+# MC alone; `HAL_C2_HOME` is the HAL-C2 root shared with the TypeScript server, which
 # `HalC2.Paths` ignores when it names an old home (`~/.t3`, `~/.hal-c2`). With neither,
 # a release uses the XDG directories. A checkout ignores the HAL_C2_HOME a dev server
 # or agent may have exported: its own `.hal-c2` wins (config.exs). T3CODE_HOME and
@@ -9,16 +9,16 @@ import Config
 present = fn name -> if (value = System.get_env(name)) not in [nil, ""], do: value end
 
 cond do
-  dir = present.("HAL_C2_NODE_HOME") -> config(:hal_c2, home: {:node, dir})
+  dir = present.("HAL_C2_MC_HOME") -> config(:hal_c2, home: {:mc, dir})
   root = config_env() == :prod && present.("HAL_C2_HOME") -> config(:hal_c2, home: {:root, root})
   true -> :ok
 end
 
-if port = present.("HAL_C2_NODE_PORT"), do: config(:hal_c2, port: String.to_integer(port))
+if port = present.("HAL_C2_MC_PORT"), do: config(:hal_c2, port: String.to_integer(port))
 # The address to bind, loopback by default; a LAN or tailnet address lets other devices pair.
-# `HAL_C2_NODE_HOST` sits alongside `HAL_C2_NODE_PORT`; `HAL_C2_HOST`, the Node server's name
+# `HAL_C2_MC_HOST` sits alongside `HAL_C2_MC_PORT`; `HAL_C2_HOST`, the Node server's name
 # for it, is the fallback.
-if host = present.("HAL_C2_NODE_HOST") || present.("HAL_C2_HOST"),
+if host = present.("HAL_C2_MC_HOST") || present.("HAL_C2_HOST"),
   do: config(:hal_c2, host: host)
 
 # Local trace file and the collector client spans are forwarded to (`HalC2.Traces`).

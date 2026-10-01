@@ -4,7 +4,7 @@ defmodule HalC2.Steps.Settings.Updates do
   release from `HalC2.Steps.Settings.HotCodeUpgrade`) and provider updates
   (`HalC2.ProviderUpdates`).
 
-  Providers are fake CLIs under the node's home, laid out the way each installer
+  Providers are fake CLIs under the MC's home, laid out the way each installer
   lays them out, as `HalC2.ProviderUpdatesTest` does. `--version` prints the version
   in the file beside the script; an update writes 9.9.9 there. The latest release
   is 9.9.9, as if already read from the registry.
@@ -13,8 +13,8 @@ defmodule HalC2.Steps.Settings.Updates do
   import ExUnit.Assertions
 
   alias HalC2.Steps.Settings.HotCodeUpgrade
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @latest "9.9.9"
   @drivers %{"Codex" => "codex", "Claude" => "claudeAgent"}
@@ -74,10 +74,10 @@ defmodule HalC2.Steps.Settings.Updates do
     {:ok, port} = :inet.port(listen)
     World.put_env("HAL_C2_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}.tar.gz")
 
-    {client, id} = start_update(Node.connect(context.node), "1.4.0")
+    {client, id} = start_update(Mc.connect(context.mc), "1.4.0")
 
     {_frame, client} =
-      Node.await(client, &(&1["id"] == id and &1["event"]["stage"] == "downloading"))
+      Mc.await(client, &(&1["id"] == id and &1["event"]["stage"] == "downloading"))
 
     context |> World.put_client("first", client) |> Map.put(:listen, listen)
   end
@@ -101,7 +101,7 @@ defmodule HalC2.Steps.Settings.Updates do
     install(context, provider, installer)
   end
 
-  step "the node checks provider versions", context do
+  step "the MC checks provider versions", context do
     check(context)
   end
 
@@ -122,8 +122,8 @@ defmodule HalC2.Steps.Settings.Updates do
     context
   end
 
-  step "the node runs Codex's update command", context do
-    prefix = Path.join(context.node.home, "npm")
+  step "the MC runs Codex's update command", context do
+    prefix = Path.join(context.mc.home, "npm")
     assert {:ok, %{"providers" => providers}} = context.reply
 
     assert File.read!(Path.join(prefix, "npm.log")) ==
@@ -145,7 +145,7 @@ defmodule HalC2.Steps.Settings.Updates do
     context
   end
 
-  step "Codex was installed in a way the node cannot update", context do
+  step "Codex was installed in a way the MC cannot update", context do
     context = setup_providers(context)
     World.put_app_env(:codex_command, [cli(context, "opt/codex", "bin/codex", "codex-cli %s")])
     context
@@ -161,7 +161,7 @@ defmodule HalC2.Steps.Settings.Updates do
     context
   end
 
-  step "the node would check provider versions", context do
+  step "the MC would check provider versions", context do
     check(context)
   end
 
@@ -181,9 +181,9 @@ defmodule HalC2.Steps.Settings.Updates do
     id = System.unique_integer([:positive])
 
     client =
-      Node.sub(client, id, %{
+      Mc.sub(client, id, %{
         "type" => "serverUpdate",
-        "node" => Atom.to_string(node()),
+        "mc" => Atom.to_string(node()),
         "input" => %{"targetVersion" => version}
       })
 
@@ -192,14 +192,14 @@ defmodule HalC2.Steps.Settings.Updates do
 
   # The update's frames, through its `end` or error.
   defp collect(client, id, frames) do
-    {frame, client} = Node.await(client, &(&1["id"] == id), 10_000)
+    {frame, client} = Mc.await(client, &(&1["id"] == id), 10_000)
     frames = frames ++ [frame]
     if frame["t"] in ["end", "error"], do: {frames, client}, else: collect(client, id, frames)
   end
 
   # A fresh provider state: no cached versions, the latest release already read.
   defp setup_providers(context) do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
 
     keys =
       [{HalC2.Codex.Provider, :version}, {HalC2.Claude.Provider, :version}] ++
@@ -229,7 +229,7 @@ defmodule HalC2.Steps.Settings.Updates do
            cli(context, "Cellar/codex/0.1.0/bin/codex", "bin/codex", "codex-cli %s")}
 
         {"Codex", "a global npm install"} ->
-          npm = Path.join([context.node.home, "npm", "bin", "npm"])
+          npm = Path.join([context.mc.home, "npm", "bin", "npm"])
           File.mkdir_p!(Path.dirname(npm))
           File.write!(npm, @npm)
           File.chmod!(npm, 0o755)
@@ -253,10 +253,10 @@ defmodule HalC2.Steps.Settings.Updates do
     context
   end
 
-  # A CLI at `real` under the node's home, found through a link at `link`.
+  # A CLI at `real` under the MC's home, found through a link at `link`.
   defp cli(context, real, link, format) do
-    real = Path.join(context.node.home, real)
-    link = Path.join(context.node.home, link)
+    real = Path.join(context.mc.home, real)
+    link = Path.join(context.mc.home, link)
     File.mkdir_p!(Path.dirname(real))
     File.mkdir_p!(Path.dirname(link))
     File.write!(real, @cli)
@@ -268,7 +268,7 @@ defmodule HalC2.Steps.Settings.Updates do
   end
 
   defp update_command(context, "Codex") do
-    prefix = Path.join(context.node.home, "npm")
+    prefix = Path.join(context.mc.home, "npm")
 
     if File.dir?(prefix),
       do: "#{prefix}/bin/npm install -g --prefix #{prefix} @openai/codex@latest",
@@ -276,9 +276,9 @@ defmodule HalC2.Steps.Settings.Updates do
   end
 
   defp update_command(context, "Claude"),
-    do: "#{Path.join([context.node.home, "local", "bin", "claude"])} update"
+    do: "#{Path.join([context.mc.home, "local", "bin", "claude"])} update"
 
-  @doc "Asks the node for Codex's status again; the providers land in `context.providers`."
+  @doc "Asks the MC for Codex's status again; the providers land in `context.providers`."
   def check(context) do
     {result, context} =
       World.call!(context, "server.refreshProviders", %{"instanceId" => "codex"})
@@ -290,7 +290,7 @@ defmodule HalC2.Steps.Settings.Updates do
   def advisory(context, provider) do
     driver = @drivers[provider]
     entry = Enum.find(context.providers, &(&1["driver"] == driver))
-    assert entry, "#{provider} is not among the node's providers"
+    assert entry, "#{provider} is not among the MC's providers"
     entry["versionAdvisory"]
   end
 end

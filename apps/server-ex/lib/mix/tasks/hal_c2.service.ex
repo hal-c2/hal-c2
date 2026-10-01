@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.HalC2.Service do
-  @shortdoc "Installs, shows, restarts or removes the node's background service"
+  @shortdoc "Installs, shows, restarts or removes the MC's background service"
   @moduledoc """
-  Runs this node as a background service for the current user (`hal-c2 service`,
+  Runs this MC as a background service for the current user (`hal-c2 service`,
   `apps/server/src/cli/service.ts`): a systemd user unit on Linux, a LaunchAgent
   on macOS (`HalC2.Service`).
 

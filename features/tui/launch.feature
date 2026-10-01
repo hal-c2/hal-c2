@@ -4,8 +4,8 @@
 #   apps/tui/src/terminalStartup.ts (tmux viewport preparation)
 #   apps/tui/src/connection.ts (initial "Connecting…" status)
 #   apps/tui/src/features.backlog.test.ts (environment-connections, environment-access-management)
-#   apps/server-ex/test/hal_c2/features_backlog_test.exs (TUI launch against the Elixir node)
-#   apps/tui/src/nodeDiscovery.ts (runtime record, access token, pairing link, saved credentials)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (TUI launch against the MC)
+#   apps/tui/src/mcDiscovery.ts (runtime record, access token, pairing link, saved credentials)
 #   apps/tui/src/socketTicket.ts (socket tickets over HTTP without a launcher)
 #   apps/server-ex/lib/hal_c2/runtime_record.ex, lib/hal_c2/auth.ex (access token as bearer)
 #   mise-tasks/tui/_default (mise run tui)
@@ -15,10 +15,10 @@ Feature: Launching and leaving the terminal client
   The terminal client is started from the command line next to a running HAL-C2 server.
   It takes over the terminal while open and gives it back intact when it leaves.
 
-  On its own ("mise run tui", or the client's entry with --base-dir) it finds the Elixir
-  node on this machine through the node's runtime record and signs in with the node's
-  access token; with --url it pairs with a remote node instead. "hal-c2 tui" is the Node
-  server's launcher, which hands the client an origin, a bearer and socket tickets.
+  On its own ("mise run tui", or the client's entry with --base-dir) it finds the MC on
+  this machine through the MC's runtime record and signs in with the MC's access token;
+  with --url it pairs with a remote MC instead. "hal-c2 tui" is the Node server's launcher,
+  which hands the client an origin, a bearer and socket tickets.
 
   @tui
   Scenario: The terminal client opens against the running local server
@@ -57,7 +57,7 @@ Feature: Launching and leaving the terminal client
     Then the server lists a client session labelled "HAL-C2 TUI"
     And the session expires after 30 days if never closed
 
-  # Started directly, the client finds the node itself (the scenarios on the Elixir node
+  # Started directly, the client finds the MC itself (the scenarios on the MC
   # below); an origin and bearer only come from the Node server's launcher.
   @dropped @tui
   Scenario: The terminal client refuses to start without an origin and credential
@@ -158,46 +158,46 @@ Feature: Launching and leaving the terminal client
     And re-attaching later opens the same thread with the same focus
 
   @tui
-  Scenario: The terminal client launches against an Elixir node
-    Given an Elixir node is running on this machine
+  Scenario: The terminal client launches against an MC
+    Given an MC is running on this machine
     When the user starts the terminal client
-    Then the terminal client connects to that node
-    And it signs in with the node's access token
+    Then the terminal client connects to that MC
+    And it signs in with the MC's access token
 
   @tui
-  Scenario: Starting the terminal client with no node running explains how to start one
-    Given no Elixir node is running on this machine
+  Scenario: Starting the terminal client with no MC running explains how to start one
+    Given no MC is running on this machine
     When the user starts the terminal client
-    Then it exits saying "No running HAL-C2 node was found. Start one with `mise run node` first."
+    Then it exits saying "No running HAL-C2 MC was found. Start one with `mise run mc` first."
 
   @tui
-  Scenario: Starting the terminal client against a node that has since stopped says so
-    Given the recorded Elixir node is no longer running
+  Scenario: Starting the terminal client against an MC that has since stopped says so
+    Given the recorded MC is no longer running
     When the user starts the terminal client
-    Then it exits saying the recorded node is no longer running
+    Then it exits saying the recorded MC is no longer running
 
   @tui
-  Scenario: Starting the terminal client against a node that does not answer says so
-    Given the recorded Elixir node does not answer
+  Scenario: Starting the terminal client against an MC that does not answer says so
+    Given the recorded MC does not answer
     When the user starts the terminal client
-    Then it exits saying the node at the recorded address could not be reached
+    Then it exits saying the MC at the recorded address could not be reached
 
   @tui
   Scenario: Without a launcher the client buys its socket tickets over HTTP
-    Given an Elixir node is running on this machine
+    Given an MC is running on this machine
     When the user starts the terminal client
-    Then the client buys a socket ticket from the node over HTTP
+    Then the client buys a socket ticket from the MC over HTTP
     And the socket URL carries only that ticket
 
   @tui
   Scenario: Without a launcher a dropped connection reconnects with a fresh ticket
-    Given the terminal client is connected to an Elixir node
-    When the node drops the connection
+    Given the terminal client is connected to an MC
+    When the MC drops the connection
     Then the client buys a new socket ticket over HTTP
     And it reconnects without the user doing anything
 
   # --url <pairing link>. The session is saved for the environment's origin rather than
-  # revoked on exit: a node does not let a session revoke itself, and a link works once.
+  # revoked on exit: an MC does not let a session revoke itself, and a link works once.
   @tui
   Scenario: The user pairs the terminal client with a remote environment
     Given a pairing link from a remote HAL-C2 environment

@@ -6,8 +6,8 @@ defmodule Mix.Tasks.HalC2.Cluster do
       mix hal_c2.cluster join LINK                     # join the link's machine's cluster
       mix hal_c2.cluster remove MEMBER                 # stop admitting a member anywhere
 
-  Asks the node running from this checkout (`mise run node`); see `HalC2.Cluster.Command`.
-  An installed node has the same commands as `hal-c2-service cluster ...`.
+  Asks the MC running from this checkout (`mise run mc`); see `HalC2.Cluster.Command`.
+  An installed MC has the same commands as `hal-c2-service cluster ...`.
   """
 
   use Mix.Task

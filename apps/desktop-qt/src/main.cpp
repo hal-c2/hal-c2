@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
   parser.addVersionOption();
   const QCommandLineOption urlOption(
       QStringLiteral("url"),
-      QStringLiteral("Attach to the node this pairing link names instead of starting one."),
+      QStringLiteral("Attach to the MC this pairing link names instead of starting one."),
       QStringLiteral("url"));
   const QCommandLineOption configDirOption(
       QStringLiteral("config-dir"),
@@ -110,7 +110,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("Allow local folder import for an attached URL known to use this machine's filesystem."));
   const QCommandLineOption homeDirOption(
       QStringLiteral("home-dir"),
-      QStringLiteral("One root for the shell's and its node's files (<dir>/config, data, state, cache)."),
+      QStringLiteral("One root for the shell's and its MC's files (<dir>/config, data, state, cache)."),
       QStringLiteral("dir"));
   const QCommandLineOption qmlDirOption(
       QStringLiteral("qml-dir"),
@@ -124,16 +124,16 @@ int main(int argc, char* argv[]) {
       QStringLiteral("path"), resolveDefaultNodeExecutable());
   const QCommandLineOption screenshotOption(
       QStringLiteral("screenshot"),
-      QStringLiteral("Write a PNG of the window once the node's first snapshot is in, then quit."),
+      QStringLiteral("Write a PNG of the window once the MC's first snapshot is in, then quit."),
       QStringLiteral("file"));
   const QCommandLineOption actionOption(
       QStringLiteral("action"),
-      QStringLiteral("Dispatch a shell action once the node's first snapshot is in, e.g. rightPanel.toggle. "
+      QStringLiteral("Dispatch a shell action once the MC's first snapshot is in, e.g. rightPanel.toggle. "
                      "Repeatable; runs in order."),
       QStringLiteral("name[=json]"));
   const QCommandLineOption keyOption(
       QStringLiteral("key"),
-      QStringLiteral("Press a key chord once the node's first snapshot is in, e.g. Ctrl+1 (portable QKeySequence "
+      QStringLiteral("Press a key chord once the MC's first snapshot is in, e.g. Ctrl+1 (portable QKeySequence "
                      "names). Repeatable; runs in command-line order together with --action."),
       QStringLiteral("chord"));
   parser.addOptions({urlOption, configDirOption, homeDirOption, qmlDirOption, hostEntryOption,
@@ -147,7 +147,7 @@ int main(int argc, char* argv[]) {
   const StoragePaths storage = resolveStoragePaths(parser.value(homeDirOption));
   const QString configDir = resolveConfigDir(parser.value(configDirOption), storage);
   // Created up front so the shell and theme watchers are live from the start: when
-  // the node migrates an old home, the user's shell lands here and reloads.
+  // the MC migrates an old home, the user's shell lands here and reloads.
   QDir().mkpath(configDir);
   const QString qmlSourceDir =
       resolveQmlSourceDir(parser.isSet(qmlDirOption) ? parser.value(qmlDirOption) : QString());
@@ -222,12 +222,12 @@ int main(int argc, char* argv[]) {
   LicensesController::setManifestPath(
       QFileInfo(backendOptions.hostEntry).dir().absoluteFilePath(QStringLiteral("../licenses/third-party-licenses.json")));
   backendOptions.hostArguments = parser.positionalArguments();
-  // Without a root the node resolves the same XDG directories itself.
+  // Without a root the MC resolves the same XDG directories itself.
   if (!storage.root.isEmpty()) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
   }
-  // Attach mode: the host starts no node; it pairs the shell with the linked
-  // node, and fails for a URL that is not one.
+  // Attach mode: the host starts no MC; it pairs the shell with the linked
+  // MC, and fails for a URL that is not one.
   if (parser.isSet(urlOption)) {
     backendOptions.hostArguments.prepend(
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));
@@ -243,7 +243,7 @@ int main(int argc, char* argv[]) {
   backend.start();
 
   // Scripted runs: replay --action and --key steps in command-line order once
-  // the node's first snapshot is in (NativeShell::ready), then optionally grab
+  // the MC's first snapshot is in (NativeShell::ready), then optionally grab
   // the window and quit.
   struct ScriptedStep {
     bool isKey;
@@ -299,7 +299,7 @@ int main(int argc, char* argv[]) {
                        }
                      },
                      Qt::SingleShotConnection);
-    // A start that fails never reaches the node; grab the error the window shows
+    // A start that fails never reaches the MC; grab the error the window shows
     // instead of waiting forever, and quit with a failure code.
     if (screenshotRequested) {
       QObject::connect(&backend, &BackendProcess::failed, &runtime,

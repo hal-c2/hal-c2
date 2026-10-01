@@ -10,7 +10,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
@@ -50,7 +50,7 @@ public:
     std::function<void(const QString& kind)> play;
   };
 
-  AlertController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  AlertController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   void attach(NativeWindow* window) override;
@@ -92,7 +92,7 @@ private:
     std::optional<qint64> completion;
   };
 
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   Presenter m_presenter;
   QString m_mode = QStringLiteral("off");

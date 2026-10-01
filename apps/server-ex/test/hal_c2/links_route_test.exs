@@ -28,8 +28,8 @@ defmodule HalC2.Links.RouteTest do
     assert_receive :registered
   end
 
-  test "this node's own environment routes to this node" do
-    assert HalC2.Links.route(HalC2.Environment.id()) == {:node, node()}
+  test "this MC's own environment routes to this MC" do
+    assert HalC2.Links.route(HalC2.Environment.id()) == {:mc, node()}
   end
 
   test "a cluster member's environment routes to that member" do
@@ -38,7 +38,7 @@ defmodule HalC2.Links.RouteTest do
     GenServer.cast(HalC2.Shell, {:peer_environment, :member@host, descriptor})
     assert_receive {:hal_c2_shell, {:environment, :member@host, _}}
 
-    assert HalC2.Links.route("env-member") == {:node, :member@host}
+    assert HalC2.Links.route("env-member") == {:mc, :member@host}
   end
 
   test "an environment a link reaches routes through the link, and others are unknown" do
@@ -53,28 +53,28 @@ defmodule HalC2.Links.RouteTest do
     assert_receive {:hal_c2_shell, {:environment, :both@host, _}}
     register("env-both")
 
-    assert HalC2.Links.route("env-both") == {:node, :both@host}
+    assert HalC2.Links.route("env-both") == {:mc, :both@host}
   end
 
-  test "a routed shape by environment keeps its environment once its node form decodes" do
+  test "a routed shape by environment keeps its environment once its MC form decodes" do
     vcs = %{"type" => "vcs", "environment" => "env-any", "cwd" => "/repo"}
     frame = JSON.encode!(%{"t" => "sub", "id" => 1, "shape" => vcs})
 
     assert {:ok, {:sub, 1, {:environment, "env-any", ^vcs}, nil}} =
              Protocol.decode(frame, [node()])
 
-    node_form =
+    mc_form =
       JSON.encode!(%{
         "t" => "sub",
         "id" => 1,
-        "shape" => Map.put(Map.delete(vcs, "environment"), "node", Atom.to_string(node()))
+        "shape" => Map.put(Map.delete(vcs, "environment"), "mc", Atom.to_string(node()))
       })
 
-    assert {:ok, {:sub, 1, local, nil}} = Protocol.decode(node_form, [node()])
-    assert Protocol.at_node(vcs, node()) == {:ok, local}
+    assert {:ok, {:sub, 1, local, nil}} = Protocol.decode(mc_form, [node()])
+    assert Protocol.at_mc(vcs, node()) == {:ok, local}
   end
 
-  test "a routed shape by environment is refused when its node form is malformed" do
+  test "a routed shape by environment is refused when its MC form is malformed" do
     frame =
       JSON.encode!(%{
         "t" => "sub",
@@ -85,7 +85,7 @@ defmodule HalC2.Links.RouteTest do
     assert {:error, _} = Protocol.decode(frame, [node()])
   end
 
-  test "shapes about one node's host are not routed" do
+  test "shapes about one MC's host are not routed" do
     for type <- ~w(shell authAccess scheduledTasks devices serverUpdate providerInstall),
         do: refute(type in Protocol.routed())
 

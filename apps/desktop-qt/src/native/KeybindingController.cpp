@@ -8,7 +8,7 @@
 #include "../ShellBridge.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "SidebarController.h"
 #include "TerminalController.h"
@@ -59,7 +59,7 @@ QSet<QString> knownVariables() {
 
 }  // namespace
 
-KeybindingController::KeybindingController(ShellBridge* bridge, NodeClient* client, QObject* parent)
+KeybindingController::KeybindingController(ShellBridge* bridge, McClient* client, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client) {
   connect(&m_commands, &CommandRegistry::countChanged, this, &KeybindingController::refreshShortcuts);
   setRules({});
@@ -397,7 +397,7 @@ QStringList KeybindingController::commandOptions() const {
 
 namespace {
 
-// The rule a row stands for, as the node stores it.
+// The rule a row stands for, as the MC stores it.
 QJsonObject target(const QVariantMap& row) {
   QJsonObject rule{{QStringLiteral("command"), row.value(QStringLiteral("command")).toString()},
                    {QStringLiteral("key"), row.value(QStringLiteral("key")).toString()}};

@@ -1,13 +1,13 @@
 defmodule HalC2.Steps.Orchestration.ComposerContext do
   @moduledoc """
-  Steps for `features/node/orchestration/composer-context.feature`. Messages go
+  Steps for `features/mc/orchestration/composer-context.feature`. Messages go
   to the fake Codex CLI, which logs the text each turn starts with; that is what
   "the provider receives".
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @png <<137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3>>
 
@@ -162,7 +162,7 @@ defmodule HalC2.Steps.Orchestration.ComposerContext do
     context
   end
 
-  step "a message references context of a kind the node does not know", context do
+  step "a message references context of a kind the MC does not know", context do
     send_message(context, "t1", "Use [it](hal-c2-context://v1/hologram/c1)", [
       %{"contextId" => "c1", "kind" => "hologram", "depth" => 3, "name" => "cube"}
     ])

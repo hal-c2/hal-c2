@@ -66,7 +66,7 @@ defmodule HalC2.EnvironmentThemesTest do
     refute Map.has_key?(desk, "extra")
   end
 
-  test "watchers of the node's settings hear about a change", %{themes: dir} do
+  test "watchers of the MC's settings hear about a change", %{themes: dir} do
     start_supervised!(HalC2.Settings)
     start_supervised!(HalC2.EnvironmentThemes)
     :ok = HalC2.Settings.watch(self())

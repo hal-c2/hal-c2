@@ -1,15 +1,15 @@
 defmodule HalC2.Steps.Platform.Upgrades do
   @moduledoc """
-  Steps for `features/node/platform/upgrades.feature`. The node runs from a release
-  laid out in its home (`HalC2.Test.Node.release/2`); bundles are built from variants of
-  loaded modules (`HalC2.Test.Node.bundle/4`), and a restart arrives as
+  Steps for `features/mc/platform/upgrades.feature`. The MC runs from a release
+  laid out in its home (`HalC2.Test.Mc.release/2`); bundles are built from variants of
+  loaded modules (`HalC2.Test.Mc.bundle/4`), and a restart arrives as
   `{:hal_c2_restart, status}` instead of stopping the VM.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
   alias HalC2.Test.WsClient
   alias HalC2.Upgrade
   alias HalC2.Upgrade.Source
@@ -17,10 +17,10 @@ defmodule HalC2.Steps.Platform.Upgrades do
   @echo Path.expand("../../support/echo_rpc.py", __DIR__)
   @unreachable "http://127.0.0.1:1/{version}/{platform}.tar.gz"
 
-  step "a node running from a release under the service wrapper", context do
-    root = Node.release(context.node)
-    Node.ensure(HalC2.Settings)
-    Node.ensure(HalC2.Upgrade)
+  step "an MC running from a release under the service wrapper", context do
+    root = Mc.release(context.mc)
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Upgrade)
     assert Upgrade.capability() == "hot-upgrade"
     Map.put(context, :root, root)
   end
@@ -36,17 +36,17 @@ defmodule HalC2.Steps.Platform.Upgrades do
     assert {:ok, _} = HalC2.JsonRpc.Connection.call(conn, "echo", 1)
 
     context
-    |> bundle(%{}, [Node.variant(HalC2.JsonRpc.Connection)])
+    |> bundle(%{}, [Mc.variant(HalC2.JsonRpc.Connection)])
     |> Map.merge(%{conn: conn, os_pid: HalC2.JsonRpc.Connection.os_pid(conn)})
   end
 
-  step ~r/^a client asks the node to update(?: to (?:that version|it))?$/, context do
+  step ~r/^a client asks the MC to update(?: to (?:that version|it))?$/, context do
     input = Map.get_lazy(context, :input, fn -> %{"targetVersion" => context.target} end)
     {reply, context} = World.call(context, "server.updateServer", input)
     Map.put(context, :reply, reply)
   end
 
-  step "the node loads the changed modules in place", context do
+  step "the MC loads the changed modules in place", context do
     assert {:ok, %{"method" => "hot-upgrade", "targetVersion" => target}} = context.reply
     assert target == context.target
     assert function_exported?(HalC2.JsonRpc.Connection, :__hal_c2_variant__, 0)
@@ -58,30 +58,30 @@ defmodule HalC2.Steps.Platform.Upgrades do
     assert HalC2.JsonRpc.Connection.os_pid(context.conn) == context.os_pid
     assert {:ok, %{"params" => 2}} = HalC2.JsonRpc.Connection.call(context.conn, "echo", 2)
     client = WsClient.send_json(World.client(context), %{"t" => "ping"})
-    {_, client} = Node.await(client, &(&1["t"] == "pong"))
+    {_, client} = Mc.await(client, &(&1["t"] == "pong"))
     World.put_client(context, client)
   end
 
-  step "the node reports the new version", context do
+  step "the MC reports the new version", context do
     assert Upgrade.version() == context.target
 
     assert {200, _, %{"serverVersion" => version}} =
-             Node.request(context.node, :get, "/.well-known/hal-c2/environment")
+             Mc.request(context.mc, :get, "/.well-known/hal-c2/environment")
 
     assert version == context.target
     context
   end
 
-  step "a client asks the node to update with progress", context do
+  step "a client asks the MC to update with progress", context do
     context = bundle(context)
 
     shape = %{
       "type" => "serverUpdate",
-      "node" => Atom.to_string(node()),
+      "mc" => Atom.to_string(node()),
       "input" => %{"targetVersion" => context.target}
     }
 
-    client = World.client(context) |> Node.sub(5, shape)
+    client = World.client(context) |> Mc.sub(5, shape)
 
     {_end, frames, client} =
       WsClient.recv_until(client, &(&1["t"] == "end" and &1["id"] == 5), 10_000)
@@ -130,11 +130,11 @@ defmodule HalC2.Steps.Platform.Upgrades do
         bundle(context, %{"config" => "d"})
 
       "a supervisor module" ->
-        bundle(context, %{}, [Node.variant(HalC2.Streams)])
+        bundle(context, %{}, [Mc.variant(HalC2.Streams)])
     end
   end
 
-  step "the node installs the bundle", context do
+  step "the MC installs the bundle", context do
     assert {:ok, %{"targetVersion" => target}} = context.reply
     assert target == context.target
     assert File.dir?(Path.join([context.root, "releases", target]))
@@ -157,7 +157,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "a node started directly from a release", context do
+  step "an MC started directly from a release", context do
     System.delete_env("HAL_C2_SERVICE")
     assert Upgrade.release_root() == context.root
     context
@@ -167,7 +167,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
     bundle(context, %{"erts" => "18.0"})
   end
 
-  step "the update fails saying the node was not started by the service wrapper", context do
+  step "the update fails saying the MC was not started by the service wrapper", context do
     assert {:error, _, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} = context.reply
     assert reason =~ "not started by bin/hal-c2-service"
     refute_received {:hal_c2_restart, _}
@@ -179,27 +179,27 @@ defmodule HalC2.Steps.Platform.Upgrades do
     bundle(context, %{}, [{mod, blocker_beam(context, mod, 3)}])
   end
 
-  step "the node restarts into the new version instead", context do
+  step "the MC restarts into the new version instead", context do
     assert {:ok, %{"targetVersion" => target}} = context.reply
     assert_receive {:hal_c2_restart, 75}, 3_000
     assert start_version(context) == target
 
     assert %{"status" => "restarting", "targetVersion" => ^target} =
-             context.node.home |> outcome_path() |> File.read!() |> JSON.decode!()
+             context.mc.home |> outcome_path() |> File.read!() |> JSON.decode!()
 
     context
   end
 
   # --- outcome ------------------------------------------------------------------------
 
-  step "the node restarted into a new version", context do
+  step "the MC restarted into a new version", context do
     target = target()
     restarting(context, target)
     boot(target)
     Map.put(context, :target, target)
   end
 
-  step "the node was restarting into a new version", context do
+  step "the MC was restarting into a new version", context do
     target = target()
     restarting(context, target)
     Map.put(context, :target, target)
@@ -211,8 +211,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   step "a client reconnects", context do
-    client = Node.connect(context.node) |> Node.sub(1, config_shape())
-    {config, client} = Node.await(client, &(&1["t"] == "config"))
+    client = Mc.connect(context.mc) |> Mc.sub(1, config_shape())
+    {config, client} = Mc.await(client, &(&1["t"] == "config"))
     context |> Map.put(:config, config) |> World.put_client(client)
   end
 
@@ -228,12 +228,12 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "a client follows the node's config", context do
-    World.put_client(context, Node.config(World.client(context)))
+  step "a client follows the MC's config", context do
+    World.put_client(context, Mc.config(World.client(context)))
   end
 
-  step "the client receives a new ready with the node's new descriptor", context do
-    {ready, client} = Node.await(World.client(context), &(&1["t"] == "config.ready"))
+  step "the client receives a new ready with the MC's new descriptor", context do
+    {ready, client} = Mc.await(World.client(context), &(&1["t"] == "config.ready"))
     assert ready["environment"]["serverVersion"] == context.target
     assert ready["updateOutcome"]["status"] == "committed"
     World.put_client(context, client)
@@ -257,8 +257,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
     Map.put(context, :target, target)
   end
 
-  step "another client asks the node to update", context do
-    context = World.put_client(context, "other", Node.connect(context.node))
+  step "another client asks the MC to update", context do
+    context = World.put_client(context, "other", Mc.connect(context.mc))
     input = %{"targetVersion" => target()}
     {reply, context} = World.call(context, "server.updateServer", input, "other")
     Map.put(context, :reply, reply)
@@ -271,7 +271,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "the node runs from a checkout", context do
+  step "the MC runs from a checkout", context do
     System.delete_env("RELEASE_ROOT")
     assert Upgrade.capability() == nil
     Map.put(context, :target, target())
@@ -293,7 +293,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   # --- where bundles come from -------------------------------------------------------------
 
-  step "the node already downloaded the target version", context do
+  step "the MC already downloaded the target version", context do
     upgrade_url(@unreachable)
     bundle(context)
   end
@@ -311,23 +311,23 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   step "a peer in the cluster holds the target bundle", context do
     upgrade_url(@unreachable)
-    {node, peer} = Node.cluster(context.node)
-    context = %{context | node: node, clients: %{}} |> Map.put(:peer, peer)
+    {mc, peer} = Mc.cluster(context.mc)
+    context = %{context | mc: mc, clients: %{}} |> Map.put(:peer, peer)
     target = target()
-    archive = Node.bundle(node, target)
+    archive = Mc.bundle(mc, target)
     :ok = :erpc.call(peer.name, Source, :put, [target, Upgrade.platform(), archive])
-    refute File.exists?(cached(node, target))
+    refute File.exists?(cached(mc, target))
     Map.put(context, :target, target)
   end
 
-  step "the node updates to that version", context do
+  step "the MC updates to that version", context do
     Map.put(context, :reply, Upgrade.update(%{"targetVersion" => context.target}))
   end
 
   step "it fetches the bundle from the peer over a one-time link", context do
     assert {:ok, %{"targetVersion" => target}} = context.reply
     assert target == context.target
-    assert File.regular?(cached(context.node, target))
+    assert File.regular?(cached(context.mc, target))
     # The link the peer handed out was taken.
     assert links(context.peer.name) == []
     context
@@ -338,8 +338,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
       :erpc.call(context.peer.name, Source, :offer, [context.target, Upgrade.platform()])
 
     peer = %{port: port}
-    assert {200, _, _} = Node.request(peer, :get, path)
-    assert {403, _, _} = Node.request(peer, :get, path)
+    assert {200, _, _} = Mc.request(peer, :get, path)
+    assert {403, _, _} = Mc.request(peer, :get, path)
     context
   end
 
@@ -348,18 +348,18 @@ defmodule HalC2.Steps.Platform.Upgrades do
     name = Path.basename(context.archive)
     File.cp!(context.archive, Path.join(context.served, name))
     File.cp!(context.archive <> ".sha256", Path.join(context.served, name <> ".sha256"))
-    upgrade_url("http://127.0.0.1:#{context.http_port}/hal-c2-node-{version}-{platform}.tar.gz")
-    refute File.exists?(cached(context.node, context.target))
+    upgrade_url("http://127.0.0.1:#{context.http_port}/hal-c2-mc-{version}-{platform}.tar.gz")
+    refute File.exists?(cached(context.mc, context.target))
     context
   end
 
-  step "the node updates", context do
+  step "the MC updates", context do
     Map.put(context, :reply, Upgrade.update(%{"targetVersion" => context.target}))
   end
 
   step "it downloads the bundle for its platform from the release location", context do
     assert {:ok, %{"targetVersion" => target}} = context.reply
-    cached = cached(context.node, target)
+    cached = cached(context.mc, target)
     assert String.ends_with?(cached, "-#{Upgrade.platform()}.tar.gz")
     assert File.read!(cached) == File.read!(context.archive)
     context
@@ -375,14 +375,14 @@ defmodule HalC2.Steps.Platform.Upgrades do
       String.duplicate("0", 64) <> "  #{name}\n"
     )
 
-    upgrade_url("http://127.0.0.1:#{context.http_port}/hal-c2-node-{version}-{platform}.tar.gz")
+    upgrade_url("http://127.0.0.1:#{context.http_port}/hal-c2-mc-{version}-{platform}.tar.gz")
     Map.put(context, :version, Upgrade.version())
   end
 
   step "the update fails saying the bundle does not match its checksum", context do
     assert {:error, %{"reason" => reason}} = context.reply
     assert reason =~ "does not match its checksum"
-    refute File.exists?(cached(context.node, context.target))
+    refute File.exists?(cached(context.mc, context.target))
     context
   end
 
@@ -403,34 +403,34 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "the node downloads a bundle", context do
+  step "the MC downloads a bundle", context do
     Map.put(context, :reply, Upgrade.update(%{"targetVersion" => context.target}))
   end
 
   step "it downloads from the mirror", context do
     assert {:ok, %{"targetVersion" => target}} = context.reply
-    assert File.read!(cached(context.node, target)) == File.read!(context.archive)
+    assert File.read!(cached(context.mc, target)) == File.read!(context.archive)
     context
   end
 
   # --- maintainer tools ------------------------------------------------------------------
 
-  step "a maintainer upgrades three nodes from a checkout", context do
-    {node, b} = Node.cluster(context.node)
-    {_node, c} = Node.cluster(node)
-    context = %{context | node: node, clients: %{}}
+  step "a maintainer upgrades three MCs from a checkout", context do
+    {mc, b} = Mc.cluster(context.mc)
+    {_mc, c} = Mc.cluster(mc)
+    context = %{context | mc: mc, clients: %{}}
     for peer <- [b, c], do: peer_release(peer)
     target = target()
-    archive = Node.bundle(node, target)
-    nodes = [node(), b.name, c.name]
-    replies = Mix.Tasks.HalC2.Upgrade.roll_out(nodes, archive)
+    archive = Mc.bundle(mc, target)
+    mcs = [node(), b.name, c.name]
+    replies = Mix.Tasks.HalC2.Upgrade.roll_out(mcs, archive)
     Map.merge(context, %{target: target, peers: [b, c], replies: replies, archive: archive})
   end
 
-  step "the first node receives the bundle", context do
+  step "the first MC receives the bundle", context do
     assert [{first, {:ok, %{"targetVersion" => target}}} | _] = context.replies
     assert first == node() and target == context.target
-    assert File.read!(cached(context.node, target)) == File.read!(context.archive)
+    assert File.read!(cached(context.mc, target)) == File.read!(context.archive)
     context
   end
 
@@ -448,19 +448,19 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "nodes started from a checkout", context do
+  step "MCs started from a checkout", context do
     System.delete_env("RELEASE_ROOT")
     assert Upgrade.release_root() == nil
     # A build directory holding a recompiled plain module and a recompiled supervisor.
     ebin =
-      Path.join([Node.tmp_dir(context.node, "_build"), "_build", "dev", "lib", "hal_c2", "ebin"])
+      Path.join([Mc.tmp_dir(context.mc, "_build"), "_build", "dev", "lib", "hal_c2", "ebin"])
 
     File.mkdir_p!(ebin)
 
     Code.ensure_loaded!(HalC2.Patch)
 
-    for {mod, beam} <- [Node.variant(HalC2.Patch), Node.variant(HalC2.Streams)] do
-      Node.remember_module(mod)
+    for {mod, beam} <- [Mc.variant(HalC2.Patch), Mc.variant(HalC2.Streams)] do
+      Mc.remember_module(mod)
       File.write!(Path.join(ebin, "#{mod}.beam"), beam)
     end
 
@@ -473,18 +473,18 @@ defmodule HalC2.Steps.Platform.Upgrades do
     Map.put(context, :report, Upgrade.reload_checkout())
   end
 
-  step "a developer reloads the local node with its own access token", context do
+  step "a developer reloads the local MC with its own access token", context do
     assert {200, _, body} = reload(context, HalC2.Web.token())
     modules = &Enum.map(body[&1], fn name -> Module.concat([name]) end)
     report = %{changed: modules.("changed"), needs_restart: modules.("needsRestart")}
     Map.put(context, :report, {:ok, report})
   end
 
-  step "someone asks the local node to reload with another token", context do
-    Map.put(context, :response, reload(context, "not-the-node-token"))
+  step "someone asks the local MC to reload with another token", context do
+    Map.put(context, :response, reload(context, "not-the-mc-token"))
   end
 
-  step "the node refuses and loads nothing", context do
+  step "the MC refuses and loads nothing", context do
     assert {401, _, _} = context.response
     refute function_exported?(HalC2.Patch, :__hal_c2_variant__, 0)
     context
@@ -547,11 +547,11 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "a client reads the descriptor of a node running from a release", context do
+  step "a client reads the descriptor of an MC running from a release", context do
     Map.put(
       context,
       :response,
-      Node.request(context.node, :get, "/.well-known/hal-c2/environment")
+      Mc.request(context.mc, :get, "/.well-known/hal-c2/environment")
     )
   end
 
@@ -562,11 +562,11 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "a node running from a checkout does not", context do
+  step "an MC running from a checkout does not", context do
     System.delete_env("RELEASE_ROOT")
 
     assert {200, _, %{"capabilities" => capabilities}} =
-             Node.request(context.node, :get, "/.well-known/hal-c2/environment")
+             Mc.request(context.mc, :get, "/.well-known/hal-c2/environment")
 
     refute Map.has_key?(capabilities, "serverSelfUpdate")
     assert capabilities["serverSelfUpdateProgress"] == false
@@ -576,14 +576,14 @@ defmodule HalC2.Steps.Platform.Upgrades do
   # --- helpers ---------------------------------------------------------------------------
 
   defp reload(context, token),
-    do: Node.request(context.node, :post, "/api/dev/reload", bearer: token)
+    do: Mc.request(context.mc, :post, "/api/dev/reload", bearer: token)
 
   defp target, do: "#{Upgrade.version()}-t#{System.unique_integer([:positive])}"
 
-  # A bundle for a fresh target version, added to the node's cache unless `cache?` is false.
+  # A bundle for a fresh target version, added to the MC's cache unless `cache?` is false.
   defp bundle(context, changes \\ %{}, modules \\ [], cache? \\ true) do
     target = target()
-    archive = Node.bundle(context.node, target, changes, modules)
+    archive = Mc.bundle(context.mc, target, changes, modules)
     if cache?, do: :ok = Source.put(target, Upgrade.platform(), archive)
     Map.merge(context, %{target: target, archive: archive})
   end
@@ -601,7 +601,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   defp restarting(context, target) do
-    path = outcome_path(context.node.home)
+    path = outcome_path(context.mc.home)
     File.mkdir_p!(Path.dirname(path))
 
     File.write!(
@@ -620,12 +620,12 @@ defmodule HalC2.Steps.Platform.Upgrades do
   defp boot(version) do
     if version, do: :persistent_term.put({Upgrade, :version}, version)
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.Upgrade)
-    Node.ensure(HalC2.Upgrade)
+    Mc.ensure(HalC2.Upgrade)
     # The outcome is read in handle_continue; a call returns after it ran.
     _ = :sys.get_state(HalC2.Upgrade)
   end
 
-  defp config_shape, do: %{"type" => "config", "node" => Atom.to_string(node())}
+  defp config_shape, do: %{"type" => "config", "mc" => Atom.to_string(node())}
 
   defp upgrade_url(url) do
     System.put_env("HAL_C2_UPGRADE_URL", url)
@@ -651,7 +651,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
   # and `http_port`.
   defp serve(context) do
     {:ok, _} = Application.ensure_all_started(:inets)
-    dir = Node.tmp_dir(context.node, "served")
+    dir = Mc.tmp_dir(context.mc, "served")
 
     {:ok, pid} =
       :inets.start(:httpd,
@@ -692,7 +692,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   # Version `version` of the blocker module, compiled but not loaded.
   defp blocker_beam(context, mod, version) do
-    path = Path.join(Node.tmp_dir(context.node, "blocker"), "#{mod}.erl")
+    path = Path.join(Mc.tmp_dir(context.mc, "blocker"), "#{mod}.erl")
 
     File.write!(path, """
     -module(#{mod}).
@@ -717,7 +717,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
     File.write!(
       Path.join([root, "releases", version, "upgrade.json"]),
-      JSON.encode!(Node.manifest(version))
+      JSON.encode!(Mc.manifest(version))
     )
 
     File.write!(Path.join([root, "releases", "start_erl.data"]), "17.0.5 #{version}\n")

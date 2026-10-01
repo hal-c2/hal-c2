@@ -29,17 +29,17 @@ defmodule HalC2.Hot do
     end
   end
 
-  @doc "Reloads `beams` on this node and every connected node."
+  @doc "Reloads `beams` on this MC and every connected MC."
   @spec reload_cluster([beam], timeout) :: [{node, {:ok, report} | {:error, term}}]
   def reload_cluster(beams, timeout \\ 30_000) do
-    nodes = [node() | Node.list()]
+    mcs = [node() | Node.list()]
 
-    nodes
+    mcs
     |> :erpc.multicall(__MODULE__, :reload, [beams], timeout)
-    |> Enum.zip(nodes)
+    |> Enum.zip(mcs)
     |> Enum.map(fn
-      {{:ok, result}, node} -> {node, result}
-      {{kind, reason}, node} -> {node, {:error, {kind, reason}}}
+      {{:ok, result}, mc} -> {mc, result}
+      {{kind, reason}, mc} -> {mc, {:error, {kind, reason}}}
     end)
   end
 

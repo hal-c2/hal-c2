@@ -8,7 +8,7 @@ defmodule HalC2.Steps.Settings.ProjectDefaults do
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @models %{"Sonnet" => %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}}
 

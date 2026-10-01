@@ -29,7 +29,7 @@ Item {
     property bool working: root.model !== null && root.model.working === true
     // Whether the view keeps the latest output in view.
     readonly property alias following: view.following
-    // Whether the list says it is loading or its node cannot be reached;
+    // Whether the list says it is loading or its MC cannot be reached;
     // hosts that say so themselves turn it off.
     property bool showStatus: true
     // Whether a reply's row can revert the thread to its turn's checkpoint.
@@ -1139,7 +1139,7 @@ Item {
                 if (!root.model)
                     return "";
                 if (root.model.status === "unreachable")
-                    return qsTr("This thread's node cannot be reached: %1").arg(root.model.problem ?? "");
+                    return qsTr("This thread's MC cannot be reached: %1").arg(root.model.problem ?? "");
                 return qsTr("Loading…");
             }
         }

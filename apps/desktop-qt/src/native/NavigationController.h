@@ -9,7 +9,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
@@ -56,7 +56,7 @@ public:
   static inline const QString kOpenUsage = QStringLiteral("usage.open");
   static inline const QString kOpenPullRequests = QStringLiteral("pullRequests.open");
 
-  NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  NavigationController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;

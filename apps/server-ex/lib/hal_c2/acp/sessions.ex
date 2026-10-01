@@ -63,10 +63,10 @@ defmodule HalC2.Acp.Sessions do
 
     cond do
       not HalC2.Acp.agent?(instance) ->
-        error("instance_not_found", "#{instance} is not an ACP agent on this node.")
+        error("instance_not_found", "#{instance} is not an ACP agent on this MC.")
 
       match?({:error, _}, project_root(project_id)) ->
-        error("project_not_found", "The project is not on this node.")
+        error("project_not_found", "The project is not on this MC.")
 
       caps != %{} and caps["loadSession"] != true and
           not is_map(get_in(caps, ["sessionCapabilities", "resume"])) ->
@@ -251,7 +251,7 @@ defmodule HalC2.Acp.Sessions do
         {:ok, root}
 
       _ ->
-        error("project_not_found", "The project is not on this node.")
+        error("project_not_found", "The project is not on this MC.")
     end
   end
 

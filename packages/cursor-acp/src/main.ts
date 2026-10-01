@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics globalConsole:off - a plain stdio process; stderr is its log.
-// Cursor over ACP on stdio, for HAL-C2 nodes (`HalC2.Acp`). Usage: main.ts [--mode <runtime mode>]
+// Cursor over ACP on stdio, for HAL-C2 MCs (`HalC2.Acp`). Usage: main.ts [--mode <runtime mode>]
 //
 // HAL_C2_CURSOR_CREDENTIALS is where the Cursor sign-in is kept; CURSOR_API_KEY replaces it.
 import * as NodeReadline from "node:readline";

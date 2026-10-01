@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-#include "NodeClient.h"
+#include "McClient.h"
 
 namespace {
 
@@ -58,7 +58,7 @@ QVariantMap detailOf(const QJsonObject& detail) {
 
 }  // namespace
 
-PullRequestReview::PullRequestReview(NodeClient* client, Notify notify, Open open, QObject* parent)
+PullRequestReview::PullRequestReview(McClient* client, Notify notify, Open open, QObject* parent)
     : QObject(parent), m_client(client), m_notify(std::move(notify)), m_open(std::move(open)) {
   m_copy = [](const QString& text) {
     QClipboard* clipboard = QGuiApplication::clipboard();
@@ -283,7 +283,7 @@ bool PullRequestReview::comment(const QString& body) {
 
 bool PullRequestReview::submitReview(const QString& verdict, const QString& body) {
   if (verdict != QLatin1String("comment") && verdict != QLatin1String("approve") && verdict != QLatin1String("request-changes")) return false;
-  // Only an approval may say nothing (the node's own rule).
+  // Only an approval may say nothing (the MC's own rule).
   if (verdict != QLatin1String("approve") && body.trimmed().isEmpty()) {
     setProblem(QStringLiteral("A review needs a summary or at least one comment."));
     return false;

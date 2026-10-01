@@ -29,7 +29,7 @@ bool collapsed(World& world) {
 }
 
 void watch(World& world) {
-  LayoutChanges& changes = world.node.part<LayoutChanges>();
+  LayoutChanges& changes = world.mc.part<LayoutChanges>();
   changes.count = 0;
   if (changes.watching) return;
   changes.watching = true;
@@ -75,7 +75,7 @@ const Steps steps([] {
   // animated width in between.
   step(QStringLiteral("the (?:thread view is resized once, not on every frame|sidebar appears without animation)"),
        [](World& world, const Captures&, const Table&) {
-         const int count = world.node.part<LayoutChanges>().count;
+         const int count = world.mc.part<LayoutChanges>().count;
          expect(count == 1, QStringLiteral("the layout changed %1 times").arg(count));
        });
   // The window is in settings; DefaultShell draws SettingsNav where the

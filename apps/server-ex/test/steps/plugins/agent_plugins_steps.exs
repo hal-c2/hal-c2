@@ -6,7 +6,7 @@ defmodule HalC2.Steps.Plugins.AcpRegistry do
   agent (`test/support/fake_acp.py`).
   """
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   defmodule Files do
     @moduledoc false
@@ -28,11 +28,11 @@ defmodule HalC2.Steps.Plugins.AcpRegistry do
   def ensure(%{registry: %{}} = context), do: context
 
   def ensure(context) do
-    HalC2.Test.Node.ensure(HalC2.Settings)
-    served = HalC2.Test.Node.tmp_dir(context.node, "registry")
+    HalC2.Test.Mc.ensure(HalC2.Settings)
+    served = HalC2.Test.Mc.tmp_dir(context.mc, "registry")
 
     server =
-      HalC2.Test.Node.ensure(
+      HalC2.Test.Mc.ensure(
         Supervisor.child_spec({Bandit, plug: {Files, served}, port: 0, ip: :loopback},
           id: :acp_registry
         )
@@ -125,47 +125,47 @@ defmodule HalC2.Steps.Plugins.AcpRegistry do
     context
   end
 
-  @doc "Where the node installs a registry agent."
-  def tools_dir(context, agent_id), do: Path.join([context.node.home, "tools", agent_id])
+  @doc "Where the MC installs a registry agent."
+  def tools_dir(context, agent_id), do: Path.join([context.mc.home, "tools", agent_id])
 end
 
 defmodule HalC2.Steps.Plugins.Turns do
   @moduledoc """
   Turns on fake providers for plugin scenarios: the fake Codex, Claude and ACP
-  agents under `test/support`, run by the node's own runtimes. A running turn is
+  agents under `test/support`, run by the MC's own runtimes. A running turn is
   kept in the context as `:running` (`%{thread, run}`), which the shared
   follow-up steps in `common_steps.exs` read.
   """
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @support Path.expand("../../support", __DIR__)
 
-  @doc "Starts what provider turns need and points the node at the fake agents."
+  @doc "Starts what provider turns need and points the MC at the fake agents."
   def providers(context) do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Codex.Registry},
         id: HalC2.Codex.Registry
       )
     )
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Claude.Registry},
         id: HalC2.Claude.Registry
       )
     )
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry},
         id: HalC2.Acp.Registry
       )
     )
 
-    Node.ensure(
+    Mc.ensure(
       Supervisor.child_spec(
         {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
         id: HalC2.Codex.Supervisor
@@ -253,14 +253,14 @@ end
 
 defmodule HalC2.Steps.Plugins.Fixtures do
   @moduledoc """
-  Node plugins for scenarios, written as source files into the node's plugins
+  MC plugins for scenarios, written as source files into the MC's plugins
   directory (`HalC2.Plugins`). Each fixture implements the behaviour its id stands for
   and runs a process registered under its module name, which answers `:version`,
   crashes on `:crash`, and tells a process registered as `:hal_c2_plugin_probe` that
   it started.
   """
 
-  alias HalC2.Test.Node
+  alias HalC2.Test.Mc
 
   @kinds %{
     "acme-agent" => "ProviderAdapter",
@@ -289,9 +289,9 @@ defmodule HalC2.Steps.Plugins.Fixtures do
 
   @doc "Starts settings and plugins; the plugins directory is scanned as they start."
   def ensure(context) do
-    Node.ensure(HalC2.Settings)
-    Node.ensure(HalC2.Plugins)
-    Node.ensure(HalC2.Orchestration.TurnWatch)
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Plugins)
+    Mc.ensure(HalC2.Orchestration.TurnWatch)
     context
   end
 
@@ -312,24 +312,24 @@ defmodule HalC2.Steps.Plugins.Fixtures do
     context
   end
 
-  def path(context, id), do: Path.join([context.node.home, "plugins", "#{id}.ex"])
+  def path(context, id), do: Path.join([context.mc.home, "plugins", "#{id}.ex"])
 
   @doc """
-  A second node in the cluster, as `:peer` and its environment id `:peer_environment`;
+  A second MC in the cluster, as `:peer` and its environment id `:peer_environment`;
   started once per scenario.
   """
   def peer(%{peer: _, peer_environment: _} = context), do: context
 
   def peer(context) do
     context = ensure(context)
-    peer = HalC2.Test.Node.start_peer(context.node)
-    Map.merge(context, %{peer: peer, peer_environment: HalC2.Test.Node.peer_environment(peer)})
+    peer = HalC2.Test.Mc.start_peer(context.mc)
+    Map.merge(context, %{peer: peer, peer_environment: HalC2.Test.Mc.peer_environment(peer)})
   end
 
-  @doc "Writes fixture `id` into the peer node's plugins directory and has it rescan."
+  @doc "Writes fixture `id` into the peer MC's plugins directory and has it rescan."
   def install_on_peer(context, id) do
     context = peer(context)
-    dir = Path.join([context.node.home, "peer", "plugins"])
+    dir = Path.join([context.mc.home, "peer", "plugins"])
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "#{id}.ex"), source(id))
     {:ok, _} = :erpc.call(context.peer, HalC2.Plugins, :handle, ["rescan", %{}])
@@ -339,12 +339,12 @@ defmodule HalC2.Steps.Plugins.Fixtures do
   @doc "The plugin listing of the environment `environment`, fetched over the client's socket."
   def list(context, environment) do
     {%{"plugins" => plugins}, client} =
-      HalC2.Test.Node.call!(HalC2.Test.Node.World.client(context), environment, "plugins.list")
+      HalC2.Test.Mc.call!(HalC2.Test.Mc.World.client(context), environment, "plugins.list")
 
-    {plugins, HalC2.Test.Node.World.put_client(context, client)}
+    {plugins, HalC2.Test.Mc.World.put_client(context, client)}
   end
 
-  @doc "The node's listing of plugin `id`, or nil."
+  @doc "The MC's listing of plugin `id`, or nil."
   def entry(id) do
     {:ok, %{"plugins" => plugins}} = HalC2.Plugins.handle("list", %{})
     Enum.find(plugins, &(&1["id"] == id))
@@ -352,7 +352,7 @@ defmodule HalC2.Steps.Plugins.Fixtures do
 
   @doc "Turns plugin `id` on as a client does, asserting it runs."
   def enable(context, id) do
-    {_, context} = HalC2.Test.Node.World.call!(context, "plugins.enable", %{"id" => id})
+    {_, context} = HalC2.Test.Mc.World.call!(context, "plugins.enable", %{"id" => id})
     %{"status" => "running"} = entry(id)
     context
   end
@@ -632,8 +632,8 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
   alias HalC2.StreamState
   alias HalC2.Steps.Plugins.{AcpRegistry, Fixtures, Turns}
   alias HalC2.Test.FakeAcp
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # --- registry agents ---------------------------------------------------------------
 
@@ -642,7 +642,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
 
     context
     |> AcpRegistry.publish([AcpRegistry.agent(context, id)])
-    |> Map.put(:node_version, HalC2.Upgrade.version())
+    |> Map.put(:mc_version, HalC2.Upgrade.version())
   end
 
   step "the user adds {string} as a provider", %{args: [id]} = context do
@@ -663,8 +663,8 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     context
   end
 
-  step "no new node version was needed", context do
-    assert HalC2.Upgrade.version() == context.node_version
+  step "no new MC version was needed", context do
+    assert HalC2.Upgrade.version() == context.mc_version
     context
   end
 
@@ -735,8 +735,8 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
   # --- built-in ACP agents ---------------------------------------------------------------
 
   step "OpenCode, Grok, Cursor and Pi are installed but not enabled", context do
-    Node.ensure(HalC2.Settings)
-    markers = HalC2.Test.Node.tmp_dir(context.node, "started")
+    Mc.ensure(HalC2.Settings)
+    markers = HalC2.Test.Mc.tmp_dir(context.mc, "started")
 
     # Each agent is a script that leaves a marker when something starts it.
     commands =
@@ -761,7 +761,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
   end
 
   step "none of their processes are started", context do
-    # What the node runs at boot and when a client lists its providers.
+    # What the MC runs at boot and when a client lists its providers.
     HalC2.Acp.load()
     entries = Map.new(HalC2.Acp.entries(), &{&1["instanceId"], &1})
 
@@ -812,7 +812,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
 
   step "the message is refused with a message naming the missing provider", context do
     assert {:error, message, _} = context.reply
-    assert message =~ ~s("#{context.instance}" is not available on this node)
+    assert message =~ ~s("#{context.instance}" is not available on this MC)
     context
   end
 
@@ -887,7 +887,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     |> Fixtures.enable(id)
   end
 
-  step "a node with no provider plugins installed", context do
+  step "an MC with no provider plugins installed", context do
     Application.put_env(:hal_c2, :bundled_plugins, [])
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :bundled_plugins) end)
     context = Fixtures.ensure(context)
@@ -938,11 +938,11 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
   step "the bundled plugin {string} has a newer version available", %{args: [id]} = context do
     context = context |> Turns.providers() |> Fixtures.ensure()
     Fixtures.probe()
-    node_version = HalC2.Upgrade.version()
-    assert %{"source" => "bundled", "version" => ^node_version} = Fixtures.entry(id)
+    mc_version = HalC2.Upgrade.version()
+    assert %{"source" => "bundled", "version" => ^mc_version} = Fixtures.entry(id)
 
     context
-    |> Map.put(:node_version, node_version)
+    |> Map.put(:mc_version, mc_version)
     |> Map.update(:plugin_updates, %{id => claude_update()}, &Map.put(&1, id, claude_update()))
   end
 
@@ -957,8 +957,8 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     context
   end
 
-  step "the node version is unchanged", context do
-    assert HalC2.Upgrade.version() == context.node_version
+  step "the MC version is unchanged", context do
+    assert HalC2.Upgrade.version() == context.mc_version
     context
   end
 
@@ -1517,7 +1517,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     context |> FakeAcp.thread("Work") |> FakeAcp.open_config() |> elem(1)
   end
 
-  step "the node has the provider plugin {string} that no client knows about",
+  step "the MC has the provider plugin {string} that no client knows about",
        %{args: [id]} = context do
     context =
       provider_plugin(context, id, name: "Acme Agent", icon: "https://#{id}.example.com/icon.svg")

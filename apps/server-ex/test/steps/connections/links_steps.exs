@@ -3,20 +3,20 @@ defmodule HalC2.Steps.Connections.Links do
   Steps for `features/connections/links.feature`.
 
   "beast" is a peer running the whole application on its own, driven over stdio, so
-  it never joins this VM's cluster: the scenario's node reaches it only through a
+  it never joins this VM's cluster: the scenario's MC reaches it only through a
   link. Its terminals run `/bin/sh` in a folder under its home.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.{Machines, Node, WsClient}
-  alias HalC2.Test.Node.{Terminal, World}
+  alias HalC2.Test.{Machines, Mc, WsClient}
+  alias HalC2.Test.Mc.{Terminal, World}
 
-  step "another node {string} outside the node's cluster", %{args: [label]} = context do
+  step "another MC {string} outside the MC's cluster", %{args: [label]} = context do
     Terminal.put_env("SHELL", "/bin/sh")
-    Node.ensure({Registry, keys: :unique, name: HalC2.Links.Registry})
-    Node.ensure({DynamicSupervisor, name: HalC2.Links.Supervisor, strategy: :one_for_one})
-    Node.ensure(HalC2.Links)
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Links.Registry})
+    Mc.ensure({DynamicSupervisor, name: HalC2.Links.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Links)
 
     machine = Machines.start(context, label, :alone)
     context = put_in(context, [Access.key(:machines, %{}), label], machine)
@@ -28,7 +28,7 @@ defmodule HalC2.Steps.Connections.Links do
 
   step "the user runs the link task with a pairing link from {string}",
        %{args: [label]} = context do
-    output = Node.run_task(Mix.Tasks.HalC2.Link, [pairing_link(context, label)])
+    output = Mc.run_task(Mix.Tasks.HalC2.Link, [pairing_link(context, label)])
     assert ["Linked " <> _] = output
     context
   end
@@ -37,12 +37,12 @@ defmodule HalC2.Steps.Connections.Links do
     url = pairing_link(context, label)
     %{"token" => token} = URI.decode_query(URI.parse(url).fragment)
     port = URI.parse(url).port
-    assert {200, _} = Node.exchange(%{port: port}, token)
+    assert {200, _} = Mc.exchange(%{port: port}, token)
     Map.put(context, :pairing_link, url)
   end
 
-  step "the user links the node with it", context do
-    Map.put(context, :link_result, Node.run_task(Mix.Tasks.HalC2.Link, [context.pairing_link]))
+  step "the user links the MC with it", context do
+    Map.put(context, :link_result, Mc.run_task(Mix.Tasks.HalC2.Link, [context.pairing_link]))
   end
 
   step "linking is refused because the pairing link is invalid or expired", context do
@@ -50,13 +50,13 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "the node is linked to {string}", %{args: [label]} = context do
+  step "the MC is linked to {string}", %{args: [label]} = context do
     assert {:ok, _} = HalC2.Links.add(pairing_link(context, label))
     await_link(environment(context, label), true)
     context
   end
 
-  step "the node lists {string} as a linked environment that is online",
+  step "the MC lists {string} as a linked environment that is online",
        %{args: [label]} = context do
     link = await_link(environment(context, label), true)
     assert link["environment"]["label"] == label
@@ -64,27 +64,27 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "the node's clients see {string} among its links", %{args: [label]} = context do
+  step "the MC's clients see {string} among its links", %{args: [label]} = context do
     id = environment(context, label)
-    client = context |> World.client() |> Node.sub(1, %{"type" => "shell"})
-    {frame, client} = Node.await(client, &(&1["t"] == "shell" and &1["id"] == 1), 5_000)
+    client = context |> World.client() |> Mc.sub(1, %{"type" => "shell"})
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 1), 5_000)
     assert [%{"environment" => %{"environmentId" => ^id}, "online" => true}] = frame["links"]
     World.put_client(context, client)
   end
 
   step "the user removes the link to {string}", %{args: [label]} = context do
     id = environment(context, label)
-    assert ["Removed the link to " <> ^id] = Node.run_task(Mix.Tasks.HalC2.Link, ["--remove", id])
+    assert ["Removed the link to " <> ^id] = Mc.run_task(Mix.Tasks.HalC2.Link, ["--remove", id])
     context
   end
 
-  step "the node has no links", context do
+  step "the MC has no links", context do
     assert HalC2.Links.list() == []
-    assert Node.run_task(Mix.Tasks.HalC2.Link, []) == ["No links."]
+    assert Mc.run_task(Mix.Tasks.HalC2.Link, []) == ["No links."]
     context
   end
 
-  step "a client of the node calling {string} is told the environment is unknown",
+  step "a client of the MC calling {string} is told the environment is unknown",
        %{args: [label]} = context do
     {reply, context} =
       call(context, label, "terminal.write", %{
@@ -109,19 +109,19 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "the node lists {string} as a linked environment whose access is refused",
+  step "the MC lists {string} as a linked environment whose access is refused",
        %{args: [label]} = context do
     await_link(environment(context, label), &(&1["problem"] == "refused" and !&1["online"]))
     context
   end
 
-  step "the node lists {string} as a linked environment that is unreachable",
+  step "the MC lists {string} as a linked environment that is unreachable",
        %{args: [label]} = context do
     await_link(environment(context, label), &(&1["problem"] == "unreachable" and !&1["online"]))
     context
   end
 
-  step "a client of the node calling {string} is told to pair it again",
+  step "a client of the MC calling {string} is told to pair it again",
        %{args: [label]} = context do
     {reply, context} =
       call(context, label, "terminal.write", %{
@@ -137,7 +137,7 @@ defmodule HalC2.Steps.Connections.Links do
 
   # --- terminals through the link ---------------------------------------------------
 
-  step "a client of the node attaches a terminal on {string}", %{args: [label]} = context do
+  step "a client of the MC attaches a terminal on {string}", %{args: [label]} = context do
     input = %{"threadId" => "th-link", "terminalId" => "term-1", "cwd" => cwd(context, label)}
     id = System.unique_integer([:positive])
 
@@ -147,8 +147,8 @@ defmodule HalC2.Steps.Connections.Links do
       "input" => input
     }
 
-    client = context |> World.client() |> Node.sub(id, shape)
-    {frame, client} = Node.await(client, &(&1["id"] == id), 10_000)
+    client = context |> World.client() |> Mc.sub(id, shape)
+    {frame, client} = Mc.await(client, &(&1["id"] == id), 10_000)
     assert %{"t" => "terminal", "event" => %{"type" => "snapshot"}} = frame
 
     context
@@ -172,11 +172,11 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "a client of the node follows the terminals on {string}", %{args: [label]} = context do
-    client = Node.connect(context.node)
+  step "a client of the MC follows the terminals on {string}", %{args: [label]} = context do
+    client = Mc.connect(context.mc)
     shape = %{"type" => "terminals", "environment" => environment(context, label)}
-    client = Node.sub(client, 2, shape)
-    {frame, client} = Node.await(client, &(&1["id"] == 2), 10_000)
+    client = Mc.sub(client, 2, shape)
+    {frame, client} = Mc.await(client, &(&1["id"] == 2), 10_000)
     assert %{"t" => "terminals"} = frame
     World.put_client(context, "follower", client)
   end
@@ -185,7 +185,7 @@ defmodule HalC2.Steps.Connections.Links do
     {_label, input} = context.link_terminal
 
     {_frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context, "follower"),
         &(&1["id"] == 2 and &1["t"] == "terminals" and
             match?(%{"type" => "upsert", "terminal" => %{"threadId" => "th-link"}}, &1["event"]) and
@@ -204,7 +204,7 @@ defmodule HalC2.Steps.Connections.Links do
     Map.put(context, :link_stream, label)
   end
 
-  step "a client of the node follows that thread by its environment", context do
+  step "a client of the MC follows that thread by its environment", context do
     {frames, _offset, client} = follow_linked(World.client(context), context, 3, nil)
     context |> World.put_client(client) |> Map.put(:link_frames, frames)
   end
@@ -218,12 +218,12 @@ defmodule HalC2.Steps.Connections.Links do
   step "a change to the thread on {string} reaches the client", %{args: [label]} = context do
     seq = commit(context, label, [{"turn-item", "i1", %{"s" => %{"text" => "from beast"}}}])
     events = &(&1["t"] == "events" and &1["id"] == 3)
-    {frame, client} = Node.await(World.client(context), events, 10_000)
+    {frame, client} = Mc.await(World.client(context), events, 10_000)
     assert [[^seq, "turn-item", "i1", %{"s" => %{"text" => "from beast"}}, _at]] = frame["events"]
     World.put_client(context, client)
   end
 
-  step "a client of the node followed that thread by its environment and stopped", context do
+  step "a client of the MC followed that thread by its environment and stopped", context do
     {_frames, offset, client} = follow_linked(World.client(context), context, 3, nil)
     client = WsClient.send_json(client, %{"t" => "unsub", "id" => 3})
     context |> World.put_client(client) |> Map.put(:link_offset, offset)
@@ -252,19 +252,19 @@ defmodule HalC2.Steps.Connections.Links do
 
   # --- linked rows in the shell -------------------------------------------------------
 
-  step "a client of the node asks for the shell with its links' rows", context do
+  step "a client of the MC asks for the shell with its links' rows", context do
     {model, client} = shell_with_rows(World.client(context))
     context |> World.put_client(client) |> Map.put(:linked, model)
   end
 
-  # Until the link's first rows are in: the thread when there is one, else a node.
-  step "a client of the node follows the shell with its links' rows", context do
+  # Until the link's first rows are in: the thread when there is one, else an MC.
+  step "a client of the MC follows the shell with its links' rows", context do
     {model, client} = shell_with_rows(World.client(context))
 
     done? =
       if context[:link_stream],
         do: &thread_listed?(&1, context),
-        else: &Enum.any?(&1.links, fn {_, l} -> l.nodes != %{} end)
+        else: &Enum.any?(&1.links, fn {_, l} -> l.mcs != %{} end)
 
     {model, client} = await_linked(client, model, done?)
     context |> World.put_client(client) |> Map.put(:linked, model)
@@ -277,12 +277,12 @@ defmodule HalC2.Steps.Connections.Links do
     context |> World.put_client(client) |> Map.put(:linked, model)
   end
 
-  step "the node of {string} is listed online under its link", %{args: [label]} = context do
+  step "the MC of {string} is listed online under its link", %{args: [label]} = context do
     id = environment(context, label)
 
     listed? = fn model ->
       Enum.any?(
-        model.links[id].nodes,
+        model.links[id].mcs,
         fn {_, n} -> n["online"] and n["environment"]["environmentId"] == id end
       )
     end
@@ -296,7 +296,7 @@ defmodule HalC2.Steps.Connections.Links do
     refute Enum.any?(context.linked.snapshot["rows"], &match?([_, "th-beast", _, _], &1))
 
     refute Enum.any?(
-             context.linked.snapshot["nodes"],
+             context.linked.snapshot["mcs"],
              &(&1["environment"]["environmentId"] == id)
            )
 
@@ -315,7 +315,7 @@ defmodule HalC2.Steps.Connections.Links do
     title = context.renamed
 
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["t"] == "shell.linkRows" and &1["link"] == id),
         10_000
@@ -330,15 +330,15 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "the client is told the node of {string} is offline under its link",
+  step "the client is told the MC of {string} is offline under its link",
        %{args: [label]} = context do
     id = environment(context, label)
-    [node] = for {name, n} <- context.linked.links[id].nodes, n["online"], do: name
+    [mc] = for {name, n} <- context.linked.links[id].mcs, n["online"], do: name
 
     {_frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
-        &(&1["t"] == "shell.linkNode" and &1["link"] == id and &1["node"] == node and
+        &(&1["t"] == "shell.linkMc" and &1["link"] == id and &1["mc"] == mc and
             &1["online"] == false),
         10_000
       )
@@ -346,13 +346,13 @@ defmodule HalC2.Steps.Connections.Links do
     World.put_client(context, client)
   end
 
-  step "a client of the node that asks for the shell with its links' rows sees the thread under the link to {string}, offline",
+  step "a client of the MC that asks for the shell with its links' rows sees the thread under the link to {string}, offline",
        %{args: [label]} = context do
     id = environment(context, label)
-    {model, _client} = shell_with_rows(Node.connect(context.node))
+    {model, _client} = shell_with_rows(Mc.connect(context.mc))
     link = model.links[id]
     assert link.online == false
-    assert link.nodes != %{} and Enum.all?(link.nodes, fn {_, n} -> n["online"] == false end)
+    assert link.mcs != %{} and Enum.all?(link.mcs, fn {_, n} -> n["online"] == false end)
     assert thread_listed?(model, context)
     context
   end
@@ -361,7 +361,7 @@ defmodule HalC2.Steps.Connections.Links do
     id = environment(context, label)
 
     {_frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["t"] == "shell.links" and
             not Enum.any?(&1["links"], fn l -> l["environment"]["environmentId"] == id end)),
@@ -371,7 +371,7 @@ defmodule HalC2.Steps.Connections.Links do
     World.put_client(context, client)
   end
 
-  step ~r/^the node (?:no longer follows|does not follow) the shell of "(?<label>[^"]+)"$/,
+  step ~r/^the MC (?:no longer follows|does not follow) the shell of "(?<label>[^"]+)"$/,
        %{args: [label]} = context do
     id = environment(context, label)
     links = :sys.get_state(HalC2.Links)
@@ -380,9 +380,9 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "a client of the node asks for the shell", context do
-    client = context |> World.client() |> Node.sub(5, %{"type" => "shell"})
-    {frame, client} = Node.await(client, &(&1["t"] == "shell" and &1["id"] == 5), 5_000)
+  step "a client of the MC asks for the shell", context do
+    client = context |> World.client() |> Mc.sub(5, %{"type" => "shell"})
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 5), 5_000)
     context |> World.put_client(client) |> Map.put(:shell_frame, frame)
   end
 
@@ -404,10 +404,10 @@ defmodule HalC2.Steps.Connections.Links do
   end
 
   step "the client stops following the shell", context do
-    client = Node.unsub(World.client(context), 5)
+    client = Mc.unsub(World.client(context), 5)
     # The pong comes after the socket has handled the unsub.
     client = WsClient.send_json(client, %{"t" => "ping"})
-    {_pong, client} = Node.await(client, &(&1["t"] == "pong"))
+    {_pong, client} = Mc.await(client, &(&1["t"] == "pong"))
     World.put_client(context, client)
   end
 
@@ -424,12 +424,12 @@ defmodule HalC2.Steps.Connections.Links do
     Map.put(context, :checkout, {label, root})
   end
 
-  step "a client of the node follows the status of that checkout on {string}",
+  step "a client of the MC follows the status of that checkout on {string}",
        %{args: [label]} = context do
     {^label, root} = context.checkout
     shape = %{"type" => "vcs", "environment" => environment(context, label), "cwd" => root}
-    client = context |> World.client() |> Node.sub(6, shape)
-    {frame, client} = Node.await(client, &(&1["id"] == 6), 10_000)
+    client = context |> World.client() |> Mc.sub(6, shape)
+    {frame, client} = Mc.await(client, &(&1["id"] == 6), 10_000)
     context |> World.put_client(client) |> Map.put(:vcs_frame, frame)
   end
 
@@ -445,14 +445,14 @@ defmodule HalC2.Steps.Connections.Links do
     {^label, root} = context.checkout
     File.write!(Path.join(root, "changed.txt"), "changed\n")
     # From another socket, so that waiting for the reply skips no status frame.
-    caller = Node.connect(context.node)
+    caller = Mc.connect(context.mc)
     payload = %{"cwd" => root}
 
     assert {{:ok, %{"hasWorkingTreeChanges" => true}}, _} =
-             Node.call(caller, environment(context, label), "vcs.refreshStatus", payload)
+             Mc.call(caller, environment(context, label), "vcs.refreshStatus", payload)
 
     {_frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["id"] == 6 and &1["t"] == "vcs" and
             match?(
@@ -465,7 +465,7 @@ defmodule HalC2.Steps.Connections.Links do
     World.put_client(context, client)
   end
 
-  step "a client of the node commits it with a git action on {string}",
+  step "a client of the MC commits it with a git action on {string}",
        %{args: [label]} = context do
     {^label, root} = context.checkout
 
@@ -482,8 +482,8 @@ defmodule HalC2.Steps.Connections.Links do
       "input" => input
     }
 
-    client = context |> World.client() |> Node.sub(7, shape)
-    {frame, client} = Node.await(client, &(&1["id"] == 7), 10_000)
+    client = context |> World.client() |> Mc.sub(7, shape)
+    {frame, client} = Mc.await(client, &(&1["id"] == 7), 10_000)
     context |> World.put_client(client) |> Map.put(:git_action_frame, frame)
   end
 
@@ -492,7 +492,7 @@ defmodule HalC2.Steps.Connections.Links do
              context.git_action_frame
 
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["id"] == 7 and &1["t"] == "gitAction" and
             &1["event"]["kind"] in ~w(action_finished action_failed)),
@@ -510,27 +510,27 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "a client of the node asks for the config of {string}", %{args: [label]} = context do
+  step "a client of the MC asks for the config of {string}", %{args: [label]} = context do
     shape = %{"type" => "config", "environment" => environment(context, label)}
-    client = context |> World.client() |> Node.sub(8, shape)
-    {frame, client} = Node.await(client, &(&1["id"] == 8 and &1["t"] == "config"), 10_000)
+    client = context |> World.client() |> Mc.sub(8, shape)
+    {frame, client} = Mc.await(client, &(&1["id"] == 8 and &1["t"] == "config"), 10_000)
     context |> World.put_client(client) |> Map.put(:config_frame, frame)
   end
 
-  step "a client of the node follows the project clones of {string}",
+  step "a client of the MC follows the project clones of {string}",
        %{args: [label]} = context do
     shape = %{"type" => "projectClones", "environment" => environment(context, label)}
-    client = context |> World.client() |> Node.sub(9, shape)
-    {_frame, client} = Node.await(client, &(&1["id"] == 9 and &1["t"] == "projectClones"), 10_000)
+    client = context |> World.client() |> Mc.sub(9, shape)
+    {_frame, client} = Mc.await(client, &(&1["id"] == 9 and &1["t"] == "projectClones"), 10_000)
     World.put_client(context, client)
   end
 
-  step "a client of the node starts cloning a repository on {string}",
+  step "a client of the MC starts cloning a repository on {string}",
        %{args: [label]} = context do
     id = "p-clone-#{System.unique_integer([:positive])}"
     dest = Path.join(Machines.home(context, label), "fs/work/cloned-#{id}")
     # From another socket, so that waiting for the reply skips no projectClones frame.
-    caller = Node.connect(context.node)
+    caller = Mc.connect(context.mc)
 
     payload = %{
       "projectId" => id,
@@ -542,7 +542,7 @@ defmodule HalC2.Steps.Connections.Links do
     }
 
     assert {{:ok, _}, _} =
-             Node.call(caller, environment(context, label), "projectClone.start", payload)
+             Mc.call(caller, environment(context, label), "projectClone.start", payload)
 
     Map.put(context, :linked_clone, id)
   end
@@ -551,7 +551,7 @@ defmodule HalC2.Steps.Connections.Links do
     id = context.linked_clone
 
     {_frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["id"] == 9 and &1["t"] == "projectClones" and
             Enum.any?(&1["clones"], fn clone -> clone["projectId"] == id end)),
@@ -571,7 +571,7 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "a client of the node calls {word} on that checkout on {string}",
+  step "a client of the MC calls {word} on that checkout on {string}",
        %{args: [method, label]} = context do
     {^label, root} = context.checkout
 
@@ -607,7 +607,7 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "a client of the node creates a thread on {string} and renames it",
+  step "a client of the MC creates a thread on {string} and renames it",
        %{args: [label]} = context do
     thread = "th-routed-#{System.unique_integer([:positive])}"
 
@@ -651,7 +651,7 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "none of it ran on the node", context do
+  step "none of it ran on the MC", context do
     assert Registry.lookup(HalC2.Streams.Registry, context.routed_thread) == []
     context
   end
@@ -682,7 +682,7 @@ defmodule HalC2.Steps.Connections.Links do
     id = environment(context, label)
 
     listed? = fn model ->
-      Enum.any?(model.links[id].nodes, fn {_, n} ->
+      Enum.any?(model.links[id].mcs, fn {_, n} ->
         n["environment"]["environmentId"] == member_id
       end)
     end
@@ -691,9 +691,9 @@ defmodule HalC2.Steps.Connections.Links do
     context |> World.put_client(client) |> Map.put(:linked, model)
   end
 
-  step "a client of the node calls {string}", %{args: [target]} = context do
+  step "a client of the MC calls {string}", %{args: [target]} = context do
     {reply, client} =
-      Node.call(World.client(context), target_environment(context, target), "vcs.listRefs", %{
+      Mc.call(World.client(context), target_environment(context, target), "vcs.listRefs", %{
         "cwd" => "/"
       })
 
@@ -701,19 +701,19 @@ defmodule HalC2.Steps.Connections.Links do
   end
 
   # Answered by "beast", which found the member in its cluster.
-  step "{string} answers that the node of {string} is unavailable", context do
-    assert {:error, "node unavailable" <> _, _} = context.called
+  step "{string} answers that the MC of {string} is unavailable", context do
+    assert {:error, "MC unavailable" <> _, _} = context.called
     context
   end
 
-  step "a client of the node that follows the status of a checkout on {string} is told the same",
+  step "a client of the MC that follows the status of a checkout on {string} is told the same",
        %{args: [target]} = context do
     frame = follow_status(context, target)
-    assert %{"t" => "error", "reason" => "node unavailable" <> _} = frame
+    assert %{"t" => "error", "reason" => "MC unavailable" <> _} = frame
     context
   end
 
-  step "a client of the node calling {string} is told {string} is unreachable",
+  step "a client of the MC calling {string} is told {string} is unreachable",
        %{args: [label, _]} = context do
     {reply, context} = call(context, label, "vcs.listRefs", %{"cwd" => "/"})
     id = environment(context, label)
@@ -730,7 +730,7 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "a client of the node that follows the status of a checkout on {string} is told {string} is unreachable",
+  step "a client of the MC that follows the status of a checkout on {string} is told {string} is unreachable",
        %{args: [label, _]} = context do
     id = environment(context, label)
 
@@ -744,7 +744,7 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "the node is linked to {string} with only orchestration:read",
+  step "the MC is linked to {string} with only orchestration:read",
        %{args: [label]} = context do
     base = Machines.on(context, label, HalC2.Web, :base_url, [])
 
@@ -765,8 +765,8 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  step "a device paired with the node with only orchestration:read", context do
-    client = Node.connect_as(context.node, Node.pair(["orchestration:read"]))
+  step "a device paired with the MC with only orchestration:read", context do
+    client = Mc.connect_as(context.mc, Mc.pair(["orchestration:read"]))
     World.put_client(context, "device", client)
   end
 
@@ -779,12 +779,12 @@ defmodule HalC2.Steps.Connections.Links do
       "input" => input
     }
 
-    client = context |> World.client("device") |> Node.sub(9, shape)
-    {frame, client} = Node.await(client, &(&1["id"] == 9), 5_000)
+    client = context |> World.client("device") |> Mc.sub(9, shape)
+    {frame, client} = Mc.await(client, &(&1["id"] == 9), 5_000)
     context |> World.put_client("device", client) |> Map.put(:device_frame, frame)
   end
 
-  step "the node refuses the device saying orchestration:operate is required", context do
+  step "the MC refuses the device saying orchestration:operate is required", context do
     assert %{"t" => "error", "reason" => "orchestration:operate is required"} =
              context.device_frame
 
@@ -818,8 +818,8 @@ defmodule HalC2.Steps.Connections.Links do
   # The first frame of a status subscription on `target` from a fresh client.
   defp follow_status(context, target) do
     shape = %{"type" => "vcs", "environment" => target_environment(context, target), "cwd" => "/"}
-    client = context.node |> Node.connect() |> Node.sub(10, shape)
-    {frame, _client} = Node.await(client, &(&1["id"] == 10), 10_000)
+    client = context.mc |> Mc.connect() |> Mc.sub(10, shape)
+    {frame, _client} = Mc.await(client, &(&1["id"] == 10), 10_000)
     frame
   end
 
@@ -865,14 +865,14 @@ defmodule HalC2.Steps.Connections.Links do
   end
 
   # An RPC from the default client, naming the linked environment, or with `:own`
-  # the node's own.
+  # the MC's own.
   defp call(context, label, method, payload, on \\ :linked) do
     env = if on == :own, do: HalC2.Environment.id(), else: environment(context, label)
-    {reply, client} = Node.call(World.client(context), env, method, payload)
+    {reply, client} = Mc.call(World.client(context), env, method, payload)
     {reply, World.put_client(context, client)}
   end
 
-  # The link to `id` once it is `online` (or matches the predicate), as the node's
+  # The link to `id` once it is `online` (or matches the predicate), as the MC's
   # links notify it.
   defp await_link(id, online) when is_boolean(online),
     do: await_link(id, &(&1["online"] == online))
@@ -897,18 +897,18 @@ defmodule HalC2.Steps.Connections.Links do
   end
 
   # The shell with its links' rows under id 5, as a model a client keeps: each link's
-  # nodes by name and rows by `{node, id}`, and the snapshot it started from.
+  # MCs by name and rows by `{mc, id}`, and the snapshot it started from.
   defp shell_with_rows(client) do
-    client = Node.sub(client, 5, %{"type" => "shell", "links" => true})
-    {frame, client} = Node.await(client, &(&1["t"] == "shell" and &1["id"] == 5), 5_000)
+    client = Mc.sub(client, 5, %{"type" => "shell", "links" => true})
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 5), 5_000)
 
     links =
       Map.new(frame["links"], fn link ->
         {link["environment"]["environmentId"],
          %{
            online: link["online"],
-           nodes: Map.new(link["nodes"], &{&1["node"], &1}),
-           rows: Map.new(link["rows"], fn [node, id, kind, row] -> {{node, id}, {kind, row}} end)
+           mcs: Map.new(link["mcs"], &{&1["mc"], &1}),
+           rows: Map.new(link["rows"], fn [mc, id, kind, row] -> {{mc, id}, {kind, row}} end)
          }}
       end)
 
@@ -921,7 +921,7 @@ defmodule HalC2.Steps.Connections.Links do
       {model, client}
     else
       {frame, client} =
-        Node.await(
+        Mc.await(
           client,
           &(&1["id"] == 5 and String.starts_with?(&1["t"], "shell.link")),
           10_000
@@ -931,22 +931,22 @@ defmodule HalC2.Steps.Connections.Links do
     end
   end
 
-  defp apply_link_frame(model, %{"link" => id, "node" => node} = frame) do
+  defp apply_link_frame(model, %{"link" => id, "mc" => mc} = frame) do
     update_in(model.links[id], fn link ->
-      entry = Map.get(link.nodes, node, %{"node" => node, "online" => false})
+      entry = Map.get(link.mcs, mc, %{"mc" => mc, "online" => false})
 
       case frame["t"] do
         "shell.linkRows" ->
           rows =
-            for [row_id, kind, row] <- frame["rows"], into: %{}, do: {{node, row_id}, {kind, row}}
+            for [row_id, kind, row] <- frame["rows"], into: %{}, do: {{mc, row_id}, {kind, row}}
 
           %{link | rows: Map.merge(link.rows, rows)}
 
         "shell.linkEnvironment" ->
-          put_in(link.nodes[node], Map.put(entry, "environment", frame["environment"]))
+          put_in(link.mcs[mc], Map.put(entry, "environment", frame["environment"]))
 
-        "shell.linkNode" ->
-          put_in(link.nodes[node], Map.put(entry, "online", frame["online"]))
+        "shell.linkMc" ->
+          put_in(link.mcs[mc], Map.put(entry, "online", frame["online"]))
       end
     end)
   end

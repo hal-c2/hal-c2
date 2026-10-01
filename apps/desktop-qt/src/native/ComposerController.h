@@ -18,13 +18,13 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 class TimelineModel;
 
 // The composer on the thread or new-thread draft the window shows (the
-// route), against the node: the draft itself (text, caret, model, options,
+// route), against the MC: the draft itself (text, caret, model, options,
 // modes, images, terminal excerpts), what the picker offers, the @ $ / suggestions, sending,
 // follow-ups while a turn runs, stop, the thread's pending approvals and
 // questions, and its proposed plan.
@@ -86,7 +86,7 @@ class TimelineModel;
 // A terminal excerpt is a chip on the draft (`composer.terminalContexts`), as
 // the web's terminal context; a send appends an inline context link for each
 // to the text and carries the excerpts as the message's `context` records,
-// which the node hands the provider (HalC2.ComposerContext).
+// which the MC hands the provider (HalC2.ComposerContext).
 //
 // Editing a queued message puts its text in the thread's composer
 // (`composer.editingQueuedRunId`) and sets the thread's own draft aside; a
@@ -98,7 +98,7 @@ class ComposerController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  ComposerController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  ComposerController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool isActive() const { return m_active; }
@@ -118,7 +118,7 @@ public:
   // carries; nothing for an empty draft (composerDraftHasUserContent).
   std::optional<QString> draftPreview(const QString& target) const;
   // An image (a snapshot) joins `target`'s draft: a thread key or a draft id.
-  // `source` rides with it to the node when set (ChatImageAttachment.source).
+  // `source` rides with it to the MC when set (ChatImageAttachment.source).
   void attachImage(const QString& target, const QString& name, const QString& mimeType, const QByteArray& bytes,
                    const QJsonObject& source = {});
   // The draft's images: {id, name, mimeType, sizeBytes, source}.
@@ -169,7 +169,7 @@ private:
     QString environmentId;
     QString threadId;
     QList<QJsonObject> commands;
-    // Uploaded first; the message carries what the node stored.
+    // Uploaded first; the message carries what the MC stored.
     QList<Attachment> attachments;
     // Given back with the text if the send fails.
     QList<TerminalContext> terminalContexts;
@@ -260,7 +260,7 @@ private:
   QVariantMap pickerState() const;
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
@@ -286,7 +286,7 @@ private:
   QString m_draftId;
   QPointer<TimelineModel> m_timeline;
   QMetaObject::Connection m_timelineConnection;
-  // Requests answered and waiting for the node, and ones it said are gone.
+  // Requests answered and waiting for the MC, and ones it said are gone.
   QSet<QString> m_responding;
   QSet<QString> m_closed;
   // Drafts whose first send is on the way.

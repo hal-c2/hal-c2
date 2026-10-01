@@ -1,15 +1,15 @@
 defmodule HalC2.Steps.Providers.Claude do
   @moduledoc """
   Steps for `features/providers/claude.feature`. Claude runs on `fake_claude.py` (see
-  `HalC2.Test.Node.World.fake_providers/2`), which plays scripted turns from trigger
+  `HalC2.Test.Mc.World.fake_providers/2`), which plays scripted turns from trigger
   words in the message and logs what it was sent.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @thread "Claude work"
 
@@ -23,13 +23,13 @@ defmodule HalC2.Steps.Providers.Claude do
 
   # --- install and updates -----------------------------------------------------------
 
-  step "the claude command is installed on the node", context do
+  step "the claude command is installed on the MC", context do
     context = World.fake_providers(context)
     assert System.find_executable(hd(Application.get_env(:hal_c2, :claude_command)))
     context
   end
 
-  step "the claude command is not installed on the node", context do
+  step "the claude command is not installed on the MC", context do
     context = World.fake_providers(context)
     World.put_app_env(:claude_command, ["hal-c2-test-no-claude"])
     World.reset_provider_caches()
@@ -231,7 +231,7 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "Claude's usage has been checked", context do
-    Node.ensure(HalC2.ProviderUsageLimits)
+    Mc.ensure(HalC2.ProviderUsageLimits)
     :ok = HalC2.ProviderUsageLimits.refresh(["claudeAgent"])
     # The account arrives as a cast the probe sent; this call lands after it.
     :sys.get_state(HalC2.ProviderUsageLimits)
@@ -303,7 +303,7 @@ defmodule HalC2.Steps.Providers.Claude do
     )
 
     ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_COMMANDS") end)
-    Node.ensure(HalC2.ProviderUsageLimits)
+    Mc.ensure(HalC2.ProviderUsageLimits)
     :ok = HalC2.ProviderUsageLimits.refresh(["claudeAgent"])
     :sys.get_state(HalC2.ProviderUsageLimits)
     Map.put(context, :composer_instance, "claudeAgent")
@@ -327,7 +327,7 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
-  step "the Claude CLI on the node is not signed in", context do
+  step "the Claude CLI on the MC is not signed in", context do
     System.put_env("FAKE_CLAUDE_SIGNED_OUT", "1")
     ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_SIGNED_OUT") end)
     context
@@ -617,7 +617,7 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "the project allows the HAL-C2 tools", context do
     context = World.fake_providers(context)
-    Node.ensure(HalC2.Mcp)
+    Mc.ensure(HalC2.Mcp)
 
     refute HalC2.Settings.for_project(World.project(context).id)["enableAgentBrowserAccess"] ==
              false
@@ -706,7 +706,7 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "Claude reports that a usage window is nearly used up during a turn", context do
     context = World.fake_providers(context)
-    Node.ensure(HalC2.ProviderUsageLimits)
+    Mc.ensure(HalC2.ProviderUsageLimits)
     context = World.launch_on(context, @thread, "claudeAgent", "rate limit")
     World.await_runs(context, @thread, ["completed"])
     :sys.get_state(HalC2.ProviderUsageLimits)
@@ -790,7 +790,7 @@ defmodule HalC2.Steps.Providers.Claude do
 
   defp claude(providers), do: Enum.find(providers, &(&1["instanceId"] == "claudeAgent"))
 
-  # The npm registry's latest release, as the node last read it.
+  # The npm registry's latest release, as the MC last read it.
   defp latest(context, driver, version) do
     :persistent_term.put(
       {HalC2.ProviderUpdates, driver},

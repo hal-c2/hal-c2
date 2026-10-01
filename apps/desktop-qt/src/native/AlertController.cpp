@@ -18,7 +18,7 @@ const NativeControllerRegistrar<AlertController> registrar(QStringLiteral("alert
 
 }  // namespace
 
-AlertController::AlertController(ShellBridge*, NodeClient* client, ShellStore* store, QObject* parent)
+AlertController::AlertController(ShellBridge*, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_client(client), m_store(store) {
   if (qGuiApp) {
     m_focused = qGuiApp->applicationState() == Qt::ApplicationActive;
@@ -27,7 +27,7 @@ AlertController::AlertController(ShellBridge*, NodeClient* client, ShellStore* s
   }
   connect(store, &ShellStore::changed, this, &AlertController::evaluate);
   // A reconnect's snapshot is a new baseline: what finished meanwhile is quiet.
-  connect(client, &NodeClient::readyChanged, this, [this](bool ready) {
+  connect(client, &McClient::readyChanged, this, [this](bool ready) {
     if (!ready) m_seen.clear();
   });
 }

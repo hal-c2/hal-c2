@@ -12,8 +12,8 @@ defmodule HalC2.Steps.SourceControl.Shared do
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @fake_text Path.expand("../../support/fake_text_cli.py", __DIR__)
 
@@ -24,8 +24,8 @@ defmodule HalC2.Steps.SourceControl.Shared do
   (`test/support/fake_text_cli.py`). The checkout under test is its root.
   """
   def thread_in_git_project(context, title) do
-    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
-    Node.ensure({DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one})
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
+    Mc.ensure({DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one})
     %{writer_log: writer_log} = answering_writer(context)
     repository = "acme/#{World.slug(title)}"
     context = World.create_project(context, title)
@@ -60,9 +60,9 @@ defmodule HalC2.Steps.SourceControl.Shared do
   its prompts to `context.writer_log`.
   """
   def answering_writer(context) do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
     writer = Application.get_env(:hal_c2, :text_claude_command)
-    writer_log = Path.join(Node.tmp_dir(context.node, "writer"), "calls.jsonl")
+    writer_log = Path.join(Mc.tmp_dir(context.mc, "writer"), "calls.jsonl")
     Application.put_env(:hal_c2, :text_claude_command, @fake_text)
     System.put_env("FAKE_TEXT_LOG", writer_log)
 
@@ -452,13 +452,13 @@ defmodule HalC2.Steps.SourceControl.Shared do
   end
 
   @doc """
-  A fake Bitbucket API (`HalC2.Steps.SourceControl.FakeBitbucket`) the node reaches
+  A fake Bitbucket API (`HalC2.Steps.SourceControl.FakeBitbucket`) the MC reaches
   through `HAL_C2_BITBUCKET_API_BASE_URL`, with `HAL_C2_BITBUCKET_ACCESS_TOKEN` set
   to the token it knows as octocat's, until the scenario ends.
   """
   def fake_bitbucket(context) do
     server =
-      Node.ensure({Bandit, plug: HalC2.Steps.SourceControl.FakeBitbucket, port: 0, ip: :loopback})
+      Mc.ensure({Bandit, plug: HalC2.Steps.SourceControl.FakeBitbucket, port: 0, ip: :loopback})
 
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
     put_env("HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="Build the Qt desktop shell, pair it with the running Elixir node (mise run node), and launch it (args go to dev-qt.mjs and hal-c2-qt)"
+#MISE description="Build the Qt desktop shell, pair it with the running MC (mise run mc), and launch it (args go to dev-qt.mjs and hal-c2-qt)"
 #MISE dir="{{config_root}}/apps/desktop-qt"
 set -euo pipefail
-# Pairs with the node `mise run node` runs (HAL_C2_NODE_PORT, default 3780), or attaches to
-# the pairing link --url names; --standalone starts the shell's own node instead.
+# Pairs with the MC `mise run mc` runs (HAL_C2_MC_PORT, default 3780), or attaches to
+# the pairing link --url names; --standalone starts the shell's own MC instead.
 exec node scripts/dev-qt.mjs "$@"

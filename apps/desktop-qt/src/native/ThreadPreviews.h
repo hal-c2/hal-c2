@@ -8,11 +8,11 @@
 
 #include <functional>
 
-class NodeClient;
+class McClient;
 
-// The Previews tab: a thread's browser tabs as the node keeps them
+// The Previews tab: a thread's browser tabs as the MC keeps them
 // (`preview.list`), each opened in the user's browser rather than embedded.
-// While shown it follows the node's `preview` events (the node serving the
+// While shown it follows the MC's `preview` events (the MC serving the
 // thread's environment; a linked environment's list is read again on show
 // and on reload()).
 //
@@ -40,12 +40,12 @@ public:
   using Notify = std::function<void(const QString& type, const QString& title, const QString& description)>;
   using Open = std::function<void(const QUrl& url)>;
 
-  ThreadPreviews(NodeClient* client, Notify notify, Open open, QObject* parent = nullptr);
+  ThreadPreviews(McClient* client, Notify notify, Open open, QObject* parent = nullptr);
   ~ThreadPreviews() override;
 
-  // The thread shown, and the node whose events carry its tabs (empty when
+  // The thread shown, and the MC whose events carry its tabs (empty when
   // none does).
-  void setThread(const QString& environmentId, const QString& threadId, const QString& node);
+  void setThread(const QString& environmentId, const QString& threadId, const QString& mc);
   // Loads and follows while shown; forgets nothing when hidden.
   void setActive(bool active);
 
@@ -74,12 +74,12 @@ private:
   void upsert(const QJsonObject& snapshot);
   void remove(const QString& tabId);
 
-  NodeClient* m_client;
+  McClient* m_client;
   Notify m_notify;
   Open m_open;
   QString m_environment;
   QString m_thread;
-  QString m_node;
+  QString m_mc;
   bool m_active = false;
   int m_subscription = -1;
   // Replies for another thread (or an older load) are dropped.

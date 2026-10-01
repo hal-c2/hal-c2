@@ -12,8 +12,8 @@ defmodule HalC2.Steps.Files.ProjectScriptsAndActions do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @fake_codex Path.expand("../../support/fake_codex.py", __DIR__)
 
@@ -179,19 +179,19 @@ defmodule HalC2.Steps.Files.ProjectScriptsAndActions do
 
   # The services a worktree launch needs, a fake agent, and the fake `bun`.
   defp setup_services(context) do
-    Node.ensure(HalC2.Settings)
-    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
-    Node.ensure(HalC2.Workspace)
-    Node.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
-    Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
-    context = HalC2.Test.Node.Terminal.ensure(context)
-    Node.ensure(HalC2.WorktreeSetup)
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
+    Mc.ensure(HalC2.Workspace)
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
+    Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    context = HalC2.Test.Mc.Terminal.ensure(context)
+    Mc.ensure(HalC2.WorktreeSetup)
 
     Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :codex_command) end)
 
-    bin = Node.tmp_dir(context.node, "bin")
-    log = Node.tmp_dir(context.node, "bun-log")
+    bin = Mc.tmp_dir(context.mc, "bin")
+    log = Mc.tmp_dir(context.mc, "bun-log")
 
     File.write!(Path.join(bin, "bun"), """
     #!/bin/sh
@@ -201,7 +201,7 @@ defmodule HalC2.Steps.Files.ProjectScriptsAndActions do
     """)
 
     File.chmod!(Path.join(bin, "bun"), 0o755)
-    HalC2.Test.Node.Terminal.put_env("PATH", bin <> ":" <> System.get_env("PATH", ""))
+    HalC2.Test.Mc.Terminal.put_env("PATH", bin <> ":" <> System.get_env("PATH", ""))
     Map.put(context, :bun_log, log)
   end
 

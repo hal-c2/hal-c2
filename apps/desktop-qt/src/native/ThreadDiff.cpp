@@ -2,10 +2,10 @@
 
 #include <QJsonArray>
 
-#include "NodeClient.h"
+#include "McClient.h"
 #include "TimelineModel.h"
 
-ThreadDiff::ThreadDiff(NodeClient* client, Notify notify, QObject* parent)
+ThreadDiff::ThreadDiff(McClient* client, Notify notify, QObject* parent)
     : QObject(parent), m_client(client), m_notify(std::move(notify)) {}
 
 void ThreadDiff::setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline) {

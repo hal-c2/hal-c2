@@ -8,13 +8,13 @@ defmodule HalC2.Steps.Timeline.Checkpoints do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @files ["a.txt", "b.txt", "c.txt"]
 
   step "a thread in {string} with three finished turns", %{args: [project]} = context do
     root = World.project(context, project).root
-    worktree = HalC2.Test.Node.tmp_dir(context.node, "rewind")
+    worktree = HalC2.Test.Mc.tmp_dir(context.mc, "rewind")
     World.git!(root, ["worktree", "add", "-q", "-b", "rewind", worktree])
 
     context

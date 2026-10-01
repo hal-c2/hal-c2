@@ -2,7 +2,7 @@ defmodule HalC2.Steps.Providers.Cursor do
   @moduledoc """
   Steps for `features/providers/cursor.feature`.
 
-  Cursor runs as the node runs it (`HalC2.Acp`: the cursor-acp agent), over a fake Cursor
+  Cursor runs as the MC runs it (`HalC2.Acp`: the cursor-acp agent), over a fake Cursor
   SDK (`test/support/fake_cursor.mjs`, set up by `HalC2.Test.AcpFixtures.ready/1`). The
   fake logs what the SDK is asked to do to `<agents>/cursor-<instance>.log`, and a
   browser sign-in finishes once `<agents>/cursor-<instance>.login-done` exists. RPCs
@@ -13,8 +13,8 @@ defmodule HalC2.Steps.Providers.Cursor do
   import ExUnit.Assertions
 
   alias HalC2.Test.AcpFixtures, as: Acp
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @api_key "crsr-test-key"
 
@@ -25,14 +25,14 @@ defmodule HalC2.Steps.Providers.Cursor do
 
     if Map.has_key?(ctx.clients, "ops"),
       do: ctx,
-      else: World.put_client(ctx, "ops", Node.connect(ctx.node))
+      else: World.put_client(ctx, "ops", Mc.connect(ctx.mc))
   end
 
   # Clients connect before any subscription: connecting reads the test's mailbox.
   defp connect(ctx, name) do
     if Map.has_key?(ctx.clients, name),
       do: ctx,
-      else: World.put_client(ctx, name, Node.connect(ctx.node))
+      else: World.put_client(ctx, name, Mc.connect(ctx.mc))
   end
 
   defp log(ctx, id \\ "cursor"), do: Acp.log(ctx, "cursor-#{id}")
@@ -50,7 +50,7 @@ defmodule HalC2.Steps.Providers.Cursor do
   defp enable("cursor"), do: Acp.put_provider("cursor", %{"enabled" => true})
   defp enable(id), do: Acp.put_instance(id, %{"driver" => "cursor", "enabled" => true})
 
-  # Cursor enabled and read as the node's status check does.
+  # Cursor enabled and read as the MC's status check does.
   defp enabled(ctx, id \\ "cursor") do
     ctx = ops(ctx)
     enable(id)
@@ -130,7 +130,7 @@ defmodule HalC2.Steps.Providers.Cursor do
     sub = ctx.config_sub
 
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(ctx),
         fn frame ->
           frame["t"] == "config.providers" and frame["id"] == sub and
@@ -149,9 +149,9 @@ defmodule HalC2.Steps.Providers.Cursor do
     sub = 5000 + System.unique_integer([:positive])
 
     client =
-      Node.sub(World.client(ctx), sub, %{"type" => "config", "node" => Atom.to_string(node())})
+      Mc.sub(World.client(ctx), sub, %{"type" => "config", "mc" => Atom.to_string(node())})
 
-    {_, client} = Node.await(client, &(&1["t"] == "config" and &1["id"] == sub), 5_000)
+    {_, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == sub), 5_000)
     ctx |> World.put_client(client) |> Map.put(:config_sub, sub)
   end
 
@@ -182,14 +182,14 @@ defmodule HalC2.Steps.Providers.Cursor do
 
   # --- enabling --------------------------------------------------------------------------
 
-  step "Cursor is not enabled on the node", context do
+  step "Cursor is not enabled on the MC", context do
     ctx = Acp.ready(context)
     refute HalC2.Acp.enabled?("cursor")
     ctx
   end
 
   step "no Cursor process is started", context do
-    # The node's boot probe, then the provider list clients get.
+    # The MC's boot probe, then the provider list clients get.
     HalC2.Acp.load()
     entry = Acp.provider("cursor")
     assert entry == nil or entry["enabled"] == false
@@ -239,7 +239,7 @@ defmodule HalC2.Steps.Providers.Cursor do
     context |> watch_auth("cursor", "second") |> start_sign_in()
   end
 
-  step "every client of the node is offered the Cursor sign-in page", context do
+  step "every client of the MC is offered the Cursor sign-in page", context do
     {_, ctx} = waiting(context, "second")
     {state, ctx} = waiting(ctx)
     assert state["authorizationUrl"] == "https://cursor.test/login"
@@ -333,7 +333,7 @@ defmodule HalC2.Steps.Providers.Cursor do
   step "Cursor is shown as signed out", context do
     assert context.auth_state["message"] == "Signed out."
     refute File.exists?(credentials("cursor"))
-    # Signing out makes the node read Cursor again.
+    # Signing out makes the MC read Cursor again.
     entry = Acp.check("cursor")
     assert entry["auth"]["status"] == "unauthenticated"
     assert entry["setup"]["canAuthenticate"] == true

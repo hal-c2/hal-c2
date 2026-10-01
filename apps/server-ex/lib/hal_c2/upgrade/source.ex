@@ -1,6 +1,6 @@
 defmodule HalC2.Upgrade.Source do
   @moduledoc """
-  Where a node gets the bundle for a version (`HalC2.Upgrade`), checked against its
+  Where an MC gets the bundle for a version (`HalC2.Upgrade`), checked against its
   SHA-256 before use:
 
     1. its own cache, `<home>/upgrades/<version>/`, where `mix hal_c2.upgrade` also
@@ -16,11 +16,11 @@ defmodule HalC2.Upgrade.Source do
 
   require Logger
 
-  @default_url "https://github.com/hal-c2/hal-c2/releases/download/node-v{version}/hal-c2-node-{version}-{platform}.tar.gz"
+  @default_url "https://github.com/hal-c2/hal-c2/releases/download/mc-v{version}/hal-c2-mc-{version}-{platform}.tar.gz"
   @link_ttl_ms :timer.minutes(10)
 
   @doc "The file name of a version's bundle for a platform."
-  def file_name(version, platform), do: "hal-c2-node-#{version}-#{platform}.tar.gz"
+  def file_name(version, platform), do: "hal-c2-mc-#{version}-#{platform}.tar.gz"
 
   @doc "The unpacked bundle directory: `{:ok, dir}` or `{:error, ServerSelfUpdateError}`."
   def fetch(version, platform) do
@@ -36,7 +36,7 @@ defmodule HalC2.Upgrade.Source do
   end
 
   @doc """
-  Adds a bundle archive for `version` to this node's cache, so it can update from
+  Adds a bundle archive for `version` to this MC's cache, so it can update from
   it and hand it to peers (`mix hal_c2.upgrade`).
   """
   def put(version, platform, source_path) do
@@ -80,7 +80,7 @@ defmodule HalC2.Upgrade.Source do
   end
 
   @doc """
-  Offered to a peer over distribution: a one-time HTTP link to this node's copy of
+  Offered to a peer over distribution: a one-time HTTP link to this MC's copy of
   the bundle, with its SHA-256, or nil when it has none.
   """
   def offer(version, platform) do
@@ -249,8 +249,8 @@ defmodule HalC2.Upgrade.Source do
 
   defp name_host(peer), do: peer |> Atom.to_string() |> String.split("@") |> List.last()
 
-  defp safe_erpc(node, mod, fun, args) do
-    :erpc.call(node, mod, fun, args, 10_000)
+  defp safe_erpc(mc, mod, fun, args) do
+    :erpc.call(mc, mod, fun, args, 10_000)
   catch
     _, _ -> nil
   end

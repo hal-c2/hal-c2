@@ -6,7 +6,7 @@ import HalC2.Shell
 // Settings → Keybindings, a native settings page over the shell's keymap
 // (KeybindingController, the `Keybindings` singleton): every binding with its
 // shortcut, condition and source, searchable, and a recorder to rebind, reset,
-// remove or add one. Edits go to the node, whose push refreshes the rows.
+// remove or add one. Edits go to the MC, whose push refreshes the rows.
 Rectangle {
     id: page
 

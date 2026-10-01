@@ -1,12 +1,12 @@
 defmodule HalC2.Paths do
   @moduledoc """
-  Where the node keeps its files, and path helpers that must agree across modules
+  Where the MC keeps its files, and path helpers that must agree across modules
   that guard the filesystem.
 
-  The node sorts its files into four kinds (`features/node/platform/storage-layout.feature`):
+  The MC sorts its files into four kinds (`features/mc/platform/storage-layout.feature`):
   config (settings, keybindings, themes), data (what the user cannot get back),
   state (logs, the migration record) and cache (what can be downloaded again). Each
-  kind is HAL-C2's directory for that kind plus an `elixir` level, so the node never
+  kind is HAL-C2's directory for that kind plus an `elixir` level, so the MC never
   collides with the TypeScript server that shares the root
   (`packages/shared/src/xdgDirs.ts` is the twin of `app_dirs/4`).
 
@@ -14,38 +14,38 @@ defmodule HalC2.Paths do
 
   - `nil`: the XDG Base Directory layout, `~/.config/hal-c2/elixir` and so on.
   - `:dev`: the same layout in the development profile, `~/.config/hal-c2-dev/elixir`
-    and so on, so a dev node never opens the installed app's files.
+    and so on, so a dev MC never opens the installed app's files.
   - `{:root, dir}`: one HAL-C2 root, `<dir>/{config,data,state,cache}/elixir`
     (`HAL_C2_HOME`, a checkout's `.hal-c2`, the desktop app's home).
-  - `{:node, dir}`: a root for the node alone, `<dir>/{config,data,state,cache}`
-    (`HAL_C2_NODE_HOME`).
-  - a directory: every kind in that one directory, the layout tests start nodes in.
+  - `{:mc, dir}`: a root for the MC alone, `<dir>/{config,data,state,cache}`
+    (`HAL_C2_MC_HOME`).
+  - a directory: every kind in that one directory, the layout tests start MCs in.
 
   A root that is relative or names an old home (`~/.t3`, `~/.hal-c2`, or a directory
-  inside one for `{:node, dir}`) is ignored: old homes are only ever read by
+  inside one for `{:mc, dir}`) is ignored: old homes are only ever read by
   `HalC2.Migration`.
   """
 
   @app "hal-c2"
   @dev_app "hal-c2-dev"
-  @node "elixir"
+  @mc "elixir"
   @kinds [:config, :data, :state, :cache]
   @legacy [".hal-c2", ".t3"]
 
-  @doc "The node's settings, keybindings and themes."
+  @doc "The MC's settings, keybindings and themes."
   def config_dir, do: dirs().config
-  @doc "The node's database, secrets, attachments, worktrees and other data it cannot get back."
+  @doc "The MC's database, secrets, attachments, worktrees and other data it cannot get back."
   def data_dir, do: dirs().data
-  @doc "The node's logs and the migration record."
+  @doc "The MC's logs and the migration record."
   def state_dir, do: dirs().state
-  @doc "The node's downloaded tools and other data it can fetch again."
+  @doc "The MC's downloaded tools and other data it can fetch again."
   def cache_dir, do: dirs().cache
 
-  @doc "The node's four directories under the configured `:home`, for this process."
-  def dirs, do: node_dirs(Application.get_env(:hal_c2, :home), System.get_env(), user_home())
+  @doc "The MC's four directories under the configured `:home`, for this process."
+  def dirs, do: mc_dirs(Application.get_env(:hal_c2, :home), System.get_env(), user_home())
 
   @doc """
-  Creates the node's directories that do not exist yet, and the data directory's
+  Creates the MC's directories that do not exist yet, and the data directory's
   `secrets`, readable only by the user.
   """
   def ensure!(dirs \\ dirs()) do
@@ -76,25 +76,25 @@ defmodule HalC2.Paths do
   @doc "The user's home directory: `HOME` when set, as the XDG specification reads it."
   def user_home, do: System.get_env("HOME") || System.user_home!()
 
-  @doc "`:windows` or `:unix`, the path rules `node_dirs/4` and `app_dirs/4` follow."
+  @doc "`:windows` or `:unix`, the path rules `mc_dirs/4` and `app_dirs/4` follow."
   def platform, do: if(match?({:win32, _}, :os.type()), do: :windows, else: :unix)
 
   @doc """
-  The node's directories for a `:home` spec (see the moduledoc), the environment
+  The MC's directories for a `:home` spec (see the moduledoc), the environment
   variables `env` (a map), the user's home and the platform.
   """
-  def node_dirs(spec, env, user_home, platform \\ platform())
+  def mc_dirs(spec, env, user_home, platform \\ platform())
 
-  def node_dirs(dir, _env, _user_home, _platform) when is_binary(dir),
+  def mc_dirs(dir, _env, _user_home, _platform) when is_binary(dir),
     do: Map.new(@kinds, &{&1, dir})
 
-  def node_dirs({:node, dir}, env, user_home, platform) do
-    if root?(dir, :node, user_home, platform),
+  def mc_dirs({:mc, dir}, env, user_home, platform) do
+    if root?(dir, :mc, user_home, platform),
       do: Map.new(@kinds, &{&1, join(platform, [dir, Atom.to_string(&1)])}),
-      else: node_dirs(nil, env, user_home, platform)
+      else: mc_dirs(nil, env, user_home, platform)
   end
 
-  def node_dirs(spec, env, user_home, platform) do
+  def mc_dirs(spec, env, user_home, platform) do
     app =
       case spec do
         {:root, dir} -> app_dirs(dir, env, user_home, platform)
@@ -102,7 +102,7 @@ defmodule HalC2.Paths do
         nil -> app_dirs(nil, env, user_home, platform)
       end
 
-    Map.new(@kinds, &{&1, join(platform, [Map.fetch!(app, &1), @node])})
+    Map.new(@kinds, &{&1, join(platform, [Map.fetch!(app, &1), @mc])})
   end
 
   @doc """
@@ -219,9 +219,9 @@ defmodule HalC2.Paths do
   end
 
   @doc """
-  Whether `dir` may be a root of `kind` (`:root` for `HAL_C2_HOME`, `:node` for
-  `HAL_C2_NODE_HOME`): absolute, and not an old home. A node root inside one is
-  refused too, since a node home from before was `~/.t3/elixir` or `~/.hal-c2/elixir`.
+  Whether `dir` may be a root of `kind` (`:root` for `HAL_C2_HOME`, `:mc` for
+  `HAL_C2_MC_HOME`): absolute, and not an old home. An MC root inside one is
+  refused too, since an MC home from before was `~/.t3/elixir` or `~/.hal-c2/elixir`.
   """
   def root?(dir, kind, user_home, platform \\ platform()) do
     case absolute(dir, platform) do
@@ -236,7 +236,7 @@ defmodule HalC2.Paths do
           legacy = normalize(join(platform, [user_home, name]), platform)
 
           legacy == normalized or
-            (kind == :node and String.starts_with?(normalized, legacy <> sep))
+            (kind == :mc and String.starts_with?(normalized, legacy <> sep))
         end)
     end
   end

@@ -10,42 +10,42 @@
 #   apps/web/src/components/settings/EnvironmentRow.tsx (SshConnectionTarget, SshConnectionProfile)
 #   apps/desktop-qt/parity/features.backlog.test.ts (ssh-environments, network-access)
 #   apps/tui/src/features.backlog.test.ts (environment-connections)
-#   Shared domain: node/platform/node-startup.feature holds the node's own listening address;
-#   connections/cluster.feature holds nodes reaching each other over the tailnet;
+#   Shared domain: mc/platform/mc-startup.feature holds the MC's own listening address;
+#   connections/cluster.feature holds MCs reaching each other over the tailnet;
 #   connections/hal-c2-connect.feature holds the relay;
 #   settings/connections.feature holds the desktop network access, Tailscale HTTPS and add-over-SSH controls.
 
 Feature: How clients reach an environment
-  A node listens on loopback unless told otherwise. Clients reach it directly on a LAN or
+  An MC listens on loopback unless told otherwise. Clients reach it directly on a LAN or
   tailnet, over Tailscale HTTPS, through a desktop-managed SSH forward, or through HAL-C2 Connect.
 
   Background:
-    Given a running node
+    Given a running MC
 
-  @node
-  Scenario: A node reaches only its own machine by default
+  @mc
+  Scenario: An MC reaches only its own machine by default
     When a client on another machine tries to connect
     Then the connection is refused
 
-  @node
+  @mc
   Scenario: A client on the same machine connects over loopback
-    When a client on the node's machine connects to the loopback address
-    Then it reaches the node
+    When a client on the MC's machine connects to the loopback address
+    Then it reaches the MC
 
-  @node
-  Scenario: An operator starts a node that listens on its LAN address
-    When an operator starts the node with a LAN host
+  @mc
+  Scenario: An operator starts an MC that listens on its LAN address
+    When an operator starts the MC with a LAN host
     Then clients on the LAN can pair with it
 
   @backlog @desktop
-  Scenario: A loopback-only node explains how to allow remote pairing
+  Scenario: A loopback-only MC explains how to allow remote pairing
     Given network access is off
     When the user opens Connections settings
     Then the client says only this machine can connect
 
   @backlog @desktop
   Scenario Outline: Advertised addresses say who can reach them
-    Given the node advertises a <reachability> address
+    Given the MC advertises a <reachability> address
     When the user chooses an address for a pairing link
     Then the address is marked as reachable from <who>
 
@@ -58,7 +58,7 @@ Feature: How clients reach an environment
 
   @backlog @desktop
   Scenario Outline: Advertised addresses say whether a hosted HTTPS client can use them
-    Given the node advertises an address whose hosted HTTPS compatibility is <compatibility>
+    Given the MC advertises an address whose hosted HTTPS compatibility is <compatibility>
     When the user chooses an address for a pairing link
     Then the client <advice>
 
@@ -83,20 +83,20 @@ Feature: How clients reach an environment
     When the user turns on Tailscale HTTPS
     Then the client says to start Tailscale to set up HTTPS through MagicDNS
 
-  @node
+  @mc
   Scenario: An operator pairs over Tailscale HTTPS from the command line
-    Given the node's machine is on a tailnet
+    Given the MC's machine is on a tailnet
     When an operator asks for a Tailscale pairing link
-    Then the node is served at its tailnet HTTPS name
+    Then the MC is served at its tailnet HTTPS name
     And the printed link uses that name
 
-  @node
+  @mc
   Scenario: The Tailscale route survives a restart
     Given an operator created a Tailscale pairing link
-    When the node restarts
+    When the MC restarts
     Then the tailnet HTTPS name still reaches it
 
-  @node
+  @mc
   Scenario: A taken Tailscale port can be replaced
     Given the default tailnet HTTPS port is in use
     When an operator asks for a Tailscale pairing link on another port
@@ -145,9 +145,9 @@ Feature: How clients reach an environment
     When the user retries the launch
     Then the environment reconnects
 
-  # The hosted app at app.hal-c2.example connects to a node over HTTPS. HAL-C2 has no hosted web
+  # The hosted app at app.hal-c2.example connects to an MC over HTTPS. HAL-C2 has no hosted web
   # client; QML clients connect over plain HTTP on a LAN or tailnet.
-  @dropped @node
+  @dropped @mc
   Scenario: A hosted HTTPS client connects only to HTTPS environments
     Given the environment offers only a plain HTTP address
     When the hosted app tries to connect

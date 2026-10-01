@@ -9,7 +9,7 @@
 #   apps/server/src/provider/acp/XAiAcpExtension.ts, apps/server/src/orchestration-v2/Adapters/XAiBackgroundTasks.ts
 #     (x.ai/task_backgrounded, x.ai/task_completed, background subagent notices, persistent monitors)
 
-@plugin-grok @node
+@plugin-grok @mc
 Feature: Grok
   Grok runs the local grok CLI as an ACP agent. Sign-in stays with the Grok CLI, or with
   an xAI API key in the instance's environment.
@@ -19,11 +19,11 @@ Feature: Grok
 
   Scenario: Grok does nothing until the user enables it
     Given Grok is installed but not enabled
-    When the node starts
+    When the MC starts
     Then no Grok process is started
 
   Scenario: Grok is only offered when the grok command is installed
-    Given the grok command is not installed on the node
+    Given the grok command is not installed on the MC
     When the user opens the list of agents to enable
     Then Grok is not offered
 
@@ -115,10 +115,10 @@ Feature: Grok
   Scenario: Grok's background work keeps its session until Grok reports it ended
     Given Grok left a command and a subagent running in the background
     Then "Work" lists the command and the subagent as background work
-    And the node keeps Grok's session of "Work" while they run
+    And the MC keeps Grok's session of "Work" while they run
     When Grok reports the command and the subagent ended
     Then Grok's command and subagent are completed
-    And the node can release Grok's session of "Work"
+    And the MC can release Grok's session of "Work"
 
   # Grok's background work runs inside the grok process, so ending it ends the process.
   Scenario: Stopping a Grok thread between turns ends its background work and the agent

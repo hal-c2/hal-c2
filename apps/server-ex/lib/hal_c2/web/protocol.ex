@@ -5,57 +5,57 @@ defmodule HalC2.Web.Protocol do
   A client subscribes to *shapes* and keeps each one in sync from an offset, the way
   Electric shapes work:
 
-    * `{"type": "shell"}`: every node's environment and every project and thread
+    * `{"type": "shell"}`: every MC's environment and every project and thread
       summary on it
     * `{"type": "shell", "links": true}`: the same, with each link also carrying its
-      environment's nodes and rows (`HalC2.Links.Rows`), then their changes
-    * `{"type": "stream", "node": n, "stream": id}`: one project or thread
-    * `{"type": "config", "node": n}`: that node's `ServerConfig` and name, then its settings and providers as they change;
+      environment's MCs and rows (`HalC2.Links.Rows`), then their changes
+    * `{"type": "stream", "mc": n, "stream": id}`: one project or thread
+    * `{"type": "config", "mc": n}`: that MC's `ServerConfig` and name, then its settings and providers as they change;
       with `"usageLimitsCommand": true` (a client that answers `/usage-limits` itself),
       every provider with limits to show offers that command
-    * `{"type": "terminal", "node": n, "input": TerminalAttachInput}`: one terminal,
+    * `{"type": "terminal", "mc": n, "input": TerminalAttachInput}`: one terminal,
       opened if needed; a snapshot, then its events
-    * `{"type": "terminals", "node": n}`: that node's terminal summaries, then changes
-    * the shapes in `routed/0` with `"environment": id` instead of `"node"`: on this
-      node or the cluster member serving that environment, else through this node's
+    * `{"type": "terminals", "mc": n}`: that MC's terminal summaries, then changes
+    * the shapes in `routed/0` with `"environment": id` instead of `"mc"`: on this
+      MC or the cluster member serving that environment, else through this MC's
       link to it or to its cluster (`HalC2.Links.route/1`), whose token's scopes apply
       there (a linked stream resumes from `offset` and resyncs as a local one does).
       While that link is down the subscription fails at once with an error whose
       `detail` is `{"_tag": "EnvironmentUnreachableError", "environmentId", "reason"}`,
       `reason` being `"unreachable"` or `"refused"` (pair it again)
-    * `{"type": "vcs", "node": n, "cwd": dir}`: a checkout's git status, then changes
-    * `{"type": "worktreeSetup", "node": n, "threadId": id}`: a new thread's worktree
+    * `{"type": "vcs", "mc": n, "cwd": dir}`: a checkout's git status, then changes
+    * `{"type": "worktreeSetup", "mc": n, "threadId": id}`: a new thread's worktree
       setup (`WorktreeSetupStreamEvent`: null, or a snapshot), then changes
-    * `{"type": "authAccess"}`: this node's pairing links and paired clients
+    * `{"type": "authAccess"}`: this MC's pairing links and paired clients
       (`AuthAccessStreamEvent`), for a session with `access:read`
-    * `{"type": "resourceTelemetry", "node": n}`: that node's resource monitor
+    * `{"type": "resourceTelemetry", "mc": n}`: that MC's resource monitor
       (`ResourceTelemetrySnapshot`), sampled every few seconds while subscribed
-    * `{"type": "preview", "node": n}`: that node's preview tab events (`PreviewEvent`)
-    * `{"type": "previewAutomation", "node": n, "host": PreviewAutomationHost}`: this
-      client as that node's browser automation host; agents' browser actions
-      (`PreviewAutomationStreamEvent`) until the node drops the host, which ends it
-    * `{"type": "serverUpdate", "node": n, "input": ServerSelfUpdateInput}`: moves
-      that node to another version (`HalC2.Upgrade`), streaming its progress and
+    * `{"type": "preview", "mc": n}`: that MC's preview tab events (`PreviewEvent`)
+    * `{"type": "previewAutomation", "mc": n, "host": PreviewAutomationHost}`: this
+      client as that MC's browser automation host; agents' browser actions
+      (`PreviewAutomationStreamEvent`) until the MC drops the host, which ends it
+    * `{"type": "serverUpdate", "mc": n, "input": ServerSelfUpdateInput}`: moves
+      that MC to another version (`HalC2.Upgrade`), streaming its progress and
       ending after `complete`
-    * `{"type": "relayClientInstall", "node": n}`: installs that node's relay client
+    * `{"type": "relayClientInstall", "mc": n}`: installs that MC's relay client
       (`cloud.installRelayClient`), streaming its stages and ending after `complete`
-    * `{"type": "localServers", "node": n}`: web servers listening on that node's
+    * `{"type": "localServers", "mc": n}`: web servers listening on that MC's
       host (`DiscoveredLocalServerList`), then the list whenever it changes
-    * `{"type": "devices", "node": n}`: that node's simulators, emulators and
+    * `{"type": "devices", "mc": n}`: that MC's simulators, emulators and
       open device sessions (`DeviceServiceState`), then the whole state on every change
-    * `{"type": "projectClones", "node": n}`: that node's project clones in
+    * `{"type": "projectClones", "mc": n}`: that MC's project clones in
       progress (`ProjectCloneSnapshot[]`), then the whole list on every change
-    * `{"type": "scheduledTasks", "node": n}`: that node's scheduled tasks, then
+    * `{"type": "scheduledTasks", "mc": n}`: that MC's scheduled tasks, then
       the whole list again whenever one changes
-    * `{"type": "backgroundPolicy", "node": n}`: that node's background policy
+    * `{"type": "backgroundPolicy", "mc": n}`: that MC's background policy
       (`BackgroundPolicySnapshot`), then again whenever it changes
-    * `{"type": "pullRequestRefreshes", "node": n}`: that node's pull request
+    * `{"type": "pullRequestRefreshes", "mc": n}`: that MC's pull request
       refresh revision, then each new one (`pullRequests.subscribeRefreshes`)
-    * `{"type": "providerAuth", "node": n, "instanceId": id}`: that provider
+    * `{"type": "providerAuth", "mc": n, "instanceId": id}`: that provider
       instance's sign-in state (`ProviderAuthState`), then changes
-    * `{"type": "providerInstall", "node": n, "instanceId": id}`: that provider
+    * `{"type": "providerInstall", "mc": n, "instanceId": id}`: that provider
       instance's managed runtime installation (`ProviderInstallState`), then changes
-    * `{"type": "gitAction", "node": n, "input": GitRunStackedActionInput}`: runs the
+    * `{"type": "gitAction", "mc": n, "input": GitRunStackedActionInput}`: runs the
       action once and streams its progress, ending with action_finished or
       action_failed
 
@@ -71,30 +71,30 @@ defmodule HalC2.Web.Protocol do
 
   Server to client:
 
-      {"t": "hello", "protocol": 3, "node": n, "environment": id}
-        (the environment this node serves, for RPCs about the node itself)
-      {"t": "shell", "id", "nodes": [{"node", "online", "environment"}], "rows": [[node, id, kind, row]],
+      {"t": "hello", "protocol": 3, "mc": n, "environment": id}
+        (the environment this MC serves, for RPCs about the MC itself)
+      {"t": "shell", "id", "mcs": [{"mc", "online", "environment"}], "rows": [[mc, id, kind, row]],
         "links": [{"environment", "origin", "online", "problem"?}]}
-      {"t": "shell.links", "id", "links"}   (environments this node links to; the whole list)
-      {"t": "shell.environment", "id", "node", "environment"}
-      {"t": "shell.rows", "id", "node", "rows": [[id, kind, row]]}
-      {"t": "shell.node", "id", "node", "online"}
-      {"t": "shell.linkRows", "id", "link", "node", "rows": [[id, kind, row]]}
-      {"t": "shell.linkEnvironment", "id", "link", "node", "environment"}
-      {"t": "shell.linkNode", "id", "link", "node", "online"}
+      {"t": "shell.links", "id", "links"}   (environments this MC links to; the whole list)
+      {"t": "shell.environment", "id", "mc", "environment"}
+      {"t": "shell.rows", "id", "mc", "rows": [[id, kind, row]]}
+      {"t": "shell.mc", "id", "mc", "online"}
+      {"t": "shell.linkRows", "id", "link", "mc", "rows": [[id, kind, row]]}
+      {"t": "shell.linkEnvironment", "id", "link", "mc", "environment"}
+      {"t": "shell.linkMc", "id", "link", "mc", "online"}
         (with "links": true: the shell.* changes of the environment `link` names, whose
-        nodes are its own; in the snapshot each link has "nodes" and "rows" as the shell
-        does; a node that appears is offline until shell.linkNode; a link that leaves
-        shell.links takes its nodes and rows with it)
+        MCs are its own; in the snapshot each link has "mcs" and "rows" as the shell
+        does; an MC that appears is offline until shell.linkMc; a link that leaves
+        shell.links takes its MCs and rows with it)
       {"t": "snapshot", "id", "offset", "at", "part", "rows": [[kind, id, entity]], "done"}
       {"t": "events", "id", "offset", "events": [[seq, kind, id, patch, at]]}
       {"t": "live", "id", "offset"}     (caught up; later events are live)
       {"t": "resync", "id", "offset"}   (fell behind: resubscribe from offset)
       {"t": "error", "id", "reason", "detail"?}
-      {"t": "config", "id", "node", "config"}
-      {"t": "config.settings", "id", "settings"}   (the node's ServerSettings changed)
+      {"t": "config", "id", "mc", "config"}
+      {"t": "config.settings", "id", "settings"}   (the MC's ServerSettings changed)
       {"t": "config.providers", "id", "providers"} (its ServerConfig.providers changed)
-      {"t": "config.ready", "id", "environment", "updateOutcome"} (the node moved to
+      {"t": "config.ready", "id", "environment", "updateOutcome"} (the MC moved to
         another version in place: its new descriptor, and how the update went)
       {"t": "serverUpdate", "id", "event"} (ServerSelfUpdateProgressEvent)
       {"t": "relayClientInstall", "id", "event"} (RelayClientInstallProgressEvent)
@@ -147,35 +147,35 @@ defmodule HalC2.Web.Protocol do
           | {:rpc, integer, String.t(), String.t(), term}
           | :ping
 
-  # The shapes a client may name by environment. The rest are about the node a client
-  # talks to (shell, authAccess) or administer one node's host (serverUpdate,
+  # The shapes a client may name by environment. The rest are about the MC a client
+  # talks to (shell, authAccess) or administer one MC's host (serverUpdate,
   # relayClientInstall, resourceTelemetry, localServers, devices, preview,
   # previewAutomation, scheduledTasks, backgroundPolicy, providerInstall),
-  # and are asked of that node by name. projectClones is routed because a client
+  # and are asked of that MC by name. projectClones is routed because a client
   # starts a clone on any environment with a routed rpc and follows it there.
   @routed ~w(stream terminal terminals config vcs gitAction worktreeSetup providerAuth
              pullRequestRefreshes projectClones)
 
-  @doc "The shape types a client may name by environment rather than node."
+  @doc "The shape types a client may name by environment rather than MC."
   def routed, do: @routed
 
   @doc """
-  An environment-named shape as `node` serves it: its node form, decoded. Where the
+  An environment-named shape as `mc` serves it: its MC form, decoded. Where the
   shape goes is `HalC2.Links.route/1`'s answer.
   """
-  @spec at_node(map, node) :: {:ok, term} | {:error, String.t()}
-  def at_node(shape, node),
+  @spec at_mc(map, node) :: {:ok, term} | {:error, String.t()}
+  def at_mc(shape, mc),
     do:
       shape
       |> Map.delete("environment")
-      |> Map.put("node", Atom.to_string(node))
-      |> decode_shape([node])
+      |> Map.put("mc", Atom.to_string(mc))
+      |> decode_shape([mc])
 
   @spec decode(binary, [node]) :: {:ok, request} | {:error, String.t()}
-  def decode(frame, known_nodes) do
+  def decode(frame, known_mcs) do
     case JSON.decode!(frame) do
       %{"t" => "sub", "id" => id, "shape" => shape} = msg when is_integer(id) ->
-        with {:ok, shape} <- decode_shape(shape, known_nodes),
+        with {:ok, shape} <- decode_shape(shape, known_mcs),
              do: {:ok, {:sub, id, shape, offset(msg["offset"])}}
 
       %{"t" => "unsub", "id" => id} when is_integer(id) ->
@@ -195,129 +195,129 @@ defmodule HalC2.Web.Protocol do
     _ -> {:error, "invalid json"}
   end
 
-  # By environment instead of node: routed where that environment is served
-  # (`HalC2.Links.route/1`). The rest of the shape must be valid in its node form.
-  defp decode_shape(%{"type" => type, "environment" => env} = shape, _nodes)
+  # By environment instead of MC: routed where that environment is served
+  # (`HalC2.Links.route/1`). The rest of the shape must be valid in its MC form.
+  defp decode_shape(%{"type" => type, "environment" => env} = shape, _mcs)
        when type in @routed and is_binary(env) do
-    with {:ok, _} <- at_node(shape, node()), do: {:ok, {:environment, env, shape}}
+    with {:ok, _} <- at_mc(shape, node()), do: {:ok, {:environment, env, shape}}
   end
 
-  defp decode_shape(%{"type" => "shell", "links" => true}, _nodes), do: {:ok, {:shell, :links}}
-  defp decode_shape(%{"type" => "shell"}, _nodes), do: {:ok, :shell}
+  defp decode_shape(%{"type" => "shell", "links" => true}, _mcs), do: {:ok, {:shell, :links}}
+  defp decode_shape(%{"type" => "shell"}, _mcs), do: {:ok, :shell}
 
-  defp decode_shape(%{"type" => "stream", "node" => node, "stream" => id}, nodes)
+  defp decode_shape(%{"type" => "stream", "mc" => mc, "stream" => id}, mcs)
        when is_binary(id) do
-    # Only nodes this server knows about; never create atoms from client input.
-    case Enum.find(nodes, &(Atom.to_string(&1) == node)) do
-      nil -> {:error, "unknown node"}
-      node -> {:ok, {:stream, node, id}}
+    # Only MCs this server knows about; never create atoms from client input.
+    case Enum.find(mcs, &(Atom.to_string(&1) == mc)) do
+      nil -> {:error, "unknown MC"}
+      mc -> {:ok, {:stream, mc, id}}
     end
   end
 
-  defp decode_shape(%{"type" => "config", "usageLimitsCommand" => true} = shape, nodes) do
-    with {:ok, config} <- decode_shape(Map.delete(shape, "usageLimitsCommand"), nodes),
+  defp decode_shape(%{"type" => "config", "usageLimitsCommand" => true} = shape, mcs) do
+    with {:ok, config} <- decode_shape(Map.delete(shape, "usageLimitsCommand"), mcs),
          do: {:ok, Tuple.insert_at(config, 2, :usage_limits_command)}
   end
 
-  defp decode_shape(%{"type" => "config", "node" => node}, nodes) do
-    case Enum.find(nodes, &(Atom.to_string(&1) == node)) do
-      nil -> {:error, "unknown node"}
-      node -> {:ok, {:config, node}}
+  defp decode_shape(%{"type" => "config", "mc" => mc}, mcs) do
+    case Enum.find(mcs, &(Atom.to_string(&1) == mc)) do
+      nil -> {:error, "unknown MC"}
+      mc -> {:ok, {:config, mc}}
     end
   end
 
-  defp decode_shape(%{"type" => "terminal", "node" => node, "input" => %{} = input}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:terminal, node, input}}
+  defp decode_shape(%{"type" => "terminal", "mc" => mc, "input" => %{} = input}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:terminal, mc, input}}
   end
 
-  defp decode_shape(%{"type" => "vcs", "node" => node, "cwd" => cwd}, nodes)
+  defp decode_shape(%{"type" => "vcs", "mc" => mc, "cwd" => cwd}, mcs)
        when is_binary(cwd) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:vcs, node, cwd}}
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:vcs, mc, cwd}}
   end
 
   defp decode_shape(
-         %{"type" => "gitAction", "node" => node, "input" => %{"actionId" => id} = input},
-         nodes
+         %{"type" => "gitAction", "mc" => mc, "input" => %{"actionId" => id} = input},
+         mcs
        )
        when is_binary(id) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:git_action, node, input}}
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:git_action, mc, input}}
   end
 
-  defp decode_shape(%{"type" => "authAccess"}, _nodes), do: {:ok, :auth_access}
+  defp decode_shape(%{"type" => "authAccess"}, _mcs), do: {:ok, :auth_access}
 
-  defp decode_shape(%{"type" => "resourceTelemetry", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:resource_telemetry, node}}
+  defp decode_shape(%{"type" => "resourceTelemetry", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:resource_telemetry, mc}}
   end
 
-  defp decode_shape(%{"type" => "preview", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:preview, node}}
+  defp decode_shape(%{"type" => "preview", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:preview, mc}}
   end
 
   defp decode_shape(
-         %{"type" => "previewAutomation", "node" => node, "host" => %{"clientId" => id} = host},
-         nodes
+         %{"type" => "previewAutomation", "mc" => mc, "host" => %{"clientId" => id} = host},
+         mcs
        )
        when is_binary(id) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:preview_automation, node, host}}
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:preview_automation, mc, host}}
   end
 
-  defp decode_shape(%{"type" => "serverUpdate", "node" => node, "input" => %{} = input}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:server_update, node, input}}
+  defp decode_shape(%{"type" => "serverUpdate", "mc" => mc, "input" => %{} = input}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:server_update, mc, input}}
   end
 
-  defp decode_shape(%{"type" => "relayClientInstall", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:relay_client_install, node}}
+  defp decode_shape(%{"type" => "relayClientInstall", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:relay_client_install, mc}}
   end
 
-  defp decode_shape(%{"type" => "localServers", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:local_servers, node}}
+  defp decode_shape(%{"type" => "localServers", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:local_servers, mc}}
   end
 
-  defp decode_shape(%{"type" => "devices", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:devices, node}}
+  defp decode_shape(%{"type" => "devices", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:devices, mc}}
   end
 
-  defp decode_shape(%{"type" => "projectClones", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:project_clones, node}}
+  defp decode_shape(%{"type" => "projectClones", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:project_clones, mc}}
   end
 
-  defp decode_shape(%{"type" => "scheduledTasks", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:scheduled_tasks, node}}
+  defp decode_shape(%{"type" => "scheduledTasks", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:scheduled_tasks, mc}}
   end
 
-  defp decode_shape(%{"type" => "backgroundPolicy", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:background_policy, node}}
+  defp decode_shape(%{"type" => "backgroundPolicy", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:background_policy, mc}}
   end
 
-  defp decode_shape(%{"type" => "pullRequestRefreshes", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:pull_request_refreshes, node}}
+  defp decode_shape(%{"type" => "pullRequestRefreshes", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:pull_request_refreshes, mc}}
   end
 
-  defp decode_shape(%{"type" => "worktreeSetup", "node" => node, "threadId" => id}, nodes)
+  defp decode_shape(%{"type" => "worktreeSetup", "mc" => mc, "threadId" => id}, mcs)
        when is_binary(id) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:worktree_setup, node, id}}
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:worktree_setup, mc, id}}
   end
 
-  defp decode_shape(%{"type" => "providerAuth", "node" => node, "instanceId" => id}, nodes)
+  defp decode_shape(%{"type" => "providerAuth", "mc" => mc, "instanceId" => id}, mcs)
        when is_binary(id) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:provider_auth, node, id}}
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:provider_auth, mc, id}}
   end
 
-  defp decode_shape(%{"type" => "providerInstall", "node" => node, "instanceId" => id}, nodes)
+  defp decode_shape(%{"type" => "providerInstall", "mc" => mc, "instanceId" => id}, mcs)
        when is_binary(id) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:provider_install, node, id}}
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:provider_install, mc, id}}
   end
 
-  defp decode_shape(%{"type" => "terminals", "node" => node}, nodes) do
-    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:terminals, node}}
+  defp decode_shape(%{"type" => "terminals", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:terminals, mc}}
   end
 
   defp decode_shape(_, _), do: {:error, "unknown shape"}
 
-  defp known_node(name, nodes) do
-    case Enum.find(nodes, &(Atom.to_string(&1) == name)) do
-      nil -> {:error, "unknown node"}
-      node -> {:ok, node}
+  defp known_mc(name, mcs) do
+    case Enum.find(mcs, &(Atom.to_string(&1) == name)) do
+      nil -> {:error, "unknown MC"}
+      mc -> {:ok, mc}
     end
   end
 

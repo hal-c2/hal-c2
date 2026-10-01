@@ -1,5 +1,5 @@
 defmodule HalC2.ClusterTest do
-  # Starts a second BEAM node with its own store and joins it to this one.
+  # Starts a second BEAM MC with its own store and joins it to this one.
   use ExUnit.Case, async: false
 
   alias HalC2.Test.WsClient
@@ -10,7 +10,7 @@ defmodule HalC2.ClusterTest do
   setup %{tmp_dir: dir} do
     unless Node.alive?() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
-      # Unique names, so the test never collides with nodes running on this machine.
+      # Unique names, so the test never collides with MCs running on this machine.
       {:ok, _} =
         Node.start(:"hal_c2_test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
     end
@@ -31,8 +31,8 @@ defmodule HalC2.ClusterTest do
         args: code_path_args()
       })
 
-    # A peer node does not read Mix config, so it gets the node settings directly.
-    for {key, value} <- [start_node: true, home: Path.join(dir, "b"), port: 0],
+    # A peer MC does not read Mix config, so it gets the MC settings directly.
+    for {key, value} <- [start_mc: true, home: Path.join(dir, "b"), port: 0],
         do: :ok = :erpc.call(b, Application, :put_env, [:hal_c2, key, value])
 
     {:ok, _} = :erpc.call(b, Application, :ensure_all_started, [:hal_c2])
@@ -41,12 +41,12 @@ defmodule HalC2.ClusterTest do
 
   defp code_path_args, do: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
 
-  test "one socket sees and follows threads on every node", %{port: port, peer: peer, b: b} do
+  test "one socket sees and follows threads on every MC", %{port: port, peer: peer, b: b} do
     b_name = Atom.to_string(b)
     {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
     {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
 
-    # A thread created on node b shows up in node a's shell.
+    # A thread created on MC b shows up in MC a's shell.
     {:ok, _} =
       :erpc.call(b, HalC2.Streams, :commit, [
         "remote-th",
@@ -62,7 +62,7 @@ defmodule HalC2.ClusterTest do
       %{"t" => "shell", "rows" => rows} ->
         Enum.any?(rows, &match?([^b_name, "remote-th", "thread", %{"title" => "On b"}], &1))
 
-      %{"t" => "shell.rows", "node" => ^b_name, "rows" => rows} ->
+      %{"t" => "shell.rows", "mc" => ^b_name, "rows" => rows} ->
         Enum.any?(rows, &match?(["remote-th", "thread", %{"title" => "On b"}], &1))
 
       _ ->
@@ -71,8 +71,8 @@ defmodule HalC2.ClusterTest do
 
     {_, _, client} = WsClient.recv_until(client, has_remote_row?)
 
-    # Following it from node a streams events committed on node b.
-    shape = %{"type" => "stream", "node" => b_name, "stream" => "remote-th"}
+    # Following it from MC a streams events committed on MC b.
+    shape = %{"type" => "stream", "mc" => b_name, "stream" => "remote-th"}
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
 
     {%{"t" => "live"}, _, client} =
@@ -88,7 +88,7 @@ defmodule HalC2.ClusterTest do
     {events, _, client} = WsClient.recv_until(client, &(&1["t"] == "events" and &1["id"] == 2))
     assert [[^seq, "turn-item", "i1", %{"s" => %{"text" => "from b"}}, _at]] = events["events"]
 
-    # Node a describes the whole cluster and serves node b's config by environment id.
+    # Node a describes the whole cluster and serves MC b's config by environment id.
     {:ok, _} = Application.ensure_all_started(:inets)
 
     {:ok, {{_, 200, _}, _, body}} =
@@ -107,12 +107,12 @@ defmodule HalC2.ClusterTest do
 
     {config, _, client} = WsClient.recv_until(client, &(&1["t"] == "config"))
 
-    assert %{"node" => ^b_name, "config" => %{"environment" => %{"environmentId" => ^b_env}}} =
+    assert %{"mc" => ^b_name, "config" => %{"environment" => %{"environmentId" => ^b_env}}} =
              config
 
     :peer.stop(peer)
-    {down, _, _client} = WsClient.recv_until(client, &(&1["t"] == "shell.node"), 5_000)
-    assert down == %{"t" => "shell.node", "id" => 1, "node" => b_name, "online" => false}
+    {down, _, _client} = WsClient.recv_until(client, &(&1["t"] == "shell.mc"), 5_000)
+    assert down == %{"t" => "shell.mc", "id" => 1, "mc" => b_name, "online" => false}
     assert Enum.any?(HalC2.Shell.rows(), &match?({{^b, "remote-th"}, _}, &1))
   end
 end

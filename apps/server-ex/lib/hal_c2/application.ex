@@ -6,7 +6,7 @@ defmodule HalC2.Application do
   @impl true
   def start(_type, _args) do
     children =
-      if Application.fetch_env!(:hal_c2, :start_node) do
+      if Application.fetch_env!(:hal_c2, :start_mc) do
         :ok = HalC2.Desktop.configure()
         :ok = prepare_files()
 
@@ -18,7 +18,7 @@ defmodule HalC2.Application do
           HalC2.Settings,
           HalC2.Streams,
           HalC2.Shell,
-          # Turns this node was running when it stopped end as interrupted.
+          # Turns this MC was running when it stopped end as interrupted.
           %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
           HalC2.Orchestration.TurnWatch,
           Supervisor.child_spec({Task, &HalC2.Search.backfill/0}, id: :search_backfill),
@@ -65,7 +65,7 @@ defmodule HalC2.Application do
           HalC2.Acp.UrlAuth,
           HalC2.Acp.Antigravity.Installation,
           Supervisor.child_spec({Task, &HalC2.Acp.load/0}, id: :acp_models),
-          # Environments outside the cluster this node was paired with.
+          # Environments outside the cluster this MC was paired with.
           {Registry, keys: :unique, name: HalC2.Links.Registry},
           {DynamicSupervisor, name: HalC2.Links.Supervisor, strategy: :one_for_one},
           HalC2.Links,
@@ -86,7 +86,7 @@ defmodule HalC2.Application do
       end
 
     # The services are independent, so one stall that times several out at once (a
-    # machine deep in swap) must not spend the default budget of 3 and stop the node.
+    # machine deep in swap) must not spend the default budget of 3 and stop the MC.
     Supervisor.start_link(children,
       strategy: :one_for_one,
       name: HalC2.Supervisor,
@@ -96,9 +96,9 @@ defmodule HalC2.Application do
   end
 
   @doc """
-  Readies the node's directories before anything opens a file in them: migrates from
+  Readies the MC's directories before anything opens a file in them: migrates from
   an old home the first time (`HalC2.Migration`), unless `:migrate` is false (a
-  checkout) or the node keeps everything in one directory (tests), then creates the
+  checkout) or the MC keeps everything in one directory (tests), then creates the
   directories that are missing. `opts` go to `HalC2.Migration.run/1`.
   """
   def prepare_files(opts \\ []) do

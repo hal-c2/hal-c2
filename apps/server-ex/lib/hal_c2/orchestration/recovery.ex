@@ -1,11 +1,11 @@
 defmodule HalC2.Orchestration.Recovery do
   @moduledoc """
-  Settles turns a node was running when it stopped. Provider processes die with
-  the node, so at boot every run still active on this node's threads is ended as
+  Settles turns an MC was running when it stopped. Provider processes die with
+  the MC, so at boot every run still active on this MC's threads is ended as
   interrupted, with its items, prompts, and provider thread; otherwise the thread
   would stay "running" and refuse its next message.
 
-  A run the node accepted but never handed to its provider goes back to the
+  A run the MC accepted but never handed to its provider goes back to the
   front of the queue instead, and `continue/0` starts it once, as the Node
   server's effect outbox replays pending provider work.
 
@@ -26,20 +26,20 @@ defmodule HalC2.Orchestration.Recovery do
   @active ~w(pending preparing queued starting running waiting active)
 
   @doc false
-  # Settles before the node takes requests, so no client sees a stale "running".
+  # Settles before the MC takes requests, so no client sees a stale "running".
   def start_link do
     run()
     :ignore
   end
 
   @doc """
-  Settles every interrupted turn on this node; returns the threads touched. Runs
+  Settles every interrupted turn on this MC; returns the threads touched. Runs
   that could go on are kept for `continue/0`.
   """
   def run do
     settled =
-      for {{node, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
-          node == node(),
+      for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
+          mc == node(),
           row["status"] in @active_runs or (row["pendingBackgroundTasks"] || []) != [],
           {count, continuable} = settle(thread_id),
           count > 0,
@@ -85,7 +85,7 @@ defmodule HalC2.Orchestration.Recovery do
   @doc """
   Asks each thread whose turn the restart cut off to continue, when its project's
   `continueThreadsAfterServerUpdate` is on and nothing newer was sent, as the Node
-  server does. Runs once the node can start turns.
+  server does. Runs once the MC can start turns.
   """
   def continue do
     runs = :persistent_term.get({__MODULE__, :continuable}, [])

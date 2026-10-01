@@ -1,6 +1,6 @@
 defmodule HalC2.PullRequests do
   @moduledoc """
-  Pull requests for this node's projects (`pullRequests.*`), as the Node server's
+  Pull requests for this MC's projects (`pullRequests.*`), as the Node server's
   `PullRequestService` serves them. A project's repository is its checkout's primary
   remote; GitHub repositories are read and changed through `gh`
   (`HalC2.PullRequests.GitHub`). Projects on other hosts are counted in the listing and
@@ -90,7 +90,7 @@ defmodule HalC2.PullRequests do
   @doc "Serves `pullRequests.<method>` (`HalC2.Rpc`)."
   def handle(method, input) do
     case @methods[method] do
-      nil -> {:error, "pullRequests.#{method} is not served by this node yet"}
+      nil -> {:error, "pullRequests.#{method} is not served by this MC yet"}
       fun -> apply(__MODULE__, fun, [input])
     end
   end
@@ -474,19 +474,19 @@ defmodule HalC2.PullRequests do
         GitHub.diff(ctx, input["cursor"], input["commit"])
       end)
 
-  @doc "`diff/1` on the node that holds the project, for a request that reached any node."
-  def diff_on_project_node(input) do
+  @doc "`diff/1` on the MC that holds the project, for a request that reached any MC."
+  def diff_on_project_mc(input) do
     id = input["projectId"]
 
     owner =
       Enum.find_value(HalC2.Shell.rows(), node(), fn
-        {{node, ^id}, {"project", _}} -> node
+        {{mc, ^id}, {"project", _}} -> mc
         _ -> nil
       end)
 
     :erpc.call(owner, __MODULE__, :diff, [input], 150_000)
   catch
-    _, _ -> refuse("diff", "The node holding this project is unavailable.")
+    _, _ -> refuse("diff", "The MC holding this project is unavailable.")
   end
 
   @doc "The host-native stack a pull request is in, or nil; `details?` false skips its second read."
@@ -494,7 +494,7 @@ defmodule HalC2.PullRequests do
     do: read(ref, "stack", fn _project, ctx -> GitHub.stack(ctx, details?) end)
 
   @doc """
-  Summaries for pull requests on this node's GitHub hosts, keyed by the refs asked
+  Summaries for pull requests on this MC's GitHub hosts, keyed by the refs asked
   for (`%{"host", "repository", "number"}`), read in one batch per host through any
   checkout there. A ref no checkout here can answer for, or GitHub left unanswered, is
   absent.
@@ -725,7 +725,7 @@ defmodule HalC2.PullRequests do
     end)
   end
 
-  @doc "`pullRequests.routingIdentity`: who `gh` is signed in as on a host this node has."
+  @doc "`pullRequests.routingIdentity`: who `gh` is signed in as on a host this MC has."
   def routing_identity(%{"host" => host}) do
     host = host |> String.trim() |> String.downcase()
 
@@ -744,7 +744,7 @@ defmodule HalC2.PullRequests do
     end
   end
 
-  @doc "`pullRequests.linkedThreads`: this node's threads linked to the pull request."
+  @doc "`pullRequests.linkedThreads`: this MC's threads linked to the pull request."
   def linked_threads(ref) do
     repository = String.downcase(String.trim(ref["repository"] || ""))
 
@@ -756,8 +756,8 @@ defmodule HalC2.PullRequests do
       end
 
     threads =
-      for {{node, _}, {"thread", row}} <- HalC2.Shell.rows(),
-          host != nil and node == node() and row["deletedAt"] == nil,
+      for {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
+          host != nil and mc == node() and row["deletedAt"] == nil,
           Enum.any?(row["pullRequests"] || [], &linked?(&1, host, repository, ref["number"])) do
         row
       end
@@ -783,11 +783,11 @@ defmodule HalC2.PullRequests do
 
   # --- projects -----------------------------------------------------------------------
 
-  # This node's projects whose checkout has a remote, as
+  # This MC's projects whose checkout has a remote, as
   # `%{id, title, root, host, repository, kind}`.
   defp projects do
-    for {{node, id}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
-        node == node() and is_binary(root) and project["deletedAt"] == nil,
+    for {{mc, id}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
+        mc == node() and is_binary(root) and project["deletedAt"] == nil,
         remote = remote(root) do
       Map.merge(remote, %{
         id: project["id"] || id,

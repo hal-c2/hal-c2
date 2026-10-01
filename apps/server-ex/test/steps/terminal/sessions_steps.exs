@@ -6,8 +6,8 @@ defmodule HalC2.Steps.Terminal.Sessions do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.{Terminal, World}
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.{Terminal, World}
 
   # --- shared by features/terminal/ ------------------------------------------------------
 
@@ -28,7 +28,7 @@ defmodule HalC2.Steps.Terminal.Sessions do
     Terminal.put_input(context, input)
   end
 
-  # --- the node starts a shell where the thread works --------------------------------------
+  # --- the MC starts a shell where the thread works --------------------------------------
 
   step "a thread whose project lives in {string}", %{args: [path]} = context do
     root = Terminal.mkdir(context, path)
@@ -175,18 +175,18 @@ defmodule HalC2.Steps.Terminal.Sessions do
     context
   end
 
-  step ~r/^the node runs with (?:any variable starting with )?(\w+) set$/,
+  step ~r/^the MC runs with (?:any variable starting with )?(\w+) set$/,
        %{args: [variable]} = context do
     name = if String.ends_with?(variable, "_"), do: variable <> "W4_PROBE", else: variable
-    Terminal.put_env(name, "from-the-node")
-    Map.put(context, :node_variable, name)
+    Terminal.put_env(name, "from-the-mc")
+    Map.put(context, :mc_variable, name)
   end
 
   step ~r/^the shell does not see (?:any variable starting with )?(\w+)$/, context do
-    name = context.node_variable
+    name = context.mc_variable
     {output, context} = Terminal.run(context, "default", "env | cut -d= -f1 | sort")
     names = output |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1)
-    # The shell does see the rest of the node's environment.
+    # The shell does see the rest of the MC's environment.
     assert "HOME" in names
     refute name in names
     context
@@ -281,7 +281,7 @@ defmodule HalC2.Steps.Terminal.Sessions do
 
   step "a finished thread's worktree has a running terminal", context do
     context = Terminal.ensure(context)
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
 
     for registry <- [
           HalC2.Codex.Registry,
@@ -289,11 +289,11 @@ defmodule HalC2.Steps.Terminal.Sessions do
           HalC2.Acp.Registry,
           HalC2.Vcs.Registry
         ],
-        do: Node.ensure({Registry, keys: :unique, name: registry})
+        do: Mc.ensure({Registry, keys: :unique, name: registry})
 
     Application.put_env(:hal_c2, :storage_cleanup_first_ms, nil)
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :storage_cleanup_first_ms) end)
-    Node.ensure(HalC2.StorageCleanup)
+    Mc.ensure(HalC2.StorageCleanup)
 
     # Worktrees go after a day idle; this thread has been idle since January.
     {_, version} = HalC2.Settings.get()

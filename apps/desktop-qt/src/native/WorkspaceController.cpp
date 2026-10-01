@@ -10,7 +10,7 @@
 #include "Keybindings.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -97,7 +97,7 @@ QString primaryLabel(const QString& label) {
 
 }  // namespace
 
-WorkspaceController::WorkspaceController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+WorkspaceController::WorkspaceController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                          QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
 
@@ -255,7 +255,7 @@ QJsonObject WorkspaceController::threadRow() const {
   return m_store->threadRow(m_place->threadKey());
 }
 
-// The checkout's status, from wherever the node reaches the thread's
+// The checkout's status, from wherever the MC reaches the thread's
 // environment: a cluster member or a link. It is followed again when the
 // environment comes back online, since a link that is down ends it at once
 // with its reason (gitError()).
@@ -437,7 +437,7 @@ QString WorkspaceController::preferredEditor(const QJsonArray& editors) const {
 }
 
 // BranchToolbar.logic's environment options: this project's checkout on each
-// machine (projects sharing its repository), the node's own first. A draft may
+// machine (projects sharing its repository), the MC's own first. A draft may
 // also move to any project on a machine without a checkout.
 QVariantList WorkspaceController::environmentChoices() const {
   if (!m_place) return {};
@@ -586,7 +586,7 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("preferredScriptId"), known ? QVariant(lastScript) : QVariant::fromValue(nullptr)},
       {QStringLiteral("environments"), environmentChoices()},
       {QStringLiteral("activeEnvironmentId"), place.environmentId},
-      // The node serving it is out of reach (a cluster member asleep, a link down).
+      // The MC serving it is out of reach (a cluster member asleep, a link down).
       {QStringLiteral("offline"), !m_store->environmentOnline(place.environmentId)},
       {QStringLiteral("environmentChangeable"), draft},
       {QStringLiteral("renameRequestId"), m_renameRequestId},

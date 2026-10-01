@@ -1,7 +1,7 @@
 defmodule HalC2.Connect.OAuth do
   @moduledoc """
   The operator's HAL-C2 Connect sign-in on the host (`apps/server/src/cloud/CliTokenManager.ts`),
-  kept as the `cloud-cli-oauth-token` secret the node links with at startup.
+  kept as the `cloud-cli-oauth-token` secret the MC links with at startup.
 
     * `loopback/1`: a browser on this machine. The operator opens the hosted app's
       `/connect` page, which sends the authorization code to a one-off listener on

@@ -12,7 +12,7 @@
 #include "CommandRegistry.h"
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
@@ -27,10 +27,10 @@ class ShellStore;
 // `sourceControl.lookupRepository`), then browses for where it goes with the
 // repository's folder name pinned to the path, in the folder Add project
 // browses from (ProjectController::browseStart). Enter there starts the clone
-// (`projectClone.start`): the node adds the project at once and clones in the
+// (`projectClone.start`): the MC adds the project at once and clones in the
 // background, and the new project's draft opens.
 //
-// Every clone the node reports (the `projectClones` shape of each online
+// Every clone the MC reports (the `projectClones` shape of each online
 // environment, in the cluster or linked) has one toast, changed in place as
 // git moves on: running (Cancel), done (Open project), failed or cancelled
 // (Retry, Remove project).
@@ -38,7 +38,7 @@ class ProjectCloneController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  ProjectCloneController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  ProjectCloneController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString&, const QVariant&) override { return false; }
@@ -90,7 +90,7 @@ private:
   void removeProject(const QString& environmentId, const QString& projectId);
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   QHash<QString, Discovery> m_discovery;

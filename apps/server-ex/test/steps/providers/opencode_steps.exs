@@ -9,7 +9,7 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   alias HalC2.StreamState
   alias HalC2.Test.FakeAcp
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   # A supported OpenCode (1.14.19 is the oldest HAL-C2 runs) connected to `models`.
   defp models(models),
@@ -83,10 +83,10 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
-  step "the opencode command is not installed on the node", context do
+  step "the opencode command is not installed on the MC", context do
     FakeAcp.services()
     HalC2.Acp.forget("opencode")
-    missing = Path.join(HalC2.Test.Node.tmp_dir(context.node, "no-opencode"), "opencode")
+    missing = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "no-opencode"), "opencode")
     FakeAcp.settings(&put_in(&1, ["providers"], %{"opencode" => %{"binaryPath" => missing}}))
     Map.put(context, :provider, "opencode")
   end
@@ -190,7 +190,7 @@ defmodule HalC2.Steps.Providers.Opencode do
     )
   end
 
-  step "the node checks its providers", context do
+  step "the MC checks its providers", context do
     Map.put(context, :entry, FakeAcp.probe(context.provider))
   end
 
@@ -710,7 +710,7 @@ defmodule HalC2.Steps.Providers.Opencode do
     Map.put(context, :running, %{thread: World.thread_id(context, @thread)})
   end
 
-  # The node talks to OpenCode over ACP, so its event stream is the agent's connection.
+  # The MC talks to OpenCode over ACP, so its event stream is the agent's connection.
   step "an OpenCode turn is streaming", context do
     context =
       context |> World.fake_providers() |> World.launch_on(@thread, "opencode", "wait for me")

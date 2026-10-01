@@ -11,7 +11,7 @@
 
 #include "DiffModel.h"
 
-class NodeClient;
+class McClient;
 class TimelineModel;
 
 // The Diff tab: what a thread's turns changed, from the checkpoint each
@@ -39,7 +39,7 @@ class ThreadDiff : public QObject {
   // The turn shown (0: all changes).
   Q_PROPERTY(int shownTurn READ shownTurn NOTIFY selectionChanged)
   // idle, loading, ready, empty (nothing to show, `message` says why) or
-  // error (`message` is the node's reason).
+  // error (`message` is the MC's reason).
   Q_PROPERTY(QString status READ status NOTIFY statusChanged)
   Q_PROPERTY(QString message READ message NOTIFY statusChanged)
   Q_PROPERTY(bool ignoreWhitespace READ ignoreWhitespace WRITE setIgnoreWhitespace NOTIFY optionsChanged)
@@ -53,7 +53,7 @@ class ThreadDiff : public QObject {
 public:
   using Notify = std::function<void(const QString& type, const QString& title, const QString& description)>;
 
-  ThreadDiff(NodeClient* client, Notify notify, QObject* parent = nullptr);
+  ThreadDiff(McClient* client, Notify notify, QObject* parent = nullptr);
 
   // The thread shown, and its timeline (for its checkpoints and whether it is
   // working; it may come later than the thread).
@@ -103,7 +103,7 @@ private:
   void setStatus(const QString& status, const QString& message = {});
   QString loadKey() const;
 
-  NodeClient* m_client;
+  McClient* m_client;
   Notify m_notify;
   DiffModel m_model;
   QString m_environment;

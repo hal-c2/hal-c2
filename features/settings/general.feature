@@ -19,7 +19,7 @@
 
 Feature: General settings
   The General section holds the everyday behaviour of threads, the composer, diffs and
-  confirmations. Rows that the node honours apply to the environments chosen in the settings
+  confirmations. Rows that the MC honours apply to the environments chosen in the settings
   scope; the rest follow the user on this device. Each changed row can be reset to its default.
 
   Background:
@@ -57,32 +57,32 @@ Feature: General settings
       When the user cancels the scheduled continuation in that thread
       Then the thread does not continue on its own
 
-    @node
+    @mc
     Scenario: A thread whose pull requests all merged settles when merge settling is on
       Given "Auto-settle merged threads" is on
       And every pull request linked to a thread has merged after the user last wrote in it
-      When the node sweeps threads
+      When the MC sweeps threads
       Then the thread is settled
 
-    @node
+    @mc
     Scenario: A thread with a merged pull request stays when merge settling is off
       Given "Auto-settle merged threads" is off
       And every pull request linked to a thread has merged
-      When the node sweeps threads
+      When the MC sweeps threads
       Then the thread is not settled for the merge
 
-    @node
+    @mc
     Scenario: A thread idle longer than the chosen days settles
       Given "Auto-settle inactive threads" is on with 3 days
       And a thread has had no activity for 4 days
-      When the node sweeps threads
+      When the MC sweeps threads
       Then the thread is settled
 
-    @node
+    @mc
     Scenario: Turning inactive settling off keeps idle threads
       Given "Auto-settle inactive threads" is off
       And a thread has had no activity for 30 days
-      When the node sweeps threads
+      When the MC sweeps threads
       Then the thread is not settled
 
     @desktop @mobile @backlog-mobile
@@ -103,7 +103,7 @@ Feature: General settings
 
     @backlog @desktop
     Scenario: Settling rows are hidden when a chosen environment cannot settle threads
-      Given the settings scope includes an environment whose node does not settle threads
+      Given the settings scope includes an environment whose MC does not settle threads
       Then the auto-settle rows are not shown
 
   Rule: Behaviour
@@ -119,8 +119,8 @@ Feature: General settings
         | 12-hour        | with AM and PM                          |
         | 24-hour        | on a 24-hour clock                      |
 
-    @node
-    Scenario Outline: The node streams replies as the chosen mode says
+    @mc
+    Scenario Outline: The MC streams replies as the chosen mode says
       Given the response streaming mode is "<mode>"
       When the agent writes a long reply
       Then the reply appears <appears>
@@ -213,18 +213,18 @@ Feature: General settings
         | Queue | waits until the run ends            |
         | Steer | is sent into the current run        |
 
-    @node
+    @mc
     Scenario: A turn cut off by a restart continues when continuation is on
       Given "Continue threads after restarts" is on for the project
-      And a turn was running when the node stopped
-      When the node starts again
+      And a turn was running when the MC stopped
+      When the MC starts again
       Then the thread is asked to continue where it left off
 
-    @node
+    @mc
     Scenario: A turn cut off by a restart stays stopped when continuation is off
       Given "Continue threads after restarts" is off for the project
-      And a turn was running when the node stopped
-      When the node starts again
+      And a turn was running when the MC stopped
+      When the MC starts again
       Then the thread stays interrupted
 
     @backlog @desktop
@@ -235,13 +235,13 @@ Feature: General settings
 
   Rule: Projects and threads
 
-    @node
+    @mc
     Scenario: New worktrees start from origin by default
       Given "Start new worktrees from origin" is on
       When an agent creates a worktree for a thread without choosing a base
       Then the worktree starts from the latest matching branch on origin
 
-    @node
+    @mc
     Scenario: New worktrees start from the local branch when origin is off
       Given "Start new worktrees from origin" is off
       When an agent creates a worktree for a thread without choosing a base
@@ -296,10 +296,10 @@ Feature: General settings
 
   Rule: Text generation
 
-    @node
+    @mc
     Scenario: Generated text uses the chosen text generation model
       Given the text generation model is set to a model of an installed provider
-      When the node names a new thread
+      When the MC names a new thread
       Then the title is written by that model
 
     @backlog @desktop

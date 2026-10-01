@@ -13,7 +13,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
     :ok
   end
 
-  test "a turn left running when the node stopped is settled at boot" do
+  test "a turn left running when the MC stopped is settled at boot" do
     :ok = HalC2.Shell.subscribe(self())
     at = "2026-09-23T10:00:00.000Z"
 

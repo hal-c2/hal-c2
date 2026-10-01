@@ -11,7 +11,7 @@
 
 #include "FileTreeModel.h"
 
-class NodeClient;
+class McClient;
 
 // A file's text as one row per line, so a ListView only lays out the lines on
 // screen: a 1 MB file is one string and a list of offsets into it.
@@ -44,7 +44,7 @@ private:
 };
 
 // The Files tab: a thread's workspace (its worktree, else its project's
-// folder) browsed through the node's `projects.listEntries`, searched with
+// folder) browsed through the MC's `projects.listEntries`, searched with
 // `projects.searchEntries` and read with `projects.readFile`, so a thread on a
 // remote environment browses that machine's files.
 //
@@ -62,7 +62,7 @@ class WorkspaceFiles : public QObject {
   Q_PROPERTY(QString query READ query WRITE setQuery NOTIFY queryChanged)
   // A search is on its way.
   Q_PROPERTY(bool searching READ searching NOTIFY searchChanged)
-  // The node had more matches than it sent.
+  // The MC had more matches than it sent.
   Q_PROPERTY(bool searchTruncated READ searchTruncated NOTIFY searchChanged)
   Q_PROPERTY(QString searchProblem READ searchProblem NOTIFY searchChanged)
   // The file in the viewer, and how it is: none, loading, ready or error.
@@ -82,13 +82,13 @@ public:
   static constexpr int searchDelayMs = 120;
   static constexpr int searchLimit = 200;
 
-  explicit WorkspaceFiles(NodeClient* client, QObject* parent = nullptr);
+  explicit WorkspaceFiles(McClient* client, QObject* parent = nullptr);
 
   // One `projects.searchEntries` for `query` under `cwd`: the Files tab's
   // search, and the composer's @ menu.
   using SearchDone =
       std::function<void(const QList<FileTreeModel::Entry>& entries, bool truncated, const std::optional<QString>& error)>;
-  static void searchEntries(NodeClient* client, QObject* context, const QString& environmentId, const QString& cwd, const QString& query,
+  static void searchEntries(McClient* client, QObject* context, const QString& environmentId, const QString& cwd, const QString& query,
                             int limit, SearchDone done);
 
   FileTreeModel* tree() { return &m_tree; }
@@ -138,7 +138,7 @@ private:
   void search();
   void walkReveal();
 
-  NodeClient* m_client;
+  McClient* m_client;
   FileTreeModel m_tree;
   TextLinesModel m_lines;
   QString m_environment;

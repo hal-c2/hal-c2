@@ -1,6 +1,6 @@
 defmodule HalC2.BackgroundPolicy do
   @moduledoc """
-  When a node may do background work nobody is looking at, as the Node server's
+  When an MC may do background work nobody is looking at, as the Node server's
   BackgroundPolicy decides it.
 
   Clients report what they show and whether they are in front
@@ -13,8 +13,8 @@ defmodule HalC2.BackgroundPolicy do
   activity settings (locked, low power, on battery, hot).
 
   Watchers (`subscribe/1`, `subscribeBackgroundPolicy`) get
-  `{:hal_c2_background_policy, node, snapshot}` whenever the policy changes. Until a
-  desktop reports host power, a Linux node reads whether it is on battery from
+  `{:hal_c2_background_policy, mc, snapshot}` whenever the policy changes. Until a
+  desktop reports host power, a Linux MC reads whether it is on battery from
   `/sys/class/power_supply` every 30 seconds.
   """
 
@@ -98,15 +98,15 @@ defmodule HalC2.BackgroundPolicy do
   def run_scope_work?(scope) do
     GenServer.call(__MODULE__, {:scope, scope})
   catch
-    # A node without the policy (tools, tests) does its work.
+    # An MC without the policy (tools, tests) does its work.
     :exit, {:noproc, _} -> true
-    # A node too slow to answer skips this round.
+    # An MC too slow to answer skips this round.
     :exit, {:timeout, _} -> false
   end
 
   @doc """
   Whether a client has thread `thread_id` in the foreground: visible, focused or
-  just used, and reporting the thread's scope. The node notifies about a thread
+  just used, and reporting the thread's scope. The MC notifies about a thread
   nobody is watching (`HalC2.Plugins.turn_finished/2`).
   """
   def watched?(thread_id) do
@@ -237,7 +237,7 @@ defmodule HalC2.BackgroundPolicy do
     {:noreply, notify(state, next)}
   end
 
-  # A desktop's report wins; without one the node asks the operating system.
+  # A desktop's report wins; without one the MC asks the operating system.
   def handle_info(:probe_power, state) do
     if state.power_timer, do: Process.cancel_timer(state.power_timer)
     state = %{state | power_timer: Process.send_after(self(), :probe_power, @power_every)}

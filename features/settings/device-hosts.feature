@@ -10,28 +10,28 @@
 
 Feature: Device hosts
   Simulators and emulators on another machine used to be reached over SSH from an environment.
-  On hal-c2 every machine is its own node: a remote machine joins the cluster and its devices
-  appear under its own environment, so SSH device hosts are dropped and the node says so.
+  On hal-c2 every machine is its own MC: a remote machine joins the cluster and its devices
+  appear under its own environment, so SSH device hosts are dropped and the MC says so.
 
   Background:
     Given the user has opened the Integrations settings for the environment "Laptop"
 
-  Rule: The node explains that SSH device hosts moved to cluster nodes
+  Rule: The MC explains that SSH device hosts moved to cluster MCs
 
-    @node
-    Scenario: Testing an SSH device host tells the user to add that machine as a node
+    @mc
+    Scenario: Testing an SSH device host tells the user to add that machine as an MC
       Given a device host "Mac mini" with the SSH target "mac-mini"
-      When the node tests the connection to "Mac mini"
+      When the MC tests the connection to "Mac mini"
       Then "Mac mini" is reported unavailable
-      And the reason says to run HAL-C2 on "mac-mini" and add it to this cluster as a node
+      And the reason says to run HAL-C2 on "mac-mini" and add it to this cluster as an MC
 
-    @node
+    @mc
     Scenario: A configured SSH device host is listed as unavailable
       Given the settings list a device host "Mac mini"
-      When the node lists devices
+      When the MC lists devices
       Then "Mac mini" is listed as unavailable with the same reason
 
-    @node
+    @mc
     Scenario: Retrying an SSH device host keeps it unavailable
       Given "Mac mini" is listed as unavailable
       When the user retries "Mac mini"

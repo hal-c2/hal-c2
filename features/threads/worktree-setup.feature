@@ -11,44 +11,44 @@ Feature: Preparing a new thread's worktree
     Given the project "shop" has a setup script
     And the user started the thread "Cart totals" in a new worktree from "main"
 
-  @node
+  @mc
   Scenario: The worktree is prepared in steps before the agent starts
     When the environment prepares the worktree
     Then it fetches "main" when asked, checks out the worktree and runs the setup script
     And the agent starts only after those steps finish
 
-  @node
+  @mc
   Scenario: A new worktree starts on a temporary branch that is renamed later
     When the worktree is checked out
     Then it is on a temporary branch
     And the branch is renamed from the first message in the background
 
-  @node
+  @mc
   Scenario: Clients see each step of the setup as it happens
     Given a client is watching the setup of "Cart totals"
     When the setup moves from checkout to the setup script
     Then the client sees the new step and the last lines of its output
 
-  @node
+  @mc
   Scenario: Cancelling the setup removes the worktree
     Given the setup script is still running
     When the user cancels the setup
     Then the worktree is removed
     And the thread's first run is cancelled
 
-  @node
+  @mc
   Scenario: The setup cannot be cancelled once the agent has started
     Given the agent has started working in "Cart totals"
     When the user tries to cancel the setup
     Then the setup is not cancelled
 
-  @node
+  @mc
   Scenario: Setup progress is not kept across a restart
     Given the worktree for "Cart totals" was prepared
     When the environment restarts
     Then "Cart totals" shows no setup progress
 
-  @node
+  @mc
   Scenario Outline: A step that is not needed is skipped
     Given <situation>
     When the environment prepares the worktree
@@ -61,41 +61,41 @@ Feature: Preparing a new thread's worktree
       | the project has no "origin" remote                | fetch        |
       | the project has no script to run on new worktrees | setup script |
 
-  @node
+  @mc
   Scenario: The worktree starts from the local branch when origin lacks it
     Given the user asked to start from origin
     And "origin" has no branch "main"
     When the environment prepares the worktree
     Then the worktree starts from the local "main"
 
-  @node
+  @mc
   Scenario: A branch the user named is used as is
     Given the user named the branch "feature/cart-totals" for the new worktree
     When the worktree is checked out
     Then it is on "feature/cart-totals"
     And the branch is not renamed later
 
-  @node
+  @mc
   Scenario: The setup script runs in the thread's setup terminal
     When the setup script starts
     Then it runs in the worktree in a terminal named "setup" on "Cart totals"
     And the user can open that terminal to follow it
 
-  @node
+  @mc
   Scenario: A setup script that must finish first stops the thread when it fails
     Given the setup script must finish before the agent starts
     When the setup script exits with 1
     Then the setup fails with "Setup script exited with 1."
     And the agent does not start
 
-  @node
+  @mc
   Scenario: A setup script that runs alongside the agent does not stop it when it fails
     Given the setup script runs alongside the agent
     When the setup script exits with 1 after the agent started
     Then the setup script step is shown as failed with "exited with 1"
     And the agent keeps working in "Cart totals"
 
-  @node
+  @mc
   Scenario Outline: The setup fails when a step cannot happen
     Given <problem>
     When the environment prepares the worktree

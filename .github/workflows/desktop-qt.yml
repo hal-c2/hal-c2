@@ -49,7 +49,7 @@ jobs:
           node-version-file: package.json
           cache: true
           # The web app's packages feed the licence manifest
-          # (third-party-licenses.ts); the node release bundles the Cursor
+          # (third-party-licenses.ts); the MC release bundles the Cursor
           # sidecar with that package's esbuild (apps/server-ex/mix.exs); the
           # host's tests and typecheck need its own.
           run-install: |
@@ -106,8 +106,8 @@ jobs:
           otp-version: "29"
           elixir-version: "1.20.3"
 
-      # The node the desktop app starts (host/elixirNode.ts), staged as hal-c2-node/.
-      - name: Build node release
+      # The MC the desktop app starts (host/elixirMc.ts), staged as hal-c2-mc/.
+      - name: Build MC release
         working-directory: apps/server-ex
         env:
           MIX_ENV: prod

@@ -1,12 +1,12 @@
 // The native Diagnostics settings page (DiagnosticsController): the @desktop
 // and @shared scenarios of features/settings/diagnostics.feature, against a
-// node whose `server.*` diagnostics calls this file fakes.
+// MC whose `server.*` diagnostics calls this file fakes.
 
 #include <QJsonArray>
 #include <QJsonObject>
 
 #include "FakeConfig.h"
-#include "FakeNode.h"
+#include "FakeMc.h"
 #include "Harness.h"
 #include "SettingsController.h"
 #include "World.h"
@@ -21,7 +21,7 @@ struct FakeDiagnostics {
   QList<QJsonObject> editorCalls;  // every shell.openInEditor payload
 };
 
-// A provider session and a terminal under the node.
+// A provider session and a terminal under the MC.
 QJsonObject processes() {
   const auto process = [](int pid, int ppid, const QString& command, int depth) {
     return QJsonObject{{QStringLiteral("pid"), pid},
@@ -45,32 +45,32 @@ QJsonObject processes() {
            QJsonArray{process(kAgentPid, 4000, QStringLiteral("codex app-server"), 0), process(4210, 4000, QStringLiteral("/bin/zsh -l"), 0)}}};
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
-  node.onRpc(QStringLiteral("server.getProcessDiagnostics"), [&node](const FakeNode::Rpc& rpc) { node.reply(rpc, processes()); });
-  node.onRpc(QStringLiteral("server.getProcessResourceHistory"), [&node](const FakeNode::Rpc& rpc) {
-    node.reply(rpc, QJsonObject{{QStringLiteral("windowMs"), rpc.payload.value(QLatin1String("windowMs"))},
+const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("server.getProcessDiagnostics"), [&mc](const FakeMc::Rpc& rpc) { mc.reply(rpc, processes()); });
+  mc.onRpc(QStringLiteral("server.getProcessResourceHistory"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.reply(rpc, QJsonObject{{QStringLiteral("windowMs"), rpc.payload.value(QLatin1String("windowMs"))},
                                 {QStringLiteral("sampleIntervalMs"), 5000},
                                 {QStringLiteral("retainedSampleCount"), 0},
                                 {QStringLiteral("totalCpuSecondsApprox"), 0},
                                 {QStringLiteral("topProcesses"), QJsonArray()},
                                 {QStringLiteral("buckets"), QJsonArray()}});
   });
-  node.onRpc(QStringLiteral("server.getTraceDiagnostics"), [&node](const FakeNode::Rpc& rpc) {
-    node.reply(rpc, QJsonObject{{QStringLiteral("recordCount"), 0},
+  mc.onRpc(QStringLiteral("server.getTraceDiagnostics"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.reply(rpc, QJsonObject{{QStringLiteral("recordCount"), 0},
                                 {QStringLiteral("failureCount"), 0},
                                 {QStringLiteral("slowSpanCount"), 0},
                                 {QStringLiteral("parseErrorCount"), 0}});
   });
-  node.onRpc(QStringLiteral("server.signalProcess"), [&node](const FakeNode::Rpc& rpc) {
-    node.part<FakeDiagnostics>().signals_.append(rpc.payload);
-    node.reply(rpc, QJsonObject{{QStringLiteral("pid"), rpc.payload.value(QLatin1String("pid"))},
+  mc.onRpc(QStringLiteral("server.signalProcess"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeDiagnostics>().signals_.append(rpc.payload);
+    mc.reply(rpc, QJsonObject{{QStringLiteral("pid"), rpc.payload.value(QLatin1String("pid"))},
                                 {QStringLiteral("signal"), rpc.payload.value(QLatin1String("signal"))},
                                 {QStringLiteral("signaled"), true}});
   });
 });
 
 FakeDiagnostics& fake(World& world) {
-  return world.node.part<FakeDiagnostics>();
+  return world.mc.part<FakeDiagnostics>();
 }
 
 QVariantMap diagnostics(World& world) {
@@ -84,15 +84,15 @@ void open(World& world) {
                 [&] { return QStringLiteral("the processes to be listed; diagnostics are %1").arg(show(diagnostics(world))); });
 }
 
-// The node's config as it announces a change, with `editors` as its editors.
+// The MC's config as it announces a change, with `editors` as its editors.
 void setEditors(World& world, const QJsonArray& editors) {
-  FakeConfig& config = fakeConfig(world.node);
+  FakeConfig& config = fakeConfig(world.mc);
   config.config.insert(QStringLiteral("availableEditors"), editors);
   QJsonObject frame = config.config;
   frame.insert(QStringLiteral("settings"), config.settings);
-  for (const int id : world.node.subscribers(QStringLiteral("config"))) {
-    if (world.node.shapeOf(id).value(QLatin1String("environment")) != world.node.environmentId) continue;
-    world.node.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), frame}});
+  for (const int id : world.mc.subscribers(QStringLiteral("config"))) {
+    if (world.mc.shapeOf(id).value(QLatin1String("environment")) != world.mc.environmentId) continue;
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), frame}});
   }
   world.sync();
 }
@@ -100,14 +100,14 @@ void setEditors(World& world, const QJsonArray& editors) {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  step(QStringLiteral("a node running a provider session and a terminal"), [](World& world, const Captures&, const Table&) {
-    FakeConfig& config = fakeConfig(world.node);
+  step(QStringLiteral("an MC running a provider session and a terminal"), [](World& world, const Captures&, const Table&) {
+    FakeConfig& config = fakeConfig(world.mc);
     config.config.insert(QStringLiteral("availableEditors"), QJsonArray{QStringLiteral("zed"), QStringLiteral("cursor")});
     config.config.insert(QStringLiteral("observability"), QJsonObject{{QStringLiteral("logsDirectoryPath"), kLogs}});
     // Over the workspace's fake: this page's calls are this file's to read.
-    world.node.onRpc(QStringLiteral("shell.openInEditor"), [&world](const FakeNode::Rpc& rpc) {
+    world.mc.onRpc(QStringLiteral("shell.openInEditor"), [&world](const FakeMc::Rpc& rpc) {
       fake(world).editorCalls.append(rpc.payload);
-      world.node.reply(rpc, QJsonValue::Null);
+      world.mc.reply(rpc, QJsonValue::Null);
     });
     world.connect();
     world.sync();
@@ -144,7 +144,7 @@ const Steps steps([] {
     world.waitFor([&] { return !fake(world).editorCalls.isEmpty(); }, QStringLiteral("the logs folder to open"));
     const QJsonObject call = fake(world).editorCalls.constLast();
     expect(call == QJsonObject{{QStringLiteral("cwd"), kLogs}, {QStringLiteral("editor"), QStringLiteral("cursor")}},
-           QStringLiteral("the node was asked for %1").arg(show(call.toVariantMap())));
+           QStringLiteral("the MC was asked for %1").arg(show(call.toVariantMap())));
   });
   step(QStringLiteral("if no editor is available the user is told %1").arg(q), [](World& world, const Captures& c, const Table&) {
     setEditors(world, QJsonArray());

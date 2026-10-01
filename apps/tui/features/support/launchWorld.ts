@@ -1,6 +1,6 @@
 // Real processes for launch.feature, all on pipes (never a real terminal).
 //
-// Started directly the client finds a fake protocol-3 node (fakeNode.ts) through
+// Started directly the client finds a fake protocol-3 MC (fakeMc.ts) through
 // the runtime record and access token under a temp `--base-dir`, or pairs with it
 // from `--url`.
 //
@@ -15,7 +15,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { Database } from "bun:sqlite";
 
-import { startFakeNode, type FakeNode } from "./fakeNode.ts";
+import { startFakeMc, type FakeMc } from "./fakeMc.ts";
 import type { World } from "./world.ts";
 
 const TUI_DIR = NodePath.resolve(import.meta.dir, "../..");
@@ -86,12 +86,12 @@ export interface LaunchWorld extends World {
   launched?: LaunchRun;
   /** A client started directly, without the launcher. */
   client?: ProcessRun;
-  /** The node a directly started client finds or pairs with. */
-  node?: FakeNode;
+  /** The MC a directly started client finds or pairs with. */
+  mc?: FakeMc;
   pairingLink?: string;
   /** A directly started client that drew and is still open. */
   direct?: DirectLaunch;
-  /** Tickets the node had issued when it dropped the connection. */
+  /** Tickets the MC had issued when it dropped the connection. */
   ticketsBeforeDrop?: number;
 }
 
@@ -148,7 +148,7 @@ function cleanEnv(ctx: LaunchWorld): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
     if (key.startsWith("HAL_C2_TUI_") || key.startsWith("TMUX") || key.startsWith("SSH_")) continue;
-    if (key === "HAL_C2_HOME" || key === "HAL_C2_NODE_HOME" || key.startsWith("XDG_")) continue;
+    if (key === "HAL_C2_HOME" || key === "HAL_C2_MC_HOME" || key.startsWith("XDG_")) continue;
     if (key === "COLORTERM" || key === "TERM_PROGRAM") continue;
     env[key] = value;
   }
@@ -429,22 +429,22 @@ process.once = ((event, listener) => {
   return path;
 }
 
-// --- a client that finds or pairs with a node itself ---
+// --- a client that finds or pairs with an MC itself ---
 
 /** The temp root a directly started client is given as `--base-dir`. */
 export function baseDir(ctx: LaunchWorld): string {
   return home(ctx);
 }
 
-export function fakeNode(ctx: LaunchWorld, options: { pairingToken?: string } = {}): FakeNode {
-  const node = startFakeNode(options);
-  ctx.cleanups.push(() => node.stop());
-  ctx.node = node;
-  return node;
+export function fakeMc(ctx: LaunchWorld, options: { pairingToken?: string } = {}): FakeMc {
+  const mc = startFakeMc(options);
+  ctx.cleanups.push(() => mc.stop());
+  ctx.mc = mc;
+  return mc;
 }
 
-/** What a running Elixir node leaves under `<root>/{state,data}/elixir`. */
-export function writeNodeRecord(
+/** What a running MC leaves under `<root>/{state,data}/elixir`. */
+export function writeMcRecord(
   ctx: LaunchWorld,
   record: { pid: number; origin: string; accessToken?: string },
 ): void {

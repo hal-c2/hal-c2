@@ -3,28 +3,28 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   Steps for features/settings/hot-code-upgrade.feature, and the release the
   background service and update scenarios share.
 
-  The node runs from a release root on disk (`RELEASE_ROOT`) whose only code of
+  The MC runs from a release root on disk (`RELEASE_ROOT`) whose only code of
   its own is a probe module reporting the version it was built as. A later
   version is a bundle holding the probe rebuilt; a bundle that "changes a native
   library" differs in its manifest's `nifs`, which forces a restart. The service
   is the real `bin/hal-c2-service` around a stand-in `bin/hal_c2` that logs each boot and
-  runs until the node signals the stop an update restart makes.
+  runs until the MC signals the stop an update restart makes.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
   alias HalC2.Upgrade
   alias HalC2.Upgrade.Source
 
   @probe HalC2.Steps.Settings.HotCodeUpgrade.Probe
   @service Path.expand("../../../rel/overlays/bin/hal-c2-service", __DIR__)
   @echo Path.expand("../../support/echo_rpc.py", __DIR__)
-  @unreachable "http://127.0.0.1:1/hal-c2-node-{version}-{platform}.tar.gz"
+  @unreachable "http://127.0.0.1:1/hal-c2-mc-{version}-{platform}.tar.gz"
 
   # Stands in for the release's bin/hal_c2: logs the version start_erl.data names, then
-  # fails if that version is marked broken, or runs until the node stops (a line
+  # fails if that version is marked broken, or runs until the MC stops (a line
   # with the exit status on the `running` fifo), or stops at once.
   @fake_hal_c2 """
   #!/bin/sh
@@ -44,7 +44,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   # --- the release, shared with the other settings steps ------------------------------
 
   @doc """
-  Makes the scenario's node run release `version` from a release root under its
+  Makes the scenario's MC run release `version` from a release root under its
   home, with `HalC2.Upgrade` and `HalC2.Settings` started. Kept in `context.release`
   (`%{root, version}`); a scenario that has one keeps it.
   """
@@ -52,7 +52,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   def running_release(%{release: %{}} = context, _version), do: context
 
   def running_release(context, version) do
-    root = Node.tmp_dir(context.node, "release")
+    root = Mc.tmp_dir(context.mc, "release")
     release_root(root, version)
     File.mkdir_p!(Path.join(root, "bin"))
     File.cp!(@service, Path.join([root, "bin", "hal-c2-service"]))
@@ -76,19 +76,19 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     :persistent_term.erase({Upgrade, :outcome})
     :persistent_term.put({Upgrade, :version}, version)
     compile_probe(version)
-    Node.ensure(HalC2.Settings)
-    Node.ensure(HalC2.Upgrade)
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Upgrade)
     Map.put(context, :release, %{root: root, version: version})
   end
 
   @doc """
   Builds the bundle of `version` (`:hot` changes only the probe's code, `:native`
   also its native library) and returns `{context, archive}`, the archive with its
-  `.sha256` beside it, in no node's cache yet.
+  `.sha256` beside it, in no MC's cache yet.
   """
   def bundle(context, version, kind) do
     context = running_release(context)
-    dir = Node.tmp_dir(context.node, "bundle")
+    dir = Mc.tmp_dir(context.mc, "bundle")
     ebin = Path.join([dir, "lib", "hal_c2_probe-#{version}", "ebin"])
     File.mkdir_p!(ebin)
     [{mod, bin}] = compile_probe(version)
@@ -99,7 +99,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
     archive =
       Path.join(
-        Node.tmp_dir(context.node, "build"),
+        Mc.tmp_dir(context.mc, "build"),
         Source.file_name(version, Upgrade.platform())
       )
 
@@ -114,7 +114,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     {context, archive}
   end
 
-  @doc "Builds the bundle of `version` and puts it in this node's cache."
+  @doc "Builds the bundle of `version` and puts it in this MC's cache."
   def cached_bundle(context, version, kind) do
     {context, archive} = bundle(context, version, kind)
     :ok = Source.put(version, Upgrade.platform(), archive)
@@ -123,7 +123,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
   @doc """
   Starts `bin/hal-c2-service` for the scenario's release and waits for its first boot.
-  The node's update restart (`:restart_exit`) ends that boot with its status.
+  The MC's update restart (`:restart_exit`) ends that boot with its status.
   """
   def start_service(context) do
     context = running_release(context)
@@ -166,7 +166,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   end
 
   @doc """
-  Starts the scenario's node again as `version` booted by the service, as the
+  Starts the scenario's MC again as `version` booted by the service, as the
   release would after an update restart. Clients reconnect afterwards.
   """
   def boot_as(context, version) do
@@ -174,19 +174,19 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     :persistent_term.erase({Upgrade, :outcome})
     :persistent_term.put({Upgrade, :version}, version)
     compile_probe(version)
-    node = Node.restart(context.node)
-    Node.ensure(HalC2.Upgrade)
+    mc = Mc.restart(context.mc)
+    Mc.ensure(HalC2.Upgrade)
     # The outcome is settled once the updater has started.
     :sys.get_state(HalC2.Upgrade)
-    %{context | node: node, clients: %{}}
+    %{context | mc: mc, clients: %{}}
   end
 
-  @doc "The `updateOutcome` a client subscribing to the node's config is sent."
+  @doc "The `updateOutcome` a client subscribing to the MC's config is sent."
   def update_outcome(context) do
     client =
-      Node.sub(World.client(context), 1, %{"type" => "config", "node" => Atom.to_string(node())})
+      Mc.sub(World.client(context), 1, %{"type" => "config", "mc" => Atom.to_string(node())})
 
-    {frame, _client} = Node.await(client, &(&1["t"] == "config"))
+    {frame, _client} = Mc.await(client, &(&1["t"] == "config"))
     frame["updateOutcome"]
   end
 
@@ -198,14 +198,14 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
   # --- steps --------------------------------------------------------------------------------
 
-  step "a node running release {string}", %{args: [version]} = context do
+  step "an MC running release {string}", %{args: [version]} = context do
     context = running_release(context, version)
     assert Upgrade.version() == version
     assert apply(@probe, :version, []) == version
     context
   end
 
-  # The node has a socket, a terminal and an agent session open when the update comes.
+  # The MC has a socket, a terminal and an agent session open when the update comes.
   step "release {string} changes only code", %{args: [version]} = context do
     context |> cached_bundle(version, :hot) |> open_sessions()
   end
@@ -214,7 +214,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     cached_bundle(context, version, :native)
   end
 
-  step "the node runs under its service", context do
+  step "the MC runs under its service", context do
     start_service(context)
   end
 
@@ -225,11 +225,11 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     start_service(context)
   end
 
-  step "the user updates the node to {string}", %{args: [version]} = context do
+  step "the user updates the MC to {string}", %{args: [version]} = context do
     update_to(context, version)
   end
 
-  step "the node runs {string}", %{args: [version]} = context do
+  step "the MC runs {string}", %{args: [version]} = context do
     assert {:ok, %{"targetVersion" => ^version, "method" => "hot-upgrade"}} = context.reply
     assert Upgrade.version() == version
     assert apply(@probe, :version, []) == version
@@ -249,7 +249,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     World.put_client(context, client)
   end
 
-  step "the node installs {string} and restarts", %{args: [version]} = context do
+  step "the MC installs {string} and restarts", %{args: [version]} = context do
     assert {:ok, %{"targetVersion" => ^version}} = context.reply
     assert File.dir?(Path.join([context.release.root, "lib", "hal_c2_probe-#{version}", "ebin"]))
     assert await_service(context) == 0
@@ -269,7 +269,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     context
   end
 
-  step "the node comes back on {string}", %{args: [version]} = context do
+  step "the MC comes back on {string}", %{args: [version]} = context do
     assert {:ok, %{"targetVersion" => target}} = context.reply
     assert await_service(context) == 0
     assert boots(context) == [version, target, version]
@@ -305,9 +305,9 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     context |> World.create_thread(title, "shop") |> mid_turn(title)
   end
 
-  # Beside the scenario's thread, the node has cut-off turns the user moved on from:
+  # Beside the scenario's thread, the MC has cut-off turns the user moved on from:
   # one written in since (a newer queued message), one archived, one deleted.
-  step "the node restarts to finish an update", context do
+  step "the MC restarts to finish an update", context do
     context =
       for title <- ["Wrote since", "Archived", "Deleted"], reduce: context do
         context -> context |> World.create_thread(title, "shop") |> mid_turn(title)
@@ -320,7 +320,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => deleted})
     World.await_row(deleted, & &1["deletedAt"])
 
-    %{context | node: Node.restart(context.node), clients: %{}}
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
   step "{string} is asked to continue where it left off", %{args: [title]} = context do
@@ -338,7 +338,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   # --- where the release comes from ---------------------------------------------------------
 
   step "a cluster peer already downloaded {string}", %{args: [version]} = context do
-    # Connected first: once the peer is up this process also hears of its node, which
+    # Connected first: once the peer is up this process also hears of its MC, which
     # the client's upgrade handshake cannot tell from socket messages.
     context = World.put_client(context, World.client(context))
     {context, archive} = bundle(context, version, :hot)
@@ -348,7 +348,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     Map.merge(context, %{peers: [peer], build: archive})
   end
 
-  step "the node fetches the release from the peer instead of the internet", context do
+  step "the MC fetches the release from the peer instead of the internet", context do
     assert {:ok, %{"targetVersion" => version}} = context.reply
     assert Upgrade.version() == version
     assert cached_sha256(version) == sha256(context.build)
@@ -362,7 +362,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
     {:ok, {_ip, port}} =
       ThousandIsland.listener_info(
-        Node.ensure(
+        Mc.ensure(
           {Bandit,
            plug: {Plug.Static, at: "/", from: Path.dirname(archive)},
            ip: :loopback,
@@ -373,13 +373,13 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
     World.put_env(
       "HAL_C2_UPGRADE_URL",
-      "http://127.0.0.1:#{port}/hal-c2-node-{version}-{platform}.tar.gz"
+      "http://127.0.0.1:#{port}/hal-c2-mc-{version}-{platform}.tar.gz"
     )
 
     context
   end
 
-  step "the update fails and the node keeps running {string}", %{args: [version]} = context do
+  step "the update fails and the MC keeps running {string}", %{args: [version]} = context do
     assert {:error, "ServerSelfUpdateError", %{"reason" => reason}} = context.reply
     assert reason =~ "does not match its checksum"
     assert Upgrade.version() == version
@@ -390,19 +390,19 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
   # --- refusals -----------------------------------------------------------------------------
 
-  step "the node runs from a source checkout", context do
+  step "the MC runs from a source checkout", context do
     System.delete_env("RELEASE_ROOT")
     assert Upgrade.capability() == nil
     context
   end
 
-  step "the node already runs {string}", %{args: [version]} = context do
+  step "the MC already runs {string}", %{args: [version]} = context do
     assert Upgrade.version() == version
     context
   end
 
-  # The bundle needs a restart, and nothing started the node that would do one.
-  step "the node was not started by its service", context do
+  # The bundle needs a restart, and nothing started the MC that would do one.
+  step "the MC was not started by its service", context do
     World.put_env("HAL_C2_SERVICE", "0")
     cached_bundle(context, "1.4.0", :native)
   end
@@ -424,11 +424,11 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
   # --- a cluster ------------------------------------------------------------------------------
 
-  step "three connected nodes", context do
+  step "three connected MCs", context do
     context = running_release(context)
     peers = for name <- ["b", "c"], do: start_peer(context, name)
-    # Peers reach this node's HTTP port for the build.
-    World.put_app_env(:port, context.node.port)
+    # Peers reach this MC's HTTP port for the build.
+    World.put_app_env(:port, context.mc.port)
     assert Enum.sort(Elixir.Node.list()) == Enum.sort(peers)
     Map.put(context, :peers, peers)
   end
@@ -442,7 +442,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     Map.put(context, :build, archive)
   end
 
-  step "the first node receives the build", context do
+  step "the first MC receives the build", context do
     assert_received {:mix_shell, :info, [line]}
     assert line == "#{node()}: hot-upgrade to 1.3.1"
     assert cached_sha256("1.3.1") == sha256(context.build)
@@ -451,8 +451,8 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     context
   end
 
-  # Each peer knows only the first node, and the release download is unreachable.
-  step "the other nodes fetch it from the first", context do
+  # Each peer knows only the first MC, and the release download is unreachable.
+  step "the other MCs fetch it from the first", context do
     sum = sha256(context.build)
 
     for peer <- context.peers do
@@ -525,14 +525,14 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
   defp open_sessions(context) do
     World.put_env("SHELL", "/bin/sh")
-    Node.ensure({Registry, keys: :unique, name: HalC2.Terminal.Registry})
-    Node.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
-    Node.ensure(HalC2.Terminal.Hub)
-    terminal = %{"threadId" => "th-upgrade", "terminalId" => "term-1", "cwd" => context.node.home}
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Terminal.Registry})
+    Mc.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Terminal.Hub)
+    terminal = %{"threadId" => "th-upgrade", "terminalId" => "term-1", "cwd" => context.mc.home}
     assert {:ok, %{"status" => "running", "pid" => shell}} = HalC2.Terminal.open(terminal)
 
     conn =
-      Node.ensure({HalC2.JsonRpc.Connection, cmd: ["python3", "-u", @echo], handler: self()})
+      Mc.ensure({HalC2.JsonRpc.Connection, cmd: ["python3", "-u", @echo], handler: self()})
 
     assert {:ok, _} = HalC2.JsonRpc.Connection.call(conn, "echo", 1)
 
@@ -572,8 +572,8 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     |> Enum.filter(&(&1["text"] == "Continue where you left off."))
   end
 
-  # A second BEAM node running this checkout's code with its own home and HTTP
-  # listener, on the scenario's release at 1.3.0, connected only to this node.
+  # A second BEAM MC running this checkout's code with its own home and HTTP
+  # listener, on the scenario's release at 1.3.0, connected only to this MC.
   defp start_peer(context, name) do
     unless Elixir.Node.alive?() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
@@ -595,11 +595,11 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
         args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1]) ++ [~c"-connect_all", ~c"false"]
       })
 
-    home = Node.tmp_dir(context.node, "peer-#{name}")
+    home = Mc.tmp_dir(context.mc, "peer-#{name}")
     root = Path.join(home, "release")
     release_root(root, "1.3.0")
 
-    for {key, value} <- [start_node: false, home: home, port: 0],
+    for {key, value} <- [start_mc: false, home: home, port: 0],
         do: :ok = :erpc.call(peer, Application, :put_env, [:hal_c2, key, value])
 
     {:ok, _} = :erpc.call(peer, Application, :ensure_all_started, [:hal_c2])
@@ -637,7 +637,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     end
   end
 
-  # Ends the service's running boot with `status`, as the node stopping would.
+  # Ends the service's running boot with `status`, as the MC stopping would.
   defp stop_boot(fifo, status),
     do: System.cmd("timeout", ["5", "sh", "-c", "echo #{status} > \"$0\"", fifo])
 end

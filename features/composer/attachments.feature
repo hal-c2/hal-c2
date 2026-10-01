@@ -69,21 +69,21 @@ Feature: Attaching images and files to a message
       | an image that is already attached    | bug.png is already attached.            |
       | a 101st image                        | You can attach up to 100 images.        |
 
-  @node
-  Scenario Outline: The node refuses uploads over its size limit
+  @mc
+  Scenario Outline: The MC refuses uploads over its size limit
     When a client asks to upload a <kind> of <size>
-    Then the node refuses with "Attachments may be at most <limit> MB."
+    Then the MC refuses with "Attachments may be at most <limit> MB."
 
     Examples:
       | kind  | size  | limit |
       | image | 11 MB | 10    |
       | file  | 51 MB | 50    |
 
-  @node
+  @mc
   Scenario: An upload that is never sent is cleaned up after a day
     Given a client uploaded "notes.pdf" but never sent a message with it
     When more than 24 hours pass
-    Then the node discards the unclaimed upload
+    Then the MC discards the unclaimed upload
 
   @backlog @desktop @mobile
   Scenario: A failed upload blocks sending until it is retried or removed

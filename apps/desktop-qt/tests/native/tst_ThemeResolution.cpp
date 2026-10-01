@@ -1,5 +1,5 @@
 // How ThemeController resolves the theme it publishes: built-in, then this
-// device's, then the node's; halves over the chosen theme; the standard look
+// device's, then the MC's; halves over the chosen theme; the standard look
 // when nothing matches; and the colours every theme is drawn in.
 
 #include <QDir>

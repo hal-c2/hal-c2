@@ -5,16 +5,16 @@
 HAL-C2 keeps its files in the XDG Base Directory layout: config, data, state and cache, each in a
 directory named `hal-c2` under its own base, or all four under one root. What goes in which kind,
 and every precedence rule, is specified in
-[storage-layout.feature](../../features/node/platform/storage-layout.feature); the one-time copy
-from an old home is in [storage-migration.feature](../../features/node/platform/storage-migration.feature);
-the node's side is in [node-startup.feature](../../features/node/platform/node-startup.feature).
+[storage-layout.feature](../../features/mc/platform/storage-layout.feature); the one-time copy
+from an old home is in [storage-migration.feature](../../features/mc/platform/storage-migration.feature);
+the MC's side is in [mc-startup.feature](../../features/mc/platform/mc-startup.feature).
 This page records why the rules are what they are.
 
 ## One resolver per language
 
 [`xdgDirs.ts`](../../packages/shared/src/xdgDirs.ts) is the only resolver for TypeScript: the
 server, Electron, the dev runner, scripts and the TUI all call it, and it is pure so each can.
-The node mirrors the same rules in Elixir, and the SSH and WSL launch scripts spell them in POSIX
+The MC mirrors the same rules in Elixir, and the SSH and WSL launch scripts spell them in POSIX
 shell (`${XDG_STATE_HOME:-$HOME/.local/state}/hal-c2`). A rule change touches all three; the
 feature files are what keeps them in agreement.
 
@@ -47,12 +47,12 @@ before always set it to the home they were installed with, so honouring it would
 to the old home forever. It is treated as a migration source instead, which means nobody can point
 HAL-C2 at an old home in place, deliberately or not.
 
-## The node's `elixir` level
+## The MC's `elixir` level
 
-The desktop app hosts the TypeScript server and hands the node the same root, and both keep a
-`settings.json`, an `environment-id`, secrets and worktrees. The node therefore adds an `elixir`
-level inside every kind (`data/elixir`, `state/elixir/logs`). `HAL_C2_NODE_HOME` is a root for
-the node alone, so it has no `elixir` level, and it outranks `HAL_C2_HOME` for the node.
+The desktop app hosts the TypeScript server and hands the MC the same root, and both keep a
+`settings.json`, an `environment-id`, secrets and worktrees. The MC therefore adds an `elixir`
+level inside every kind (`data/elixir`, `state/elixir/logs`). `HAL_C2_MC_HOME` is a root for
+the MC alone, so it has no `elixir` level, and it outranks `HAL_C2_HOME` for the MC.
 
 ## Migration copies, once
 
@@ -65,7 +65,7 @@ using `~/.t3` in place, which made a developer's T3 Code install the live HAL-C2
   `migrated-from.json` in the state directory. The record lives in state, not data, so deleting
   the data directory does not copy the old home back. `HAL_C2_NO_MIGRATE=1` writes the record too
   (`skipped`), so a later start without the variable does not migrate. The TypeScript server and
-  the node each migrate their own part of the old home (`userdata` or `dev`, and `elixir`) and keep
+  the MC each migrate their own part of the old home (`userdata` or `dev`, and `elixir`) and keep
   their own record.
 - Databases are copied with `VACUUM INTO`: the source may be open, and a file copy of a live
   SQLite database is a corrupt copy. Everything lands in a `data.migrating-<pid>` directory that is

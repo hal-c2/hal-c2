@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// The right panel's Files tab: the thread's workspace as the node lists it,
+// The right panel's Files tab: the thread's workspace as the MC lists it,
 // from a WorkspaceFiles (Panel.files). The tree loads a folder when it is
 // expanded; typing searches the whole workspace. A file opens read-only
 // below the tree, one row per line.

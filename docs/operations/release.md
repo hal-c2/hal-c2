@@ -2,18 +2,18 @@
 
 > For maintainers. Using HAL-C2? See [docs/user](../user/).
 
-HAL-C2 ships the node, the Qt desktop and the TUI. The release pipeline inherited from T3 Code
+HAL-C2 ships the MC, the Qt desktop and the TUI. The release pipeline inherited from T3 Code
 (Electron desktop, the npm CLI, the hosted web app, AUR and the mobile store builds) was removed
 with its workflows; `git log -- .github/workflows/release.yml` has it.
 
-## Elixir node
+## MC
 
-`.github/workflows/release-node.yml` publishes the bundles nodes update from (`HalC2.Upgrade`):
-`hal-c2-node-<version>-<platform>.tar.gz` and its `.sha256` for `darwin-arm64`, `linux-x64` and
-`linux-arm64`, on a `node-v<version>` prerelease. Push a `node-v<version>` tag, or dispatch it with
-a `version` (defaulting to `apps/server/package.json`). Nodes fetch from that release unless
+`.github/workflows/release-mc.yml` publishes the bundles MCs update from (`HalC2.Upgrade`):
+`hal-c2-mc-<version>-<platform>.tar.gz` and its `.sha256` for `darwin-arm64`, `linux-x64` and
+`linux-arm64`, on an `mc-v<version>` prerelease. Push a `mc-v<version>` tag, or dispatch it with
+a `version` (defaulting to `apps/server/package.json`). MCs fetch from that release unless
 `HAL_C2_UPGRADE_URL` names another host, and pass bundles on to their cluster peers. See the
-[node README](../../apps/server-ex/README.md#upgrades) for building and sending one by hand.
+[MC README](../../apps/server-ex/README.md#upgrades) for building and sending one by hand.
 
 ## Qt desktop
 

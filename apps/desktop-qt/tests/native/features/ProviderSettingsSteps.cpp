@@ -1,6 +1,6 @@
 // The Providers settings section on the desktop (ProviderSettingsController):
 // the @desktop scenarios of features/settings/providers-panel.feature and
-// the desktop's side of providers/provider-setup.feature. The node's own
+// the desktop's side of providers/provider-setup.feature. The MC's own
 // environment plays "Laptop", this machine; others are linked environments.
 
 #include <QDateTime>
@@ -17,7 +17,7 @@
 
 namespace {
 
-// The node's side of sign-in (HalC2.ProviderAuth) and updates.
+// The MC's side of sign-in (HalC2.ProviderAuth) and updates.
 struct FakeProviders {
   QHash<QString, QJsonObject> auth;  // each instance's ProviderAuthState
   QStringList starts, cancels, logouts;
@@ -26,7 +26,7 @@ struct FakeProviders {
   QList<QJsonObject> completes;  // provider.auth.complete payloads
   bool terminalGone = false;
   QString credential;  // the credential the agent last asked for
-  QList<FakeNode::Rpc> updates;
+  QList<FakeMc::Rpc> updates;
   QString updateRefusal;
   int followedBefore = 0;
   QString instanceId;  // the instance the scenario last acted on
@@ -52,7 +52,7 @@ struct FakeProviders {
   QStringList installCalls;
   // Calls the scenario answers itself, one at a time, while held.
   bool holdPrepares = false, holdStarts = false;
-  QList<FakeNode::Rpc> heldPrepares, heldStarts;
+  QList<FakeMc::Rpc> heldPrepares, heldStarts;
 };
 
 
@@ -72,7 +72,7 @@ QJsonArray registryAgents() {
 }
 
 FakeProviders& fake(World& world) {
-  return world.node.part<FakeProviders>();
+  return world.mc.part<FakeProviders>();
 }
 
 const QString kSignInUrl = QStringLiteral("https://auth.example/gemini");
@@ -87,40 +87,40 @@ QJsonObject authState(const QString& instanceId, const QJsonObject& fields = {})
   return state;
 }
 
-void sendAuth(FakeNode& node, const QString& instanceId, const QJsonObject& fields) {
-  QJsonObject& state = node.part<FakeProviders>().auth[instanceId];
+void sendAuth(FakeMc& mc, const QString& instanceId, const QJsonObject& fields) {
+  QJsonObject& state = mc.part<FakeProviders>().auth[instanceId];
   state = authState(instanceId, fields);
-  for (const int id : node.subscribers(QStringLiteral("providerAuth"))) {
-    if (node.shapeOf(id).value(QLatin1String("instanceId")) != instanceId) continue;
-    node.send({{QStringLiteral("t"), QStringLiteral("providerAuth")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), state}});
+  for (const int id : mc.subscribers(QStringLiteral("providerAuth"))) {
+    if (mc.shapeOf(id).value(QLatin1String("instanceId")) != instanceId) continue;
+    mc.send({{QStringLiteral("t"), QStringLiteral("providerAuth")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), state}});
   }
 }
 
 // The managed runtime changes as `patch` says, and every client following it hears.
-void sendInstall(FakeNode& node, const QJsonObject& patch) {
-  QJsonObject& state = node.part<FakeProviders>().install;
+void sendInstall(FakeMc& mc, const QJsonObject& patch) {
+  QJsonObject& state = mc.part<FakeProviders>().install;
   for (auto it = patch.begin(); it != patch.end(); ++it) state.insert(it.key(), it.value());
-  for (const int id : node.subscribers(QStringLiteral("providerInstall"))) {
-    node.send({{QStringLiteral("t"), QStringLiteral("providerInstall")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), state}});
+  for (const int id : mc.subscribers(QStringLiteral("providerInstall"))) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("providerInstall")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), state}});
   }
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
-  node.onShape(QStringLiteral("providerAuth"), [&node](int id, const QJsonObject& shape) {
+const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("providerAuth"), [&mc](int id, const QJsonObject& shape) {
     const QString instanceId = shape.value(QLatin1String("instanceId")).toString();
-    const QJsonObject state = node.part<FakeProviders>().auth.value(instanceId, authState(instanceId));
-    node.send({{QStringLiteral("t"), QStringLiteral("providerAuth")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), state}});
+    const QJsonObject state = mc.part<FakeProviders>().auth.value(instanceId, authState(instanceId));
+    mc.send({{QStringLiteral("t"), QStringLiteral("providerAuth")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), state}});
   });
-  node.onRpc(QStringLiteral("provider.auth.start"), [&node](const FakeNode::Rpc& rpc) {
+  mc.onRpc(QStringLiteral("provider.auth.start"), [&mc](const FakeMc::Rpc& rpc) {
     const QString instanceId = rpc.payload.value(QLatin1String("instanceId")).toString();
-    node.part<FakeProviders>().starts.append(instanceId);
-    node.part<FakeProviders>().methods.append(rpc.payload.value(QLatin1String("methodId")).toString());
-    if (node.part<FakeProviders>().holdStarts) {
-      node.part<FakeProviders>().heldStarts.append(rpc);
+    mc.part<FakeProviders>().starts.append(instanceId);
+    mc.part<FakeProviders>().methods.append(rpc.payload.value(QLatin1String("methodId")).toString());
+    if (mc.part<FakeProviders>().holdStarts) {
+      mc.part<FakeProviders>().heldStarts.append(rpc);
       return;
     }
-    node.reply(rpc, QJsonObject{});
-    sendAuth(node, instanceId,
+    mc.reply(rpc, QJsonObject{});
+    sendAuth(mc, instanceId,
              {{QStringLiteral("phase"), QStringLiteral("waiting")},
               {QStringLiteral("flowId"), QStringLiteral("flow-1")},
               {QStringLiteral("interaction"), QJsonObject{{QStringLiteral("id"), QStringLiteral("browser-1")},
@@ -128,111 +128,111 @@ const FakeNode::Extension extension([](FakeNode& node) {
                                                           {QStringLiteral("url"), kSignInUrl},
                                                           {QStringLiteral("requiresConsent"), false}}}});
   });
-  node.onShape(QStringLiteral("providerInstall"), [&node](int id, const QJsonObject&) {
-    node.send({{QStringLiteral("t"), QStringLiteral("providerInstall")}, {QStringLiteral("id"), id},
-               {QStringLiteral("state"), node.part<FakeProviders>().install}});
+  mc.onShape(QStringLiteral("providerInstall"), [&mc](int id, const QJsonObject&) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("providerInstall")}, {QStringLiteral("id"), id},
+               {QStringLiteral("state"), mc.part<FakeProviders>().install}});
   });
-  node.onRpc(QStringLiteral("provider.install.start"), [&node](const FakeNode::Rpc& rpc) {
-    node.part<FakeProviders>().installCalls.append(QStringLiteral("start"));
-    sendInstall(node, {{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("phase"), QStringLiteral("downloading")},
+  mc.onRpc(QStringLiteral("provider.install.start"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeProviders>().installCalls.append(QStringLiteral("start"));
+    sendInstall(mc, {{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("phase"), QStringLiteral("downloading")},
                        {QStringLiteral("downloadedBytes"), 0}, {QStringLiteral("message"), QStringLiteral("Downloading Google's official Antigravity runtime.")}});
-    node.reply(rpc, node.part<FakeProviders>().install);
+    mc.reply(rpc, mc.part<FakeProviders>().install);
   });
-  node.onRpc(QStringLiteral("provider.install.cancel"), [&node](const FakeNode::Rpc& rpc) {
-    node.part<FakeProviders>().installCalls.append(QStringLiteral("cancel ") + rpc.payload.value(QLatin1String("operationId")).toString());
-    sendInstall(node, {{QStringLiteral("phase"), QStringLiteral("cancelled")},
+  mc.onRpc(QStringLiteral("provider.install.cancel"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeProviders>().installCalls.append(QStringLiteral("cancel ") + rpc.payload.value(QLatin1String("operationId")).toString());
+    sendInstall(mc, {{QStringLiteral("phase"), QStringLiteral("cancelled")},
                        {QStringLiteral("message"), QStringLiteral("Installation cancelled. The previous runtime is unchanged.")}});
-    node.reply(rpc, node.part<FakeProviders>().install);
+    mc.reply(rpc, mc.part<FakeProviders>().install);
   });
-  node.onRpc(QStringLiteral("provider.install.remove"), [&node](const FakeNode::Rpc& rpc) {
-    node.part<FakeProviders>().installCalls.append(QStringLiteral("remove"));
-    sendInstall(node, {{QStringLiteral("operationId"), QJsonValue::Null}, {QStringLiteral("phase"), QStringLiteral("idle")},
+  mc.onRpc(QStringLiteral("provider.install.remove"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeProviders>().installCalls.append(QStringLiteral("remove"));
+    sendInstall(mc, {{QStringLiteral("operationId"), QJsonValue::Null}, {QStringLiteral("phase"), QStringLiteral("idle")},
                        {QStringLiteral("downloadedBytes"), 0}, {QStringLiteral("installedVersion"), QJsonValue::Null},
                        {QStringLiteral("canRemove"), false}, {QStringLiteral("message"), QJsonValue::Null}});
-    node.reply(rpc, node.part<FakeProviders>().install);
+    mc.reply(rpc, mc.part<FakeProviders>().install);
   });
-  node.onRpc(QStringLiteral("server.acceptAcpRegistryUrlAuth"), [&node](const FakeNode::Rpc& rpc) {
-    FakeProviders& fake = node.part<FakeProviders>();
+  mc.onRpc(QStringLiteral("server.acceptAcpRegistryUrlAuth"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeProviders& fake = mc.part<FakeProviders>();
     fake.urlAuthAccepts.append(rpc.payload.value(QLatin1String("instanceId")).toString() + QLatin1Char('/') +
                                rpc.payload.value(QLatin1String("elicitationId")).toString());
-    node.reply(rpc, QJsonObject{{QStringLiteral("accepted"), !fake.urlAuthExpired}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("accepted"), !fake.urlAuthExpired}});
   });
-  node.onRpc(QStringLiteral("provider.auth.cancel"), [&node](const FakeNode::Rpc& rpc) {
+  mc.onRpc(QStringLiteral("provider.auth.cancel"), [&mc](const FakeMc::Rpc& rpc) {
     const QString instanceId = rpc.payload.value(QLatin1String("instanceId")).toString();
-    node.part<FakeProviders>().cancels.append(rpc.payload.value(QLatin1String("flowId")).toString());
-    node.reply(rpc, QJsonObject{});
-    sendAuth(node, instanceId, {{QStringLiteral("phase"), QStringLiteral("cancelled")}});
+    mc.part<FakeProviders>().cancels.append(rpc.payload.value(QLatin1String("flowId")).toString());
+    mc.reply(rpc, QJsonObject{});
+    sendAuth(mc, instanceId, {{QStringLiteral("phase"), QStringLiteral("cancelled")}});
   });
-  node.onRpc(QStringLiteral("provider.auth.respond"), [&node](const FakeNode::Rpc& rpc) {
-    FakeProviders& fake = node.part<FakeProviders>();
+  mc.onRpc(QStringLiteral("provider.auth.respond"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeProviders& fake = mc.part<FakeProviders>();
     const bool terminal = rpc.payload.value(QLatin1String("response")).toObject().value(QLatin1String("type")) == QLatin1String("terminal");
     if (terminal && fake.terminalGone) {
-      node.refuse(rpc, QStringLiteral("No sign-in is waiting for that input."));
+      mc.refuse(rpc, QStringLiteral("No sign-in is waiting for that input."));
       return;
     }
     fake.responses.append(rpc.payload);
-    node.reply(rpc, QJsonObject{});
+    mc.reply(rpc, QJsonObject{});
   });
-  node.onRpc(QStringLiteral("provider.auth.complete"), [&node](const FakeNode::Rpc& rpc) {
-    node.part<FakeProviders>().completes.append(rpc.payload);
-    node.reply(rpc, QJsonObject{});
+  mc.onRpc(QStringLiteral("provider.auth.complete"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeProviders>().completes.append(rpc.payload);
+    mc.reply(rpc, QJsonObject{});
   });
-  node.onRpc(QStringLiteral("provider.auth.logout"), [&node](const FakeNode::Rpc& rpc) {
-    node.part<FakeProviders>().logouts.append(rpc.payload.value(QLatin1String("instanceId")).toString());
-    node.reply(rpc, QJsonObject{});
+  mc.onRpc(QStringLiteral("provider.auth.logout"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeProviders>().logouts.append(rpc.payload.value(QLatin1String("instanceId")).toString());
+    mc.reply(rpc, QJsonObject{});
   });
-  node.onRpc(QStringLiteral("server.uninstallAcpRegistryManagedBinary"), [&node](const FakeNode::Rpc& rpc) {
-    FakeProviders& fake = node.part<FakeProviders>();
+  mc.onRpc(QStringLiteral("server.uninstallAcpRegistryManagedBinary"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeProviders& fake = mc.part<FakeProviders>();
     fake.uninstalls.append(rpc.payload.value(QLatin1String("agentId")).toString());
-    if (fake.uninstallRefusal.isEmpty()) node.reply(rpc, QJsonObject{});
-    else node.refuse(rpc, fake.uninstallRefusal);
+    if (fake.uninstallRefusal.isEmpty()) mc.reply(rpc, QJsonObject{});
+    else mc.refuse(rpc, fake.uninstallRefusal);
   });
-  node.onRpc(QStringLiteral("server.searchAcpRegistry"), [&node](const FakeNode::Rpc& rpc) {
+  mc.onRpc(QStringLiteral("server.searchAcpRegistry"), [&mc](const FakeMc::Rpc& rpc) {
     const QString query = rpc.payload.value(QLatin1String("query")).toString();
-    node.part<FakeProviders>().searches.append(query);
+    mc.part<FakeProviders>().searches.append(query);
     QJsonArray agents;
     for (const QJsonValue& agent : registryAgents()) {
       if (agent.toObject().value(QLatin1String("id")).toString().contains(query, Qt::CaseInsensitive)) agents.append(agent);
     }
-    node.reply(rpc, QJsonObject{{QStringLiteral("agents"), agents}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("agents"), agents}});
   });
-  node.onRpc(QStringLiteral("server.prepareAcpRegistryAgent"), [&node](const FakeNode::Rpc& rpc) {
+  mc.onRpc(QStringLiteral("server.prepareAcpRegistryAgent"), [&mc](const FakeMc::Rpc& rpc) {
     const QString agentId = rpc.payload.value(QLatin1String("agentId")).toString();
-    node.part<FakeProviders>().prepares.append(agentId);
-    if (node.part<FakeProviders>().holdPrepares) {
-      node.part<FakeProviders>().heldPrepares.append(rpc);
+    mc.part<FakeProviders>().prepares.append(agentId);
+    if (mc.part<FakeProviders>().holdPrepares) {
+      mc.part<FakeProviders>().heldPrepares.append(rpc);
       return;
     }
-    node.reply(rpc, QJsonObject{{QStringLiteral("agentId"), agentId},
+    mc.reply(rpc, QJsonObject{{QStringLiteral("agentId"), agentId},
                                 {QStringLiteral("version"), QStringLiteral("1.2.3")},
                                 {QStringLiteral("distribution"), QStringLiteral("npx")},
                                 {QStringLiteral("prepared"), true}});
   });
-  node.onRpc(QStringLiteral("server.listAcpRegistrySessions"), [&node](const FakeNode::Rpc& rpc) {
-    node.reply(rpc, QJsonObject{{QStringLiteral("sessions"), node.part<FakeProviders>().acpSessions},
+  mc.onRpc(QStringLiteral("server.listAcpRegistrySessions"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.reply(rpc, QJsonObject{{QStringLiteral("sessions"), mc.part<FakeProviders>().acpSessions},
                                 {QStringLiteral("nextCursor"), QJsonValue::Null},
                                 {QStringLiteral("canLoad"), true},
                                 {QStringLiteral("canResume"), false},
                                 {QStringLiteral("canDelete"), true}});
   });
-  node.onRpc(QStringLiteral("server.importAcpRegistrySession"), [&node](const FakeNode::Rpc& rpc) {
-    node.part<FakeProviders>().acpImports.append(rpc.payload);
-    node.reply(rpc, QJsonObject{{QStringLiteral("threadId"), QStringLiteral("thread-imported")}, {QStringLiteral("imported"), true}});
+  mc.onRpc(QStringLiteral("server.importAcpRegistrySession"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeProviders>().acpImports.append(rpc.payload);
+    mc.reply(rpc, QJsonObject{{QStringLiteral("threadId"), QStringLiteral("thread-imported")}, {QStringLiteral("imported"), true}});
   });
-  node.onRpc(QStringLiteral("server.deleteAcpRegistrySession"), [&node](const FakeNode::Rpc& rpc) {
-    FakeProviders& fake = node.part<FakeProviders>();
+  mc.onRpc(QStringLiteral("server.deleteAcpRegistrySession"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeProviders& fake = mc.part<FakeProviders>();
     const QString sessionId = rpc.payload.value(QLatin1String("sessionId")).toString();
     fake.acpDeletes.append(sessionId);
     for (qsizetype i = 0; i < fake.acpSessions.size(); ++i) {
       if (fake.acpSessions.at(i).toObject().value(QLatin1String("sessionId")) == sessionId) fake.acpSessions.removeAt(i--);
     }
-    node.reply(rpc, QJsonObject{{QStringLiteral("deleted"), true}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("deleted"), true}});
   });
-  node.onRpc(QStringLiteral("server.listAcpRegistryProviders"), [&node](const FakeNode::Rpc& rpc) {
-    node.reply(rpc, QJsonObject{{QStringLiteral("providers"), node.part<FakeProviders>().acpProviders}});
+  mc.onRpc(QStringLiteral("server.listAcpRegistryProviders"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.reply(rpc, QJsonObject{{QStringLiteral("providers"), mc.part<FakeProviders>().acpProviders}});
   });
-  const auto current = [&node](const QString& providerId, const QJsonValue& value) {
-    QJsonArray& providers = node.part<FakeProviders>().acpProviders;
+  const auto current = [&mc](const QString& providerId, const QJsonValue& value) {
+    QJsonArray& providers = mc.part<FakeProviders>().acpProviders;
     for (qsizetype i = 0; i < providers.size(); ++i) {
       QJsonObject entry = providers.at(i).toObject();
       if (entry.value(QLatin1String("providerId")) != providerId) continue;
@@ -240,27 +240,27 @@ const FakeNode::Extension extension([](FakeNode& node) {
       providers.replace(i, entry);
     }
   };
-  node.onRpc(QStringLiteral("server.setAcpRegistryProvider"), [&node, current](const FakeNode::Rpc& rpc) {
-    node.part<FakeProviders>().acpSets.append(rpc.payload);
+  mc.onRpc(QStringLiteral("server.setAcpRegistryProvider"), [&mc, current](const FakeMc::Rpc& rpc) {
+    mc.part<FakeProviders>().acpSets.append(rpc.payload);
     current(rpc.payload.value(QLatin1String("providerId")).toString(),
             QJsonObject{{QStringLiteral("apiType"), rpc.payload.value(QLatin1String("apiType"))},
                         {QStringLiteral("baseUrl"), rpc.payload.value(QLatin1String("baseUrl"))}});
-    node.reply(rpc, QJsonObject{{QStringLiteral("configured"), true}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("configured"), true}});
   });
-  node.onRpc(QStringLiteral("server.disableAcpRegistryProvider"), [&node, current](const FakeNode::Rpc& rpc) {
-    node.part<FakeProviders>().acpDisables.append(rpc.payload.value(QLatin1String("providerId")).toString());
+  mc.onRpc(QStringLiteral("server.disableAcpRegistryProvider"), [&mc, current](const FakeMc::Rpc& rpc) {
+    mc.part<FakeProviders>().acpDisables.append(rpc.payload.value(QLatin1String("providerId")).toString());
     current(rpc.payload.value(QLatin1String("providerId")).toString(), QJsonValue::Null);
-    node.reply(rpc, QJsonObject{{QStringLiteral("disabled"), true}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("disabled"), true}});
   });
-  node.onRpc(QStringLiteral("server.logoutAcpRegistry"), [&node](const FakeNode::Rpc& rpc) {
-    node.part<FakeProviders>().acpLogouts.append(rpc.payload.value(QLatin1String("instanceId")).toString());
-    node.reply(rpc, QJsonObject{{QStringLiteral("loggedOut"), true}});
+  mc.onRpc(QStringLiteral("server.logoutAcpRegistry"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeProviders>().acpLogouts.append(rpc.payload.value(QLatin1String("instanceId")).toString());
+    mc.reply(rpc, QJsonObject{{QStringLiteral("loggedOut"), true}});
   });
-  node.onRpc(QStringLiteral("server.updateProvider"), [&node](const FakeNode::Rpc& rpc) {
-    FakeProviders& fake = node.part<FakeProviders>();
+  mc.onRpc(QStringLiteral("server.updateProvider"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeProviders& fake = mc.part<FakeProviders>();
     fake.updates.append(rpc);
     if (!fake.updateRefusal.isEmpty()) {
-      node.refuse(rpc, fake.updateRefusal, {{QStringLiteral("_tag"), QStringLiteral("ServerProviderUpdateError")}});
+      mc.refuse(rpc, fake.updateRefusal, {{QStringLiteral("_tag"), QStringLiteral("ServerProviderUpdateError")}});
     }
     // Otherwise the update runs until the scenario finishes it.
   });
@@ -297,7 +297,7 @@ void openPanel(World& world) {
     world.sync();
   }
   if (panel(world).value(QStringLiteral("open")).toBool()) return;
-  fake(world).followedBefore = world.node.subscribers(QStringLiteral("config")).size();
+  fake(world).followedBefore = world.mc.subscribers(QStringLiteral("config")).size();
   world.native().controller<NavigationController>()->open(
       NavigationController::Route::settings(NavigationController::kProvidersSection));
   world.waitFor([&] { return panel(world).value(QStringLiteral("open")).toBool(); },
@@ -355,7 +355,7 @@ QJsonObject acpAgent(const QString& authStatus = QStringLiteral("authenticated")
 
 // This machine's providers, replacing the one with the same instance id.
 void offer(World& world, const QJsonObject& entry) {
-  QJsonArray providers = fakeConfig(world.node).config.value(QLatin1String("providers")).toArray();
+  QJsonArray providers = fakeConfig(world.mc).config.value(QLatin1String("providers")).toArray();
   for (qsizetype i = 0; i < providers.size(); ++i) {
     if (providers.at(i).toObject().value(QLatin1String("instanceId")) == entry.value(QLatin1String("instanceId"))) {
       providers.removeAt(i);
@@ -363,12 +363,12 @@ void offer(World& world, const QJsonObject& entry) {
     }
   }
   providers.append(entry);
-  publishProviders(world.node, providers);
+  publishProviders(world.mc, providers);
 }
 
 void linkEnvironment(World& world, const QString& environment, const QJsonArray& providers) {
-  fakeConfig(world.node).elsewhere.insert(environment, QJsonObject{{QStringLiteral("providers"), providers}});
-  world.node.link(environment);
+  fakeConfig(world.mc).elsewhere.insert(environment, QJsonObject{{QStringLiteral("providers"), providers}});
+  world.mc.link(environment);
 }
 
 void showEnvironment(World& world, const QString& environment) {
@@ -385,7 +385,7 @@ void showEnvironment(World& world, const QString& environment) {
 }
 
 bool instanceEnabled(World& world, const QString& instanceId) {
-  return fakeConfig(world.node).settings.value(QLatin1String("providerInstances")).toObject()
+  return fakeConfig(world.mc).settings.value(QLatin1String("providerInstances")).toObject()
       .value(instanceId).toObject().value(QLatin1String("enabled")).toBool(true);
 }
 
@@ -401,9 +401,9 @@ void expectEnabled(World& world, bool enabled) {
 // and the machine lists it; it shows once its settings are there to edit.
 void seedInstance(World& world, const QString& instanceId, const QJsonObject& instance, const QJsonObject& listed) {
   openPanel(world);
-  QJsonObject instances = fakeConfig(world.node).settings.value(QLatin1String("providerInstances")).toObject();
+  QJsonObject instances = fakeConfig(world.mc).settings.value(QLatin1String("providerInstances")).toObject();
   instances.insert(instanceId, instance);
-  saveElsewhere(world.node, QStringLiteral("providerInstances"), instances);
+  saveElsewhere(world.mc, QStringLiteral("providerInstances"), instances);
   offer(world, listed);
   const QString name = listed.value(QLatin1String("displayName")).toString();
   waitForEntry(world, name, [](const QVariantMap& found) { return found.value(QStringLiteral("editable")).toBool(); },
@@ -422,7 +422,7 @@ void seedWork(World& world, const QString& name, const QJsonArray& environment =
 }
 
 QJsonObject savedInstance(World& world, const QString& instanceId) {
-  return fakeConfig(world.node).settings.value(QLatin1String("providerInstances")).toObject().value(instanceId).toObject();
+  return fakeConfig(world.mc).settings.value(QLatin1String("providerInstances")).toObject().value(instanceId).toObject();
 }
 
 QVariantMap pickerInstance(World& world, const QString& instanceId) {
@@ -520,21 +520,21 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 is disconnected").arg(q), [](World& world, const Captures& c, const Table&) {
     linkEnvironment(world, c[0], {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
-    world.node.setLinkProblem(c[0], QStringLiteral("unreachable"));
+    world.mc.setLinkProblem(c[0], QStringLiteral("unreachable"));
   });
   step(QStringLiteral("the user's session may view but not operate %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.linkScopes.insert(c[0], {QStringLiteral("orchestration:read")});
+    world.mc.linkScopes.insert(c[0], {QStringLiteral("orchestration:read")});
     linkEnvironment(world, c[0], {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
   });
   step(QStringLiteral("the providers are shown read-only"), [](World& world, const Captures&, const Table&) {
     waitForEntry(world, QStringLiteral("Codex"), [&](const QVariantMap&) { return panel(world).value(QStringLiteral("readOnly")).toBool(); },
                  QStringLiteral("to be listed read-only"));
     // Nothing on it takes a change.
-    const qsizetype writes = fakeConfig(world.node).writes.size();
+    const qsizetype writes = fakeConfig(world.mc).writes.size();
     act(world, QStringLiteral("wizardOpen"));
     act(world, QStringLiteral("enable"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("enabled"), false}});
     act(world, QStringLiteral("healthInterval"), {{QStringLiteral("seconds"), 60}});
-    expect(panel(world).value(QStringLiteral("wizard")).isNull() && fakeConfig(world.node).writes.size() == writes &&
+    expect(panel(world).value(QStringLiteral("wizard")).isNull() && fakeConfig(world.mc).writes.size() == writes &&
                !entry(world, QStringLiteral("Codex")).value(QStringLiteral("busy")).toBool(),
            QStringLiteral("no change to be made; the panel is %1").arg(show(panel(world))));
   });
@@ -561,12 +561,12 @@ const Steps steps([] {
       }
       return false;
     }, [&] { return QStringLiteral("the hub listed by its host; the panel is %1").arg(show(panel(world))); });
-    // The key went to the node's secret store, not the document.
-    const FakeConfig& config = fakeConfig(world.node);
+    // The key went to the MC's secret store, not the document.
+    const FakeConfig& config = fakeConfig(world.mc);
     expect(config.secrets.value(QStringLiteral("hub/") + id) == QLatin1String("hub-key") &&
                config.settings.value(QLatin1String("usageLimitSources")).toObject().value(id).toObject()
                        .value(QLatin1String("managementKey")) == QStringLiteral("••••••"),
-           QStringLiteral("the key sealed on the node; the settings are %1").arg(QString::fromUtf8(QJsonDocument(config.settings).toJson(QJsonDocument::Compact))));
+           QStringLiteral("the key sealed on the MC; the settings are %1").arg(QString::fromUtf8(QJsonDocument(config.settings).toJson(QJsonDocument::Compact))));
   });
   step(QStringLiteral("the user fills in a URL but no management key"), [](World& world, const Captures&, const Table&) {
     openPanel(world);
@@ -574,7 +574,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user cannot add the hub"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    expect(fakeConfig(world.node).writes.isEmpty(), QStringLiteral("no hub saved"));
+    expect(fakeConfig(world.mc).writes.isEmpty(), QStringLiteral("no hub saved"));
   });
   step(QStringLiteral("the user removes %1 and confirms").arg(q), [](World& world, const Captures& c, const Table&) {
     openPanel(world);
@@ -587,19 +587,19 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("%1 to be listed; the panel is %2").arg(c[0], show(panel(world))); });
     act(world, QStringLiteral("removeHub"), {{QStringLiteral("id"), id}});
   });
-  step(QStringLiteral("its key is deleted from the node"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return !fakeConfig(world.node).secrets.contains(QStringLiteral("hub/team-hub")); },
+  step(QStringLiteral("its key is deleted from the MC"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !fakeConfig(world.mc).secrets.contains(QStringLiteral("hub/team-hub")); },
                   QStringLiteral("the hub's key to be deleted"));
-    expect(!fakeConfig(world.node).settings.value(QLatin1String("usageLimitSources")).toObject().contains(QStringLiteral("team-hub")),
+    expect(!fakeConfig(world.mc).settings.value(QLatin1String("usageLimitSources")).toObject().contains(QStringLiteral("team-hub")),
            QStringLiteral("the hub gone from the settings"));
   });
-  // Nothing is sent to the hub: the node only saved its settings once.
+  // Nothing is sent to the hub: the MC only saved its settings once.
   step(QStringLiteral("the hub itself is untouched"), [](World& world, const Captures&, const Table&) {
-    expect(fakeConfig(world.node).writes.size() == 1, QStringLiteral("one settings write; there were %1").arg(fakeConfig(world.node).writes.size()));
+    expect(fakeConfig(world.mc).writes.size() == 1, QStringLiteral("one settings write; there were %1").arg(fakeConfig(world.mc).writes.size()));
   });
   step(QStringLiteral("the user is connected with read-only access"), [](World& world, const Captures&, const Table&) {
-    world.node.linkScopes.insert(QStringLiteral("Build box"), {QStringLiteral("orchestration:read")});
-    documentOf(world.node, QStringLiteral("Build box")).settings.insert(QStringLiteral("usageLimitSources"), QJsonObject{});
+    world.mc.linkScopes.insert(QStringLiteral("Build box"), {QStringLiteral("orchestration:read")});
+    documentOf(world.mc, QStringLiteral("Build box")).settings.insert(QStringLiteral("usageLimitSources"), QJsonObject{});
     linkEnvironment(world, QStringLiteral("Build box"), {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
   });
   step(QStringLiteral("the user opens usage providers"), [](World& world, const Captures&, const Table&) {
@@ -610,11 +610,11 @@ const Steps steps([] {
                   [&] { return QStringLiteral("the providers read-only; the panel is %1").arg(show(panel(world))); });
     act(world, QStringLiteral("addHub"), {{QStringLiteral("url"), QStringLiteral("https://hub.example")}, {QStringLiteral("key"), QStringLiteral("hub-key")}});
     world.sync();
-    expect(documentOf(world.node, QStringLiteral("Build box")).version == 0 && fakeConfig(world.node).writes.isEmpty(),
+    expect(documentOf(world.mc, QStringLiteral("Build box")).version == 0 && fakeConfig(world.mc).writes.isEmpty(),
            QStringLiteral("no hub saved on Build box"));
   });
   step(QStringLiteral("%1 reconnects").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.setLinkProblem(c[0], QString());
+    world.mc.setLinkProblem(c[0], QString());
   });
   step(QStringLiteral("the user shows the providers of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     showEnvironment(world, c[0]);
@@ -631,21 +631,21 @@ const Steps steps([] {
     }, QStringLiteral("of ") + c[0] + QStringLiteral(" to be listed"));
   });
   step(QStringLiteral("the user leaves the Providers settings"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return !world.node.subscribers(QStringLiteral("providerAuth")).isEmpty(); }, QStringLiteral("a sign-in to be followed"));
+    world.waitFor([&] { return !world.mc.subscribers(QStringLiteral("providerAuth")).isEmpty(); }, QStringLiteral("a sign-in to be followed"));
     world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("home")));
   });
   step(QStringLiteral("no provider or sign-in is followed for the panel"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return world.node.subscribers(QStringLiteral("config")).size() == fake(world).followedBefore &&
-                               world.node.subscribers(QStringLiteral("providerAuth")).isEmpty(); },
+    world.waitFor([&] { return world.mc.subscribers(QStringLiteral("config")).size() == fake(world).followedBefore &&
+                               world.mc.subscribers(QStringLiteral("providerAuth")).isEmpty(); },
                   [&] { return QStringLiteral("only the shell's own config to be followed; %1 configs and %2 sign-ins are")
-                            .arg(world.node.subscribers(QStringLiteral("config")).size())
-                            .arg(world.node.subscribers(QStringLiteral("providerAuth")).size()); });
+                            .arg(world.mc.subscribers(QStringLiteral("config")).size())
+                            .arg(world.mc.subscribers(QStringLiteral("providerAuth")).size()); });
   });
 
   // Turning an instance off and on.
   step(QStringLiteral("the user turns off the %1 instance").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString instanceId = QStringLiteral("claudeAgent_work");
-    FakeConfig& config = fakeConfig(world.node);
+    FakeConfig& config = fakeConfig(world.mc);
     QJsonObject instances = config.settings.value(QLatin1String("providerInstances")).toObject();
     instances.insert(instanceId, QJsonObject{{QStringLiteral("driver"), QStringLiteral("claudeAgent")},
                                              {QStringLiteral("displayName"), c[0]},
@@ -663,7 +663,7 @@ const Steps steps([] {
                             QVariantMap{{QStringLiteral("instanceId"), fake(world).instanceId}, {QStringLiteral("enabled"), true}});
   });
   // The model picker leaves out what the environment reports disabled
-  // (providers/models.feature); the panel turns it off where the node reads it.
+  // (providers/models.feature); the panel turns it off where the MC reads it.
   step(QStringLiteral("its models are not offered in new threads"), [](World& world, const Captures&, const Table&) {
     expectEnabled(world, false);
   });
@@ -671,7 +671,7 @@ const Steps steps([] {
     expectEnabled(world, true);
   });
   step(QStringLiteral("saving settings on %1 fails").arg(q), [](World& world, const Captures&, const Table&) {
-    fakeConfig(world.node).refuseWrites = QStringLiteral("The settings file could not be written.");
+    fakeConfig(world.mc).refuseWrites = QStringLiteral("The settings file could not be written.");
   });
   step(QStringLiteral("the user is told the provider settings could not be saved"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] {
@@ -694,9 +694,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("(?:an|the) instance %1 exists").arg(q), [](World& world, const Captures& c, const Table&) {
     openPanel(world);
-    QJsonObject instances = fakeConfig(world.node).settings.value(QLatin1String("providerInstances")).toObject();
+    QJsonObject instances = fakeConfig(world.mc).settings.value(QLatin1String("providerInstances")).toObject();
     instances.insert(c[0], QJsonObject{{QStringLiteral("driver"), c[0].section(QLatin1Char('_'), 0, 0)}, {QStringLiteral("enabled"), true}});
-    saveElsewhere(world.node, QStringLiteral("providerInstances"), instances);
+    saveElsewhere(world.mc, QStringLiteral("providerInstances"), instances);
     world.waitFor([&] {
       for (const QVariant& row : panel(world).value(QStringLiteral("providers")).toList()) {
         if (row.toMap().value(QStringLiteral("instanceId")) == c[0]) return true;
@@ -722,7 +722,7 @@ const Steps steps([] {
   step(QStringLiteral("(?:the suggested instance id|its instance id) is %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(fake(world).suggestedId == c[0], QStringLiteral("the wizard suggested %1").arg(fake(world).suggestedId));
     world.waitFor([&] { return !savedInstance(world, c[0]).isEmpty(); },
-                  [&] { return QStringLiteral("%1 to be saved; the settings are %2").arg(c[0], show(fakeConfig(world.node).settings)); });
+                  [&] { return QStringLiteral("%1 to be saved; the settings are %2").arg(c[0], show(fakeConfig(world.mc).settings)); });
   });
   step(QStringLiteral("the user (?:enters|sets) the instance id (?:to )?%1(?: and continues)?").arg(q), [](World& world, const Captures& c, const Table&) {
     startAdding(world, QStringLiteral("Codex"), std::nullopt);
@@ -760,7 +760,7 @@ const Steps steps([] {
     finishAdding(world);
   });
   step(QStringLiteral("the user is told the provider instance could not be added"), [](World& world, const Captures&, const Table&) {
-    expectToast(world, QStringLiteral("Could not add provider instance"), fakeConfig(world.node).refuseWrites);
+    expectToast(world, QStringLiteral("Could not add provider instance"), fakeConfig(world.mc).refuseWrites);
     world.waitFor([&] { return !wizard(world).isEmpty() && !wizard(world).value(QStringLiteral("saving")).toBool(); },
                   [&] { return QStringLiteral("the wizard to stay open; it is %1").arg(show(wizard(world))); });
   });
@@ -769,7 +769,7 @@ const Steps steps([] {
   // The picker names an instance as the environment lists it (ComposerModel).
   step(QStringLiteral("the instance is shown as %1 in the model picker").arg(q), [](World& world, const Captures& c, const Table&) {
     const auto listed = [&] {
-      for (const QJsonValue& value : fakeConfig(world.node).config.value(QLatin1String("providers")).toArray()) {
+      for (const QJsonValue& value : fakeConfig(world.mc).config.value(QLatin1String("providers")).toArray()) {
         if (value.toObject().value(QLatin1String("instanceId")) == fake(world).instanceId) return value.toObject().value(QLatin1String("displayName")).toString();
       }
       return QString();
@@ -781,7 +781,7 @@ const Steps steps([] {
   step(QStringLiteral("the instance %1( has a green accent)?").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(c[0] == QLatin1String("claudeAgent_work"), QStringLiteral("only claudeAgent_work is seeded, not %1").arg(c[0]));
     seedWork(world, QStringLiteral("Claude Work"));
-    if (c[1].isEmpty()) return;
+    if (c.value(1).isEmpty()) return;
     act(world, QStringLiteral("accent"), {{QStringLiteral("instanceId"), c[0]}, {QStringLiteral("color"), QStringLiteral("#22c55e")}});
     world.waitFor([&] { return savedInstance(world, c[0]).value(QLatin1String("accentColor")) == QLatin1String("#22c55e"); },
                   [&] { return QStringLiteral("the accent to be saved; the instance is %1").arg(show(savedInstance(world, c[0]).toVariantMap())); });
@@ -818,7 +818,7 @@ const Steps steps([] {
   step(QStringLiteral("its value is stored as a secret"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] {
       const QJsonArray environment = savedInstance(world, fake(world).instanceId).value(QLatin1String("environment")).toArray();
-      return fakeConfig(world.node).secrets.value(fake(world).instanceId + QStringLiteral("/API_KEY")) == QLatin1String("sk-secret") &&
+      return fakeConfig(world.mc).secrets.value(fake(world).instanceId + QStringLiteral("/API_KEY")) == QLatin1String("sk-secret") &&
              environment.size() == 1 && environment.at(0).toObject().value(QLatin1String("value")).toString().isEmpty();
     }, [&] { return QStringLiteral("API_KEY to be sealed; the instance is %1").arg(show(savedInstance(world, fake(world).instanceId))); });
   });
@@ -836,7 +836,7 @@ const Steps steps([] {
                  QStringLiteral("to list its variable"));
   });
   step(QStringLiteral("the instance keeps %1 as a stored secret").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeConfig(world.node).secrets.insert(QStringLiteral("claudeAgent_work/") + c[0], QStringLiteral("sk-secret"));
+    fakeConfig(world.mc).secrets.insert(QStringLiteral("claudeAgent_work/") + c[0], QStringLiteral("sk-secret"));
     seedWork(world, QStringLiteral("Claude Work"),
              {QJsonObject{{QStringLiteral("name"), c[0]}, {QStringLiteral("value"), QString()}, {QStringLiteral("sensitive"), true},
                           {QStringLiteral("valueRedacted"), true}}});
@@ -867,7 +867,7 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("%1 to be saved without a secret; the instance is %2").arg(c[0], show(savedInstance(world, fake(world).instanceId))); });
   });
   step(QStringLiteral("the secret stored for %1 is forgotten").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return !fakeConfig(world.node).secrets.contains(fake(world).instanceId + QLatin1Char('/') + c[0]); },
+    world.waitFor([&] { return !fakeConfig(world.mc).secrets.contains(fake(world).instanceId + QLatin1Char('/') + c[0]); },
                   [&] { return QStringLiteral("the secret of %1 to be deleted").arg(c[0]); });
   });
   step(QStringLiteral("Codex was checked (\\d+) minutes ago and Claude (\\d+) minutes ago"), [](World& world, const Captures& c, const Table&) {
@@ -919,7 +919,7 @@ const Steps steps([] {
     }, QStringLiteral("to show the download starting"));
     expect(fake(world).installCalls == QStringList{QStringLiteral("start")},
            QStringLiteral("one install to start; the calls are %1").arg(fake(world).installCalls.join(QStringLiteral(", "))));
-    sendInstall(world.node, {{QStringLiteral("downloadedBytes"), 25'000'000}});
+    sendInstall(world.mc, {{QStringLiteral("downloadedBytes"), 25'000'000}});
     waitForEntry(world, QStringLiteral("Antigravity"), [](const QVariantMap& found) {
       return at(found, QStringLiteral("runtime.status")) == QLatin1String("Downloading 25.0 MB of 100.0 MB.") &&
              qAbs(at(found, QStringLiteral("runtime.progress")).toDouble() - 0.25) < 1e-9;
@@ -961,7 +961,7 @@ const Steps steps([] {
   });
   // A Cursor instance that signs in from the browser, keeping `CURSOR_API_KEY` as a stored secret.
   step(QStringLiteral("a Cursor instance keeps its own %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeConfig(world.node).secrets.insert(QStringLiteral("cursor_work/") + c[0], QStringLiteral("crsr-secret"));
+    fakeConfig(world.mc).secrets.insert(QStringLiteral("cursor_work/") + c[0], QStringLiteral("crsr-secret"));
     seedInstance(world, QStringLiteral("cursor_work"),
                  {{QStringLiteral("driver"), QStringLiteral("cursor")}, {QStringLiteral("displayName"), QStringLiteral("Cursor Work")},
                   {QStringLiteral("enabled"), true},
@@ -1007,7 +1007,7 @@ const Steps steps([] {
     world.waitFor([&] {
       const QJsonObject saved = savedInstance(world, fake(world).instanceId);
       return !saved.isEmpty() && !saved.contains(QLatin1String("environment")) && variables(world, QStringLiteral("Claude Work")).isEmpty() &&
-             !fakeConfig(world.node).secrets.contains(fake(world).instanceId + QLatin1Char('/') + c[0]);
+             !fakeConfig(world.mc).secrets.contains(fake(world).instanceId + QLatin1Char('/') + c[0]);
     }, [&] { return QStringLiteral("%1 to be gone; the instance is %2").arg(c[0], show(savedInstance(world, fake(world).instanceId))); });
   });
   step(QStringLiteral("the user deletes the %1 instance").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -1064,14 +1064,14 @@ const Steps steps([] {
   step(QStringLiteral("the user switches to another environment and back and signs in to %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
     linkEnvironment(world, QStringLiteral("Studio"), QJsonArray{});
     showEnvironment(world, QStringLiteral("Studio"));
-    showEnvironment(world, world.node.environmentId);
+    showEnvironment(world, world.mc.environmentId);
     waitForEntry(world, c[0], [](const QVariantMap& found) { return at(found, QStringLiteral("account.canSignIn")).toBool(); },
                  QStringLiteral("to offer signing in again"));
     dispatch(world, QStringLiteral("signIn"), c[0]);
     world.waitFor([&] { return fake(world).heldStarts.size() == 2; }, QStringLiteral("the second sign-in to be started"));
   });
   step(QStringLiteral("the first sign-in is answered"), [](World& world, const Captures&, const Table&) {
-    world.node.reply(fake(world).heldStarts.takeFirst(), QJsonObject{});
+    world.mc.reply(fake(world).heldStarts.takeFirst(), QJsonObject{});
     world.sync();
   });
   step(QStringLiteral("the second sign-in is still waiting on the environment"), [](World& world, const Captures&, const Table&) {
@@ -1140,7 +1140,7 @@ const Steps steps([] {
   step(QStringLiteral("the sign-in fails with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return at(found, QStringLiteral("account.canCancel")).toBool(); },
                  QStringLiteral("to be signing in"));
-    sendAuth(world.node, QStringLiteral("gemini"),
+    sendAuth(world.mc, QStringLiteral("gemini"),
              {{QStringLiteral("phase"), QStringLiteral("failed")}, {QStringLiteral("flowId"), QStringLiteral("flow-1")}, {QStringLiteral("message"), c[0]}});
   });
   step(QStringLiteral("the user is told why the sign-in failed: %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -1173,7 +1173,7 @@ const Steps steps([] {
   step(QStringLiteral("the agent's login terminal shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return at(found, QStringLiteral("account.canCancel")).toBool(); },
                  QStringLiteral("to be signing in"));
-    sendAuth(world.node, QStringLiteral("gemini"),
+    sendAuth(world.mc, QStringLiteral("gemini"),
              {{QStringLiteral("phase"), QStringLiteral("waiting")},
               {QStringLiteral("flowId"), QStringLiteral("flow-1")},
               {QStringLiteral("interaction"), QJsonObject{{QStringLiteral("id"), QStringLiteral("terminal")},
@@ -1212,7 +1212,7 @@ const Steps steps([] {
     waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return at(found, QStringLiteral("account.canCancel")).toBool(); },
                  QStringLiteral("to be signing in"));
     fake(world).credential = c[0];
-    sendAuth(world.node, QStringLiteral("gemini"),
+    sendAuth(world.mc, QStringLiteral("gemini"),
              {{QStringLiteral("phase"), QStringLiteral("waiting")},
               {QStringLiteral("flowId"), QStringLiteral("flow-1")},
               {QStringLiteral("interaction"),
@@ -1246,7 +1246,7 @@ const Steps steps([] {
   step(QStringLiteral("the sign-in returns to a local address"), [](World& world, const Captures&, const Table&) {
     waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return at(found, QStringLiteral("account.canCancel")).toBool(); },
                  QStringLiteral("to be signing in"));
-    sendAuth(world.node, QStringLiteral("gemini"),
+    sendAuth(world.mc, QStringLiteral("gemini"),
              {{QStringLiteral("phase"), QStringLiteral("waiting")},
               {QStringLiteral("flowId"), QStringLiteral("flow-1")},
               {QStringLiteral("interaction"), QJsonObject{{QStringLiteral("id"), QStringLiteral("browser-1")},
@@ -1279,16 +1279,16 @@ const Steps steps([] {
     expect(fake(world).logouts.isEmpty() && at(entry(world, c[0]), QStringLiteral("account.canSignOut")).toBool(),
            QStringLiteral("%1 to stay signed in; signed out %2, the panel is %3").arg(c[0], fake(world).logouts.join(QStringLiteral(", ")), show(panel(world))));
   });
-  // The node stops the threads that share the sign-in as it signs out.
+  // The MC stops the threads that share the sign-in as it signs out.
   step(QStringLiteral("running threads sharing that sign-in stop"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return fake(world).logouts == QStringList{QStringLiteral("gemini")}; },
                   [&] { return QStringLiteral("Gemini to be signed out; signed out %1").arg(fake(world).logouts.join(QStringLiteral(", "))); });
   });
   step(QStringLiteral("thread history is kept"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    for (const QJsonObject& command : world.node.commands) {
+    for (const QJsonObject& command : world.mc.commands) {
       expect(!command.value(QLatin1String("type")).toString().contains(QLatin1String("delete")),
-             QStringLiteral("no thread to be deleted; the node has %1").arg(world.describeCommands()));
+             QStringLiteral("no thread to be deleted; the MC has %1").arg(world.describeCommands()));
     }
   });
   step(QStringLiteral("%1 is linked and its %1 can sign in from HAL-C2").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -1299,13 +1299,13 @@ const Steps steps([] {
       return at(found, QStringLiteral("account.description")) == QStringLiteral("Sign in from a client paired with %1.").arg(c[0]) &&
              !at(found, QStringLiteral("account.canSignIn")).toBool();
     }, QStringLiteral("to be signed in from elsewhere"));
-    expect(world.node.subscribers(QStringLiteral("providerAuth")).isEmpty(), QStringLiteral("no sign-in to be followed"));
+    expect(world.mc.subscribers(QStringLiteral("providerAuth")).isEmpty(), QStringLiteral("no sign-in to be followed"));
   });
 
   // The health check interval. The environment starts on the "performance"
   // preset (a minute), so each interval below is a change.
   step(QStringLiteral("the user sets the provider health check interval to (\\d+) seconds"), [](World& world, const Captures& c, const Table&) {
-    saveElsewhere(world.node, QStringLiteral("backgroundActivity"),
+    saveElsewhere(world.mc, QStringLiteral("backgroundActivity"),
                   QJsonObject{{QStringLiteral("schemaVersion"), 1}, {QStringLiteral("profile"), QStringLiteral("performance")}});
     world.waitFor([&] { return at(panel(world), QStringLiteral("health.seconds")) == 60; },
                   [&] { return QStringLiteral("the interval to show a minute; the panel is %1").arg(show(panel(world))); });
@@ -1313,16 +1313,16 @@ const Steps steps([] {
   });
   step(QStringLiteral("providers are refreshed in the background (every five minutes|never)"), [](World& world, const Captures& c, const Table&) {
     const int seconds = c[0] == QLatin1String("never") ? 0 : 300;
-    // What the node reads (HalC2.BackgroundPolicy.settings): a custom profile's override.
+    // What the MC reads (HalC2.BackgroundPolicy.settings): a custom profile's override.
     const auto saved = [&] {
-      const QJsonObject activity = fakeConfig(world.node).settings.value(QLatin1String("backgroundActivity")).toObject();
+      const QJsonObject activity = fakeConfig(world.mc).settings.value(QLatin1String("backgroundActivity")).toObject();
       return activity.value(QLatin1String("profile")) == QLatin1String("custom") &&
              activity.value(QLatin1String("baseProfile")) == QLatin1String("performance") &&
              activity.value(QLatin1String("overrides")).toObject().value(QLatin1String("providerHealthRefreshInterval")).toInt(-1) == seconds * 1000;
     };
     world.waitFor([&] { return saved() && at(panel(world), QStringLiteral("health.seconds")) == seconds; },
                   [&] { return QStringLiteral("a %1 s interval to be saved; the settings are %2, the panel %3")
-                            .arg(seconds).arg(show(fakeConfig(world.node).settings.value(QLatin1String("backgroundActivity"))), show(panel(world))); });
+                            .arg(seconds).arg(show(fakeConfig(world.mc).settings.value(QLatin1String("backgroundActivity"))), show(panel(world))); });
   });
 
   // Updates.
@@ -1422,7 +1422,7 @@ const Steps steps([] {
       return false;
     }, [&] { return QStringLiteral("a toast to run it in a terminal; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
   });
-  step(QStringLiteral("the node reports %1 updated").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC reports %1 updated").arg(q), [](World& world, const Captures& c, const Table&) {
     offer(world, provider(QStringLiteral("codex"), QStringLiteral("codex"), c[0],
                           {{QStringLiteral("version"), QStringLiteral("0.51.0")},
                            {QStringLiteral("versionAdvisory"), QJsonObject{{QStringLiteral("status"), QStringLiteral("current")},
@@ -1451,7 +1451,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the update finishes"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return !fake(world).updates.isEmpty(); }, [] { return QStringLiteral("an update to have been asked for"); });
-    world.node.reply(fake(world).updates.first(), QJsonObject{});
+    world.mc.reply(fake(world).updates.first(), QJsonObject{});
   });
   step(QStringLiteral("%1 is no longer shown updating").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForEntry(world, c[0], [](const QVariantMap& found) { return !found.value(QStringLiteral("updating")).toBool(); },
@@ -1502,7 +1502,7 @@ QJsonArray savedModels(World& world) {
   return savedInstance(world, QStringLiteral("codex")).value(QLatin1String("config")).toObject().value(QLatin1String("customModels")).toArray();
 }
 
-// Codex lists its saved custom models after its own, as the node does
+// Codex lists its saved custom models after its own, as the MC does
 // (HalC2.Environment's with_custom_models): one without options of its own
 // takes Codex's first model's.
 void listCustomModels(World& world) {
@@ -1555,10 +1555,10 @@ void saveCustomModel(World& world) {
   act(world, QStringLiteral("saveModel"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("slug"), kCustomModel}});
 }
 
-// A thread on Codex with `my-model` chosen, once the node lists it.
+// A thread on Codex with `my-model` chosen, once the MC lists it.
 void chooseCustomModel(World& world) {
   listCustomModels(world);
-  world.node.projects.insert(stream::kProject, {{QStringLiteral("id"), stream::kProject},
+  world.mc.projects.insert(stream::kProject, {{QStringLiteral("id"), stream::kProject},
                                                 {QStringLiteral("title"), stream::kProject},
                                                 {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
                                                 {QStringLiteral("scripts"), QJsonArray()}});
@@ -1673,9 +1673,9 @@ const Steps registrySteps([] {
     searchRegistry(world, QString());
   });
   step(QStringLiteral("the agent finishes preparing"), [](World& world, const Captures&, const Table&) {
-    const FakeNode::Rpc rpc = fake(world).heldPrepares.takeFirst();
+    const FakeMc::Rpc rpc = fake(world).heldPrepares.takeFirst();
     const QString agentId = rpc.payload.value(QLatin1String("agentId")).toString();
-    world.node.reply(rpc, QJsonObject{{QStringLiteral("agentId"), agentId},
+    world.mc.reply(rpc, QJsonObject{{QStringLiteral("agentId"), agentId},
                                       {QStringLiteral("version"), QStringLiteral("1.2.3")},
                                       {QStringLiteral("distribution"), QStringLiteral("npx")},
                                       {QStringLiteral("prepared"), true}});
@@ -1713,8 +1713,8 @@ void acpProject(World& world, const QString& title) {
                         {QStringLiteral("createdAt"), stream::iso(stream::now())},
                         {QStringLiteral("updatedAt"), stream::iso(stream::now())},
                         {QStringLiteral("scripts"), QJsonArray()}};
-  world.node.projects.insert(title, row);
-  world.node.sendRow(title, row, QStringLiteral("project"));
+  world.mc.projects.insert(title, row);
+  world.mc.sendRow(title, row, QStringLiteral("project"));
 }
 
 // Gemini with one native session in `project`, imported as a thread or not.
@@ -1865,7 +1865,7 @@ const Steps acpSteps([] {
   step(QStringLiteral("the agent is signed out and its status is read again"), [](World& world, const Captures&, const Table&) {
     expectToast(world, QStringLiteral("Logged out of ACP agent"));
     expect(fake(world).acpLogouts == QStringList{QStringLiteral("gemini")}, QStringLiteral("gemini to be logged out"));
-    // The node reads the agent's status again and lists it signed out.
+    // The MC reads the agent's status again and lists it signed out.
     const QString before = entry(world, QStringLiteral("Gemini")).value(QStringLiteral("headline")).toString();
     offer(world, acpAgent(QStringLiteral("unauthenticated")));
     world.waitFor([&] { return entry(world, QStringLiteral("Gemini")).value(QStringLiteral("headline")).toString() != before; },
@@ -1933,7 +1933,7 @@ const Steps customModelSteps([] {
          editorOption(QStringLiteral("reasoningEffort"), QStringLiteral("Reasoning"), {editorChoice(QStringLiteral("low")), editorChoice(QStringLiteral("low"))})},
     };
     expect(problems.contains(c[0]), QStringLiteral("a known problem, not %1").arg(c[0]));
-    fake(world).writesBefore = fakeConfig(world.node).writes.size();
+    fake(world).writesBefore = fakeConfig(world.mc).writes.size();
     draftOptions(world, {problems.value(c[0])});
     saveCustomModel(world);
   });
@@ -1948,7 +1948,7 @@ const Steps customModelSteps([] {
       return found.value(QStringLiteral("modelError")) == messages.value(c[0]);
     }, QStringLiteral("to say the option ") + c[0]);
     // Nothing is saved, and the option stays open to fix.
-    expect(fakeConfig(world.node).writes.size() == fake(world).writesBefore &&
+    expect(fakeConfig(world.mc).writes.size() == fake(world).writesBefore &&
                shown.value(QStringLiteral("modelDraft")).toMap().value(QStringLiteral("slug")) == kCustomModel,
            QStringLiteral("the draft to stay unsaved; the entry is %1").arg(show(shown)));
   });

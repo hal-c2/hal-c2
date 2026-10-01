@@ -2,17 +2,17 @@ defmodule HalC2.Acp.Antigravity do
   @moduledoc """
   Google's Antigravity ACP agent (`agy_acp_server`), as `HalC2.Acp` runs it.
 
-  The node installs Google's published runtime itself (`HalC2.Acp.Antigravity.Installation`)
+  The MC installs Google's published runtime itself (`HalC2.Acp.Antigravity.Installation`)
   under `<home>/tools/antigravity-acp/<platform>-<arch>`, unless an instance names its
   own executable (`binaryPath`, with its `localharness_external` helper beside it).
   Every instance runs with a private Google profile under
   `<home>/providers/antigravity/<sha256(instance id)>`: the agent keeps its Google
   login there, and only the instance's configured sign-in method reaches it, never
-  the node's ambient Google variables.
+  the MC's ambient Google variables.
 
   Signing in is `HalC2.Acp.Antigravity.Auth`. Once an instance's session opens, the
   account it used and its models are kept in the profile (`hal-c2-account.json`), so
-  the provider list shows the account across node restarts.
+  the provider list shows the account across MC restarts.
 
   Test seams (application env): `:antigravity_platform` (`{os, arch}`),
   `:antigravity_release` (a release map, or `:none`).
@@ -70,7 +70,7 @@ defmodule HalC2.Acp.Antigravity do
 
   @methods ~w(oauth-personal oauth-business gemini-api-key agent-platform)
 
-  # Google variables the node may carry that must not decide an instance's account.
+  # Google variables the MC may carry that must not decide an instance's account.
   @removed_env ~w(GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_APPLICATION_CREDENTIALS
     GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION GOOGLE_CLOUD_QUOTA_PROJECT
     GOOGLE_GENAI_USE_VERTEXAI GCLOUD_PROJECT CLOUDSDK_CORE_PROJECT AGY_ACP_CCPA_PROJECT
@@ -131,7 +131,7 @@ defmodule HalC2.Acp.Antigravity do
     end
   end
 
-  @doc "Where the managed runtime lives on this node."
+  @doc "Where the managed runtime lives on this MC."
   def managed_dir,
     do:
       Path.join([
@@ -354,7 +354,7 @@ defmodule HalC2.Acp.Antigravity do
   @doc """
   The command and environment that start an instance's agent: the resolved
   executable with its profile, and only the configured method's credential.
-  Exile adds the node's own environment, so the Google variables the node carries
+  Exile adds the MC's own environment, so the Google variables the MC carries
   are removed with `env -u` first.
   """
   def command(instance, extra_env \\ []) do

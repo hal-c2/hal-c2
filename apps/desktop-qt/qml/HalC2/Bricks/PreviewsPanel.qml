@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// The right panel's Previews tab: the thread's browser tabs as the node keeps
+// The right panel's Previews tab: the thread's browser tabs as the MC keeps
 // them, from a ThreadPreviews model (Panel.previews). The desktop embeds no
 // browser: a row opens its page in the user's browser, and closes from here.
 //

@@ -1,14 +1,14 @@
 defmodule HalC2.UsageLimitSources do
   @moduledoc """
-  Quota from places this node cannot run turns on: today CLIProxyAPI hubs pooling
+  Quota from places this MC cannot run turns on: today CLIProxyAPI hubs pooling
   several subscription accounts (`settings.usageLimitSources`, read with
   `HalC2.UsageLimitSources.Cliproxy`), as the Node server's UsageLimitSources does.
 
   Every enabled source is read at boot, when the sources in settings change, on an
   untargeted `server.refreshProviders`, and every `providerHealthRefreshInterval`
-  while a client watches this node's config. Clients get the snapshots
+  while a client watches this MC's config. Clients get the snapshots
   (`UsageLimitSourceSnapshot[]`) after the config snapshot and whenever they change,
-  as `{:hal_c2_usage_limit_sources, node, sources}` through `HalC2.Settings` watchers. A
+  as `{:hal_c2_usage_limit_sources, mc, sources}` through `HalC2.Settings` watchers. A
   source that cannot be read keeps its row with `error` set. Nothing is persisted.
 
   Reads and redemptions run one at a time in this process, so a slow read started

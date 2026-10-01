@@ -2,13 +2,13 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
   @moduledoc """
   Steps for `features/files/file-viewer-and-editing.feature`: `projects.readFile`
   and `projects.writeFile` over the socket. Absolute paths are the scenario's host
-  paths (`HalC2.Test.Node.Host`).
+  paths (`HalC2.Test.Mc.Host`).
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.{Host, World}
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.{Host, World}
 
   # A PNG's signature and header: bytes that are not text.
   @png <<137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
@@ -51,11 +51,11 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     read(context, project, file, %{"encoding" => "utf8"})
   end
 
-  step "the node answers that {string} is not a text file", %{args: [file]} = context do
+  step "the MC answers that {string} is not a text file", %{args: [file]} = context do
     refused(context, "binary_file", "'#{file}' is not a text file.")
   end
 
-  step "the node answers that {string} is not a file", %{args: [file]} = context do
+  step "the MC answers that {string} is not a file", %{args: [file]} = context do
     refused(context, "path_not_file", "'#{file}' is not a file.")
   end
 
@@ -115,7 +115,7 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     read(context, project, file, %{})
   end
 
-  step "the node answers that the path is outside the project", context do
+  step "the MC answers that the path is outside the project", context do
     assert {:error, _, %{"failure" => failure}} = context.reply
     assert failure in ["workspace_path_outside_root", "resolved_path_outside_root"]
     context
@@ -127,7 +127,7 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
   end
 
   step "a client lists the files of {string}", %{args: [project]} = context do
-    Node.ensure(HalC2.Workspace)
+    Mc.ensure(HalC2.Workspace)
 
     {reply, context} =
       World.call(context, "projects.listEntries", %{"cwd" => World.project(context, project).root})
@@ -135,7 +135,7 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     Map.put(context, :reply, reply)
   end
 
-  step "the node answers that the project folder does not exist", context do
+  step "the MC answers that the project folder does not exist", context do
     assert {:error, message, %{"failure" => "workspace_root_not_found"}} = context.reply
     assert message =~ "does not exist"
     context
@@ -149,7 +149,7 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
   end
 
   defp read(context, project, file, input) do
-    Node.ensure(HalC2.Workspace)
+    Mc.ensure(HalC2.Workspace)
 
     {reply, context} =
       World.call(

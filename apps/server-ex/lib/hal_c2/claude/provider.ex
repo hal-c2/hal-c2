@@ -1,7 +1,7 @@
 defmodule HalC2.Claude.Provider do
   @moduledoc """
-  The Claude entry in this node's `ServerConfig.providers`, present when the `claude`
-  CLI is on the node's PATH. Models are the Claude catalog of the bundled model manifest,
+  The Claude entry in this MC's `ServerConfig.providers`, present when the `claude`
+  CLI is on the MC's PATH. Models are the Claude catalog of the bundled model manifest,
   read at compile time, less those the installed CLI is too old to run.
   """
 

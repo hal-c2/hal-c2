@@ -1,12 +1,12 @@
 defmodule HalC2.Steps.Platform.EventStore do
-  @moduledoc "Steps for features/node/platform/event-store.feature."
+  @moduledoc "Steps for features/mc/platform/event-store.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias Exqlite.Sqlite3
   alias HalC2.{Store, StreamState, Streams}
-  alias HalC2.Test.{Node, WsClient}
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.{Mc, WsClient}
+  alias HalC2.Test.Mc.World
 
   # --- offsets --------------------------------------------------------------------------
 
@@ -164,7 +164,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     assert %{patch: %{"d" => true}, kind: "provider-session"} = List.last(log(context, id))
     assert StreamState.get(thread_state(context), "provider-session") == %{}
     # A fold of the log from scratch agrees with the live state.
-    assert StreamState.get(StreamState.load(context.node.store, id), "provider-session") == %{}
+    assert StreamState.get(StreamState.load(context.mc.store, id), "provider-session") == %{}
     context
   end
 
@@ -206,7 +206,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     reader =
       spawn_link(fn ->
         count =
-          Store.reduce_stream(context.node.store, id, 0, 0, fn _event, count ->
+          Store.reduce_stream(context.mc.store, id, 0, 0, fn _event, count ->
             if count == 0 do
               send(test, {:reading, self()})
               receive do: (:go -> :ok)
@@ -249,11 +249,11 @@ defmodule HalC2.Steps.Platform.EventStore do
     context
   end
 
-  step "the node writes a snapshot of its folded state", context do
+  step "the MC writes a snapshot of its folded state", context do
     id = World.thread_id(context, "main")
     state = thread_state(context)
     idle_stop(id)
-    assert {seq, %StreamState{} = snapshot} = Store.get_snapshot(context.node.store, id)
+    assert {seq, %StreamState{} = snapshot} = Store.get_snapshot(context.mc.store, id)
     assert seq == state.seq
     assert snapshot == state
     context
@@ -264,9 +264,9 @@ defmodule HalC2.Steps.Platform.EventStore do
     commit(context, for(n <- 1..500, do: {"note", "n-#{n}", %{"s" => %{"text" => "note #{n}"}}}))
     expected = thread_state(context)
     idle_stop(id)
-    assert Store.get_snapshot(context.node.store, id)
+    assert Store.get_snapshot(context.mc.store, id)
     sql!(context, "DELETE FROM snapshots")
-    assert Store.get_snapshot(context.node.store, id) == nil
+    assert Store.get_snapshot(context.mc.store, id) == nil
     Map.put(context, :expected, expected)
   end
 
@@ -278,10 +278,10 @@ defmodule HalC2.Steps.Platform.EventStore do
     context |> World.put_client(client) |> Map.merge(%{live: live, rows: rows})
   end
 
-  step "the node folds the log again", context do
+  step "the MC folds the log again", context do
     id = World.thread_id(context, "main")
     state = thread_state(context)
-    assert state == StreamState.load(context.node.store, id)
+    assert state == StreamState.load(context.mc.store, id)
     assert state.seq == context.expected.seq
     assert context.live["offset"] == state.seq
     context
@@ -295,7 +295,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     context
   end
 
-  step "a thread's snapshot was written by an older node", context do
+  step "a thread's snapshot was written by an older MC", context do
     id = World.thread_id(context, "main")
     state = thread_state(context)
     idle_stop(id)
@@ -311,7 +311,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     Map.put(context, :expected, state)
   end
 
-  step "the node loads the thread", context do
+  step "the MC loads the thread", context do
     Map.put(context, :loaded, thread_state(context))
   end
 
@@ -336,7 +336,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     for id <- [project, thread] do
       [%{seq: first} | _] = log(context, id)
       state = Streams.Server.state(Streams.ensure(id))
-      assert state == StreamState.load(context.node.store, id)
+      assert state == StreamState.load(context.mc.store, id)
       assert state.created |> Map.values() |> Enum.min() == first
     end
 
@@ -360,7 +360,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     World.await_row(id, &(&1["title"] == "Renamed"))
 
     assert {^id, "thread", %{"title" => "Renamed"}} =
-             List.keyfind(Store.list_shell(context.node.store), id, 0)
+             List.keyfind(Store.list_shell(context.mc.store), id, 0)
 
     context
   end
@@ -375,7 +375,7 @@ defmodule HalC2.Steps.Platform.EventStore do
         "shape" => %{"type" => "shell"}
       })
 
-    {_, client} = Node.await(client, &(&1["t"] == "shell" and &1["id"] == 2))
+    {_, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 2))
 
     started = System.monotonic_time(:millisecond)
 
@@ -416,7 +416,7 @@ defmodule HalC2.Steps.Platform.EventStore do
 
     for id <- ids, do: idle_stop(id)
     # Rows from before the restart must not stand in for rebuilt ones.
-    HalC2.Shell.online_nodes()
+    HalC2.Shell.online_mcs()
     flush_rows()
 
     sql!(
@@ -429,7 +429,7 @@ defmodule HalC2.Steps.Platform.EventStore do
       "DELETE FROM snapshots WHERE stream IN (SELECT key FROM streams WHERE id LIKE 'th-old-%')"
     )
 
-    stored = Store.list_shell(context.node.store)
+    stored = Store.list_shell(context.mc.store)
     for id <- ids, do: refute(List.keyfind(stored, id, 0))
     Map.put(context, :old_threads, ids)
   end
@@ -440,7 +440,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     row = await_update(slow)
     assert row["title"] == "old 2"
 
-    stored = Store.list_shell(context.node.store)
+    stored = Store.list_shell(context.mc.store)
     for id <- context.old_threads, do: assert({^id, "thread", _} = List.keyfind(stored, id, 0))
     context
   end
@@ -458,23 +458,23 @@ defmodule HalC2.Steps.Platform.EventStore do
     Store.path()
     sql!(context, "DELETE FROM messages")
     sql!(context, "DELETE FROM meta WHERE key = 'messages_indexed'")
-    assert Store.search_messages(context.node.store, "%flux%", 10) == []
+    assert Store.search_messages(context.mc.store, "%flux%", 10) == []
     context
   end
 
   step "their finished messages are indexed once", context do
     backfill()
-    found = Store.search_messages(context.node.store, "%flux%", 10)
+    found = Store.search_messages(context.mc.store, "%flux%", 10)
 
     assert found |> Enum.map(&elem(&1, 0)) |> Enum.sort() ==
              Enum.sort([World.thread_id(context, "main"), World.thread_id(context, "other")])
 
-    assert Store.meta(context.node.store, "messages_indexed") == "1"
+    assert Store.meta(context.mc.store, "messages_indexed") == "1"
 
     # A later start does not index them again.
     sql!(context, "DELETE FROM messages")
     backfill()
-    assert Store.search_messages(context.node.store, "%flux%", 10) == []
+    assert Store.search_messages(context.mc.store, "%flux%", 10) == []
     sql!(context, "DELETE FROM meta WHERE key = 'messages_indexed'")
     backfill()
     context
@@ -511,31 +511,31 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   step "that connection closes when the store stops", context do
     ref = Process.monitor(:sys.get_state(Store).checkpointer)
-    context = %{context | node: Node.restart(context.node), clients: %{}}
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
     assert_receive {:DOWN, ^ref, :process, _, _}
     context
   end
 
   # --- schema version -------------------------------------------------------------------
 
-  step "a node opens its store", context do
-    %{context | node: Node.restart(context.node), clients: %{}}
+  step "an MC opens its store", context do
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
   step "the store carries the schema version it was written with", context do
-    assert Store.meta(context.node.store, "schema_version") ==
+    assert Store.meta(context.mc.store, "schema_version") ==
              Integer.to_string(Store.schema_version())
 
     context
   end
 
-  step "a store written by a newer node schema", context do
+  step "a store written by a newer MC schema", context do
     newer = Store.schema_version() + 1
     :ok = Store.put_meta("schema_version", Integer.to_string(newer))
     Map.put(context, :newer, newer)
   end
 
-  step "an older node opens it", context do
+  step "an older MC opens it", context do
     for child <- [
           HalC2.RuntimeRecord,
           HalC2.Web,
@@ -549,7 +549,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     Map.put(
       context,
       :opened,
-      ExUnit.Callbacks.start_supervised({Store, path: context.node.store})
+      ExUnit.Callbacks.start_supervised({Store, path: context.mc.store})
     )
   end
 
@@ -558,7 +558,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     assert message =~ "schema version #{context.newer}"
     refute Process.whereis(Store)
     # The file is left as it was.
-    assert Store.meta(context.node.store, "schema_version") == Integer.to_string(context.newer)
+    assert Store.meta(context.mc.store, "schema_version") == Integer.to_string(context.newer)
     context
   end
 
@@ -579,10 +579,10 @@ defmodule HalC2.Steps.Platform.EventStore do
     do: Streams.Server.state(Streams.ensure(World.thread_id(context, "main")))
 
   defp log(context, id, after_seq \\ 0),
-    do: Store.reduce_stream(context.node.store, id, after_seq, [], &[&1 | &2]) |> Enum.reverse()
+    do: Store.reduce_stream(context.mc.store, id, after_seq, [], &[&1 | &2]) |> Enum.reverse()
 
   defp sub(client, id, stream, offset \\ nil) do
-    shape = %{"type" => "stream", "node" => Atom.to_string(node()), "stream" => stream}
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => stream}
     frame = %{"t" => "sub", "id" => id, "shape" => shape}
     WsClient.send_json(client, if(offset, do: Map.put(frame, "offset", offset), else: frame))
   end
@@ -606,7 +606,7 @@ defmodule HalC2.Steps.Platform.EventStore do
   end
 
   defp with_db(context, opts, fun) do
-    {:ok, db} = Sqlite3.open(context.node.store, opts)
+    {:ok, db} = Sqlite3.open(context.mc.store, opts)
 
     try do
       fun.(db)
@@ -633,7 +633,7 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   defp row_frames(client, id, title, acc) do
     {frame, client} =
-      Node.await(
+      Mc.await(
         client,
         &(&1["t"] == "shell.rows" and Enum.any?(&1["rows"], fn [row_id | _] -> row_id == id end)),
         3_000

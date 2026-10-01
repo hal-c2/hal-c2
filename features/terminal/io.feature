@@ -18,30 +18,30 @@
 
 Feature: Terminal input and output
   What the user types reaches the shell, and what the shell prints reaches every client
-  watching it. Clearing, restarting and closing act on the node's shell, not a local copy.
+  watching it. Clearing, restarting and closing act on the MC's shell, not a local copy.
 
-  Rule: The node relays keystrokes and output
+  Rule: The MC relays keystrokes and output
 
-    @node
+    @mc
     Scenario: Typed input runs in the shell and its output streams back
       Given a running terminal
       When a client writes "echo hello" and a return
       Then every client attached to the terminal receives "hello"
 
-    @node
+    @mc
     Scenario: Rapid output arrives in small batches instead of one event per byte
       Given a running terminal
       When the shell prints a thousand lines at once
       Then attached clients receive the lines in a few batched output events
       And no output is lost
 
-    @node
+    @mc
     Scenario: Resizing a terminal tells the running program its new size
       Given a running terminal at 120 columns and 30 rows
       When a client resizes it to 80 columns and 24 rows
       Then the running program sees 80 columns and 24 rows
 
-    @node
+    @mc
     Scenario: Clearing a terminal empties its history for every client
       Given a running terminal with output
       When a client clears it
@@ -49,7 +49,7 @@ Feature: Terminal input and output
       And a client attaching afterwards sees no earlier output
       And the shell keeps running
 
-    @node
+    @mc
     Scenario: Restarting a terminal starts a fresh shell with empty history
       Given a running terminal with output
       When a client restarts it
@@ -57,13 +57,13 @@ Feature: Terminal input and output
       And every attached client is told the terminal restarted
       And the history starts empty
 
-    @node
+    @mc
     Scenario: Keystrokes sent just before a clear still reach the shell first
       Given a running terminal
       When a client writes a command and immediately clears the terminal
       Then the command runs before the history is cleared
 
-    @node
+    @mc
     Scenario Outline: A shell that ends reports how it ended
       Given a running terminal
       When the shell <ends>
@@ -76,14 +76,14 @@ Feature: Terminal input and output
         | exits with code 2          | exit code 2        |
         | is killed with SIGKILL     | signal 9           |
 
-    @node
+    @mc
     Scenario: A terminal shows what it is running
       Given a running terminal labelled "Terminal 1"
       When the user starts "npm run dev" in it
       Then within a second the terminal is marked as running a command
       And its label becomes "npm"
 
-    @node
+    @mc
     Scenario: A terminal goes back to its number when the command finishes
       Given a terminal labelled "npm" while a dev server runs
       When the dev server stops

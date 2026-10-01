@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.HalC2.Theme do
-  @shortdoc "Shows or sets the theme this node's clients switch to"
+  @shortdoc "Shows or sets the theme this MC's clients switch to"
   @moduledoc """
   Inspects and sets the environment's theme, as `hal-c2 theme` does for the Node server:
 
@@ -8,8 +8,8 @@ defmodule Mix.Tasks.HalC2.Theme do
       mix hal_c2.theme show      # the theme and the published themes
 
   Connected web and desktop clients switch when it is set; each set applies once,
-  so a theme a user picks afterwards sticks until the next set. It edits the node's
-  settings.json, which a running node checks every couple of seconds.
+  so a theme a user picks afterwards sticks until the next set. It edits the MC's
+  settings.json, which a running MC checks every couple of seconds.
   """
 
   use Mix.Task

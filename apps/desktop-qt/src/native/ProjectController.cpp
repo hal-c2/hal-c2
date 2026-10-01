@@ -11,7 +11,7 @@
 #include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ProjectCloneController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -38,7 +38,7 @@ QString asFolder(const QString& path) {
 
 }  // namespace
 
-ProjectController::ProjectController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+ProjectController::ProjectController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_settings(new EnvironmentSettings(client, this)) {
   // A removal asked about a project that went away meanwhile has nothing to ask.
   connect(store, &ShellStore::changed, this, [this] {
@@ -82,7 +82,7 @@ void ProjectController::activate() {
       if (m_store->environmentOnline(environmentId)) online.append(environmentId);
     }
     if (online.size() == 1) return sources(online.constFirst());
-    const QString own = m_store->environmentOf(m_client->node());
+    const QString own = m_store->environmentOf(m_client->mc());
     QList<CommandRegistry::Choice> environments;
     for (const QString& environmentId : m_store->environments()) {
       const QJsonObject descriptor = m_store->environment(environmentId);
@@ -114,7 +114,7 @@ bool ProjectController::handle(const QString& action, const QVariant& payload) {
     const QString path = map.value(QStringLiteral("path")).toString();
     // Without a folder, the palette's Add project.
     if (path.isEmpty()) return NativeShell::of(this)->controller<KeybindingController>()->commands()->run(kAdd);
-    // Where this machine's folders are not the node's (a node elsewhere),
+    // Where this machine's folders are not the MC's (an MC elsewhere),
     // nothing opens.
     if (!m_bridge->localFolders()) return true;
     openFolder(path);
@@ -143,7 +143,7 @@ void ProjectController::openFolder(const QString& path) {
     toasts->error(QStringLiteral("Could not open folder"), path + QStringLiteral(" is not a folder on this machine."));
     return;
   }
-  const QString own = m_store->environmentOf(m_client->node());
+  const QString own = m_store->environmentOf(m_client->mc());
   if (!m_client->isReady() || own.isEmpty()) {
     toasts->error(QStringLiteral("Could not open folder"), QStringLiteral("The environment is not connected."));
     return;

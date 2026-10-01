@@ -167,7 +167,7 @@ Item {
         // keyed by its own text.
         function test_severalQuestionsAreAnsweredTogether() {
             const requests = createTemporaryObject(requestsComponent, root);
-            const ids = ["What should the prose say where it now says \"the node\" / \"two nodes\"?", "Which short form (tags, env vars, `mise` tasks)?", "How deep should the rename go?"];
+            const ids = ["What should the prose say where it now says \"the MC\" / \"two MCs\"?", "Which short form (tags, env vars, `mise` tasks)?", "How deep should the rename go?"];
             Shell.publishTurn({
                 questions: [{
                         requestId: "request-q",

@@ -9,7 +9,7 @@ defmodule HalC2.OrchestrationTest do
   @fake_acp Path.expand("../support/fake_acp.py", __DIR__)
 
   setup %{tmp_dir: dir} do
-    # Threads without a project run in the node's cwd; make that a repo of its own so
+    # Threads without a project run in the MC's cwd; make that a repo of its own so
     # checkpoints land there and not in this checkout.
     work = Path.join(dir, "work")
     File.mkdir_p!(work)
@@ -2096,7 +2096,7 @@ defmodule HalC2.OrchestrationTest do
       :ok = HalC2.Shell.subscribe(self())
       await_shell_row(thread_id, &(&1["activeRunId"] != nil))
 
-      # The node stops: its provider processes go with it.
+      # The MC stops: its provider processes go with it.
       for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
           do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
 

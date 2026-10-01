@@ -1,5 +1,5 @@
 /**
- * The node origin and token of a pairing link such as `mix hal_c2.pair` prints
+ * The MC origin and token of a pairing link such as `mix hal_c2.pair` prints
  * (`http://127.0.0.1:3780/?token=...`), token in the query or the fragment.
  * Undefined for anything that is not an http(s) URL.
  */

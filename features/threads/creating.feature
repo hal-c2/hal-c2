@@ -91,7 +91,7 @@ Feature: Creating threads
     When the user starts a new thread on that branch from the thread menu
     Then a draft opens in the same worktree as the current thread
 
-  @node
+  @mc
   Scenario Outline: Launching a thread with a workspace strategy
     When a client launches a thread in "shop" with the <strategy> workspace
     Then the thread is created with <workspace>
@@ -103,24 +103,24 @@ Feature: Creating threads
       | existing worktree | the chosen existing worktree as its workspace       |
       | new worktree      | a worktree prepared from the base branch before run |
 
-  @node
+  @mc
   Scenario: Launching into a new worktree prepares it before the agent runs
     When a client launches a thread in "shop" with a new worktree from "main"
     Then the thread shows that its workspace is being prepared
     And the agent starts only after the worktree is ready
 
-  @node
+  @mc
   Scenario: Launching a thread can ask for a generated title
     When a client launches a thread with title generation requested
     Then the thread title is generated from the first message
 
-  @node
+  @mc
   Scenario: A thread id can only be created once
     Given the thread "t-1" exists
     When a client creates another thread with the id "t-1"
     Then the command is rejected with "Thread t-1 already exists."
 
-  @node
+  @mc
   Scenario: Launching can reuse an existing empty thread
     Given an empty draft thread exists for "shop"
     When a client launches a thread in "shop" and asks to reuse the existing thread

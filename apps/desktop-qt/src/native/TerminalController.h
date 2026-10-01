@@ -16,12 +16,12 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
 // Where a thread's terminals run: the environment that owns the thread (the
-// node routes its shapes and RPCs there), and the launch context every terminal
+// MC routes its shapes and RPCs there), and the launch context every terminal
 // of the thread starts with.
 struct TerminalPlace {
   QString environmentId;
@@ -30,13 +30,13 @@ struct TerminalPlace {
   QString worktreePath;  // empty without a worktree
   QJsonObject env;
   QJsonArray scripts;
-  // A provider's setup terminal: the node runs it with that instance's env and home.
+  // A provider's setup terminal: the MC runs it with that instance's env and home.
   QString providerInstanceId;
 
   QJsonObject launchInput(const QString& terminalId) const;
 };
 
-// One terminal the drawer shows: attached to the node's session with a
+// One terminal the drawer shows: attached to the MC's session with a
 // `terminal` shape for as long as it lives. The QML Terminal feeds `write` and
 // `resize` and draws `output`; `replaced` hands it a whole new screen (attach,
 // reattach after a reconnect, clear, restart). The transcript lets a Terminal
@@ -46,7 +46,7 @@ class TerminalSession : public QObject {
   Q_PROPERTY(QString terminalId READ terminalId CONSTANT)
 
 public:
-  TerminalSession(NodeClient* client, const TerminalPlace& place, const QString& terminalId, QSize size,
+  TerminalSession(McClient* client, const TerminalPlace& place, const QString& terminalId, QSize size,
                   QObject* parent = nullptr);
   ~TerminalSession() override;
 
@@ -55,7 +55,7 @@ public:
 
   Q_INVOKABLE QString transcript() const { return m_transcript.join(QString()); }
   // Keystrokes, pastes and replies from the Terminal: sent one request at a
-  // time, since the node runs each RPC on its own and would reorder them.
+  // time, since the MC runs each RPC on its own and would reorder them.
   Q_INVOKABLE void write(const QString& data);
   // Only the latest size matters; one resize is in flight at a time.
   Q_INVOKABLE void resize(int columns, int rows);
@@ -64,11 +64,11 @@ signals:
   void output(const QString& data);
   void replaced(const QString& history);
   void resized(QSize size);
-  // The node closed the terminal (from this or another client).
+  // The MC closed the terminal (from this or another client).
   void closed();
   // The first snapshot arrived: the shell is running.
   void attached();
-  // The node refused to open the terminal.
+  // The MC refused to open the terminal.
   void failed(const QString& reason);
 
 private:
@@ -79,7 +79,7 @@ private:
   void flushWrites();
   void flushResize();
 
-  NodeClient* m_client;
+  McClient* m_client;
   QString m_environmentId;
   QString m_threadId;
   QString m_terminalId;
@@ -164,7 +164,7 @@ private:
 // whether the drawer is open and how tall, its tabs) and the right panel's
 // terminal tabs, and the RPCs behind them. The thread (drafts too), its
 // project root, worktree and scripts are WorkspaceController's place; the
-// terminals come from the node. They are attached the first time the drawer
+// terminals come from the MC. They are attached the first time the drawer
 // opens on that thread (or a panel tab does) and stay attached while the
 // thread is on screen, so hiding the drawer keeps their output.
 //
@@ -191,7 +191,7 @@ public:
   static constexpr int maxPerGroup = 4;
   static constexpr int minimumHeight = 180;
 
-  TerminalController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  TerminalController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool isActive() const { return m_active; }
@@ -245,9 +245,9 @@ private:
     QString active;
     // Split and panel groups; any other terminal is a group of its own.
     QList<Group> groups;
-    // Opened here and not yet listed by the node.
+    // Opened here and not yet listed by the MC.
     QSet<QString> local;
-    // Closed here; ignored until the node confirms.
+    // Closed here; ignored until the MC confirms.
     QSet<QString> closing;
   };
 
@@ -270,7 +270,7 @@ private:
   void toast(const QString& title, const QString& description);
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   QString m_threadKey;
@@ -281,7 +281,7 @@ private:
   // The size the last terminal settled on, for the next one to open at.
   QSize m_size;
   QHash<QString, ThreadUi> m_ui;
-  // Terminals the node lists, per thread key.
+  // Terminals the MC lists, per thread key.
   QHash<QString, QMap<QString, Summary>> m_known;
   // The `terminals` subscription per environment.
   QHash<QString, int> m_watched;

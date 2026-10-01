@@ -45,7 +45,7 @@ defmodule HalC2.Web do
     "#{scheme}://#{host}:#{port()}"
   end
 
-  @doc "Whether `token` is the node's access token (once the listener has read it)."
+  @doc "Whether `token` is the MC's access token (once the listener has read it)."
   @spec access_token?(String.t()) :: boolean
   def access_token?(token) do
     case :persistent_term.get({__MODULE__, :token}, nil) do
@@ -55,7 +55,7 @@ defmodule HalC2.Web do
   end
 
   @doc """
-  The node's access token, generated on first use and kept in the HAL-C2 home directory
+  The MC's access token, generated on first use and kept in the HAL-C2 home directory
   with owner-only permissions.
   """
   @spec token() :: String.t()

@@ -51,13 +51,13 @@ Feature: Archiving and deleting threads
     When the user opens the thread menu
     Then archiving is unavailable
 
-  @node
+  @mc
   Scenario: Archiving cancels runs that have not started
     Given "Old spike" has a queued turn
     When a client archives "Old spike"
     Then the queued turn is cancelled
 
-  @node
+  @mc
   Scenario: Archived threads are listed separately
     Given "Old spike" and "Older spike" are archived
     When a client asks for the archived threads
@@ -65,13 +65,13 @@ Feature: Archiving and deleting threads
 
   # Dropped with a reason in parity/rpc.feature: no client subscribes to the archived
   # shell; the archived list is fetched as a snapshot when the user opens it.
-  @dropped @node
+  @dropped @mc
   Scenario: Archived threads stream to clients that watch them
     Given a client is watching the archived threads
     When "Old spike" is archived
     Then the client sees "Old spike" appear in the archived threads
 
-  @node
+  @mc
   Scenario: The archived list is fetched fresh when a client opens it
     Given "Old spike" was archived after the client last looked
     When a client asks for the archived threads
@@ -121,13 +121,13 @@ Feature: Archiving and deleting threads
     When the user deletes "Old spike"
     Then the user is warned that deleting clears the conversation history
 
-  @node
+  @mc
   Scenario: A deleted thread is gone for every client
     When a client deletes "Old spike"
     Then no client lists "Old spike"
     And its history can no longer be read
 
-  @node
+  @mc
   Scenario: Deleting a thread with a running agent stops the agent first
     Given the agent is working in "Old spike"
     When the user deletes "Old spike"

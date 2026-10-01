@@ -115,7 +115,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | medium |
       | high   |
 
-  @node @desktop @tui
+  @mc @desktop @tui
   Scenario Outline: The user sets what the agent may do without asking
     When the user sets the permissions to <mode>
     Then the next turn runs in <mode>
@@ -127,7 +127,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | Auto                 |
       | Full access          |
 
-  @node @tui
+  @mc @tui
   Scenario: Planning and building can be toggled for the next turn
     Given the thread is building
     When the user toggles to planning

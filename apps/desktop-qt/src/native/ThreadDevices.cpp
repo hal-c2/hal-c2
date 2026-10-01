@@ -5,7 +5,7 @@
 
 #include <algorithm>
 
-#include "NodeClient.h"
+#include "McClient.h"
 
 namespace {
 
@@ -34,7 +34,7 @@ std::pair<QString, QString> ThreadDevices::targetOf(const QString& tabId) {
   return {QUrl::fromPercentEncoding(parts[0].toLatin1()), QUrl::fromPercentEncoding(parts[1].toLatin1())};
 }
 
-ThreadDevices::ThreadDevices(NodeClient* client, QObject* parent) : QObject(parent), m_client(client), m_stream(client) {
+ThreadDevices::ThreadDevices(McClient* client, QObject* parent) : QObject(parent), m_client(client), m_stream(client) {
   publish();
 }
 
@@ -42,16 +42,16 @@ ThreadDevices::~ThreadDevices() {
   unfollow();
 }
 
-void ThreadDevices::setThread(const QString& environmentId, const QString& threadId, const QString& node) {
-  if (environmentId == m_environment && threadId == m_thread && node == m_node) return;
-  const bool moved = environmentId != m_environment || node != m_node;
+void ThreadDevices::setThread(const QString& environmentId, const QString& threadId, const QString& mc) {
+  if (environmentId == m_environment && threadId == m_thread && mc == m_mc) return;
+  const bool moved = environmentId != m_environment || mc != m_mc;
   m_thread = threadId;
   m_pending.clear();
   m_error.clear();
   if (moved) {
     unfollow();
     m_environment = environmentId;
-    m_node = node;
+    m_mc = mc;
     ++m_generation;
     m_state = {};
     m_loaded = false;
@@ -68,15 +68,15 @@ void ThreadDevices::setTab(const QString& tabId) {
   const bool shown = m_tab.isEmpty() && !tabId.isEmpty();
   m_tab = tabId;
   // Showing the tab lists again (the linked environment's only read).
-  if (shown && (m_node.isEmpty() || (m_loaded && text(m_state, QLatin1String("hostStatus")) != QLatin1String("disabled"))))
+  if (shown && (m_mc.isEmpty() || (m_loaded && text(m_state, QLatin1String("hostStatus")) != QLatin1String("disabled"))))
     list();
   retarget();
   publish();
 }
 
 void ThreadDevices::follow() {
-  if (m_subscription >= 0 || m_node.isEmpty() || m_environment.isEmpty()) return;
-  m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("node"), m_node}},
+  if (m_subscription >= 0 || m_mc.isEmpty() || m_environment.isEmpty()) return;
+  m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("mc"), m_mc}},
                                        [this](const QJsonObject& frame) {
                                          if (frame.value(QLatin1String("t")) == QLatin1String("devices"))
                                            take(frame.value(QLatin1String("state")).toObject());
@@ -103,7 +103,7 @@ void ThreadDevices::take(const QJsonObject& state) {
   m_state = state;
   const bool first = !m_loaded;
   m_loaded = true;
-  if (first && !m_tab.isEmpty() && text(state, QLatin1String("hostStatus")) != QLatin1String("disabled") && !m_node.isEmpty())
+  if (first && !m_tab.isEmpty() && text(state, QLatin1String("hostStatus")) != QLatin1String("disabled") && !m_mc.isEmpty())
     list();
   watchSessions();
   retarget();
@@ -201,7 +201,7 @@ void ThreadDevices::open(const QString& hostId, const QString& deviceId) {
                      publish();
                      return;
                    }
-                   // The session is the node's; seeing it later is not an agent's open.
+                   // The session is the MC's; seeing it later is not an agent's open.
                    const QJsonObject session = result.toObject();
                    const QString host = session.value(QLatin1String("hostId")).toString(hostId);
                    const QString id = session.value(QLatin1String("deviceId")).toString(deviceId);

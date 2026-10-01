@@ -1,7 +1,7 @@
 // The composer's turn on an open thread: the agent's requests and questions,
-// its proposed plan, queued messages and follow-ups, as the node streams them,
+// its proposed plan, queued messages and follow-ups, as the MC streams them,
 // and what the user's answers send (the `turn` key ComposerController
-// publishes, and the commands the node receives). The thread's stream is
+// publishes, and the commands the MC receives). The thread's stream is
 // Stream.h's.
 
 #include <QJsonArray>
@@ -27,7 +27,7 @@ namespace {
 const QString kQuestion = QStringLiteral("database");
 
 QString threadKey(World& world) {
-  return world.node.environmentId + QLatin1Char(':') + kThread;
+  return world.mc.environmentId + QLatin1Char(':') + kThread;
 }
 
 QVariantMap turn(World& world) {
@@ -38,10 +38,10 @@ QVariantList listed(World& world, const QString& field) {
   return turn(world).value(field).toList();
 }
 
-// Opens a thread of "shop" on a connected node, unless one is open.
+// Opens a thread of "shop" on a connected MC, unless one is open.
 void openThread(World& world) {
-  if (!world.node.part<FakeStreams>().thread.isEmpty()) return;
-  world.node.projects.insert(kProject, {{QStringLiteral("id"), kProject},
+  if (!world.mc.part<FakeStreams>().thread.isEmpty()) return;
+  world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject},
                                         {QStringLiteral("title"), kProject},
                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
                                         {QStringLiteral("scripts"), QJsonArray()}});
@@ -52,9 +52,9 @@ void openThread(World& world) {
 
 // The thread's shell row says whether a turn runs.
 void updateRow(World& world, const QJsonObject& fields) {
-  QJsonObject& row = world.node.threads[kThread];
+  QJsonObject& row = world.mc.threads[kThread];
   for (auto it = fields.begin(); it != fields.end(); ++it) row.insert(it.key(), it.value());
-  world.node.sendRow(kThread, row);
+  world.mc.sendRow(kThread, row);
   world.sync();
 }
 
@@ -72,7 +72,7 @@ void finishTurn(World& world) {
 // A pending request of the running turn: its runtime-request and its item.
 QString request(World& world, const QString& type, const QJsonObject& fields,
                 const QString& capability = QStringLiteral("live")) {
-  FakeStreams& fake = world.node.part<FakeStreams>();
+  FakeStreams& fake = world.mc.part<FakeStreams>();
   const QString id = QStringLiteral("request-%1").arg(fake.ordinal + 1);
   set(world, QStringLiteral("runtime-request"), id,
       {{QStringLiteral("id"), id},
@@ -127,11 +127,11 @@ void answer(World& world, const QVariant& value) {
   world.sync();
 }
 
-// The commands of a type the node received, oldest first.
+// The commands of a type the MC received, oldest first.
 QList<QJsonObject> commandsOf(World& world, const QString& type) {
   world.sync();
   QList<QJsonObject> found;
-  for (const QJsonObject& command : world.node.commands) {
+  for (const QJsonObject& command : world.mc.commands) {
     if (command.value(QLatin1String("type")).toString() == type) found.append(command);
   }
   return found;
@@ -139,14 +139,14 @@ QList<QJsonObject> commandsOf(World& world, const QString& type) {
 
 QJsonObject lastCommand(World& world, const QString& type) {
   const QList<QJsonObject> found = commandsOf(world, type);
-  if (found.isEmpty()) fail(QStringLiteral("no %1 command; the node has %2").arg(type, world.describeCommands()));
+  if (found.isEmpty()) fail(QStringLiteral("no %1 command; the MC has %2").arg(type, world.describeCommands()));
   return found.last();
 }
 
 void expectDecision(World& world, const QString& decision) {
   const QJsonObject command = lastCommand(world, QStringLiteral("runtime-request.respond"));
   expect(command.value(QLatin1String("decision")).toString() == decision && command.value(QLatin1String("threadId")) == kThread,
-         QStringLiteral("the node was told %1").arg(show(command.toVariantMap())));
+         QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
 }
 
 QVariant receivedAnswer(World& world) {
@@ -170,13 +170,13 @@ void proposePlan(World& world, bool settled) {
       {{QStringLiteral("id"), QStringLiteral("plan-1")},
        {QStringLiteral("kind"), QStringLiteral("proposed_plan")},
        {QStringLiteral("status"), QStringLiteral("active")},
-       {QStringLiteral("runId"), world.node.part<FakeStreams>().run},
+       {QStringLiteral("runId"), world.mc.part<FakeStreams>().run},
        {QStringLiteral("markdown"), markdown}});
   if (settled) finishTurn(world);
 }
 
 void queueMessage(World& world, const QString& text) {
-  FakeStreams& fake = world.node.part<FakeStreams>();
+  FakeStreams& fake = world.mc.part<FakeStreams>();
   const QString run = QStringLiteral("run-queued-%1").arg(text);
   const int position = ++fake.ordinal;
   set(world, QStringLiteral("message"), QStringLiteral("message-") + text,
@@ -334,7 +334,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("sending the answer fails because (the request was already resolved|the connection dropped for a moment)"),
        [](World& world, const Captures& c, const Table&) {
-         world.node.refusals.insert(QStringLiteral("runtime-request.respond"),
+         world.mc.refusals.insert(QStringLiteral("runtime-request.respond"),
                                     c[0] == QLatin1String("the request was already resolved") ? QStringLiteral("no pending request")
                                                                                               : QStringLiteral("connection closed"));
          respond(world, QStringLiteral("accept"));
@@ -384,7 +384,7 @@ const Steps steps([] {
     const QVariantMap shown = first(world, QStringLiteral("questions"));
     expect(shown.value(QStringLiteral("canRespond")).toBool(), QStringLiteral("the question is %1").arg(show(shown)));
     answer(world, QStringLiteral("SQLite"));
-    expect(receivedAnswer(world) == QVariant(QStringLiteral("SQLite")), QStringLiteral("the answer did not reach the node"));
+    expect(receivedAnswer(world) == QVariant(QStringLiteral("SQLite")), QStringLiteral("the answer did not reach the MC"));
   });
   step(QStringLiteral("the agent has asked %1 with options %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     startWorking(world);
@@ -398,7 +398,7 @@ const Steps steps([] {
   step(QStringLiteral("the agent is told the question was dismissed"), [](World& world, const Captures&, const Table&) {
     const QJsonObject command = lastCommand(world, QStringLiteral("thread.user-input.dismiss"));
     expect(command.value(QLatin1String("threadId")) == kThread && !command.value(QLatin1String("requestId")).toString().isEmpty(),
-           QStringLiteral("the node was told %1").arg(show(command.toVariantMap())));
+           QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
     expect(commandsOf(world, QStringLiteral("runtime-request.respond")).isEmpty(), QStringLiteral("the agent was also given an answer"));
   });
 
@@ -417,12 +417,12 @@ const Steps steps([] {
     expect(message.value(QLatin1String("threadId")) == kThread &&
                message.value(QLatin1String("text")).toString().startsWith(QLatin1String("PLEASE IMPLEMENT THIS PLAN:\n# Tax line")) &&
                message.value(QLatin1String("sourcePlanRef")).toObject().value(QLatin1String("planId")) == QLatin1String("plan-1"),
-           QStringLiteral("the node was sent %1").arg(show(message.toVariantMap())));
+           QStringLiteral("the MC was sent %1").arg(show(message.toVariantMap())));
     const QJsonObject mode = lastCommand(world, QStringLiteral("thread.interaction-mode.set"));
     expect(mode.value(QLatin1String("interactionMode")) == QLatin1String("default"), QStringLiteral("the thread was set to %1").arg(show(mode.toVariantMap())));
   });
   step(QStringLiteral("the plan card is no longer offered"), [](World& world, const Captures&, const Table&) {
-    // What the node does with the message's sourcePlanRef.
+    // What the MC does with the message's sourcePlanRef.
     set(world, QStringLiteral("plan"), QStringLiteral("plan-1"), {{QStringLiteral("status"), QStringLiteral("completed")}});
     expect(!turn(world).value(QStringLiteral("plan")).isValid(), QStringLiteral("the turn is %1").arg(show(turn(world))));
   });
@@ -433,7 +433,7 @@ const Steps steps([] {
   step(QStringLiteral("the agent revises the plan"), [](World& world, const Captures&, const Table&) {
     const QJsonObject message = lastMessage(world);
     expect(message.value(QLatin1String("text")) == QLatin1String("split the migration into its own step") && !message.contains(QLatin1String("sourcePlanRef")),
-           QStringLiteral("the node was sent %1").arg(show(message.toVariantMap())));
+           QStringLiteral("the MC was sent %1").arg(show(message.toVariantMap())));
   });
   step(QStringLiteral("the thread stays in plan mode"), [](World& world, const Captures&, const Table&) {
     for (const QJsonObject& mode : commandsOf(world, QStringLiteral("thread.interaction-mode.set"))) {
@@ -458,13 +458,13 @@ const Steps steps([] {
     expect(message.value(QLatin1String("text")) == c[0] &&
                message.value(QLatin1String("dispatchMode")).toObject().value(QLatin1String("type")) == QLatin1String("queue_after_active") &&
                !message.contains(QLatin1String("deliveryIntent")),
-           QStringLiteral("the node was sent %1").arg(show(message.toVariantMap())));
+           QStringLiteral("the MC was sent %1").arg(show(message.toVariantMap())));
   });
   step(QStringLiteral("%1 steers the running turn").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonObject message = lastMessage(world);
     expect(message.value(QLatin1String("text")) == c[0] && message.value(QLatin1String("deliveryIntent")) == QLatin1String("steer") &&
                message.value(QLatin1String("dispatchMode")).toObject().value(QLatin1String("type")) == QLatin1String("start_immediately"),
-           QStringLiteral("the node was sent %1").arg(show(message.toVariantMap())));
+           QStringLiteral("the MC was sent %1").arg(show(message.toVariantMap())));
   });
   step(QStringLiteral("the composer is empty"), [](World& world, const Captures&, const Table&) {
     expect(openDraft(world).isEmpty(), QStringLiteral("the draft reads \"%1\"").arg(openDraft(world)));
@@ -475,7 +475,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the running turn is interrupted"), [](World& world, const Captures&, const Table&) {
     const QJsonObject command = lastCommand(world, QStringLiteral("run.interrupt"));
-    expect(command.value(QLatin1String("runId")) == world.node.part<FakeStreams>().run, QStringLiteral("the node was told %1").arg(show(command.toVariantMap())));
+    expect(command.value(QLatin1String("runId")) == world.mc.part<FakeStreams>().run, QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
   });
   step(QStringLiteral("%1 and %1 are queued").arg(q), [](World& world, const Captures& c, const Table&) {
     queueMessage(world, c[0]);
@@ -500,15 +500,15 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("composer.queue.steer"), QVariantMap{{QStringLiteral("runId"), queued(world, c[0])}});
     world.sync();
   });
-  step(QStringLiteral("the node is asked to cancel the queued run of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to cancel the queued run of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonObject command = lastCommand(world, QStringLiteral("queued-run.cancel"));
-    expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0], QStringLiteral("the node was told %1").arg(show(command.toVariantMap())));
+    expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0], QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
   });
-  step(QStringLiteral("the node is asked to steer the running turn with the queued run of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to steer the running turn with the queued run of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonObject command = lastCommand(world, QStringLiteral("queued-message.promote-to-steer"));
     expect(command.value(QLatin1String("queuedRunId")) == QStringLiteral("run-queued-") + c[0] &&
-               command.value(QLatin1String("targetRunId")) == world.node.part<FakeStreams>().run,
-           QStringLiteral("the node was told %1").arg(show(command.toVariantMap())));
+               command.value(QLatin1String("targetRunId")) == world.mc.part<FakeStreams>().run,
+           QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
   });
 
   // Editing a queued message.
@@ -533,16 +533,16 @@ const Steps steps([] {
   step(QStringLiteral("the queued run of %1 starts").arg(q), [](World& world, const Captures& c, const Table&) {
     set(world, QStringLiteral("run"), QStringLiteral("run-queued-") + c[0], {{QStringLiteral("status"), QStringLiteral("running")}});
   });
-  step(QStringLiteral("the node is asked to change the queued run of %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to change the queued run of %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonObject command = lastCommand(world, QStringLiteral("queued-run.edit"));
     expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && command.value(QLatin1String("text")) == c[1],
-           QStringLiteral("the node was told %1").arg(show(command.toVariantMap())));
+           QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
   });
   step(QStringLiteral("the queued message still reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QStringList texts;
     for (const QVariant& queued : listed(world, QStringLiteral("queue"))) texts.append(queued.toMap().value(QStringLiteral("text")).toString());
     expect(texts.contains(c[0]) && commandsOf(world, QStringLiteral("queued-run.edit")).isEmpty(),
-           QStringLiteral("the queue is [%1] and the node has %2").arg(texts.join(QStringLiteral(", ")), world.describeCommands()));
+           QStringLiteral("the queue is [%1] and the MC has %2").arg(texts.join(QStringLiteral(", ")), world.describeCommands()));
   });
 
   // Answers in flight.
@@ -551,21 +551,21 @@ const Steps steps([] {
     const QVariantMap shown = first(world, QStringLiteral("approvals"));
     expect(shown.value(QStringLiteral("responding")).toBool(), QStringLiteral("the approval is %1").arg(show(shown)));
   });
-  step(QStringLiteral("the node receives one answer"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC receives one answer"), [](World& world, const Captures&, const Table&) {
     const qsizetype answers = commandsOf(world, QStringLiteral("runtime-request.respond")).size();
-    expect(answers == 1, QStringLiteral("the node received %1 answers").arg(answers));
+    expect(answers == 1, QStringLiteral("the MC received %1 answers").arg(answers));
   });
 
   // Drafts.
   const auto threadB = [](World& world) {
     const QString id = QStringLiteral("thread-2");
-    if (!world.node.threads.contains(id)) {
-      world.node.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), QStringLiteral("Other")}, {QStringLiteral("projectId"), kProject},
+    if (!world.mc.threads.contains(id)) {
+      world.mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), QStringLiteral("Other")}, {QStringLiteral("projectId"), kProject},
                                      {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
-      world.node.sendRow(id, world.node.threads.value(id));
+      world.mc.sendRow(id, world.mc.threads.value(id));
       world.sync();
     }
-    return world.node.environmentId + QStringLiteral(":") + id;
+    return world.mc.environmentId + QStringLiteral(":") + id;
   };
   step(QStringLiteral("the user has typed %1 in thread A").arg(q), [](World& world, const Captures& c, const Table&) { typeInto(world, c[0]); });
   step(QStringLiteral("the user switches to thread B and back to thread A"), [threadB](World& world, const Captures&, const Table&) {
@@ -581,8 +581,8 @@ const Steps steps([] {
     expect(draftOf(world, threadB(world)).isEmpty(), QStringLiteral("thread B's draft reads \"%1\"").arg(draftOf(world, threadB(world))));
   });
   step(QStringLiteral("the environment is disconnected"), [](World& world, const Captures&, const Table&) {
-    world.node.stopAccepting();
-    world.node.drop();
+    world.mc.stopAccepting();
+    world.mc.drop();
     world.waitFor([&world] { return !world.native().client()->isReady(); }, QStringLiteral("the shell to see the drop"));
   });
   step(QStringLiteral("the user has typed %1").arg(q), [](World& world, const Captures& c, const Table&) { typeInto(world, c[0]); });
@@ -594,14 +594,14 @@ const Steps steps([] {
     const QVariantMap toast = toasts(world).last().toMap();
     expect(toast.value(QStringLiteral("type")) == QLatin1String("warning") && toast.value(QStringLiteral("title")) == QLatin1String("Not connected: message not sent"),
            QStringLiteral("the toast is %1").arg(show(toast)));
-    expect(world.node.commands.isEmpty(), QStringLiteral("the node has %1").arg(world.describeCommands()));
+    expect(world.mc.commands.isEmpty(), QStringLiteral("the MC has %1").arg(world.describeCommands()));
   });
   step(QStringLiteral("the draft (?:still reads %1|reads %1 again)").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString expected = c[0].isEmpty() ? c[1] : c[0];
     world.waitFor([&] { return openDraft(world) == expected; }, [&] { return QStringLiteral("the draft reads \"%1\"").arg(openDraft(world)); });
   });
-  step(QStringLiteral("the user sends it and the node rejects the message"), [](World& world, const Captures&, const Table&) {
-    world.node.refusals.insert(QStringLiteral("message.dispatch"), QStringLiteral("Provider unavailable"));
+  step(QStringLiteral("the user sends it and the MC rejects the message"), [](World& world, const Captures&, const Table&) {
+    world.mc.refusals.insert(QStringLiteral("message.dispatch"), QStringLiteral("Provider unavailable"));
     world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), openDraft(world)}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
     world.sync();
   });

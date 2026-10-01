@@ -4,7 +4,7 @@ defmodule HalC2.Mcp.Tools do
   agent called it. Definitions come from `priv/mcp_tools.json`; only the tools
   implemented here and in the area modules (`HalC2.Mcp.Tools.Threads`, `Queue`,
   `Projects` and `PullRequests`), which share the access helpers below, are advertised.
-  Tools only nodes have are defined in `priv/mcp_node_tools.json`.
+  Tools only MCs have are defined in `priv/mcp_mc_tools.json`.
 
   The access rules follow the Node server's: a caller sees only threads of its own
   project; changing another thread needs a caller that is itself running, and never
@@ -51,10 +51,10 @@ defmodule HalC2.Mcp.Tools do
   defp definitions do
     case :persistent_term.get({__MODULE__, :definitions}, nil) do
       nil ->
-        # The Node server's tools, and the ones only nodes have (moving between machines).
+        # The Node server's tools, and the ones only MCs have (moving between machines).
         tools =
           Enum.flat_map(
-            ~w(mcp_tools.json mcp_node_tools.json),
+            ~w(mcp_tools.json mcp_mc_tools.json),
             &(Application.app_dir(:hal_c2, Path.join("priv", &1))
               |> File.read!()
               |> JSON.decode!())
@@ -93,7 +93,7 @@ defmodule HalC2.Mcp.Tools do
     if area do
       with {:ok, me} <- caller_row(caller), do: area.run(name, args, Map.put(caller, :row, me))
     else
-      {:error, "capability_denied", "#{name} is not available on this node."}
+      {:error, "capability_denied", "#{name} is not available on this MC."}
     end
   end
 
@@ -325,8 +325,8 @@ defmodule HalC2.Mcp.Tools do
 
   def run("hal_c2_project_list", args, _caller) do
     projects =
-      for {{node, _}, {"project", row}} <- HalC2.Shell.rows(),
-          node == node() and row["deletedAt"] == nil,
+      for {{mc, _}, {"project", row}} <- HalC2.Shell.rows(),
+          mc == node() and row["deletedAt"] == nil,
           do: project(row)
 
     cursor = args["cursor"] || 0
@@ -574,7 +574,7 @@ defmodule HalC2.Mcp.Tools do
   @doc "A thread's own entity, current where its sidebar row may trail."
   def thread(id), do: StreamState.get(stream(id), "thread")[id]
 
-  @doc "A project of this node that is not deleted, or nil. Project rows omit null fields."
+  @doc "A project of this MC that is not deleted, or nil. Project rows omit null fields."
   def project_row(id) do
     case HalC2.Shell.row(node(), id) do
       {"project", row} -> if row["deletedAt"] == nil, do: row
@@ -585,8 +585,8 @@ defmodule HalC2.Mcp.Tools do
   @doc "A project's threads that are not deleted, most recently updated first."
   def project_threads(project_id) do
     for(
-      {{node, _}, {"thread", row}} <- HalC2.Shell.rows(),
-      node == node() and row["projectId"] == project_id and row["deletedAt"] == nil,
+      {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
+      mc == node() and row["projectId"] == project_id and row["deletedAt"] == nil,
       do: row
     )
     |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)

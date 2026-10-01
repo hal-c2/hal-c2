@@ -1,8 +1,8 @@
 # Model manifest
 
-The node owns the [manifest](../../apps/server-ex/priv/model-manifest.json). It
-compiles the Claude catalog in, so a manifest change reaches nodes with their next
-release; the node does not fetch it yet.
+The MC owns the [manifest](../../apps/server-ex/priv/model-manifest.json). It
+compiles the Claude catalog in, so a manifest change reaches MCs with their next
+release; the MC does not fetch it yet.
 
 The legacy Node server bundles the same file, which allows offline startup, and
 fetches it from `main` so model metadata can change between releases. Its releases

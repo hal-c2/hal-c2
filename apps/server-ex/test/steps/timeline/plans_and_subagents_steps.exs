@@ -1,7 +1,7 @@
 defmodule HalC2.Steps.Timeline.PlansAndSubagents do
   @moduledoc """
-  Steps for the `@node` scenarios of `features/timeline/plans-and-subagents.feature`.
-  The working agent delegates through the node's MCP `delegate_task` tool, as a
+  Steps for the `@mc` scenarios of `features/timeline/plans-and-subagents.feature`.
+  The working agent delegates through the MC's MCP `delegate_task` tool, as a
   provider would. Outcome scenarios delegate "answer from gate", which the fake Codex
   answers with whatever the test puts in the gate file "answer".
   """
@@ -9,12 +9,12 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   step "the agent delegates {string} to a subagent", %{args: [task]} = context do
     title = World.current(context)
     before = World.stream(context, title)
-    HalC2.Test.Node.ensure(HalC2.Mcp)
+    HalC2.Test.Mc.ensure(HalC2.Mcp)
     result = delegate(context, %{"task" => task})
 
     # Every version of the parent's subagent item since the call, oldest first: the
@@ -67,7 +67,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
 
   step "the agent delegated a task and chose to carry on", context do
     context = World.working_thread(context, World.current(context))
-    HalC2.Test.Node.ensure(HalC2.Mcp)
+    HalC2.Test.Mc.ensure(HalC2.Mcp)
     result = delegate(context, %{"task" => "answer from gate"})
     Map.merge(context, %{delegated: result["structuredContent"], mode: :carry_on})
   end
@@ -75,7 +75,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
   step "the agent delegated a task and chose to wait for it", context do
     title = World.current(context)
     context = World.working_thread(context, title)
-    HalC2.Test.Node.ensure(HalC2.Mcp)
+    HalC2.Test.Mc.ensure(HalC2.Mcp)
 
     waiting =
       Task.async(fn -> delegate(context, %{"task" => "answer from gate", "mode" => "wait"}) end)
@@ -126,7 +126,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
 
   step "a subagent sent a message to its parent", context do
     context = World.working_thread(context, World.current(context))
-    HalC2.Test.Node.ensure(HalC2.Mcp)
+    HalC2.Test.Mc.ensure(HalC2.Mcp)
     :ok = HalC2.Shell.subscribe(self())
     # The subagent holds its run open on the gate, as the sender must be running.
     %{"childThreadId" => child_id} =
@@ -137,7 +137,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
       &Enum.any?(StreamState.list(&1, "run"), fn run -> run["status"] == "running" end)
     )
 
-    # The node finds a calling thread by its sidebar row.
+    # The MC finds a calling thread by its sidebar row.
     World.await_row(child_id, & &1)
 
     text = "The cart totals are fixed."
@@ -185,7 +185,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
   step "the agent delegated work to a subagent on the model {string}",
        %{args: [model]} = context do
     context = World.working_thread(context, World.current(context))
-    HalC2.Test.Node.ensure(HalC2.Mcp)
+    HalC2.Test.Mc.ensure(HalC2.Mcp)
     result = delegate(context, %{"task" => "answer from gate", "target" => %{"model" => model}})
     Map.merge(context, %{delegated: result["structuredContent"], mode: :carry_on})
   end
@@ -213,12 +213,12 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     context
   end
 
-  # Calls the node's MCP tool `delegate_task` as the current thread's provider. The
-  # test process must have started `HalC2.Mcp` (`HalC2.Test.Node.ensure/1`).
+  # Calls the MC's MCP tool `delegate_task` as the current thread's provider. The
+  # test process must have started `HalC2.Mcp` (`HalC2.Test.Mc.ensure/1`).
   defp delegate(context, arguments),
     do: tool(World.thread_id(context, World.current(context)), "delegate_task", arguments)
 
-  # Calls one of the node's MCP tools as the provider of `thread_id`.
+  # Calls one of the MC's MCP tools as the provider of `thread_id`.
   defp tool(thread_id, name, arguments) do
     %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
 
@@ -306,17 +306,17 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
 
   # A thread as a client that opens it reads it: the snapshot of its stream.
   defp read_thread(context, thread_id) do
-    shape = %{"type" => "stream", "node" => Atom.to_string(node()), "stream" => thread_id}
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => thread_id}
 
-    context.node
-    |> HalC2.Test.Node.connect()
-    |> HalC2.Test.Node.sub(1, shape)
+    context.mc
+    |> HalC2.Test.Mc.connect()
+    |> HalC2.Test.Mc.sub(1, shape)
     |> snapshot([])
   end
 
   defp snapshot(client, rows) do
     {frame, client} =
-      HalC2.Test.Node.await(client, &(&1["id"] == 1 and &1["t"] == "snapshot"), 5_000)
+      HalC2.Test.Mc.await(client, &(&1["id"] == 1 and &1["t"] == "snapshot"), 5_000)
 
     rows = rows ++ frame["rows"]
     if frame["done"], do: rows, else: snapshot(client, rows)

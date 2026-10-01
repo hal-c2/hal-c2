@@ -3,7 +3,7 @@
 #   apps/server-ex/lib/hal_c2/editors.ex (shell.openInEditor)
 #   apps/web/src/components/files/FilePreviewPanel.tsx
 #   apps/web/src/components/chat/ThreadDetailsPanel.tsx, OpenInPicker.tsx, OpenInPicker.logic.ts (open the workspace)
-#   apps/web/src/remoteOpen.ts (SSH deep links for a remote environment; remoteOpenTargets not sent by the node)
+#   apps/web/src/remoteOpen.ts (SSH deep links for a remote environment; remoteOpenTargets not sent by the MC)
 #   apps/web/src/components/files/FileBreadcrumbs.tsx
 #   apps/web/src/components/files/fileSaveCoordinator.ts
 #   apps/web/src/components/files/fileEditorDismissal.ts
@@ -36,36 +36,36 @@ Feature: Viewing and editing files
 
   Rule: Reading
 
-    @node
+    @mc
     Scenario: Reading a text file returns its contents
       When a client reads "src/app.ts" from "shop"
       Then the file's contents are returned
       And the result is not marked as truncated
 
-    @node
+    @mc
     Scenario: A file larger than one megabyte is returned in part
       Given "logs/big.log" in "shop" is 3 MB
       When a client reads "logs/big.log" from "shop"
       Then the first megabyte is returned
       And the result is marked as truncated
 
-    @node
+    @mc
     Scenario Outline: Files that cannot be shown as text are refused
       When a client reads "<path>" from "shop" as text
-      Then the node answers that "<path>" <reason>
+      Then the MC answers that "<path>" <reason>
 
       Examples:
         | path           | reason              |
         | assets/logo.db | is not a text file  |
         | src            | is not a file       |
 
-    @node
+    @mc
     Scenario: A binary file can be read as base64
       Given "assets/logo.png" is an image in "shop"
       When a client reads "assets/logo.png" from "shop" as base64
       Then the image bytes are returned
 
-    @node
+    @mc
     Scenario: A file on the host outside the project can be read by its full path
       Given the host has the file "/home/sam/notes/todo.txt"
       When a client reads "/home/sam/notes/todo.txt" from "shop"
@@ -198,7 +198,7 @@ Feature: Viewing and editing files
 
   Rule: Editing
 
-    @node
+    @mc
     Scenario: Writing a file creates any missing folders
       When a client writes "src/new/deep.ts" in "shop"
       Then "src/new/deep.ts" exists with the written contents
@@ -242,10 +242,10 @@ Feature: Viewing and editing files
 
   Rule: Paths stay inside the project
 
-    @node
+    @mc
     Scenario Outline: Paths that leave the project are refused
       When a client <action> "<path>" in "shop"
-      Then the node answers that the path is outside the project
+      Then the MC answers that the path is outside the project
 
       Examples:
         | action | path                 |
@@ -254,11 +254,11 @@ Feature: Viewing and editing files
         | writes | /etc/hosts           |
         | reads  | link-to-home/.bashrc |
 
-    @node
+    @mc
     Scenario: A project whose folder was deleted reports it
       Given the folder of "shop" was deleted
       When a client lists the files of "shop"
-      Then the node answers that the project folder does not exist
+      Then the MC answers that the project folder does not exist
 
   Rule: Viewing attachments
 

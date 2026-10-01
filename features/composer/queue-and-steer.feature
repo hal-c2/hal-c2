@@ -20,13 +20,13 @@ Feature: Follow-ups while the agent is working
   Background:
     Given a thread whose agent is working on a turn
 
-  @node
+  @mc
   Scenario: A message sent to the queue during a turn waits for the thread to be idle
     When the user queues "also update the docs"
     Then "also update the docs" is queued behind the running turn
     And it starts once the thread is idle
 
-  @node
+  @mc
   Scenario Outline: Steering joins the running turn only where the provider can take it
     Given the thread runs on <provider>
     When the user steers the running turn with "use the new API"
@@ -39,7 +39,7 @@ Feature: Follow-ups while the agent is working
       | OpenCode | the running turn receives "use the new API"                              |
       | Grok     | the running turn is interrupted and "use the new API" runs next          |
 
-  @node
+  @mc
   Scenario: A steer the provider rejects is refused, not quietly queued
     Given the provider rejects the steer
     When the user tries to steer the running turn with "stop and summarize"
@@ -47,7 +47,7 @@ Feature: Follow-ups while the agent is working
     And "stop and summarize" is neither queued nor part of the running turn
     And the running turn keeps working
 
-  @node
+  @mc
   Scenario: Restarting with a message interrupts the turn and runs the message next
     Given "later" is queued
     When the user restarts the turn with "start over with tests first"
@@ -73,13 +73,13 @@ Feature: Follow-ups while the agent is working
     When the user sends "tweak" the opposite way from the phone
     Then "tweak" steers the running turn
 
-  @node
+  @mc
   Scenario: Reordering the queue changes what runs next
     Given "a", "b" and "c" are queued in that order
     When the user moves "c" before "a"
     Then the queue order is "c", "a", "b"
 
-  @node
+  @mc
   Scenario: Editing a queued message replaces its text before it runs
     Given "fix typo" is queued
     When the user edits it to "fix all typos"
@@ -96,7 +96,7 @@ Feature: Follow-ups while the agent is working
     Then the composer holds "unrelated draft" again
     And the queued message still reads "fix typo"
 
-  @node
+  @mc
   Scenario Outline: Promoting a queued message steers the running turn
     Given the thread runs on <provider>
     And "check the logs" is queued
@@ -111,16 +111,16 @@ Feature: Follow-ups while the agent is working
       | OpenCode | the running turn receives "check the logs"                       |
       | Grok     | the running turn is interrupted and "check the logs" runs next   |
 
-  @node
+  @mc
   Scenario: Removing a queued message cancels it
     Given "never mind" is queued
     When the user removes it from the queue
     Then "never mind" never runs
 
-  @node
-  Scenario: The queue is held after a node restart until the user resumes it
-    Given "later" was queued when the node restarted
-    When the node comes back
+  @mc
+  Scenario: The queue is held after an MC restart until the user resumes it
+    Given "later" was queued when the MC restarted
+    When the MC comes back
     Then the queue is held and "later" does not start on its own
     When the user resumes the queue
     Then "later" starts
@@ -161,12 +161,12 @@ Feature: Follow-ups while the agent is working
   Scenario: Removing a queued message cancels its run
     Given "check the logs" and "update the docs" are queued
     When the user removes "check the logs" from the queue
-    Then the node is asked to cancel the queued run of "check the logs"
+    Then the MC is asked to cancel the queued run of "check the logs"
 
   @desktop
-  Scenario: A removal the node refuses is reported
+  Scenario: A removal the MC refuses is reported
     Given "check the logs" and "update the docs" are queued
-    And the node refuses "queued-run.cancel" with "run already started"
+    And the MC refuses "queued-run.cancel" with "run already started"
     When the user removes "check the logs" from the queue
     Then the user sees an "error" toast "Failed to remove the queued message." saying "run already started"
 
@@ -174,12 +174,12 @@ Feature: Follow-ups while the agent is working
   Scenario: A queued message can steer the running turn
     Given "check the logs" and "update the docs" are queued
     When the user steers the running turn with the queued "update the docs"
-    Then the node is asked to steer the running turn with the queued run of "update the docs"
+    Then the MC is asked to steer the running turn with the queued run of "update the docs"
 
   @desktop
-  Scenario: A steer the node refuses is reported
+  Scenario: A steer the MC refuses is reported
     Given "check the logs" and "update the docs" are queued
-    And the node refuses "queued-message.promote-to-steer" with "provider cannot steer"
+    And the MC refuses "queued-message.promote-to-steer" with "provider cannot steer"
     When the user steers the running turn with the queued "update the docs"
     Then the user sees an "error" toast "Failed to steer with the queued message." saying "provider cannot steer"
 
@@ -189,13 +189,13 @@ Feature: Follow-ups while the agent is working
     And the user has typed "unrelated draft"
     When the user starts editing the last queued message from the start of the composer
     And the user sends "fix all typos" from the composer
-    Then the node is asked to change the queued run of "fix typo" to "fix all typos"
+    Then the MC is asked to change the queued run of "fix typo" to "fix all typos"
     And the composer holds "unrelated draft" again
 
   @desktop
-  Scenario: An edit the node refuses stays in the composer
+  Scenario: An edit the MC refuses stays in the composer
     Given "fix typo" is queued
-    And the node refuses "queued-run.edit" with "run already started"
+    And the MC refuses "queued-run.edit" with "run already started"
     When the user starts editing the last queued message from the start of the composer
     And the user sends "fix all typos" from the composer
     Then the user sees an "error" toast "Could not save the edited queued message." saying "run already started"

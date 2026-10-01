@@ -2,7 +2,7 @@
 #   apps/mobile/src/features/updates/app-updates.ts (background install, prompts, flush first)
 #   apps/mobile/src/features/settings/SettingsAboutRouteScreen.tsx (hidden update check)
 #   apps/mobile/app.config.ts (expo-updates on load, fingerprint runtime version, variants)
-# Node hot upgrades are specified in features/connections/ and the node domains.
+# MC hot upgrades are specified in features/connections/ and the MC domains.
 
 Feature: Keeping the phone app up to date
   The app updates itself without losing work. Store builds replace the whole app; smaller

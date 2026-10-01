@@ -4,7 +4,7 @@ defmodule HalC2.SourceControl.Forgejo do
   `ForgejoSourceControlProvider.ts`): through `fj` (Forgejo CLI 0.6 or later) when it
   holds a login for the server, else through `tea`.
 
-  `fj` keeps its tokens in its `keys.json`; the node reads the token and calls the
+  `fj` keeps its tokens in its `keys.json`; the MC reads the token and calls the
   server's API itself, after `fj whoami` has had the chance to renew it. fj 0.6 drops
   the path of a server mounted under a subpath, so such servers are left to `tea`,
   which makes each call (`tea api`). `Application.get_env(:hal_c2, :fj_keys_paths)`

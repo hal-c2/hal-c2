@@ -10,7 +10,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 
 // The shell's one context menu and one confirmation question. A controller
@@ -41,7 +41,7 @@ public:
   };
   using Chosen = std::function<void(const QString& id)>;
 
-  MenuController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  MenuController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
   void activate() override {}
   bool handle(const QString& action, const QVariant& payload) override;

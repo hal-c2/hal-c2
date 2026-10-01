@@ -1,16 +1,16 @@
 defmodule HalC2.Steps.Timeline.ScrollingAndLinks do
   @moduledoc """
-  Steps for the `@node` scenarios of `features/timeline/scrolling-and-links.feature`:
+  Steps for the `@mc` scenarios of `features/timeline/scrolling-and-links.feature`:
   a client following a thread stream over the WebSocket. The agent's writing is
   committed straight to the thread's stream, as the turn writer does, while the
-  node's socket process for the client is held with `:sys.suspend/1` so that a burst
+  MC's socket process for the client is held with `:sys.suspend/1` so that a burst
   lands in its mailbox before it can send anything, as it does behind a slow client.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node, as: TestNode
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc, as: TestMc
+  alias HalC2.Test.Mc.World
 
   @history 300
   @reply "message:live-reply"
@@ -86,7 +86,7 @@ defmodule HalC2.Steps.Timeline.ScrollingAndLinks do
 
   step "the client is told to resync", context do
     {frame, client} =
-      TestNode.await(
+      TestMc.await(
         context.follower,
         &(&1["id"] == context.sub_id and &1["t"] in ~w(events resync)),
         5_000
@@ -105,7 +105,7 @@ defmodule HalC2.Steps.Timeline.ScrollingAndLinks do
     {frames, client} = frames_until(client, context.sub_id, context.last_seq, 10_000)
 
     {live, client} =
-      TestNode.await(client, &(&1["id"] == context.sub_id and &1["t"] == "live"), 5_000)
+      TestMc.await(client, &(&1["id"] == context.sub_id and &1["t"] == "live"), 5_000)
 
     assert live["offset"] == context.last_seq
 
@@ -143,10 +143,10 @@ defmodule HalC2.Steps.Timeline.ScrollingAndLinks do
   # Subscribes a fresh socket to the current thread and reads its snapshot to `live`.
   defp follow(context) do
     id = World.thread_id(context, World.current(context))
-    shape = %{"type" => "stream", "node" => Atom.to_string(node()), "stream" => id}
-    client = TestNode.connect(context.node) |> sub(1, shape, nil)
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => id}
+    client = TestMc.connect(context.mc) |> sub(1, shape, nil)
     {rows, client} = snapshot(client, 1, [])
-    {live, client} = TestNode.await(client, &(&1["id"] == 1 and &1["t"] == "live"), 5_000)
+    {live, client} = TestMc.await(client, &(&1["id"] == 1 and &1["t"] == "live"), 5_000)
 
     messages = for ["message", _id, entity] <- rows, do: entity
     assert length(messages) == @history + 1
@@ -163,12 +163,12 @@ defmodule HalC2.Steps.Timeline.ScrollingAndLinks do
   end
 
   defp snapshot(client, id, rows) do
-    {frame, client} = TestNode.await(client, &(&1["id"] == id and &1["t"] == "snapshot"), 5_000)
+    {frame, client} = TestMc.await(client, &(&1["id"] == id and &1["t"] == "snapshot"), 5_000)
     rows = rows ++ frame["rows"]
     if frame["done"], do: {rows, client}, else: snapshot(client, id, rows)
   end
 
-  # The node's socket process for the follower: the stream's one subscriber that is
+  # The MC's socket process for the follower: the stream's one subscriber that is
   # not this test process.
   defp socket_pid(stream_id) do
     %{subscribers: subscribers} = :sys.get_state(HalC2.Streams.ensure(stream_id))
@@ -200,7 +200,7 @@ defmodule HalC2.Steps.Timeline.ScrollingAndLinks do
   # The `events` frames for subscription `id` up to the one that reaches `seq`.
   defp frames_until(client, id, seq, timeout \\ 5_000, acc \\ []) do
     {frame, client} =
-      TestNode.await(client, &(&1["id"] == id and &1["t"] in ~w(events snapshot resync)), timeout)
+      TestMc.await(client, &(&1["id"] == id and &1["t"] in ~w(events snapshot resync)), timeout)
 
     acc = acc ++ [frame]
 

@@ -8,7 +8,7 @@ defmodule HalC2.Steps.SourceControl.CheckpointDiffs do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @branch_refs ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"]
   @cart "if (total) {\n  pay(total)\n}\n"
@@ -228,7 +228,7 @@ defmodule HalC2.Steps.SourceControl.CheckpointDiffs do
         {ordinal, ref}
       end
 
-    source = Path.join(HalC2.Test.Node.tmp_dir(context.node, "previous-server"), "state.sqlite")
+    source = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "previous-server"), "state.sqlite")
     write_node_log(source, node_events(id, project, scope, refs, context.cwd))
     {:ok, _} = HalC2.Import.V2.run(source, HalC2.Store, only: [id])
 

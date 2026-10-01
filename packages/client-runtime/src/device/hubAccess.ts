@@ -11,8 +11,8 @@ export interface DeviceHubAccess {
 }
 
 /**
- * Points access at the `hubBasePath` an environment reports. A cluster node names
- * itself there, so the node a client is connected to can relay to the node that
+ * Points access at the `hubBasePath` an environment reports. A cluster MC names
+ * itself there, so the MC a client is connected to can relay to the MC that
  * owns the device; servers that report the default path are unaffected.
  */
 export const atDeviceHubBasePath = (

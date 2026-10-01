@@ -1,13 +1,13 @@
 defmodule HalC2.Steps.Files.RemovingAndListingProjects do
   @moduledoc """
   Steps for `features/files/removing-and-listing-projects.feature`: project updates
-  and deletes over `projects.mutate`, and the automatic pull a node runs at boot.
+  and deletes over `projects.mutate`, and the automatic pull an MC runs at boot.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.{Host, World}
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.{Host, World}
 
   @sonnet %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-5"}
 
@@ -67,7 +67,7 @@ defmodule HalC2.Steps.Files.RemovingAndListingProjects do
     World.await_row(id, &(&1["deletedAt"] != nil))
 
     refute Enum.any?(HalC2.Shell.rows(), fn
-             {{_node, ^id}, {"project", row}} -> row["deletedAt"] == nil
+             {{_mc, ^id}, {"project", row}} -> row["deletedAt"] == nil
              _ -> false
            end)
 
@@ -93,7 +93,7 @@ defmodule HalC2.Steps.Files.RemovingAndListingProjects do
   end
 
   step "automatic pull was never turned on for {string}", %{args: [project]} = context do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
     refute HalC2.Settings.for_project(World.project(context, project).id)["defaultAutoPull"]
     context
   end
@@ -154,7 +154,7 @@ defmodule HalC2.Steps.Files.RemovingAndListingProjects do
     context
   end
 
-  step "the node starts normally", context do
+  step "the MC starts normally", context do
     client = World.client(context)
     client = HalC2.Test.WsClient.send_json(client, %{"t" => "ping"})
     {%{"t" => "pong"}, client} = HalC2.Test.WsClient.recv(client, 1_000)
@@ -163,8 +163,8 @@ defmodule HalC2.Steps.Files.RemovingAndListingProjects do
   end
 
   defp auto_pull(context, project, on) do
-    Node.ensure(HalC2.Settings)
-    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
     {settings, version} = HalC2.Settings.get()
     id = World.project(context, project).id
 
@@ -179,11 +179,11 @@ defmodule HalC2.Steps.Files.RemovingAndListingProjects do
 
   # The checkout becomes a clone of a new origin that someone else pushed to since.
   defp behind(context, project) do
-    Node.ensure(HalC2.Settings)
-    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
     root = World.project(context, project).root
-    origin = Node.tmp_dir(context.node, "origin.git")
-    other = Node.tmp_dir(context.node, "other")
+    origin = Mc.tmp_dir(context.mc, "origin.git")
+    other = Mc.tmp_dir(context.mc, "other")
     File.rm_rf!(origin)
     World.git!(Path.dirname(origin), ["clone", "-q", "--bare", root, origin])
     File.rm_rf!(root)

@@ -1,7 +1,7 @@
 import Config
 
 # Tests start the pieces they need under their own supervisors.
-config :hal_c2, start_node: false
+config :hal_c2, start_mc: false
 config :logger, level: :warning
 
 # Text generation never reaches a real model; tests that need it set a fake.

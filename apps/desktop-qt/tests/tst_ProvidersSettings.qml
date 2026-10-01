@@ -50,7 +50,7 @@ Item {
             Shell.reset();
         }
 
-        // The managed runtime shows the node's download and the actions it allows.
+        // The managed runtime shows the MC's download and the actions it allows.
         function test_the_managed_runtime_shows_its_download_and_cancels() {
             const runtime = { status: "Downloading 25.0 MB of 100.0 MB.", message: "", progress: 0.25, installLabel: "",
                               canCancel: true, canRemove: false, busy: false, error: "" };
@@ -227,7 +227,7 @@ Item {
             compare(step.action, "providerSettings.wizardStep");
             compare(step.payload.step, 2);
             compare(step.payload.label, "work");
-            verify(!("instanceId" in step.payload), "an id not typed is derived by the node");
+            verify(!("instanceId" in step.payload), "an id not typed is derived by the MC");
         }
 
         // A stored secret is never shown; its row offers a replacement.

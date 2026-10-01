@@ -1,10 +1,10 @@
 defmodule HalC2.Store do
   @moduledoc """
-  The node's durable event log, in one SQLite file.
+  The MC's durable event log, in one SQLite file.
 
   A *stream* is a project or a thread, addressed by its string id and stored under a
   small integer key. Every event is a `HalC2.Patch` to one entity of one stream, and its
-  `seq` is the node-wide offset clients resume from. Snapshots are a cache of folded
+  `seq` is the mc-wide offset clients resume from. Snapshots are a cache of folded
   stream state and can always be rebuilt from events.
 
   All writes go through this process. Reads open their own read-only connection, so
@@ -18,7 +18,7 @@ defmodule HalC2.Store do
   long enough to time out a running turn. A linked process checkpoints from its own
   connection instead, which SQLite runs alongside writes.
 
-  The meta table records the schema version the file was written with. A node
+  The meta table records the schema version the file was written with. An MC
   refuses to open a store from a newer schema rather than misread it.
   """
 
@@ -188,10 +188,10 @@ defmodule HalC2.Store do
           {:ok, %{log: integer, checkpointed: integer}} | {:error, term}
   def checkpoint(store \\ __MODULE__), do: GenServer.call(store, :checkpoint, @write_timeout)
 
-  @doc "The node's database in its data directory, which the application and mix tasks open."
+  @doc "The MC's database in its data directory, which the application and mix tasks open."
   def home_path, do: Path.join(HalC2.Paths.data_dir(), "hal-c2.sqlite")
 
-  @doc "The store schema version this node writes; stores with a newer one are refused."
+  @doc "The store schema version this MC writes; stores with a newer one are refused."
   def schema_version, do: @schema_version
 
   @spec path(GenServer.server()) :: String.t()
@@ -292,7 +292,7 @@ defmodule HalC2.Store do
         {:stop,
          {:newer_schema,
           "#{path} was written with store schema version #{found}; " <>
-            "this node reads up to version #{@schema_version}. Upgrade the node to open it."}}
+            "this MC reads up to version #{@schema_version}. Upgrade the MC to open it."}}
 
       _ ->
         open(path, db)

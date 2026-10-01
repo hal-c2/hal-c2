@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Orchestration.AgentSessionImport do
   @moduledoc """
-  Steps for `features/node/orchestration/agent-session-import.feature`.
+  Steps for `features/mc/orchestration/agent-session-import.feature`.
 
   Transcripts are written under a scratch folder that stands in for the user's
   home: `~/code/app` is `<scratch>/code/app`, and `CLAUDE_CONFIG_DIR` and
@@ -10,7 +10,7 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @day 24 * 60 * 60
 
@@ -88,7 +88,7 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
           Path.join([System.user_home!(), "Downloads", "unpacked"])
 
         "the HAL-C2 home" ->
-          context.node.home
+          context.mc.home
 
         "a HAL-C2 worktree" ->
           mkdir(Path.join(context.agent_home, ".hal-c2/worktrees/app/hal-c2-1a2b"))
@@ -115,14 +115,14 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
   end
 
   # Shared with projects.feature, whose `~` is the scenario's `$HOME`
-  # (`HalC2.Test.Node.Host`) rather than the agents' home (`context.agent_home`).
+  # (`HalC2.Test.Mc.Host`) rather than the agents' home (`context.agent_home`).
   step "project {string} has the folder {string}", %{args: [title, folder]} = context do
     if context[:agent_home] do
       path = mkdir(dir(context, folder))
       session(context, path, source: "claude")
       project(context, title, path)
     else
-      HalC2.Test.Node.Host.home(context)
+      HalC2.Test.Mc.Host.home(context)
 
       World.create_project(context, title, %{
         "workspaceRoot" => folder,
@@ -544,8 +544,8 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
 
   defp await_rows(project, count, deadline) do
     rows =
-      for {{node, id}, {"thread", row}} <- HalC2.Shell.rows(),
-          node == node() and row["projectId"] == project,
+      for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
+          mc == node() and row["projectId"] == project,
           do: {id, row}
 
     if length(rows) >= count do

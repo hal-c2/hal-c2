@@ -2,8 +2,8 @@ defmodule HalC2.Keybindings do
   @moduledoc """
   The user's keybinding rules (`<home>/keybindings.json`), as written: `key`,
   `command`, and optional `when`. Clients merge them with the defaults and
-  compile them (`@hal-c2/shared/keybindings`), so the node only stores rules and
-  says when they change (`{:hal_c2_keybindings, node, rules}` to settings watchers).
+  compile them (`@hal-c2/shared/keybindings`), so the MC only stores rules and
+  says when they change (`{:hal_c2_keybindings, mc, rules}` to settings watchers).
   """
 
   @max 256

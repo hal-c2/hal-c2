@@ -17,7 +17,7 @@ const Steps steps([] {
   step(QStringLiteral("the user is viewing %1 with its project at %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const qsizetype colon = c[0].indexOf(QLatin1Char(':'));
     const QString environment = c[0].left(colon);
-    const QString peer = world.node.peers.value(environment);
+    const QString peer = world.mc.peers.value(environment);
     const QString thread = c[0].mid(colon + 1);
     const QString project = QStringLiteral("project-") + thread;
     const QJsonObject projectRow{{QStringLiteral("id"), project}, {QStringLiteral("workspaceRoot"), c[1]}, {QStringLiteral("scripts"), QJsonArray()}};
@@ -26,11 +26,11 @@ const Steps steps([] {
       QJsonArray rows;
       rows.append(QJsonArray{project, QStringLiteral("project"), projectRow});
       rows.append(QJsonArray{thread, QStringLiteral("thread"), threadRow});
-      world.node.sendRows(peer, rows);
+      world.mc.sendRows(peer, rows);
       world.sync();
-    } else if (world.node.linked.contains(environment)) {
-      world.node.sendLinkRow(environment, project, projectRow, QStringLiteral("project"));
-      world.node.sendLinkRow(environment, thread, threadRow);
+    } else if (world.mc.linked.contains(environment)) {
+      world.mc.sendLinkRow(environment, project, projectRow, QStringLiteral("project"));
+      world.mc.sendLinkRow(environment, thread, threadRow);
       world.sync();
     }
     world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), c[0]}});

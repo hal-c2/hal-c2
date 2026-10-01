@@ -1,20 +1,20 @@
 defmodule HalC2.Diagnostics do
   @moduledoc """
-  What the node and the processes it started are doing (Settings → Diagnostics).
+  What the MC and the processes it started are doing (Settings → Diagnostics).
 
-  A sampler reads the process tree under the node with `ps`: every 15 seconds,
+  A sampler reads the process tree under the MC with `ps`: every 15 seconds,
   or every 2 while a client watches the resource monitor. It keeps an hour of
   samples. From those come the process list (`server.getProcessDiagnostics`),
   the resource monitor's live snapshots and timeline (`subscribeResourceTelemetry`,
   `server.getResourceTelemetryHistory`) and the process history
   (`server.getProcessResourceHistory`). `server.signalProcess` only signals a
-  process under the node that is still the one a client saw. Each process's I/O
+  process under the MC that is still the one a client saw. Each process's I/O
   comes from `/proc/<pid>/io` (storage bytes) where the platform has it, and is
-  reported as unavailable elsewhere; the node's own writes by operation are
+  reported as unavailable elsewhere; the MC's own writes by operation are
   `HalC2.Diagnostics.Attribution`. Traces are recorded only while `HalC2.Traces`
   is on, and there is no desktop host to supply power state.
 
-  Watchers get `{:hal_c2_resource_telemetry, node, snapshot}` after every sample.
+  Watchers get `{:hal_c2_resource_telemetry, mc, snapshot}` after every sample.
   """
 
   use GenServer
@@ -55,7 +55,7 @@ defmodule HalC2.Diagnostics do
     end
   end
 
-  @doc "`server.signalProcess`: only a process under this node, and only the one that was seen."
+  @doc "`server.signalProcess`: only a process under this MC, and only the one that was seen."
   def signal(%{"pid" => pid, "startTimeMs" => started, "signal" => signal}) do
     result = %{"pid" => pid, "signal" => signal}
 
@@ -72,8 +72,8 @@ defmodule HalC2.Diagnostics do
       reason ->
         message =
           case reason do
-            :not_ours -> "That process is not one this node started."
-            :server -> "The node itself cannot be signalled from here."
+            :not_ours -> "That process is not one this MC started."
+            :server -> "The MC itself cannot be signalled from here."
             :replaced -> "That process has already exited."
             {:error, message} -> message
             {out, _} -> String.trim(out)
@@ -111,7 +111,7 @@ defmodule HalC2.Diagnostics do
       "error" =>
         some(%{
           "kind" => "trace-file-not-found",
-          "message" => "This node does not record traces."
+          "message" => "This MC does not record traces."
         })
     }
   end
@@ -528,7 +528,7 @@ defmodule HalC2.Diagnostics do
         children = Enum.group_by(rows, & &1.ppid)
 
         case Enum.find(rows, &(&1.pid == root)) do
-          nil -> {:error, "The node's own process was not found."}
+          nil -> {:error, "The MC's own process was not found."}
           row -> {:ok, row |> walk(0, children) |> Enum.map(&Map.put(&1, :io, proc_io(&1.pid)))}
         end
 

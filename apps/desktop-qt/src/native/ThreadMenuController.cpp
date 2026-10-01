@@ -13,7 +13,7 @@
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
 #include "SidebarController.h"
@@ -51,7 +51,7 @@ bool setting(QObject* context, const char* key) {
 
 }  // namespace
 
-ThreadMenuController::ThreadMenuController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+ThreadMenuController::ThreadMenuController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                            QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
   m_writeClipboard = [](const QString& text) {
@@ -450,7 +450,7 @@ QString ThreadMenuController::workspacePath(const QString& key) const {
   return text(m_store->projectRow(thread->environmentId, thread->projectId), "workspaceRoot");
 }
 
-// A copy of the thread up to its latest finished run, opened once the node has it.
+// A copy of the thread up to its latest finished run, opened once the MC has it.
 void ThreadMenuController::fork(const QString& key) {
   const auto thread = m_store->thread(key);
   if (!thread) return;

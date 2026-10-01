@@ -1,5 +1,5 @@
 defmodule HalC2.StreamsTest do
-  # Uses the node-wide named Store, Streams, and Shell processes.
+  # Uses the MC-wide named Store, Streams, and Shell processes.
   use ExUnit.Case, async: false
 
   alias HalC2.Streams
@@ -116,8 +116,8 @@ defmodule HalC2.StreamsTest do
     {:ok, _} = Streams.commit("th-4", :thread, thread("th-4", %{"projectId" => "p"}))
 
     # Rows are recomputed shortly after a commit, not on every one.
-    assert_receive {:hal_c2_shell, {:rows, node, [{"th-4", {"thread", row}}]}}, 1_000
-    assert node == node()
+    assert_receive {:hal_c2_shell, {:rows, mc, [{"th-4", {"thread", row}}]}}, 1_000
+    assert mc == node()
     assert %{"id" => "th-4", "title" => "t", "projectId" => "p", "status" => "idle"} = row
 
     {:ok, _} =

@@ -1,9 +1,9 @@
 defmodule HalC2.Steps.Orchestration.Threads do
-  @moduledoc "Steps for `features/node/orchestration/threads.feature`."
+  @moduledoc "Steps for `features/mc/orchestration/threads.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @model %{"instanceId" => "codex", "model" => "gpt-5.4"}
 
@@ -139,7 +139,7 @@ defmodule HalC2.Steps.Orchestration.Threads do
     thread_command(context, "thread.archive", thread)
   end
 
-  step "a client dispatches a command of a type the node does not serve", context do
+  step "a client dispatches a command of a type the MC does not serve", context do
     context
     |> Map.put(:unserved_type, "thread.teleport")
     |> World.command(%{"type" => "thread.teleport", "threadId" => "t1"})
@@ -416,7 +416,7 @@ defmodule HalC2.Steps.Orchestration.Threads do
     World.await_row(thread, &(&1["deletedAt"] != nil))
 
     live =
-      for {{_node, id}, {"thread", row}} <- HalC2.Shell.rows(),
+      for {{_mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
           row["projectId"] == project and row["deletedAt"] == nil,
           do: id
 
@@ -457,7 +457,7 @@ defmodule HalC2.Steps.Orchestration.Threads do
   end
 
   step "a client subscribes to the shell", context do
-    client = HalC2.Test.Node.sub(World.client(context), 900, %{"type" => "shell"})
+    client = HalC2.Test.Mc.sub(World.client(context), 900, %{"type" => "shell"})
     {%{"t" => "shell"}, client} = HalC2.Test.WsClient.recv(client, 1_000)
     World.put_client(context, client)
   end
@@ -467,7 +467,7 @@ defmodule HalC2.Steps.Orchestration.Threads do
     assert {:ok, _} = context.reply
 
     {frame, client} =
-      HalC2.Test.Node.await(World.client(context), fn frame ->
+      HalC2.Test.Mc.await(World.client(context), fn frame ->
         frame["t"] == "shell.rows" and
           Enum.any?(
             frame["rows"],

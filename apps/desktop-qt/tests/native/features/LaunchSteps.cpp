@@ -1,5 +1,5 @@
 // A new thread's first send (ComposerController::submitDraft): the thread the
-// node launches for it, what the launch carries, and the window moving to it
+// MC launches for it, what the launch carries, and the window moving to it
 // (features/composer/sending-turns.feature, desktop/native-composer.feature,
 // composer/drafting-and-sending.feature,
 // source-control/worktrees-and-setup-scripts.feature).
@@ -16,19 +16,19 @@
 
 namespace {
 
-// `orchestration.launchThread`: the node makes the thread (its shell row) and
+// `orchestration.launchThread`: the MC makes the thread (its shell row) and
 // answers with its id; refused like a command, held with the answers.
 struct FakeLaunches {
   QList<QJsonObject> calls;
 };
 
-const FakeNode::Extension launches([](FakeNode& node) {
-  node.onRpc(QStringLiteral("orchestration.launchThread"), [&node](const FakeNode::Rpc& rpc) {
+const FakeMc::Extension launches([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("orchestration.launchThread"), [&mc](const FakeMc::Rpc& rpc) {
     const QString method = QStringLiteral("orchestration.launchThread");
-    node.part<FakeLaunches>().calls.append(rpc.payload);
-    const auto answer = [&node, rpc, method] {
-      if (node.refusals.contains(method)) {
-        node.refuse(rpc, node.refusals.value(method));
+    mc.part<FakeLaunches>().calls.append(rpc.payload);
+    const auto answer = [&mc, rpc, method] {
+      if (mc.refusals.contains(method)) {
+        mc.refuse(rpc, mc.refusals.value(method));
         return;
       }
       const QString threadId = rpc.payload.value(QLatin1String("threadId")).toString();
@@ -39,12 +39,12 @@ const FakeNode::Extension launches([](FakeNode& node) {
           {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")},
           {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T10:00:00Z")},
       };
-      node.threads.insert(threadId, row);
-      node.sendRow(threadId, row);
-      node.reply(rpc, QJsonObject{{QStringLiteral("threadId"), threadId}, {QStringLiteral("resumed"), false}});
+      mc.threads.insert(threadId, row);
+      mc.sendRow(threadId, row);
+      mc.reply(rpc, QJsonObject{{QStringLiteral("threadId"), threadId}, {QStringLiteral("resumed"), false}});
     };
-    if (node.holding(QStringLiteral("answers"))) {
-      node.defer(answer);
+    if (mc.holding(QStringLiteral("answers"))) {
+      mc.defer(answer);
     } else {
       answer();
     }
@@ -68,11 +68,11 @@ bool toastOffering(World& world, const QString& type, const QString& title, cons
 }
 
 QList<QJsonObject> calls(World& world) {
-  return world.node.part<FakeLaunches>().calls;
+  return world.mc.part<FakeLaunches>().calls;
 }
 
 QJsonObject lastLaunch(World& world) {
-  world.waitFor([&] { return !calls(world).isEmpty(); }, [] { return QStringLiteral("a launch; the node got none"); });
+  world.waitFor([&] { return !calls(world).isEmpty(); }, [] { return QStringLiteral("a launch; the MC got none"); });
   return calls(world).constLast();
 }
 
@@ -131,7 +131,7 @@ const Steps steps([] {
     const QJsonObject launch = lastLaunch(world);
     expect(launch.value(QLatin1String("title")) == c[0] && launch.value(QLatin1String("generateTitle")).toBool(),
            QStringLiteral("the launch is %1").arg(describe(launch)));
-    const QString threadKey = world.node.environmentId + QLatin1Char(':') + launch.value(QLatin1String("threadId")).toString();
+    const QString threadKey = world.mc.environmentId + QLatin1Char(':') + launch.value(QLatin1String("threadId")).toString();
     world.waitFor([&] { return navigation(world)->threadKey() == threadKey; },
                   [&] { return QStringLiteral("%1; the route is %2").arg(threadKey, show(world.state(QStringLiteral("route")))); });
   });
@@ -141,7 +141,7 @@ const Steps steps([] {
                message(launch).value(QLatin1String("text")) == launch.value(QLatin1String("title")),
            QStringLiteral("the launch is %1").arg(describe(launch)));
   });
-  step(QStringLiteral("the node launches the thread with the message %1 titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC launches the thread with the message %1 titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonObject launch = lastLaunch(world);
     expect(message(launch).value(QLatin1String("text")) == c[0] && launch.value(QLatin1String("title")) == c[1] &&
                !message(launch).value(QLatin1String("messageId")).toString().isEmpty(),
@@ -182,7 +182,7 @@ const Steps steps([] {
   step(QStringLiteral("the thread is not started"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(calls(world).isEmpty() && navigation(world)->route().kind == QLatin1String("draft"),
-           QStringLiteral("the node launched %1; the route is %2").arg(describe(calls(world).value(0)), show(world.state(QStringLiteral("route")))));
+           QStringLiteral("the MC launched %1; the route is %2").arg(describe(calls(world).value(0)), show(world.state(QStringLiteral("route")))));
   });
   step(QStringLiteral("the user is told to pick a base branch"), [](World& world, const Captures&, const Table&) {
     const auto told = [&] {
@@ -193,26 +193,26 @@ const Steps steps([] {
     };
     world.waitFor(told, [&] { return QStringLiteral("a toast; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
   });
-  step(QStringLiteral("the node launches no thread"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC launches no thread"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    expect(calls(world).isEmpty(), QStringLiteral("the node launched %1").arg(describe(calls(world).value(0))));
+    expect(calls(world).isEmpty(), QStringLiteral("the MC launched %1").arg(describe(calls(world).value(0))));
   });
-  step(QStringLiteral("the node launches (\\d+) threads?"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC launches (\\d+) threads?"), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(calls(world).size() == c[0].toInt(), QStringLiteral("the node launched %1 threads").arg(calls(world).size()));
+    expect(calls(world).size() == c[0].toInt(), QStringLiteral("the MC launched %1 threads").arg(calls(world).size()));
   });
 
   // What the window shows.
   step(QStringLiteral("the window shows the launched thread in the draft's place"), [](World& world, const Captures&, const Table&) {
     const QJsonObject launch = lastLaunch(world);
-    const QString threadKey = world.node.environmentId + QLatin1Char(':') + launch.value(QLatin1String("threadId")).toString();
+    const QString threadKey = world.mc.environmentId + QLatin1Char(':') + launch.value(QLatin1String("threadId")).toString();
     world.waitFor([&] { return navigation(world)->threadKey() == threadKey; },
                   [&] { return QStringLiteral("%1; the route is %2").arg(threadKey, show(world.state(QStringLiteral("route")))); });
     expect(!world.native().controller<DraftController>()->draft(world.draftId),
            QStringLiteral("the shell still keeps the draft %1").arg(world.draftId));
   });
   step(QStringLiteral("the window shows the thread the background start launched"), [](World& world, const Captures&, const Table&) {
-    const QString threadKey = world.node.environmentId + QLatin1Char(':') + lastLaunch(world).value(QLatin1String("threadId")).toString();
+    const QString threadKey = world.mc.environmentId + QLatin1Char(':') + lastLaunch(world).value(QLatin1String("threadId")).toString();
     world.waitFor([&] { return navigation(world)->threadKey() == threadKey; },
                   [&] { return QStringLiteral("%1; the route is %2").arg(threadKey, show(world.state(QStringLiteral("route")))); });
   });
@@ -231,7 +231,7 @@ const Steps steps([] {
                             QVariantMap{{QStringLiteral("target"), world.draftId}, {QStringLiteral("text"), text}, {QStringLiteral("cursor"), text.size()}});
   };
   const auto sendInBackground = [](World& world) {
-    world.node.part<Background>().text = world.native().controller<ComposerController>()->draft(world.draftId);
+    world.mc.part<Background>().text = world.native().controller<ComposerController>()->draft(world.draftId);
     world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("intent"), QStringLiteral("background")}});
   };
   step(QStringLiteral("the user is writing the first message of a new thread"), [typeFirst](World& world, const Captures&, const Table&) {
@@ -241,19 +241,19 @@ const Steps steps([] {
     sendInBackground(world);
   });
   step(QStringLiteral("the user sent %1 in the background").arg(q), [typeFirst, sendInBackground](World& world, const Captures& c, const Table&) {
-    world.node.hold(QStringLiteral("answers"));
+    world.mc.hold(QStringLiteral("answers"));
     typeFirst(world, c[0]);
     sendInBackground(world);
   });
   step(QStringLiteral("the background thread fails to start"), [](World& world, const Captures&, const Table&) {
-    world.node.refusals.insert(QStringLiteral("orchestration.launchThread"), QStringLiteral("Provider unavailable"));
+    world.mc.refusals.insert(QStringLiteral("orchestration.launchThread"), QStringLiteral("Provider unavailable"));
     world.sync();
-    world.node.answerHeld();
+    world.mc.answerHeld();
     world.sync();
   });
   step(QStringLiteral("a new thread starts with that message"), [](World& world, const Captures&, const Table&) {
     const QJsonObject launch = lastLaunch(world);
-    expect(message(launch).value(QLatin1String("text")) == world.node.part<Background>().text.trimmed(),
+    expect(message(launch).value(QLatin1String("text")) == world.mc.part<Background>().text.trimmed(),
            QStringLiteral("the launch is %1").arg(describe(launch)));
   });
   step(QStringLiteral("the user is told it started in the background with a way to open it"), [](World& world, const Captures&, const Table&) {

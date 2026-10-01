@@ -16,7 +16,7 @@ class EnvironmentSettings;
 
 // getProviderSummary: the headline and detail under a provider's name.
 QPair<QString, QString> providerSummary(const QJsonObject& provider);
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
@@ -27,9 +27,9 @@ class ShellStore;
 //
 // While the section shows, the chosen environment's `config` shape brings its
 // providers, and each provider that signs in from HAL-C2 has its
-// `providerAuth` shape followed (only on environments a cluster node serves;
-// the shape is node-addressed). Turning a provider off is a settings edit on
-// that environment, as the node reads it (HalC2.Settings provider_enabled?).
+// `providerAuth` shape followed (only on environments a cluster MC serves;
+// the shape is MC-addressed). Turning a provider off is a settings edit on
+// that environment, as the MC reads it (HalC2.Settings provider_enabled?).
 //
 // Publishes `providerSettings`: {open, environmentId, environments [{id,
 // label, local, online}] (this machine first, the others by name), status:
@@ -61,14 +61,14 @@ class ShellStore;
 // `.openDocs {instanceId}`, `.update {instanceId}`, `.copyUpdateCommand {instanceId}`,
 // `.healthInterval {seconds}` (0 turns it off), `.resetHealthInterval`,
 // `.addHub {url, key, label}` (a CLIProxyAPI hub; url and key required),
-// `.removeHub {id}` (its key is deleted from the node), and
+// `.removeHub {id}` (its key is deleted from the MC), and
 // the actions ProviderSettingsInstances.cpp, ProviderSettingsRegistry.cpp and
 // ProviderSettingsAcp.cpp list.
 class ProviderSettingsController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  ProviderSettingsController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  ProviderSettingsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
@@ -110,7 +110,7 @@ private:
                const std::function<void(const QJsonObject&)>& done);
   void listAcpProviders(const QString& instanceId, const QString& projectId);
   QVariant acp(const QJsonObject& provider) const;
-  // ProviderSettingsRuntime.cpp: the runtime the node installs itself (Antigravity).
+  // ProviderSettingsRuntime.cpp: the runtime the MC installs itself (Antigravity).
   void followRuntime();
   void unfollowRuntime();
   bool handleRuntime(const QString& action, const QVariantMap& input);
@@ -124,7 +124,7 @@ private:
   QVariantMap entry(const QJsonObject& provider) const;
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   std::function<bool(const QString&)> m_writeClipboard;
   bool m_active = false;

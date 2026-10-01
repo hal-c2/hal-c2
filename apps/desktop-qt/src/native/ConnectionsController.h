@@ -9,13 +9,13 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
 // The Connections settings page, which the shell owns: the environments the
-// node is linked to (apps/server-ex `HalC2.Links`, from the shell shape's
-// links), and who may reach this node (`HalC2.Auth`: pairing links and paired
+// MC is linked to (apps/server-ex `HalC2.Links`, from the shell shape's
+// links), and who may reach this MC (`HalC2.Auth`: pairing links and paired
 // clients, live through the `authAccess` shape while the page is open).
 // Publishes `connections`:
 //   {links: [{environmentId, label, origin, online, problem, status}],
@@ -24,12 +24,12 @@ class ShellStore;
 // The page shows while the route is the settings section
 // "/settings/connections" (NavigationController takes connections.open and
 // connections.close). Managing access needs an administrative session; the
-// node's refusal becomes `accessError` or the notice.
+// MC's refusal becomes `accessError` or the notice.
 class ConnectionsController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  ConnectionsController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  ConnectionsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
@@ -51,10 +51,10 @@ private:
   void publish();
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   QVariantMap m_state;
-  // The access list as the node last described it, while the page is open.
+  // The access list as the MC last described it, while the page is open.
   QJsonArray m_pairingLinks;
   QJsonArray m_clients;
   int m_accessSubscription = -1;

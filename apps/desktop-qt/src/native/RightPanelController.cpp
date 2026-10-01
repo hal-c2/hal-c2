@@ -15,7 +15,7 @@
 #include "Keybindings.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "TerminalController.h"
@@ -69,7 +69,7 @@ QString text(const QJsonObject& row, QLatin1StringView field) {
 
 }  // namespace
 
-RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
       m_client(client),
@@ -197,8 +197,8 @@ void RightPanelController::retarget() {
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root);
     m_pullRequests.setThread(threadKey);
-    m_previews.setThread(environmentId, threadId, m_store->nodeServing(environmentId));
-    m_devices.setThread(environmentId, threadId, m_store->nodeServing(environmentId));
+    m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
+    m_devices.setThread(environmentId, threadId, m_store->mcServing(environmentId));
   }
   presentCommands();
   update();
@@ -454,7 +454,7 @@ void RightPanelController::update() {
   if (m_onThread) {
     Panel& state = panel();
     // A terminal tab whose terminals all ended (here, in another client, or
-    // the node's) goes: the next one shows.
+    // the MC's) goes: the next one shows.
     const QStringList groups = terminalGroups();
     const QStringList before = tabIds();
     state.tabs.removeIf([&groups](const QString& id) {
@@ -498,7 +498,7 @@ void RightPanelController::publish() {
   for (const QString& id : state.tabs) {
     tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id, m_devices)}});
   }
-  // Terminals need the thread's place on an environment the node reaches.
+  // Terminals need the thread's place on an environment the MC reaches.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
   const bool canTerminal = terminals && terminals->available() && terminals->threadKey() == m_thread;
   m_bridge->publish(QStringLiteral("panel"),

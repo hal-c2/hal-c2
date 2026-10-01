@@ -8,7 +8,7 @@ defmodule HalC2.Steps.Settings.SourceControlWriting do
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   step "the environment's writing style is Conventional Commits", context do
     context
@@ -47,7 +47,7 @@ defmodule HalC2.Steps.Settings.SourceControlWriting do
     commit(context, project)
   end
 
-  # node/orchestration/text-generation.feature, whose writers are already set up
+  # mc/orchestration/text-generation.feature, whose writers are already set up
   # (`context.text_log`), asks for the message itself as a commit does.
   step "a commit message is generated", context do
     case context do

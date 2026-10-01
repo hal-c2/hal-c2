@@ -113,9 +113,9 @@ private slots:
     ShellBridge bridge;
     const auto url = QUrl::fromLocalFile(directory.path());
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
-    bridge.setNodeOrigin(QUrl("https://remote.example"));
+    bridge.setMcOrigin(QUrl("https://remote.example"));
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
-    bridge.setNodeOrigin(QUrl("http://127.0.0.1:6182"));
+    bridge.setMcOrigin(QUrl("http://127.0.0.1:6182"));
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
     bridge.setLocalFolderImportEnabled(true);
     QCOMPARE(bridge.localDirectoryPath(url), QFileInfo(directory.path()).canonicalFilePath());
@@ -126,8 +126,8 @@ private slots:
     QVERIFY(file.open(QIODevice::WriteOnly));
     file.close();
     QVERIFY(bridge.localDirectoryPath(QUrl::fromLocalFile(file.fileName())).isEmpty());
-    // A node on another machine: its folders are not this machine's.
-    bridge.setNodeOrigin(QUrl("https://remote.example"));
+    // An MC on another machine: its folders are not this machine's.
+    bridge.setMcOrigin(QUrl("https://remote.example"));
     QVERIFY(bridge.localDirectoryPath(url).isEmpty());
   }
 

@@ -14,7 +14,7 @@
 #include "CommandRegistry.h"
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
@@ -47,7 +47,7 @@ class ShellStore;
 //   - ask (a clone's repository): the query is free text, nothing is listed,
 //     and Enter hands it to the asker, which moves the palette on or closes it.
 //
-// Searches against the node wait for typing to pause (kSearchDelayMs) and
+// Searches against the MC wait for typing to pause (kSearchDelayMs) and
 // only the newest answer counts; files and content only while the route
 // thread's environment is online, starting afresh when it moves to another
 // project. Each row is {title, description, group,
@@ -98,7 +98,7 @@ public:
   // The root list with no query, in order (the web's actionItems).
   static const QStringList kRootCommands;
 
-  CommandPaletteController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  CommandPaletteController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   // Registers the toggles and follows what the palette lists.
   void activate() override;
@@ -128,7 +128,7 @@ public:
   // path, choice id, file path, "path:line" or folder path).
   QString kindAt(int row) const;
   QString idAt(int row) const;
-  // Whether a search against the node is on its way.
+  // Whether a search against the MC is on its way.
   bool searching() const { return m_pending > 0 || m_debounce.isActive(); }
 
   // Opens it in command mode with an empty query and the first entry
@@ -257,7 +257,7 @@ private:
   bool openEntry(const Entry& entry);
   bool runCommand(const QString& command);
   Target target() const;
-  // Starts the mode's search against the node once typing pauses.
+  // Starts the mode's search against the MC once typing pauses.
   void scheduleSearch();
   void search();
   void searchFiles(int generation);
@@ -268,7 +268,7 @@ private:
   void followTarget();
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   bool m_open = false;
@@ -282,7 +282,7 @@ private:
   // The command being run from the palette, whose failure is toasted.
   QString m_running;
 
-  // Searches against the node: the newest one's generation, and how many
+  // Searches against the MC: the newest one's generation, and how many
   // answers are still to come.
   QTimer m_debounce;
   int m_generation = 0;

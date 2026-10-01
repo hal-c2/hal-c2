@@ -22,20 +22,20 @@ export const ClusterStatus = Schema.Union([
     /** This machine's environment id, label and member addresses. */
     id: Schema.String,
     label: Schema.String,
-    node: Schema.String,
+    mc: Schema.String,
     addresses: Schema.Array(Schema.String),
     /** The other members. */
     members: Schema.Array(ClusterMember),
   }),
-  /** The node was started without cluster support; `reason` says why. */
+  /** The MC was started without cluster support; `reason` says why. */
   Schema.Struct({ clustered: Schema.Literal(false), reason: Schema.String }),
 ]);
 export type ClusterStatus = typeof ClusterStatus.Type;
 
 export const ClusterInviteInput = Schema.Struct({
-  /** Where the other machine reaches this node; by default where it listens. */
+  /** Where the other machine reaches this MC; by default where it listens. */
   baseUrl: Schema.optional(Schema.String),
-  /** Reach this node through its Tailscale Serve name, publishing it if need be. */
+  /** Reach this MC through its Tailscale Serve name, publishing it if need be. */
   tailscale: Schema.optional(Schema.Boolean),
 });
 export type ClusterInviteInput = typeof ClusterInviteInput.Type;

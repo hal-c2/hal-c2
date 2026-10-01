@@ -114,8 +114,8 @@ Feature: Windows, zoom and quitting
     @desktop
     Scenario: A setting that fails to save says so in the window that changed it
       Given a second window is open
-      And the node refuses to save settings
-      When the user changes a node setting in the second window and goes back to the first
+      And the MC refuses to save settings
+      When the user changes an MC setting in the second window and goes back to the first
       Then the second window says "Setting not saved"
       And the first window shows no toast
 
@@ -160,13 +160,13 @@ Feature: Windows, zoom and quitting
       Then the first window has that unsent work
 
     @desktop
-    Scenario: Closing a window while it waits on the node
+    Scenario: Closing a window while it waits on the MC
       Given a second window is open
-      And the second window is waiting on the node
+      And the second window is waiting on the MC
       When the user closes the second window
-      And the node answers what the closed window asked
+      And the MC answers what the closed window asked
       Then the first window stays open on the same thread
-      And the node no longer sends the closed window anything
+      And the MC no longer sends the closed window anything
 
     @desktop
     Scenario: Windows share the sign-in but not the navigation
@@ -294,16 +294,16 @@ Feature: Windows, zoom and quitting
 
     Background:
       Given the time is "2026-09-23T10:00:00Z"
-      And the desktop's node "node-a" serves the environment "env-a"
-      And the node has these threads:
+      And the desktop's MC "mc-a" serves the environment "env-a"
+      And the MC has these threads:
         | id | project | title  | createdAt            |
         | t1 | p1      | First  | 2026-09-23T09:50:00Z |
         | t2 | p1      | Second | 2026-09-23T09:40:00Z |
-      And the node has the project "p1" titled "proj-1"
-      And the desktop shell is connected to its node
+      And the MC has the project "p1" titled "proj-1"
+      And the desktop shell is connected to its MC
 
     @desktop
     Scenario: The window title follows the thread's title
       Given the user opens "env-a:t1" from the sidebar
-      When the node updates the thread "t1" with the title "Renamed"
+      When the MC updates the thread "t1" with the title "Renamed"
       Then the window is titled "Renamed"

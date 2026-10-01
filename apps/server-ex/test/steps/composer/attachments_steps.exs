@@ -3,7 +3,7 @@ defmodule HalC2.Steps.Composer.Attachments do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   step "a client asks to upload a {word} of {int} MB", %{args: [kind, mb]} = context do
     {reply, context} =
@@ -17,7 +17,7 @@ defmodule HalC2.Steps.Composer.Attachments do
     Map.put(context, :reply, reply)
   end
 
-  step "the node refuses with {string}", %{args: [message]} = context do
+  step "the MC refuses with {string}", %{args: [message]} = context do
     assert {:error, error, _} = context.reply
     assert error == message
     context
@@ -41,7 +41,7 @@ defmodule HalC2.Steps.Composer.Attachments do
     Map.put(context, :upload_path, path)
   end
 
-  # The upload is backdated past a day; the node sweeps unclaimed uploads when a
+  # The upload is backdated past a day; the MC sweeps unclaimed uploads when a
   # client next asks for an upload, at most every 15 minutes.
   step "more than 24 hours pass", context do
     File.touch!(context.upload_path, System.os_time(:second) - 25 * 60 * 60)
@@ -58,7 +58,7 @@ defmodule HalC2.Steps.Composer.Attachments do
     context
   end
 
-  step "the node discards the unclaimed upload", context do
+  step "the MC discards the unclaimed upload", context do
     refute File.exists?(context.upload_path)
     context
   end

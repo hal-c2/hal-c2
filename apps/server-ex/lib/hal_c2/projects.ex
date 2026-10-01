@@ -1,6 +1,6 @@
 defmodule HalC2.Projects do
   @moduledoc """
-  Projects on this node (`projects.mutate`) and the folder browser used to pick a
+  Projects on this MC (`projects.mutate`) and the folder browser used to pick a
   project's workspace root (`filesystem.browse`).
 
   A project is its own stream holding one `project` entity in the shape of the
@@ -172,14 +172,14 @@ defmodule HalC2.Projects do
   end
 
   @doc """
-  Gives this node's projects the repository identity of their checkout when the
-  shell starts or loads new code (`HalC2.Shell`): projects added before the node
+  Gives this MC's projects the repository identity of their checkout when the
+  shell starts or loads new code (`HalC2.Shell`): projects added before the MC
   recorded one, ones imported from the Node server, and checkouts whose origin changed. A folder that is gone or has no origin keeps
   what it had. Not a user edit, so the update time stays.
   """
   def identify_repositories do
-    for {{node, id}, {"project", project}} <- HalC2.Shell.rows(),
-        node == node() and project["deletedAt"] == nil,
+    for {{mc, id}, {"project", project}} <- HalC2.Shell.rows(),
+        mc == node() and project["deletedAt"] == nil,
         (identity = repository_identity(project["workspaceRoot"])) != nil,
         identity["canonicalKey"] != get_in(project, ["repositoryIdentity", "canonicalKey"]),
         do: update(id, identify(identity))
@@ -203,8 +203,8 @@ defmodule HalC2.Projects do
 
   # The project's threads not yet deleted, archived ones included.
   defp threads(id) do
-    for {{node, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
-        node == node() and row["projectId"] == id and row["deletedAt"] == nil,
+    for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
+        mc == node() and row["projectId"] == id and row["deletedAt"] == nil,
         do: thread_id
   end
 
@@ -252,8 +252,8 @@ defmodule HalC2.Projects do
   """
   def auto_pull do
     roots =
-      for {{node, _id}, {"project", project}} <- HalC2.Shell.rows(),
-          node == node(),
+      for {{mc, _id}, {"project", project}} <- HalC2.Shell.rows(),
+          mc == node(),
           project["deletedAt"] == nil,
           HalC2.Settings.for_project(project["id"])["defaultAutoPull"] == true,
           uniq: true,
@@ -276,12 +276,12 @@ defmodule HalC2.Projects do
   end
 
   @doc """
-  The id of this node's project a directory belongs to: a thread's worktree, or
+  The id of this MC's project a directory belongs to: a thread's worktree, or
   the project whose workspace holds it (the deepest one). Nil when none does.
   """
   def at(path) when is_binary(path) do
     path = Path.expand(path)
-    rows = for {{node, _id}, row} <- HalC2.Shell.rows(), node == node(), do: row
+    rows = for {{mc, _id}, row} <- HalC2.Shell.rows(), mc == node(), do: row
 
     worktree =
       Enum.find_value(rows, fn

@@ -3,7 +3,7 @@
 // settings scope's environments (`device.configure` on each), and the device
 // status of the scope's first connected environment, which says so when
 // several are selected. That environment's DeviceServiceState is followed
-// through the node's `devices` shape when a cluster node serves it, and read
+// through the MC's `devices` shape when a cluster MC serves it, and read
 // with `device.list` otherwise. At a project scope the hub is the
 // environment's and only agent access changes, as the project's override.
 // The built-in browser's defaults have no native page: the desktop has no
@@ -35,7 +35,7 @@
 #include "NativeController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsScopeController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -78,7 +78,7 @@ QString versionLabel(const QJsonObject& tools, const QString& kind) {
 
 class DeviceSettingsController : public QObject, public NativeController {
 public:
-  DeviceSettingsController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+  DeviceSettingsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
       : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
 
   void activate() override {
@@ -161,12 +161,12 @@ private:
       m_pending.clear();
       ++m_generation;
       if (!environmentId.isEmpty()) {
-        const QString node = m_store->nodeServing(environmentId);
-        if (node.isEmpty()) {
+        const QString mc = m_store->mcServing(environmentId);
+        if (mc.isEmpty()) {
           list({}, {});
         } else {
           m_subscription = m_client->subscribe(this, 
-              {{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("node"), node}}, [this](const QJsonObject& frame) {
+              {{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("mc"), mc}}, [this](const QJsonObject& frame) {
                 if (frame.value(QLatin1String("t")) == QLatin1String("devices")) take(frame.value(QLatin1String("state")).toObject());
               });
         }
@@ -395,7 +395,7 @@ private:
   }
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   bool m_open = false;

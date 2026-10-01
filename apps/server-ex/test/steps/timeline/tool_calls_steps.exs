@@ -9,7 +9,7 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
 
   alias HalC2.StreamState
   alias HalC2.Test.FakeAcp
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   # What the agent's tool call carries, by its ACP kind.
   @acp_calls %{
@@ -135,7 +135,7 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     |> FakeAcp.thread("Agent work")
   end
 
-  step "the node projects the call", context do
+  step "the MC projects the call", context do
     context = FakeAcp.send_message(context, "use the tool")
     state = FakeAcp.await_run(context, "completed")
 

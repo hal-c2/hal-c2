@@ -41,7 +41,7 @@ Feature: Approvals and agent questions
       | always allow it this session | the command runs and matching requests stop asking this session |
       | cancel the request           | the command is not run and the turn stops waiting               |
 
-  @node
+  @mc
   Scenario Outline: Allowing always maps to what each provider supports
     Given the thread runs on <provider>
     And the agent asks to run "npm test"
@@ -53,14 +53,14 @@ Feature: Approvals and agent questions
       | Codex                                   | allow it for the rest of the session              |
       | an ACP agent such as OpenCode or Cursor | allow it always, or once if always is not offered |
 
-  @plugin-claude @node
+  @plugin-claude @mc
   Scenario: Claude remembers an approval for the session
     Given the thread runs on Claude
     When the user always allows "npm test" for this session
     And the agent asks to run "npm test" again
     Then the command runs without asking
 
-  @plugin-claude @node @backlog
+  @plugin-claude @mc @backlog
   Scenario: A released Claude session forgets its approvals
     Given the user always allowed "npm test" for this session on Claude
     When the Claude session is released and a new session starts
@@ -115,18 +115,18 @@ Feature: Approvals and agent questions
       | the connection dropped for a moment | still open so the user can answer again |
 
   @desktop
-  Scenario: An answer waiting on the node is not sent twice
+  Scenario: An answer waiting on the MC is not sent twice
     Given the agent asks to run "npm test"
-    And the node holds its answers
+    And the MC holds its answers
     When the user approves it
     Then the approval shows it is being answered
     When the user approves it
-    Then the node receives one answer
+    Then the MC receives one answer
 
   @desktop
   Scenario: A failed answer is reported and can be sent again
     Given the agent asks to run "npm test"
-    And the node refuses "runtime-request.respond" with "connection closed"
+    And the MC refuses "runtime-request.respond" with "connection closed"
     When the user approves it
     Then the user sees an "error" toast "Failed to submit approval decision." saying "connection closed"
     And the approval is still open so the user can answer again
@@ -150,7 +150,7 @@ Feature: Approvals and agent questions
     When the user answers "DuckDB, in memory"
     Then the agent receives "DuckDB, in memory"
 
-  @node
+  @mc
   Scenario: The user dismisses a question without answering
     Given the agent asks "Which database?"
     When the user dismisses the question

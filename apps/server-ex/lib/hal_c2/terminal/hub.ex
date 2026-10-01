@@ -1,10 +1,10 @@
 defmodule HalC2.Terminal.Hub do
   @moduledoc """
-  This node's terminals as a list (`subscribeTerminalMetadata`), and which command
+  This MC's terminals as a list (`subscribeTerminalMetadata`), and which command
   each shell is running.
 
   Terminals report their summary here; watchers (client sockets, possibly on other
-  nodes) get the list once and then `{:hal_c2_terminals, node, event}` messages shaped
+  MCs) get the list once and then `{:hal_c2_terminals, mc, event}` messages shaped
   as `TerminalMetadataStreamEvent`. While any shell runs, one `ps` per second finds
   each shell's child process and tells the terminal when it changes, so its label
   can show the running command.

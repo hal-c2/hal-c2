@@ -5,7 +5,7 @@ defmodule HalC2.Plugins.Kind do
 
     * `manifest/0`: `%{id, name, version, api_version, settings}`, where `settings`
       lists `%{key, label}` fields and a field with `secret: true` is kept in the
-      node's secret store rather than the settings document.
+      MC's secret store rather than the settings document.
     * `validate_settings/1` (optional): `:ok`, or `{:error, message}` shown to the
       user when they save settings the plugin cannot use.
     * `start_link/1` (optional): the plugin's process, started with its settings
@@ -34,7 +34,7 @@ defmodule HalC2.Plugins.ProviderAdapter do
   (`started/1` when the turn runs, `finish/3` when it ends). `start_turn/2` returns
   once the turn is under way; a process it starts for the thread belongs under
   `HalC2.Plugins.sessions(driver)`, the plugin's own sessions supervisor. The process
-  that calls `started/1` drives the turn: if it crashes before `finish/3`, the node
+  that calls `started/1` drives the turn: if it crashes before `finish/3`, the MC
   ends the turn as failed.
 
   The manifest's `provider:` map declares the rest (atom keys, all optional):
@@ -202,7 +202,7 @@ end
 
 defmodule HalC2.Plugins.GitHost do
   @moduledoc """
-  A git host the node's pull request listing reads (`HalC2.PullRequests.list/1`) for
+  A git host the MC's pull request listing reads (`HalC2.PullRequests.list/1`) for
   projects whose remote is on it. A pull request is the listing's entry shape
   (`number`, `title`, `url`, `state`, `headBranch`, `baseBranch`, `updatedAt`, ...).
   """
@@ -214,7 +214,7 @@ end
 
 defmodule HalC2.Plugins.NotificationChannel do
   @moduledoc """
-  Delivers the node's notifications (`HalC2.Plugins.notify/1`): a turn that finished
+  Delivers the MC's notifications (`HalC2.Plugins.notify/1`): a turn that finished
   while no client had its thread in the foreground arrives as
   `%{"type" => "turn.finished", "threadId", "title", "status"}`.
   """

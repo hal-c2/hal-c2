@@ -1,18 +1,18 @@
 defmodule HalC2.Devices do
   @moduledoc """
-  iOS Simulators and Android Emulators on this node's machine (`device.*` RPCs and
+  iOS Simulators and Android Emulators on this MC's machine (`device.*` RPCs and
   the `devices` shape), as on the Node server.
 
-  Discovery, boot and streaming go through expo-device-hub, which the node installs
+  Discovery, boot and streaming go through expo-device-hub, which the MC installs
   on first use under `<home>/tools` and runs with the system Node on a loopback
   port; clients reach it through `HalC2.Devices.Proxy`. Agents drive devices with the
   agent-device CLI (`HalC2.Mcp.Devices`), whose daemon starts once the user grants
   agents access. Nothing is installed or started until device support is enabled.
 
-  The node keeps which thread has which device open, so the Device panel and the
-  agent tools agree. Watchers get `{:hal_c2_devices, node, DeviceServiceState}` on every
+  The MC keeps which thread has which device open, so the Device panel and the
+  agent tools agree. Watchers get `{:hal_c2_devices, mc, DeviceServiceState}` on every
   change. Every machine is its own host: SSH hosts configured for the Node server
-  are reported unavailable, since in a cluster a remote machine runs its own node.
+  are reported unavailable, since in a cluster a remote machine runs its own MC.
   Long work (installs, boots, hub requests) runs in the caller; the server only
   keeps the state and starts the helper processes.
   """
@@ -45,9 +45,9 @@ defmodule HalC2.Devices do
   @doc "The running hub's loopback origin, or nil. Never starts it."
   def hub_origin, do: GenServer.call(__MODULE__, :hub_origin)
 
-  @doc "The path clients prefix to hub routes: the proxy on any node forwards it here."
+  @doc "The path clients prefix to hub routes: the proxy on any MC forwards it here."
   def hub_base_path,
-    do: "/api/device-hub/nodes/" <> URI.encode_www_form(Atom.to_string(node()))
+    do: "/api/device-hub/mcs/" <> URI.encode_www_form(Atom.to_string(node()))
 
   # --- RPCs ------------------------------------------------------------------------
 
@@ -101,7 +101,7 @@ defmodule HalC2.Devices do
     end
   end
 
-  @doc "`device.testHost`: SSH hosts are not served by nodes."
+  @doc "`device.testHost`: SSH hosts are not served by MCs."
   def test_host(%{"id" => id} = config),
     do: host_unavailable(id, ssh_reason(config))
 
@@ -404,8 +404,8 @@ defmodule HalC2.Devices do
   end
 
   defp ssh_reason(config) do
-    "SSH device hosts are not served by HAL-C2 nodes. Run HAL-C2 on #{config["target"] || "that machine"} " <>
-      "and add it to this cluster as a node; its simulators and emulators then appear under its own environment."
+    "SSH device hosts are not served by HAL-C2 MCs. Run HAL-C2 on #{config["target"] || "that machine"} " <>
+      "and add it to this cluster as an MC; its simulators and emulators then appear under its own environment."
   end
 
   defp platform_available(platform) do
@@ -856,7 +856,7 @@ defmodule HalC2.Devices do
       [
         {"AGENT_DEVICE_STATE_DIR", agent_state_dir()},
         {"AGENT_DEVICE_DAEMON_SERVER_MODE", "http"},
-        # The node owns the daemon's lifetime and stops it explicitly.
+        # The MC owns the daemon's lifetime and stops it explicitly.
         {"AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS", "0"},
         {"AGENT_DEVICE_NO_UPDATE_NOTIFIER", "1"},
         {"FORCE_COLOR", "0"},
@@ -1245,7 +1245,7 @@ defmodule HalC2.Devices do
        publish(state, &%{&1 | "bootingDevices" => without(&1["bootingDevices"], device)})}
 
   @impl true
-  def handle_info({:hal_c2_settings, _node, settings}, state),
+  def handle_info({:hal_c2_settings, _mc, settings}, state),
     do: {:noreply, apply_settings(state, read_settings(settings))}
 
   def handle_info({:subprocess_lines, _reader, _lines}, %{hub_process: sub} = state)

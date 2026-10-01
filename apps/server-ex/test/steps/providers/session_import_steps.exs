@@ -4,13 +4,13 @@ defmodule HalC2.Steps.Providers.SessionImport do
   history (`agentSessions.scan` / `agentSessions.import`) and managing an ACP agent's
   own sessions (`server.*AcpRegistrySession`).
 
-  "~" in the feature is a user home made for the scenario outside the node's home
+  "~" in the feature is a user home made for the scenario outside the MC's home
   (which a scan never offers), with `CLAUDE_CONFIG_DIR` and `CODEX_HOME` inside it.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @session_ids %{
     "shop-1" => "0b8f5c1e-4a7d-4c2b-9e1f-2d3c4b5a6f70",
@@ -32,7 +32,7 @@ defmodule HalC2.Steps.Providers.SessionImport do
     Map.put(context, :source, if(source == :codex, do: "codex", else: "claudeAgent"))
   end
 
-  step "the node scans for agent history", context do
+  step "the MC scans for agent history", context do
     context = homes(context)
     {result, context} = World.call!(context, "agentSessions.scan")
     Map.put(context, :scan, result)
@@ -268,7 +268,7 @@ defmodule HalC2.Steps.Providers.SessionImport do
     assert {:ok, %{"imported" => false, "threadId" => ^id}} = context.reply
 
     threads =
-      for {{_node, _id}, {"thread", row}} <- HalC2.Shell.rows(),
+      for {{_mc, _id}, {"thread", row}} <- HalC2.Shell.rows(),
           row["projectId"] == "shop",
           do: row
 
@@ -316,7 +316,7 @@ defmodule HalC2.Steps.Providers.SessionImport do
         )
 
       "is not signed in" ->
-        System.put_env("FAKE_AUTH_FILE", Path.join(context.node.home, "never-signed-in"))
+        System.put_env("FAKE_AUTH_FILE", Path.join(context.mc.home, "never-signed-in"))
     end
 
     ExUnit.Callbacks.on_exit(fn ->
@@ -384,7 +384,7 @@ defmodule HalC2.Steps.Providers.SessionImport do
     context
   end
 
-  step "the user lists an ACP agent's sessions for a project that is not on this node", context do
+  step "the user lists an ACP agent's sessions for a project that is not on this MC", context do
     context = gemini(context)
 
     acp_call(context, "server.listAcpRegistrySessions", %{"projectId" => "elsewhere"})
@@ -392,7 +392,7 @@ defmodule HalC2.Steps.Providers.SessionImport do
 
   # --- helpers ----------------------------------------------------------------------------------
 
-  # The scenario's user home, outside the node's, with the agents' homes in it.
+  # The scenario's user home, outside the MC's, with the agents' homes in it.
   defp homes(%{user_home: _} = context), do: context
 
   defp homes(context) do

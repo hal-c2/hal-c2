@@ -5,7 +5,7 @@
 #include <QRegularExpression>
 #include <QUrl>
 
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ShellStore.h"
 
 namespace {
@@ -29,7 +29,7 @@ bool hostOf(const QString& host, const QString& apex, const QString& label) {
          (!label.isEmpty() && host.split(QLatin1Char('.')).contains(label));
 }
 
-// A repository's pull request page, as the node builds it
+// A repository's pull request page, as the MC builds it
 // (mcp/tools/pull_requests.ex url/4) from the host alone.
 QString pageOf(const QString& host, const QString& repository, int number) {
   if (hostOf(host, QStringLiteral("gitlab.com"), QStringLiteral("gitlab"))) {
@@ -67,7 +67,7 @@ QString canonicalKey(QString key) {
 
 }  // namespace
 
-ThreadPullRequests::ThreadPullRequests(NodeClient* client, ShellStore* store, Notify notify, Open open, QObject* parent)
+ThreadPullRequests::ThreadPullRequests(McClient* client, ShellStore* store, Notify notify, Open open, QObject* parent)
     : QAbstractListModel(parent), m_client(client), m_store(store), m_notify(std::move(notify)), m_open(std::move(open)) {}
 
 void ThreadPullRequests::setThread(const QString& threadKey) {
@@ -137,7 +137,7 @@ const QJsonObject* ThreadPullRequests::find(const QString& key) const {
 
 // --- Naming a pull request -------------------------------------------------------------
 
-// The host, repository and number behind a pull request URL, as the node
+// The host, repository and number behind a pull request URL, as the MC
 // parses it (projection/pull_requests.ex parse_change_request_url/1).
 std::optional<ThreadPullRequests::Target> ThreadPullRequests::parseUrl(const QString& url) {
   const QUrl parsed(url.trimmed(), QUrl::StrictMode);
@@ -173,7 +173,7 @@ std::optional<ThreadPullRequests::Target> ThreadPullRequests::parseUrl(const QSt
 }
 
 // As the web's LinkPullRequestDialog: a URL may name any repository on a host
-// a project here reads, since that project lends the node its credentials
+// a project here reads, since that project lends the MC its credentials
 // there (findProjectOnChangeRequestHost); Azure DevOps reads with the
 // checkout's own organization and project, so there it takes a project of that
 // repository. A bare number means the thread's own repository.

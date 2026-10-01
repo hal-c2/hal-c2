@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-#include "NodeClient.h"
+#include "McClient.h"
 
 namespace {
 
@@ -66,7 +66,7 @@ QHash<int, QByteArray> TextLinesModel::roleNames() const {
 
 // --- WorkspaceFiles ------------------------------------------------------------------
 
-WorkspaceFiles::WorkspaceFiles(NodeClient* client, QObject* parent) : QObject(parent), m_client(client) {
+WorkspaceFiles::WorkspaceFiles(McClient* client, QObject* parent) : QObject(parent), m_client(client) {
   m_tree.setFetch([this](const QString& folder) { list(folder); });
   m_searchDelay.setSingleShot(true);
   m_searchDelay.setInterval(searchDelayMs);
@@ -146,7 +146,7 @@ void WorkspaceFiles::setQuery(const QString& query) {
   m_searchDelay.start();
 }
 
-void WorkspaceFiles::searchEntries(NodeClient* client, QObject* context, const QString& environmentId, const QString& cwd,
+void WorkspaceFiles::searchEntries(McClient* client, QObject* context, const QString& environmentId, const QString& cwd,
                                    const QString& query, int limit, SearchDone done) {
   client->call(context, environmentId, QStringLiteral("projects.searchEntries"),
                QJsonObject{{QStringLiteral("cwd"), cwd}, {QStringLiteral("query"), query}, {QStringLiteral("limit"), limit}},

@@ -5,7 +5,7 @@ import HalC2.Shell
 
 // The centre for a thread or draft route (js/centreViews.js): the route's
 // thread from Threads (ThreadStore), or a draft's opening line with where it
-// will run. Loading says so without moving; a thread whose node stopped
+// will run. Loading says so without moving; a thread whose MC stopped
 // sending it says why and offers Retry.
 //
 // Web links open in the system browser; file links and files the agent
@@ -100,7 +100,7 @@ Item {
         onRevertRequested: rowId => view.askRevert(rowId)
     }
 
-    // Why the thread stopped following its node, with a way to try again.
+    // Why the thread stopped following its MC, with a way to try again.
     Rectangle {
         id: problemBar
         objectName: "threadProblem"
@@ -120,7 +120,7 @@ Item {
             spacing: 12
             Label {
                 Layout.fillWidth: true
-                text: qsTr("This thread's node cannot be reached: %1").arg(view.model ? view.model.problem : "")
+                text: qsTr("This thread's MC cannot be reached: %1").arg(view.model ? view.model.problem : "")
                 color: Theme.palette.color("warning", "#f59e0b")
                 font.family: view.uiFamily
                 font.pixelSize: 13

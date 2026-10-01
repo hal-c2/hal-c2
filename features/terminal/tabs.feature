@@ -102,7 +102,7 @@ Feature: Terminal tabs and splits
 
     @backlog @tui
     Scenario: Terminals kept from before a server restart are listed again
-      Given the thread had terminals 1 and 2 before the node restarted
+      Given the thread had terminals 1 and 2 before the MC restarted
       When the terminal client opens the thread
       Then both terminals are listed
       And opening one shows its earlier output

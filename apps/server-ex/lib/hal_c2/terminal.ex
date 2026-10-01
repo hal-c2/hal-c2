@@ -2,7 +2,7 @@ defmodule HalC2.Terminal do
   @moduledoc """
   A thread's terminal: one shell in a PTY (via erlexec), its scrollback, and the
   clients attached to it. Serves the `terminal.*` RPCs of
-  `packages/contracts/src/terminal.ts` on the node that owns the thread.
+  `packages/contracts/src/terminal.ts` on the MC that owns the thread.
 
   Each terminal is a process registered by `{thread_id, terminal_id}`; it outlives
   its shell, so an exited terminal can still be attached and read. Output is sent

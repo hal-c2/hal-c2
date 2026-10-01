@@ -180,7 +180,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(mapRemoteEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
-      // The environment asked for, which may be a cluster member the node serves.
+      // The environment asked for, which may be a cluster member the MC serves.
       const member = descriptor.cluster?.find(
         (entry) => entry.environmentId === input.expectedEnvironmentId,
       );

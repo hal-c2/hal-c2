@@ -1,5 +1,5 @@
 // Runs the desktop shell's native scenarios (the @desktop and @shared ones in
-// the files kDefaultGlobs names) against a fake protocol-3 node: a small
+// the files kDefaultGlobs names) against a fake protocol-3 MC: a small
 // Gherkin reader, the step definitions the files in features/ register
 // (Harness.h), and one QTest row per scenario.
 // HAL_C2_FEATURES narrows the run to other globs under features/ (space
@@ -194,7 +194,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/windows.feature:Closing the first window leaves the others open"),
     QStringLiteral("navigation/windows.feature:Closing the last window quits"),
     QStringLiteral("navigation/windows.feature:Closing a window keeps its unsent work"),
-    QStringLiteral("navigation/windows.feature:Closing a window while it waits on the node"),
+    QStringLiteral("navigation/windows.feature:Closing a window while it waits on the MC"),
     QStringLiteral("navigation/windows.feature:Windows share the sign-in but not the navigation"),
     QStringLiteral("navigation/windows.feature:A window restores its drafts and panels after a restart"),
     QStringLiteral("navigation/windows.feature:A window keeps its files in its own folder"),
@@ -238,17 +238,17 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/queue-and-steer.feature:A shortcut bound to stop*"),
     QStringLiteral("composer/queue-and-steer.feature:Queued messages are listed*"),
     QStringLiteral("composer/queue-and-steer.feature:Removing a queued message cancels its run*"),
-    QStringLiteral("composer/queue-and-steer.feature:A removal the node refuses*"),
+    QStringLiteral("composer/queue-and-steer.feature:A removal the MC refuses*"),
     QStringLiteral("composer/queue-and-steer.feature:A queued message can steer*"),
-    QStringLiteral("composer/queue-and-steer.feature:A steer the node refuses*"),
+    QStringLiteral("composer/queue-and-steer.feature:A steer the MC refuses*"),
     QStringLiteral("composer/queue-and-steer.feature:Editing the last queued message*"),
     QStringLiteral("composer/queue-and-steer.feature:Saving an edited queued message*"),
-    QStringLiteral("composer/queue-and-steer.feature:An edit the node refuses*"),
+    QStringLiteral("composer/queue-and-steer.feature:An edit the MC refuses*"),
     QStringLiteral("composer/queue-and-steer.feature:An edit whose message starts running*"),
     QStringLiteral("composer/queue-and-steer.feature:Leaving the thread ends the edit"),
     QStringLiteral("composer/context-references.feature:A terminal excerpt*"),
     QStringLiteral("composer/context-references.feature:A removed terminal excerpt*"),
-    QStringLiteral("composer/context-references.feature:A send the node rejects gives its terminal excerpt back"),
+    QStringLiteral("composer/context-references.feature:A send the MC rejects gives its terminal excerpt back"),
     QStringLiteral("terminal/composer-context.feature:The user adds selected terminal output*"),
     QStringLiteral("terminal/composer-context.feature:A one-line selection*"),
     QStringLiteral("terminal/composer-context.feature:Selecting only blank lines*"),
@@ -256,7 +256,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("terminal/composer-context.feature:The user removes a terminal excerpt*"),
     QStringLiteral("composer/drafting-and-sending.feature:Each thread keeps its own draft*"),
     QStringLiteral("composer/drafting-and-sending.feature:Sending while disconnected*"),
-    QStringLiteral("composer/drafting-and-sending.feature:A send the node rejects*"),
+    QStringLiteral("composer/drafting-and-sending.feature:A send the MC rejects*"),
     QStringLiteral("composer/sending-turns.feature"),
     QStringLiteral("composer/editors-and-keys.feature"),
     QStringLiteral("composer/drafting-and-sending.feature:A background prompt*"),
@@ -442,7 +442,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/titles.feature"),
     QStringLiteral("source-control/refs-and-branches.feature"),
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
-    // The desktop's git actions (GitController); the rest of these files is the node's and the TUI's.
+    // The desktop's git actions (GitController); the rest of these files is the MC's and the TUI's.
     QStringLiteral("source-control/git-actions.feature:The recommended action*"),
     QStringLiteral("source-control/git-actions.feature:A detached checkout*"),
     QStringLiteral("source-control/git-actions.feature:A repository without a remote*"),

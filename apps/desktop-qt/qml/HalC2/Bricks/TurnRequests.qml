@@ -8,7 +8,7 @@ import HalC2.Shell
 // agent's question, the proposed plan once the turn is over, and the queued
 // follow-ups. Rendered from Shell.state.turn (ComposerController) for the
 // thread the composer shows; every answer is a composer.* action the shell
-// sends to the node.
+// sends to the MC.
 Item {
     id: requests
 

@@ -2,7 +2,7 @@ defmodule HalC2.Test.AcpFixtures do
   @moduledoc """
   Fake provider agents for the provider features (`features/providers/`).
 
-  `ready/1` brings up the provider services a node runs (settings, ACP, sign-in,
+  `ready/1` brings up the provider services an MC runs (settings, ACP, sign-in,
   URL sign-in) with Codex and Claude replaced by their fakes, and nothing reaching
   the network. Agents are `test/support/fake_acme_agent.py` (any ACP agent: Grok,
   OpenCode, registry agents) and `test/support/fake_cursor.mjs` (the real Cursor
@@ -37,7 +37,7 @@ defmodule HalC2.Test.AcpFixtures do
   def ready(%{acp: _} = ctx), do: ctx
 
   def ready(ctx) do
-    dir = Path.join(ctx.node.home, "agents")
+    dir = Path.join(ctx.mc.home, "agents")
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "control.json"), "{}")
 
@@ -71,36 +71,36 @@ defmodule HalC2.Test.AcpFixtures do
     System.put_env("FAKE_TEXT_LOG", Path.join(dir, "text.log"))
     System.delete_env("HAL_C2_NODE_ELECTRON")
 
-    HalC2.Test.Node.ensure(HalC2.Settings)
-    HalC2.Test.Node.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
+    HalC2.Test.Mc.ensure(HalC2.Settings)
+    HalC2.Test.Mc.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
 
-    HalC2.Test.Node.ensure(
+    HalC2.Test.Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Claude.Registry},
         id: :claude_registry
       )
     )
 
-    HalC2.Test.Node.ensure(
+    HalC2.Test.Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry},
         id: :acp_registry
       )
     )
 
-    HalC2.Test.Node.ensure(
+    HalC2.Test.Mc.ensure(
       {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one}
     )
 
-    HalC2.Test.Node.ensure(
+    HalC2.Test.Mc.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.ProviderAuth.Registry},
         id: :provider_auth_registry
       )
     )
 
-    HalC2.Test.Node.ensure(
+    HalC2.Test.Mc.ensure(
       {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one}
     )
 
-    HalC2.Test.Node.ensure(HalC2.Acp.UrlAuth)
+    HalC2.Test.Mc.ensure(HalC2.Acp.UrlAuth)
     cursor_node(dir)
     Map.put(ctx, :acp, %{dir: dir})
   end
@@ -109,7 +109,7 @@ defmodule HalC2.Test.AcpFixtures do
     if Application.get_env(:hal_c2, key) == nil, do: Application.put_env(:hal_c2, key, value)
   end
 
-  # What the node read from agents and registries lives in persistent terms.
+  # What the MC read from agents and registries lives in persistent terms.
   defp forget_all do
     for {key, _} <- :persistent_term.get(),
         is_tuple(key),
@@ -123,7 +123,7 @@ defmodule HalC2.Test.AcpFixtures do
         do: :persistent_term.erase(key)
   end
 
-  # Cursor's sidecar runs `$HAL_C2_NODE_COMMAND <main.ts> --mode <mode>`; this node
+  # Cursor's sidecar runs `$HAL_C2_NODE_COMMAND <main.ts> --mode <mode>`; this MC
   # command drops main.ts and runs the fake SDK's agent instead.
   defp cursor_node(dir) do
     path = Path.join(dir, "cursor-node")
@@ -219,10 +219,10 @@ defmodule HalC2.Test.AcpFixtures do
   """
   def write_settings(ctx, fun, name \\ "default") do
     {%{"settings" => settings, "version" => version}, ctx} =
-      HalC2.Test.Node.World.call!(ctx, "hal-c2.readSettings", %{}, name)
+      HalC2.Test.Mc.World.call!(ctx, "hal-c2.readSettings", %{}, name)
 
     {_, ctx} =
-      HalC2.Test.Node.World.call!(
+      HalC2.Test.Mc.World.call!(
         ctx,
         "hal-c2.writeSettings",
         %{"settings" => fun.(settings), "version" => version},
@@ -259,7 +259,7 @@ defmodule HalC2.Test.AcpFixtures do
     end
   end
 
-  @doc "Serves an ACP Registry on loopback and points the node at it; idempotent."
+  @doc "Serves an ACP Registry on loopback and points the MC at it; idempotent."
   def serve_registry(ctx) do
     ctx = ready(ctx)
 
@@ -283,7 +283,7 @@ defmodule HalC2.Test.AcpFixtures do
 
   @doc """
   Publishes `agents` (default: `acme_agent/2`) on the served registry, and makes the
-  node forget any registry it read before.
+  MC forget any registry it read before.
   """
   def publish(ctx, agents \\ nil) do
     ctx = serve_registry(ctx)
@@ -487,23 +487,23 @@ defmodule HalC2.Test.AcpFixtures do
   """
   def watch_auth(ctx, id, name \\ "default", sub \\ nil) do
     sub = sub || 1000 + System.unique_integer([:positive])
-    client = HalC2.Test.Node.World.client(ctx, name)
+    client = HalC2.Test.Mc.World.client(ctx, name)
 
     client =
-      HalC2.Test.Node.sub(client, sub, %{
+      HalC2.Test.Mc.sub(client, sub, %{
         "type" => "providerAuth",
-        "node" => Atom.to_string(node()),
+        "mc" => Atom.to_string(node()),
         "instanceId" => id
       })
 
     {frame, client} =
-      HalC2.Test.Node.await(
+      HalC2.Test.Mc.await(
         client,
         &(&1["t"] == "providerAuth" and &1["id"] == sub and is_list(&1["state"]["methods"])),
         5_000
       )
 
-    ctx = HalC2.Test.Node.World.put_client(ctx, name, client)
+    ctx = HalC2.Test.Mc.World.put_client(ctx, name, client)
     {frame["state"], put_in(ctx, [Access.key(:auth_subs, %{}), {name, id}], sub)}
   end
 
@@ -512,13 +512,13 @@ defmodule HalC2.Test.AcpFixtures do
     sub = ctx.auth_subs[{name, id}] || flunk("client #{name} does not watch #{id}'s sign-in")
 
     {frame, client} =
-      HalC2.Test.Node.await(
-        HalC2.Test.Node.World.client(ctx, name),
+      HalC2.Test.Mc.await(
+        HalC2.Test.Mc.World.client(ctx, name),
         &(&1["t"] == "providerAuth" and &1["id"] == sub and fun.(&1["state"])),
         timeout
       )
 
-    {frame["state"], HalC2.Test.Node.World.put_client(ctx, name, client)}
+    {frame["state"], HalC2.Test.Mc.World.put_client(ctx, name, client)}
   end
 
   @doc "The sign-in process of instance `id`, if one runs."

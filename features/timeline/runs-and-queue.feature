@@ -26,21 +26,21 @@ Feature: Runs, interruptions and the queue
     And the user is looking at a thread in "shop"
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
-  @node
+  @mc
   Scenario: The user interrupts the running turn
     Given the agent is working
     When the user interrupts the turn
     Then the turn stops
     And the timeline marks the run as interrupted
 
-  @node
+  @mc
   Scenario: A message sent while the agent works waits its turn
     Given the agent is working
     When the user queues "also update the changelog"
     Then the message is queued at position 1
     And it starts when the running turn ends
 
-  @node
+  @mc
   Scenario Outline: Steering reaches the running turn when the provider allows it
     Given the agent is working on <provider>
     When the user steers with "use the new API"
@@ -53,14 +53,14 @@ Feature: Runs, interruptions and the queue
       | OpenCode | joins the running turn            |
       | Grok     | is queued behind the running turn |
 
-  @node
+  @mc
   Scenario: Restarting puts the new message first
     Given the agent is working and one message is queued
     When the user sends "stop, do this instead" as a restart
     Then the running turn is interrupted
     And "stop, do this instead" runs before the queued message
 
-  @node
+  @mc
   Scenario Outline: The user manages the queue
     Given the agent is working and "A" and "B" are queued
     When the user <action>
@@ -72,7 +72,7 @@ Feature: Runs, interruptions and the queue
       | removes "A" from the queue     | "B"                   |
       | edits "A" to read "A, briefly" | "A, briefly" then "B" |
 
-  @node
+  @mc
   Scenario: A queued message is promoted to steer the running turn
     Given the agent is working on Codex and "A" is queued
     When the user sends "A" as a steer instead
@@ -90,25 +90,25 @@ Feature: Runs, interruptions and the queue
       | sent as a steer                      | Steered the active turn                                   |
       | queued and later promoted to a steer | Originally queued, then promoted to steer the active turn |
 
-  @node
+  @mc
   Scenario: After a restart the queue waits for the user
-    Given two messages were queued when the node restarted
+    Given two messages were queued when the MC restarted
     Then the queue is held and the messages are kept
     When the user resumes the queue
     Then the first queued message starts
 
-  @node
-  Scenario: A turn that was running when the node stopped is settled
-    Given the agent was working when the node stopped
-    When the node starts again
+  @mc
+  Scenario: A turn that was running when the MC stopped is settled
+    Given the agent was working when the MC stopped
+    When the MC starts again
     Then the turn is marked interrupted
     And the thread is not shown as still working
 
-  @node
+  @mc
   Scenario Outline: A thread continues after a restart only when the project asks for it
-    Given the agent was working when the node stopped
+    Given the agent was working when the MC stopped
     And continuing threads after restarts is <setting>
-    When the node starts again
+    When the MC starts again
     Then <outcome>
 
     Examples:
@@ -116,7 +116,7 @@ Feature: Runs, interruptions and the queue
       | on      | the agent is sent "Continue where you left off." |
       | off     | the thread waits for the user                    |
 
-  @node
+  @mc
   Scenario: The provider stops while a turn is starting
     When the provider exits before the turn starts
     Then the run fails with "The provider stopped while starting the turn."
@@ -140,7 +140,7 @@ Feature: Runs, interruptions and the queue
       | chooses to resume at reset | the thread continues at 3 pm             |
       | cancels the auto-resume    | the thread waits for the user after 3 pm |
 
-  # TUI: renders the meter from apps/tui/src/contextWindow.ts, but the node does not report context usage yet.
+  # TUI: renders the meter from apps/tui/src/contextWindow.ts, but the MC does not report context usage yet.
   @shared @backlog
   Scenario Outline: The thread shows how full the context window is
     Given the agent has used 144,000 tokens <of>

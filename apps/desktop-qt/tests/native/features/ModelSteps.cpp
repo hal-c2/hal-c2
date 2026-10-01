@@ -1,4 +1,4 @@
-// The model, effort and permissions a turn runs with: the node's providers
+// The model, effort and permissions a turn runs with: the MC's providers
 // (`config.providers`), the model picker ComposerController publishes
 // (`modelPicker`), and the message a send makes of the choice
 // (features/composer/model-and-mode.feature).
@@ -18,7 +18,7 @@ using namespace stream;
 
 namespace {
 
-// The providers the node offers, and the model last made a favourite.
+// The providers the MC offers, and the model last made a favourite.
 struct Catalogue {
   QJsonArray providers;
   QString favourite;
@@ -74,10 +74,10 @@ QStringList slugs(const QVariantMap& instance) {
   return result;
 }
 
-// The node offers `providers` and the picker lists them.
+// The MC offers `providers` and the picker lists them.
 void offer(World& world, const QJsonArray& providers) {
-  world.node.part<Catalogue>().providers = providers;
-  publishProviders(world.node, providers);
+  world.mc.part<Catalogue>().providers = providers;
+  publishProviders(world.mc, providers);
   world.waitFor([&] { return instances(world).size() == std::count_if(providers.begin(), providers.end(), [](const QJsonValue& entry) {
                                return entry.toObject().value(QLatin1String("enabled")).toBool();
                              }); },
@@ -85,7 +85,7 @@ void offer(World& world, const QJsonArray& providers) {
 }
 
 void add(World& world, const QJsonObject& entry) {
-  QJsonArray providers = world.node.part<Catalogue>().providers;
+  QJsonArray providers = world.mc.part<Catalogue>().providers;
   for (qsizetype i = 0; i < providers.size(); ++i) {
     if (providers.at(i).toObject().value(QLatin1String("instanceId")) == entry.value(QLatin1String("instanceId"))) {
       providers.removeAt(i);
@@ -96,7 +96,7 @@ void add(World& world, const QJsonObject& entry) {
   offer(world, providers);
 }
 
-// Codex and Claude, as a node with both signed in.
+// Codex and Claude, as an MC with both signed in.
 QJsonArray codexAndClaude() {
   return {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"),
                    {QStringLiteral("gpt-5"), QStringLiteral("gpt-5-codex")}),
@@ -105,9 +105,9 @@ QJsonArray codexAndClaude() {
 }
 
 void updateThread(World& world, const QJsonObject& fields) {
-  QJsonObject& row = world.node.threads[kThread];
+  QJsonObject& row = world.mc.threads[kThread];
   for (auto it = fields.begin(); it != fields.end(); ++it) row.insert(it.key(), it.value());
-  world.node.sendRow(kThread, row);
+  world.mc.sendRow(kThread, row);
   world.sync();
 }
 
@@ -126,14 +126,14 @@ QVariantMap composer(World& world) {
 
 // Sends a turn and returns the commands it made, the message last.
 QList<QJsonObject> sendTurn(World& world) {
-  const qsizetype before = world.node.commands.size();
+  const qsizetype before = world.mc.commands.size();
   world.bridge().dispatch(QStringLiteral("composer.submit"),
                           QVariantMap{{QStringLiteral("text"), QStringLiteral("next turn")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
   world.waitFor([&] {
-    return world.node.commands.size() > before &&
-           world.node.commands.last().value(QLatin1String("type")) == QLatin1String("message.dispatch");
-  }, [&] { return QStringLiteral("the message; the node has %1").arg(world.describeCommands()); });
-  return world.node.commands.mid(before);
+    return world.mc.commands.size() > before &&
+           world.mc.commands.last().value(QLatin1String("type")) == QLatin1String("message.dispatch");
+  }, [&] { return QStringLiteral("the message; the MC has %1").arg(world.describeCommands()); });
+  return world.mc.commands.mid(before);
 }
 
 bool favourite(World& world, const QString& slug) {
@@ -155,14 +155,14 @@ bool favourite(World& world, const QString& slug) {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  // The node's providers.
+  // The MC's providers.
   step(QStringLiteral("a project with an open thread on Codex"), [](World& world, const Captures&, const Table&) {
-    world.node.projects.insert(kProject, {{QStringLiteral("id"), kProject},
+    world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject},
                                           {QStringLiteral("title"), kProject},
                                           {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
                                           {QStringLiteral("scripts"), QJsonArray()}});
-    world.node.part<Catalogue>().providers = codexAndClaude();
-    publishProviders(world.node, codexAndClaude());
+    world.mc.part<Catalogue>().providers = codexAndClaude();
+    publishProviders(world.mc, codexAndClaude());
     world.connect();
     world.sync();
     lookAtThread(world, kProject);
@@ -210,12 +210,12 @@ const Steps steps([] {
     fail(QStringLiteral("the composer offers %1").arg(show(composer(world).value(QStringLiteral("runtimeModes")))));
   });
   step(QStringLiteral("the user marks %1 as a favourite").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<Catalogue>().favourite = c[0];
+    world.mc.part<Catalogue>().favourite = c[0];
     world.bridge().dispatch(QStringLiteral("composer.model.favorite.toggle"),
                             QVariantMap{{QStringLiteral("instanceId"), instanceOf(world, c[0])}, {QStringLiteral("model"), c[0]}});
   });
   step(QStringLiteral("the user removes it from the favourites"), [](World& world, const Captures&, const Table&) {
-    const QString slug = world.node.part<Catalogue>().favourite;
+    const QString slug = world.mc.part<Catalogue>().favourite;
     world.bridge().dispatch(QStringLiteral("composer.model.favorite.toggle"),
                             QVariantMap{{QStringLiteral("instanceId"), instanceOf(world, slug)}, {QStringLiteral("model"), slug}});
   });
@@ -254,7 +254,7 @@ const Steps steps([] {
     world.waitFor([&] { return favourite(world, c[0]); }, [&] { return QStringLiteral("a favourite; the picker lists %1").arg(show(instances(world))); });
   });
   step(QStringLiteral("it is no longer listed among the favourites"), [](World& world, const Captures&, const Table&) {
-    const QString slug = world.node.part<Catalogue>().favourite;
+    const QString slug = world.mc.part<Catalogue>().favourite;
     world.waitFor([&] { return !favourite(world, slug); }, [&] { return QStringLiteral("no favourite; the picker lists %1").arg(show(instances(world))); });
   });
   step(QStringLiteral("only Codex models can be chosen"), [](World& world, const Captures&, const Table&) {
@@ -288,7 +288,7 @@ const Steps steps([] {
     for (const QVariant& entry : composer(world).value(QStringLiteral("runtimeModes")).toList()) {
       if (entry.toMap().value(QStringLiteral("label")) == c[0]) mode = entry.toMap().value(QStringLiteral("value")).toString();
     }
-    const QString before = world.node.threads.value(kThread).value(QLatin1String("runtimeMode")).toString();
+    const QString before = world.mc.threads.value(kThread).value(QLatin1String("runtimeMode")).toString();
     // The mode is set before the message, unless the thread already runs in it.
     QString runs = before;
     for (const QJsonObject& command : sendTurn(world)) {
@@ -301,8 +301,8 @@ const Steps steps([] {
   step(QStringLiteral("plan mode is turned on"), [](World& world, const Captures&, const Table&) {
     expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true),
            world.native().controller<SettingsController>()->deviceError());
-    world.node.part<Catalogue>().providers = codexAndClaude();
-    publishProviders(world.node, codexAndClaude());
+    world.mc.part<Catalogue>().providers = codexAndClaude();
+    publishProviders(world.mc, codexAndClaude());
     world.sync();
   });
 });

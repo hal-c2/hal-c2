@@ -39,8 +39,8 @@ const Steps steps([] {
   });
   // Settings reached from a thread of "shop" (settings/search-and-navigation.feature, navigation/focus.feature).
   step(QStringLiteral("the user (?:has opened|is in) settings"), [](World& world, const Captures&, const Table&) {
-    if (!world.node.projects.contains(stream::kProject)) {
-      world.node.projects.insert(stream::kProject, {{QStringLiteral("id"), stream::kProject}, {QStringLiteral("title"), stream::kProject},
+    if (!world.mc.projects.contains(stream::kProject)) {
+      world.mc.projects.insert(stream::kProject, {{QStringLiteral("id"), stream::kProject}, {QStringLiteral("title"), stream::kProject},
                                                     {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")}, {QStringLiteral("scripts"), QJsonArray()}});
       world.connect();
       world.sync();
@@ -82,7 +82,7 @@ const Steps steps([] {
     expectRoute(world, QStringLiteral("usage"));
   });
   step(QStringLiteral("(?:the|that) thread is shown(?: again)?"), [](World& world, const Captures&, const Table&) {
-    expectRoute(world, QStringLiteral("thread"), QStringLiteral("threadKey"), world.node.environmentId + QLatin1Char(':') + stream::kThread);
+    expectRoute(world, QStringLiteral("thread"), QStringLiteral("threadKey"), world.mc.environmentId + QLatin1Char(':') + stream::kThread);
   });
   step(QStringLiteral("the window shows home"), [](World& world, const Captures&, const Table&) {
     expectRoute(world, QStringLiteral("home"));

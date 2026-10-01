@@ -2,21 +2,21 @@ defmodule Mix.Tasks.HalC2.Bundle do
   @shortdoc "Packs the built release into an upgrade bundle"
   @moduledoc """
   Packs `_build/prod/rel/hal_c2` (build it first with `MIX_ENV=prod mix release`) into
-  the bundle nodes install to move to its version (`HalC2.Upgrade`):
+  the bundle MCs install to move to its version (`HalC2.Upgrade`):
 
       mix hal_c2.bundle [OUT_DIR]
 
-  Writes `hal-c2-node-<version>-<platform>.tar.gz` and its `.sha256` to `OUT_DIR`
+  Writes `hal-c2-mc-<version>-<platform>.tar.gz` and its `.sha256` to `OUT_DIR`
   (default `_build/prod`), the names release artifacts are published under. Beside it
-  goes the single-file node, `hal-c2-node-<version>-<platform>` and its `.sha256`: the
-  bundle behind a shell script (`rel/hal-c2-node.sh`) that unpacks it into the node's
+  goes the single-file MC, `hal-c2-mc-<version>-<platform>` and its `.sha256`: the
+  bundle behind a shell script (`rel/hal-c2-mc.sh`) that unpacks it into the MC's
   data directory and starts it, for machines without Elixir or Erlang.
   Prints the bundle's path.
   """
 
   use Mix.Task
 
-  @stub_path Path.expand("../../../rel/hal-c2-node.sh", __DIR__)
+  @stub_path Path.expand("../../../rel/hal-c2-mc.sh", __DIR__)
   @external_resource @stub_path
   @stub File.read!(@stub_path)
 
@@ -60,7 +60,7 @@ defmodule Mix.Tasks.HalC2.Bundle do
     path
   end
 
-  # The script the single-file node starts with; the bundle follows its last line.
+  # The script the single-file MC starts with; the bundle follows its last line.
   defp stub(root, version, erts) do
     data_dir = File.read!(Path.join([root, "bin", "hal-c2-data-dir"]))
 

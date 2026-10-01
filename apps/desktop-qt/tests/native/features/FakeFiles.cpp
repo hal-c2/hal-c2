@@ -4,10 +4,10 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 
-#include "FakeNode.h"
+#include "FakeMc.h"
 
-FakeFiles& fakeFiles(FakeNode& node) {
-  return node.part<FakeFiles>();
+FakeFiles& fakeFiles(FakeMc& mc) {
+  return mc.part<FakeFiles>();
 }
 
 QStringList withFolders(const QString& path) {
@@ -27,12 +27,12 @@ QJsonObject entry(const FakeFiles& fake, const QString& path) {
           {QStringLiteral("ignored"), ignored}};
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
-  node.onRpc(QStringLiteral("projects.listEntries"), [&node](const FakeNode::Rpc& rpc) {
-    FakeFiles& fake = fakeFiles(node);
+const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("projects.listEntries"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeFiles& fake = fakeFiles(mc);
     const QString folder = rpc.payload.value(QLatin1String("directoryPath")).toString();
     if (fake.cannotList || fake.failOnce.remove(folder)) {
-      node.refuse(rpc, QStringLiteral("Could not list %1.").arg(folder.isEmpty() ? QStringLiteral("the project") : folder));
+      mc.refuse(rpc, QStringLiteral("Could not list %1.").arg(folder.isEmpty() ? QStringLiteral("the project") : folder));
       return;
     }
     QSet<QString> children;
@@ -44,12 +44,12 @@ const FakeNode::Extension extension([](FakeNode& node) {
     }
     QJsonArray entries;
     for (const QString& path : children) entries.append(entry(fake, path));
-    node.reply(rpc, QJsonObject{{QStringLiteral("entries"), entries}, {QStringLiteral("truncated"), false}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("entries"), entries}, {QStringLiteral("truncated"), false}});
   });
   // By name; `kind` narrows to files or folders.
-  node.onRpc(QStringLiteral("projects.searchEntries"), [&node](const FakeNode::Rpc& rpc) {
-    const auto answer = [&node, rpc] {
-      FakeFiles& fake = fakeFiles(node);
+  mc.onRpc(QStringLiteral("projects.searchEntries"), [&mc](const FakeMc::Rpc& rpc) {
+    const auto answer = [&mc, rpc] {
+      FakeFiles& fake = fakeFiles(mc);
       const QString query = rpc.payload.value(QLatin1String("query")).toString();
       const QString kind = rpc.payload.value(QLatin1String("kind")).toString();
       QSet<QString> matches;
@@ -64,17 +64,17 @@ const FakeNode::Extension extension([](FakeNode& node) {
         if (kind == QLatin1String("file") && found.value(QLatin1String("kind")) != QLatin1String("file")) continue;
         entries.append(found);
       }
-      node.reply(rpc, QJsonObject{{QStringLiteral("entries"), entries}, {QStringLiteral("truncated"), false}});
+      mc.reply(rpc, QJsonObject{{QStringLiteral("entries"), entries}, {QStringLiteral("truncated"), false}});
     };
-    if (node.holding(QStringLiteral("search"))) {
-      node.defer(answer);
+    if (mc.holding(QStringLiteral("search"))) {
+      mc.defer(answer);
     } else {
       answer();
     }
   });
   // Line by line; an unparseable regular expression falls back to the text.
-  node.onRpc(QStringLiteral("projects.searchContents"), [&node](const FakeNode::Rpc& rpc) {
-    FakeFiles& fake = fakeFiles(node);
+  mc.onRpc(QStringLiteral("projects.searchContents"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeFiles& fake = fakeFiles(mc);
     const QString query = rpc.payload.value(QLatin1String("query")).toString();
     const bool caseSensitive = rpc.payload.value(QLatin1String("caseSensitive")).toBool();
     QString pattern = QRegularExpression::escape(query);
@@ -105,24 +105,24 @@ const FakeNode::Extension extension([](FakeNode& node) {
     }
     answer.insert(QStringLiteral("matches"), matches);
     answer.insert(QStringLiteral("truncated"), false);
-    node.reply(rpc, answer);
+    mc.reply(rpc, answer);
   });
-  node.onRpc(QStringLiteral("projects.readFile"), [&node](const FakeNode::Rpc& rpc) {
-    FakeFiles& fake = fakeFiles(node);
+  mc.onRpc(QStringLiteral("projects.readFile"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeFiles& fake = fakeFiles(mc);
     const QString path = rpc.payload.value(QLatin1String("relativePath")).toString();
     if (fake.readFailsOnce.remove(path) || !fake.files.contains(path)) {
-      node.refuse(rpc, QStringLiteral("Could not read %1.").arg(path));
+      mc.refuse(rpc, QStringLiteral("Could not read %1.").arg(path));
       return;
     }
     const QString contents = fake.files.value(path);
-    node.reply(rpc, QJsonObject{{QStringLiteral("contents"), contents},
+    mc.reply(rpc, QJsonObject{{QStringLiteral("contents"), contents},
                                 {QStringLiteral("byteLength"), double(fake.truncated.value(path, contents.toUtf8().size()))},
                                 {QStringLiteral("truncated"), fake.truncated.contains(path)}});
   });
   // The folders in the typed path's parent whose names start with its last
   // segment; a path ending in "/" lists the whole folder.
-  node.onRpc(QStringLiteral("filesystem.browse"), [&node](const FakeNode::Rpc& rpc) {
-    FakeFiles& fake = fakeFiles(node);
+  mc.onRpc(QStringLiteral("filesystem.browse"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeFiles& fake = fakeFiles(mc);
     QString partial = rpc.payload.value(QLatin1String("partialPath")).toString();
     if (partial == QLatin1String("~")) partial = QStringLiteral("~/");
     if (partial.startsWith(QLatin1Char('~'))) partial = fake.home + partial.mid(1);
@@ -139,7 +139,7 @@ const FakeNode::Extension extension([](FakeNode& node) {
         entries.append(QJsonObject{{QStringLiteral("name"), name}, {QStringLiteral("fullPath"), folder}});
       }
     }
-    node.reply(rpc, QJsonObject{{QStringLiteral("parentPath"), parent}, {QStringLiteral("entries"), entries}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("parentPath"), parent}, {QStringLiteral("entries"), entries}});
   });
 });
 

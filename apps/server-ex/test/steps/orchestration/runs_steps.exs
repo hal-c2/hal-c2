@@ -2,8 +2,8 @@ defmodule HalC2.Steps.Orchestration.Runs do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # Provider output is delivered to the thread's Codex runtime as if the (fake)
   # app-server sent it (`test/support/fake_codex.py` keeps a "wait" turn running).
@@ -28,7 +28,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
     |> Map.put(:thread, thread)
   end
 
-  step "the node has no provider instance {string}", %{args: [instance]} = context do
+  step "the MC has no provider instance {string}", %{args: [instance]} = context do
     refute Map.has_key?(HalC2.Settings.settings()["providerInstances"] || %{}, instance)
     refute HalC2.Acp.agent?(instance)
     context
@@ -208,7 +208,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
   # The named worktree stands for a real directory under the scenario's home, since
   # the provider process starts in it.
   step "{string} is in worktree {string}", %{args: [thread, path]} = context do
-    dir = Node.tmp_dir(context.node, "worktree-#{World.slug(path)}")
+    dir = Mc.tmp_dir(context.mc, "worktree-#{World.slug(path)}")
 
     context
     |> World.patch_thread(thread, %{"worktreePath" => dir})

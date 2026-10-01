@@ -12,7 +12,7 @@
 #   apps/tui/src/controls.ts (runtime mode and plan/build toggles)
 #   packages/contracts/src/orchestration.ts (RuntimeMode, ProviderApprovalDecision, InteractionMode)
 
-@node
+@mc
 Feature: Permission modes
   A thread's permission mode decides when the agent must ask before acting. HAL-C2 has
   four modes and each provider maps them onto its own permission system. Approvals and
@@ -32,7 +32,7 @@ Feature: Permission modes
     When the user starts a new thread in "shop"
     Then the thread is supervised
 
-  # auto was acceptEdits on the node; the Node server passes Claude's own auto mode.
+  # auto was acceptEdits on the MC; the Node server passes Claude's own auto mode.
   Scenario Outline: Each mode reaches Claude as its own permission mode
     Given a Claude thread in <mode>
     When the user sends a message
@@ -161,9 +161,9 @@ Feature: Permission modes
       | Claude      | the provider's automatic reviewer approves it   |
       | OpenCode    | the user is asked, as in supervised             |
 
-    # Cursor and Antigravity rows split out: they still need node work.
+    # Cursor and Antigravity rows split out: they still need MC work.
     @backlog
-    Examples: Not yet on the node
+    Examples: Not yet on the MC
       | provider    | outcome                                         |
       | Cursor      | the provider's automatic reviewer approves it   |
       | Antigravity | the user is asked, as in supervised             |

@@ -1,9 +1,9 @@
 defmodule HalC2.Steps.Orchestration.ThreadOrganization do
-  @moduledoc "Steps for `features/node/orchestration/thread-organization.feature`."
+  @moduledoc "Steps for `features/mc/orchestration/thread-organization.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   defp organize(context, thread, type, fields \\ %{}) do
     context

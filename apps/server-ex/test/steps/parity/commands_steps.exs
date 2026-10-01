@@ -3,15 +3,15 @@ defmodule HalC2.Steps.Parity.Commands do
   Steps for `features/parity/commands.feature`: every aligned command dispatched
   over the socket and seen by a second socket following the thread, and every
   event of the Node server's log imported with `HalC2.Import.V2` into the running
-  node's store.
+  MC's store.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias Exqlite.Sqlite3
   alias HalC2.StreamState
-  alias HalC2.Test.{Node, WsClient}
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.{Mc, WsClient}
+  alias HalC2.Test.Mc.World
 
   @support Path.expand("../../support", __DIR__)
   @orchestration Path.expand("../../../lib/hal_c2/orchestration.ex", __DIR__)
@@ -24,7 +24,7 @@ defmodule HalC2.Steps.Parity.Commands do
     fake_providers()
 
     {:ok, access, _expires, _scopes} =
-      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.mc.store), %{
         "label" => "Phone"
       })
 
@@ -33,14 +33,14 @@ defmodule HalC2.Steps.Parity.Commands do
     context
     |> World.create_project("Parity")
     |> World.create_thread("Parity thread")
-    |> World.put_client("paired", Node.connect(context.node, "wsTicket=#{ticket}"))
+    |> World.put_client("paired", Mc.connect(context.mc, "wsTicket=#{ticket}"))
   end
 
   # --- commands --------------------------------------------------------------------
 
   step "the client dispatches {word}", %{args: [type]} = context do
     # Connect first: the handshake takes any message, and a run's pushes would break it.
-    follower = Node.connect(context.node)
+    follower = Mc.connect(context.mc)
     %{command: command, follow: follow, change: change} = prepare(type, context)
     {follower, entities} = subscribe(follower, follow)
     refute change.(entities), "#{type}: the change was there before the command"
@@ -55,7 +55,7 @@ defmodule HalC2.Steps.Parity.Commands do
     })
   end
 
-  step ~r/^the node accepts it through its (?<kind>dispatch|thread update) path$/,
+  step ~r/^the MC accepts it through its (?<kind>dispatch|thread update) path$/,
        %{args: [kind]} = context do
     type = context.command["type"]
     assert {:ok, %{"sequence" => sequence}} = context.reply, "#{type}: #{inspect(context.reply)}"
@@ -95,7 +95,7 @@ defmodule HalC2.Steps.Parity.Commands do
     Map.merge(context, %{log: log(events), log_thread: tid, expect: expect})
   end
 
-  step("the node records the same change", context, do: import_log(context))
+  step("the MC records the same change", context, do: import_log(context))
 
   step ~r/^it stores (?<what>a .+)$/, %{args: [what]} = context do
     %{kind: kind, id: id} = expect = context.expect
@@ -133,7 +133,7 @@ defmodule HalC2.Steps.Parity.Commands do
   step "streams it to clients following the {word}", %{args: [kind]} = context do
     expect = context.expect
     assert kind == expect.kind
-    {_client, entities} = subscribe(Node.connect(context.node), context.log_thread)
+    {_client, entities} = subscribe(Mc.connect(context.mc), context.log_thread)
 
     if expect.entity do
       entity = entities[{kind, expect.id}]
@@ -159,7 +159,7 @@ defmodule HalC2.Steps.Parity.Commands do
     Map.merge(context, %{log: log(events), log_thread: tid})
   end
 
-  step("the node imports the log", context, do: import_log(context))
+  step("the MC imports the log", context, do: import_log(context))
 
   step "it stores one patch", context do
     assert context.import_report.source_events == 3
@@ -171,7 +171,7 @@ defmodule HalC2.Steps.Parity.Commands do
 
   step "the TypeScript server logged {word} for a project", %{args: [type]} = context do
     pid = "proj-log-#{System.unique_integer([:positive])}"
-    root = Node.tmp_dir(context.node, "imported")
+    root = Mc.tmp_dir(context.mc, "imported")
 
     created =
       {"project", pid, "project.created",
@@ -257,7 +257,7 @@ defmodule HalC2.Steps.Parity.Commands do
 
   step "the imported thread is the same as without it", context do
     assert context.import_report.source_events == length(context.log_rows)
-    store_path = Path.join(Node.tmp_dir(context.node, "without"), "hal-c2.sqlite")
+    store_path = Path.join(Mc.tmp_dir(context.mc, "without"), "hal-c2.sqlite")
 
     store =
       ExUnit.Callbacks.start_supervised!({HalC2.Store, path: store_path, name: nil},
@@ -695,9 +695,9 @@ defmodule HalC2.Steps.Parity.Commands do
           {HalC2.Claude.Registry, :claude_registry},
           {HalC2.Acp.Registry, :acp_registry}
         ],
-        do: Node.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: id))
+        do: Mc.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: id))
 
-    Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
   end
 
   defp send!(tid, text) do
@@ -753,9 +753,9 @@ defmodule HalC2.Steps.Parity.Commands do
   # Subscribes `client` to a stream; returns it with the snapshot's entities by `{kind, id}`.
   defp subscribe(client, stream) do
     client =
-      Node.sub(client, @follow, %{
+      Mc.sub(client, @follow, %{
         "type" => "stream",
-        "node" => Atom.to_string(node()),
+        "mc" => Atom.to_string(node()),
         "stream" => stream
       })
 
@@ -772,7 +772,7 @@ defmodule HalC2.Steps.Parity.Commands do
       remaining = max(deadline - System.monotonic_time(:millisecond), 1)
 
       {frame, client} =
-        Node.await(
+        Mc.await(
           client,
           &(&1["t"] in ["snapshot", "events"] and &1["id"] == @follow),
           remaining
@@ -823,7 +823,7 @@ defmodule HalC2.Steps.Parity.Commands do
   end
 
   defp write_log(context, rows) do
-    path = Path.join(Node.tmp_dir(context.node, "node-log"), "state.sqlite")
+    path = Path.join(Mc.tmp_dir(context.mc, "mc-log"), "state.sqlite")
     {:ok, db} = Sqlite3.open(path)
 
     :ok =
@@ -913,7 +913,7 @@ defmodule HalC2.Steps.Parity.Commands do
     "thread.visited" => {%{}, %{"lastVisitedAt" => "2026-09-01T12:01:00.000Z"}}
   }
 
-  # The events to log for `type` and what the node should keep: `%{kind, id, entity}`,
+  # The events to log for `type` and what the MC should keep: `%{kind, id, entity}`,
   # with `entity: nil` when it should be gone.
   defp v2_log("thread." <> _ = type, tid) do
     {before, change} = Map.fetch!(@thread_changes, type)

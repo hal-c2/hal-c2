@@ -19,9 +19,9 @@ const RESYNC_INTERVAL = Duration.minutes(1);
  * Registers machines that joined a protocol-3 cluster after it was paired.
  *
  * Pairing registers the cluster as it was then. This re-reads the descriptor of
- * each saved bearer environment (once per node address) whenever the saved
+ * each saved bearer environment (once per MC address) whenever the saved
  * environments change and every minute, and registers members it has not seen,
- * reached through the same node with the same credential. Nothing is removed: a
+ * reached through the same MC with the same credential. Nothing is removed: a
  * member that left stays until the user removes it, like any environment.
  */
 export const syncClusterMembers = Effect.gen(function* () {

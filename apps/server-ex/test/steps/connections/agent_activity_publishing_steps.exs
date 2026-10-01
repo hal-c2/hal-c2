@@ -5,17 +5,17 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
 
   alias HalC2.Connect.{Jwt, Publisher}
   alias HalC2.Test.FakeRelay
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @fake_cloudflared Path.expand("../../support/fake_cloudflared.sh", __DIR__)
   @thread "Fix login"
 
   # Linked as the settings page links it: a proof for the relay, then the relay's
   # answer with a managed tunnel. The relay client is a fake on the PATH.
-  step "a node linked to HAL-C2 Connect", context do
+  step "an MC linked to HAL-C2 Connect", context do
     relay = FakeRelay.start()
-    bin = Node.tmp_dir(context.node, "bin")
+    bin = Mc.tmp_dir(context.mc, "bin")
     connector = Path.join(bin, "cloudflared")
     File.cp!(@fake_cloudflared, connector)
     File.chmod!(connector, 0o755)
@@ -25,17 +25,17 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
       Application.delete_env(:hal_c2, :relay_client_env)
     end)
 
-    Node.ensure(HalC2.Connect.Supervisor)
+    Mc.ensure(HalC2.Connect.Supervisor)
 
     context =
-      context |> Map.put(:relay, relay) |> Map.put(:admin, Node.pair(Node.admin_scopes(), "Web"))
+      context |> Map.put(:relay, relay) |> Map.put(:admin, Mc.pair(Mc.admin_scopes(), "Web"))
 
     {:ok, %{"challenge" => challenge}} =
       relay_post(relay, "/v1/client/environment-link-challenges", %{
         "managedTunnelsEnabled" => true
       })
 
-    origin = "http://127.0.0.1:#{context.node.port}"
+    origin = "http://127.0.0.1:#{context.mc.port}"
 
     {200, proof} =
       connect(context, "/api/connect/link-proof", %{
@@ -46,7 +46,7 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
           "wsBaseUrl" => String.replace_prefix(origin, "http", "ws"),
           "providerKind" => "cloudflare_tunnel"
         },
-        "origin" => %{"localHttpHost" => "127.0.0.1", "localHttpPort" => context.node.port}
+        "origin" => %{"localHttpHost" => "127.0.0.1", "localHttpPort" => context.mc.port}
       })
 
     {:ok, link} =
@@ -74,12 +74,12 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
     agent(context, event)
   end
 
-  step "the node publishes nothing to the relay", context do
+  step "the MC publishes nothing to the relay", context do
     assert published(context) == []
     context
   end
 
-  step "the node publishes the thread's activity as {string}", %{args: [phase]} = context do
+  step "the MC publishes the thread's activity as {string}", %{args: [phase]} = context do
     states = for {state, _proof} <- published(context), do: state
     assert %{"phase" => ^phase} = state = List.last(states), "published #{inspect(states)}"
     Map.put(context, :activity, state)
@@ -108,12 +108,12 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
   end
 
   # A restart settles the cut-off turn as interrupted before HAL-C2 Connect starts again.
-  step "the node restarts without finishing it", context do
+  step "the MC restarts without finishing it", context do
     ExUnit.Callbacks.stop_supervised(HalC2.Connect.Supervisor)
-    node = Node.restart(context.node)
+    mc = Mc.restart(context.mc)
     World.await_row(World.thread_id(context, @thread), &(&1["status"] == "interrupted"))
-    Node.ensure(HalC2.Connect.Supervisor)
-    Map.put(context, :node, node)
+    Mc.ensure(HalC2.Connect.Supervisor)
+    Map.put(context, :mc, mc)
   end
 
   step "a published thread", context do
@@ -127,17 +127,17 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
     context
   end
 
-  step ~r/^the node (publishes an empty state for it|withdraws the thread's activity)$/,
+  step ~r/^the MC (publishes an empty state for it|withdraws the thread's activity)$/,
        context do
     assert [{nil, _proof} | _] = Enum.reverse(published(context))
     context
   end
 
-  step "the node publishes an update", context do
+  step "the MC publishes an update", context do
     agent(context, "is working")
   end
 
-  step "the update carries the node's signed proof for that thread and state", context do
+  step "the update carries the MC's signed proof for that thread and state", context do
     assert [{state, proof}] = published(context)
     {public, _private} = Jwt.key_pair()
     env = HalC2.Environment.id()
@@ -206,7 +206,7 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
   end
 
   step "publishing stays on", context do
-    {200, state} = Node.http(context.node, :get, "/api/connect/link-state", bearer: context.admin)
+    {200, state} = Mc.http(context.mc, :get, "/api/connect/link-state", bearer: context.admin)
 
     assert %{"linked" => true, "managedTunnelActive" => false, "publishAgentActivity" => true} =
              state
@@ -214,7 +214,7 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
     context |> agent("completes its turn") |> assert_published("completed")
   end
 
-  step "a node paired directly and not linked to HAL-C2 Connect", context do
+  step "an MC paired directly and not linked to HAL-C2 Connect", context do
     {200, %{"ok" => true}} = connect(context, "/api/connect/unlink", %{})
     context
   end
@@ -222,7 +222,7 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
   step "the user cannot turn on agent activity publishing", context do
     assert {409, %{"message" => message}} = preferences(context, true)
     assert message =~ "Link this environment to HAL-C2 Connect"
-    {200, state} = Node.http(context.node, :get, "/api/connect/link-state", bearer: context.admin)
+    {200, state} = Mc.http(context.mc, :get, "/api/connect/link-state", bearer: context.admin)
     assert state["publishAgentActivity"] == false
     context
   end
@@ -247,7 +247,7 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
     context
   end
 
-  step "the node tries the next update when it happens", context do
+  step "the MC tries the next update when it happens", context do
     FakeRelay.set(context.relay, fail: [])
     context |> agent("starts a turn") |> assert_published("starting")
   end
@@ -296,7 +296,7 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
     context
   end
 
-  # Every activity update the node sent this thread since the last look, oldest
+  # Every activity update the MC sent this thread since the last look, oldest
   # first, as `{state, proof}`.
   defp published(context) do
     Publisher.drain()
@@ -341,7 +341,7 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
   end
 
   defp connect(context, path, body),
-    do: Node.http(context.node, :post, path, bearer: context.admin, json: body)
+    do: Mc.http(context.mc, :post, path, bearer: context.admin, json: body)
 
   defp relay_post(relay, path, body),
     do: HalC2.Connect.relay(:post, relay.url <> path, "clerk-token", body)

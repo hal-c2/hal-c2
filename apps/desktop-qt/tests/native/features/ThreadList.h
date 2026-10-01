@@ -13,8 +13,8 @@ QString threadKeyOf(World& world, const QString& thread);
 // The sidebar section listing the thread `key` (pinned, active, snoozed,
 // settled), empty when none does.
 QString sidebarSectionOf(World& world, const QString& key);
-// Changes the node's row for the thread `id`, sends it and waits for the shell.
+// Changes the MC's row for the thread `id`, sends it and waits for the shell.
 void updateThreadRow(World& world, const QString& id, const std::function<void(QJsonObject&)>& change);
-// The node's rows follow the thread commands it accepts (pin, settle, snooze,
+// The MC's rows follow the thread commands it accepts (pin, settle, snooze,
 // visit...), as the real projection does.
 void projectThreadCommands(World& world);

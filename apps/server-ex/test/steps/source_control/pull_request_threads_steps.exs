@@ -13,8 +13,8 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @repository "acme/shop"
   @url "https://github.com/acme/shop/pull/42"
@@ -262,7 +262,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
 
   step "the agent in {string} opens pull request {int} and links it with its tool",
        %{args: [title, number]} = context do
-    Node.ensure(HalC2.Mcp)
+    Mc.ensure(HalC2.Mcp)
     context = thread(context, title)
     %{authorization: auth} = HalC2.Mcp.server(World.thread_id(context, title), "codex")
 
@@ -330,7 +330,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     branch_answer(context, branch, 42, "OPEN")
   end
 
-  # The node sweeps unsettled threads every minute (`Discovery`'s timer); the sweep is
+  # The MC sweeps unsettled threads every minute (`Discovery`'s timer); the sweep is
   # run here rather than waited for.
   step "within a minute {string} shows that pull request as its branch's",
        %{args: [title]} = context do
@@ -552,7 +552,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   end
 
   defp discovery(context) do
-    Node.ensure({HalC2.PullRequests.Discovery, interval: nil})
+    Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
     context
   end
 
@@ -605,7 +605,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   end
 
   defp sync(context) do
-    Node.ensure({HalC2.PullRequests.Sync, interval: nil})
+    Mc.ensure({HalC2.PullRequests.Sync, interval: nil})
     context = World.cli_rules(context, %{"args" => ["stacks?pull_request="], "stdout" => []})
     if context[:summaries], do: context, else: summaries(context, %{})
   end

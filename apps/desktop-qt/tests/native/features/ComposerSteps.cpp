@@ -1,6 +1,6 @@
-// The composer's turn against the node: the route the composer shows, what the
+// The composer's turn against the MC: the route the composer shows, what the
 // user types, picks, attaches and sends (as the brick dispatches it), the
-// images the node stores, and the text the shell's composer holds
+// images the MC stores, and the text the shell's composer holds
 // (features/composer/sending-turns.feature, desktop/native-composer.feature).
 
 #include <QJsonArray>
@@ -16,30 +16,30 @@
 
 namespace {
 
-// The chat images the node stored (`assets.persistChatAttachments`); refused
-// like a command, by `the node refuses "assets.persistChatAttachments" ...`.
+// The chat images the MC stored (`assets.persistChatAttachments`); refused
+// like a command, by `the MC refuses "assets.persistChatAttachments" ...`.
 struct FakeUploads {
   QList<QJsonObject> stored;
 };
 
-const FakeNode::Extension uploads([](FakeNode& node) {
-  node.onRpc(QStringLiteral("assets.persistChatAttachments"), [&node](const FakeNode::Rpc& rpc) {
+const FakeMc::Extension uploads([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("assets.persistChatAttachments"), [&mc](const FakeMc::Rpc& rpc) {
     const QString method = QStringLiteral("assets.persistChatAttachments");
-    if (node.refusals.contains(method)) {
-      node.refuse(rpc, node.refusals.value(method));
+    if (mc.refusals.contains(method)) {
+      mc.refuse(rpc, mc.refusals.value(method));
       return;
     }
     QJsonArray stored;
     for (const QJsonValue& value : rpc.payload.value(QLatin1String("attachments")).toArray()) {
       QJsonObject image = value.toObject();
       image.insert(QStringLiteral("threadId"), rpc.payload.value(QLatin1String("threadId")));
-      node.part<FakeUploads>().stored.append(image);
+      mc.part<FakeUploads>().stored.append(image);
       image.remove(QStringLiteral("threadId"));
       image.remove(QStringLiteral("dataUrl"));
-      image.insert(QStringLiteral("id"), QStringLiteral("image-%1").arg(node.part<FakeUploads>().stored.size()));
+      image.insert(QStringLiteral("id"), QStringLiteral("image-%1").arg(mc.part<FakeUploads>().stored.size()));
       stored.append(image);
     }
-    node.reply(rpc, QJsonObject{{QStringLiteral("attachments"), stored}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("attachments"), stored}});
   });
 });
 
@@ -104,13 +104,13 @@ const Steps steps([] {
                                                                  });
   });
   step(QStringLiteral("the user picks the model %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    // The picker offers what the node's providers list.
-    const QJsonArray providers = fakeConfig(world.node).config.value(QLatin1String("providers")).toArray();
+    // The picker offers what the MC's providers list.
+    const QJsonArray providers = fakeConfig(world.mc).config.value(QLatin1String("providers")).toArray();
     const bool offered = std::any_of(providers.begin(), providers.end(), [&](const QJsonValue& entry) {
       return entry.toObject().value(QLatin1String("instanceId")) == c[1];
     });
     if (!offered) {
-      publishProviders(world.node, QJsonArray{QJsonObject{
+      publishProviders(world.mc, QJsonArray{QJsonObject{
                                        {QStringLiteral("instanceId"), c[1]},
                                        {QStringLiteral("driver"), c[1]},
                                        {QStringLiteral("enabled"), true},
@@ -182,23 +182,23 @@ const Steps steps([] {
   step(QStringLiteral("the composer lists no attachments"), [](World& world, const Captures&, const Table&) {
     expect(attachments(world).isEmpty(), QStringLiteral("the composer lists %1").arg(show(attachments(world))));
   });
-  step(QStringLiteral("the node stores the image %1 for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC stores the image %1 for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    const QList<QJsonObject> stored = world.node.part<FakeUploads>().stored;
+    const QList<QJsonObject> stored = world.mc.part<FakeUploads>().stored;
     const bool found = std::any_of(stored.cbegin(), stored.cend(), [&](const QJsonObject& image) {
       return image.value(QLatin1String("name")).toString() == c[0] &&
              image.value(QLatin1String("dataUrl")).toString().startsWith(QLatin1String("data:image/png;base64,"));
     });
     QStringList names;
     for (const QJsonObject& image : stored) names.append(image.value(QLatin1String("name")).toString());
-    expect(found, QStringLiteral("the node stored [%1]").arg(names.join(QStringLiteral(", "))));
+    expect(found, QStringLiteral("the MC stored [%1]").arg(names.join(QStringLiteral(", "))));
   });
-  step(QStringLiteral("the node stores the image %1 for the draft's thread").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC stores the image %1 for the draft's thread").arg(q), [](World& world, const Captures& c, const Table&) {
     // The draft's thread id, or once it launched, the thread the window moved to.
     const auto draft = world.native().controller<DraftController>()->draft(world.draftId);
-    world.waitFor([&] { return !world.node.part<FakeUploads>().stored.isEmpty(); }, [] { return QStringLiteral("an image stored"); });
+    world.waitFor([&] { return !world.mc.part<FakeUploads>().stored.isEmpty(); }, [] { return QStringLiteral("an image stored"); });
     const QString threadId = draft ? draft->threadId : route(world).section(u':', 1);
-    const QList<QJsonObject> stored = world.node.part<FakeUploads>().stored;
+    const QList<QJsonObject> stored = world.mc.part<FakeUploads>().stored;
     const bool found = std::any_of(stored.cbegin(), stored.cend(), [&](const QJsonObject& image) {
       return image.value(QLatin1String("name")) == c[0] && image.value(QLatin1String("threadId")) == threadId;
     });
@@ -206,15 +206,15 @@ const Steps steps([] {
     for (const QJsonObject& image : stored) {
       seen.append(image.value(QLatin1String("name")).toString() + QStringLiteral(" for ") + image.value(QLatin1String("threadId")).toString());
     }
-    expect(found && !threadId.isEmpty(), QStringLiteral("the node stored [%1], not for %2").arg(seen.join(QStringLiteral(", ")), threadId));
+    expect(found && !threadId.isEmpty(), QStringLiteral("the MC stored [%1], not for %2").arg(seen.join(QStringLiteral(", ")), threadId));
   });
-  step(QStringLiteral("the node stores no images"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC stores no images"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    expect(world.node.part<FakeUploads>().stored.isEmpty(), QStringLiteral("the node stored images"));
+    expect(world.mc.part<FakeUploads>().stored.isEmpty(), QStringLiteral("the MC stored images"));
   });
   step(QStringLiteral("the message carries the image %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(world.command.has_value(), QStringLiteral("no command was found before"));
-    const QJsonArray images = world.node.commands.at(*world.command).value(QLatin1String("attachments")).toArray();
+    const QJsonArray images = world.mc.commands.at(*world.command).value(QLatin1String("attachments")).toArray();
     const bool found = std::any_of(images.begin(), images.end(), [&](const QJsonValue& image) {
       return image.toObject().value(QLatin1String("name")).toString() == c[0] &&
              !image.toObject().value(QLatin1String("id")).toString().isEmpty();

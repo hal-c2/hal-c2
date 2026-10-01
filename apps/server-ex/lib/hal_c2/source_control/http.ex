@@ -1,6 +1,6 @@
 defmodule HalC2.SourceControl.Http do
   @moduledoc """
-  The HTTP requests the node makes to a source control host's API itself (Bitbucket,
+  The HTTP requests the MC makes to a source control host's API itself (Bitbucket,
   and Forgejo through `fj`'s stored token). Redirects are not followed, so a
   credential never travels to another origin.
   """

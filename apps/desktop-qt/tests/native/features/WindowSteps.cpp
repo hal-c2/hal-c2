@@ -1,5 +1,5 @@
 // More than one window (navigation/windows.feature): each NativeWindow has
-// its own route, drafts and panels over the shell's one node connection, and
+// its own route, drafts and panels over the shell's one MC connection, and
 // reopens with them after a restart until it is closed.
 
 #include <QCoreApplication>
@@ -29,7 +29,7 @@ const QString kSecond = QStringLiteral("t2");
 const QString kStableId = QStringLiteral("stable");
 
 QString keyOf(World& world, const QString& thread) {
-  return world.node.environmentId + QLatin1Char(':') + thread;
+  return world.mc.environmentId + QLatin1Char(':') + thread;
 }
 
 NativeWindow* second(World& world) {
@@ -55,10 +55,10 @@ void collectKeys(const QVariant& value, QStringList& keys) {
 
 // Two threads of one project, the first open in the first window.
 void connectWithThreads(World& world) {
-  world.node.projects.insert(stream::kProject, {{QStringLiteral("id"), stream::kProject}, {QStringLiteral("title"), stream::kProject},
+  world.mc.projects.insert(stream::kProject, {{QStringLiteral("id"), stream::kProject}, {QStringLiteral("title"), stream::kProject},
                                                 {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")}, {QStringLiteral("scripts"), QJsonArray()}});
   for (const QString& id : {kFirst, kSecond}) {
-    world.node.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("projectId"), stream::kProject},
+    world.mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("projectId"), stream::kProject},
                                    {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
                                    {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
   }
@@ -69,7 +69,7 @@ void connectWithThreads(World& world) {
 }
 
 // What the user's layout (or the palette's "New window") asks for.
-// The node's subscriptions from the second window on: its own, while the
+// The MC's subscriptions from the second window on: its own, while the
 // first window stays where it is.
 struct SecondWindowWork {
   qsizetype firstSub = 0;
@@ -85,7 +85,7 @@ QStringList toastTitles(NativeWindow* window) {
 }
 
 NativeWindow* openSecond(World& world, const QVariantMap& payload = {}) {
-  world.node.part<SecondWindowWork>().firstSub = world.node.subscriptions.size();
+  world.mc.part<SecondWindowWork>().firstSub = world.mc.subscriptions.size();
   world.bridge().dispatch(QStringLiteral("window.new"), payload);
   NativeWindow* window = second(world);
   expect(window != nullptr, QStringLiteral("no second window opened"));
@@ -127,7 +127,7 @@ struct QuitState {
 };
 
 QuitState& quitting(World& world) {
-  QuitState& state = world.node.part<QuitState>();
+  QuitState& state = world.mc.part<QuitState>();
   if (!state.hooked) {
     state.hooked = true;
     auto* controller = world.native().shared<QuitController>();
@@ -197,14 +197,14 @@ const Steps steps([] {
   step(QStringLiteral("the user closes the first window"), [](World& world, const Captures&, const Table&) {
     if (NativeWindow* window = second(world)) {
       openIn(world, window, kSecond);
-      world.node.part<SecondWindowWork>().id = window->id();
+      world.mc.part<SecondWindowWork>().id = window->id();
     }
     world.closeWindow(world.native().main());
   });
   step(QStringLiteral("the second window is still open on its own thread"), [](World& world, const Captures&, const Table&) {
     world.sync();
     const auto& windows = world.native().windows();
-    const QString id = world.node.part<SecondWindowWork>().id;
+    const QString id = world.mc.part<SecondWindowWork>().id;
     expect(windows.size() == 1 && windows.front()->id() == id,
            QStringLiteral("%1 windows are open, the first %2").arg(windows.size()).arg(windows.front()->id()));
     expect(shownBy(windows.front().get()) == keyOf(world, kSecond),
@@ -216,7 +216,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("only the second window reopens"), [](World& world, const Captures&, const Table&) {
     const auto& windows = world.native().windows();
-    const QString id = world.node.part<SecondWindowWork>().id;
+    const QString id = world.mc.part<SecondWindowWork>().id;
     expect(windows.size() == 1 && windows.front()->id() == id,
            QStringLiteral("%1 windows reopened, the first %2").arg(windows.size()).arg(windows.front()->id()));
     NativeWindow* window = windows.front().get();
@@ -233,7 +233,7 @@ const Steps steps([] {
 
   // What main.cpp publishes on the first window's bridge when the backend fails.
   step(QStringLiteral("the backend fails"), [](World& world, const Captures&, const Table&) {
-    world.bridge().publish(QStringLiteral("backendError"), QStringLiteral("the node exited"));
+    world.bridge().publish(QStringLiteral("backendError"), QStringLiteral("the MC exited"));
   });
   step(QStringLiteral("the user opens a third window"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("window.new"), QVariantMap{});
@@ -242,17 +242,17 @@ const Steps steps([] {
   step(QStringLiteral("every window shows the failure"), [](World& world, const Captures&, const Table&) {
     for (const auto& window : world.native().windows()) {
       const QString error = window->bridge()->state()->value(QStringLiteral("backendError")).toString();
-      expect(error == QLatin1String("the node exited"), QStringLiteral("window %1 shows the error \"%2\"").arg(window->id(), error));
+      expect(error == QLatin1String("the MC exited"), QStringLiteral("window %1 shows the error \"%2\"").arg(window->id(), error));
     }
   });
 
   // A failure to save settings reaches the window that asked.
-  step(QStringLiteral("the node refuses to save settings"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC refuses to save settings"), [](World& world, const Captures&, const Table&) {
     auto* settings = world.native().controller<SettingsController>();
-    world.waitFor([settings] { return settings->ready(); }, QStringLiteral("the shell to read the node's settings"));
-    fakeConfig(world.node).refuseWrites = QStringLiteral("The settings file is read-only.");
+    world.waitFor([settings] { return settings->ready(); }, QStringLiteral("the shell to read the MC's settings"));
+    fakeConfig(world.mc).refuseWrites = QStringLiteral("The settings file is read-only.");
   });
-  step(QStringLiteral("the user changes a node setting in the second window and goes back to the first"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user changes an MC setting in the second window and goes back to the first"), [](World& world, const Captures&, const Table&) {
     world.native().setActiveWindow(second(world));
     world.native().controller<SettingsController>()->set(QStringLiteral("autoResumeLimitedThreads"), true);
     world.native().setActiveWindow(world.native().main());
@@ -267,32 +267,32 @@ const Steps steps([] {
     expect(titles.isEmpty(), QStringLiteral("the first window's toasts are %1").arg(titles.join(QStringLiteral(", "))));
   });
 
-  // Node work in flight when a window closes (NodeClient's contexts).
-  step(QStringLiteral("the second window is waiting on the node"), [](World& world, const Captures&, const Table&) {
+  // Mc work in flight when a window closes (McClient's contexts).
+  step(QStringLiteral("the second window is waiting on the MC"), [](World& world, const Captures&, const Table&) {
     openIn(world, second(world), kSecond);
     // A refusal would toast in the window that asked.
-    world.node.refusals.insert(QStringLiteral("thread.unsettle"), QStringLiteral("Not now"));
-    world.node.hold(QStringLiteral("answers"));
-    const qsizetype sent = world.node.commands.size();
+    world.mc.refusals.insert(QStringLiteral("thread.unsettle"), QStringLiteral("Not now"));
+    world.mc.hold(QStringLiteral("answers"));
+    const qsizetype sent = world.mc.commands.size();
     second(world)->bridge()->dispatch(QStringLiteral("thread.unsettle"), QVariantMap{{QStringLiteral("key"), keyOf(world, kSecond)}});
-    world.waitFor([&] { return world.node.commands.size() > sent; }, QStringLiteral("the second window's command to reach the node"));
+    world.waitFor([&] { return world.mc.commands.size() > sent; }, QStringLiteral("the second window's command to reach the MC"));
   });
-  step(QStringLiteral("the node answers what the closed window asked"), [](World& world, const Captures&, const Table&) {
-    world.node.answerHeld();
+  step(QStringLiteral("the MC answers what the closed window asked"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
     // And a frame already on its way to each of the window's subscriptions.
-    const QList<QJsonObject>& subs = world.node.subscriptions;
-    for (qsizetype i = world.node.part<SecondWindowWork>().firstSub; i < subs.size(); ++i) {
-      world.node.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), subs.at(i).value(QLatin1String("id"))}});
+    const QList<QJsonObject>& subs = world.mc.subscriptions;
+    for (qsizetype i = world.mc.part<SecondWindowWork>().firstSub; i < subs.size(); ++i) {
+      world.mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), subs.at(i).value(QLatin1String("id"))}});
     }
     world.sync();
   });
-  step(QStringLiteral("the node no longer sends the closed window anything"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC no longer sends the closed window anything"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    const QList<QJsonObject>& subs = world.node.subscriptions;
+    const QList<QJsonObject>& subs = world.mc.subscriptions;
     QStringList live;
-    for (qsizetype i = world.node.part<SecondWindowWork>().firstSub; i < subs.size(); ++i) {
+    for (qsizetype i = world.mc.part<SecondWindowWork>().firstSub; i < subs.size(); ++i) {
       const int id = subs.at(i).value(QLatin1String("id")).toInt();
-      if (!world.node.shapeOf(id).isEmpty()) live << show(world.node.shapeOf(id).toVariantMap());
+      if (!world.mc.shapeOf(id).isEmpty()) live << show(world.mc.shapeOf(id).toVariantMap());
     }
     expect(live.isEmpty(), QStringLiteral("the closed window still follows %1").arg(live.join(u", ")));
   });
@@ -330,7 +330,7 @@ const Steps steps([] {
     expect(keys.contains(keyOf(world, kFirst)) && keys.contains(keyOf(world, kSecond)),
            QStringLiteral("the second window's sidebar lists %1").arg(keys.join(u", ")));
     // One connection, and so one sign-in, for every window.
-    expect(world.node.connections.size() == 1, QStringLiteral("the shell opened %1 connections").arg(world.node.connections.size()));
+    expect(world.mc.connections.size() == 1, QStringLiteral("the shell opened %1 connections").arg(world.mc.connections.size()));
   });
   step(QStringLiteral("navigating in one window does not navigate the other"), [](World& world, const Captures&, const Table&) {
     NativeWindow* window = second(world);

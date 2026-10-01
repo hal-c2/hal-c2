@@ -2,7 +2,7 @@
 
 #include <QJsonArray>
 
-#include "NodeClient.h"
+#include "McClient.h"
 
 namespace {
 
@@ -12,21 +12,21 @@ QJsonObject navOf(const QJsonObject& snapshot) {
 
 }  // namespace
 
-ThreadPreviews::ThreadPreviews(NodeClient* client, Notify notify, Open open, QObject* parent)
+ThreadPreviews::ThreadPreviews(McClient* client, Notify notify, Open open, QObject* parent)
     : QAbstractListModel(parent), m_client(client), m_notify(std::move(notify)), m_open(std::move(open)) {}
 
 ThreadPreviews::~ThreadPreviews() {
   unfollow();
 }
 
-void ThreadPreviews::setThread(const QString& environmentId, const QString& threadId, const QString& node) {
-  if (environmentId == m_environment && threadId == m_thread && node == m_node) return;
+void ThreadPreviews::setThread(const QString& environmentId, const QString& threadId, const QString& mc) {
+  if (environmentId == m_environment && threadId == m_thread && mc == m_mc) return;
   const bool threadMoved = environmentId != m_environment || threadId != m_thread;
   m_environment = environmentId;
   m_thread = threadId;
-  if (node != m_node) {
+  if (mc != m_mc) {
     unfollow();
-    m_node = node;
+    m_mc = mc;
   }
   if (threadMoved) {
     ++m_generation;
@@ -57,8 +57,8 @@ void ThreadPreviews::setActive(bool active) {
 }
 
 void ThreadPreviews::follow() {
-  if (m_subscription >= 0 || m_node.isEmpty()) return;
-  m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("preview")}, {QStringLiteral("node"), m_node}},
+  if (m_subscription >= 0 || m_mc.isEmpty()) return;
+  m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("preview")}, {QStringLiteral("mc"), m_mc}},
                                        [this](const QJsonObject& frame) {
                                          onEvent(frame.value(QLatin1String("event")).toObject());
                                        });
@@ -106,7 +106,7 @@ void ThreadPreviews::onEvent(const QJsonObject& event) {
   const QString epoch = event.value(QLatin1String("serverEpoch")).toString();
   const qint64 revision = event.value(QLatin1String("revision")).toInteger(-1);
   if (epoch != m_epoch) {
-    // The node restarted: its tabs are whatever it lists now.
+    // The MC restarted: its tabs are whatever it lists now.
     reload();
     return;
   }
@@ -153,7 +153,7 @@ void ThreadPreviews::close(const QString& tabId) {
                  [this, generation, row, snapshot, tabId](const QJsonValue&, const std::optional<QString>& error) {
                    if (!m_closing.remove(tabId) || generation != m_generation) return;
                    if (!error) return;
-                   // It is still open on the node: it comes back where it was.
+                   // It is still open on the MC: it comes back where it was.
                    if (rowOf(tabId) < 0) {
                      const int at = std::min(row, int(m_rows.size()));
                      beginInsertRows({}, at, at);

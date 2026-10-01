@@ -67,7 +67,7 @@ const Steps steps([] {
       world.bridge().dispatch(QStringLiteral("projectSettings.workspace"), QVariantMap{{QStringLiteral("value"), c[0]}});
       return;
     }
-    world.sync();  // a menu can open on the node's answer
+    world.sync();  // a menu can open on the MC's answer
     // From an open command palette (a file found by name): its entry of that
     // title or path.
     if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {

@@ -2,7 +2,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   @moduledoc """
   Steps for `features/connections/device-hub.feature`.
 
-  The node's device tools are real processes run against fakes: `npm` installs
+  The MC's device tools are real processes run against fakes: `npm` installs
   the fake hub and agent-device from `test/support` on first use, the Android SDK
   is a directory of fake `adb` and `emulator` scripts under `ANDROID_HOME`, and a
   Mac is `config :hal_c2, :os_type` plus a fake `xcrun` on PATH. The fakes log every
@@ -13,8 +13,8 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @support Path.expand("../../support", __DIR__)
   @simulator %{
@@ -28,15 +28,15 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
   # --- the machine --------------------------------------------------------------------
 
-  step "a node with device support enabled", context do
+  step "an MC with device support enabled", context do
     context |> machine() |> write_settings(%{"enableDeviceSupport" => true})
   end
 
-  step "a node with device support disabled", context do
+  step "an MC with device support disabled", context do
     write_settings(context, %{"enableDeviceSupport" => false})
   end
 
-  step "the node runs on Linux", context do
+  step "the MC runs on Linux", context do
     Application.put_env(:hal_c2, :os_type, {:unix, :linux})
     context
   end
@@ -75,25 +75,25 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   end
 
   step "a client lists devices for the first time", context do
-    refute File.exists?(Path.join(context.node.home, "tools"))
+    refute File.exists?(Path.join(context.mc.home, "tools"))
     rpc(context, "device.list", %{})
   end
 
-  step "the node installs and starts no device tools", context do
+  step "the MC installs and starts no device tools", context do
     assert {:ok, %{"hostStatus" => "disabled", "devices" => []}} = context.reply
-    refute File.exists?(Path.join(context.node.home, "tools"))
+    refute File.exists?(Path.join(context.mc.home, "tools"))
     assert HalC2.Devices.hub_origin() == nil
     refute File.exists?(context.devices.log)
     context
   end
 
-  step "the node installs the device hub under its home's tools folder", context do
+  step "the MC installs the device hub under its home's tools folder", context do
     assert {:ok, %{"hostStatus" => "ready", "hosts" => [local | _]}} = context.reply
 
     assert %{"hubInstalled" => true, "tools" => %{"hub" => %{"installedVersions" => [version]}}} =
              local
 
-    dir = Path.join([context.node.home, "tools", "expo-device-hub", version])
+    dir = Path.join([context.mc.home, "tools", "expo-device-hub", version])
     assert File.read!(Path.join(dir, ".install-complete")) == version <> "\n"
 
     assert File.exists?(
@@ -106,7 +106,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   step "runs it on a loopback port", context do
     assert "http://127.0.0.1:" <> port = HalC2.Devices.hub_origin()
     assert {:ok, 200, "ok"} = hub_get("/readyz")
-    assert String.to_integer(port) != context.node.port
+    assert String.to_integer(port) != context.mc.port
     context
   end
 
@@ -129,7 +129,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     rpc(context, "device.open", %{"threadId" => "t1", "deviceId" => "SIM-1", "platform" => "ios"})
   end
 
-  step "the node boots the simulator", context do
+  step "the MC boots the simulator", context do
     assert {:ok, %{"deviceId" => "SIM-1", "threadId" => "t1"}} = context.reply
     assert %{"booted" => true} = hub_simulator("SIM-1")
     assert %{"booted" => true} = device("SIM-1")
@@ -180,7 +180,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     })
   end
 
-  step "the node answers that the device was not found", context do
+  step "the MC answers that the device was not found", context do
     assert {:error, message, %{"_tag" => "DeviceNotFoundError", "deviceId" => "nope"}} =
              context.reply
 
@@ -265,9 +265,9 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
   step "a client subscribed to devices", context do
     devices()
-    client = Node.connect(context.node)
-    client = Node.sub(client, 1, %{"type" => "devices", "node" => Atom.to_string(node())})
-    {%{"state" => %{"sessions" => []}}, client} = Node.await(client, &(&1["t"] == "devices"))
+    client = Mc.connect(context.mc)
+    client = Mc.sub(client, 1, %{"type" => "devices", "mc" => Atom.to_string(node())})
+    {%{"state" => %{"sessions" => []}}, client} = Mc.await(client, &(&1["t"] == "devices"))
     World.put_client(context, "watcher", client)
   end
 
@@ -283,7 +283,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     assert {:ok, %{"deviceId" => "emulator-5554"}} = context.reply
 
     {%{"state" => state}, client} =
-      Node.await(
+      Mc.await(
         World.client(context, "watcher"),
         &(&1["t"] == "devices" and &1["state"]["sessions"] != []),
         5_000
@@ -302,7 +302,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     |> rpc("device.detail", %{"deviceId" => "emulator-5580"})
   end
 
-  step "the node answers with its settings and foreground app", context do
+  step "the MC answers with its settings and foreground app", context do
     assert {:ok, detail} = context.reply
 
     assert %{
@@ -342,7 +342,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     |> rpc("device.action", input)
   end
 
-  step "the node answers with the device's detail after the action", context do
+  step "the MC answers with the device's detail after the action", context do
     assert {:ok, %{"deviceId" => id, "settings" => settings} = detail} = context.reply
     assert id == context.action["deviceId"]
     calls = context |> calls() |> String.split("\n", trim: true)
@@ -377,7 +377,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     context
   end
 
-  step "the node answers that the action is unavailable on that platform", context do
+  step "the MC answers that the action is unavailable on that platform", context do
     platform = context.platform
 
     assert {:error, _,
@@ -394,7 +394,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
   # --- the proxy ------------------------------------------------------------------------
 
-  step "a client with read access opens a device's stream through the node", context do
+  step "a client with read access opens a device's stream through the MC", context do
     ticket = ticket(["orchestration:read"])
     devices()
     {:ok, _} = HalC2.Devices.list(%{})
@@ -437,7 +437,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     Map.put(context, :response, response)
   end
 
-  step "the node refuses it as needing the operate scope", context do
+  step "the MC refuses it as needing the operate scope", context do
     assert %{status: 403, body: body} = context.response
 
     assert %{
@@ -455,7 +455,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     Map.put(context, :response, response)
   end
 
-  step "the node answers that the credential is invalid", context do
+  step "the MC answers that the credential is invalid", context do
     assert %{status: 401, body: body} = context.response
 
     assert %{"_tag" => "EnvironmentAuthInvalidError", "reason" => "invalid_credential"} =
@@ -479,7 +479,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     Map.put(context, :response, response)
   end
 
-  step "the node answers the method is not allowed", context do
+  step "the MC answers the method is not allowed", context do
     assert %{status: 405} = context.response
     context
   end
@@ -498,7 +498,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     Map.merge(context, %{responses: responses, stream_path: path})
   end
 
-  step "the node accepts the ticket while it lasts", context do
+  step "the MC accepts the ticket while it lasts", context do
     assert [%{status: 200}, %{status: 200}] = context.responses
     refute Enum.any?(context.responses, &(&1.body =~ "wsTicket"))
 
@@ -539,13 +539,13 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     # What a peer's shell pushes on connect; it stays listed after the peer goes down.
     GenServer.cast(HalC2.Shell, {:peer_environment, peer, %{"environmentId" => "env-laptop"}})
     # A call after the cast: the shell has handled it once this answers.
-    refute peer in HalC2.Shell.online_nodes()
+    refute peer in HalC2.Shell.online_mcs()
     assert Enum.any?(HalC2.Shell.environments(), &(elem(&1, 0) == peer))
 
     Map.put(
       context,
       :hub_base,
-      "/api/device-hub/nodes/" <> URI.encode_www_form(Atom.to_string(peer))
+      "/api/device-hub/mcs/" <> URI.encode_www_form(Atom.to_string(peer))
     )
   end
 
@@ -825,8 +825,8 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
   # Fake npm and the fake Android SDK; every variable is restored after the scenario.
   defp machine(context) do
-    bin = Node.tmp_dir(context.node, "bin")
-    sdk = Node.tmp_dir(context.node, "sdk")
+    bin = Mc.tmp_dir(context.mc, "bin")
+    sdk = Mc.tmp_dir(context.mc, "sdk")
     log = Path.join(bin, "calls.log")
 
     script(Path.join(bin, "npm"), """
@@ -948,7 +948,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   defp restore_env(name, value), do: System.put_env(name, value)
 
   defp write_settings(context, changes) do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
     {settings, version} = HalC2.Settings.get()
 
     settings =
@@ -962,8 +962,8 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   end
 
   defp devices do
-    Node.ensure(HalC2.Settings)
-    Node.ensure(HalC2.Devices)
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Devices)
   end
 
   # An RPC on the paired client; installing and booting take longer than most calls.
@@ -972,9 +972,9 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     id = System.unique_integer([:positive])
 
     client =
-      Node.rpc(World.client(context, "paired"), context.node.environment, id, method, payload)
+      Mc.rpc(World.client(context, "paired"), context.mc.environment, id, method, payload)
 
-    {frame, client} = Node.await(client, Node.reply?(id), 15_000)
+    {frame, client} = Mc.await(client, Mc.reply?(id), 15_000)
 
     reply =
       case frame do
@@ -1036,10 +1036,10 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     ticket
   end
 
-  # One request to the node's HTTP port. A response that never ends is read until
+  # One request to the MC's HTTP port. A response that never ends is read until
   # `until` holds, then the client hangs up (`closed: true`).
   defp http(context, method, path, opts \\ []) do
-    {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", context.node.port, mode: :passive)
+    {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", context.mc.port, mode: :passive)
     {:ok, conn, ref} = Mint.HTTP.request(conn, method, path, opts[:headers] || [], opts[:body])
     read(conn, ref, %{status: nil, headers: [], body: "", closed: false}, opts[:until])
   end
@@ -1080,7 +1080,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
   defp tool(context, name, arguments, thread) do
     devices()
-    Node.ensure(HalC2.Mcp)
+    Mc.ensure(HalC2.Mcp)
     %{authorization: auth} = HalC2.Mcp.server(thread, "codex")
 
     body =

@@ -1,23 +1,23 @@
 defmodule HalC2.Steps.Settings.Integrations do
   @moduledoc """
   The device hub half of Settings → Integrations, driven over `device.configure`
-  and `device.list` on a node whose device tools are the `HalC2.DevicesTest` fakes.
+  and `device.list` on an MC whose device tools are the `HalC2.DevicesTest` fakes.
   npm is a fake on `PATH` so tool updates never reach the registry.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   step "the user has opened the Integrations settings", context do
     context = World.fake_device_tools(context)
     World.put_client(context, "default", World.client(context))
   end
 
-  step "the user turns on the device hub for this node", context do
-    Node.ensure(HalC2.Devices)
+  step "the user turns on the device hub for this MC", context do
+    Mc.ensure(HalC2.Devices)
     {reply, context} = World.call(context, "device.configure", %{"enabled" => true})
     Map.put(context, :reply, reply)
   end
@@ -37,7 +37,7 @@ defmodule HalC2.Steps.Settings.Integrations do
     context
   end
 
-  step "the node lists the simulators and emulators on its machine", context do
+  step "the MC lists the simulators and emulators on its machine", context do
     assert {:ok, %{"hostStatus" => "ready", "devices" => devices}} = context.reply
 
     assert Enum.any?(devices, &match?(%{"id" => "Pixel_9", "platform" => "android"}, &1)),
@@ -53,7 +53,7 @@ defmodule HalC2.Steps.Settings.Integrations do
         "enableAgentDeviceAccess" => true
       })
 
-    Node.ensure(HalC2.Devices)
+    Mc.ensure(HalC2.Devices)
     context
   end
 
@@ -65,8 +65,8 @@ defmodule HalC2.Steps.Settings.Integrations do
     Map.put(context, :reply, reply)
   end
 
-  step "the user checks device tool versions on this node", context do
-    Node.ensure(HalC2.Devices)
+  step "the user checks device tool versions on this MC", context do
+    Mc.ensure(HalC2.Devices)
     context = Map.put(context, :tools_before, tool_tree(context))
     {reply, context} = World.call(context, "device.list", %{"inspectOnly" => true})
     Map.put(context, :reply, reply)
@@ -88,17 +88,17 @@ defmodule HalC2.Steps.Settings.Integrations do
   end
 
   step "the device hub tool is older than the required version", context do
-    File.rm_rf!(Path.join([context.node.home, "tools", "expo-device-hub", "0.10.1"]))
+    File.rm_rf!(Path.join([context.mc.home, "tools", "expo-device-hub", "0.10.1"]))
     World.fake_device_tools(context, hub: "0.9.0")
     fake_npm(context, :online)
   end
 
-  step "this node has no network access", context do
+  step "this MC has no network access", context do
     fake_npm(context, :offline)
   end
 
   step "the user updates the device hub tool", context do
-    Node.ensure(HalC2.Devices)
+    Mc.ensure(HalC2.Devices)
     {reply, context} = World.call(context, "device.list", %{"updateTool" => "hub"})
     Map.put(context, :reply, reply)
   end
@@ -125,16 +125,16 @@ defmodule HalC2.Steps.Settings.Integrations do
   defp local_tools(reply), do: flunk("expected a device state, got #{inspect(reply)}")
 
   defp tool_tree(context) do
-    root = Path.join(context.node.home, "tools")
+    root = Path.join(context.mc.home, "tools")
     Path.wildcard(Path.join(root, "**"), match_dot: true) |> Enum.sort()
   end
 
-  defp npm_log(context), do: Path.join(context.node.home, "npm.log")
+  defp npm_log(context), do: Path.join(context.mc.home, "npm.log")
 
   # An `npm` first on PATH: online it stages the fake hub where `npm install --prefix`
   # would, offline it fails the way npm does without DNS.
   defp fake_npm(context, mode) do
-    bin = Node.tmp_dir(context.node, "bin")
+    bin = Mc.tmp_dir(context.mc, "bin")
     hub = Path.expand("../../support/fake_device_hub.mjs", __DIR__)
 
     body =

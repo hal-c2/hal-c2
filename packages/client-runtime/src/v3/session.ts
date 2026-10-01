@@ -119,7 +119,7 @@ const decodeServerConfig = Schema.decodeUnknownSync(Schema.toCodecJson(ServerCon
 const decodeKeybindingRule = Schema.decodeUnknownOption(KeybindingRule);
 const decodeLauncherError = Schema.decodeUnknownOption(ExternalLauncherError);
 
-/** A node's keybinding rules, merged with the defaults and compiled. */
+/** An MC's keybinding rules, merged with the defaults and compiled. */
 function resolveKeybindings(rules: unknown): ResolvedKeybindingsConfig {
   const valid = Array.isArray(rules)
     ? rules.flatMap((rule) => Option.toArray(decodeKeybindingRule(rule)))
@@ -127,7 +127,7 @@ function resolveKeybindings(rules: unknown): ResolvedKeybindingsConfig {
   return mergeWithDefaultKeybindings(compileResolvedKeybindingsConfig(valid));
 }
 
-/** A node sends its raw keybinding rules; clients compile them. */
+/** An MC sends its raw keybinding rules; clients compile them. */
 const decodeDescriptor = Schema.decodeUnknownSync(
   Schema.toCodecJson(ExecutionEnvironmentDescriptor),
 );
@@ -199,13 +199,13 @@ function withProviderInstance(
   return { ...settings, providerInstances };
 }
 
-// A node's launch result leaves out the thread projection: nothing reads it, and the
+// An MC's launch result leaves out the thread projection: nothing reads it, and the
 // thread's stream shape already carries that state.
 const UNDECODED_RESULTS: ReadonlySet<string> = new Set([ORCHESTRATION_V2_WS_METHODS.launchThread]);
 const decodeReviewError = Schema.decodeUnknownOption(ReviewDiffPreviewError);
 const decodeVcsError = Schema.decodeUnknownOption(Schema.Union([GitManagerServiceError, VcsError]));
 
-/** A node's git error, or a command error carrying its message. */
+/** An MC's git error, or a command error carrying its message. */
 function vcsError(operation: string, cwd: string, detail: unknown, message: string) {
   return decodeVcsError(detail).pipe(
     Option.getOrElse(
@@ -218,7 +218,7 @@ const decodePullRequestError = Schema.decodeUnknownOption(
   Schema.Union([PullRequestUnavailableError, PullRequestOperationError]),
 );
 
-/** The pull request RPCs a node serves through its `gh`, all failing the same way. */
+/** The pull request RPCs an MC serves through its `gh`, all failing the same way. */
 const PULL_REQUEST_METHODS = [
   WS_METHODS.pullRequestsList,
   WS_METHODS.pullRequestsListStats,
@@ -284,7 +284,7 @@ function shapeStream<A, E = never>(
   );
 }
 
-/** A node's terminal error, or a lookup error when it sent none that decodes. */
+/** An MC's terminal error, or a lookup error when it sent none that decodes. */
 function terminalError(
   request: { readonly threadId: string; readonly terminalId?: string | undefined },
   detail: unknown,
@@ -310,10 +310,10 @@ function unsupported(tag: string): RpcClientError.RpcClientError {
 }
 
 /**
- * An `RpcSession` for one node of a protocol-3 cluster, carried over a shared
+ * An `RpcSession` for one MC of a protocol-3 cluster, carried over a shared
  * `ClusterSocket`. The shell and thread subscriptions and the server config are
  * served from shapes, so the environment state code runs unchanged; every other
- * RPC fails as unsupported until the node serves it.
+ * RPC fails as unsupported until the MC serves it.
  */
 export function makeV3Session(input: {
   readonly socket: ClusterSocket;
@@ -321,10 +321,10 @@ export function makeV3Session(input: {
 }): Effect.Effect<RpcSession, ConnectionTransientError> {
   return Effect.gen(function* () {
     const { socket } = input;
-    // The environment may live on another node of the cluster; its config reply
-    // names the node that this session's shapes are addressed to.
+    // The environment may live on another MC of the cluster; its config reply
+    // names the MC that this session's shapes are addressed to.
     const reply = yield* Deferred.make<
-      { readonly node: string; readonly config: ServerConfig },
+      { readonly mc: string; readonly config: ServerConfig },
       ConnectionTransientError
     >();
     const unsubscribeConfig = socket.subscribe(
@@ -333,7 +333,7 @@ export function makeV3Session(input: {
         if (frame.t === "config")
           Deferred.doneUnsafe(
             reply,
-            Effect.succeed({ node: String(frame.node), config: decodeConfig(frame.config) }),
+            Effect.succeed({ mc: String(frame.mc), config: decodeConfig(frame.config) }),
           );
         if (frame.t === "error")
           Deferred.doneUnsafe(
@@ -347,18 +347,18 @@ export function makeV3Session(input: {
           );
       },
     );
-    const { node, config } = yield* Deferred.await(reply).pipe(
+    const { mc, config } = yield* Deferred.await(reply).pipe(
       Effect.ensuring(Effect.sync(unsubscribeConfig)),
     );
     const initialConfig = Effect.succeed(config);
 
     const shell = () => {
-      const fold = new ShellShapeFold(node);
+      const fold = new ShellShapeFold(mc);
       return shapeStream(socket, { type: "shell" }, (frame) => {
         if (frame.t === "shell") return fold.shell(frame.rows as ReadonlyArray<ShellRow>);
         if (frame.t === "shell.rows")
           return fold.rows(
-            String(frame.node),
+            String(frame.mc),
             frame.rows as ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
           );
         return [];
@@ -367,7 +367,7 @@ export function makeV3Session(input: {
 
     const thread = (request: { readonly threadId: string }) => {
       const fold = new ThreadShapeFold(ThreadId.make(request.threadId));
-      return shapeStream(socket, { type: "stream", node, stream: request.threadId }, (frame) => {
+      return shapeStream(socket, { type: "stream", mc, stream: request.threadId }, (frame) => {
         switch (frame.t) {
           case "snapshot":
             return fold.snapshot({
@@ -387,7 +387,7 @@ export function makeV3Session(input: {
       });
     };
 
-    // The node's config, then its settings and providers whenever they change.
+    // The MC's config, then its settings and providers whenever they change.
     const serverConfig = (request: {
       readonly environmentThemes?: boolean | undefined;
       readonly usageLimitSources?: boolean | undefined;
@@ -397,7 +397,7 @@ export function makeV3Session(input: {
         socket,
         {
           type: "config",
-          node,
+          mc,
           ...(request.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
         },
         (frame): ReadonlyArray<ServerConfigStreamEvent> => {
@@ -454,9 +454,9 @@ export function makeV3Session(input: {
         },
       );
 
-    // A node never bootstraps a project from its cwd, so its welcome is complete at
+    // An MC never bootstraps a project from its cwd, so its welcome is complete at
     // once; the stream then stays open like the Node server's lifecycle stream.
-    // A welcome and ready for each (re)connection, and a ready again whenever the node
+    // A welcome and ready for each (re)connection, and a ready again whenever the MC
     // moves to another version in place; readies carry how its last update went.
     const serverLifecycle = () => {
       let sequence = 0;
@@ -472,7 +472,7 @@ export function makeV3Session(input: {
             : { updateOutcome: decodeUpdateOutcome(outcome) }),
         },
       });
-      return shapeStream(socket, { type: "config", node }, (frame) => {
+      return shapeStream(socket, { type: "config", mc }, (frame) => {
         if (frame.t === "config") {
           const current = decodeConfig(frame.config);
           return [
@@ -497,7 +497,7 @@ export function makeV3Session(input: {
       });
     };
 
-    // RPCs run on the environment's node; a failure surfaces as the method's contract error.
+    // RPCs run on the environment's MC; a failure surfaces as the method's contract error.
     const forward =
       <R extends object, E>(
         tag: string,
@@ -520,7 +520,7 @@ export function makeV3Session(input: {
           Effect.flatMap((value) =>
             decode(value).pipe(
               Effect.mapError((cause) =>
-                toError(request, `The node sent an invalid ${tag} result.`, cause),
+                toError(request, `The mc sent an invalid ${tag} result.`, cause),
               ),
             ),
           ),
@@ -573,7 +573,7 @@ export function makeV3Session(input: {
       (_request: object, message) => new OrchestrationSearchThreadsError({ message }),
     );
 
-    // A node moves to another version in place, or restarts into it (`HalC2.Upgrade`).
+    // An MC moves to another version in place, or restarts into it (`HalC2.Upgrade`).
     const updateError = (_request: object, message: string, cause: unknown) =>
       decodeSelfUpdateError(cause instanceof ClusterRpcError ? cause.detail : undefined).pipe(
         Option.getOrElse(() => new ServerSelfUpdateError({ reason: message })),
@@ -582,7 +582,7 @@ export function makeV3Session(input: {
     const updateServerWithProgress = (request: { readonly targetVersion: string }) =>
       shapeStream(
         socket,
-        { type: "serverUpdate", node, input: request },
+        { type: "serverUpdate", mc, input: request },
         (frame) => (frame.t === "serverUpdate" ? [decodeSelfUpdateProgress(frame.event)] : []),
         (frame) =>
           decodeSelfUpdateError(frame.detail).pipe(
@@ -618,7 +618,7 @@ export function makeV3Session(input: {
       (_request: object, message) => new OrchestrationV2GetShellSnapshotError({ message }),
     );
 
-    // Terminals live on the thread's node; attach and metadata are shapes there.
+    // Terminals live on the thread's MC; attach and metadata are shapes there.
     type TerminalRequest = { readonly threadId: string; readonly terminalId?: string };
     const terminalCommand = (tag: string) =>
       forward(tag, (request: TerminalRequest, _message, cause) =>
@@ -628,13 +628,13 @@ export function makeV3Session(input: {
     const terminalAttach = (request: TerminalRequest) =>
       shapeStream(
         socket,
-        { type: "terminal", node, input: request },
+        { type: "terminal", mc, input: request },
         (frame) => (frame.t === "terminal" ? [frame.event] : []),
         (frame) => terminalError(request, frame.detail),
       );
 
     const terminalMetadata = () =>
-      shapeStream(socket, { type: "terminals", node }, (frame) =>
+      shapeStream(socket, { type: "terminals", mc }, (frame) =>
         frame.t === "terminals" ? [frame.event] : [],
       );
 
@@ -653,7 +653,7 @@ export function makeV3Session(input: {
         ),
       );
 
-    // Attachments upload to, and files are served from, the thread's node.
+    // Attachments upload to, and files are served from, the thread's MC.
     const decodeAssetError = Schema.decodeUnknownOption(AssetAccessError);
     const createAssetUrl = forward(
       WS_METHODS.assetsCreateUrl,
@@ -680,7 +680,7 @@ export function makeV3Session(input: {
       (_request: object, _message, cause) => cause,
     );
 
-    // A project's files are read and searched on its node.
+    // A project's files are read and searched on its MC.
     const projectFiles = <R extends { readonly cwd: string }, E>(
       tag: string,
       decodeError: (detail: unknown) => Option.Option<E>,
@@ -692,9 +692,9 @@ export function makeV3Session(input: {
         ),
       );
 
-    // Keybinding rules are stored on the node and compiled here.
+    // Keybinding rules are stored on the MC and compiled here.
     const keybindingCommand = (method: string) => (request: object) =>
-      nodeCall(method, request).pipe(
+      mcCall(method, request).pipe(
         Effect.map((result) => ({
           keybindings: resolveKeybindings((result as { readonly rules?: unknown }).rules),
           issues: [],
@@ -719,9 +719,9 @@ export function makeV3Session(input: {
         ),
     );
 
-    // Scheduled tasks run on their node; the list streams whole on every change.
+    // Scheduled tasks run on their MC; the list streams whole on every change.
     const scheduledTasks = () =>
-      shapeStream(socket, { type: "scheduledTasks", node }, (frame) =>
+      shapeStream(socket, { type: "scheduledTasks", mc }, (frame) =>
         frame.t === "scheduledTasks" ? [decodeScheduledTasks({ tasks: frame.tasks })] : [],
       );
     const scheduledTaskCommand = (tag: string) =>
@@ -731,7 +731,7 @@ export function makeV3Session(input: {
         ),
       );
 
-    // Repositories are looked up, cloned, and published by the node's host CLIs.
+    // Repositories are looked up, cloned, and published by the MC's host CLIs.
     const repositoryCommand = (tag: string, operation: string) =>
       forward(tag, (request: { readonly provider?: string }, message, cause) =>
         decodeRepositoryError(cause instanceof ClusterRpcError ? cause.detail : undefined).pipe(
@@ -747,11 +747,11 @@ export function makeV3Session(input: {
         ),
       );
     const projectClones = () =>
-      shapeStream(socket, { type: "projectClones", node }, (frame) =>
+      shapeStream(socket, { type: "projectClones", mc }, (frame) =>
         frame.t === "projectClones" ? [decodeProjectClones(frame.clones)] : [],
       );
 
-    // Preview tabs are tracked on the node; URLs are normalized here, as Node does.
+    // Preview tabs are tracked on the MC; URLs are normalized here, as Node does.
     type PreviewRequest = {
       readonly threadId: string;
       readonly tabId?: string;
@@ -788,24 +788,24 @@ export function makeV3Session(input: {
         }).pipe(Effect.flatMap((url) => previewCommand(tag)({ ...request, url })));
       };
     const previewEvents = () =>
-      shapeStream(socket, { type: "preview", node }, (frame) =>
+      shapeStream(socket, { type: "preview", mc }, (frame) =>
         frame.t === "preview" ? [decodePreviewEvent(frame.event)] : [],
       );
-    // The stream ends when the node drops this host; the caller registers again.
-    // A node that cannot host automation just never sends requests.
+    // The stream ends when the MC drops this host; the caller registers again.
+    // An MC that cannot host automation just never sends requests.
     const previewAutomation = (host: PreviewAutomationHost) =>
-      shapeStream(socket, { type: "previewAutomation", node, host }, (frame) =>
+      shapeStream(socket, { type: "previewAutomation", mc, host }, (frame) =>
         frame.t === "previewAutomation" ? [decodePreviewAutomationEvent(frame.event)] : [],
       );
     const localServers = () =>
-      shapeStream(socket, { type: "localServers", node }, (frame) =>
+      shapeStream(socket, { type: "localServers", mc }, (frame) =>
         frame.t === "localServers" ? [decodeLocalServers(frame.list)] : [],
       );
 
-    // Devices live on the node's own machine; clients reach its hub through the
-    // connected node at the state's `hubBasePath`.
+    // Devices live on the MC's own machine; clients reach its hub through the
+    // connected MC at the state's `hubBasePath`.
     const deviceState = () =>
-      shapeStream(socket, { type: "devices", node }, (frame) =>
+      shapeStream(socket, { type: "devices", mc }, (frame) =>
         frame.t === "devices" ? [decodeDeviceState(frame.state)] : [],
       );
     const deviceCommand = (tag: string) =>
@@ -829,10 +829,10 @@ export function makeV3Session(input: {
         ),
       );
 
-    // A client manages the connections of the node it is paired with; other
-    // nodes are reached through it without a session of their own.
+    // A client manages the connections of the MC it is paired with; other
+    // MCs are reached through it without a session of their own.
     const authAccess = () =>
-      socket.connectedNode() === node
+      socket.connectedMc() === mc
         ? shapeStream(
             socket,
             { type: "authAccess" },
@@ -841,13 +841,13 @@ export function makeV3Session(input: {
           )
         : Stream.fail(
             new AuthAccessStreamError({
-              message: "Manage this node's connections from a client paired with it directly.",
+              message: "Manage this MC's connections from a client paired with it directly.",
             }),
           );
 
-    // The node samples its processes faster while this is subscribed.
+    // The MC samples its processes faster while this is subscribed.
     const resourceTelemetry = () =>
-      shapeStream(socket, { type: "resourceTelemetry", node }, (frame) =>
+      shapeStream(socket, { type: "resourceTelemetry", mc }, (frame) =>
         frame.t === "resourceTelemetry" ? [decodeTelemetry(frame.snapshot)] : [],
       );
     const backgroundPolicy = forward(
@@ -855,9 +855,9 @@ export function makeV3Session(input: {
       (_request: object, message) => new ClusterRpcError(message, undefined),
     );
 
-    // A new thread's worktree is prepared on its node.
+    // A new thread's worktree is prepared on its MC.
     const worktreeSetup = (request: { readonly threadId: string }) =>
-      shapeStream(socket, { type: "worktreeSetup", node, threadId: request.threadId }, (frame) =>
+      shapeStream(socket, { type: "worktreeSetup", mc, threadId: request.threadId }, (frame) =>
         frame.t === "worktreeSetup" ? [decodeWorktreeSetup(frame.event)] : [],
       );
     const cancelWorktreeSetup = forward(
@@ -865,7 +865,7 @@ export function makeV3Session(input: {
       (_request: object, _message, cause) => cause,
     );
 
-    // Signing a provider in happens on the node that runs it.
+    // Signing a provider in happens on the MC that runs it.
     const setupError = (instanceId: string, operation: string, message: string, detail: unknown) =>
       decodeSetupError(detail).pipe(
         Option.getOrElse(
@@ -889,7 +889,7 @@ export function makeV3Session(input: {
         ),
     );
 
-    // A Codex credit redeems on the node that runs Codex; a hub account's on the node
+    // A Codex credit redeems on the MC that runs Codex; a hub account's on the MC
     // whose settings name the hub.
     const consumeResetCredit = forward(
       WS_METHODS.providerConsumeResetCredit,
@@ -916,12 +916,12 @@ export function makeV3Session(input: {
     const providerAuthSubscribe = (request: { readonly instanceId: string }) =>
       shapeStream(
         socket,
-        { type: "providerAuth", node, instanceId: request.instanceId },
+        { type: "providerAuth", mc, instanceId: request.instanceId },
         (frame) => (frame.t === "providerAuth" ? [decodeAuthState(frame.state)] : []),
         (frame) => setupError(request.instanceId, "subscribe", String(frame.reason), frame.detail),
       );
 
-    // ACP Registry search and installs run on the node that will run the agent.
+    // ACP Registry search and installs run on the MC that will run the agent.
     const acpRegistryCommand = (tag: string) =>
       forward(tag, (_request: object, message, cause) =>
         decodeAcpRegistryError(cause instanceof ClusterRpcError ? cause.detail : undefined).pipe(
@@ -940,23 +940,23 @@ export function makeV3Session(input: {
         ),
       );
 
-    // A checkout's git status streams from its node; git actions are forwarded.
+    // A checkout's git status streams from its MC; git actions are forwarded.
     const vcsStatus = (request: { readonly cwd: string }) =>
       shapeStream(
         socket,
-        { type: "vcs", node, cwd: request.cwd },
+        { type: "vcs", mc, cwd: request.cwd },
         (frame) => (frame.t === "vcs" ? [frame.event] : []),
         (frame) =>
           vcsError(WS_METHODS.subscribeVcsStatus, request.cwd, frame.detail, String(frame.reason)),
       );
 
-    // Runs once on the checkout's node. The stream ends with the action, failing
+    // Runs once on the checkout's MC. The stream ends with the action, failing
     // after action_failed as the Node server's does.
     const runStackedAction = (request: { readonly cwd: string; readonly actionId: string }) =>
       Stream.callback<unknown, unknown>((queue) =>
         Effect.acquireRelease(
           Effect.sync(() =>
-            socket.subscribe({ type: "gitAction", node, input: request }, (frame) => {
+            socket.subscribe({ type: "gitAction", mc, input: request }, (frame) => {
               if (frame.t === "error") {
                 Queue.failCauseUnsafe(
                   queue,
@@ -1003,7 +1003,7 @@ export function makeV3Session(input: {
         ),
       );
 
-    // Pull requests are read and changed through the node's `gh`; a node bumps its
+    // Pull requests are read and changed through the MC's `gh`; an MC bumps its
     // refresh revision after every change so other readers fetch again.
     const pullRequestCommand = (tag: string) =>
       forward(tag, (_request: object, message, cause) =>
@@ -1014,7 +1014,7 @@ export function makeV3Session(input: {
         ),
       );
     const pullRequestRefreshes = () =>
-      shapeStream(socket, { type: "pullRequestRefreshes", node }, (frame) =>
+      shapeStream(socket, { type: "pullRequestRefreshes", mc }, (frame) =>
         frame.t === "pullRequestRefreshes" &&
         typeof frame.revision === "number" &&
         frame.revision > 0
@@ -1027,9 +1027,9 @@ export function makeV3Session(input: {
       (_request: object, message) => new OrchestrationGetFullThreadDiffError({ message }),
     );
 
-    // A node stores settings; the patch is applied here with the shared rules, to
-    // the version the node has. A concurrent write sends it round again.
-    const nodeCall = (method: string, payload: unknown) =>
+    // An MC stores settings; the patch is applied here with the shared rules, to
+    // the version the MC has. A concurrent write sends it round again.
+    const mcCall = (method: string, payload: unknown) =>
       Effect.tryPromise({
         try: () => socket.call(input.environmentId, method, payload),
         catch: (cause) =>
@@ -1045,7 +1045,7 @@ export function makeV3Session(input: {
       readonly providerInstanceMutation?: ProviderInstanceMutation;
     }) =>
       Effect.gen(function* () {
-        const current = (yield* nodeCall("hal-c2.readSettings", {})) as {
+        const current = (yield* mcCall("hal-c2.readSettings", {})) as {
           readonly settings: unknown;
           readonly version: number;
         };
@@ -1063,7 +1063,7 @@ export function makeV3Session(input: {
         }
         const patched = applyServerSettingsPatch(settings, request.patch);
         const next = mutation === undefined ? patched : withProviderInstance(patched, mutation);
-        yield* nodeCall("hal-c2.writeSettings", {
+        yield* mcCall("hal-c2.writeSettings", {
           settings: yield* encodeSettings(next),
           version: current.version,
         });
@@ -1080,7 +1080,7 @@ export function makeV3Session(input: {
     const threadProjection = (request: { readonly threadId: ThreadId }) => {
       const failure = (message: string, cause?: unknown) =>
         new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message, cause });
-      return nodeCall("hal-c2.threadRows", { threadId: request.threadId }).pipe(
+      return mcCall("hal-c2.threadRows", { threadId: request.threadId }).pipe(
         Effect.mapError((cause) => failure(cause.message, cause)),
         Effect.flatMap((result) => {
           const { rows, offset, at } = result as {
@@ -1164,7 +1164,7 @@ export function makeV3Session(input: {
       [WS_METHODS.subscribeResourceTelemetry]: resourceTelemetry,
       [WS_METHODS.subscribeAuthAccess]: authAccess,
       [WS_METHODS.serverGetBackgroundPolicy]: backgroundPolicy,
-      // Nodes have no client-driven policy, so it never changes after the first read.
+      // MCs have no client-driven policy, so it never changes after the first read.
       [WS_METHODS.subscribeBackgroundPolicy]: (request: object) =>
         Stream.concat(Stream.fromEffect(backgroundPolicy(request)), Stream.never),
       [WS_METHODS.previewOpen]: withPreviewUrl(WS_METHODS.previewOpen),
@@ -1230,7 +1230,7 @@ export function makeV3Session(input: {
             ),
           ),
       ),
-      // Usage is read from the node's own provider transcripts.
+      // Usage is read from the MC's own provider transcripts.
       [WS_METHODS.serverGetUsageSummary]: forward(
         WS_METHODS.serverGetUsageSummary,
         (_request: object, message, cause) =>
@@ -1242,7 +1242,7 @@ export function makeV3Session(input: {
         WS_METHODS.serverRefreshUsageRates,
         (_request: object, _message, cause) => cause,
       ),
-      // The node pauses background work nobody in front is looking at.
+      // The MC pauses background work nobody in front is looking at.
       [WS_METHODS.serverReportClientActivity]: forward(
         WS_METHODS.serverReportClientActivity,
         (_request: object, _message, cause) => cause,
@@ -1429,8 +1429,8 @@ export const connectV3Session = (
             url: connection.socketUrl,
             reconnect: false,
             onStatus: (status) => {
-              if (status.connected && status.node !== null) {
-                Deferred.doneUnsafe(hello, Effect.succeed(status.node));
+              if (status.connected && status.mc !== null) {
+                Deferred.doneUnsafe(hello, Effect.succeed(status.mc));
                 return;
               }
               const error = new ConnectionTransientError({

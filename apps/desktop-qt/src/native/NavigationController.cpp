@@ -66,7 +66,7 @@ QVariantMap NavigationController::Route::toVariant() const {
   };
 }
 
-NavigationController::NavigationController(ShellBridge* bridge, NodeClient*, ShellStore* store, QObject* parent)
+NavigationController::NavigationController(ShellBridge* bridge, McClient*, ShellStore* store, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_store(store) {
   // The window title follows the open thread's.
   connect(store, &ShellStore::changed, this, [this] {
@@ -88,7 +88,7 @@ void NavigationController::activate() {
   if (m_active) return;
   m_active = true;
   // A thread deleted since the last run is not coming back; one on an
-  // environment the node does not serve yet may still arrive.
+  // environment the MC does not serve yet may still arrive.
   if (!m_route.threadKey.isEmpty() && m_store->servesEnvironment(m_route.threadKey.section(QLatin1Char(':'), 0, 0)) &&
       !m_store->thread(m_route.threadKey)) {
     m_route = Route();

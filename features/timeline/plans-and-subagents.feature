@@ -96,14 +96,14 @@ Feature: Plans and subagents
     When the user saves the plan to the workspace
     Then the user is told "Workspace path is unavailable"
 
-  @node
+  @mc
   Scenario: A delegated task appears in the parent's timeline
     Given the agent is working
     When the agent delegates "write the tax tests" to a subagent
     Then a subagent thread starts with only that task
     And the parent's timeline shows the subagent working
 
-  @node
+  @mc
   Scenario Outline: The parent hears the subagent's result
     Given the agent delegated a task and chose to <wait>
     When the subagent finishes <answer>
@@ -136,28 +136,28 @@ Feature: Plans and subagents
     When the user opens the parent thread
     Then the parent thread is shown
 
-  @node @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A message from another agent says which thread it came from
     Given a subagent sent a message to its parent
     When the user reads the message in the parent thread
     Then it says which thread it came from
     And the user can open that thread
 
-  @node @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A subagent shows the model it runs on
     Given the agent delegated work to a subagent on the model "model-b"
     When the user looks at the parent's subagents
     Then the subagent is shown with "model-b"
     And the parent's model is not shown for it
 
-  @node @shared @backlog
+  @mc @shared @backlog
   Scenario: A finished subagent with work still running is shown as pending
     Given a subagent returned its result while background work it started is still running
     When the user looks at the parent thread
     Then the subagent's result is shown
     And its background work is still shown as running
 
-  @node @shared @backlog
+  @mc @shared @backlog
   Scenario: A subagent's approval request shows up in the parent thread
     Given a subagent asks for approval to run a command
     When the user looks at the parent thread

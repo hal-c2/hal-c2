@@ -1,14 +1,14 @@
 defmodule HalC2.Steps.Providers.Capabilities do
   @moduledoc """
   Steps for `features/providers/capabilities.feature`: the same conversation moves
-  across the fake providers (`HalC2.Test.Node.World.fake_providers/2`) and each one's
+  across the fake providers (`HalC2.Test.Mc.World.fake_providers/2`) and each one's
   log shows what it was handed.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @thread "Work"
   @instances %{
@@ -67,7 +67,7 @@ defmodule HalC2.Steps.Providers.Capabilities do
     context
   end
 
-  step "the user's steer reaches the node after the turn ended", context do
+  step "the user's steer reaches the MC after the turn ended", context do
     # Codex refuses the steer (its turn is over) and ends the turn.
     World.post_message(context, @thread, "one more thing", %{"dispatchMode" => nil})
   end

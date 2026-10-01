@@ -12,7 +12,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
@@ -53,7 +53,7 @@ class UsageController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  UsageController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  UsageController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
@@ -86,7 +86,7 @@ private:
   void redeem(const QString& key);
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
