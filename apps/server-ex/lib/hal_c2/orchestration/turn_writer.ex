@@ -34,7 +34,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   @doc """
   Creates the turn item (and its node) for a native item the first time it is seen.
-  `kind` is `:assistant`, `:reasoning`, `:command`, `:file`, `:web`, `:tool`,
+  `kind` is `:assistant`, `:reasoning`, `:command`, `:file`, `:search`, `:web`, `:tool`,
   `:compaction`, or `:error` (a provider failure, such as a retry);
   `fields` are the item type's own fields.
   """
@@ -108,6 +108,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   defp shape(:command, _, fields), do: {"tool_call", "command_execution", fields}
   defp shape(:file, _, fields), do: {"tool_call", "file_change", fields}
+  defp shape(:search, _, fields), do: {"tool_call", "file_search", fields}
   defp shape(:web, _, fields), do: {"tool_call", "web_search", fields}
   defp shape(:tool, _, fields), do: {"tool_call", "dynamic_tool", fields}
   defp shape(:subagent, _, fields), do: {"subagent", "subagent", fields}

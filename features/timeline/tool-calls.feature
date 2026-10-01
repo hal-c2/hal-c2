@@ -90,7 +90,7 @@ Feature: Tool calls and file changes
       | called an MCP tool | wrench         |
       | asked for approval | message-circle |
 
-  @node @shared @backlog
+  @node @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: An ACP agent's read, search and fetch tools keep their meaning
     Given an ACP agent's tool call is of kind "<provider kind>"
     When the node projects the call
@@ -101,6 +101,20 @@ Feature: Tool calls and file changes
       | read          | a file read   |
       | search        | a file search |
       | fetch         | a web search  |
+
+  # OpenCode announces a tool call before it has its input and names it once it runs.
+  @node
+  Scenario Outline: An ACP read or search named only once it runs still says what it looked for
+    Given an ACP agent announces a call of kind "<provider kind>" and names its input <when>
+    When the node projects the call
+    Then the timeline shows it as <timeline kind>
+
+    Examples:
+      | provider kind | when             | timeline kind |
+      | read          | while it runs    | a file read   |
+      | search        | while it runs    | a file search |
+      | read          | when it finishes | a file read   |
+      | search        | when it finishes | a file search |
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
   @shared @backlog-mobile @backlog-tui

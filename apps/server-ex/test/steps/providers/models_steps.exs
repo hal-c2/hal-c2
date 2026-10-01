@@ -194,6 +194,46 @@ defmodule HalC2.Steps.Providers.Models do
     context
   end
 
+  # --- the bundled manifest ----------------------------------------------------------------
+
+  # The manifest is compiled into the node (`HalC2.Claude.Provider`); a download
+  # would be a file in its home.
+  step "the node has never fetched the model manifest", context do
+    assert downloaded_manifests(context) == []
+    context
+  end
+
+  step "the node starts without network access", context do
+    %{context | node: HalC2.Test.Node.restart(context.node), clients: %{}}
+  end
+
+  step "models are listed from the bundled manifest", context do
+    bundled =
+      Application.app_dir(:hal_c2, "priv/model-manifest.json")
+      |> File.read!()
+      |> JSON.decode!()
+      |> get_in(["providers", "claudeAgent"])
+
+    {providers, context} = World.provider_list(context)
+    claude = Enum.find(providers, &(&1["instanceId"] == "claudeAgent"))
+
+    # Every listed model is the manifest's, in its order; the installed CLI's version
+    # decides which of them it can run.
+    listed = Enum.map(claude["models"], &{&1["slug"], &1["name"]})
+    assert listed != []
+
+    assert listed ==
+             for(
+               model <- bundled["models"],
+               List.keymember?(listed, model["slug"], 0),
+               do: {model["slug"], model["name"]}
+             )
+
+    # Listing them asked nobody: there is still no downloaded copy.
+    assert downloaded_manifests(context) == []
+    context
+  end
+
   # --- custom models --------------------------------------------------------------------------
 
   step "the user adds the custom model {string} to Claude", %{args: [slug]} = context do
@@ -295,6 +335,38 @@ defmodule HalC2.Steps.Providers.Models do
     context
   end
 
+  step ~r/^the settings for Claude are saved with (?<saved>an empty custom model id|the built-in "claude-haiku-4-5" as custom|the custom model "my-model" twice)$/,
+       %{args: [saved]} = context do
+    models =
+      case saved do
+        "an empty custom model id" -> ["", %{"slug" => "  ", "name" => "Blank"}]
+        "the built-in" <> _ -> ["claude-haiku-4-5"]
+        "the custom model" <> _ -> ["my-model", %{"slug" => "my-model", "name" => "Mine"}]
+      end
+
+    Enum.reduce(models, World.fake_providers(context), &add_custom_model(&2, &1))
+  end
+
+  step "Claude's models have no model with an empty id", context do
+    slugs = claude_slugs(context)
+    assert slugs != []
+    assert Enum.all?(slugs, &(String.trim(&1) != ""))
+    context
+  end
+
+  step ~r/^Claude's models have "(?<slug>[^"]+)" once, still built in$/,
+       %{args: [slug]} = context do
+    assert Enum.count(claude_slugs(context), &(&1 == slug)) == 1
+    refute claude_model(context, slug)["isCustom"]
+    context
+  end
+
+  step ~r/^Claude's models have "(?<slug>[^"]+)" once$/, %{args: [slug]} = context do
+    assert Enum.count(claude_slugs(context), &(&1 == slug)) == 1
+    assert %{"isCustom" => true} = claude_model(context, slug)
+    context
+  end
+
   # --- helpers ------------------------------------------------------------------------------
 
   # Saves a custom model the way the settings panel does: read, add, write back.
@@ -319,10 +391,22 @@ defmodule HalC2.Steps.Providers.Models do
     Map.put(context, :custom_model, setting)
   end
 
+  defp downloaded_manifests(context),
+    do: Path.wildcard(Path.join(context.node.home, "**/*manifest*"))
+
   defp claude_model(context, slug) do
     {providers, _context} = World.provider_list(context)
     claude = Enum.find(providers, &(&1["instanceId"] == "claudeAgent"))
     Enum.find(claude["models"], &(&1["slug"] == slug)) || flunk("#{slug} is not offered")
+  end
+
+  defp claude_slugs(context) do
+    {providers, _context} = World.provider_list(context)
+
+    providers
+    |> Enum.find(&(&1["instanceId"] == "claudeAgent"))
+    |> Map.fetch!("models")
+    |> Enum.map(& &1["slug"])
   end
 
   defp codex_default, do: %{"instanceId" => "codex", "model" => "gpt-5.4"}

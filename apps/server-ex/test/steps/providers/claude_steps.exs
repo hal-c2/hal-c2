@@ -471,6 +471,50 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "Claude asks the user a question", context do
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "question first", %{
+        "interactionMode" => context.interaction_mode
+      })
+
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the question is shown", context do
+    assert %{"kind" => "user_input"} = context.request
+
+    assert [%{"status" => "waiting", "questions" => [question]}] =
+             for(
+               i <- StreamState.list(World.stream(context, @thread), "turn-item"),
+               i["type"] == "user_input_request",
+               do: i
+             )
+
+    Map.put(context, :question, question)
+  end
+
+  # Claude plans from the answer, so there is no plan while the question waits.
+  step "the plan stays pending until the user answers", context do
+    assert [%{"status" => "running"}] = World.runs(context, @thread)
+    assert StreamState.list(World.stream(context, @thread), "plan") == []
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "answers" => %{context.question["id"] => "Red"}
+      })
+
+    state = World.await_runs(context, @thread, ["completed"])
+
+    assert [%{"kind" => "proposed_plan", "status" => "active", "markdown" => markdown}] =
+             StreamState.list(state, "plan")
+
+    assert markdown =~ "paint it Red"
+    context
+  end
+
   step "Claude asks the user a multiple choice question", context do
     context =
       context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "ask me")
@@ -508,6 +552,66 @@ defmodule HalC2.Steps.Providers.Claude do
 
     World.await_runs(context, @thread, ["completed"])
     assert ~s(answered {"Which color?": "Red"}) in World.replies(context, @thread)
+    context
+  end
+
+  step "a Claude thread whose history is close to the context limit", context do
+    context = context |> World.providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    # Its Claude process is gone, so the next message resumes the conversation, and the
+    # fake Claude then finds a "long session" long and old enough to ask about.
+    :ok = HalC2.Orchestration.release_session(World.thread_id(context, @thread))
+    context
+  end
+
+  step "the user resumes the Claude thread", context do
+    context = World.send_turn(context, @thread, "long session")
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the user can compact and continue, keep the full history, or never be asked again",
+       context do
+    assert ["--resume", "fake-session-1"] in pairs(List.last(World.claude_starts(context)))
+    assert %{"kind" => "user_input"} = context.request
+
+    assert [%{"status" => "waiting", "questions" => [question]}] =
+             for(
+               i <- StreamState.list(World.stream(context, @thread), "turn-item"),
+               i["type"] == "user_input_request",
+               do: i
+             )
+
+    assert question["question"] ==
+             "This session is 2h 15m old and uses 182,400 tokens. Compact it before continuing?"
+
+    choices = [
+      {"Compact and continue", "compact"},
+      {"Keep full history", "continue"},
+      {"Don't ask again", "never"}
+    ]
+
+    assert Enum.map(question["options"], & &1["label"]) == Enum.map(choices, &elem(&1, 0))
+
+    # Claude is told each choice; the fake answers with what it was told.
+    Enum.reduce(choices, {context.request, ["completed"]}, fn {label, result}, {request, runs} ->
+      {:ok, _} =
+        HalC2.Orchestration.dispatch(%{
+          "type" => "runtime-request.respond",
+          "threadId" => World.thread_id(context, @thread),
+          "requestId" => request["id"],
+          "answers" => %{question["id"] => label}
+        })
+
+      runs = runs ++ ["completed"]
+      World.await_runs(context, @thread, runs)
+      assert "resume #{result}" in World.replies(context, @thread)
+
+      if result != "never" do
+        World.send_turn(context, @thread, "long session")
+        {World.await_request(context, @thread), runs}
+      end
+    end)
+
     context
   end
 

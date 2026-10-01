@@ -1662,6 +1662,27 @@ defmodule HalC2.OrchestrationTest do
       assert Enum.any?(StreamState.list(state, "turn-item"), &(&1["text"] == "denied"))
     end
 
+    test "dismissing Claude's question about compacting a resumed conversation cancels it" do
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      # Without its process, the next message resumes the conversation.
+      :ok = Orchestration.release_session(thread_id)
+      {:ok, _} = send_message(thread_id, "m2", "long session")
+      request = await_request(thread_id)
+      assert %{"status" => "pending", "kind" => "user_input"} = request
+
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "thread.user-input.dismiss",
+          "threadId" => thread_id,
+          "requestId" => request["id"]
+        })
+
+      state = await_statuses(thread_id, ["completed", "completed"])
+      assert [%{"status" => "cancelled"}] = StreamState.list(state, "runtime-request")
+      assert Enum.any?(StreamState.list(state, "turn-item"), &(&1["text"] == "resume cancelled"))
+    end
+
     test "declining a Claude prompt is passed on to Claude" do
       thread_id = launch("approve this", "claudeAgent")
       request = await_request(thread_id)

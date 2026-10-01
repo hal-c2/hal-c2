@@ -233,15 +233,17 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
-  defp executable("codex"), do: find(Application.get_env(:hal_c2, :codex_command, ["codex"]))
+  defp executable(driver) when driver in ["codex", "claudeAgent"] do
+    key = if driver == "codex", do: :codex_command, else: :claude_command
+    default = [if(driver == "codex", do: "codex", else: "claude")]
 
-  defp executable("claudeAgent"),
-    do: find(Application.get_env(:hal_c2, :claude_command, ["claude"]))
+    case HalC2.Settings.instance_command(driver, Application.get_env(:hal_c2, key, default)) do
+      [command | _] -> System.find_executable(command)
+      _ -> nil
+    end
+  end
 
   defp executable(_), do: nil
-
-  defp find([command | _]), do: System.find_executable(command)
-  defp find(_), do: nil
 
   # Provider entries cache their version; an update makes it stale.
   defp forget_version("codex"), do: :persistent_term.erase({HalC2.Codex.Provider, :version})

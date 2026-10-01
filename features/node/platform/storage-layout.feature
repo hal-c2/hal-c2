@@ -378,7 +378,9 @@ Feature: Where HAL-C2 keeps its files
 
   Rule: Remote hosts and WSL follow the same rules
 
-    @backlog @node
+    # Blocked: needs "The first SSH launch installs the server on the host"
+    # (connections/connection-modes.feature) first.
+    @backlog @blocked @node
     Scenario Outline: A host reached over SSH keeps its launch state in its own state directory
       Given a remote host reached over SSH where <setting>
       When HAL-C2 launches a server on that host

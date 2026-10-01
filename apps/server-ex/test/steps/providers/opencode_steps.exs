@@ -710,6 +710,43 @@ defmodule HalC2.Steps.Providers.Opencode do
     Map.put(context, :running, %{thread: World.thread_id(context, @thread)})
   end
 
+  # The node talks to OpenCode over ACP, so its event stream is the agent's connection.
+  step "an OpenCode turn is streaming", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "opencode", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "acp", &(get_in(&1, ["in", "method"]) == "session/prompt"))
+    context
+  end
+
+  # OpenCode's own pid, from its connection (never found by name).
+  step "the event stream ends unexpectedly", context do
+    [{runtime, _}] = Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, @thread))
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(:sys.get_state(runtime).conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    context
+  end
+
+  step "the turn fails saying OpenCode exited unexpectedly", context do
+    state = World.await_runs(context, @thread, ["failed"])
+
+    assert Enum.any?(
+             StreamState.list(state, "provider-session"),
+             &(&1["lastError"] == "OpenCode exited unexpectedly")
+           )
+
+    context
+  end
+
+  # The thread a provider feature's scenario started (`World.launch_on/5`).
+  step "the thread takes the next message", context do
+    assert %{"status" => "completed", "ordinal" => 2} =
+             World.finish_turn(context, World.current_thread(context), "Carry on")
+
+    context
+  end
+
   # OpenCode's running loop takes a second `session/prompt` into the turn.
   step "OpenCode receives the message during the running turn", context do
     World.await_provider_log(

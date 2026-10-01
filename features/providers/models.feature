@@ -58,7 +58,6 @@ Feature: Models
     When a commit needs a message
     Then Claude writes the commit message
 
-  @backlog
   Scenario: The bundled model manifest works offline
     Given the node has never fetched the model manifest
     When the node starts without network access
@@ -99,16 +98,17 @@ Feature: Models
     When the user adds the custom model "my-model" to Claude's own instance
     Then "my-model" is offered in the model picker for Claude
 
-  @backlog
-  Scenario Outline: Custom model ids are checked
-    When the user adds the custom model "<slug>" to Claude
-    Then the user is told "<message>"
+  # The settings panel tells the user what is wrong with an id (settings/providers-panel.feature).
+  # The backend keeps the model list sound whatever reaches the settings.
+  Scenario Outline: A custom model id that cannot be used does not spoil the model list
+    When the settings for Claude are saved with <saved>
+    Then Claude's models have <listed>
 
     Examples:
-      | slug                  | message                            |
-      |                       | Enter a model slug.                |
-      | claude-fable-5-1      | That model is already built in.    |
-      | my-model              | That custom model is already saved.|
+      | saved                                     | listed                                  |
+      | an empty custom model id                  | no model with an empty id               |
+      | the built-in "claude-haiku-4-5" as custom | "claude-haiku-4-5" once, still built in |
+      | the custom model "my-model" twice         | "my-model" once                         |
 
   Scenario: A custom model can have its own options
     When the user gives the custom model "my-model" a reasoning choice of low or high with high as default

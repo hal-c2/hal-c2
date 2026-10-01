@@ -507,17 +507,21 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp rpc_message(reason), do: inspect(reason)
 
   defp connect(%{conn: nil} = state, turn) do
-    cmd = Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
+    instance = if ids = turn[:ids], do: Entities.instance(ids)
+
+    cmd =
+      HalC2.Settings.instance_command(
+        instance,
+        Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
+      )
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex.
-    env =
-      if ids = turn[:ids],
-        do: Enum.to_list(HalC2.Settings.instance_env(Entities.instance(ids))),
-        else: []
+    env = if instance, do: Enum.to_list(HalC2.Settings.instance_env(instance)), else: []
 
-    with {:ok, conn} <-
+    with {:ok, args} <- launch_args(instance),
+         {:ok, conn} <-
            Connection.start_link(
-             cmd: cmd,
+             cmd: cmd ++ args,
              handler: self(),
              cd: turn.cwd,
              env: env,
@@ -543,6 +547,13 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp connect(state, _turn), do: {:ok, state}
+
+  # The instance's launch arguments follow `app-server`, split as a shell would.
+  defp launch_args(instance) do
+    {:ok, OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")}
+  rescue
+    RuntimeError -> {:error, "the launch arguments in settings have a quote that is never closed"}
+  end
 
   # A session carried from another machine that this Codex cannot open (a newer
   # Codex wrote it, say) starts a new thread with the handoff instead, and the user
@@ -805,7 +816,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification("error", %{"error" => error} = params, state) do
     cond do
       params["willRetry"] == true ->
-        state
+        retry_item(state, error)
 
       error_code(error["codexErrorInfo"]) in ["usageLimitExceeded", "rateLimitExceeded"] ->
         %{state | failure: usage_limit_message(Map.get(state, :rate_limits), DateTime.utc_now())}
@@ -825,6 +836,70 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp notification(_method, _params, state), do: state
+
+  # Codex retries a failed request itself and reports each attempt: one work-log item
+  # per turn (`terminal-failure:<provider turn>`), updated by every attempt and closed
+  # with the turn. The attempt comes from Codex's own "2/5" when the message has one.
+  defp retry_item(state, error) do
+    native = "terminal-failure:#{state.turn.ids.provider_turn}"
+    message = error["message"] || "Codex is retrying a failed request"
+    code = error_code(error["codexErrorInfo"])
+
+    failure = %{
+      "class" =>
+        cond do
+          code in ["usageLimitExceeded", "rateLimitExceeded"] -> "usage_limit"
+          String.starts_with?(code || "", ["http", "responseStream"]) -> "transport_error"
+          true -> "provider_error"
+        end,
+      "message" =>
+        case String.trim(error["additionalDetails"] || "") do
+          "" -> message
+          details -> details
+        end,
+      "code" => code,
+      "retryable" => true
+    }
+
+    state =
+      state
+      |> flush()
+      |> ensure_item(native, :error, %{"title" => "Provider retry", "failure" => failure})
+
+    %{id: item_id} = state.items[native]
+    at = Entities.now()
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "turn-item", item_id, fn item ->
+          previous = item["retry"] || %{}
+
+          retry =
+            case Regex.run(~r/\b([1-9]\d*)\s*\/\s*([1-9]\d*)\b/, message) do
+              [_, attempt, max] ->
+                %{
+                  "attempt" => String.to_integer(attempt),
+                  "maxAttempts" => String.to_integer(max)
+                }
+
+              nil ->
+                %{
+                  "attempt" => (previous["attempt"] || 0) + 1,
+                  "maxAttempts" => previous["maxAttempts"]
+                }
+            end
+
+          Map.merge(item, %{
+            "failure" => failure,
+            "retry" => Map.put(retry, "retryDelayMs", nil),
+            "updatedAt" => at
+          })
+        end)
+      ]
+    end)
+
+    state
+  end
 
   defp end_turn(state, status, failure) do
     state = flush(state)

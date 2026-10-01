@@ -97,7 +97,7 @@ Feature: Delegating tasks to subagents
     And the message runs after the caller's active turn
     And the task delivery is "delivered"
 
-  @node @backlog
+  @node
   Scenario: Each later completion wakes the caller again
     Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
     And "parent" was woken for the completion of "one"

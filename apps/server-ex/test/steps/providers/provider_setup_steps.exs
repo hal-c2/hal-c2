@@ -19,6 +19,13 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
   @login [%{"id" => "acme-login", "name" => "Log in with Acme"}]
 
+  # The ledger's words for a compatibility status, and the title clients show for it.
+  @compatibility %{
+    "of limited support" => {"graceful", "Limited support"},
+    "unsupported" => {"unsupported", "Unsupported version"},
+    "known to be broken" => {"broken", "Known broken version"}
+  }
+
   # Grok, enabled and signed out, offering a browser sign-in.
   defp signed_out_grok(ctx, control \\ %{}) do
     ctx = Acp.ready(ctx)
@@ -178,6 +185,44 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   end
 
   # --- updates -----------------------------------------------------------------------
+
+  # Codex 0.1.0 under a policy that gives every release before 0.2 that status.
+  step ~r/^the installed provider version is (?<status>of limited support|unsupported|known to be broken) for this HAL-C2 release$/,
+       %{args: [status]} = context do
+    {status, _title} = Map.fetch!(@compatibility, status)
+
+    Application.put_env(:hal_c2, :provider_compatibility, [
+      %{
+        "driver" => "codex",
+        "halC2Range" => ">=0",
+        "recommendedRange" => ">=0.2",
+        "ranges" => [%{"range" => "<0.2", "status" => status}]
+      }
+    ])
+
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :provider_compatibility) end)
+    context |> homebrew_codex() |> Map.put(:compatibility, status)
+  end
+
+  # The title is the client's label for the status the node reports.
+  step "the provider shows {string}", %{args: [title]} = context do
+    status = context.compatibility
+    assert {status, title} in Map.values(@compatibility)
+    codex = Enum.find(context.providers, &(&1["instanceId"] == "codex"))
+
+    assert %{
+             "status" => ^status,
+             "message" => message,
+             "recommendedRange" => ">=0.2",
+             "recommendedVersion" => nil
+           } = codex["compatibilityAdvisory"]
+
+    assert message =~ "with this HAL-C2 release" or message =~ "for this HAL-C2 release"
+    assert message =~ "Use >=0.2."
+    # The provider still runs; the advisory only warns.
+    assert codex["status"] == "ready"
+    context
+  end
 
   step "Codex was installed with Homebrew and is outdated", context do
     ctx = homebrew_codex(context)

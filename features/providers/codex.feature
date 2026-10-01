@@ -111,11 +111,26 @@ Feature: Codex
     When a Codex turn starts
     Then Codex can call the HAL-C2 tools for this thread
 
-  @backlog
   Scenario: Codex starts with the launch arguments configured for it
     Given the Codex instance has launch arguments configured
     When a Codex session starts
     Then Codex is started with those arguments
+
+  Scenario: Launch arguments that cannot be read fail the turn and say why
+    Given the Codex instance has launch arguments with a quote that is never closed
+    When the user sends a message to a Codex thread
+    Then the turn fails saying the launch arguments have a quote that is never closed
+
+  @backlog
+  Scenario Outline: Codex launch arguments apply wherever Codex is started
+    Given the Codex instance has launch arguments configured
+    When <occasion>
+    Then Codex is started with those arguments
+
+    Examples:
+      | occasion                                  |
+      | the node checks Codex's version           |
+      | Codex writes a title for a new thread     |
 
   Scenario: Reverting a Codex turn rolls Codex back too
     Given a Codex thread with three turns
@@ -158,13 +173,15 @@ Feature: Codex
     Then both instances see the same Codex sessions and settings
     And each keeps its own login and model list
 
-  @backlog
+  # Blocked: needs "Several Codex accounts share one Codex home" first.
+  @backlog @blocked
   Scenario: The user can switch a Codex thread to another account
     Given two Codex instances share a Codex home
     When the user picks the other account from the thread's model picker
     Then the thread continues on that account without moving its history
 
-  @backlog
+  # Blocked: needs "Several Codex accounts share one Codex home" first.
+  @backlog @blocked
   Scenario: Accounts with a different Codex home are not offered for an existing thread
     Given a Codex instance with a separate Codex home
     When the user opens the model picker in an existing Codex thread

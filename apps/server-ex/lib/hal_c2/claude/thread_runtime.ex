@@ -36,7 +36,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.StreamState
 
-  @state_version 8
+  @state_version 9
 
   @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
                 "on this environment's machine, then start a new thread. For API-key " <>
@@ -221,7 +221,13 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_call({:start_turn, turn}, _from, state) do
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
-    launch = Provider.launch(turn.model, Map.get(turn, :options, %{}))
+    # The CLI also takes its MCP server at launch: a credential renewed since (the old
+    # one lapsed, or the project's agent access changed) needs a new process to reach it.
+    launch =
+      turn.model
+      |> Provider.launch(Map.get(turn, :options, %{}))
+      |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
+
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
     session = state.session
@@ -294,6 +300,19 @@ defmodule HalC2.Claude.ThreadRuntime do
                "resolved"}
 
         Session.answer_permission(state.session, control_id, answer)
+        state = resolve_request(%{state | requests: requests}, request_id, response, status)
+        {:reply, :ok, state}
+
+      # A dismissed dialog is cancelled, and Claude does what it does without an answer.
+      {{:dialog, control_id, question}, requests} ->
+        {answer, status} =
+          if response["dismissed"],
+            do: {:cancelled, "cancelled"},
+            else:
+              {{:completed, resume_choice(claude_answers(response["answers"])[question])},
+               "resolved"}
+
+        Session.answer_dialog(state.session, control_id, answer)
         state = resolve_request(%{state | requests: requests}, request_id, response, status)
         {:reply, :ok, state}
 
@@ -376,6 +395,19 @@ defmodule HalC2.Claude.ThreadRuntime do
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
   end
 
+  def handle_info({:claude, session, {:dialog, id, _kind, _payload}}, %{turn: nil} = state) do
+    Session.answer_dialog(session, id, :cancelled)
+    {:noreply, state}
+  end
+
+  # Claude asks before it continues a long, old conversation (`resume_return`).
+  def handle_info({:claude, _session, {:dialog, id, "resume_return", payload}}, state) do
+    question = resume_question(payload)
+    {state, request_id} = open_question(flush(state), id, [question])
+    request = {:dialog, id, question["id"]}
+    {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
+  end
+
   def handle_info({:EXIT, session, _reason}, %{session: session} = state) do
     state =
       if state.turn,
@@ -413,8 +445,16 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
        |> Map.put_new(:launch, nil)
+       |> Map.update!(:launch, &upgrade_launch(&1, state))
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
+
+  # A session started before launches recorded their MCP server has the thread's own.
+  defp upgrade_launch(%{} = launch, %{last_ids: %{} = ids, thread_id: thread_id})
+       when not is_map_key(launch, :mcp),
+       do: Map.put(launch, :mcp, HalC2.Mcp.for_agent(thread_id, Entities.instance(ids)))
+
+  defp upgrade_launch(launch, _state), do: launch
 
   # Allowing for the session keeps the CLI's own suggested rules, scoped to this
   # session, or allows the whole tool when it suggested none.
@@ -462,6 +502,57 @@ defmodule HalC2.Claude.ThreadRuntime do
       }
     end
   end
+
+  @resume_compact "Compact and continue"
+  @resume_never "Don't ask again"
+
+  # The question of Claude's resume dialog: how old and how large the conversation is,
+  # and what to do about it. Clients recognize the question and its "never" answer by
+  # these words.
+  defp resume_question(payload) do
+    minutes = whole(payload["sessionAgeMinutes"])
+
+    age =
+      if minutes >= 60, do: "#{div(minutes, 60)}h #{rem(minutes, 60)}m", else: "#{minutes}m"
+
+    tokens =
+      payload["estimatedTokens"]
+      |> whole()
+      |> Integer.to_string()
+      |> String.replace(~r/\B(?=(\d{3})+$)/, ",")
+
+    text = "This session is #{age} old and uses #{tokens} tokens. Compact it before continuing?"
+
+    %{
+      "id" => text,
+      "header" => "Resume session",
+      "question" => text,
+      "options" => [
+        %{
+          "label" => @resume_compact,
+          "description" => "Resume with a summary and use fewer tokens."
+        },
+        %{
+          "label" => "Keep full history",
+          "description" => "Resume without changing the conversation."
+        },
+        %{
+          "label" => @resume_never,
+          "description" => "Keep full history and skip future resume prompts."
+        }
+      ],
+      "multiSelect" => false
+    }
+  end
+
+  defp whole(number) when is_number(number), do: max(0, trunc(number))
+  defp whole(_other), do: 0
+
+  # What Claude does with the answer: compacts first, continues as it is, or continues
+  # and never asks again.
+  defp resume_choice(@resume_compact), do: "compact"
+  defp resume_choice(@resume_never), do: "never"
+  defp resume_choice(_answer), do: "continue"
 
   defp claude_answers(answers) do
     for {question, value} <- answers || %{}, into: %{} do
@@ -590,7 +681,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # The version `claude --version` reports here, as the turn would run it.
   defp claude_version(turn) do
-    [command | args] = Application.get_env(:hal_c2, :claude_command) || ["claude"]
+    [command | args] = command(turn)
     env = Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids)))
 
     case System.cmd(command, args ++ ["--version"], env: env, stderr_to_stdout: true) do
@@ -626,8 +717,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp semver(_text), do: nil
 
-  # The CLI takes its model and options at launch, so a turn on others resumes the
-  # conversation in a new process.
+  # The CLI takes its model, options and MCP server at launch, so a turn on others
+  # resumes the conversation in a new process.
   defp ensure_session(%{session: session} = state, turn)
        when session != nil and state.launch != turn.launch do
     state = end_work(state, "interrupted")
@@ -659,19 +750,13 @@ defmodule HalC2.Claude.ThreadRuntime do
       resume_at: fork_or(turn, :turn, Map.get(turn, :head)),
       fork_session: Map.get(turn, :fork) != nil,
       partial_messages: true,
-      mcp: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids)),
+      mcp: turn.launch.mcp,
       # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude.
       env: Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids))),
       log: state.thread_id
     ]
 
-    opts =
-      case Application.get_env(:hal_c2, :claude_command) do
-        nil -> opts
-        command -> Keyword.put(opts, :command, command)
-      end
-
-    case Session.start_link(opts) do
+    case Session.start_link(Keyword.put(opts, :command, command(turn))) do
       {:ok, session} ->
         {:ok,
          %{state | session: session, permission_mode: permission_mode(turn), launch: turn.launch}}
@@ -680,6 +765,14 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:error, reason}
     end
   end
+
+  # The `claude` the turn's instance runs: its binary path in settings, else the one on PATH.
+  defp command(turn),
+    do:
+      HalC2.Settings.instance_command(
+        Entities.instance(turn.ids),
+        Application.get_env(:hal_c2, :claude_command) || ["claude"]
+      )
 
   # A fork's first turn resumes the source session at the fork point, as a new session.
   defp fork_or(%{fork: %{} = fork}, key, _default), do: Map.fetch!(fork, key)

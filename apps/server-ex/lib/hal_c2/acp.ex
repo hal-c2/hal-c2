@@ -719,7 +719,7 @@ defmodule HalC2.Acp do
         entry
 
       version ->
-        entry = Map.put(entry, "compatibilityAdvisory", opencode_advisory(version))
+        entry = HalC2.ProviderCompatibility.put(entry)
 
         cond do
           Version.compare(version, @opencode_minimum) == :lt ->
@@ -943,22 +943,6 @@ defmodule HalC2.Acp do
   end
 
   defp stable_version(_version), do: nil
-
-  # HAL-C2's bundled compatibility policy for OpenCode: older than the minimum is broken.
-  defp opencode_advisory(version) do
-    broken = Version.compare(version, @opencode_minimum) == :lt
-
-    %{
-      "status" => if(broken, do: "broken", else: "unknown"),
-      "message" =>
-        if(broken,
-          do:
-            "This provider version is known to be incompatible with this HAL-C2 release. Use >=#{@opencode_minimum}."
-        ),
-      "recommendedVersion" => nil,
-      "recommendedRange" => ">=#{@opencode_minimum}"
-    }
-  end
 
   @doc """
   Starts an instance's agent in `cwd` (for `runtime_mode`, see `command/2`),

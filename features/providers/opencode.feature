@@ -178,11 +178,10 @@ Feature: OpenCode
     When OpenCode reports that the server is ready
     Then the first prompt is sent to it
 
-  @backlog
   Scenario: An OpenCode event stream that ends fails the turn
     Given an OpenCode turn is streaming
     When the event stream ends unexpectedly
-    Then the turn fails
+    Then the turn fails saying OpenCode exited unexpectedly
     And the thread takes the next message
 
   @backlog

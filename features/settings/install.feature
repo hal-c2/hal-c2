@@ -10,7 +10,9 @@ Feature: Installing and uninstalling
   keeps it current from the command line, and can remove it without losing
   their data.
 
-  @backlog @node
+  # Blocked: how does a release reach the user's machine? The install script and the
+  # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
+  @backlog @blocked @node
   Scenario Outline: The install script puts hal-c2 on the machine
     When the user runs the install script <options>
     Then hal-c2 <result> is installed in the user's local bin folder
@@ -22,7 +24,10 @@ Feature: Installing and uninstalling
       | on the nightly channel  | from the nightly channel |
       | pinned to "1.3.0"       | at version "1.3.0"     |
 
-  @backlog @node
+  # Dropped: a release runs under the operating system's service manager
+  # (background-service.feature) and a checkout under a mise daemon. There is no web app
+  # to open and no npm package to run.
+  @dropped @node
   Scenario Outline: The user starts the server
     When the user runs "<command>"
     Then the server starts <how>
@@ -33,7 +38,9 @@ Feature: Installing and uninstalling
       | hal-c2 serve        | without opening anything       |
       | npx hal-c2@latest   | without installing it          |
 
-  @backlog @node
+  # Blocked: how does a release reach the user's machine? The install script and the
+  # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
+  @backlog @blocked @node
   Scenario Outline: The user updates from the command line
     When the user runs "<command>"
     Then <result>
@@ -45,19 +52,25 @@ Feature: Installing and uninstalling
       | hal-c2 update 1.2.0 --allow-downgrade  | the server moves back to version 1.2.0             |
       | hal-c2 update --channel preview        | the user is asked to confirm the preview channel   |
 
-  @backlog @node
+  # Blocked: how does a release reach the user's machine? The install script and the
+  # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
+  @backlog @blocked @node
   Scenario: Declining the restart leaves the old server running
     When the user runs "hal-c2 update" and declines the restart
     Then the old version keeps running until the user restarts the service
 
-  @backlog @node
+  # Blocked: how does a release reach the user's machine? The install script and the
+  # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
+  @backlog @blocked @node
   Scenario: Uninstalling keeps the user's data
     When the user runs "hal-c2 uninstall"
     Then the user is shown everything that will be removed and asked once
     And after confirming hal-c2 and its service are removed
     But the user's threads and settings are kept
 
-  @backlog @node
+  # Blocked: how does a release reach the user's machine? The install script and the
+  # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
+  @backlog @blocked @node
   Scenario: An Intel Mac has no prebuilt server
     Given an Intel Mac
     When the user runs the install script

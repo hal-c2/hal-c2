@@ -25,7 +25,12 @@ defmodule HalC2.ProviderUsageLimits.Claude do
     "seven_day" => {"weekly", "Weekly", @week}
   }
 
-  def command, do: Application.get_env(:hal_c2, :claude_command, ["claude"])
+  def command,
+    do:
+      HalC2.Settings.instance_command(
+        "claudeAgent",
+        Application.get_env(:hal_c2, :claude_command, ["claude"])
+      )
 
   def installed? do
     case command() do

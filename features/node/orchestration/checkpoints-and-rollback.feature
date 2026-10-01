@@ -187,13 +187,22 @@ Feature: Checkpoints, diffs and rewinding
     Then the provider receives the history through run 1
     And neither rolled-back run is replayed
 
-  @node @backlog
+  @node
   Scenario: A rewind whose restore fails ends with an error
     Given runs 1 and 2 of "t1" completed with checkpoints
     When the user rewinds "t1" to run 1 and restoring the files fails
     Then the rewind ends with an error
     And "t1" is not left waiting
     And the checkpoint of run 1 is still the last valid checkpoint
+
+  # The provider is asked to drop the later turns before the files are restored, so a
+  # failed restore leaves it a turn behind what the thread still shows.
+  @node @backlog
+  Scenario: A rewind whose restore fails leaves the provider's conversation whole
+    Given runs 1 and 2 of "t1" completed with checkpoints
+    When the user rewinds "t1" to run 1 and restoring the files fails
+    Then the provider still holds the conversation through run 2
+    And the next message to "t1" continues after run 2
 
   @node @backlog
   Scenario: Editing from a message after a stopped run starts from that message
@@ -209,7 +218,10 @@ Feature: Checkpoints, diffs and rewinding
     Then the command fails explaining the provider could not roll back
     And no run is marked rolled back
 
-  @node @backlog
+  # Dropped: a subagent works in its run's worktree, so the run's own checkpoint already
+  # holds its changes and a rewind already undoes them. Upstream never wrote a nested
+  # scope either: every scope it creates has no parent.
+  @dropped @node
   Scenario: Nested checkpoint scopes for subagent runs
     Given a run of "t1" delegated work to a subagent in the same worktree
     Then the subagent's work is captured in a nested checkpoint scope under the run

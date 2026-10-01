@@ -58,7 +58,7 @@ Feature: Changing model and provider mid-thread
     And the failed turn stays in the history of "t1"
 
   @node
-  Scenario: A long transcript keeps its newest part
+  Scenario: A long transcript leaves out an older message that does not fit
     Given the conversation of "t1" is longer than 60,000 characters
     When a run starts a new provider thread for "t1"
     Then the transcript keeps at most 60,000 characters of history

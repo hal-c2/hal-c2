@@ -12,6 +12,8 @@ defmodule HalC2.Steps.Orchestration.McpServer do
 
   alias HalC2.Test.Node.World
 
+  @claude_thread "claude work"
+
   # --- background ------------------------------------------------------------------
 
   step "thread {string} in {string} runs on {string} in full-access mode and default interaction mode",
@@ -399,6 +401,63 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     Map.put(context, :mcp_result, World.mcp_tool(context, caller, tool, arguments))
   end
 
+  # --- a renewed credential in a running Claude thread -----------------------------
+
+  # Claude takes the server on its command line, so what each start was given is in
+  # its arguments (`World.claude_starts/1`).
+  step "the agent of a running Claude thread uses the {string} server",
+       %{args: [name]} = context do
+    context =
+      context
+      |> World.create_thread(@claude_thread, "demo", %{
+        "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "claude-haiku"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default"
+      })
+      |> World.send_turn(@claude_thread, "hello")
+
+    World.await_runs(context, @claude_thread, ["completed"])
+    assert [auth] = claude_credentials(context, name)
+    assert {200, _} = HalC2.Mcp.handle(auth, request("tools/list", %{}))
+    Map.put(context, :credential, auth)
+  end
+
+  # The credential lapses once the idle agent presents it after the idle limit; the
+  # thread's next turn is given a new one.
+  step "the thread's credential is renewed", context do
+    "Bearer " <> token = context.credential
+    idle_since = System.monotonic_time(:millisecond) - (24 * 60 + 1) * 60 * 1_000
+    assert :ets.update_element(HalC2.Mcp.Credentials, token, {3, idle_since})
+    assert {401, _} = HalC2.Mcp.handle(context.credential, request("tools/list", %{}))
+
+    context = World.send_turn(context, @claude_thread, "hello again")
+    World.await_runs(context, @claude_thread, ["completed", "completed"])
+    context
+  end
+
+  step "the agent keeps its tools with the new credential", context do
+    assert [old, new] = claude_credentials(context, "hal-c2")
+    assert old == context.credential and new != old
+
+    assert new ==
+             HalC2.Mcp.server(World.thread_id(context, @claude_thread), "claudeAgent").authorization
+
+    # The same conversation, in a process that has the new credential.
+    assert "--resume" in List.last(World.claude_starts(context))
+
+    assert {200, %{"result" => %{"tools" => [_ | _]}}} =
+             HalC2.Mcp.handle(new, request("tools/list", %{}))
+
+    context
+  end
+
+  step "the old credential is refused from then on", context do
+    assert {401, %{"error" => "invalid_mcp_credential"}} =
+             HalC2.Mcp.handle(context.credential, request("tools/list", %{}))
+
+    context
+  end
+
   # --- credential lifetime ---------------------------------------------------------
 
   step "the agent of {string} has made no call for longer than the idle limit and has no turn in progress",
@@ -432,6 +491,17 @@ defmodule HalC2.Steps.Orchestration.McpServer do
 
   defp request(method, params \\ %{}),
     do: JSON.encode!(%{"jsonrpc" => "2.0", "id" => 1, "method" => method, "params" => params})
+
+  # The credential each fake Claude start was given for the server `name`, oldest first.
+  defp claude_credentials(context, name) do
+    for argv <- World.claude_starts(context),
+        index = Enum.find_index(argv, &(&1 == "--mcp-config")),
+        do:
+          argv
+          |> Enum.at(index + 1)
+          |> JSON.decode!()
+          |> get_in(["mcpServers", name, "headers", "Authorization"])
+  end
 
   defp tool_request(name, arguments),
     do: request("tools/call", %{"name" => name, "arguments" => arguments})

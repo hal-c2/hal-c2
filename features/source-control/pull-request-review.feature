@@ -157,7 +157,8 @@ Feature: Reviewing a pull request
     Then the environment keeps the mark with the revision it was made against
     And the file reads as viewed in HAL-C2
 
-  @backlog @node
+  # Blocked: needs "Hosts without viewed marks keep them in the environment" first.
+  @backlog @blocked @node
   Scenario: A file missing from the host's answer is not treated as deleted
     Given the user marked "src/cart.ts" viewed in a GitLab merge request
     When the host answers without "src/cart.ts"

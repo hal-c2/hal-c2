@@ -12,6 +12,8 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
   alias HalC2.Test.Node
 
   @drivers %{"Grok" => "grok", "OpenCode" => "opencode"}
+  # What the fake Codex and Claude at a custom binary path report as their version.
+  @binary_version "7.7.7"
 
   # A feature's absolute path, inside the scenario's home.
   defp local(ctx, path), do: Path.join(ctx.node.home, path)
@@ -367,8 +369,57 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
     Map.merge(ctx, %{instance: driver, binary_path: path})
   end
 
+  # Codex and Claude: the commands the node would find on the path are missing, and the
+  # executable at `path` is a fake CLI that reports its own version and logs each start
+  # the way the fake ACP agent does.
+  step ~r/^the (?<provider>Codex|Claude) instance has the binary path "(?<path>[^"]+)"$/,
+       %{args: [provider, path]} = context do
+    ctx = Acp.ready(context)
+
+    {driver, key, default, version, fake} =
+      case provider do
+        "Codex" ->
+          {"codex", :codex_command, ["hal-c2-test-no-codex", "app-server"],
+           "codex-cli #{@binary_version}", "fake_codex.py"}
+
+        "Claude" ->
+          {"claudeAgent", :claude_command, ["hal-c2-test-no-claude"],
+           "#{@binary_version} (Claude Code)", "fake_claude.py"}
+      end
+
+    log = Path.join([ctx.node.home, "agents", driver <> ".log"])
+    binary = local(ctx, path)
+    File.mkdir_p!(Path.dirname(binary))
+
+    File.write!(binary, """
+    #!/bin/sh
+    if [ "$1" = "--version" ]; then echo "#{version}"; exit 0; fi
+    printf '{"event":"launch","argv0":"%s","cwd":"%s"}\\n' "$0" "$(pwd -P)" >> #{log}
+    exec python3 -u #{Path.expand("../../support/#{fake}", __DIR__)} "$@"
+    """)
+
+    File.chmod!(binary, 0o755)
+    # Restored by `Acp.ready/1` when the scenario ends.
+    Application.put_env(:hal_c2, key, default)
+    Acp.put_provider(driver, %{"binaryPath" => binary})
+    Map.merge(ctx, %{instance: driver, binary_path: path})
+  end
+
   step "a thread runs on that instance", context do
     run_thread(context, context.instance)
+  end
+
+  step "the provider's version and update checks read {string}", %{args: [path]} = context do
+    assert %{"version" => @binary_version, "versionAdvisory" => advisory} =
+             Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == context.instance))
+
+    assert advisory["currentVersion"] == @binary_version
+
+    # Claude Code updates itself, so its updater is the executable the setting names.
+    if context.instance == "claudeAgent",
+      do: assert(advisory["updateCommand"] == local(context, path) <> " update")
+
+    context
   end
 
   step "{string} is started for the thread", %{args: [path]} = context do

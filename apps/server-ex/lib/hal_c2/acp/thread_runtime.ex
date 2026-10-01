@@ -37,7 +37,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.OpenCode
 
-  @state_version 8
+  @state_version 9
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -173,6 +173,10 @@ defmodule HalC2.Acp.ThreadRuntime do
        orphans: %{},
        # The session's config options (`configId` -> current value).
        config: %{},
+       # The agent's own planning modes (`configId` -> the choice that plans), and what
+       # those options held before HAL-C2's plan mode took them over.
+       plan_modes: %{},
+       build_modes: %{},
        # OpenCode's HTTP server (`HalC2.Acp.OpenCode`), and its session's newest
        # message when the turn began: `{:ok, id | nil}`, or `:unknown`.
        server: nil,
@@ -512,7 +516,11 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: state |> Map.merge(%{server: nil, leaf: :unknown}) |> Map.put(:v, 7) |> migrate()
 
   defp migrate(%{v: 7} = state),
-    do: state |> Map.put_new(:tasks, %{}) |> Map.put(:v, 8)
+    do: state |> Map.put_new(:tasks, %{}) |> Map.put(:v, 8) |> migrate()
+
+  # Planning modes are read from the session's next config options.
+  defp migrate(%{v: 8} = state),
+    do: state |> Map.merge(%{plan_modes: %{}, build_modes: %{}}) |> Map.put(:v, 9)
 
   # --- session -------------------------------------------------------------------
 
@@ -687,8 +695,20 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  defp remember_config(state, %{"configOptions" => [_ | _] = options}),
-    do: %{state | config: Map.new(options, &{&1["id"], &1["currentValue"]})}
+  defp remember_config(state, %{"configOptions" => [_ | _] = options}) do
+    %{
+      state
+      | config: Map.new(options, &{&1["id"], &1["currentValue"]}),
+        plan_modes:
+          for(
+            %{"id" => id, "category" => category} = option <- options,
+            category in ["mode", "collaboration_mode"],
+            choice = plan_choice(option),
+            into: %{},
+            do: {id, choice}
+          )
+    }
+  end
 
   defp remember_config(state, _result), do: state
 
@@ -715,7 +735,35 @@ defmodule HalC2.Acp.ThreadRuntime do
     state |> set_config("mode", agent) |> set_config("effort", value.("variant"))
   end
 
-  defp set_options(state, _turn), do: state
+  # Any other agent with a mode of its own for planning (a mode option offering `plan`
+  # or `architect`) runs in it while the thread is in plan mode. HAL-C2 owns only that
+  # override: the next turn out of plan mode puts back what the options held before.
+  defp set_options(%{plan_modes: plan_modes} = state, %{interaction_mode: "plan"}) do
+    Enum.reduce(plan_modes, state, fn {id, plan}, state ->
+      if state.config[id] == plan do
+        state
+      else
+        build_modes = Map.put_new(state.build_modes, id, state.config[id])
+        set_config(%{state | build_modes: build_modes}, id, plan)
+      end
+    end)
+  end
+
+  defp set_options(%{build_modes: build_modes} = state, _turn),
+    do:
+      Enum.reduce(
+        build_modes,
+        %{state | build_modes: %{}},
+        &set_config(&2, elem(&1, 0), elem(&1, 1))
+      )
+
+  # The choice of a select option (flat or grouped) that plans, if it has one.
+  defp plan_choice(option) do
+    option["options"]
+    |> List.wrap()
+    |> Enum.flat_map(&(&1["options"] || [&1]))
+    |> Enum.find_value(&(&1["value"] in ["plan", "architect"] && &1["value"]))
+  end
 
   defp set_config(state, id, value)
        when is_binary(value) and is_map_key(state.config, id) do
@@ -848,6 +896,12 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp update(%{"sessionUpdate" => "agent_thought_chunk"} = u, state),
     do: chunk(state, u, :reasoning)
 
+  # The protocol lets an agent send any JSON as a tool's raw input. Only a map names a
+  # command, a pattern or an address, so anything else is left out.
+  defp update(%{"sessionUpdate" => s, "rawInput" => input} = call, state)
+       when s in ["tool_call", "tool_call_update"] and not is_map(input),
+       do: update(Map.delete(call, "rawInput"), state)
+
   defp update(%{"sessionUpdate" => s, "toolCallId" => id} = call, state)
        when s in ["tool_call", "tool_call_update"] and is_map_key(state.subagents, id),
        do: subagent_call(state, id, call)
@@ -958,7 +1012,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         state |> killed(id, call) |> finish_tool(id, call)
 
       true ->
-        running_command(state, id, call)
+        state |> running_command(id, call) |> running_search(id, call)
     end
   end
 
@@ -975,6 +1029,21 @@ defmodule HalC2.Acp.ThreadRuntime do
          true <- fields != %{} do
       commit(state, fn stream ->
         [Orchestration.upsert(stream, "turn-item", item_id, &Map.merge(&1, fields))]
+      end)
+
+      %{state | items: Map.put(state.items, id, Map.merge(item, fields))}
+    else
+      _ -> state
+    end
+  end
+
+  # A read or search announced before its input says what it looked for once it runs.
+  defp running_search(state, id, call) do
+    with %{kind: :search, id: item_id} = item <- state.items[id],
+         fields = Map.drop(search_fields(call), Map.keys(item)),
+         true <- fields != %{} do
+      commit(state, fn stream ->
+        [Orchestration.upsert(stream, "turn-item", item_id, &Map.merge(fields, &1))]
       end)
 
       %{state | items: Map.put(state.items, id, Map.merge(item, fields))}
@@ -1362,12 +1431,34 @@ defmodule HalC2.Acp.ThreadRuntime do
       kind when kind in ["edit", "delete", "move"] ->
         {:file, %{"fileName" => path || call["title"] || "file"}}
 
+      # A read names its file; a search names what it looked for. Their output stays
+      # out of the timeline: a file's whole text is too much to send to every client.
+      "read" ->
+        {:search, file_search(path, path)}
+
+      "search" ->
+        {:search, search_fields(call)}
+
       "fetch" ->
         {:web, %{"patterns" => Enum.filter([input["url"], input["query"]], &is_binary/1)}}
 
       _ ->
         {:tool, %{"toolName" => call["title"] || call["kind"] || "tool", "input" => input}}
     end
+  end
+
+  # What a search or read looked for, from whatever the call says so far.
+  defp search_fields(call) do
+    input = call["rawInput"] || %{}
+    path = get_in(call, ["locations", Access.at(0), "path"])
+    file_search(input["pattern"] || input["query"] || path, path)
+  end
+
+  defp file_search(pattern, path) do
+    Map.reject(
+      %{"pattern" => pattern, "results" => path && [%{"fileName" => path}]},
+      fn {_key, value} -> not (is_binary(value) or is_list(value)) end
+    )
   end
 
   defp command_text(%{"command" => command}, _title) when is_binary(command), do: command
@@ -1398,6 +1489,10 @@ defmodule HalC2.Acp.ThreadRuntime do
           entity
           |> Map.put("output", output || "")
           |> then(&if(call["rawInput"], do: Map.put(&1, "input", call["rawInput"]), else: &1))
+
+        # What the call named when it was announced stays; the end fills in the rest.
+        :search ->
+          Map.merge(search_fields(call), entity)
 
         _ ->
           entity

@@ -540,6 +540,19 @@ Feature: Providers settings panel
         | a choice list with no choices | needs at least one choice  |
         | the same choice twice         | uses a choice twice        |
 
+    @desktop @backlog-desktop
+    Scenario Outline: A custom model id is checked before it is saved
+      Given Claude already has the custom model "my-model"
+      When the user adds the custom model "<slug>" to Claude
+      Then the user is told "<message>"
+      And nothing is saved
+
+      Examples:
+        | slug             | message                             |
+        |                  | Enter a model slug.                 |
+        | claude-fable-5-1 | That model is already built in.     |
+        | my-model         | That custom model is already saved. |
+
     @desktop
     Scenario: A custom model without options uses the provider's defaults
       When the user adds a custom model with no options

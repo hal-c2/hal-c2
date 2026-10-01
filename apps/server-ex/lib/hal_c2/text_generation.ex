@@ -174,8 +174,8 @@ defmodule HalC2.TextGeneration do
 
   defp usable?(settings, %{"instanceId" => id}) when is_binary(id) do
     case driver(id) do
-      "codex" -> enabled?(settings, id) and executable?(codex_command())
-      "claudeAgent" -> enabled?(settings, id) and executable?(claude_command())
+      "codex" -> enabled?(settings, id) and executable?(codex_command(id))
+      "claudeAgent" -> enabled?(settings, id) and executable?(claude_command(id))
       "pi" -> HalC2.Acp.enabled?(id) and executable?(HalC2.Acp.binary_path(id) || "pi")
       driver when driver in @acp_drivers -> HalC2.Acp.enabled?(id) and acp_installed?(id)
       # A text-generation backend plugin (`HalC2.Plugins.TextGeneration`) by its id.
@@ -291,7 +291,7 @@ defmodule HalC2.TextGeneration do
         ["--disable-slash-commands", "--strict-mcp-config", "--permission-mode", "dontAsk"]
 
     in_dir(if(isolate, do: nil, else: cwd), fn dir ->
-      with {:ok, out} <- run_cli([claude_command() | args], dir, prompt),
+      with {:ok, out} <- run_cli([claude_command(selection["instanceId"]) | args], dir, prompt),
            {:ok, decoded} <- JSON.decode(out),
            %{} = result <- structured(decoded) do
         {:ok, result}
@@ -329,7 +329,7 @@ defmodule HalC2.TextGeneration do
           ["--output-schema", schema_path, "--output-last-message", output_path] ++
           Enum.flat_map(images, &["--image", &1]) ++ ["-"]
 
-      with {:ok, _} <- run_cli([codex_command() | args], cwd, prompt),
+      with {:ok, _} <- run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt),
            {:ok, text} <- File.read(output_path),
            {:ok, %{} = result} <- JSON.decode(text) do
         {:ok, result}
@@ -753,8 +753,13 @@ defmodule HalC2.TextGeneration do
     |> String.slice(-500, 500)
   end
 
-  defp claude_command, do: Application.get_env(:hal_c2, :text_claude_command, "claude")
-  defp codex_command, do: Application.get_env(:hal_c2, :text_codex_command, "codex")
+  # The CLI an instance writes text with: its binary path in settings, else the one on PATH.
+  defp claude_command(instance), do: cli(instance, :text_claude_command, "claude")
+  defp codex_command(instance), do: cli(instance, :text_codex_command, "codex")
+
+  defp cli(instance, key, default),
+    do:
+      hd(HalC2.Settings.instance_command(instance, [Application.get_env(:hal_c2, key, default)]))
 
   # --- linked pull requests and issues -----------------------------------------------
 

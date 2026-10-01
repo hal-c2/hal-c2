@@ -182,6 +182,37 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     context
   end
 
+  step "the agent delegated work to a subagent on the model {string}",
+       %{args: [model]} = context do
+    context = World.working_thread(context, World.current(context))
+    HalC2.Test.Node.ensure(HalC2.Mcp)
+    result = delegate(context, %{"task" => "answer from gate", "target" => %{"model" => model}})
+    Map.merge(context, %{delegated: result["structuredContent"], mode: :carry_on})
+  end
+
+  step "the user looks at the parent's subagents", context do
+    parent = World.thread_id(context, World.current(context))
+    rows = read_thread(context, parent)
+    [thread] = for ["thread", ^parent, thread] <- rows, do: thread
+
+    Map.merge(context, %{
+      parent_model: thread["modelSelection"]["model"],
+      subagents: for(["subagent", _, subagent] <- rows, do: subagent)
+    })
+  end
+
+  step "the subagent is shown with {string}", %{args: [model]} = context do
+    task_id = context.delegated["taskId"]
+    assert [%{"id" => ^task_id, "model" => ^model}] = context.subagents
+    context
+  end
+
+  step "the parent's model is not shown for it", context do
+    assert [subagent] = context.subagents
+    assert is_binary(context.parent_model) and subagent["model"] != context.parent_model
+    context
+  end
+
   # Calls the node's MCP tool `delegate_task` as the current thread's provider. The
   # test process must have started `HalC2.Mcp` (`HalC2.Test.Node.ensure/1`).
   defp delegate(context, arguments),

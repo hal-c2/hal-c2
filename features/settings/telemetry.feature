@@ -3,6 +3,9 @@
 #   docs/internals/product-analytics.md
 #   apps/server/src/telemetry (PostHog delivery, not present in apps/server-ex)
 
+# Blocked: should the fork send product telemetry at all, and to which analytics project?
+# The backend sends none today.
+@blocked
 Feature: Product telemetry
   The server sends anonymous product events so maintainers can see which
   providers and models are used. Content never leaves the machine, and the

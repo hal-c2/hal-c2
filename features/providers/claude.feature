@@ -177,10 +177,9 @@ Feature: Claude
     When the conversation grows past that size
     Then Claude compacts the conversation and the timeline says so
 
-  @backlog
   Scenario: Resuming a long Claude conversation offers to compact first
     Given a Claude thread whose history is close to the context limit
-    When the user resumes it
+    When the user resumes the Claude thread
     Then the user can compact and continue, keep the full history, or never be asked again
 
   @backlog
@@ -208,7 +207,6 @@ Feature: Claude
     Then Claude continues from the compacted conversation
     And the context meter keeps the usage Claude reported after compaction
 
-  @backlog
   Scenario: Claude can ask a question while planning
     Given the thread is in plan mode on Claude
     When Claude asks the user a question
