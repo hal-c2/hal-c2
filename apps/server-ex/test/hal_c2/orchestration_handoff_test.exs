@@ -118,6 +118,13 @@ defmodule HalC2.Orchestration.HandoffTest do
              "User: run the tests\n\nCommand: mix test\nInterrupted before it finished\nCompiling"
   end
 
+  test "a failed command with no exit code is handed over as failed" do
+    command = %{"input" => "mix test", "status" => "failed", "output" => "1 failure\n"}
+
+    assert Handoff.transcript(state(turn(1, "run the tests", "one fails", command)), 2) ==
+             "User: run the tests\n\nCommand: mix test\nFailed\n1 failure\n\nAssistant: one fails"
+  end
+
   test "long command output keeps its end" do
     output = String.duplicate("a", 3_000) <> "\n3 tests, 0 failures"
 

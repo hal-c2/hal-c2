@@ -389,6 +389,8 @@ defmodule HalC2.Orchestration.Handoff do
       cond do
         is_integer(item["exitCode"]) -> "Exit code: #{item["exitCode"]}"
         item["status"] == "interrupted" -> "Interrupted before it finished"
+        # Only Codex and Pi report an exit code; the others say just that it failed.
+        item["status"] == "failed" -> "Failed"
         true -> nil
       end
 
