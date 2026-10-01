@@ -2,7 +2,9 @@
 # Plays one turn per user message: thinking, a Bash tool call, and a streamed answer.
 # A message containing "wait" stays open until an interrupt control request; "approve"
 # asks permission for a command ("approve run: CMD" names it), "ask" asks a question
-# (AskUserQuestion), and "where are we" says which message the session resumed at
+# (AskUserQuestion), "long session" asks whether to compact first when the session was
+# resumed (the resume_return dialog, only for a host that said it can show it, answered
+# with "resume RESULT"), and "where are we" says which message the session resumed at
 # (--resume-session-at); "usage limit until EPOCH" stops on a usage limit; "in the
 # background" starts a background subagent (task task-agent-N) and a background command
 # (task task-bash-N) and ends the turn while both run, their task_notification left to
@@ -79,6 +81,7 @@ if os.environ.get("FAKE_CLAUDE_ARGV_LOG"):
 turn = 0
 session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
+dialogs = []  # the dialog kinds the host said it can show (initialize)
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
 # classifier approves the command "approve" would otherwise ask about.
@@ -89,6 +92,10 @@ for line in sys.stdin:
     trace({"in": msg})
     if msg.get("type") == "control_response":
         reply = msg["response"]["response"]
+        if reply["behavior"] in ("completed", "cancelled"):
+            send({"type": "assistant", "session_id": session, "message": {"id": "m-dialog", "role": "assistant", "content": [{"type": "text", "text": "resume " + reply.get("result", "cancelled")}]}})
+            send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+            continue
         allowed = reply["behavior"] == "allow"
         for update in reply.get("updatedPermissions") or []:
             if update.get("destination") == "session" and update.get("behavior") == "allow":
@@ -117,6 +124,8 @@ for line in sys.stdin:
         # The account a signed-in Claude Code reports when it starts.
         if sub == "set_permission_mode":
             mode = msg["request"]["mode"]
+        if sub == "initialize":
+            dialogs = msg["request"].get("supportedDialogKinds", [])
         # FAKE_CLAUDE_COMMANDS is a JSON list of the slash command names it reports.
         reply = {"account": {"email": "me@example.com", "subscriptionType": "max", "tokenSource": "claude.ai"},
                  "commands": [{"name": n, "description": "", "argumentHint": ""} for n in json.loads(os.environ.get("FAKE_CLAUDE_COMMANDS", "[]"))]} if sub == "initialize" else {}
@@ -161,6 +170,10 @@ for line in sys.stdin:
         send({"type": "rate_limit_event", "session_id": session, "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour", "resetsAt": resets}})
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}l", "role": "assistant", "content": [{"type": "text", "text": "You've hit your limit"}]}})
         send({"type": "result", "subtype": "success", "is_error": True, "result": "You've hit your limit", "session_id": session})
+        continue
+    if "long session" in text and "--resume" in sys.argv and "resume_return" in dialogs:
+        send({"type": "control_request", "request_id": f"dialog-{turn}", "request": {"subtype": "request_user_dialog", "dialog_kind": "resume_return",
+              "payload": {"sessionAgeMinutes": 135, "estimatedTokens": 182400}}})
         continue
     if "wait" in text:
         continue

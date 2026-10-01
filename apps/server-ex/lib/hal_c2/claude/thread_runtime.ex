@@ -303,6 +303,19 @@ defmodule HalC2.Claude.ThreadRuntime do
         state = resolve_request(%{state | requests: requests}, request_id, response, status)
         {:reply, :ok, state}
 
+      # A dismissed dialog is cancelled, and Claude does what it does without an answer.
+      {{:dialog, control_id, question}, requests} ->
+        {answer, status} =
+          if response["dismissed"],
+            do: {:cancelled, "cancelled"},
+            else:
+              {{:completed, resume_choice(claude_answers(response["answers"])[question])},
+               "resolved"}
+
+        Session.answer_dialog(state.session, control_id, answer)
+        state = resolve_request(%{state | requests: requests}, request_id, response, status)
+        {:reply, :ok, state}
+
       {{:permission, control_id, tool, suggestions}, requests} ->
         decision = response["decision"] || "decline"
 
@@ -379,6 +392,19 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     {state, request_id} = open_request(flush(state), id, kind, prompt)
     request = {:permission, id, tool, context["permission_suggestions"]}
+    {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
+  end
+
+  def handle_info({:claude, session, {:dialog, id, _kind, _payload}}, %{turn: nil} = state) do
+    Session.answer_dialog(session, id, :cancelled)
+    {:noreply, state}
+  end
+
+  # Claude asks before it continues a long, old conversation (`resume_return`).
+  def handle_info({:claude, _session, {:dialog, id, "resume_return", payload}}, state) do
+    question = resume_question(payload)
+    {state, request_id} = open_question(flush(state), id, [question])
+    request = {:dialog, id, question["id"]}
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
   end
 
@@ -476,6 +502,57 @@ defmodule HalC2.Claude.ThreadRuntime do
       }
     end
   end
+
+  @resume_compact "Compact and continue"
+  @resume_never "Don't ask again"
+
+  # The question of Claude's resume dialog: how old and how large the conversation is,
+  # and what to do about it. Clients recognize the question and its "never" answer by
+  # these words.
+  defp resume_question(payload) do
+    minutes = whole(payload["sessionAgeMinutes"])
+
+    age =
+      if minutes >= 60, do: "#{div(minutes, 60)}h #{rem(minutes, 60)}m", else: "#{minutes}m"
+
+    tokens =
+      payload["estimatedTokens"]
+      |> whole()
+      |> Integer.to_string()
+      |> String.replace(~r/\B(?=(\d{3})+$)/, ",")
+
+    text = "This session is #{age} old and uses #{tokens} tokens. Compact it before continuing?"
+
+    %{
+      "id" => text,
+      "header" => "Resume session",
+      "question" => text,
+      "options" => [
+        %{
+          "label" => @resume_compact,
+          "description" => "Resume with a summary and use fewer tokens."
+        },
+        %{
+          "label" => "Keep full history",
+          "description" => "Resume without changing the conversation."
+        },
+        %{
+          "label" => @resume_never,
+          "description" => "Keep full history and skip future resume prompts."
+        }
+      ],
+      "multiSelect" => false
+    }
+  end
+
+  defp whole(number) when is_number(number), do: max(0, trunc(number))
+  defp whole(_other), do: 0
+
+  # What Claude does with the answer: compacts first, continues as it is, or continues
+  # and never asks again.
+  defp resume_choice(@resume_compact), do: "compact"
+  defp resume_choice(@resume_never), do: "never"
+  defp resume_choice(_answer), do: "continue"
 
   defp claude_answers(answers) do
     for {question, value} <- answers || %{}, into: %{} do

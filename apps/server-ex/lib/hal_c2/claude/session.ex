@@ -6,7 +6,9 @@ defmodule HalC2.Claude.Session do
   signed-in account) to the `:handler` as `{:claude, session, {:initialized, reply}}`.
   Transcript messages go to the handler as `{:claude, session, {:message, map}}`. Tool permission prompts arrive as
   `{:claude, session, {:permission, request_id, tool_name, input, context}}` and are
-  answered with `answer_permission/3`. `control/3` sends any control request
+  answered with `answer_permission/3`. A dialog Claude asks the host to show (only the
+  kinds named at `initialize`) arrives as `{:claude, session, {:dialog, request_id, kind,
+  payload}}` and is answered with `answer_dialog/3`. `control/3` sends any control request
   (`"interrupt"`, `"set_model"`, `"set_permission_mode"`, ...) and waits for its reply.
   """
 
@@ -16,6 +18,10 @@ defmodule HalC2.Claude.Session do
   alias HalC2.Subprocess
 
   @state_version 1
+
+  # The dialogs the node can show; Claude sends no other kind. `resume_return` asks
+  # whether to compact a long, old conversation before continuing it.
+  @dialog_kinds ["resume_return"]
 
   @spec start_link(keyword) :: GenServer.on_start()
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, hibernate_after: 15_000)
@@ -32,6 +38,11 @@ defmodule HalC2.Claude.Session do
   def answer_permission(session, request_id, decision),
     do: GenServer.cast(session, {:answer_permission, request_id, decision})
 
+  @doc "Answers a dialog with the user's choice, or `:cancelled` for the dialog's default."
+  @spec answer_dialog(GenServer.server(), String.t(), {:completed, term} | :cancelled) :: :ok
+  def answer_dialog(session, request_id, result),
+    do: GenServer.cast(session, {:answer_dialog, request_id, result})
+
   @spec control(GenServer.server(), String.t(), map, timeout) :: {:ok, map} | {:error, term}
   def control(session, subtype, params \\ %{}, timeout \\ 30_000),
     do: GenServer.call(session, {:control, subtype, params}, timeout)
@@ -45,7 +56,13 @@ defmodule HalC2.Claude.Session do
         Protocol.cli_args(opts)
 
     with {:ok, sub} <- Subprocess.start(cmd, Keyword.take(opts, [:cd, :env])),
-         :ok <- Subprocess.write_line(sub, Protocol.control_request("init", "initialize", %{})) do
+         :ok <-
+           Subprocess.write_line(
+             sub,
+             Protocol.control_request("init", "initialize", %{
+               "supportedDialogKinds" => @dialog_kinds
+             })
+           ) do
       {:ok,
        %{
          v: @state_version,
@@ -89,6 +106,11 @@ defmodule HalC2.Claude.Session do
     end
   end
 
+  def handle_cast({:answer_dialog, id, result}, state) do
+    :ok = Subprocess.write_line(state.sub, Protocol.dialog_reply(id, result))
+    {:noreply, state}
+  end
+
   @impl true
   def handle_info({:subprocess_lines, _reader, lines}, state) do
     state = Enum.reduce(lines, state, &handle_line/2)
@@ -129,6 +151,11 @@ defmodule HalC2.Claude.Session do
       {:control_cancel, id} ->
         notify(state, {:permission_cancelled, id})
         %{state | permissions: Map.delete(state.permissions, id)}
+
+      {:control_request, id, %{"subtype" => "request_user_dialog", "dialog_kind" => kind} = r}
+      when kind in @dialog_kinds ->
+        notify(state, {:dialog, id, kind, r["payload"] || %{}})
+        state
 
       {:control_request, id, request} ->
         # Hooks and MCP-over-control are not wired yet; refuse rather than hang the turn.

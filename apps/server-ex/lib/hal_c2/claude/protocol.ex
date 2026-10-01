@@ -130,6 +130,14 @@ defmodule HalC2.Claude.Protocol do
     control_success(request_id, body)
   end
 
+  @doc "The reply to a `request_user_dialog`: the user's choice, or the dialog cancelled."
+  @spec dialog_reply(String.t(), {:completed, term} | :cancelled) :: iodata
+  def dialog_reply(request_id, {:completed, result}),
+    do: control_success(request_id, %{"behavior" => "completed", "result" => result})
+
+  def dialog_reply(request_id, :cancelled),
+    do: control_success(request_id, %{"behavior" => "cancelled"})
+
   @spec control_success(String.t(), map) :: iodata
   def control_success(request_id, body),
     do:
