@@ -4,6 +4,7 @@
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (server.updateProvider, versionAdvisory)
 #   apps/server/src/provider/providerMaintenance.ts, apps/server/src/provider/providerMaintenanceRunner.ts
 #   apps/server/src/provider/providerCompatibility.ts (applyProviderCompatibility, latestVersionStatus)
+#   apps/server-ex/lib/hal_c2/provider_compatibility.ex (compatibilityAdvisory)
 #   apps/web/src/components/settings/providerStatus.ts (getProviderVersionAdvisoryPresentation)
 #   apps/web/src/components/settings/ProviderAuthenticationSection.tsx, apps/web/src/components/settings/ProviderAuthTerminal.tsx
 #   apps/web/src/components/settings/ProviderSetupSection.tsx
@@ -82,7 +83,6 @@ Feature: Provider setup, updates and sign-in
     When the user updates Codex
     Then the update fails asking the user to refresh and try again
 
-  @backlog
   Scenario Outline: A provider version outside the supported range is flagged
     Given the installed provider version is <status> for this HAL-C2 release
     When the user opens the provider list

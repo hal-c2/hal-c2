@@ -168,6 +168,7 @@ defmodule HalC2.Environment do
       &(&1
         |> with_identity()
         |> with_custom_models()
+        |> HalC2.ProviderCompatibility.put()
         |> HalC2.ProviderUsageLimits.put())
     )
   end
