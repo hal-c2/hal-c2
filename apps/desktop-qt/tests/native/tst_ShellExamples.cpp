@@ -613,6 +613,79 @@ private slots:
     QVERIFY(!settingsNav->isVisible());
   }
 
+  void shellsShowThePendingQuestion_data() {
+    QTest::addColumn<QString>("example");
+    for (const auto& example : {"default", "minimal", "glass", "terminal", "dashboard", "folders"}) {
+      QTest::newRow(example) << QString(example);
+    }
+#ifdef Q_OS_MACOS
+    QTest::newRow("glass-macos") << QString("glass-macos");
+#endif
+  }
+
+  // Scenario: A user's own shell layout still answers the agent
+  // (features/navigation/layout.feature): the built-in layout and every
+  // example, which a user's own shell starts from, show the question.
+  void shellsShowThePendingQuestion() {
+    QFETCH(QString, example);
+    QFile::remove(directory.filePath("shell.qml"));
+    if (example != "default") {
+      const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/examples/") + example);
+      for (const auto& file : source.entryList(QDir::Files)) {
+        const QString target = directory.filePath(file);
+        if (QFile::exists(target)) QVERIFY(QFile::remove(target));
+        QVERIFY(QFile::copy(source.filePath(file), target));
+      }
+    }
+    theme->reload();
+    runtime->reload();
+    QCOMPARE(runtime->usingUserShell(), example != "default");
+    QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    window->resize(1200, 880);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    bridge.publish("composer", QJsonDocument::fromJson(R"({
+      "target": "env-a:thread-1", "edit": null, "text": "", "cursor": 0, "suggestions": [],
+      "triggerKind": null, "suggestionsEmptyText": null, "options": [], "attachments": [],
+      "terminalContexts": [], "placeholder": "Send a message", "editorDisabled": true, "canSend": false,
+      "selectedInstanceId": null, "selectedModel": null, "runtimeMode": "approval-required",
+      "runtimeModes": [], "showInteractionModeToggle": false, "interactionMode": "default",
+      "pendingApprovalCount": 0, "showPlanFollowUpPrompt": false, "isRunning": true,
+      "followUpBehavior": "steer",
+      "enterIntents": {"singleLine": {"": "foreground"}, "multiline": {"": "foreground"}}
+    })").toVariant());
+    bridge.publish("turn", QJsonDocument::fromJson(R"({
+      "threadKey": "env-a:thread-1", "kind": "thread", "running": true, "approvals": [], "plan": null, "queue": [],
+      "questions": [{
+        "requestId": "request-q", "canRespond": true, "responding": false, "problem": "",
+        "questions": [{
+          "id": "Which database?", "header": "Database", "question": "Which database?", "multiSelect": false,
+          "options": [{"label": "Postgres", "description": "The one we run."}, {"label": "SQLite", "description": ""}]
+        }]
+      }]
+    })").toVariant());
+
+    QTRY_VERIFY(findVisualItem(window->contentItem(), "questionSubmit"));
+    auto* submit = findVisualItem(window->contentItem(), "questionSubmit");
+    QTRY_VERIFY(submit->isVisible());
+    QTRY_VERIFY(submit->height() > 0);
+    QTRY_VERIFY(submit->mapToScene(QPointF(0, submit->height())).y() <= window->height());
+    auto* option = findVisualItem(window->contentItem(), "questionOption-Postgres");
+    QVERIFY(option);
+    QVERIFY(option->isVisible());
+    QVERIFY(option->mapToScene(QPointF(0, 0)).y() >= 0);
+
+    bridge.publish("turn", QVariant());
+    bridge.publish("composer", QVariant());
+    bridge.publish("route", QVariant());
+  }
+
   // Scenario: A broken shell layout falls back to the default
   // (features/navigation/layout.feature): the built-in shell shows, and says
   // why, until the file is fixed.

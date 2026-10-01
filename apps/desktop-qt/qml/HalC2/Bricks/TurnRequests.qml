@@ -3,8 +3,8 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// What the open thread's turn waits on from the user, stacked on top of the
-// Composer: the pending approval (one at a time, with its position), the
+// What the open thread's turn waits on from the user, which the Composer
+// stacks on top of its prompt: the pending approval (one at a time, with its position), the
 // agent's question, the proposed plan once the turn is over, and the queued
 // follow-ups. Rendered from Shell.state.turn (ComposerController) for the
 // thread the composer shows; every answer is a composer.* action the shell
@@ -35,8 +35,12 @@ Item {
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
-    visible: approval !== null || question !== null || plan !== null || queue.length > 0
-    implicitHeight: visible ? column.implicitHeight + 8 : 0
+    // Whether the turn waits on anything. The height follows this and not
+    // `visible`, which a host may bind to more than this.
+    readonly property bool pending: approval !== null || question !== null || plan !== null || queue.length > 0
+
+    visible: pending
+    implicitHeight: pending ? column.implicitHeight + 8 : 0
 
     onQuestionChanged: {
         const id = question?.requestId ?? "";
