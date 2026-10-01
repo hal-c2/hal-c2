@@ -58,7 +58,6 @@ Feature: Models
     When a commit needs a message
     Then Claude writes the commit message
 
-  @backlog
   Scenario: The bundled model manifest works offline
     Given the node has never fetched the model manifest
     When the node starts without network access

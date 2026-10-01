@@ -194,6 +194,46 @@ defmodule HalC2.Steps.Providers.Models do
     context
   end
 
+  # --- the bundled manifest ----------------------------------------------------------------
+
+  # The manifest is compiled into the node (`HalC2.Claude.Provider`); a download
+  # would be a file in its home.
+  step "the node has never fetched the model manifest", context do
+    assert downloaded_manifests(context) == []
+    context
+  end
+
+  step "the node starts without network access", context do
+    %{context | node: HalC2.Test.Node.restart(context.node), clients: %{}}
+  end
+
+  step "models are listed from the bundled manifest", context do
+    bundled =
+      Application.app_dir(:hal_c2, "priv/model-manifest.json")
+      |> File.read!()
+      |> JSON.decode!()
+      |> get_in(["providers", "claudeAgent"])
+
+    {providers, context} = World.provider_list(context)
+    claude = Enum.find(providers, &(&1["instanceId"] == "claudeAgent"))
+
+    # Every listed model is the manifest's, in its order; the installed CLI's version
+    # decides which of them it can run.
+    listed = Enum.map(claude["models"], &{&1["slug"], &1["name"]})
+    assert listed != []
+
+    assert listed ==
+             for(
+               model <- bundled["models"],
+               List.keymember?(listed, model["slug"], 0),
+               do: {model["slug"], model["name"]}
+             )
+
+    # Listing them asked nobody: there is still no downloaded copy.
+    assert downloaded_manifests(context) == []
+    context
+  end
+
   # --- custom models --------------------------------------------------------------------------
 
   step "the user adds the custom model {string} to Claude", %{args: [slug]} = context do
@@ -318,6 +358,9 @@ defmodule HalC2.Steps.Providers.Models do
 
     Map.put(context, :custom_model, setting)
   end
+
+  defp downloaded_manifests(context),
+    do: Path.wildcard(Path.join(context.node.home, "**/*manifest*"))
 
   defp claude_model(context, slug) do
     {providers, _context} = World.provider_list(context)
