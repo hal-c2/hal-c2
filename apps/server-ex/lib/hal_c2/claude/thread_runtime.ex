@@ -36,7 +36,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.StreamState
 
-  @state_version 8
+  @state_version 9
 
   @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
                 "on this environment's machine, then start a new thread. For API-key " <>
@@ -221,7 +221,13 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_call({:start_turn, turn}, _from, state) do
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
-    launch = Provider.launch(turn.model, Map.get(turn, :options, %{}))
+    # The CLI also takes its MCP server at launch: a credential renewed since (the old
+    # one lapsed, or the project's agent access changed) needs a new process to reach it.
+    launch =
+      turn.model
+      |> Provider.launch(Map.get(turn, :options, %{}))
+      |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
+
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
     session = state.session
@@ -413,8 +419,16 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
        |> Map.put_new(:launch, nil)
+       |> Map.update!(:launch, &upgrade_launch(&1, state))
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
+
+  # A session started before launches recorded their MCP server has the thread's own.
+  defp upgrade_launch(%{} = launch, %{last_ids: %{} = ids, thread_id: thread_id})
+       when not is_map_key(launch, :mcp),
+       do: Map.put(launch, :mcp, HalC2.Mcp.for_agent(thread_id, Entities.instance(ids)))
+
+  defp upgrade_launch(launch, _state), do: launch
 
   # Allowing for the session keeps the CLI's own suggested rules, scoped to this
   # session, or allows the whole tool when it suggested none.
@@ -626,8 +640,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp semver(_text), do: nil
 
-  # The CLI takes its model and options at launch, so a turn on others resumes the
-  # conversation in a new process.
+  # The CLI takes its model, options and MCP server at launch, so a turn on others
+  # resumes the conversation in a new process.
   defp ensure_session(%{session: session} = state, turn)
        when session != nil and state.launch != turn.launch do
     state = end_work(state, "interrupted")
@@ -659,7 +673,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       resume_at: fork_or(turn, :turn, Map.get(turn, :head)),
       fork_session: Map.get(turn, :fork) != nil,
       partial_messages: true,
-      mcp: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids)),
+      mcp: turn.launch.mcp,
       # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude.
       env: Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids))),
       log: state.thread_id
