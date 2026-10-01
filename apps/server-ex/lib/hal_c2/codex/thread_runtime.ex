@@ -509,19 +509,19 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp connect(%{conn: nil} = state, turn) do
     instance = if ids = turn[:ids], do: Entities.instance(ids)
 
-    # The instance's launch arguments follow `app-server`, split as a shell would.
     cmd =
       HalC2.Settings.instance_command(
         instance,
         Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
-      ) ++ OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")
+      )
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex.
     env = if instance, do: Enum.to_list(HalC2.Settings.instance_env(instance)), else: []
 
-    with {:ok, conn} <-
+    with {:ok, args} <- launch_args(instance),
+         {:ok, conn} <-
            Connection.start_link(
-             cmd: cmd,
+             cmd: cmd ++ args,
              handler: self(),
              cd: turn.cwd,
              env: env,
@@ -547,6 +547,13 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp connect(state, _turn), do: {:ok, state}
+
+  # The instance's launch arguments follow `app-server`, split as a shell would.
+  defp launch_args(instance) do
+    {:ok, OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")}
+  rescue
+    RuntimeError -> {:error, "the launch arguments in settings have a quote that is never closed"}
+  end
 
   # A session carried from another machine that this Codex cannot open (a newer
   # Codex wrote it, say) starts a new thread with the handoff instead, and the user

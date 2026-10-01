@@ -116,6 +116,11 @@ Feature: Codex
     When a Codex session starts
     Then Codex is started with those arguments
 
+  Scenario: Launch arguments that cannot be read fail the turn and say why
+    Given the Codex instance has launch arguments with a quote that is never closed
+    When the user sends a message to a Codex thread
+    Then the turn fails saying the launch arguments have a quote that is never closed
+
   Scenario: Reverting a Codex turn rolls Codex back too
     Given a Codex thread with three turns
     When the user reverts to the end of the first turn

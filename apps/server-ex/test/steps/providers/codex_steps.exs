@@ -324,6 +324,27 @@ defmodule HalC2.Steps.Providers.Codex do
     |> Map.put(:launch_args, ["--strict-config", "-c", ~s(profile="acme corp")])
   end
 
+  step "the Codex instance has launch arguments with a quote that is never closed", context do
+    context
+    |> World.fake_providers()
+    |> World.put_settings(%{"providers" => %{"codex" => %{"launchArgs" => ~s(-c 'profile=acme)}}})
+  end
+
+  step "the user sends a message to a Codex thread", context do
+    World.launch_on(context, @thread, "codex", "hello")
+  end
+
+  step "the turn fails saying the launch arguments have a quote that is never closed", context do
+    state = World.await_runs(context, @thread, ["failed"])
+
+    assert [%{"lastError" => error}] = StreamState.list(state, "provider-session")
+
+    assert error ==
+             "Codex could not start: the launch arguments in settings have a quote that is never closed"
+
+    context
+  end
+
   step "a Codex session starts", context do
     context = World.launch_on(context, @thread, "codex", "hello")
     World.await_runs(context, @thread, ["completed"])
