@@ -374,6 +374,32 @@ defmodule HalC2.Steps.Orchestration.Migration do
     context
   end
 
+  # `features/threads/migration-and-handoffs.feature`: the same migration as the user
+  # meets it.
+  step "{string} was migrated", %{args: ["Legacy work"]} = context do
+    context
+    |> Map.put_new(:snapshot, [])
+    |> v1_thread([
+      {"user", "Fix the cart", []},
+      {"assistant", "Fixed the cart total", []}
+    ])
+    |> import_snapshot()
+    |> World.agents()
+  end
+
+  step "a new agent session starts", context do
+    assert [_] = World.codex_requests(context, "thread/start")
+    assert World.codex_requests(context, "thread/resume") == []
+    context
+  end
+
+  step "the agent receives a trimmed account of the earlier conversation", context do
+    summary = imported_history(context)
+    assert String.length(summary) <= 32_000
+    assert summary =~ "User:\nFix the cart\n\nAssistant:\nFixed the cart total"
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   # A version 1 thread "Legacy work" in a project of its own, with `messages`

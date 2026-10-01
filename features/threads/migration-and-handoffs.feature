@@ -63,10 +63,10 @@ Feature: Carrying threads and context across servers and agents
       | pending approvals     |
       | plans                 |
 
-  @backlog @node
+  @node
   Scenario: The first message after migration starts a fresh agent with the history
     Given "Legacy work" was migrated
-    When the user sends a message in "Legacy work"
+    When the user sends its first message after the migration
     Then a new agent session starts
     And the agent receives a trimmed account of the earlier conversation
 
