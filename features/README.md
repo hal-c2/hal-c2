@@ -63,6 +63,9 @@ Elixir node, native QML, and the TUI. Anything served by `apps/server`, `apps/we
   `@backlog`.
 - `@dropped` means we decided not to carry the behaviour. The scenario stays so the decision
   is visible and reviewable.
+- `@blocked` goes beside a backlog tag on work that cannot start yet. A comment above it
+  names what it waits for: a question the maintainers have to answer, or another scenario
+  that has to land first. Remove the tag once that is settled.
 
 Tags on a `Feature`, `Rule` or `Examples` table apply to everything under it.
 
@@ -74,6 +77,8 @@ which picks random backlog scenarios to work on. Low priority still comes up, ju
 It takes a count, `@tag`s to require, `-@tag`s to exclude, and files or globs under `features/`:
 `mise run features:pick 8 @node -@plugin-antigravity 'providers/**'`. Requiring a surface keeps
 only work still missing on it, so `@desktop` draws `@backlog` and `@backlog-desktop` scenarios.
+`@blocked` work is left out; `mise run features:pick 20 @blocked` lists it with what each
+scenario waits for.
 
 ## Writing rules
 

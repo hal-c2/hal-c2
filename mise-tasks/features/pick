@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #MISE description="Pick random backlog scenarios to work on, weighted by @priority-high and @priority-low"
 #MISE dir="{{config_root}}/features"
-#USAGE arg "[filter]" var=#true help="A count (default 1), @tag to require, -@tag to exclude, or a file, directory or glob under features/"
+#USAGE arg "[filter]" var=#true help="A count (default 1), @tag to require (@blocked to include blocked work), -@tag to exclude, or a file, directory or glob under features/"
 # A scenario is backlog work when it is @backlog, or @backlog-<surface> for a surface it has.
 # Asking for a surface (@node, @desktop, @mobile, @tui) keeps only work still missing there;
-# @shared counts as each client. A high-priority scenario is four times as likely as a low
-# one and twice a plain one, so low-priority work still comes up. Prints file:line, the
-# scenario, its tags and its steps.
+# @shared counts as each client. @blocked work is left out unless @blocked is asked for. A
+# high-priority scenario is four times as likely as a low one and twice a plain one, so
+# low-priority work still comes up. Prints file:line, the comment above the scenario, the
+# scenario, its tags, its steps and its tables.
 set -euo pipefail
 shopt -s globstar nullglob
 
@@ -28,32 +29,42 @@ done
 find "${paths[@]}" -name '*.feature' | sed 's|^\./||' | sort -u | xargs awk -v want="$want" -v skip="$skip" -v seed="$RANDOM" '
   BEGIN {
     srand(seed); n = split(want, wanted, " "); m = split(skip, skipped, " ")
-    for (i = 1; i <= n; i++) if (wanted[i] ~ /^@(node|desktop|mobile|tui)$/) surfaces = surfaces " " substr(wanted[i], 2)
+    for (i = 1; i <= n; i++) {
+      if (wanted[i] ~ /^@(node|desktop|mobile|tui)$/) surfaces = surfaces " " substr(wanted[i], 2)
+      if (wanted[i] == "@blocked") blocked_too = 1
+    }
   }
-  FNR == 1 { flush(); pending = feature = rule = scenario = steps = ""; in_steps = 0 }
+  FNR == 1 { flush(); pending = feature = rule = scenario = steps = note = feature_note = rule_note = ""; in_scenario = 0 }
+  # A comment belongs to what directly follows it, so a blank line ends it.
+  /^[[:space:]]*$/ { note = ""; next }
+  /^[[:space:]]*#/ { note = note "\037" trimmed(); next }
   /^[[:space:]]*@/ { line = $0; sub(/#.*/, "", line); pending = pending " " line; next }
-  /^[[:space:]]*Feature:/ { flush(); feature = pending; pending = ""; in_steps = 0; next }
-  /^[[:space:]]*Rule:/ { flush(); rule = pending; pending = ""; in_steps = 0; next }
+  # The "# Sources:" header is about the file, not about its scenarios.
+  /^[[:space:]]*Feature:/ { flush(); feature = pending; feature_note = note ~ /^\037# Sources:/ ? "" : note; pending = note = ""; in_scenario = 0; next }
+  /^[[:space:]]*Rule:/ { flush(); rule = pending; rule_note = note; pending = note = ""; in_scenario = 0; next }
   /^[[:space:]]*(Scenario|Scenario Outline|Example):/ {
     flush()
-    tags = feature " " rule " " pending " "; pending = ""
-    name = $0; sub(/^[[:space:]]*/, "", name)
-    scenario = tags; outline_name = name; steps = ""; in_steps = 1
-    if (backlogged(tags)) consider(tags, FILENAME ":" FNR, name)
-    next
+    tags = feature " " rule " " pending " "
+    scenario = tags; outline_name = trimmed(); steps = ""; in_scenario = 1; tables = 0
+    if (backlogged(tags)) consider(tags, FILENAME ":" FNR, outline_name)
+    pending = note = ""; next
   }
   # An outline that is not backlog work can still carry backlog Examples tables; each one
-  # is its own piece of work.
+  # is its own piece of work, printed with the steps of the outline.
   /^[[:space:]]*Examples:/ {
-    flush(); in_steps = 0
-    if (backlogged(" " pending " ") && !backlogged(scenario)) {
-      name = $0; sub(/^[[:space:]]*/, "", name)
-      consider(scenario pending " ", FILENAME ":" FNR, outline_name " / " name); flush()
+    if (!backlogged(scenario)) {
+      flush()
+      if (!tables++) outline_steps = steps
+      steps = outline_steps
+      if (backlogged(" " pending " ")) consider(scenario pending " ", FILENAME ":" FNR, outline_name " / " trimmed())
     }
-    pending = ""; next
+    steps = steps "\037" trimmed(); pending = note = ""; next
   }
-  in_steps && /^[[:space:]]*(Given|When|Then|And|But|\*) / { step = $0; sub(/^[[:space:]]*/, "", step); steps = steps "\037" step }
+  in_scenario && /^[[:space:]]*(Given|When|Then|And|But|\*) / { steps = steps "\037" trimmed() }
+  in_scenario && /^[[:space:]]*\|/ { steps = steps "\037  " trimmed() }
+  { note = "" }
   END { flush() }
+  function trimmed(   line) { line = $0; sub(/^[[:space:]]*/, "", line); return line }
   function backlogged(tags,   i, sv) {
     if (tags ~ / @backlog /) return 1
     if (surfaces == "") return tags ~ / @backlog-(node|desktop|mobile|tui) /
@@ -61,7 +72,7 @@ find "${paths[@]}" -name '*.feature' | sed 's|^\./||' | sort -u | xargs awk -v w
     return 0
   }
   function consider(tags, at, name,   i, t, w) {
-    if (tags ~ / @dropped /) return
+    if (tags ~ / @dropped / || (tags ~ / @blocked / && !blocked_too)) return
     for (i = 1; i <= n; i++) {
       t = wanted[i]
       if (index(tags, " " t " ") == 0 && !(t ~ /^@(desktop|mobile|tui)$/ && tags ~ / @shared /)) return
@@ -71,14 +82,18 @@ find "${paths[@]}" -name '*.feature' | sed 's|^\./||' | sort -u | xargs awk -v w
     gsub(/[[:space:]]+/, " ", tags); sub(/^ /, "", tags); sub(/ $/, "", tags)
     # Weighted sampling without replacement: the largest u^(1/w) keys win.
     held = sprintf("%.12f\tfeatures/%s\t%s\t%s", rand() ^ (1 / w), at, name, tags)
+    held_note = feature_note rule_note note
   }
-  # A candidate is printed once its steps have been read.
+  # A candidate is printed once its steps and tables have been read.
   function flush() {
-    if (held != "") print held "\t" steps
+    if (held != "") print held "\t" steps "\t" held_note
     held = ""
   }
 ' | sort -rn | awk -F'\t' -v count="$count" 'NR <= count {
-  printf "%s%s\n  %s\n  %s\n", (NR > 1 ? "\n" : ""), $2, $3, $4
+  printf "%s%s\n", (NR > 1 ? "\n" : ""), $2
+  n = split($6, notes, "\037")
+  for (i = 2; i <= n; i++) printf "  %s\n", notes[i]
+  printf "  %s\n  %s\n", $3, $4
   n = split($5, steps, "\037")
   for (i = 2; i <= n; i++) printf "    %s\n", steps[i]
 }'
