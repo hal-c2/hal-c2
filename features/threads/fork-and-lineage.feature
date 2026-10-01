@@ -58,10 +58,11 @@ Feature: Forking threads and merging work back
     Then Claude receives a transcript of the history ahead of the message
 
   @node
-  Scenario: A long history is trimmed from the oldest end
+  Scenario: A long history leaves out the message that does not fit
     Given "Plan billing" has more history than fits in a handoff
     When the user sends the first message in a fork on another agent
-    Then the newest part of the history is kept
+    Then the first request and the newest messages are kept whole
+    And the message that does not fit is left out
 
   @node
   Scenario: A fork outlives the thread it came from

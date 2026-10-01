@@ -38,4 +38,115 @@ defmodule HalC2.Orchestration.HandoffTest do
     assert [@header, "User:\n... " <> kept] = String.split(summary, "\n\n")
     assert kept == String.duplicate("x", String.length(kept))
   end
+
+  # Folds `{kind, entity}` pairs into a thread's state, one event each.
+  defp state(entities) do
+    entities
+    |> Enum.with_index(1)
+    |> Enum.reduce(HalC2.StreamState.new(), fn {{kind, entity}, seq}, state ->
+      HalC2.StreamState.apply_event(state, %{
+        seq: seq,
+        kind: kind,
+        entity: entity["id"],
+        patch: %{"s" => entity}
+      })
+    end)
+  end
+
+  # A finished run: its request, a command when given, and its answer.
+  defp turn(ordinal, request, answer, command \\ nil) do
+    run = "run-#{ordinal}"
+    at = fn step -> "2026-10-01T10:0#{ordinal}:0#{step}Z" end
+
+    message = fn role, text, step ->
+      {"message",
+       %{"id" => "#{role}-#{ordinal}", "runId" => run, "role" => role, "text" => text}
+       |> Map.put("createdAt", at.(step))}
+    end
+
+    [
+      {"run", %{"id" => run, "ordinal" => ordinal, "status" => "completed"}},
+      message.("user", request, 0),
+      command &&
+        {"turn-item",
+         Map.merge(
+           %{"id" => "command-#{ordinal}", "runId" => run, "type" => "command_execution"},
+           Map.put(command, "startedAt", at.(1))
+         )},
+      message.("assistant", answer, 2)
+    ]
+    |> Enum.filter(& &1)
+  end
+
+  test "a command is handed over between its request and the answer, with how it ended" do
+    command = %{
+      "input" => "mix test",
+      "status" => "failed",
+      "exitCode" => 2,
+      "output" => "1 failure\n"
+    }
+
+    running = %{"input" => "sleep 100", "status" => "running"}
+
+    state =
+      state(
+        turn(1, "run the tests", "one test fails", command) ++
+          [
+            {"turn-item",
+             %{"id" => "c", "runId" => "run-1", "type" => "command_execution"}
+             |> Map.merge(running)}
+          ]
+      )
+
+    assert Handoff.transcript(state, 2) ==
+             "User: run the tests\n\nCommand: mix test\nExit code: 2\n1 failure\n\nAssistant: one test fails"
+  end
+
+  test "long command output keeps its end" do
+    output = String.duplicate("a", 3_000) <> "\n3 tests, 0 failures"
+
+    command = %{
+      "input" => "mix test",
+      "status" => "completed",
+      "exitCode" => 0,
+      "output" => output
+    }
+
+    assert [_, "Command: mix test\nExit code: 0\n... " <> kept, _] =
+             state(turn(1, "run the tests", "all green", command))
+             |> Handoff.transcript(2)
+             |> String.split("\n\n")
+
+    assert String.length(kept) == 2_000
+    assert String.ends_with?(kept, "\n3 tests, 0 failures")
+  end
+
+  test "a transcript too long keeps the newest turn and the first request, and drops entries whole" do
+    long = String.duplicate("x", 40_000)
+
+    state =
+      state(
+        turn(1, "the original request", "first " <> long) ++
+          turn(2, "second request", "second " <> long) ++
+          turn(3, "newest request", "done", %{
+            "input" => "ls",
+            "status" => "completed",
+            "exitCode" => 0
+          })
+      )
+
+    assert Handoff.transcript(state, 4) ==
+             Enum.join(
+               [
+                 "[earlier messages omitted]",
+                 "User: the original request",
+                 "User: second request",
+                 "Assistant: second " <> long,
+                 "User: newest request",
+                 "Command: ls\nExit code: 0",
+                 "Assistant: done"
+               ],
+               "\n\n"
+             )
+  end
 end

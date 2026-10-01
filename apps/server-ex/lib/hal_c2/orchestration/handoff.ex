@@ -10,6 +10,13 @@ defmodule HalC2.Orchestration.Handoff do
   thread comes back to gets only the runs it missed. Work merged back from a fork
   arrives the same way, as a transcript prepared when it was merged.
 
+  A transcript is what was said and each command the agent ran with how it ended,
+  which is what tells the next agent what has been tried and verified. Reasoning,
+  other tool calls and attachments stay behind. One too long to hand over whole
+  keeps the newest request and answer, then the original request, then whatever
+  else fits from the newest back; anything left out is left out whole and stays
+  readable through `hal_c2_thread_read`.
+
   A thread migrated from the version 1 orchestrator (`HalC2.Import.V1Thread`) keeps
   its messages outside any run, so no transcript covers them. Until one of its runs
   completes, a run that starts a provider thread gets that conversation as imported
@@ -25,8 +32,11 @@ defmodule HalC2.Orchestration.Handoff do
 
   @native_forks ~w(codex claudeAgent pi opencode)
   @finished ~w(completed interrupted failed)
-  # Keeps a transcript well inside any provider's context; the newest part wins.
+  # Keeps a transcript well inside any provider's context.
   @max_chars 60_000
+  @omitted "[earlier messages omitted]"
+  # The end of a command's output is where it says how it went.
+  @max_output_chars 2_000
   @legacy_max_chars 32_000
   @legacy_header "Imported conversation history from the previous HAL-C2 orchestrator. Use it as context; do not repeat it unless the user asks."
 
@@ -323,8 +333,9 @@ defmodule HalC2.Orchestration.Handoff do
   end
 
   @doc """
-  The conversation of the runs before `ordinal` that finished, as `User:` and
-  `Assistant:` turns, trimmed from the start to fit; nil when there is none.
+  The conversation of the runs before `ordinal` that finished, as `User:`,
+  `Assistant:` and `Command:` entries in the order they happened, selected to fit
+  (see the module doc); nil when there is none.
   """
   def transcript(state, ordinal, after_ordinal \\ 0) do
     runs =
@@ -335,31 +346,83 @@ defmodule HalC2.Orchestration.Handoff do
       )
       |> Enum.sort_by(& &1["ordinal"])
 
-    # A run's user message comes before its replies, whatever their ids.
     messages =
-      state
-      |> StreamState.list("message")
-      |> Enum.sort_by(&{&1["createdAt"] || "", if(&1["role"] == "user", do: 0, else: 1)})
-      |> Enum.group_by(& &1["runId"])
-
-    lines =
-      for run <- runs,
-          message <- Map.get(messages, run["id"], []),
+      for message <- StreamState.list(state, "message"),
           text = String.trim(message["text"] || ""),
           text != "" do
-        "#{if message["role"] == "user", do: "User", else: "Assistant"}: #{text}"
+        role = if message["role"] == "user", do: :user, else: :assistant
+        label = if role == :user, do: "User", else: "Assistant"
+        {message["runId"], message["createdAt"] || "", role, "#{label}: #{text}"}
       end
 
-    case lines do
+    commands =
+      for %{"type" => "command_execution", "input" => input} = item <-
+            StreamState.list(state, "turn-item"),
+          is_binary(input) and item["status"] in ~w(completed failed),
+          do: {item["runId"], item["startedAt"] || "", :command, command(item)}
+
+    # A run's user message comes before what the agent did, whatever the timestamps,
+    # and a command before the answer that reports it.
+    order = %{user: 0, command: 1, assistant: 2}
+
+    entries =
+      (messages ++ commands)
+      |> Enum.sort_by(fn {_run, at, role, _text} -> {at, order[role]} end)
+      |> Enum.group_by(&elem(&1, 0), fn {_run, _at, role, text} -> {role, text} end)
+
+    case Enum.flat_map(runs, &Map.get(entries, &1["id"], [])) do
       [] -> nil
-      lines -> lines |> Enum.join("\n\n") |> tail()
+      entries -> fit(entries)
     end
   end
 
-  defp tail(text) do
-    if String.length(text) > @max_chars,
-      do: "[earlier messages omitted]\n\n" <> String.slice(text, -@max_chars, @max_chars),
-      else: text
+  defp command(item) do
+    output = String.trim(item["output"] || "")
+
+    output =
+      if String.length(output) > @max_output_chars,
+        do: "... " <> String.slice(output, -@max_output_chars, @max_output_chars),
+        else: output
+
+    [
+      "Command: #{item["input"]}",
+      is_integer(item["exitCode"]) && "Exit code: #{item["exitCode"]}",
+      output != "" && output
+    ]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.join("\n")
+  end
+
+  # Every entry when they fit; otherwise the selection of the module doc, in the
+  # order the entries happened, under a note that some were left out.
+  defp fit(entries) do
+    texts = Enum.map(entries, &elem(&1, 1))
+    whole = Enum.join(texts, "\n\n")
+
+    if String.length(whole) <= @max_chars do
+      whole
+    else
+      indexed = Enum.with_index(entries)
+      newest = Enum.reverse(indexed)
+      role = fn role -> &match?({{^role, _}, _}, &1) end
+
+      first =
+        [Enum.find(newest, role.(:user)), Enum.find(newest, role.(:assistant))] ++
+          [Enum.find(indexed, role.(:user))]
+
+      {kept, _left} =
+        (Enum.reject(first, &is_nil/1) ++ newest)
+        |> Enum.reduce({MapSet.new(), @max_chars}, fn {{_role, text}, index}, {kept, left} ->
+          cost = String.length(text) + 2
+
+          if MapSet.member?(kept, index) or cost > left,
+            do: {kept, left},
+            else: {MapSet.put(kept, index), left - cost}
+        end)
+
+      selected = for {{_role, text}, index} <- indexed, MapSet.member?(kept, index), do: text
+      Enum.join([@omitted | selected], "\n\n")
+    end
   end
 
   defp wrap(nil, "", nil, nil), do: nil

@@ -82,7 +82,7 @@ Feature: Carrying threads and context across servers and agents
     When the user switches "Alpha" to Claude and sends a message
     Then Claude receives the whole conversation ahead of the message
 
-  @backlog @node
+  @node
   Scenario: A long conversation keeps what matters most
     Given the thread "Alpha" has a conversation longer than the handoff budget
     When the user switches "Alpha" to Claude and sends a message
@@ -114,13 +114,20 @@ Feature: Carrying threads and context across servers and agents
       | 100000 | 64000 |
 
   @node
-  Scenario: Reasoning, tool state and attachments are not handed over
+  Scenario: Each command the agent ran is handed over with how it ended
     Given the thread "Alpha" has attachments and tool activity
     When the user switches "Alpha" to another agent
-    Then the new agent receives the conversation text only
+    Then the new agent receives each command with its exit code and output
+
+  @node
+  Scenario: Reasoning and attachments are not handed over
+    Given the thread "Alpha" has attachments and tool activity
+    When the user switches "Alpha" to another agent
+    Then the new agent receives only what was said and the commands that ran
 
   @node
   Scenario: A transcript handoff stays well inside the agent's context
     Given the thread "Alpha" has more than 60,000 characters of history
     When the user switches "Alpha" to another agent and sends a message
-    Then the agent receives the newest 60,000 characters of history
+    Then the agent receives at most 60,000 characters of history
+    And every message it receives is whole

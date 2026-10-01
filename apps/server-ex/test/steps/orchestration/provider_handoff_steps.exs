@@ -44,15 +44,22 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
 
   step "the conversation of {string} is longer than 60,000 characters",
        %{args: [thread]} = context do
-    context = World.add_run(context, thread, "completed", nil, %{"ordinal" => 3})
-    run = World.latest_run(context, thread)
     filler = String.duplicate("x", 35_000)
 
-    context
-    |> World.add_message(thread, "user", "oldest-start " <> filler, nil, %{"runId" => run["id"]})
-    |> World.add_message(thread, "assistant", filler <> " newest-end", nil, %{
-      "runId" => run["id"]
-    })
+    # Two long answers that cannot both be handed over.
+    for {ordinal, ask, answer} <- [
+          {3, "Try three", "oldest-start " <> filler},
+          {4, "Try four", filler <> " newest-end"}
+        ],
+        reduce: context do
+      context ->
+        context = World.add_run(context, thread, "completed", nil, %{"ordinal" => ordinal})
+        run = %{"runId" => World.latest_run(context, thread)["id"]}
+
+        context
+        |> World.add_message(thread, "user", ask, nil, run)
+        |> World.add_message(thread, "assistant", answer, nil, run)
+    end
   end
 
   step "the provider thread of {string} has no native conversation any more",
@@ -221,6 +228,10 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     assert String.length(history) <= 60_000
     assert transcript =~ "newest-end"
     refute transcript =~ "oldest-start"
+    # The requests around the answer left out are still there, the first one too.
+    for request <- ["repeat one", "Try three", "Try four"],
+        do: assert(transcript =~ "User: #{request}\n")
+
     context
   end
 
@@ -255,7 +266,8 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   step "the handoff carries only the turns since {string} last saw the thread",
        %{args: [provider]} = context do
     transcript = transcript(prompt(context))
-    assert transcript == "User: Carry on\n\nAssistant: Hello from claude"
+    # The fake Claude runs `ls` in its turn, as the fake Codex does.
+    assert transcript == "User: Carry on\n\nCommand: ls\na.txt\n\nAssistant: Hello from claude"
 
     run = World.latest_run(context, context.thread)
 

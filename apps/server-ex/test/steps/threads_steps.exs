@@ -1766,16 +1766,23 @@ defmodule HalC2.Steps.Threads do
     Map.merge(context, %{where: reply, fork_state: state})
   end
 
-  step "the newest part of the history is kept", context do
+  step "the first request and the newest messages are kept whole", context do
     assert context.where =~ "history True"
 
     assert [%{"summaryText" => "[earlier messages omitted]\n\n" <> kept}] =
              HalC2.StreamState.list(context.fork_state, "context-handoff")
 
-    assert String.length(kept) == 60_000
-    assert kept =~ ~r/User: newest work\n\nAssistant: [^\n]+\z/
-    refute kept =~ "User: oldest"
-    refute kept =~ "User: hello"
+    assert kept =~ ~r/\AUser: hello\n\n/
+
+    assert kept =~
+             ~r/User: newest work\n\n(Command: [^\n]+\n[^\n]+\n[^\n]+\n\n)?Assistant: [^\n]+\z/
+
+    Map.put(context, :kept, kept)
+  end
+
+  step "the message that does not fit is left out", context do
+    refute context.kept =~ "User: oldest"
+    assert String.length(context.kept) < 1_000
     context
   end
 
@@ -2913,19 +2920,59 @@ defmodule HalC2.Steps.Threads do
     switch_and_ask(context, title)
   end
 
-  step "the new agent receives the conversation text only", context do
+  step "the new agent receives each command with its exit code and output", context do
+    assert handed_history(context) =~
+             ~r/\AUser: check this screenshot\n\nCommand: ls\nExit code: 0\na\.txt\n\nAssistant: [^\n]+\z/
+
+    context
+  end
+
+  step "the new agent receives only what was said and the commands that ran", context do
     history = handed_history(context)
     assert history =~ "User: check this screenshot"
 
     for block <- String.split(history, "\n\n"),
         do:
           assert(
-            String.starts_with?(block, ["User: ", "Assistant: "]),
-            "not conversation text: #{block}"
+            String.starts_with?(block, ["User: ", "Assistant: ", "Command: "]),
+            "neither a message nor a command: #{block}"
           )
 
     refute history =~ "a.png"
-    refute history =~ "a.txt"
+    context
+  end
+
+  step "the thread {string} has a conversation longer than the handoff budget",
+       %{args: [title]} = context do
+    texts = for n <- 1..3, do: "part #{n} " <> String.duplicate("cart ", 5_000)
+
+    context
+    |> handoff_thread(title)
+    |> World.finished_turns(title, ["the original request"] ++ texts ++ ["the newest request"])
+  end
+
+  # Parts 2 and 3 fit beside the original request and the newest turn; part 1 does not.
+  # The fake Codex names its answer and its command the same in every turn, so only the
+  # newest turn has them.
+  step "Claude receives the original request, the recent turns and command outcomes", context do
+    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
+    assert String.length(kept) <= 60_000
+
+    assert ["User: the original request", "User: part 2 " <> _, "User: part 3 " <> _ | newest] =
+             String.split(kept, "\n\n")
+
+    assert ["User: the newest request", "Command: ls\nExit code: 0\na.txt", "Assistant: " <> _] =
+             newest
+
+    context
+  end
+
+  step "the new message is never shortened", context do
+    assert String.ends_with?(
+             List.last(World.claude_prompts(context)),
+             "</conversation_history>\n\nwhere are we"
+           )
+
     context
   end
 
@@ -2938,10 +2985,26 @@ defmodule HalC2.Steps.Threads do
     |> World.finished_turns(title, texts ++ ["the newest request"])
   end
 
-  step "the agent receives the newest 60,000 characters of history", context do
+  step "the agent receives at most 60,000 characters of history", context do
     assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
-    assert String.length(kept) == 60_000
-    assert kept =~ ~r/User: the newest request\n\nAssistant: [^\n]+\z/
+    assert String.length(kept) in 50_000..60_000
+
+    assert kept =~
+             ~r/User: the newest request\n\nCommand: ls\n[^\n]+\n[^\n]+\n\nAssistant: [^\n]+\z/
+
+    Map.put(context, :kept, kept)
+  end
+
+  # The first request and the newest long one, with the one between them left out.
+  step "every message it receives is whole", context do
+    requests = for "User: part " <> _ = block <- String.split(context.kept, "\n\n"), do: block
+
+    assert requests ==
+             for(
+               n <- [1, 3],
+               do: String.trim("User: part #{n} " <> String.duplicate("cart ", 5_000))
+             )
+
     context
   end
 
@@ -2954,12 +3017,14 @@ defmodule HalC2.Steps.Threads do
       |> World.finished_turns("Alpha", texts ++ ["the newest request"])
       |> switch_and_ask("Alpha")
 
+    # The first request and the newest two fit; the one between them does not.
     assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
-    refute kept =~ "part 1 "
-    Map.put(context, :left_out, hd(texts))
+    assert kept =~ "part 1 "
+    refute kept =~ "part 2 "
+    Map.put(context, :left_out, Enum.at(texts, 1))
   end
 
-  # Claude, now the thread's agent, reads the thread's first message with the node's tool.
+  # Claude, now the thread's agent, pages to the thread's second request with the node's tool.
   step "the agent needs one of the left-out parts", context do
     read =
       World.mcp_tool(
@@ -2968,6 +3033,7 @@ defmodule HalC2.Steps.Threads do
         "hal_c2_thread_read",
         %{
           "threadId" => World.thread_id(context, "Alpha"),
+          "afterPosition" => 1,
           "limit" => 1,
           "maxCharsPerItem" => String.length(context.left_out)
         },
