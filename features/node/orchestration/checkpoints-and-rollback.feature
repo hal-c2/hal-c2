@@ -209,7 +209,10 @@ Feature: Checkpoints, diffs and rewinding
     Then the command fails explaining the provider could not roll back
     And no run is marked rolled back
 
-  @node @backlog
+  # Dropped: a subagent works in its run's worktree, so the run's own checkpoint already
+  # holds its changes and a rewind already undoes them. Upstream never wrote a nested
+  # scope either: every scope it creates has no parent.
+  @dropped @node
   Scenario: Nested checkpoint scopes for subagent runs
     Given a run of "t1" delegated work to a subagent in the same worktree
     Then the subagent's work is captured in a nested checkpoint scope under the run
