@@ -781,7 +781,7 @@ const Steps steps([] {
   step(QStringLiteral("the instance %1( has a green accent)?").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(c[0] == QLatin1String("claudeAgent_work"), QStringLiteral("only claudeAgent_work is seeded, not %1").arg(c[0]));
     seedWork(world, QStringLiteral("Claude Work"));
-    if (c[1].isEmpty()) return;
+    if (c.value(1).isEmpty()) return;
     act(world, QStringLiteral("accent"), {{QStringLiteral("instanceId"), c[0]}, {QStringLiteral("color"), QStringLiteral("#22c55e")}});
     world.waitFor([&] { return savedInstance(world, c[0]).value(QLatin1String("accentColor")) == QLatin1String("#22c55e"); },
                   [&] { return QStringLiteral("the accent to be saved; the instance is %1").arg(show(savedInstance(world, c[0]).toVariantMap())); });
