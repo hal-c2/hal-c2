@@ -477,8 +477,8 @@ options, modes, images) in the controller, saved on this machine; a new
 thread's text is `DraftController`'s. It sends, queues, steers, stops,
 answers approvals and questions and implements the plan with node RPCs, and
 publishes the route thread's pending state as `turn` (see
-`ComposerController.h`), which the `TurnRequests` brick stacks above the
-`Composer`. A new thread's first send launches it
+`ComposerController.h`), which the `Composer` brick stacks above its prompt
+(`TurnRequests`), so a shell that hosts the composer needs nothing more to answer them. A new thread's first send launches it
 (`orchestration.launchThread` with the draft's checkout, model and modes) and
 the window replaces the draft with the thread; a background send leaves the
 draft for another prompt and toasts a way to open the thread, or to restore

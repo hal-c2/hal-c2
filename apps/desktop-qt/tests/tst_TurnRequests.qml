@@ -163,6 +163,45 @@ Item {
             compare(lastAction().payload.answers.database, "db");
         }
 
+        // The shape Claude's AskUserQuestion arrives in: several questions, each
+        // keyed by its own text.
+        function test_severalQuestionsAreAnsweredTogether() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            const ids = ["What should the prose say where it now says \"the node\" / \"two nodes\"?", "Which short form (tags, env vars, `mise` tasks)?", "How deep should the rename go?"];
+            Shell.publishTurn({
+                questions: [{
+                        requestId: "request-q",
+                        questions: ids.map((id, index) => ({
+                                    id: id,
+                                    header: "Question " + (index + 1),
+                                    question: id,
+                                    options: [
+                                        { label: "First " + index + " (Recommended)", description: "The first choice." },
+                                        { label: "Second " + index, description: "The second choice." }
+                                    ],
+                                    multiSelect: false
+                                })),
+                        canRespond: true,
+                        responding: false,
+                        problem: ""
+                    }]
+            });
+            waitForRendering(root);
+            verify(requests.visible, "the card shows");
+            const submit = findChild(requests, "questionSubmit");
+            verify(submit.mapToItem(root, 0, submit.height).y <= root.height, "the answer button is inside the window");
+            mouseClick(findChild(requests, "questionOption-First 0 (Recommended)"));
+            mouseClick(findChild(requests, "questionOption-Second 1"));
+            verify(!submit.enabled, "one question is still open");
+            mouseClick(findChild(requests, "questionOption-First 2 (Recommended)"));
+            verify(submit.enabled);
+            mouseClick(submit);
+            compare(lastAction().action, "composer.question.answer");
+            compare(lastAction().payload.answers[ids[0]], "First 0 (Recommended)");
+            compare(lastAction().payload.answers[ids[1]], "Second 1");
+            compare(lastAction().payload.answers[ids[2]], "First 2 (Recommended)");
+        }
+
         function test_questionCanBeDismissed() {
             const requests = createTemporaryObject(requestsComponent, root);
             Shell.publishTurn({ questions: [question(false)] });

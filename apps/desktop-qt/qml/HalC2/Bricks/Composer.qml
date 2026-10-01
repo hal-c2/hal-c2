@@ -71,7 +71,7 @@ Rectangle {
     property int nextEditRevision: 0
     property int lastSentRevision: 0
 
-    implicitHeight: stack.implicitHeight + gutter
+    implicitHeight: turnRequests.implicitHeight + stack.implicitHeight + gutter
     color: canvas
 
     // The model-picker and toolbar keybindings land here while this
@@ -290,10 +290,21 @@ Rectangle {
         onTriggered: composer.flushText()
     }
 
+    // What the turn waits on from the user sits on the prompt, so every shell
+    // that hosts the composer can answer it.
+    TurnRequests {
+        id: turnRequests
+
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: implicitHeight
+    }
+
     ColumnLayout {
         id: stack
 
-        anchors.top: parent.top
+        anchors.top: turnRequests.bottom
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width - composer.gutter * 2, composer.maximumCardWidth)
         spacing: 0
