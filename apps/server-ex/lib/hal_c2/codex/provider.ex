@@ -185,21 +185,27 @@ defmodule HalC2.Codex.Provider do
     end
   end
 
-  defp command, do: Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
+  defp command,
+    do:
+      HalC2.Settings.instance_command(
+        "codex",
+        Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
+      )
 
+  # Read once per executable: a changed binary path reads the new one.
   defp version(path) do
     case :persistent_term.get({__MODULE__, :version}, nil) do
-      nil ->
+      {^path, version} ->
+        version
+
+      _ ->
         version =
           case System.cmd(path, ["--version"], stderr_to_stdout: true) do
             {out, 0} -> out |> String.split() |> List.last() |> Kernel.||("unknown")
             _ -> "unknown"
           end
 
-        :persistent_term.put({__MODULE__, :version}, version)
-        version
-
-      version ->
+        :persistent_term.put({__MODULE__, :version}, {path, version})
         version
     end
   rescue

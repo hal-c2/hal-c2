@@ -108,6 +108,30 @@ defmodule HalC2.SettingsTest do
     assert Settings.instance_setting(nil, "launchArgs") == nil
   end
 
+  test "an instance's binary path replaces the executable of its command" do
+    assert {:ok, 1} =
+             Settings.put(
+               %{
+                 "providers" => %{"codex" => %{"binaryPath" => " /opt/codex/bin/codex "}},
+                 "providerInstances" => %{
+                   "codex_work" => %{
+                     "driver" => "codex",
+                     "config" => %{"binaryPath" => "~/bin/codex"}
+                   }
+                 }
+               },
+               0
+             )
+
+    assert Settings.instance_command("codex", ["codex", "app-server"]) ==
+             ["/opt/codex/bin/codex", "app-server"]
+
+    assert Settings.instance_command("codex_work", ["codex", "app-server"]) ==
+             [Path.join(HalC2.Paths.user_home(), "bin/codex"), "app-server"]
+
+    assert Settings.instance_command("claudeAgent", ["claude"]) == ["claude"]
+  end
+
   describe "sensitive provider variables" do
     defp instance(variables),
       do: %{

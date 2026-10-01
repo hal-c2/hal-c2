@@ -98,6 +98,27 @@ defmodule HalC2.Settings do
     )
   end
 
+  @doc """
+  The command that runs provider instance `instance`: `default`, with the instance's
+  `binaryPath` setting in place of its executable when it has one. A path the user wrote
+  as `~/bin/codex` names their home directory, as a shell would.
+  """
+  def instance_command(instance, [_executable | args] = default) do
+    case instance_setting(instance, "binaryPath") do
+      nil ->
+        default
+
+      path ->
+        case String.trim(path) do
+          "~" -> [HalC2.Paths.user_home() | args]
+          "~/" <> rest -> [Path.join(HalC2.Paths.user_home(), rest) | args]
+          path -> [path | args]
+        end
+    end
+  end
+
+  def instance_command(_instance, default), do: default
+
   @doc "`{settings, version}`."
   def get do
     :ets.lookup_element(__MODULE__, :settings, 2)

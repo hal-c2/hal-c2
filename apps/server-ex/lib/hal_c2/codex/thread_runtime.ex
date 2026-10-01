@@ -511,8 +511,10 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     # The instance's launch arguments follow `app-server`, split as a shell would.
     cmd =
-      Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"]) ++
-        OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")
+      HalC2.Settings.instance_command(
+        instance,
+        Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
+      ) ++ OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex.
     env = if instance, do: Enum.to_list(HalC2.Settings.instance_env(instance)), else: []

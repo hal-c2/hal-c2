@@ -1,7 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/internals/providers.md (route by instance, unknown drivers keep their configuration)
-#   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?)
+#   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?, instance_command/2 binaryPath of Codex and Claude)
 #   apps/server-ex/lib/hal_c2/provider_secrets.ex (sensitive variables in the secret store)
 #   apps/server-ex/lib/hal_c2/acp.ex (instance environment, built-ins off until enabled, binary/3 binaryPath)
 #   apps/server-ex/lib/hal_c2/background_policy.ex (providerHealthRefreshInterval)
@@ -201,9 +201,6 @@ Feature: Provider instances
       | Grok     | ~/bin/grok       |
       | OpenCode | ~/bin/opencode   |
 
-  # apps/server-ex starts Codex and Claude from fixed commands in its own configuration
-  # (codex_command, claude_command) and ignores their binaryPath setting.
-  @backlog
   Scenario Outline: Codex and Claude run from a custom binary path
     Given the <provider> instance has the binary path "<path>"
     When a thread runs on that instance

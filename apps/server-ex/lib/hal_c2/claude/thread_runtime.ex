@@ -590,7 +590,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # The version `claude --version` reports here, as the turn would run it.
   defp claude_version(turn) do
-    [command | args] = Application.get_env(:hal_c2, :claude_command) || ["claude"]
+    [command | args] = command(turn)
     env = Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids)))
 
     case System.cmd(command, args ++ ["--version"], env: env, stderr_to_stdout: true) do
@@ -665,13 +665,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       log: state.thread_id
     ]
 
-    opts =
-      case Application.get_env(:hal_c2, :claude_command) do
-        nil -> opts
-        command -> Keyword.put(opts, :command, command)
-      end
-
-    case Session.start_link(opts) do
+    case Session.start_link(Keyword.put(opts, :command, command(turn))) do
       {:ok, session} ->
         {:ok,
          %{state | session: session, permission_mode: permission_mode(turn), launch: turn.launch}}
@@ -680,6 +674,14 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:error, reason}
     end
   end
+
+  # The `claude` the turn's instance runs: its binary path in settings, else the one on PATH.
+  defp command(turn),
+    do:
+      HalC2.Settings.instance_command(
+        Entities.instance(turn.ids),
+        Application.get_env(:hal_c2, :claude_command) || ["claude"]
+      )
 
   # A fork's first turn resumes the source session at the fork point, as a new session.
   defp fork_or(%{fork: %{} = fork}, key, _default), do: Map.fetch!(fork, key)
