@@ -10,8 +10,9 @@ defmodule HalC2.Orchestration.Handoff do
   thread comes back to gets only the runs it missed. Work merged back from a fork
   arrives the same way, as a transcript prepared when it was merged.
 
-  A transcript is what was said and each command the agent ran with how it ended,
-  which is what tells the next agent what has been tried and verified. Reasoning,
+  A transcript is what was said and each command the agent ran with how it ended
+  (one cut short by an interrupt says so), which is what tells the next agent what
+  has been tried and verified. Reasoning,
   other tool calls and attachments stay behind. One too long to hand over whole
   keeps the newest request and answer, then the original request, then whatever
   else fits from the newest back; anything left out is left out whole and stays
@@ -358,7 +359,7 @@ defmodule HalC2.Orchestration.Handoff do
     commands =
       for %{"type" => "command_execution", "input" => input} = item <-
             StreamState.list(state, "turn-item"),
-          is_binary(input) and item["status"] in ~w(completed failed),
+          is_binary(input) and item["status"] in ~w(completed failed interrupted),
           do: {item["runId"], item["startedAt"] || "", :command, command(item)}
 
     # A run's user message comes before what the agent did, whatever the timestamps,
@@ -384,11 +385,14 @@ defmodule HalC2.Orchestration.Handoff do
         do: "... " <> String.slice(output, -@max_output_chars, @max_output_chars),
         else: output
 
-    [
-      "Command: #{item["input"]}",
-      is_integer(item["exitCode"]) && "Exit code: #{item["exitCode"]}",
-      output != "" && output
-    ]
+    ended =
+      cond do
+        is_integer(item["exitCode"]) -> "Exit code: #{item["exitCode"]}"
+        item["status"] == "interrupted" -> "Interrupted before it finished"
+        true -> nil
+      end
+
+    ["Command: #{item["input"]}", ended, output != "" && output]
     |> Enum.filter(&is_binary/1)
     |> Enum.join("\n")
   end
@@ -412,7 +416,9 @@ defmodule HalC2.Orchestration.Handoff do
 
       {kept, _left} =
         (Enum.reject(first, &is_nil/1) ++ newest)
-        |> Enum.reduce({MapSet.new(), @max_chars}, fn {{_role, text}, index}, {kept, left} ->
+        |> Enum.reduce({MapSet.new(), @max_chars - String.length(@omitted)}, fn {{_role, text},
+                                                                                 index},
+                                                                                {kept, left} ->
           cost = String.length(text) + 2
 
           if MapSet.member?(kept, index) or cost > left,

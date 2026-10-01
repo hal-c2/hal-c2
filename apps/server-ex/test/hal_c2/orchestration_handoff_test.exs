@@ -102,6 +102,22 @@ defmodule HalC2.Orchestration.HandoffTest do
              "User: run the tests\n\nCommand: mix test\nExit code: 2\n1 failure\n\nAssistant: one test fails"
   end
 
+  test "a command cut short by an interrupt is handed over as interrupted" do
+    command = %{"input" => "mix test", "status" => "interrupted", "output" => "Compiling\n"}
+
+    state =
+      state(turn(1, "run the tests", "", command))
+      |> HalC2.StreamState.apply_event(%{
+        seq: 100,
+        kind: "run",
+        entity: "run-1",
+        patch: %{"s" => %{"id" => "run-1", "ordinal" => 1, "status" => "interrupted"}}
+      })
+
+    assert Handoff.transcript(state, 2) ==
+             "User: run the tests\n\nCommand: mix test\nInterrupted before it finished\nCompiling"
+  end
+
   test "long command output keeps its end" do
     output = String.duplicate("a", 3_000) <> "\n3 tests, 0 failures"
 
@@ -148,5 +164,17 @@ defmodule HalC2.Orchestration.HandoffTest do
                ],
                "\n\n"
              )
+  end
+
+  test "the note that messages were left out counts against the budget" do
+    # The two requests and the newest answer are 60,000 characters with what joins them,
+    # so they no longer fit once the note is counted.
+    fixed = String.length("User: first" <> "User: second" <> "Assistant: ") + 3 * 2
+    answer = String.duplicate("y", 60_000 - fixed)
+
+    state = state(turn(1, "first", String.duplicate("x", 100)) ++ turn(2, "second", answer))
+
+    assert "[earlier messages omitted]\n\n" <> _ = transcript = Handoff.transcript(state, 3)
+    assert String.length(transcript) <= 60_000
   end
 end
