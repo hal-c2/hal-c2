@@ -90,7 +90,7 @@ Feature: Tool calls and file changes
       | called an MCP tool | wrench         |
       | asked for approval | message-circle |
 
-  @node @shared @backlog
+  @node @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: An ACP agent's read, search and fetch tools keep their meaning
     Given an ACP agent's tool call is of kind "<provider kind>"
     When the node projects the call

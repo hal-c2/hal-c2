@@ -1362,12 +1362,27 @@ defmodule HalC2.Acp.ThreadRuntime do
       kind when kind in ["edit", "delete", "move"] ->
         {:file, %{"fileName" => path || call["title"] || "file"}}
 
+      # A read names its file; a search names what it looked for. Their output stays
+      # out of the timeline: a file's whole text is too much to send to every client.
+      "read" ->
+        {:search, file_search(path, path)}
+
+      "search" ->
+        {:search, file_search(input["pattern"] || input["query"] || path, path)}
+
       "fetch" ->
         {:web, %{"patterns" => Enum.filter([input["url"], input["query"]], &is_binary/1)}}
 
       _ ->
         {:tool, %{"toolName" => call["title"] || call["kind"] || "tool", "input" => input}}
     end
+  end
+
+  defp file_search(pattern, path) do
+    Map.reject(
+      %{"pattern" => pattern, "results" => path && [%{"fileName" => path}]},
+      fn {_key, value} -> not (is_binary(value) or is_list(value)) end
+    )
   end
 
   defp command_text(%{"command" => command}, _title) when is_binary(command), do: command
