@@ -34,6 +34,14 @@ defmodule HalC2.ProviderCompatibilityTest do
     refute Compatibility.satisfies?("1.0.0", "")
   end
 
+  test "a space after an operator and build metadata on a version are read through" do
+    assert Compatibility.satisfies?("1.14.19", ">= 1.14.19")
+    refute Compatibility.satisfies?("3.0.0", ">= 2 < 3")
+    assert Compatibility.satisfies?("3.0.0", ">= 2 < 3 || = 3")
+    assert Compatibility.satisfies?("1.14.19+build.5", ">=1.14.19")
+    assert Compatibility.satisfies?("1.15.0-beta.1+sha.abc", ">=1.14.19")
+  end
+
   test "the first range a stable version is in decides its status" do
     for {version, status} <- [
           {"1.14.18", "broken"},

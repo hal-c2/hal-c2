@@ -83,7 +83,8 @@ defmodule HalC2.ProviderCompatibility do
         range
         |> String.split("||")
         |> Enum.any?(fn group ->
-          comparators = String.split(group)
+          # ">= 1.2" is one comparator, as ">=1.2" is.
+          comparators = String.split(Regex.replace(~r/(\^|>=|>|<=|<|=)\s+/, group, "\\1"))
           comparators != [] and Enum.all?(comparators, &matches?(version, &1))
         end)
     end
@@ -113,9 +114,13 @@ defmodule HalC2.ProviderCompatibility do
   defp caret?([0, minor | _], [0, target | _]) when target > 0, do: minor == target
   defp caret?(version, target), do: version == target
 
-  # `[major, minor, patch]`, which compare in order; a prerelease suffix is ignored.
+  # `[major, minor, patch]`, which compare in order; a prerelease suffix and build
+  # metadata are ignored.
   defp triple(text) do
-    case Regex.run(~r/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?$/, String.trim(text)) do
+    case Regex.run(
+           ~r/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/,
+           String.trim(text)
+         ) do
       [_ | parts] ->
         Enum.map(parts, &String.to_integer/1) ++ List.duplicate(0, 3 - length(parts))
 
