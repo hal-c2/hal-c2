@@ -163,9 +163,9 @@ private:
       ++m_index;
       if (++nots > kMaxWhenDepth) return nullptr;
     }
-    WhenPtr mc = parsePrimary(depth);
-    for (; mc && nots > 0; --nots) mc = std::make_shared<When>(When{When::Kind::Not, {}, mc, {}});
-    return mc;
+    WhenPtr node = parsePrimary(depth);
+    for (; node && nots > 0; --nots) node = std::make_shared<When>(When{When::Kind::Not, {}, node, {}});
+    return node;
   }
 
   WhenPtr parseBinary(int depth, Token op, When::Kind kind) {

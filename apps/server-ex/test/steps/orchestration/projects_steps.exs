@@ -291,7 +291,7 @@ defmodule HalC2.Steps.Orchestration.Projects do
 
     source = Path.join(Mc.tmp_dir(context.mc, "mc-log"), "state.sqlite")
 
-    World.mc_log(source, [
+    World.node_log(source, [
       {"project", "imported", "project.created", payload, 1_577_836_800_000}
     ])
 

@@ -1,7 +1,7 @@
 defmodule HalC2.Steps.Orchestration.Migration do
   @moduledoc """
   Steps for `features/mc/orchestration/migration.feature`. The snapshot is a
-  Node server database holding `orchestration_events` (`World.mc_log/2`), built
+  Node server database holding `orchestration_events` (`World.node_log/2`), built
   from `context.snapshot` (oldest first) when the operator imports it. The operator
   runs `mix hal_c2.import` (`Mix.Tasks.HalC2.Import`) while the MC is stopped, and the
   MC starts on the result.
@@ -253,7 +253,7 @@ defmodule HalC2.Steps.Orchestration.Migration do
   step "an MC starts next to a Node server's database", context do
     source = Path.join([context.mc.home, "userdata", "state.sqlite"])
     File.mkdir_p!(Path.dirname(source))
-    World.mc_log(source, context.snapshot)
+    World.node_log(source, context.snapshot)
     %{context | mc: Mc.restart(context.mc), clients: %{}} |> Map.put(:source, source)
   end
 
@@ -493,7 +493,7 @@ defmodule HalC2.Steps.Orchestration.Migration do
 
   defp snapshot(context) do
     path = Path.join(Mc.tmp_dir(context.mc, "mc-server"), "state.sqlite")
-    World.mc_log(path, context.snapshot)
+    World.node_log(path, context.snapshot)
     Enum.each(context[:v1_streams] || [], &version_1(path, &1))
     path
   end

@@ -56,8 +56,8 @@ Item {
     }
 
     function isInside(item) {
-        for (let mc = item; mc !== null; mc = mc.parent) {
-            if (mc === drawer) return true;
+        for (let node = item; node !== null; node = node.parent) {
+            if (node === drawer) return true;
         }
         return false;
     }

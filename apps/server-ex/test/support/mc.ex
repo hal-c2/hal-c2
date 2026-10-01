@@ -3199,7 +3199,7 @@ defmodule HalC2.Test.Mc.World do
   `HalC2.Import.V2` reads it. Each event is `{aggregate, stream, type, payload, at_ms}`;
   thread events are V2 (`application_event_version` 2), project events carry none.
   """
-  def mc_log(path, events) do
+  def node_log(path, events) do
     alias Exqlite.Sqlite3
     {:ok, db} = Sqlite3.open(path)
 
