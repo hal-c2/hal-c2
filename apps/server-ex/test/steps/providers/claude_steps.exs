@@ -471,6 +471,50 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "Claude asks the user a question", context do
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "question first", %{
+        "interactionMode" => context.interaction_mode
+      })
+
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the question is shown", context do
+    assert %{"kind" => "user_input"} = context.request
+
+    assert [%{"status" => "waiting", "questions" => [question]}] =
+             for(
+               i <- StreamState.list(World.stream(context, @thread), "turn-item"),
+               i["type"] == "user_input_request",
+               do: i
+             )
+
+    Map.put(context, :question, question)
+  end
+
+  # Claude plans from the answer, so there is no plan while the question waits.
+  step "the plan stays pending until the user answers", context do
+    assert [%{"status" => "running"}] = World.runs(context, @thread)
+    assert StreamState.list(World.stream(context, @thread), "plan") == []
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "answers" => %{context.question["id"] => "Red"}
+      })
+
+    state = World.await_runs(context, @thread, ["completed"])
+
+    assert [%{"kind" => "proposed_plan", "status" => "active", "markdown" => markdown}] =
+             StreamState.list(state, "plan")
+
+    assert markdown =~ "paint it Red"
+    context
+  end
+
   step "Claude asks the user a multiple choice question", context do
     context =
       context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "ask me")

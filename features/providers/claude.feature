@@ -208,7 +208,6 @@ Feature: Claude
     Then Claude continues from the compacted conversation
     And the context meter keeps the usage Claude reported after compaction
 
-  @backlog
   Scenario: Claude can ask a question while planning
     Given the thread is in plan mode on Claude
     When Claude asks the user a question
