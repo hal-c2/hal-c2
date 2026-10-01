@@ -195,6 +195,15 @@ Feature: Checkpoints, diffs and rewinding
     And "t1" is not left waiting
     And the checkpoint of run 1 is still the last valid checkpoint
 
+  # The provider is asked to drop the later turns before the files are restored, so a
+  # failed restore leaves it a turn behind what the thread still shows.
+  @node @backlog
+  Scenario: A rewind whose restore fails leaves the provider's conversation whole
+    Given runs 1 and 2 of "t1" completed with checkpoints
+    When the user rewinds "t1" to run 1 and restoring the files fails
+    Then the provider still holds the conversation through run 2
+    And the next message to "t1" continues after run 2
+
   @node @backlog
   Scenario: Editing from a message after a stopped run starts from that message
     Given run 2 of "t1" was stopped by the user after an assistant message

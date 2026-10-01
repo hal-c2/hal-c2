@@ -121,6 +121,17 @@ Feature: Codex
     When the user sends a message to a Codex thread
     Then the turn fails saying the launch arguments have a quote that is never closed
 
+  @backlog
+  Scenario Outline: Codex launch arguments apply wherever Codex is started
+    Given the Codex instance has launch arguments configured
+    When <occasion>
+    Then Codex is started with those arguments
+
+    Examples:
+      | occasion                                  |
+      | the node checks Codex's version           |
+      | Codex writes a title for a new thread     |
+
   Scenario: Reverting a Codex turn rolls Codex back too
     Given a Codex thread with three turns
     When the user reverts to the end of the first turn

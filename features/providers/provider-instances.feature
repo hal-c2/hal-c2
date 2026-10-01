@@ -211,3 +211,27 @@ Feature: Provider instances
       | provider | path                    |
       | Codex    | /opt/codex/bin/codex    |
       | Claude   | /opt/claude/bin/claude  |
+
+  @backlog
+  Scenario Outline: A binary path with nothing at it lists the provider as not installed
+    Given the <provider> instance has a binary path where nothing is installed
+    When a client lists the providers
+    Then <provider> is listed as not installed
+    And its configured binary path is kept
+
+    Examples:
+      | provider |
+      | Codex    |
+      | Claude   |
+
+  @backlog
+  Scenario Outline: A second instance's checks read its own binary path
+    Given a second <provider> instance "<instance>" with the binary path "<path>"
+    When the node checks the version, update and usage of "<instance>"
+    Then each check runs "<path>"
+    And none runs the default instance's executable
+
+    Examples:
+      | provider | instance    | path                        |
+      | Codex    | codex_work  | /opt/codex-work/bin/codex   |
+      | Claude   | claude_work | /opt/claude-work/bin/claude |

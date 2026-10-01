@@ -244,6 +244,14 @@ Feature: ACP registry agents
     When the user switches the thread to plan mode
     Then "acme" runs in its plan mode
 
+  # The mode to go back to is only held by the running agent's runtime.
+  @backlog
+  Scenario: Leaving plan mode after the agent restarted returns it to its build mode
+    Given "acme" has its own plan mode and the thread is in plan mode
+    And the runtime of "acme" restarted
+    When the user switches the thread out of plan mode
+    Then "acme" runs in the mode it had before plan mode
+
   Scenario: Images and audio the client cannot render show as placeholders
     When "acme" returns an image resource in its answer
     Then the answer shows a placeholder for the image instead of dropping it
