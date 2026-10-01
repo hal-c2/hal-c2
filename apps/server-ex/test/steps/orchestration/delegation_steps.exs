@@ -170,6 +170,54 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # Each task's child thread goes by the task's name. A result message quotes the
+  # task's title, and the fake Codex plays the caller's wake turn from it: "where
+  # are we" answers and ends the turn.
+  step "the agent in {string} delegated tasks {string}, {string} and {string} without waiting",
+       %{args: [caller | names]} = context do
+    Enum.reduce(names, context, fn name, context ->
+      context =
+        delegate(context, caller, %{"mode" => "async", "title" => "where are we with #{name}"})
+
+      context
+      |> put_in([:threads, name], context.threads["subagent"])
+      |> put_in([Access.key(:named_tasks, %{}), name], context.task_id)
+    end)
+  end
+
+  step "{string} was woken for the completion of {string}", %{args: [parent, name]} = context do
+    context = complete_named(context, name)
+    # The caller's own turn ends, and the result runs as its next turn.
+    World.send_turn(context, parent, "say Carrying on")
+    [wake] = await_wakes(context, parent, [name])
+    Map.put(context, :first_wake, wake)
+  end
+
+  step "{string} and {string} complete afterwards", %{args: [first, second]} = context do
+    context |> complete_named(first) |> complete_named(second) |> Map.put(:later, [first, second])
+  end
+
+  step "{string} is woken again for them", %{args: [parent]} = context do
+    wakes = await_wakes(context, parent, context.later)
+    assert Enum.all?(wakes, &(&1["ordinal"] > context.first_wake["ordinal"]))
+    Map.put(context, :later_wakes, wakes)
+  end
+
+  # Each result is delivered once; two that land together may ride one turn.
+  step "completions that arrive together may share one wake turn", context do
+    assert length(Enum.uniq_by(context.later_wakes, & &1["id"])) in 1..2
+
+    for name <- context.later do
+      assert [_] =
+               Enum.filter(
+                 messages(context, "parent"),
+                 &(&1["text"] =~ ~s(taskId="#{context.named_tasks[name]}"))
+               )
+    end
+
+    context
+  end
+
   # --- the subagent ----------------------------------------------------------------
 
   step "the subagent completes with {string}", %{args: [answer]} = context do
@@ -629,6 +677,36 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     World.send_turn(context, "subagent", "say " <> answer)
     await_task(context, &(&1["status"] == "completed"))
     context
+  end
+
+  # Steers the working child of the task called `name` to its answer.
+  defp complete_named(context, name) do
+    task_id = context.named_tasks[name]
+    World.await_runs(context, name, ["running"])
+    World.send_turn(context, name, "say #{name} done")
+
+    World.await_state(context, context.task_parent, fn state ->
+      StreamState.get(state, "subagent")[task_id]["status"] == "completed"
+    end)
+
+    context
+  end
+
+  # The parent's finished runs that delivered the results of the tasks `names`, in that order.
+  defp await_wakes(context, parent, names) do
+    wakes = fn state ->
+      messages = StreamState.get(state, "message")
+
+      for name <- names do
+        Enum.find(StreamState.list(state, "run"), fn run ->
+          run["status"] == "completed" and
+            (get_in(messages, [run["userMessageId"], "text"]) || "") =~
+              ~s(taskId="#{context.named_tasks[name]}")
+        end)
+      end
+    end
+
+    context |> World.await_state(parent, &Enum.all?(wakes.(&1))) |> wakes.()
   end
 
   defp messages(context, thread) do
