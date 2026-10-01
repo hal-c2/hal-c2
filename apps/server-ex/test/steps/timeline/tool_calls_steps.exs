@@ -93,6 +93,48 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     |> FakeAcp.thread("Agent work")
   end
 
+  # The announcement has nothing but the kind, with the input as text for a search
+  # (an agent may send that); the input comes with a later update.
+  step ~r/^an ACP agent announces a call of kind "(?<kind>read|search)" and names its input (?<at>while it runs|when it finishes)$/,
+       %{args: [kind, at]} = context do
+    named = Map.delete(Map.fetch!(@acp_calls, kind), "title")
+    update = %{"sessionUpdate" => "tool_call_update", "toolCallId" => "call-1"}
+    announced = if kind == "search", do: %{"rawInput" => ""}, else: %{}
+
+    updates =
+      case at do
+        "while it runs" ->
+          [
+            Map.merge(update, Map.put(named, "status", "in_progress")),
+            Map.put(update, "status", "completed")
+          ]
+
+        "when it finishes" ->
+          [Map.merge(update, Map.put(named, "status", "completed"))]
+      end
+
+    turn = %{
+      "match" => "use the tool",
+      "steps" =>
+        [
+          %{
+            "update" =>
+              Map.merge(announced, %{
+                "sessionUpdate" => "tool_call",
+                "toolCallId" => "call-1",
+                "kind" => kind,
+                "title" => kind,
+                "status" => "pending"
+              })
+          }
+        ] ++ Enum.map(updates, &%{"update" => &1}) ++ [%{"text" => "Done."}]
+    }
+
+    context
+    |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+    |> FakeAcp.thread("Agent work")
+  end
+
   step "the node projects the call", context do
     context = FakeAcp.send_message(context, "use the tool")
     state = FakeAcp.await_run(context, "completed")

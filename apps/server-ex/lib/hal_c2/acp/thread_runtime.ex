@@ -896,6 +896,12 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp update(%{"sessionUpdate" => "agent_thought_chunk"} = u, state),
     do: chunk(state, u, :reasoning)
 
+  # The protocol lets an agent send any JSON as a tool's raw input. Only a map names a
+  # command, a pattern or an address, so anything else is left out.
+  defp update(%{"sessionUpdate" => s, "rawInput" => input} = call, state)
+       when s in ["tool_call", "tool_call_update"] and not is_map(input),
+       do: update(Map.delete(call, "rawInput"), state)
+
   defp update(%{"sessionUpdate" => s, "toolCallId" => id} = call, state)
        when s in ["tool_call", "tool_call_update"] and is_map_key(state.subagents, id),
        do: subagent_call(state, id, call)
@@ -1006,7 +1012,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         state |> killed(id, call) |> finish_tool(id, call)
 
       true ->
-        running_command(state, id, call)
+        state |> running_command(id, call) |> running_search(id, call)
     end
   end
 
@@ -1023,6 +1029,21 @@ defmodule HalC2.Acp.ThreadRuntime do
          true <- fields != %{} do
       commit(state, fn stream ->
         [Orchestration.upsert(stream, "turn-item", item_id, &Map.merge(&1, fields))]
+      end)
+
+      %{state | items: Map.put(state.items, id, Map.merge(item, fields))}
+    else
+      _ -> state
+    end
+  end
+
+  # A read or search announced before its input says what it looked for once it runs.
+  defp running_search(state, id, call) do
+    with %{kind: :search, id: item_id} = item <- state.items[id],
+         fields = Map.drop(search_fields(call), Map.keys(item)),
+         true <- fields != %{} do
+      commit(state, fn stream ->
+        [Orchestration.upsert(stream, "turn-item", item_id, &Map.merge(fields, &1))]
       end)
 
       %{state | items: Map.put(state.items, id, Map.merge(item, fields))}
@@ -1416,7 +1437,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:search, file_search(path, path)}
 
       "search" ->
-        {:search, file_search(input["pattern"] || input["query"] || path, path)}
+        {:search, search_fields(call)}
 
       "fetch" ->
         {:web, %{"patterns" => Enum.filter([input["url"], input["query"]], &is_binary/1)}}
@@ -1424,6 +1445,13 @@ defmodule HalC2.Acp.ThreadRuntime do
       _ ->
         {:tool, %{"toolName" => call["title"] || call["kind"] || "tool", "input" => input}}
     end
+  end
+
+  # What a search or read looked for, from whatever the call says so far.
+  defp search_fields(call) do
+    input = call["rawInput"] || %{}
+    path = get_in(call, ["locations", Access.at(0), "path"])
+    file_search(input["pattern"] || input["query"] || path, path)
   end
 
   defp file_search(pattern, path) do
@@ -1461,6 +1489,10 @@ defmodule HalC2.Acp.ThreadRuntime do
           entity
           |> Map.put("output", output || "")
           |> then(&if(call["rawInput"], do: Map.put(&1, "input", call["rawInput"]), else: &1))
+
+        # What the call named when it was announced stays; the end fills in the rest.
+        :search ->
+          Map.merge(search_fields(call), entity)
 
         _ ->
           entity
