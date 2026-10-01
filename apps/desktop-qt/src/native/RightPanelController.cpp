@@ -437,6 +437,12 @@ void RightPanelController::togglePreviews() {
   }
 }
 
+void RightPanelController::setFilesShownElsewhere(bool shown) {
+  if (shown == m_filesShownElsewhere) return;
+  m_filesShownElsewhere = shown;
+  update();
+}
+
 void RightPanelController::linkPullRequest() {
   if (!m_onThread) return;
   showTab(QStringLiteral("pull-requests"));
@@ -470,7 +476,7 @@ void RightPanelController::update() {
   }
   const bool open = isOpen();
   m_diff.setActive(open && activeTab() == QLatin1String("diff"));
-  m_files.setActive(open && activeTab() == QLatin1String("files"));
+  m_files.setActive((open && activeTab() == QLatin1String("files")) || m_filesShownElsewhere);
   m_agents.setActive(open && activeTab() == QLatin1String("agents"));
   m_previews.setActive(open && activeTab() == QLatin1String("previews"));
   m_devices.setTab(open && kindOf(activeTab()) == QLatin1String("device") ? activeTab() : QString());

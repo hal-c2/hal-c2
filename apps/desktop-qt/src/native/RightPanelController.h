@@ -129,6 +129,9 @@ public:
   Q_INVOKABLE void toggleMaximized();
   // Shows or hides the thread details column (mod+alt+t).
   Q_INVOKABLE void toggleDetails();
+  // Keeps the Files tab's tree loaded while it is shown outside the panel
+  // (XrFiles, the XR workspace's files).
+  Q_INVOKABLE void setFilesShownElsewhere(bool shown);
   // Shows the Diff tab, or closes the panel when it is showing (mod+d).
   Q_INVOKABLE void toggleDiff();
   // Shows the Previews tab, or closes the panel when it is showing.
@@ -186,6 +189,7 @@ private:
   // so coming back finds the tabs as they were.
   QString m_thread;
   bool m_onThread = false;
+  bool m_filesShownElsewhere = false;
   QHash<QString, Panel> m_panels;
   // Threads by when their panel was last shown, the latest last: the store
   // keeps the latest kStoredThreads.

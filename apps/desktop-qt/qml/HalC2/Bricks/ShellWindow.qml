@@ -27,6 +27,9 @@ Window {
     readonly property bool terminalFocused: hasAncestor(root.activeFocusItem, "HalC2Terminal")
     // A text field has the keyboard (the web's editableFocus).
     readonly property bool editableFocused: root.activeFocusItem !== null && root.activeFocusItem.cursorPosition !== undefined
+    // The XR workspace's layout (an XrWorkspace of XrPanels), made while it is
+    // open (xr.toggle); null for DefaultXrWorkspace.
+    property Component xrWorkspace: null
 
     function hasAncestor(item, objectName) {
         for (let node = item; node; node = node.parent) {
@@ -67,6 +70,12 @@ Window {
     ConfirmDialog {}
 
     CommandPalette {}
+
+    // The palette's "Toggle XR workspace": the window in XR glasses.
+    XrHost {
+        objectName: "xrHost"
+        layout: root.xrWorkspace
+    }
 
     // The palette's "Toggle theme editor": the active theme's colours.
     ThemeEditor {

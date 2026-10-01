@@ -42,6 +42,12 @@ qt_add_qml_module(hal_c2_bricks
     TitleBar.qml
     WindowControls.qml
     Workspace.qml
+    DefaultXrWorkspace.qml
+    XrFiles.qml
+    XrHost.qml
+    XrPanel.qml
+    XrTerminal.qml
+    XrWorkspace.qml
     Timeline.qml
     SettingsHost.qml
     SettingsPage.qml

@@ -66,6 +66,23 @@ everything the shell publishes, `Shell.dispatch(action, payload)` to act,
 `SettingsHost` showing `settingsSection` in its place with the composer
 hidden, as the examples do.
 
+The XR workspace (the palette's "Toggle XR workspace", for XR glasses with an
+OpenXR runtime) is part of the rice too. Set `ShellWindow.xrWorkspace` to a
+`Component` holding an `XrWorkspace` of `XrPanel`s, each placing bricks at an
+`angle` to the left, an `elevation` up and a `distance` ahead, `width` by
+`height` in centimetres; `XrTerminal` and `XrFiles` are the thread's terminal
+and the project's files for a panel. Left unset, it is `DefaultXrWorkspace`.
+A rice that sets it needs Qt Quick 3D XR:
+
+```qml
+xrWorkspace: Component {
+    XrWorkspace {
+        XrPanel { CentreHost { anchors.fill: parent; kind: root.route?.kind ?? "" } }
+        XrPanel { elevation: -25; height: 45; XrTerminal { anchors.fill: parent } }
+    }
+}
+```
+
 Shells written for older builds placed a `WebSurface` (or reached the
 built-in layout's `webView`) for the embedded web page. That page is gone:
 put a `CentreHost` and a `SettingsHost` where the `WebSurface` was, bind

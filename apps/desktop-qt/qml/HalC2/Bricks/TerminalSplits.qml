@@ -16,6 +16,10 @@ FocusScope {
     property bool panel: false
     // The group shown.
     property string group: ""
+    // Follows the sessions without driving them: no input and no resize, since
+    // another view (the drawer) owns each terminal's size. The XR workspace's
+    // copy; wider than the owner so its lines do not wrap again.
+    property bool mirror: false
     property color background: Theme.palette.color("canvas", "#09090b")
     property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color border: Theme.palette.color("border", "#27272a")
@@ -63,7 +67,7 @@ FocusScope {
             objectName: "terminalCell-" + terminalId
             active: cell.panel === splits.panel
             visible: active && shown
-            focus: shown && current
+            focus: shown && current && !splits.mirror
             x: vertical ? 0 : Math.round(splits.width * slot / span)
             y: vertical ? Math.round(splits.height * slot / span) : 0
             width: vertical ? splits.width : Math.round(splits.width * (slot + 1) / span) - x
@@ -87,15 +91,18 @@ FocusScope {
 
                 onActiveFocusChanged: if (activeFocus)
                     Terminals.focusTerminal(cell.terminalId)
-                onInput: data => terminal.session.write(data)
+                onInput: data => {
+                    if (!splits.mirror)
+                        terminal.session.write(data);
+                }
                 // Only a laid-out Terminal knows its grid; the first pass is 1x1.
                 onResized: (columns, rows) => {
-                    if (terminal.width > 0 && terminal.height > 0)
+                    if (!splits.mirror && terminal.width > 0 && terminal.height > 0)
                         terminal.session.resize(columns, rows);
                 }
                 Component.onCompleted: {
                     terminal.restore(terminal.session.transcript());
-                    if (terminal.width > 0 && terminal.height > 0)
+                    if (!splits.mirror && terminal.width > 0 && terminal.height > 0)
                         terminal.session.resize(terminal.columns, terminal.rows);
                 }
 
