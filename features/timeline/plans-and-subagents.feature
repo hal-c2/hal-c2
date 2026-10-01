@@ -143,7 +143,7 @@ Feature: Plans and subagents
     Then it says which thread it came from
     And the user can open that thread
 
-  @node @shared @backlog
+  @node @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A subagent shows the model it runs on
     Given the agent delegated work to a subagent on the model "model-b"
     When the user looks at the parent's subagents
