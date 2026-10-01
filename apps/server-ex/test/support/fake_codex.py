@@ -20,6 +20,9 @@ def trace(entry):
         with open(TRACE, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
+# The arguments the app-server was started with, first in the trace.
+trace({"argv": sys.argv[1:]})
+
 def send(msg):
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()

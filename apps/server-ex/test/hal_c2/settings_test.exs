@@ -88,6 +88,26 @@ defmodule HalC2.SettingsTest do
     assert HalC2.Settings.resolve(settings, nil) == settings
   end
 
+  test "an instance's driver setting is its own, else its driver's, and blank is unset" do
+    assert {:ok, 1} =
+             Settings.put(
+               %{
+                 "providers" => %{"codex" => %{"launchArgs" => "--strict-config"}},
+                 "providerInstances" => %{
+                   "codex_work" => %{"driver" => "codex", "config" => %{"launchArgs" => "-c a=1"}},
+                   "codex_home" => %{"driver" => "codex", "config" => %{"launchArgs" => "  "}}
+                 }
+               },
+               0
+             )
+
+    assert Settings.instance_setting("codex_work", "launchArgs") == "-c a=1"
+    assert Settings.instance_setting("codex_home", "launchArgs") == "--strict-config"
+    assert Settings.instance_setting("codex", "launchArgs") == "--strict-config"
+    assert Settings.instance_setting("claudeAgent", "launchArgs") == nil
+    assert Settings.instance_setting(nil, "launchArgs") == nil
+  end
+
   describe "sensitive provider variables" do
     defp instance(variables),
       do: %{

@@ -507,13 +507,15 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp rpc_message(reason), do: inspect(reason)
 
   defp connect(%{conn: nil} = state, turn) do
-    cmd = Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
+    instance = if ids = turn[:ids], do: Entities.instance(ids)
+
+    # The instance's launch arguments follow `app-server`, split as a shell would.
+    cmd =
+      Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"]) ++
+        OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex.
-    env =
-      if ids = turn[:ids],
-        do: Enum.to_list(HalC2.Settings.instance_env(Entities.instance(ids))),
-        else: []
+    env = if instance, do: Enum.to_list(HalC2.Settings.instance_env(instance)), else: []
 
     with {:ok, conn} <-
            Connection.start_link(

@@ -111,7 +111,6 @@ Feature: Codex
     When a Codex turn starts
     Then Codex can call the HAL-C2 tools for this thread
 
-  @backlog
   Scenario: Codex starts with the launch arguments configured for it
     Given the Codex instance has launch arguments configured
     When a Codex session starts

@@ -80,6 +80,24 @@ defmodule HalC2.Settings do
     Map.new(HalC2.ProviderSecrets.environment(instance, entry))
   end
 
+  @doc """
+  A driver setting of provider instance `instance`, such as Codex's `launchArgs`: its
+  own `config` value, else its driver's in `providers.<driver>`. A blank string counts
+  as unset.
+  """
+  def instance_setting(instance, key) do
+    settings = settings()
+    entry = get_in(settings, ["providerInstances", instance]) || %{}
+
+    Enum.find(
+      [
+        get_in(entry, ["config", key]),
+        get_in(settings, ["providers", entry["driver"] || instance, key])
+      ],
+      &(is_binary(&1) and String.trim(&1) != "")
+    )
+  end
+
   @doc "`{settings, version}`."
   def get do
     :ets.lookup_element(__MODULE__, :settings, 2)
