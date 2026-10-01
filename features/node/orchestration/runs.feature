@@ -173,12 +173,15 @@ Feature: Runs and turns
     Then the run is failed with "The provider stopped while starting the turn."
     And "t1" can take its next message
 
+  # Whether and how often to retry is each provider plugin's own behaviour; the core
+  # only waits for the plugin to give up.
   @node @backlog
-  Scenario: Opening the provider session is retried before the run fails
-    Given opening the provider session fails the first time
+  Scenario: A provider plugin's own retries run before the run fails
+    Given a provider whose plugin retries opening its session
+    And opening the session fails the first time
     When the user sends "Hi" to "t1"
-    Then the node opens the session again
-    And the run fails only once the retries are used up
+    Then the plugin opens the session again
+    And the run fails only once the plugin gives up
 
   @node @shared @backlog
   Scenario: A failed turn keeps the output it had already produced

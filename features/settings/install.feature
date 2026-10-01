@@ -22,7 +22,10 @@ Feature: Installing and uninstalling
       | on the nightly channel  | from the nightly channel |
       | pinned to "1.3.0"       | at version "1.3.0"     |
 
-  @backlog @node
+  # Dropped: a release runs under the operating system's service manager
+  # (background-service.feature) and a checkout under a mise daemon. There is no web app
+  # to open and no npm package to run.
+  @dropped @node
   Scenario Outline: The user starts the server
     When the user runs "<command>"
     Then the server starts <how>
