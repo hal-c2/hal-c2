@@ -46,6 +46,7 @@ defmodule HalC2.ProviderCompatibilityTest do
     for {version, status} <- [
           {"1.14.18", "broken"},
           {"v1.15.0", "supported"},
+          {"1.15.0+build.5", "supported"},
           {"2.1.0", "graceful"},
           {"3.0.0", "unsupported"}
         ] do

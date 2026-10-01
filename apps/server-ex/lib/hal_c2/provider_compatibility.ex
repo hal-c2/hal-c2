@@ -49,7 +49,8 @@ defmodule HalC2.ProviderCompatibility do
     if policy do
       status =
         with true <- is_binary(version),
-             [_, stable] <- Regex.run(~r/^v?(\d+\.\d+\.\d+)$/, String.trim(version)),
+             [_, stable] <-
+               Regex.run(~r/^v?(\d+\.\d+\.\d+)(?:\+[0-9A-Za-z.-]+)?$/, String.trim(version)),
              %{"status" => status} <-
                Enum.find(policy["ranges"], &satisfies?(stable, &1["range"])) do
           status
