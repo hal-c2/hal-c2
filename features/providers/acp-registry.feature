@@ -239,7 +239,6 @@ Feature: ACP registry agents
     When "acme" reports a new model while a session runs
     Then the model picker offers it without a provider refresh
 
-  @backlog
   Scenario: Agent plan and build modes follow HAL-C2's plan toggle
     Given "acme" has its own plan mode
     When the user switches the thread to plan mode

@@ -76,11 +76,19 @@ DEFAULT_MODELS = [["acme/fast", "Fast"], ["acme/smart", "Smart"]]
 models = CONTROL.get("models", DEFAULT_MODELS)
 model = models[0][0] if models else None
 
+# "modes": the agent's own session modes, the first being the one it starts in.
+modes = CONTROL.get("modes", [])
+mode = modes[0] if modes else None
+
 def config_options():
-    if not models:
-        return []
-    return [{"id": "model", "name": "Model", "type": "select", "currentValue": model,
-             "options": [{"value": v, "name": n} for v, n in models]}]
+    options = []
+    if models:
+        options.append({"id": "model", "name": "Model", "type": "select", "currentValue": model,
+                        "options": [{"value": v, "name": n} for v, n in models]})
+    if modes:
+        options.append({"id": "mode", "name": "Mode", "category": "mode", "type": "select",
+                        "currentValue": mode, "options": [{"value": v, "name": v} for v in modes]})
+    return options
 
 def providers():
     try:
@@ -223,6 +231,8 @@ for line in sys.stdin:
     elif method == "session/set_config_option":
         if params.get("configId") == "model":
             model = params["value"]
+        if params.get("configId") == "mode":
+            mode = params["value"]
         send({"id": mid, "result": {"configOptions": config_options()}})
     elif method == "session/prompt":
         prompt(mid, params["sessionId"], "\n".join(b.get("text", "") for b in params["prompt"]))

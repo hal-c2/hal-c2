@@ -166,6 +166,39 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     Map.put(ctx, :thread, "Acme")
   end
 
+  defp interaction_mode(ctx, mode) do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.interaction-mode.set",
+        "commandId" => "cmd-mode-#{System.unique_integer([:positive])}",
+        "threadId" => thread(ctx),
+        "interactionMode" => mode
+      })
+
+    ctx
+  end
+
+  # The thread's prompts and the modes set between them, in order.
+  defp mode_calls(ctx) do
+    Enum.flat_map(Acp.log(ctx, "acme"), fn
+      %{"event" => "request", "method" => "session/prompt", "params" => %{"prompt" => prompt}} ->
+        # Title generation prompts the agent too, on a session of its own.
+        if Enum.any?(prompt, &((&1["text"] || "") =~ "Return a JSON object")),
+          do: [],
+          else: [:prompt]
+
+      %{
+        "event" => "request",
+        "method" => "session/set_config_option",
+        "params" => %{"configId" => "mode", "value" => value}
+      } ->
+        [{"mode", value}]
+
+      _ ->
+        []
+    end)
+  end
+
   defp url_action(id), do: &(get_in(&1, ["auth", "action", "elicitationId"]) == id)
 
   defp agent(ctx, id, name, dist) do
@@ -1002,6 +1035,34 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     # Only the probe and the thread's session ran the agent: nothing probed it again.
     assert length(Acp.launches(ctx, "acme")) == 2
     ctx
+  end
+
+  # --- plan mode -----------------------------------------------------------------------
+
+  step "{string} has its own plan mode", %{args: [_]} = context do
+    ctx = context |> acme(%{"modes" => ["build", "plan"]}) |> run_on_acme("hello")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "the user switches the thread to plan mode", context do
+    context |> interaction_mode("plan") |> Acp.follow_up("Acme", "plan the checkout")
+    Acp.await_runs(thread(context), 2)
+    context
+  end
+
+  step "{string} runs in its plan mode", %{args: [_]} = context do
+    # The agent's own mode is chosen on the session before the plan turn's prompt.
+    assert [:prompt, {"mode", "plan"}, :prompt] = mode_calls(context)
+
+    # Out of plan mode again, the agent goes back to the mode it was in.
+    context |> interaction_mode("default") |> Acp.follow_up("Acme", "now build it")
+    Acp.await_runs(thread(context), 3)
+
+    assert [:prompt, {"mode", "plan"}, :prompt, {"mode", "build"}, :prompt] =
+             mode_calls(context)
+
+    context
   end
 
   step "{string} asks the client to read a file or run a terminal", %{args: [_]} = context do

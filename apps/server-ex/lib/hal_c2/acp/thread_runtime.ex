@@ -37,7 +37,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.OpenCode
 
-  @state_version 8
+  @state_version 9
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -173,6 +173,10 @@ defmodule HalC2.Acp.ThreadRuntime do
        orphans: %{},
        # The session's config options (`configId` -> current value).
        config: %{},
+       # The agent's own planning modes (`configId` -> the choice that plans), and what
+       # those options held before HAL-C2's plan mode took them over.
+       plan_modes: %{},
+       build_modes: %{},
        # OpenCode's HTTP server (`HalC2.Acp.OpenCode`), and its session's newest
        # message when the turn began: `{:ok, id | nil}`, or `:unknown`.
        server: nil,
@@ -512,7 +516,11 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: state |> Map.merge(%{server: nil, leaf: :unknown}) |> Map.put(:v, 7) |> migrate()
 
   defp migrate(%{v: 7} = state),
-    do: state |> Map.put_new(:tasks, %{}) |> Map.put(:v, 8)
+    do: state |> Map.put_new(:tasks, %{}) |> Map.put(:v, 8) |> migrate()
+
+  # Planning modes are read from the session's next config options.
+  defp migrate(%{v: 8} = state),
+    do: state |> Map.merge(%{plan_modes: %{}, build_modes: %{}}) |> Map.put(:v, 9)
 
   # --- session -------------------------------------------------------------------
 
@@ -687,8 +695,20 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  defp remember_config(state, %{"configOptions" => [_ | _] = options}),
-    do: %{state | config: Map.new(options, &{&1["id"], &1["currentValue"]})}
+  defp remember_config(state, %{"configOptions" => [_ | _] = options}) do
+    %{
+      state
+      | config: Map.new(options, &{&1["id"], &1["currentValue"]}),
+        plan_modes:
+          for(
+            %{"id" => id, "category" => category} = option <- options,
+            category in ["mode", "collaboration_mode"],
+            choice = plan_choice(option),
+            into: %{},
+            do: {id, choice}
+          )
+    }
+  end
 
   defp remember_config(state, _result), do: state
 
@@ -715,7 +735,35 @@ defmodule HalC2.Acp.ThreadRuntime do
     state |> set_config("mode", agent) |> set_config("effort", value.("variant"))
   end
 
-  defp set_options(state, _turn), do: state
+  # Any other agent with a mode of its own for planning (a mode option offering `plan`
+  # or `architect`) runs in it while the thread is in plan mode. HAL-C2 owns only that
+  # override: the next turn out of plan mode puts back what the options held before.
+  defp set_options(%{plan_modes: plan_modes} = state, %{interaction_mode: "plan"}) do
+    Enum.reduce(plan_modes, state, fn {id, plan}, state ->
+      if state.config[id] == plan do
+        state
+      else
+        build_modes = Map.put_new(state.build_modes, id, state.config[id])
+        set_config(%{state | build_modes: build_modes}, id, plan)
+      end
+    end)
+  end
+
+  defp set_options(%{build_modes: build_modes} = state, _turn),
+    do:
+      Enum.reduce(
+        build_modes,
+        %{state | build_modes: %{}},
+        &set_config(&2, elem(&1, 0), elem(&1, 1))
+      )
+
+  # The choice of a select option (flat or grouped) that plans, if it has one.
+  defp plan_choice(option) do
+    option["options"]
+    |> List.wrap()
+    |> Enum.flat_map(&(&1["options"] || [&1]))
+    |> Enum.find_value(&(&1["value"] in ["plan", "architect"] && &1["value"]))
+  end
 
   defp set_config(state, id, value)
        when is_binary(value) and is_map_key(state.config, id) do
