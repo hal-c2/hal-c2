@@ -9,7 +9,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 class ToastController;
@@ -31,7 +31,7 @@ class ThreadMenuController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  ThreadMenuController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  ThreadMenuController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   static inline const QString kCopyReference = QStringLiteral("thread.copyReference");
   static inline const QString kProjectSettingsCommand = QStringLiteral("projectSettings.open");
@@ -76,7 +76,7 @@ private:
   void present();
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   std::function<bool(const QString&)> m_writeClipboard;
 };

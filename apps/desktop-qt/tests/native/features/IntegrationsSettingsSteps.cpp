@@ -1,6 +1,6 @@
 // The native Integrations settings section (DeviceSettingsController): the
 // @desktop device scenarios of features/settings/integrations.feature. The
-// node fakes HalC2.Devices: its DeviceServiceState follows each environment's
+// MC fakes HalC2.Devices: its DeviceServiceState follows each environment's
 // settings document, `device.configure` saves there, and its own state goes
 // to `devices` watchers.
 
@@ -21,25 +21,25 @@ struct FakeDevices {
   bool failUpdates = false;
 };
 
-QString environmentOf(const FakeNode& node, const FakeNode::Rpc& rpc) {
-  return rpc.environment.isEmpty() ? node.environmentId : rpc.environment;
+QString environmentOf(const FakeMc& mc, const FakeMc::Rpc& rpc) {
+  return rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
 }
 
-QJsonObject settingsOf(FakeNode& node, const QString& environment) {
-  return environment == node.environmentId ? fakeConfig(node).settings : documentOf(node, environment).settings;
+QJsonObject settingsOf(FakeMc& mc, const QString& environment) {
+  return environment == mc.environmentId ? fakeConfig(mc).settings : documentOf(mc, environment).settings;
 }
 
 // HalC2.Devices' state on `environment`: iOS here, Android missing; a
 // linked machine says which it is, so the one shown can be told apart.
-QJsonObject deviceState(FakeNode& node, const QString& environment) {
-  const QJsonObject settings = settingsOf(node, environment);
+QJsonObject deviceState(FakeMc& mc, const QString& environment) {
+  const QJsonObject settings = settingsOf(mc, environment);
   const bool enabled = settings.value(QLatin1String("enableDeviceSupport")).toBool();
   const QJsonObject tool{{QStringLiteral("requiredVersion"), QStringLiteral("1.4.0")},
                          {QStringLiteral("installedVersions"), QJsonArray{QStringLiteral("1.4.0")}},
                          {QStringLiteral("runningVersion"), QJsonValue::Null}};
   QJsonObject hub = tool;
-  if (node.part<FakeDevices>().outdated.contains(environment)) hub.insert(QStringLiteral("installedVersions"), QJsonArray{QStringLiteral("1.3.0")});
-  const bool here = environment == node.environmentId;
+  if (mc.part<FakeDevices>().outdated.contains(environment)) hub.insert(QStringLiteral("installedVersions"), QJsonArray{QStringLiteral("1.3.0")});
+  const bool here = environment == mc.environmentId;
   return {{QStringLiteral("supportsHostRetry"), true},
           {QStringLiteral("supportsToolUpdate"), true},
           {QStringLiteral("supportsToolInspection"), true},
@@ -72,45 +72,45 @@ QJsonObject deviceState(FakeNode& node, const QString& environment) {
           {QStringLiteral("revision"), 0}};
 }
 
-void broadcast(FakeNode& node) {
-  for (const int id : node.subscribers(QStringLiteral("devices"))) {
-    node.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), deviceState(node, node.environmentId)}});
+void broadcast(FakeMc& mc) {
+  for (const int id : mc.subscribers(QStringLiteral("devices"))) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), deviceState(mc, mc.environmentId)}});
   }
 }
 
-const FakeNode::Extension devices([](FakeNode& node) {
-  node.onShape(QStringLiteral("devices"), [&node](int id, const QJsonObject&) {
-    node.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), deviceState(node, node.environmentId)}});
+const FakeMc::Extension devices([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("devices"), [&mc](int id, const QJsonObject&) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), deviceState(mc, mc.environmentId)}});
   });
-  node.onRpc(QStringLiteral("device."), [&node](const FakeNode::Rpc& rpc) {
-    const QString environment = environmentOf(node, rpc);
-    FakeDevices& fake = node.part<FakeDevices>();
-    if (node.holding(QStringLiteral("device"))) {
+  mc.onRpc(QStringLiteral("device."), [&mc](const FakeMc::Rpc& rpc) {
+    const QString environment = environmentOf(mc, rpc);
+    FakeDevices& fake = mc.part<FakeDevices>();
+    if (mc.holding(QStringLiteral("device"))) {
       // Answered once released, late: the change is still saving until then.
-      node.defer([&node, rpc, environment] { node.reply(rpc, deviceState(node, environment)); });
+      mc.defer([&mc, rpc, environment] { mc.reply(rpc, deviceState(mc, environment)); });
       return;
     }
     if (rpc.method == QLatin1String("device.configure")) {
-      const QString refusal = environment == node.environmentId ? fakeConfig(node).refuseWrites : documentOf(node, environment).refuseWrites;
+      const QString refusal = environment == mc.environmentId ? fakeConfig(mc).refuseWrites : documentOf(mc, environment).refuseWrites;
       if (!refusal.isEmpty()) {
-        node.refuse(rpc, refusal);
+        mc.refuse(rpc, refusal);
         return;
       }
       if (rpc.payload.value(QLatin1String("enabled")).isBool()) {
-        saveOn(node, environment, QStringLiteral("enableDeviceSupport"), rpc.payload.value(QLatin1String("enabled")));
+        saveOn(mc, environment, QStringLiteral("enableDeviceSupport"), rpc.payload.value(QLatin1String("enabled")));
       }
       if (rpc.payload.value(QLatin1String("agentAccessEnabled")).isBool()) {
-        saveOn(node, environment, QStringLiteral("enableAgentDeviceAccess"), rpc.payload.value(QLatin1String("agentAccessEnabled")));
+        saveOn(mc, environment, QStringLiteral("enableAgentDeviceAccess"), rpc.payload.value(QLatin1String("agentAccessEnabled")));
       }
     } else if (rpc.method == QLatin1String("device.list") && rpc.payload.contains(QLatin1String("updateTool"))) {
       if (fake.failUpdates) {
-        node.refuse(rpc, QStringLiteral("Could not update device tool: command failed"));
+        mc.refuse(rpc, QStringLiteral("Could not update device tool: command failed"));
         return;
       }
       fake.outdated.remove(environment);
     }
-    node.reply(rpc, deviceState(node, environment));
-    if (environment == node.environmentId) broadcast(node);
+    mc.reply(rpc, deviceState(mc, environment));
+    if (environment == mc.environmentId) broadcast(mc);
   });
 });
 
@@ -118,7 +118,7 @@ QVariantMap section(World& world) {
   return world.state(QStringLiteral("deviceSettings")).toMap();
 }
 
-// Connects once the Givens have set the node up, then waits for the section.
+// Connects once the Givens have set the MC up, then waits for the section.
 void ready(World& world) {
   if (world.shellSubscriptions() == 0) {
     world.connect();
@@ -143,7 +143,7 @@ void turn(World& world, const QString& tool, bool enabled) {
 }
 
 void expectStored(World& world, const QString& key, bool value) {
-  world.waitFor([&] { return fakeConfig(world.node).settings.value(key) == QJsonValue(value); },
+  world.waitFor([&] { return fakeConfig(world.mc).settings.value(key) == QJsonValue(value); },
                 [&] { return QStringLiteral("%1 to be stored as %2; the section is %3").arg(key, value ? QStringLiteral("on") : QStringLiteral("off"), show(section(world))); });
   world.waitFor([&] { return at(section(world), (key == QLatin1String("enableDeviceSupport") ? QStringLiteral("hub") : QStringLiteral("agent")) + QStringLiteral(".on")).toBool() == value; },
                 [&] { return QStringLiteral("the switch to show it; the section is %1").arg(show(section(world))); });
@@ -152,14 +152,14 @@ void expectStored(World& world, const QString& key, bool value) {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  // The section opens once the scenario's Givens have shaped the node (ready()).
+  // The section opens once the scenario's Givens have shaped the MC (ready()).
   step(QStringLiteral("the user has opened the Integrations settings"), [](World&, const Captures&, const Table&) {});
 
   step(QStringLiteral("the device hub is on"), [](World& world, const Captures&, const Table&) {
-    saveElsewhere(world.node, QStringLiteral("enableDeviceSupport"), true, true);
+    saveElsewhere(world.mc, QStringLiteral("enableDeviceSupport"), true, true);
   });
   step(QStringLiteral("agent device access is on"), [](World& world, const Captures&, const Table&) {
-    saveElsewhere(world.node, QStringLiteral("enableAgentDeviceAccess"), true, true);
+    saveElsewhere(world.mc, QStringLiteral("enableAgentDeviceAccess"), true, true);
   });
   step(QStringLiteral("the user turns on the device hub"), [](World& world, const Captures&, const Table&) { turn(world, QStringLiteral("hub"), true); });
   step(QStringLiteral("the user turns off the device hub"), [](World& world, const Captures&, const Table&) { turn(world, QStringLiteral("hub"), false); });
@@ -188,14 +188,14 @@ const Steps steps([] {
            }
            return false;
          }, [&] { return QStringLiteral("the failed save to be reported; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
-         expect(documentOf(world.node, QStringLiteral("Laptop")).settings.value(QLatin1String("enableDeviceSupport")) == QJsonValue(true) &&
-                    fakeConfig(world.node).settings.value(QLatin1String("enableDeviceSupport")) == QJsonValue(true),
+         expect(documentOf(world.mc, QStringLiteral("Laptop")).settings.value(QLatin1String("enableDeviceSupport")) == QJsonValue(true) &&
+                    fakeConfig(world.mc).settings.value(QLatin1String("enableDeviceSupport")) == QJsonValue(true),
                 QStringLiteral("the other environments to have saved it"));
        });
 
   step(QStringLiteral("the device tools are still being checked"), [](World& world, const Captures&, const Table&) {
     ready(world);
-    world.node.hold(QStringLiteral("device"));
+    world.mc.hold(QStringLiteral("device"));
     world.bridge().dispatch(QStringLiteral("deviceSettings.check"), QVariantMap{});
     world.waitFor([&] { return section(world).value(QStringLiteral("pending")) == QLatin1String("check"); },
                   [&] { return QStringLiteral("the check to be running; the section is %1").arg(show(section(world))); });
@@ -205,7 +205,7 @@ const Steps steps([] {
     navigation->open(NavigationController::Route::settings(QStringLiteral("/settings/general")));
     world.waitFor([&] { return !section(world).value(QStringLiteral("open")).toBool(); },
                   [&] { return QStringLiteral("the device settings to close; they are %1").arg(show(section(world))); });
-    world.node.answerHeld();
+    world.mc.answerHeld();
     ready(world);
   });
   step(QStringLiteral("the device hub can be changed again"), [](World& world, const Captures&, const Table&) {
@@ -216,8 +216,8 @@ const Steps steps([] {
   });
 
   step(QStringLiteral("the device hub tool update fails"), [](World& world, const Captures&, const Table&) {
-    world.node.part<FakeDevices>().outdated.insert(world.node.environmentId);
-    world.node.part<FakeDevices>().failUpdates = true;
+    world.mc.part<FakeDevices>().outdated.insert(world.mc.environmentId);
+    world.mc.part<FakeDevices>().failUpdates = true;
   });
   step(QStringLiteral("the user updates the device hub tool"), [](World& world, const Captures&, const Table&) {
     ready(world);
@@ -234,12 +234,12 @@ const Steps steps([] {
 
   step(QStringLiteral("the user is editing settings across %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // This machine is the first; the other is linked.
-    world.node.label = c[0];
-    fakeConfig(world.node).elsewhere.insert(c[1], QJsonObject{});
-    documentOf(world.node, c[1]).settings.insert(QStringLiteral("enableDeviceSupport"), true);
-    world.node.linkLabels.insert(c[1], c[1]);
-    world.node.link(c[1]);
-    saveElsewhere(world.node, QStringLiteral("enableDeviceSupport"), true, true);
+    world.mc.label = c[0];
+    fakeConfig(world.mc).elsewhere.insert(c[1], QJsonObject{});
+    documentOf(world.mc, c[1]).settings.insert(QStringLiteral("enableDeviceSupport"), true);
+    world.mc.linkLabels.insert(c[1], c[1]);
+    world.mc.link(c[1]);
+    saveElsewhere(world.mc, QStringLiteral("enableDeviceSupport"), true, true);
     ready(world);
     chooseAllEnvironments(world);
   });

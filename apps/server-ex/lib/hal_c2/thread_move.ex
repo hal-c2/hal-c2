@@ -4,7 +4,7 @@ defmodule HalC2.ThreadMove do
   machine it left keeps only a forwarding record (`movedTo` on its thread entity), so
   links and forks that name it still find it (`locate/1`).
 
-  `move/3` runs on the thread's node. It refuses a thread that is running, waiting for
+  `move/3` runs on the thread's MC. It refuses a thread that is running, waiting for
   an answer or already moving, asks the destination whether it can take it (`fit/1`:
   the agent, the project, the space), and returns what does not come along for the
   user to confirm. The thread is then marked `moving` and read-only, sent as a
@@ -15,7 +15,7 @@ defmodule HalC2.ThreadMove do
   This process settles moves a restart or a lost connection cut off: at boot, and
   when a destination comes back, a thread still marked `moving` becomes a forwarding
   record if the destination holds it, and is released otherwise. At boot it also
-  discards copies this node was receiving when it stopped.
+  discards copies this MC was receiving when it stopped.
 
   Results are `{:ok, %{"status" => ...}}`: `"moved"`, `"confirm"` (call again with
   `confirmed: true`) or `"choose_project"` (call again with `project:`), or
@@ -97,34 +97,34 @@ defmodule HalC2.ThreadMove do
       meta = meta(archive)
 
       {:ok,
-       for {node, descriptor} <- Enum.sort_by(Shell.environments(), &elem(&1, 1)["label"]),
-           node != node() do
-         up = node in online
+       for {mc, descriptor} <- Enum.sort_by(Shell.environments(), &elem(&1, 1)["label"]),
+           mc != node() do
+         up = mc in online
 
          %{
            "machine" => descriptor["label"],
            "environmentId" => descriptor["environmentId"],
            "online" => up,
-           "projects" => if(up, do: remote(node, :projects, [meta]) |> ok_or([]), else: [])
+           "projects" => if(up, do: remote(mc, :projects, [meta]) |> ok_or([]), else: [])
          }
        end}
     end
   end
 
   @doc """
-  Where a thread lives now, following forwarding records: `{:ok, %{"node",
+  Where a thread lives now, following forwarding records: `{:ok, %{"mc",
   "environmentId", "machine"}}`, or `{:error, message}` when it was deleted or is
   not known.
   """
   def locate(id) do
-    rows = for {{node, ^id}, {"thread", row}} <- Shell.rows(), do: {node, row}
+    rows = for {{mc, ^id}, {"thread", row}} <- Shell.rows(), do: {mc, row}
 
-    case Enum.find(rows, fn {_node, row} -> row["movedTo"] == nil end) do
-      {_node, %{"deletedAt" => deleted, "title" => title}} when deleted != nil ->
+    case Enum.find(rows, fn {_mc, row} -> row["movedTo"] == nil end) do
+      {_mc, %{"deletedAt" => deleted, "title" => title}} when deleted != nil ->
         {:error, "#{title} was deleted."}
 
-      {node, _row} ->
-        {:ok, where(node)}
+      {mc, _row} ->
+        {:ok, where(mc)}
 
       nil ->
         follow(id, rows)
@@ -134,11 +134,11 @@ defmodule HalC2.ThreadMove do
   # Only forwarding records are known here: ask where the last one points.
   defp follow(id, [_ | _] = rows) do
     {_, row} = Enum.max_by(rows, fn {_, row} -> row["movedTo"]["at"] || "" end)
-    node = String.to_atom(row["movedTo"]["node"])
+    mc = String.to_atom(row["movedTo"]["mc"])
 
-    case remote(node, :holds?, [id]) do
+    case remote(mc, :holds?, [id]) do
       true ->
-        {:ok, where(node)}
+        {:ok, where(mc)}
 
       :deleted ->
         {:error, "#{row["title"]} was deleted on #{row["movedTo"]["label"]}."}
@@ -147,17 +147,17 @@ defmodule HalC2.ThreadMove do
         {:error, "#{row["title"]} is not on #{row["movedTo"]["label"]} any more."}
 
       {:error, _} ->
-        {:ok, where(node) |> Map.put("online", false)}
+        {:ok, where(mc) |> Map.put("online", false)}
     end
   end
 
   defp follow(id, []), do: {:error, "There is no thread #{id} in the cluster."}
 
-  defp where(node) do
-    descriptor = Enum.find_value(Shell.environments(), %{}, fn {n, d} -> if n == node, do: d end)
+  defp where(mc) do
+    descriptor = Enum.find_value(Shell.environments(), %{}, fn {n, d} -> if n == mc, do: d end)
 
     %{
-      "node" => Atom.to_string(node),
+      "mc" => Atom.to_string(mc),
       "environmentId" => descriptor["environmentId"],
       "machine" => descriptor["label"]
     }
@@ -171,17 +171,17 @@ defmodule HalC2.ThreadMove do
   end
 
   defp destination(to, thread) do
-    case Enum.find(Shell.environments(), fn {node, d} ->
-           to in [d["label"], d["environmentId"], Atom.to_string(node)]
+    case Enum.find(Shell.environments(), fn {mc, d} ->
+           to in [d["label"], d["environmentId"], Atom.to_string(mc)]
          end) do
       nil ->
         error(:invalid_request, "There is no machine #{to} in the cluster.")
 
-      {node, _} when node == node() ->
+      {mc, _} when mc == node() ->
         error(:invalid_request, "#{thread["title"]} is already on #{to}.")
 
-      {node, descriptor} ->
-        {:ok, %{node: node, label: descriptor["label"], environment: descriptor["environmentId"]}}
+      {mc, descriptor} ->
+        {:ok, %{mc: mc, label: descriptor["label"], environment: descriptor["environmentId"]}}
     end
   end
 
@@ -222,10 +222,9 @@ defmodule HalC2.ThreadMove do
   end
 
   defp online(dest, thread) do
-    if dest.node in Node.list(),
+    if dest.mc in Node.list(),
       do: :ok,
-      else:
-        error(:node_unavailable, "#{dest.label} is offline. #{thread["title"]} was not moved.")
+      else: error(:mc_unavailable, "#{dest.label} is offline. #{thread["title"]} was not moved.")
   end
 
   defp build(id, opts \\ []) do
@@ -305,7 +304,7 @@ defmodule HalC2.ThreadMove do
             moving = %{
               "label" => dest.label,
               "environmentId" => dest.environment,
-              "node" => Atom.to_string(dest.node),
+              "mc" => Atom.to_string(dest.mc),
               "at" => at
             }
 
@@ -332,7 +331,7 @@ defmodule HalC2.ThreadMove do
 
     result =
       try do
-        :erpc.call(dest.node, __MODULE__, :accept, [data, [project: fit["project"]]], @timeout)
+        :erpc.call(dest.mc, __MODULE__, :accept, [data, [project: fit["project"]]], @timeout)
       catch
         kind, reason -> {:broken, {kind, reason}}
       end
@@ -361,11 +360,11 @@ defmodule HalC2.ThreadMove do
         error(:thread_not_movable, message)
 
       {:broken, reason} ->
-        Logger.warning("move of #{id} to #{dest.node} broke off: #{inspect(reason)}")
+        Logger.warning("move of #{id} to #{dest.mc} broke off: #{inspect(reason)}")
         release(id)
 
         error(
-          :node_unavailable,
+          :mc_unavailable,
           "The move of #{archive["thread"]["title"]} to #{dest.label} did not finish. #{archive["thread"]["title"]} is still on #{ThreadArchive.label()} and can be moved again."
         )
     end
@@ -380,7 +379,7 @@ defmodule HalC2.ThreadMove do
       else: "#{title} moved to #{label}."
   end
 
-  # The destination holds the thread: this node keeps only the forwarding record. Its
+  # The destination holds the thread: this MC keeps only the forwarding record. Its
   # provider processes stop, and its terminals close (their scrollback travelled).
   defp let_go(id, dest, imported) do
     _ = Orchestration.release_session(id)
@@ -389,7 +388,7 @@ defmodule HalC2.ThreadMove do
     moved = %{
       "label" => dest.label,
       "environmentId" => dest.environment,
-      "node" => Atom.to_string(dest.node),
+      "mc" => Atom.to_string(dest.mc),
       "projectId" => imported[:project],
       "at" => at
     }
@@ -467,7 +466,7 @@ defmodule HalC2.ThreadMove do
   # --- destination ---------------------------------------------------------------
 
   @doc """
-  Whether this node can take a thread (`request/2` on the source): its agent is
+  Whether this MC can take a thread (`request/2` on the source): its agent is
   here, a project is chosen and its folder exists, and there is room. Returns
   `{:ok, %{"project", "notes"}}`, a `"choose_project"` result, or an error.
   """
@@ -493,7 +492,7 @@ defmodule HalC2.ThreadMove do
     end
   end
 
-  @doc "This node's projects, and which are checkouts of the thread's repository."
+  @doc "This MC's projects, and which are checkouts of the thread's repository."
   def projects(meta) do
     same = MapSet.new(ThreadArchive.same_repository(%{"thread" => meta}), & &1["id"])
 
@@ -510,7 +509,7 @@ defmodule HalC2.ThreadMove do
   end
 
   @doc """
-  Receives a thread (its archive's JSON): stages it under this node's data, then
+  Receives a thread (its archive's JSON): stages it under this MC's data, then
   imports it into `opts[:project]`.
   """
   def accept(data, opts) do
@@ -527,7 +526,7 @@ defmodule HalC2.ThreadMove do
     end
   end
 
-  @doc "Whether this node holds the thread `id` (not a forwarding record); `:deleted` if deleted here."
+  @doc "Whether this MC holds the thread `id` (not a forwarding record); `:deleted` if deleted here."
   def holds?(id) do
     case ThreadArchive.local_thread(id) do
       nil -> false
@@ -668,8 +667,8 @@ defmodule HalC2.ThreadMove do
     {:noreply, state}
   end
 
-  def handle_info({:nodeup, node}, state) do
-    settle(node)
+  def handle_info({:nodeup, mc}, state) do
+    settle(mc)
     {:noreply, state}
   end
 
@@ -697,17 +696,17 @@ defmodule HalC2.ThreadMove do
   def handle_info(_other, state), do: {:noreply, state}
 
   @doc """
-  Settles moves that were cut off: to `node`, or all (`:all`). A thread marked
+  Settles moves that were cut off: to `mc`, or all (`:all`). A thread marked
   `moving` becomes a forwarding record if its destination holds it, and is released
   if the destination is reachable and does not.
   """
   def settle(which \\ :all) do
-    for {"thread", %{"id" => id, "moving" => %{"node" => name} = moving}} <- local_rows(),
-        node = String.to_atom(name),
-        which in [:all, node] do
-      case remote(node, :holds?, [id]) do
+    for {"thread", %{"id" => id, "moving" => %{"mc" => name} = moving}} <- local_rows(),
+        mc = String.to_atom(name),
+        which in [:all, mc] do
+      case remote(mc, :holds?, [id]) do
         true ->
-          dest = %{node: node, label: moving["label"], environment: moving["environmentId"]}
+          dest = %{mc: mc, label: moving["label"], environment: moving["environmentId"]}
           let_go(id, dest, %{project: nil})
 
         {:error, _} ->
@@ -730,20 +729,20 @@ defmodule HalC2.ThreadMove do
   defp state(id), do: Streams.Server.state(Streams.ensure(id))
 
   defp ask(dest, fun, args, thread) do
-    case remote(dest.node, fun, args) do
+    case remote(dest.mc, fun, args) do
       {:error, %{}} = error ->
         error
 
       {:error, _} ->
-        error(:node_unavailable, "#{dest.label} is offline. #{thread["title"]} was not moved.")
+        error(:mc_unavailable, "#{dest.label} is offline. #{thread["title"]} was not moved.")
 
       other ->
         other
     end
   end
 
-  defp remote(node, fun, args) do
-    :erpc.call(node, __MODULE__, fun, args, 30_000)
+  defp remote(mc, fun, args) do
+    :erpc.call(mc, __MODULE__, fun, args, 30_000)
   catch
     _, reason -> {:error, reason}
   end

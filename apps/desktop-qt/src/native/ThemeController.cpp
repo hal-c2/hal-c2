@@ -158,7 +158,7 @@ const BuiltIns& builtIns() {
 
 }  // namespace
 
-ThemeController::ThemeController(ShellBridge* bridge, NodeClient*, QObject* parent)
+ThemeController::ThemeController(ShellBridge* bridge, McClient*, QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
       // Built before this one: controllers are built in name order.
@@ -243,7 +243,7 @@ QList<ThemeController::Definition> ThemeController::definitions() const {
 }
 
 // The first with the id: built-in, then this device's, then published, so a
-// theme the user saved wins over one the node publishes under its id.
+// theme the user saved wins over one the MC publishes under its id.
 std::optional<ThemeController::Definition> ThemeController::find(const QString& id) const {
   if (id.isEmpty()) return std::nullopt;
   for (const Definition& definition : definitions()) {
@@ -539,7 +539,7 @@ void ThemeController::resolve() {
                                                  {QStringLiteral("fontUi"), data.fontUi},
                                                  {QStringLiteral("fontMono"), data.fontMono},
                                              });
-  // The choice and `available` move with the device and the node as well.
+  // The choice and `available` move with the device and the MC as well.
   emit changed();
 }
 

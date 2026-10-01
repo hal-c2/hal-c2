@@ -12,7 +12,7 @@
 
 #include "DiffModel.h"
 
-class NodeClient;
+class McClient;
 
 // The Pull request review tab (`pull-request:<host>/<repository>#<number>`):
 // one pull request of the thread, read from its host through the thread's
@@ -36,7 +36,7 @@ class PullRequestReview : public QObject {
   Q_PROPERTY(QString key READ key NOTIFY targetChanged)
   Q_PROPERTY(int number READ number NOTIFY targetChanged)
   Q_PROPERTY(bool online READ online NOTIFY stateChanged)
-  // idle, loading, ready or error (`message` is the node's reason).
+  // idle, loading, ready or error (`message` is the MC's reason).
   Q_PROPERTY(QString status READ status NOTIFY stateChanged)
   Q_PROPERTY(QString message READ message NOTIFY stateChanged)
   // {title, body, url, author, state, stateLabel, branches, labels [name],
@@ -62,7 +62,7 @@ public:
   using Open = std::function<void(const QString& url)>;
   using Copy = std::function<bool(const QString& text)>;
 
-  PullRequestReview(NodeClient* client, Notify notify, Open open, QObject* parent = nullptr);
+  PullRequestReview(McClient* client, Notify notify, Open open, QObject* parent = nullptr);
 
   // The pull request shown: its environment, the thread's project (whose
   // checkout reads it), and the link's host, repository and number.
@@ -121,7 +121,7 @@ private:
   // Sends a change; `done` runs once it lands, then the pull request is read again.
   bool change(const QString& method, const QJsonObject& input, const QString& failure, std::function<void()> done = {});
 
-  NodeClient* m_client;
+  McClient* m_client;
   Notify m_notify;
   Open m_open;
   Copy m_copy;

@@ -1,10 +1,10 @@
 // Cloning a repository into a new project (ProjectCloneController): Add
 // project's clone sources in the palette (features/navigation/
 // palette-add-project.feature) and each clone's toast
-// (features/files/adding-projects.feature). The fake node looks repositories
-// up, starts clones (adding their project at once, as the node does) and
+// (features/files/adding-projects.feature). The fake MC looks repositories
+// up, starts clones (adding their project at once, as the MC does) and
 // reports them on each environment's `projectClones` shape; what git does is
-// the node's own scenarios'. Where Add project browses from is the
+// the MC's own scenarios'. Where Add project browses from is the
 // environment's `addProjectBaseDirectory` setting (features/settings/
 // general.feature).
 
@@ -45,62 +45,62 @@ QJsonArray reported(const FakeClones& fake, const QString& environment) {
   return clones;
 }
 
-// The environment a shape or call is for; the node's own when it names none.
-QString environmentOf(FakeNode& node, const QString& named) {
-  return named.isEmpty() ? node.environmentId : named;
+// The environment a shape or call is for; the MC's own when it names none.
+QString environmentOf(FakeMc& mc, const QString& named) {
+  return named.isEmpty() ? mc.environmentId : named;
 }
 
-void publish(FakeNode& node, const QString& environment) {
-  for (const int id : node.subscribers(QStringLiteral("projectClones"))) {
-    if (environmentOf(node, node.shapeOf(id).value(QLatin1String("environment")).toString()) != environment) continue;
-    node.send({{QStringLiteral("t"), QStringLiteral("projectClones")}, {QStringLiteral("id"), id},
-               {QStringLiteral("clones"), reported(node.part<FakeClones>(), environment)}});
+void publish(FakeMc& mc, const QString& environment) {
+  for (const int id : mc.subscribers(QStringLiteral("projectClones"))) {
+    if (environmentOf(mc, mc.shapeOf(id).value(QLatin1String("environment")).toString()) != environment) continue;
+    mc.send({{QStringLiteral("t"), QStringLiteral("projectClones")}, {QStringLiteral("id"), id},
+               {QStringLiteral("clones"), reported(mc.part<FakeClones>(), environment)}});
   }
 }
 
-QString expandHome(FakeNode& node, const QString& path) {
-  return path.startsWith(QLatin1Char('~')) ? fakeFiles(node).home + path.mid(1) : path;
+QString expandHome(FakeMc& mc, const QString& path) {
+  return path.startsWith(QLatin1Char('~')) ? fakeFiles(mc).home + path.mid(1) : path;
 }
 
-void addProjectRow(FakeNode& node, const QString& id, const QString& title, const QString& root) {
+void addProjectRow(FakeMc& mc, const QString& id, const QString& title, const QString& root) {
   const QJsonObject row{{QStringLiteral("id"), id},
                         {QStringLiteral("title"), title},
                         {QStringLiteral("workspaceRoot"), root},
                         {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")},
                         {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T10:00:00Z")},
                         {QStringLiteral("scripts"), QJsonArray()}};
-  node.projects.insert(id, row);
-  node.sendRow(id, row, QStringLiteral("project"));
+  mc.projects.insert(id, row);
+  mc.sendRow(id, row, QStringLiteral("project"));
 }
 
-const FakeNode::Extension clones([](FakeNode& node) {
-  node.onShape(QStringLiteral("projectClones"), [&node](int id, const QJsonObject& shape) {
-    const QString environment = environmentOf(node, shape.value(QLatin1String("environment")).toString());
-    node.send({{QStringLiteral("t"), QStringLiteral("projectClones")}, {QStringLiteral("id"), id},
-               {QStringLiteral("clones"), reported(node.part<FakeClones>(), environment)}});
+const FakeMc::Extension clones([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("projectClones"), [&mc](int id, const QJsonObject& shape) {
+    const QString environment = environmentOf(mc, shape.value(QLatin1String("environment")).toString());
+    mc.send({{QStringLiteral("t"), QStringLiteral("projectClones")}, {QStringLiteral("id"), id},
+               {QStringLiteral("clones"), reported(mc.part<FakeClones>(), environment)}});
   });
-  node.onRpc(QStringLiteral("sourceControl.lookupRepository"), [&node](const FakeNode::Rpc& rpc) {
-    FakeClones& fake = node.part<FakeClones>();
+  mc.onRpc(QStringLiteral("sourceControl.lookupRepository"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeClones& fake = mc.part<FakeClones>();
     fake.calls.append({rpc.method, rpc.payload});
-    if (!fake.refuseLookup.isEmpty()) return node.refuse(rpc, fake.refuseLookup);
+    if (!fake.refuseLookup.isEmpty()) return mc.refuse(rpc, fake.refuseLookup);
     const QString provider = rpc.payload.value(QLatin1String("provider")).toString();
     const QString repository = rpc.payload.value(QLatin1String("repository")).toString();
     const QString host = provider + QStringLiteral(".example.com");
-    node.reply(rpc, QJsonObject{{QStringLiteral("provider"), provider},
+    mc.reply(rpc, QJsonObject{{QStringLiteral("provider"), provider},
                                 {QStringLiteral("nameWithOwner"), repository},
                                 {QStringLiteral("url"), QStringLiteral("https://%1/%2.git").arg(host, repository)},
                                 {QStringLiteral("sshUrl"), QStringLiteral("git@%1:%2.git").arg(host, repository)}});
   });
-  node.onRpc(QStringLiteral("projectClone."), [&node](const FakeNode::Rpc& rpc) {
-    FakeClones& fake = node.part<FakeClones>();
+  mc.onRpc(QStringLiteral("projectClone."), [&mc](const FakeMc::Rpc& rpc) {
+    FakeClones& fake = mc.part<FakeClones>();
     fake.calls.append({rpc.method, rpc.payload});
-    if (rpc.method != QLatin1String("projectClone.start")) return node.reply(rpc, QJsonObject());
-    if (!fake.refuseStart.isEmpty()) return node.refuse(rpc, fake.refuseStart);
+    if (rpc.method != QLatin1String("projectClone.start")) return mc.reply(rpc, QJsonObject());
+    if (!fake.refuseStart.isEmpty()) return mc.refuse(rpc, fake.refuseStart);
     const QString id = rpc.payload.value(QLatin1String("projectId")).toString();
-    const QString destination = expandHome(node, rpc.payload.value(QLatin1String("destinationPath")).toString());
-    node.reply(rpc, QJsonObject());
-    addProjectRow(node, id, rpc.payload.value(QLatin1String("title")).toString(), destination);
-    const QString environment = environmentOf(node, rpc.environment);
+    const QString destination = expandHome(mc, rpc.payload.value(QLatin1String("destinationPath")).toString());
+    mc.reply(rpc, QJsonObject());
+    addProjectRow(mc, id, rpc.payload.value(QLatin1String("title")).toString(), destination);
+    const QString environment = environmentOf(mc, rpc.environment);
     fake.clones[environment].append({{QStringLiteral("projectId"), id},
                         {QStringLiteral("remoteUrl"), rpc.payload.value(QLatin1String("remoteUrl"))},
                         {QStringLiteral("destinationPath"), destination},
@@ -110,12 +110,12 @@ const FakeNode::Extension clones([](FakeNode& node) {
                         {QStringLiteral("percent"), QJsonValue::Null},
                         {QStringLiteral("detail"), QJsonValue::Null},
                         {QStringLiteral("error"), QJsonValue::Null}});
-    publish(node, environment);
+    publish(mc, environment);
   });
 });
 
 FakeClones& fake(World& world) {
-  return world.node.part<FakeClones>();
+  return world.mc.part<FakeClones>();
 }
 
 // --- The palette -------------------------------------------------------------------------
@@ -181,14 +181,14 @@ void enter(World& world, const QString& typed = {}) {
   world.sync();
 }
 
-// Add project from `source` up to where the node is asked to clone (or adds the folder).
+// Add project from `source` up to where the MC is asked to clone (or adds the folder).
 void addFrom(World& world, const QString& source) {
   FakeClones& clones = fake(world);
   clones.source = source;
-  if (source == u"a repository on GitLab") setSourceControlHost(world.node, QStringLiteral("gitlab"), true);
+  if (source == u"a repository on GitLab") setSourceControlHost(world.mc, QStringLiteral("gitlab"), true);
   openSources(world);
   if (source == u"a local folder") {
-    FakeFiles& files = fakeFiles(world.node);
+    FakeFiles& files = fakeFiles(world.mc);
     files.folders << files.home + QStringLiteral("/code") << files.home + QStringLiteral("/code/shop");
     runRow(world, QStringLiteral("Local folder"));
     remember(world);
@@ -225,16 +225,16 @@ QJsonObject started(World& world) {
   return {};
 }
 
-// --- Clones the node reports ---------------------------------------------------------------
+// --- Clones the MC reports ---------------------------------------------------------------
 
 // A linked environment the scenario's clones run on.
 const QString kLinked = QStringLiteral("beast");
 
 void reportClone(World& world, const QString& repository, QJsonObject fields, const QString& environment = {}) {
-  const QString on = environmentOf(world.node, environment);
-  const QString destination = fakeFiles(world.node).home + QStringLiteral("/shop");
-  const bool own = on == world.node.environmentId;
-  if (own && !world.node.projects.contains(kCloneProject)) addProjectRow(world.node, kCloneProject, QStringLiteral("shop"), destination);
+  const QString on = environmentOf(world.mc, environment);
+  const QString destination = fakeFiles(world.mc).home + QStringLiteral("/shop");
+  const bool own = on == world.mc.environmentId;
+  if (own && !world.mc.projects.contains(kCloneProject)) addProjectRow(world.mc, kCloneProject, QStringLiteral("shop"), destination);
   QJsonObject clone{{QStringLiteral("projectId"), kCloneProject},
                     {QStringLiteral("remoteUrl"), QStringLiteral("https://github.com/%1.git").arg(repository)},
                     {QStringLiteral("destinationPath"), destination},
@@ -245,7 +245,7 @@ void reportClone(World& world, const QString& repository, QJsonObject fields, co
                     {QStringLiteral("error"), QJsonValue::Null}};
   for (auto it = fields.begin(); it != fields.end(); ++it) clone.insert(it.key(), it.value());
   fake(world).clones[on] = {clone};
-  publish(world.node, on);
+  publish(world.mc, on);
   world.sync();
 }
 
@@ -286,8 +286,8 @@ QJsonObject draftProject(World& world) {
   const QVariant route = world.state(QStringLiteral("route"));
   if (at(route, QStringLiteral("kind")) != QLatin1String("draft")) return {};
   const auto draft = world.native().controller<DraftController>()->draft(at(route, QStringLiteral("draftId")).toString());
-  if (!draft || draft->environmentId != world.node.environmentId) return {};
-  return world.node.projects.value(draft->projectId);
+  if (!draft || draft->environmentId != world.mc.environmentId) return {};
+  return world.mc.projects.value(draft->projectId);
 }
 
 const Steps steps([] {
@@ -298,7 +298,7 @@ const Steps steps([] {
        [](World& world, const Captures& c, const Table&) { addFrom(world, c[0]); });
   step(QStringLiteral("the project is added to the chosen environment"), [](World& world, const Captures&, const Table&) {
     const QString source = fake(world).source;
-    const QString home = fakeFiles(world.node).home;
+    const QString home = fakeFiles(world.mc).home;
     const QString root = source == u"a local folder" ? home + QStringLiteral("/code/shop") : home + QStringLiteral("/shop");
     world.waitFor([&] { return draftProject(world).value(QLatin1String("workspaceRoot")) == root; },
                   [&] { return QStringLiteral("a draft in the project at %1; the route is %2").arg(root, show(world.state(QStringLiteral("route")))); });
@@ -315,7 +315,7 @@ const Steps steps([] {
 
   // A provider that is not set up.
   step(QStringLiteral("GitLab is not connected"), [](World& world, const Captures&, const Table&) {
-    setSourceControlHost(world.node, QStringLiteral("gitlab"), false);
+    setSourceControlHost(world.mc, QStringLiteral("gitlab"), false);
   });
   step(QStringLiteral("the user looks at repository sources while adding a project"), [](World& world, const Captures&, const Table&) {
     openSources(world);
@@ -345,10 +345,10 @@ const Steps steps([] {
 
   // Where browsing starts.
   step(QStringLiteral("the add project base directory is %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    saveElsewhere(world.node, QStringLiteral("addProjectBaseDirectory"), c[0]);
+    saveElsewhere(world.mc, QStringLiteral("addProjectBaseDirectory"), c[0]);
   });
   step(QStringLiteral("the add project base directory is empty"), [](World& world, const Captures&, const Table&) {
-    saveElsewhere(world.node, QStringLiteral("addProjectBaseDirectory"), QString());
+    saveElsewhere(world.mc, QStringLiteral("addProjectBaseDirectory"), QString());
   });
   step(QStringLiteral("the user starts adding a project"), [](World& world, const Captures&, const Table&) {
     openSources(world);
@@ -397,10 +397,10 @@ const Steps steps([] {
   });
   step(QStringLiteral("a clone of %1 is receiving objects at (\\d+) percent on a linked environment").arg(q),
        [](World& world, const Captures& c, const Table&) {
-         world.node.link(kLinked);
+         world.mc.link(kLinked);
          world.waitFor([&] {
-           for (const int id : world.node.subscribers(QStringLiteral("projectClones"))) {
-             if (world.node.shapeOf(id).value(QLatin1String("environment")) == kLinked) return true;
+           for (const int id : world.mc.subscribers(QStringLiteral("projectClones"))) {
+             if (world.mc.shapeOf(id).value(QLatin1String("environment")) == kLinked) return true;
            }
            return false;
          }, QStringLiteral("the clones of the linked environment to be followed"));
@@ -425,7 +425,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user sees %1 with its destination folder").arg(q), [](World& world, const Captures& c, const Table&) {
     const QVariantMap toast = waitForToast(world, c[0]);
-    expect(toast.value(QStringLiteral("description")) == fakeFiles(world.node).home + u"/shop", show(toast));
+    expect(toast.value(QStringLiteral("description")) == fakeFiles(world.mc).home + u"/shop", show(toast));
   });
   step(QStringLiteral("the user can cancel the clone"), [](World& world, const Captures&, const Table&) {
     choose(world, QStringLiteral("Cloning acme/shop"), QStringLiteral("Cancel"));
@@ -451,7 +451,7 @@ const Steps steps([] {
       for (const QVariant& project : at(world.state(QStringLiteral("sidebar")), QStringLiteral("projects")).toList()) {
         if (project.toMap().value(QStringLiteral("displayName")) == c[0]) return false;
       }
-      return !world.node.projects.contains(kCloneProject);
+      return !world.mc.projects.contains(kCloneProject);
     }, [&] { return QStringLiteral("%1 to go; the sidebar is %2").arg(c[0], show(world.state(QStringLiteral("sidebar")))); });
   });
 });

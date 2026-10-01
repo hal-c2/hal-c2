@@ -9,8 +9,8 @@ defmodule HalC2.Steps.SourceControl.StackedPullRequests do
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @stack_number 7
   @unsupported "This stack action is not supported or has no expected head revision."
@@ -369,7 +369,7 @@ defmodule HalC2.Steps.SourceControl.StackedPullRequests do
   end
 
   defp link(context, number, title) do
-    Node.ensure({HalC2.PullRequests.Sync, interval: nil})
+    Mc.ensure({HalC2.PullRequests.Sync, interval: nil})
 
     context =
       if (context[:threads] || %{})[title],

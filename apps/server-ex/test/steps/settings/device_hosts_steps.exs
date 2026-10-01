@@ -1,20 +1,20 @@
 defmodule HalC2.Steps.Settings.DeviceHosts do
   @moduledoc """
-  SSH device hosts on a node: `device.testHost` and `device.list` report them
-  unavailable with the reason to add that machine as a cluster node instead.
+  SSH device hosts on an MC: `device.testHost` and `device.list` report them
+  unavailable with the reason to add that machine as a cluster MC instead.
   Hosts are `%{"id", "label", "target"}` configs kept under `context.device_hosts`.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   step "the user has opened the Integrations settings for the environment {string}",
        %{args: [_environment]} = context do
     context = World.fake_device_tools(context)
-    Node.ensure(HalC2.Devices)
+    Mc.ensure(HalC2.Devices)
 
     context
     |> World.put_client("default", World.client(context))
@@ -39,7 +39,7 @@ defmodule HalC2.Steps.Settings.DeviceHosts do
     context
   end
 
-  step "the node tests the connection to {string}", %{args: [label]} = context do
+  step "the MC tests the connection to {string}", %{args: [label]} = context do
     {reply, context} = World.call(context, "device.testHost", context.device_hosts[label])
     Map.put(context, :reply, reply)
   end
@@ -50,14 +50,14 @@ defmodule HalC2.Steps.Settings.DeviceHosts do
     context
   end
 
-  step "the reason says to run HAL-C2 on {string} and add it to this cluster as a node",
+  step "the reason says to run HAL-C2 on {string} and add it to this cluster as an MC",
        %{args: [target]} = context do
     {:error, _, %{"reason" => reason}} = context.reply
-    assert reason =~ "Run HAL-C2 on #{target} and add it to this cluster as a node"
+    assert reason =~ "Run HAL-C2 on #{target} and add it to this cluster as an MC"
     context
   end
 
-  step "the node lists devices", context do
+  step "the MC lists devices", context do
     {reply, context} = World.call(context, "device.list", %{})
     Map.put(context, :reply, reply)
   end

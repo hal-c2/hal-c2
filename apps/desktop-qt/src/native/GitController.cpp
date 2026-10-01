@@ -5,7 +5,7 @@
 #include <QUuid>
 
 #include "NativeShell.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -103,7 +103,7 @@ QVariantMap defaultBranchCopy(const QString& action, const QString& branch, bool
 
 }  // namespace
 
-GitController::GitController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+GitController::GitController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
 
 GitController::~GitController() {
@@ -129,13 +129,13 @@ void GitController::activate() {
     m_publishing.reset();
     publish();
   });
-  // A stacked action that lost its connection is not resent: the node would
+  // A stacked action that lost its connection is not resent: the MC would
   // run it a second time.
-  connect(m_client, &NodeClient::readyChanged, this, [this](bool ready) {
+  connect(m_client, &McClient::readyChanged, this, [this](bool ready) {
     if (ready || !m_action) return;
     finishAction();
     toasts()->show(QStringLiteral("error"), QStringLiteral("Action failed"),
-                   QStringLiteral("The connection to the node dropped while the action ran."), {}, 0);
+                   QStringLiteral("The connection to the MC dropped while the action ran."), {}, 0);
   });
   publish();
 }
@@ -304,7 +304,7 @@ void GitController::publish() {
       QStringLiteral("git"),
       QVariantMap{
           {QStringLiteral("available"), true},
-          // Taken for a repository until the node says otherwise, so Initialize Git does not flash.
+          // Taken for a repository until the MC says otherwise, so Initialize Git does not flash.
           {QStringLiteral("isRepo"), current ? flag(s, "isRepo") : true},
           {QStringLiteral("busy"), m_action != 0 || m_pulling},
           {QStringLiteral("initPending"), m_initPending},
@@ -432,7 +432,7 @@ void GitController::run(const QString& action, const QString& message, const std
   if (featureBranch) input.insert(QStringLiteral("featureBranch"), true);
   if (filePaths) input.insert(QStringLiteral("filePaths"), QJsonArray::fromStringList(*filePaths));
   // A pull request the action opens is linked to the thread it ran beside;
-  // a draft has no thread on the node yet.
+  // a draft has no thread on the MC yet.
   if (place.draftId.isEmpty()) {
     input.insert(QStringLiteral("threadId"), place.threadId);
   } else {
@@ -565,7 +565,7 @@ void GitController::init() {
                  });
 }
 
-// The dialog stays open with the node's reason when publishing fails.
+// The dialog stays open with the MC's reason when publishing fails.
 void GitController::submitPublish(const QVariantMap& args) {
   if (!m_publishing || m_publishing->busy) return;
   const QString repository = args.value(QStringLiteral("repository")).toString().trimmed();

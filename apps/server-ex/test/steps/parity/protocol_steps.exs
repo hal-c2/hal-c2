@@ -9,12 +9,12 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   alias HalC2.Steps.Parity.Fixtures
   alias HalC2.Steps.Parity.Shapes
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
   alias HalC2.Test.WsClient
 
   step "a protocol 3 client connected to it", context do
-    World.put_client(context, Node.connect(context.node))
+    World.put_client(context, Mc.connect(context.mc))
   end
 
   # --- greeting --------------------------------------------------------------------
@@ -23,12 +23,12 @@ defmodule HalC2.Steps.Parity.Protocol do
     Map.put(context, :received, Shapes.open_socket(context))
   end
 
-  step "the first frame is a hello carrying protocol 3, the node's name and its environment",
+  step "the first frame is a hello carrying protocol 3, the MC's name and its environment",
        context do
     me = Atom.to_string(node())
     environment = HalC2.Environment.id()
 
-    assert %{"t" => "hello", "protocol" => 3, "node" => ^me, "environment" => ^environment} =
+    assert %{"t" => "hello", "protocol" => 3, "mc" => ^me, "environment" => ^environment} =
              context.received
 
     context
@@ -50,8 +50,8 @@ defmodule HalC2.Steps.Parity.Protocol do
       "unsub" ->
         context = Shapes.subscribe(context, "scheduledTasks")
         id = context.shape.id
-        client = Node.unsub(World.client(context), id)
-        # The unsub is behind the pong, so the node has dropped the shape after it.
+        client = Mc.unsub(World.client(context), id)
+        # The unsub is behind the pong, so the MC has dropped the shape after it.
         client = Shapes.quiet(client, id)
         context |> World.put_client(client) |> Map.put(:sent, %{id: id})
 
@@ -60,21 +60,21 @@ defmodule HalC2.Steps.Parity.Protocol do
 
       "rpc" ->
         # The payload is optional: this one has none.
-        message = %{"t" => "rpc", "id" => 7, "environment" => context.node.environment}
+        message = %{"t" => "rpc", "id" => 7, "environment" => context.mc.environment}
         message = Map.put(message, "method", "hal-c2.readSettings")
         client = WsClient.send_json(client, message)
         context |> World.put_client(client) |> Map.put(:sent, %{id: 7})
     end
   end
 
-  step ~r/^the node answers with (?<answer>the shape's first frames under that id|nothing further under that id|an rpc\.result or an rpc\.error under that id)$/,
+  step ~r/^the MC answers with (?<answer>the shape's first frames under that id|nothing further under that id|an rpc\.result or an rpc\.error under that id)$/,
        %{args: [answer]} = context do
     id = context.sent.id
 
     case answer do
       "the shape's first frames under that id" ->
-        {frame, client} = Node.await(World.client(context), &(&1["id"] == id))
-        assert %{"t" => "shell", "nodes" => [_ | _], "rows" => rows} = frame
+        {frame, client} = Mc.await(World.client(context), &(&1["id"] == id))
+        assert %{"t" => "shell", "mcs" => [_ | _], "rows" => rows} = frame
         assert is_list(rows)
         World.put_client(context, client)
 
@@ -83,7 +83,7 @@ defmodule HalC2.Steps.Parity.Protocol do
         World.put_client(context, Shapes.quiet(World.client(context), id))
 
       "an rpc.result or an rpc.error under that id" ->
-        {frame, client} = Node.await(World.client(context), Node.reply?(id))
+        {frame, client} = Mc.await(World.client(context), Mc.reply?(id))
         assert %{"t" => "rpc.result", "result" => %{"settings" => %{}}} = frame
         World.put_client(context, client)
     end
@@ -97,7 +97,7 @@ defmodule HalC2.Steps.Parity.Protocol do
       cond do
         "environment" in String.split(fields, ", ") -> "environment"
         fields == "links" -> "links"
-        true -> "node"
+        true -> "mc"
       end
 
     context = Shapes.subscribe(context, type, form)
@@ -116,7 +116,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     later = Shapes.later(type, form)
 
     if form == "environment",
-      do: assert(text == "the same frames as the node form"),
+      do: assert(text == "the same frames as the MC form"),
       else: for(t <- later, do: assert(String.contains?(text, t), "#{t} is not in #{text}"))
 
     Enum.reduce(later, context, fn t, context ->
@@ -126,19 +126,19 @@ defmodule HalC2.Steps.Parity.Protocol do
     end)
   end
 
-  # The methods a shape replaces are not rpc methods on the node.
+  # The methods a shape replaces are not rpc methods on the MC.
   step ~r/^the shape stands in for (?<replaces>.+)$/, %{args: [replaces]} = context do
     replaces
     |> String.split([", ", " and "])
     |> Enum.reduce(context, fn method, context ->
       {reply, context} = World.call(context, method, %{})
       assert {:error, error, _} = reply
-      assert error == "#{method} is not served by this node yet"
+      assert error == "#{method} is not served by this MC yet"
       context
     end)
   end
 
-  # --- frames the node sends -------------------------------------------------------
+  # --- frames the MC sends -------------------------------------------------------
 
   step ~r/^the client is subscribed to a shape that uses (?<frame>[\w.]+) frames$/,
        %{args: [frame]} = context do
@@ -163,25 +163,25 @@ defmodule HalC2.Steps.Parity.Protocol do
     "a method succeeds" => "rpc.result",
     "a method fails" => "rpc.error",
     "the shell subscription opens" => "shell",
-    "projects or threads on one node change" => "shell.rows",
-    "a node's environment descriptor changes" => "shell.environment",
-    "a node joins or leaves the cluster" => "shell.node",
-    "the environments the node links to change" => "shell.links",
+    "projects or threads on one MC change" => "shell.rows",
+    "an MC's environment descriptor changes" => "shell.environment",
+    "an MC joins or leaves the cluster" => "shell.mc",
+    "the environments the MC links to change" => "shell.links",
     "a linked environment's projects or threads change" => "shell.linkRows",
-    "a linked environment's node descriptor changes" => "shell.linkEnvironment",
-    "a linked environment's node comes online or goes offline" => "shell.linkNode",
+    "a linked environment's MC descriptor changes" => "shell.linkEnvironment",
+    "a linked environment's MC comes online or goes offline" => "shell.linkMc",
     "a stream subscription starts or falls too far behind" => "snapshot",
     "stream entities change" => "events",
     "a stream has caught up" => "live",
     "a client falls behind" => "resync",
     "a shape is over" => "end",
     "a config subscription opens" => "config",
-    "the node moves to another version in place" => "config.ready",
-    "the node's settings change" => "config.settings",
-    "the node's published themes change" => "config.themes",
-    "the node's usage limit sources change" => "config.usageLimitSources",
-    "the node's keybinding rules change" => "config.keybindings",
-    "the node's providers change" => "config.providers",
+    "the MC moves to another version in place" => "config.ready",
+    "the MC's settings change" => "config.settings",
+    "the MC's published themes change" => "config.themes",
+    "the MC's usage limit sources change" => "config.usageLimitSources",
+    "the MC's keybinding rules change" => "config.keybindings",
+    "the MC's providers change" => "config.providers",
     "an attached terminal emits" => "terminal",
     "terminal summaries change" => "terminals",
     "a checkout's status changes" => "vcs",
@@ -202,7 +202,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "the relay client install progresses" => "relayClientInstall"
   }
 
-  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one node change|a node's environment descriptor changes|a node joins or leaves the cluster|the environments the node links to change|a linked environment's projects or threads change|a linked environment's node descriptor changes|a linked environment's node comes online or goes offline|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the node moves to another version in place|the node's settings change|the node's published themes change|the node's usage limit sources change|the node's keybinding rules change|the node's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
+  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|the environments the MC links to change|a linked environment's projects or threads change|a linked environment's MC descriptor changes|a linked environment's MC comes online or goes offline|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
        %{args: [text]} = context do
     frame = Map.fetch!(@whens, text)
 
@@ -218,8 +218,8 @@ defmodule HalC2.Steps.Parity.Protocol do
 
         "error" ->
           shape = %{"type" => "config", "environment" => "env-missing"}
-          client = Node.sub(World.client(context), 31, shape)
-          {frame, client} = Node.await(client, &(&1["id"] == 31))
+          client = Mc.sub(World.client(context), 31, shape)
+          {frame, client} = Mc.await(client, &(&1["id"] == 31))
           {frame, World.put_client(context, client)}
 
         "rpc.result" ->
@@ -241,25 +241,25 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   # The keys each frame carries besides `t`, from `apps/server-ex/lib/hal_c2/web/protocol.ex`.
   @carries %{
-    "hello" => ~w(protocol node environment),
+    "hello" => ~w(protocol mc environment),
     "pong" => [],
     "error" => ~w(id reason),
     "rpc.result" => ~w(id result),
     "rpc.error" => ~w(id error detail),
-    "shell" => ~w(id nodes rows links),
-    "shell.rows" => ~w(id node rows),
-    "shell.environment" => ~w(id node environment),
-    "shell.node" => ~w(id node online),
+    "shell" => ~w(id mcs rows links),
+    "shell.rows" => ~w(id mc rows),
+    "shell.environment" => ~w(id mc environment),
+    "shell.mc" => ~w(id mc online),
     "shell.links" => ~w(id links),
-    "shell.linkRows" => ~w(id link node rows),
-    "shell.linkEnvironment" => ~w(id link node environment),
-    "shell.linkNode" => ~w(id link node online),
+    "shell.linkRows" => ~w(id link mc rows),
+    "shell.linkEnvironment" => ~w(id link mc environment),
+    "shell.linkMc" => ~w(id link mc online),
     "snapshot" => ~w(id offset at part rows done),
     "events" => ~w(id offset events),
     "live" => ~w(id offset),
     "resync" => ~w(id offset),
     "end" => ~w(id),
-    "config" => ~w(id node config),
+    "config" => ~w(id mc config),
     "config.ready" => ~w(id environment updateOutcome),
     "config.settings" => ~w(id settings),
     "config.themes" => ~w(id themes),
@@ -287,7 +287,7 @@ defmodule HalC2.Steps.Parity.Protocol do
   end
 
   defp check_frame("shell", frame),
-    do: for(n <- frame["nodes"], do: assert(Map.keys(n) -- ["node"] == ~w(environment online)))
+    do: for(n <- frame["mcs"], do: assert(Map.keys(n) -- ["mc"] == ~w(environment online)))
 
   defp check_frame("events", frame) do
     for [seq, kind, id, _patch, at] <- frame["events"],
@@ -301,14 +301,14 @@ defmodule HalC2.Steps.Parity.Protocol do
   defp check_frame(_t, _frame), do: :ok
 
   defp reply(context, id, method, payload) do
-    client = Node.rpc(World.client(context), context.node.environment, id, method, payload)
-    {frame, client} = Node.await(client, Node.reply?(id))
+    client = Mc.rpc(World.client(context), context.mc.environment, id, method, payload)
+    {frame, client} = Mc.await(client, Mc.reply?(id))
     {frame, World.put_client(context, client)}
   end
 
   # --- shapes that end on their own ------------------------------------------------
 
-  step ~r/^(?<ending>the action finishes or fails|the update completes|the update fails|the node drops the client as its host|the relay client is found or installed)$/,
+  step ~r/^(?<ending>the action finishes or fails|the update completes|the update fails|the MC drops the client as its host|the relay client is found or installed)$/,
        %{args: [ending]} = context do
     id = context.shape.id
 
@@ -316,35 +316,35 @@ defmodule HalC2.Steps.Parity.Protocol do
       case ending do
         "the action finishes or fails" ->
           done = &(&1["id"] == id and &1["event"]["kind"] in ~w(action_finished action_failed))
-          {frame, client} = Node.await(World.client(context), done, 10_000)
+          {frame, client} = Mc.await(World.client(context), done, 10_000)
           {[frame], World.put_client(context, client)}
 
         "the update completes" ->
           Shapes.serve_bundle()
           complete? = &(&1["id"] == id and &1["event"]["type"] == "complete")
-          {complete, client} = Node.await(World.client(context), complete?, 5_000)
+          {complete, client} = Mc.await(World.client(context), complete?, 5_000)
           {frame, client} = WsClient.recv(client, 2_000)
           {[complete, frame], World.put_client(context, client)}
 
         "the update fails" ->
           Shapes.refuse_bundle()
-          {frame, client} = Node.await(World.client(context), &(&1["t"] == "error"), 5_000)
+          {frame, client} = Mc.await(World.client(context), &(&1["t"] == "error"), 5_000)
           {[frame], World.put_client(context, client)}
 
-        "the node drops the client as its host" ->
+        "the MC drops the client as its host" ->
           {frame, context} = Shapes.trigger(context, "end")
           {[frame], context}
 
         "the relay client is found or installed" ->
           {complete, context} = Shapes.trigger(context, "relayClientInstall")
-          {frame, client} = Node.await(World.client(context), &(&1["id"] == id), 2_000)
+          {frame, client} = Mc.await(World.client(context), &(&1["id"] == id), 2_000)
           {[complete, frame], World.put_client(context, client)}
       end
 
     Map.put(context, :last, last)
   end
 
-  step ~r/^the node sends (?<last>a gitAction frame with action_finished or action_failed|a serverUpdate frame with complete, then an end frame|an error frame with the reason and its detail|an end frame|a relayClientInstall frame with complete, then an end frame)$/,
+  step ~r/^the MC sends (?<last>a gitAction frame with action_finished or action_failed|a serverUpdate frame with complete, then an end frame|an error frame with the reason and its detail|an end frame|a relayClientInstall frame with complete, then an end frame)$/,
        %{args: [last]} = context do
     id = context.shape.id
 
@@ -377,7 +377,7 @@ defmodule HalC2.Steps.Parity.Protocol do
   end
 
   # An event for the ended shape reaches the socket and goes nowhere.
-  step "the node forgets the subscription", context do
+  step "the MC forgets the subscription", context do
     %{type: type, id: id} = context.shape
     {socket, context} = Shapes.socket_pid(context)
 
@@ -402,7 +402,7 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   # --- refusals --------------------------------------------------------------------
 
-  step ~r/^the node answers with an? (?<frame>error|rpc\.error) frame whose reason is "(?<reason>[^"]+)"$/,
+  step ~r/^the MC answers with an? (?<frame>error|rpc\.error) frame whose reason is "(?<reason>[^"]+)"$/,
        %{args: [t, reason]} = context do
     frame = context.refusal
 
@@ -418,7 +418,7 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   step "the client calls server.reportClientActivity in an rpc frame", context do
     {client, session} = Shapes.paired_client(context, "Activity")
-    policy = Node.ensure(HalC2.BackgroundPolicy)
+    policy = Mc.ensure(HalC2.BackgroundPolicy)
     {socket, context} = Shapes.socket_pid(World.put_client(context, client))
     :erlang.trace(policy, true, [:receive])
 
@@ -428,7 +428,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     Map.merge(context, %{received: frame, activity: %{session: session, socket: socket}})
   end
 
-  step "the node records the activity lease for the client's session and socket", context do
+  step "the MC records the activity lease for the client's session and socket", context do
     %{session: session, socket: socket} = context.activity
     leases = Map.values(:sys.get_state(HalC2.BackgroundPolicy).leases)
     lease = Enum.find(leases, &(&1["clientId"] == "parity-client"))
@@ -451,8 +451,8 @@ defmodule HalC2.Steps.Parity.Protocol do
   # A method the TypeScript client offers that the adapter does not carry.
   step "a client calls a method the protocol 3 adapter does not carry", context do
     {:ok, ticket, _} = ticket()
-    url = "ws://127.0.0.1:#{context.node.port}/ws?wsTicket=#{ticket}"
-    args = [@adapter_script, url, context.node.environment, "provider.install.start"]
+    url = "ws://127.0.0.1:#{context.mc.port}/ws?wsTicket=#{ticket}"
+    args = [@adapter_script, url, context.mc.environment, "provider.install.start"]
     {out, status} = System.cmd("bun", args, stderr_to_stdout: true)
     assert status == 0, out
     line = out |> String.split("\n", trim: true) |> List.last()
@@ -467,7 +467,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     context
   end
 
-  step "no frame is sent to the node", context do
+  step "no frame is sent to the MC", context do
     assert context.adapter["sent"] == []
     context
   end
@@ -487,15 +487,15 @@ end
 defmodule HalC2.Steps.Parity.Shapes do
   @moduledoc """
   Every protocol 3 shape, subscribed the way a client does and driven through the
-  node's own services: `subscribe/3` opens one on the default socket and records
-  `context.shape` (`%{type, id, map, form, first}`), `trigger/2` makes the node send
+  MC's own services: `subscribe/3` opens one on the default socket and records
+  `context.shape` (`%{type, id, map, form, first}`), `trigger/2` makes the MC send
   a later frame of a type and returns it.
   """
   import ExUnit.Assertions
 
   alias HalC2.Steps.Parity.Fixtures
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
   alias HalC2.Test.WsClient
 
   @ids %{
@@ -522,7 +522,7 @@ defmodule HalC2.Steps.Parity.Shapes do
     "relayClientInstall" => 21
   }
 
-  # The services a node-wide shape reads, as `HalC2.Application` starts them.
+  # The services an MC-wide shape reads, as `HalC2.Application` starts them.
   @services %{
     "scheduledTasks" => HalC2.ScheduledTasks,
     "projectClones" => HalC2.ProjectClones,
@@ -551,7 +551,7 @@ defmodule HalC2.Steps.Parity.Shapes do
   def shape_for(t), do: t
 
   @doc "The later frame types of a shape, in the order `trigger/2` can produce them."
-  def later("shell"), do: ~w(shell.rows shell.environment shell.node)
+  def later("shell"), do: ~w(shell.rows shell.environment shell.mc)
   def later("stream"), do: ~w(live events resync)
 
   def later("config"),
@@ -560,19 +560,19 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   def later(type), do: [type]
 
-  def later("shell", "links"), do: ~w(shell.linkRows shell.linkEnvironment shell.linkNode)
+  def later("shell", "links"), do: ~w(shell.linkRows shell.linkEnvironment shell.linkMc)
   def later(type, _form), do: later(type)
 
   @doc "The form of the shape a frame type needs: a linked environment's frames need links."
   def form_for("shell.link" <> _), do: "links"
-  def form_for(_t), do: "node"
+  def form_for(_t), do: "mc"
 
   @doc "Subscribes the default socket to `type` and collects its first frames."
-  def subscribe(context, type, form \\ "node") do
+  def subscribe(context, type, form \\ "mc") do
     context = Fixtures.setup(context)
     {map, context} = prepare(context, type, form)
     id = Map.fetch!(@ids, type)
-    client = Node.sub(World.client(context), id, Map.put(map, "type", type))
+    client = Mc.sub(World.client(context), id, Map.put(map, "type", type))
     {first, client} = first(client, type, id)
 
     for frame <- first,
@@ -582,7 +582,7 @@ defmodule HalC2.Steps.Parity.Shapes do
     context |> World.put_client(client) |> Map.put(:shape, shape)
   end
 
-  @doc "The first frame a shape delivers, driving the node when it sends none at once."
+  @doc "The first frame a shape delivers, driving the MC when it sends none at once."
   def first_frame(context, type) do
     context = subscribe(context, type)
 
@@ -597,7 +597,7 @@ defmodule HalC2.Steps.Parity.Shapes do
     ended =
       &(&1["id"] == @ids["gitAction"] and &1["event"]["kind"] in ~w(action_finished action_failed))
 
-    {_, client} = Node.await(World.client(context), ended, 10_000)
+    {_, client} = Mc.await(World.client(context), ended, 10_000)
     World.put_client(context, client)
   end
 
@@ -606,7 +606,7 @@ defmodule HalC2.Steps.Parity.Shapes do
   defp first(client, "preview", id), do: {[], quiet(client, id)}
 
   defp first(client, "config", id) do
-    Node.await_all(
+    Mc.await_all(
       client,
       for(
         t <- ~w(config config.themes config.usageLimitSources),
@@ -616,12 +616,12 @@ defmodule HalC2.Steps.Parity.Shapes do
   end
 
   defp first(client, "stream", id), do: snapshots(client, id, [])
-  defp first(client, _type, id), do: Node.await(client, &(&1["id"] == id), 5_000) |> one()
+  defp first(client, _type, id), do: Mc.await(client, &(&1["id"] == id), 5_000) |> one()
 
   defp one({frame, client}), do: {[frame], client}
 
   defp snapshots(client, id, acc) do
-    {frame, client} = Node.await(client, &(&1["id"] == id))
+    {frame, client} = Mc.await(client, &(&1["id"] == id))
     acc = [frame | acc]
 
     if frame["t"] != "snapshot" or frame["done"],
@@ -637,16 +637,16 @@ defmodule HalC2.Steps.Parity.Shapes do
 
     case {type, first} do
       {"shell", [frame]} ->
-        assert %{"t" => "shell", "nodes" => nodes, "rows" => rows} = frame
+        assert %{"t" => "shell", "mcs" => mcs, "rows" => rows} = frame
 
-        assert Enum.map(nodes, & &1["node"]) ==
+        assert Enum.map(mcs, & &1["mc"]) ==
                  Enum.map(HalC2.Shell.environments(), &to_string(elem(&1, 0)))
 
         assert length(rows) == length(HalC2.Shell.rows())
 
-        # With links, each link also carries its environment's nodes and rows. A link
+        # With links, each link also carries its environment's MCs and rows. A link
         # paired since scopes were kept also lists them.
-        link_keys = if form == "links", do: ~w(environment nodes online origin rows)
+        link_keys = if form == "links", do: ~w(environment mcs online origin rows)
         link_keys = link_keys || ~w(environment online origin)
 
         for link <- frame["links"],
@@ -659,10 +659,10 @@ defmodule HalC2.Steps.Parity.Shapes do
 
       {"config", frames} ->
         assert Enum.map(frames, & &1["t"]) == ~w(config config.themes config.usageLimitSources)
-        assert hd(frames)["node"] == me
+        assert hd(frames)["mc"] == me
 
         if form == "environment",
-          do: assert(context.shape.map["environment"] == context.node.environment)
+          do: assert(context.shape.map["environment"] == context.mc.environment)
 
       {"terminal", [frame]} ->
         assert %{"event" => %{"type" => "snapshot", "snapshot" => %{}}} = frame
@@ -727,19 +727,19 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   # --- preparing a shape -------------------------------------------------------------
 
-  # A shape named by environment is its node form with the environment in place of the node.
+  # A shape named by environment is its MC form with the environment in place of the MC.
   defp prepare(context, type, "environment") do
-    {map, context} = prepare(context, type, "node")
-    {map |> Map.delete("node") |> Map.put("environment", context.node.environment), context}
+    {map, context} = prepare(context, type, "mc")
+    {map |> Map.delete("mc") |> Map.put("environment", context.mc.environment), context}
   end
 
   defp prepare(context, type, form) do
     f = context.fixtures
-    node = %{"node" => Atom.to_string(node())}
+    mc = %{"mc" => Atom.to_string(node())}
 
     case type do
       "shell" ->
-        # The socket follows the node's links for shell.links from the moment it subscribes.
+        # The socket follows the MC's links for shell.links from the moment it subscribes.
         ensure([
           {Registry, keys: :unique, name: HalC2.Links.Registry},
           {DynamicSupervisor, name: HalC2.Links.Supervisor, strategy: :one_for_one},
@@ -752,36 +752,36 @@ defmodule HalC2.Steps.Parity.Shapes do
         {%{}, context}
 
       "stream" ->
-        {Map.put(node, "stream", f.thread), context}
+        {Map.put(mc, "stream", f.thread), context}
 
       "config" ->
-        Enum.each([HalC2.EnvironmentThemes, HalC2.UsageLimitSources], &Node.ensure/1)
-        {node, context}
+        Enum.each([HalC2.EnvironmentThemes, HalC2.UsageLimitSources], &Mc.ensure/1)
+        {mc, context}
 
       "terminal" ->
         World.open_terminal(f.thread, f.root)
-        {Map.put(node, "input", Fixtures.terminal(f)), context}
+        {Map.put(mc, "input", Fixtures.terminal(f)), context}
 
       "terminals" ->
         ensure(Fixtures.terminals())
         World.put_env("SHELL", "/bin/sh")
-        {node, context}
+        {mc, context}
 
       "vcs" ->
         ensure(Fixtures.vcs())
-        {Map.put(node, "cwd", f.root), context}
+        {Map.put(mc, "cwd", f.root), context}
 
       "providerAuth" ->
         ensure(Fixtures.provider_auth())
-        {Map.put(node, "instanceId", "opencode"), context}
+        {Map.put(mc, "instanceId", "opencode"), context}
 
       "worktreeSetup" ->
         ensure([@services[type]])
-        {Map.put(node, "threadId", f.thread), context}
+        {Map.put(mc, "threadId", f.thread), context}
 
       "previewAutomation" ->
         ensure([@services[type]])
-        {Map.put(node, "host", %{"clientId" => "parity-host"}), context}
+        {Map.put(mc, "host", %{"clientId" => "parity-host"}), context}
 
       "gitAction" ->
         ensure(Fixtures.vcs())
@@ -794,41 +794,41 @@ defmodule HalC2.Steps.Parity.Shapes do
           "commitMessage" => "Parity"
         }
 
-        {Map.put(node, "input", input), context}
+        {Map.put(mc, "input", input), context}
 
       "devices" ->
         context = World.fake_device_tools(context)
         ensure([HalC2.Devices])
-        {node, context}
+        {mc, context}
 
       "serverUpdate" ->
-        {Map.put(node, "input", %{"targetVersion" => @target}), update_gate(context)}
+        {Map.put(mc, "input", %{"targetVersion" => @target}), update_gate(context)}
 
       "providerInstall" ->
         ensure(Fixtures.provider_auth() ++ [HalC2.Acp.Antigravity.Installation])
-        {Map.put(node, "instanceId", "antigravity"), Fixtures.managed_install(context)}
+        {Map.put(mc, "instanceId", "antigravity"), Fixtures.managed_install(context)}
 
       # A relay client already on the PATH: the install checks, finds it and completes.
       "relayClientInstall" ->
-        bin = Node.tmp_dir(context.node, "relay-bin")
+        bin = Mc.tmp_dir(context.mc, "relay-bin")
         File.cp!(@fake_cloudflared, Path.join(bin, "cloudflared"))
         File.chmod!(Path.join(bin, "cloudflared"), 0o755)
         World.put_app_env(:relay_client_env, %{"PATH" => bin})
         World.put_app_env(:relay_client_target, {"linux", "x64"})
-        {node, context}
+        {mc, context}
 
       _ ->
         ensure([Map.fetch!(@services, type)])
-        {node, context}
+        {mc, context}
     end
   end
 
-  defp ensure(children), do: Enum.each(children, &Node.ensure/1)
+  defp ensure(children), do: Enum.each(children, &Mc.ensure/1)
 
   # --- later frames ------------------------------------------------------------------
 
   @doc """
-  Makes the node send a `t` frame on the current shape; returns `{frame, context}`.
+  Makes the MC send a `t` frame on the current shape; returns `{frame, context}`.
   Methods go through a second socket, so waiting for their reply skips no frame.
   """
   def trigger(context, t) do
@@ -843,9 +843,9 @@ defmodule HalC2.Steps.Parity.Shapes do
       "shell.environment" ->
         descriptor = %{"environmentId" => "env-gone"}
         GenServer.cast(HalC2.Shell, {:peer_environment, @gone, descriptor})
-        await(context, t, id, &(&1["node"] == to_string(@gone)))
+        await(context, t, id, &(&1["mc"] == to_string(@gone)))
 
-      "shell.node" ->
+      "shell.mc" ->
         send(HalC2.Shell, {:nodedown, @gone})
         await(context, t, id, &(&1["online"] == false))
 
@@ -891,7 +891,7 @@ defmodule HalC2.Steps.Parity.Shapes do
         await(context, t, id)
 
       "config.themes" ->
-        dir = Path.join(context.node.home, "themes")
+        dir = Path.join(context.mc.home, "themes")
         File.mkdir_p!(dir)
 
         theme = %{
@@ -998,7 +998,7 @@ defmodule HalC2.Steps.Parity.Shapes do
 
       "localServers" ->
         server =
-          Node.ensure(
+          Mc.ensure(
             Supervisor.child_spec({Bandit, plug: __MODULE__.Page, port: 0, ip: :loopback},
               id: :parity_page
             )
@@ -1037,7 +1037,7 @@ defmodule HalC2.Steps.Parity.Shapes do
   end
 
   # A link to an environment nobody serves, whose shell frames the test plays to the
-  # node's links as that environment would send them; removed once the frame lands.
+  # MC's links as that environment would send them; removed once the frame lands.
   defp linked_frame(context, t, id) do
     environment = %{"environmentId" => "env-linked", "label" => "Linked"}
     link = %{"origin" => "http://127.0.0.1:9", "token" => "t", "environment" => environment}
@@ -1048,13 +1048,13 @@ defmodule HalC2.Steps.Parity.Shapes do
       case t do
         "shell.linkRows" ->
           row = %{"id" => "th-linked", "title" => "Linked"}
-          %{"t" => "shell.rows", "node" => "beast@host", "rows" => [["th-linked", "thread", row]]}
+          %{"t" => "shell.rows", "mc" => "beast@host", "rows" => [["th-linked", "thread", row]]}
 
         "shell.linkEnvironment" ->
-          %{"t" => "shell.environment", "node" => "beast@host", "environment" => environment}
+          %{"t" => "shell.environment", "mc" => "beast@host", "environment" => environment}
 
-        "shell.linkNode" ->
-          %{"t" => "shell.node", "node" => "beast@host", "online" => true}
+        "shell.linkMc" ->
+          %{"t" => "shell.mc", "mc" => "beast@host", "online" => true}
       end
 
     send(HalC2.Links, {:hal_c2_link, ref, frame})
@@ -1065,7 +1065,7 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   defp await(context, t, id, fun \\ fn _ -> true end, timeout \\ 3_000) do
     match = &(&1["t"] == t and &1["id"] == id and fun.(&1))
-    {frame, client} = Node.await(World.client(context), match, timeout)
+    {frame, client} = Mc.await(World.client(context), match, timeout)
     {frame, World.put_client(context, client)}
   end
 
@@ -1108,10 +1108,10 @@ defmodule HalC2.Steps.Parity.Shapes do
     end
   end
 
-  # A release root the node updates from a loopback server, restarting into the new
+  # A release root the MC updates from a loopback server, restarting into the new
   # version through a stand-in for `System.stop/1`.
   defp update_gate(context) do
-    root = Node.tmp_dir(context.node, "release")
+    root = Mc.tmp_dir(context.mc, "release")
     for dir <- ~w(releases lib bin), do: File.mkdir_p!(Path.join(root, dir))
     start = "#{:erlang.system_info(:version)} #{HalC2.Upgrade.version()}\n"
     File.write!(Path.join([root, "releases", "start_erl.data"]), start)
@@ -1121,7 +1121,7 @@ defmodule HalC2.Steps.Parity.Shapes do
     World.put_env("HAL_C2_SERVICE", "1")
 
     gate =
-      Node.ensure(
+      Mc.ensure(
         Supervisor.child_spec({Bandit, plug: {Gate, self()}, port: 0, ip: :loopback},
           id: :parity_gate
         )
@@ -1130,7 +1130,7 @@ defmodule HalC2.Steps.Parity.Shapes do
     {:ok, {_, port}} = ThousandIsland.listener_info(gate)
     World.put_env("HAL_C2_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}/{platform}.tar.gz")
 
-    Node.ensure(HalC2.Upgrade)
+    Mc.ensure(HalC2.Upgrade)
 
     ExUnit.Callbacks.on_exit(fn ->
       :persistent_term.erase({HalC2.Upgrade, :version})
@@ -1178,9 +1178,9 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   # --- sockets -------------------------------------------------------------------------
 
-  @doc "Opens a new socket with the node's token and returns its first frame."
+  @doc "Opens a new socket with the MC's token and returns its first frame."
   def open_socket(context) do
-    {:ok, client} = WsClient.connect(context.node.port, "/ws?token=#{HalC2.Web.token()}")
+    {:ok, client} = WsClient.connect(context.mc.port, "/ws?token=#{HalC2.Web.token()}")
     {frame, _client} = WsClient.recv(client, 1_000)
     frame
   end
@@ -1194,13 +1194,13 @@ defmodule HalC2.Steps.Parity.Shapes do
   end
 
   @doc """
-  The node process behind the default socket, found as the one new shell
+  The MC process behind the default socket, found as the one new shell
   subscriber when it subscribes to the shell. Returns `{pid, context}`.
   """
   def socket_pid(context) do
     before = Map.keys(:sys.get_state(HalC2.Shell).subscribers)
-    client = Node.sub(World.client(context), 99, %{"type" => "shell"})
-    {_, client} = Node.await(client, &(&1["t"] == "shell" and &1["id"] == 99))
+    client = Mc.sub(World.client(context), 99, %{"type" => "shell"})
+    {_, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 99))
     [pid] = Map.keys(:sys.get_state(HalC2.Shell).subscribers) -- before
     {pid, World.put_client(context, client)}
   end
@@ -1218,6 +1218,6 @@ defmodule HalC2.Steps.Parity.Shapes do
     {:ok, access, _expires, _scopes} = HalC2.Auth.exchange(credential, %{"label" => label})
     [session] = sessions.() -- before
     {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
-    {Node.connect(context.node, "wsTicket=#{ticket}"), session}
+    {Mc.connect(context.mc, "wsTicket=#{ticket}"), session}
   end
 end

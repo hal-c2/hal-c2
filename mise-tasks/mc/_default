@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Run the MC in the foreground (mix hal_c2.server), ready to cluster"
+#MISE dir="{{config_root}}/apps/server-ex"
+set -euo pipefail
+# The MC starts TLS distribution itself (HalC2.Cluster) and writes its options here.
+optfile="$(mktemp -t hal-c2-dist.XXXXXX)"
+export ELIXIR_ERL_OPTIONS="${ELIXIR_ERL_OPTIONS:-} -proto_dist inet_tls -ssl_dist_optfile $optfile -setcookie hal_c2"
+exec mix hal_c2.server "$@"

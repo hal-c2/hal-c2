@@ -1,10 +1,10 @@
 defmodule HalC2.Steps.Orchestration.Commands do
-  @moduledoc "Steps for `features/node/orchestration/commands.feature`."
+  @moduledoc "Steps for `features/mc/orchestration/commands.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   step "{string} is at sequence {int}", %{args: [thread, seq]} = context do
     Map.put(context, :sequence, bump(context, thread, seq))
@@ -42,9 +42,9 @@ defmodule HalC2.Steps.Orchestration.Commands do
        %{args: [thread]} = context do
     {:ok, %{"sequence" => seq}} = context.reply
     id = World.thread_id(context, thread)
-    shape = %{"type" => "stream", "node" => Atom.to_string(node()), "stream" => id}
-    client = context.node |> Node.connect() |> Node.sub(9, shape)
-    {frame, _client} = Node.await(client, &(&1["t"] == "live" and &1["id"] == 9))
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => id}
+    client = context.mc |> Mc.connect() |> Mc.sub(9, shape)
+    {frame, _client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 9))
     assert frame["offset"] >= seq
     context
   end
@@ -79,7 +79,7 @@ defmodule HalC2.Steps.Orchestration.Commands do
 
     # The stream's events hold both renames, one after the other.
     applied =
-      context.node.store
+      context.mc.store
       |> HalC2.Store.reduce_stream(id, 0, [], fn event, acc ->
         case Enum.find(titles, &String.contains?(JSON.encode!(event.patch), &1)) do
           nil -> acc
@@ -137,7 +137,7 @@ defmodule HalC2.Steps.Orchestration.Commands do
   step "it dispatches the same command again with command id {string} after a reconnect",
        %{args: [id]} = context do
     assert context.command["commandId"] == id
-    context = World.put_client(context, Node.connect(context.node))
+    context = World.put_client(context, Mc.connect(context.mc))
     answer(context, context.command)
   end
 

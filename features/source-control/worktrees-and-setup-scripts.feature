@@ -18,7 +18,7 @@
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (a new thread's checkout, the previous worktree)
 
 Feature: Worktrees and setup scripts
-  A thread can start in its own worktree. The node creates it from a base ref, runs the
+  A thread can start in its own worktree. The MC creates it from a base ref, runs the
   project's setup script, starts the agent, and shows each stage while it happens.
 
   Background:
@@ -46,43 +46,43 @@ Feature: Worktrees and setup scripts
     When the user starts a thread in a new worktree based on "release/2"
     Then the worktree starts from "release/2"
 
-  @node
+  @mc
   Scenario: A new worktree is made under the HAL-C2 home by default
     When a worktree is created for the branch "feature/tax" with no path given
     Then it is made in the HAL-C2 home's worktrees folder under the repository and branch names
 
-  @node
+  @mc
   Scenario: Starting from origin fetches the base first
     Given the project starts worktrees from origin and "shop" has the remote "origin"
     When the user sends the first message of a thread in a new worktree
     Then the fetch stage runs before the files are checked out
 
-  @node
+  @mc
   Scenario: Without a remote the fetch stage is skipped
     Given "shop" has no remote
     When the user sends the first message of a thread in a new worktree
     Then the fetch stage is reported as skipped
 
-  @node
+  @mc
   Scenario: The temporary branch is renamed from the first message
     When the user sends "Add tax to the cart" as the first message of a thread in a new worktree
     Then the worktree first sits on a temporary branch
     And the branch is renamed to a name the writer model derives from the message
 
-  @node
+  @mc
   Scenario: A client that names the temporary branch itself gets it renamed too
     Given the client names the new worktree's temporary branch "hal-c2/42a5d641"
     When the user sends "Add tax to the cart" as the first message of a thread in a new worktree
     Then the worktree first sits on the temporary branch "hal-c2/42a5d641"
     And the branch is renamed to a name the writer model derives from the message
 
-  @node
+  @mc
   Scenario: A branch named "hal-c2" does not stop a new worktree
     Given "shop" has a branch named "hal-c2"
     When the user sends the first message of a thread in a new worktree
     Then the worktree is made on a temporary branch beside "hal-c2"
 
-  @node
+  @mc
   Scenario Outline: Setup reports each stage as it runs
     When the user sends the first message of a thread in a new worktree
     Then the setup reports the stage "<stage>" with its status
@@ -94,13 +94,13 @@ Feature: Worktrees and setup scripts
       | Run setup script   |
       | Start agent        |
 
-  @node
+  @mc
   Scenario: Submodule initialization is its own setup stage
     Given "shop" has submodules
     When the user sends the first message of a thread in a new worktree
     Then the setup reports the stage "Init submodules" with its status
 
-  @node
+  @mc
   Scenario Outline: Submodules follow the project's setting
     Given "shop" has nested submodules and the worktree submodules setting is <setting>
     When a worktree is created
@@ -112,7 +112,7 @@ Feature: Worktrees and setup scripts
       | top level only | only the top level submodules are initialized           |
       | skip           | no submodule is initialized                             |
 
-  @node
+  @mc
   Scenario: The setup script runs in the setup terminal
     Given "shop" has a setup script set to run when a worktree is created
     When the user sends the first message of a thread in a new worktree
@@ -120,33 +120,33 @@ Feature: Worktrees and setup scripts
 
   # files/project-scripts-and-actions.feature holds a project without a setup script
   # skipping that stage.
-  @node
+  @mc
   Scenario: The setup script's latest output is shown while it runs
     Given "shop" has a setup script that prints many lines
     When the user sends the first message of a thread in a new worktree
     Then the setup script stage shows the last 5 lines of its output as it runs
 
-  @node
+  @mc
   Scenario: A failing setup script that must finish first fails the setup
     Given the setup script must finish before the agent starts and it exits with 3
     When the user sends the first message of a thread in a new worktree
     Then the setup fails with "Setup script exited with 3."
     And the agent does not start
 
-  @node
+  @mc
   Scenario: A failing background setup script does not stop the agent
     Given the setup script runs in the background and it exits with 3
     When the user sends the first message of a thread in a new worktree
     Then the setup script stage is reported as failed
     And the agent still starts
 
-  @node
+  @mc
   Scenario: A worktree that cannot be created fails the setup
     Given the branch cannot be checked out into a new worktree
     When the user sends the first message of a thread in a new worktree
     Then the setup fails with a message starting "Could not create the worktree:"
 
-  @node
+  @mc
   Scenario: Cancelling setup before the agent starts
     Given a thread's worktree setup is still checking out files
     When the user cancels the setup
@@ -154,30 +154,30 @@ Feature: Worktrees and setup scripts
     And the thread no longer points at a worktree
     And the setup is reported as cancelled
 
-  @node
+  @mc
   Scenario: Setup cannot be cancelled once the agent is starting
     Given a thread's worktree setup has reached the agent stage
     When the user cancels the setup
     Then the setup is not cancelled
     And the worktree stays
 
-  @node
+  @mc
   Scenario: An agent that cannot start fails the setup
     Given a thread's worktree is ready and its setup script finished
     And the thread's run cannot be released to the agent
     When the setup reaches the agent stage
     Then the setup fails with a message starting "The agent could not start:"
 
-  @node
+  @mc
   Scenario: A client that reconnects sees the setup where it is now
     Given a thread's worktree setup is running the setup script
     When the user's client drops and reconnects
     Then it receives the setup's current stages, not a replay
 
-  @node
-  Scenario: Setup progress does not outlive the node
+  @mc
+  Scenario: Setup progress does not outlive the MC
     Given a thread's worktree setup finished
-    When the node restarts
+    When the MC restarts
     Then no setup progress is shown for that thread
 
   @backlog @desktop @mobile
@@ -186,19 +186,19 @@ Feature: Worktrees and setup scripts
     Then the thread shows the worktree's base, branch and path with the stages
     And it reads "Worktree ready" once the agent starts
 
-  @node
+  @mc
   Scenario: Removing a worktree
     Given "feature/tax" has a worktree with no changes
     When the user removes that worktree
     Then its folder is gone and git no longer lists it
 
-  @node
+  @mc
   Scenario: Removing a worktree whose folder was already deleted
     Given the folder of the "feature/tax" worktree was deleted by hand
     When the user removes that worktree
     Then git forgets it without an error
 
-  @node
+  @mc
   Scenario: Forcing removal of a worktree with changes
     Given the "feature/tax" worktree has uncommitted changes
     When the user removes that worktree with force
@@ -210,7 +210,7 @@ Feature: Worktrees and setup scripts
     When the user starts a new thread in "shop"
     Then the user can pick the previous worktree on "feature/tax" for it
 
-  @node
+  @mc
   Scenario: The agent moves its thread into a new worktree
     Given the agent works in "shop" without a worktree
     When the agent hands the thread off to a new worktree on "feature/pay" with a continuation prompt
@@ -218,13 +218,13 @@ Feature: Worktrees and setup scripts
     And the setup script is started
     And the agent continues in the worktree with the prompt
 
-  @node
+  @mc
   Scenario: A thread already in a worktree cannot be handed off again
     Given the thread already works in a worktree
     When the agent hands the thread off to a new worktree
     Then the handoff is refused as already in a worktree
 
-  @node
+  @mc
   Scenario: The agent asks where its thread is working
     Given the thread works in the worktree on "feature/tax"
     When the agent asks for its worktree status

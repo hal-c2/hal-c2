@@ -4,7 +4,7 @@
 #   apps/server-ex/lib/hal_c2/usage/aggregator.ex (de-duplication, day and hour buckets)
 #   apps/server-ex/lib/hal_c2/usage/pricing.ex (LiteLLM rates, server.refreshUsageRates, usagePriceOverrides)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits.ex (limits, consumeResetCredit)
-#   apps/server-ex/test/node_parity_test.exs (usage summary and rates, consumeResetCredit aligned)
+#   apps/server-ex/test/mc_parity_test.exs (usage summary and rates, consumeResetCredit aligned)
 #   packages/contracts/src/usage.ts
 #   packages/contracts/src/providerUsageLimits.ts
 #   packages/contracts/src/rpc.ts (server.getUsageSummary, server.refreshUsageRates, server.consumeResetCredit)
@@ -24,46 +24,46 @@ Feature: Usage and limits
   session history, and shows how much of each provider's rate limits is left.
   Cost is an API-equivalent estimate, not a bill.
 
-  Rule: The node summarises usage from session history
+  Rule: The MC summarises usage from session history
 
-    @node
+    @mc
     Scenario: Usage combines every supported provider's history
       Given Codex, Claude Code and Grok have session history on the machine
       When a client asks for the usage summary
       Then the summary has tokens, cache savings and estimated cost per model
 
-    @node
+    @mc
     Scenario: A provider home moved by environment variable is found
       Given Claude Code keeps its history under a custom config directory
       When a client asks for the usage summary
       Then that history is counted
 
-    @node
+    @mc
     Scenario: Two accounts that share a history directory count once
       Given two Codex accounts point at the same history directory
       When a client asks for the usage summary
       Then that history is counted once
 
-    @node
+    @mc
     Scenario: Resumed and forked sessions are not counted twice
       Given a Claude session was resumed into a new transcript
       When a client asks for the usage summary
       Then the repeated turns count once
 
-    @node
+    @mc
     Scenario: A second scan only reads what changed
-      Given the node has scanned the history once
+      Given the MC has scanned the history once
       And one transcript has grown since
       When a client asks for the usage summary again
       Then only the new lines of that transcript are read
 
-    @node
+    @mc
     Scenario: History the provider deleted still counts for 90 days
       Given a transcript that was scanned and then removed by its CLI
       When a client asks for the usage summary within 90 days
       Then its usage is still counted
 
-    @node
+    @mc
     Scenario Outline: Usage is bucketed in the user's time zone
       When a client asks for <granularity> usage in "<zone>"
       Then the buckets start at <boundary> in "<zone>"
@@ -74,26 +74,26 @@ Feature: Usage and limits
         | daily       | Atlantic/Reykjavik | midnight                        |
         | hourly      | America/New_York   | each hour from the window start |
 
-    @node
+    @mc
     Scenario: An unknown time zone falls back to UTC
       When a client asks for daily usage in "Mars/Olympus"
       Then the buckets are in UTC
 
   Rule: Prices
 
-    @node
+    @mc
     Scenario: Prices keep working offline
-      Given the node fetched model prices yesterday
+      Given the MC fetched model prices yesterday
       And the machine is offline
       When a client asks for the usage summary
       Then costs use the saved prices
 
-    @node
+    @mc
     Scenario: Refreshing prices fetches them again
       When the user refreshes usage prices
-      Then the node fetches the latest model prices
+      Then the MC fetches the latest model prices
 
-    @node
+    @mc
     Scenario: A custom model price replaces automatic pricing
       Given the user saved a price for "my-model" of 1 USD input and 4 USD output per million tokens
       When a client asks for the usage summary
@@ -175,10 +175,10 @@ Feature: Usage and limits
 
     @shared @backlog-mobile @backlog-tui
     Scenario: Usage that could not be read can be read again
-      Given the node cannot read usage
+      Given the MC cannot read usage
       When the user views cost for the past 7 days
       Then usage says "This environment could not report usage."
-      When the node can read usage again
+      When the MC can read usage again
       And the user refreshes usage
       Then the usage of this environment is shown
 
@@ -186,7 +186,7 @@ Feature: Usage and limits
     Scenario: Refreshing usage fetches prices and reads it again
       Given the user views cost for the past 7 days
       When the user refreshes usage
-      Then the node is asked for the latest model prices
+      Then the MC is asked for the latest model prices
       And usage is read again
 
     @shared @backlog-mobile @backlog-tui
@@ -227,23 +227,23 @@ Feature: Usage and limits
 
   Rule: Limits
 
-    @node
+    @mc
     Scenario: Provider limits are checked when a client asks for providers again
       When a client refreshes providers
-      Then the node checks Codex and Claude rate limits
+      Then the MC checks Codex and Claude rate limits
 
-    @node
+    @mc
     Scenario: A failed limit check keeps the last known limits
       Given Codex limits were read an hour ago
       When the next limit check fails
       Then the last known Codex limits remain
 
-    @node
+    @mc
     Scenario: An API key account has no limits to show
       Given Claude is signed in with an API key
       Then Claude limits are reported as unsupported
 
-    @node
+    @mc
     Scenario Outline: Using a banked Codex reset credit
       Given a Codex account <credits>
       When the user uses a reset credit

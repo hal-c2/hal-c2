@@ -1,4 +1,4 @@
-// The usage page on the desktop (UsageController), and the node's side of it:
+// The usage page on the desktop (UsageController), and the MC's side of it:
 // the @shared scenarios of features/settings/usage.feature.
 
 #include <QJsonArray>
@@ -18,34 +18,34 @@ namespace {
 // `server.getUsageSummary`: one provider per environment, so what each one
 // contributes can be told apart.
 struct FakeUsage {
-  QHash<QString, QString> providers;  // by environment; the node's own is Codex
+  QHash<QString, QString> providers;  // by environment; the MC's own is Codex
   QHash<QString, int> versions;       // contract versions other than 5
   QSet<QString> scanning;             // environments that never answer
-  QString refusal;                    // the node's own summary fails so
-  QList<FakeNode::Rpc> summaries;
+  QString refusal;                    // the MC's own summary fails so
+  QList<FakeMc::Rpc> summaries;
   int rates = 0;
   qsizetype readsAtRefresh = 0;
   int limitChecks = 0;
   int followedBefore = 0;
-  // provider.consumeResetCredit: what the node says, and what it was asked.
+  // provider.consumeResetCredit: what the MC says, and what it was asked.
   QString creditOutcome = QStringLiteral("reset");
   QList<QJsonObject> redeemed;
 };
 
 FakeUsage& fake(World& world) {
-  return world.node.part<FakeUsage>();
+  return world.mc.part<FakeUsage>();
 }
 
-QString environmentOf(FakeNode& node, const FakeNode::Rpc& rpc) {
-  return rpc.environment.isEmpty() ? node.environmentId : rpc.environment;
+QString environmentOf(FakeMc& mc, const FakeMc::Rpc& rpc) {
+  return rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
 }
 
-QString providerOf(FakeNode& node, const QString& environment) {
-  return node.part<FakeUsage>().providers.value(environment, QStringLiteral("codex"));
+QString providerOf(FakeMc& mc, const QString& environment) {
+  return mc.part<FakeUsage>().providers.value(environment, QStringLiteral("codex"));
 }
 
-QJsonObject summary(FakeNode& node, const QString& environment, const QJsonObject& input) {
-  const QString provider = providerOf(node, environment);
+QJsonObject summary(FakeMc& mc, const QString& environment, const QJsonObject& input) {
+  const QString provider = providerOf(mc, environment);
   QJsonObject bucket{
       {QStringLiteral("day"), input.value(QLatin1String("untilDay"))},
       {QStringLiteral("provider"), provider},
@@ -74,7 +74,7 @@ QJsonObject summary(FakeNode& node, const QString& environment, const QJsonObjec
       {QStringLiteral("distinctSessions"), 2},
   };
   return {
-      {QStringLiteral("contractVersion"), node.part<FakeUsage>().versions.value(environment, 5)},
+      {QStringLiteral("contractVersion"), mc.part<FakeUsage>().versions.value(environment, 5)},
       {QStringLiteral("readAt"), QStringLiteral("2026-09-23T10:00:00.000Z")},
       {QStringLiteral("timeZone"), input.value(QLatin1String("timeZone"))},
       {QStringLiteral("sinceDay"), input.value(QLatin1String("sinceDay"))},
@@ -85,28 +85,28 @@ QJsonObject summary(FakeNode& node, const QString& environment, const QJsonObjec
   };
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
-  node.onRpc(QStringLiteral("server.getUsageSummary"), [&node](const FakeNode::Rpc& rpc) {
-    FakeUsage& fake = node.part<FakeUsage>();
-    const QString environment = environmentOf(node, rpc);
+const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("server.getUsageSummary"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeUsage& fake = mc.part<FakeUsage>();
+    const QString environment = environmentOf(mc, rpc);
     fake.summaries.append(rpc);
     if (fake.scanning.contains(environment)) return;
-    if (!fake.refusal.isEmpty() && environment == node.environmentId) {
-      node.refuse(rpc, fake.refusal, {{QStringLiteral("_tag"), QStringLiteral("UsageReadError")}});
+    if (!fake.refusal.isEmpty() && environment == mc.environmentId) {
+      mc.refuse(rpc, fake.refusal, {{QStringLiteral("_tag"), QStringLiteral("UsageReadError")}});
       return;
     }
-    node.reply(rpc, summary(node, environment, rpc.payload));
+    mc.reply(rpc, summary(mc, environment, rpc.payload));
   });
-  node.onRpc(QStringLiteral("server.refreshUsageRates"), [&node](const FakeNode::Rpc& rpc) {
-    ++node.part<FakeUsage>().rates;
-    node.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("fresh")}});
+  mc.onRpc(QStringLiteral("server.refreshUsageRates"), [&mc](const FakeMc::Rpc& rpc) {
+    ++mc.part<FakeUsage>().rates;
+    mc.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("fresh")}});
   });
-  node.onRpc(QStringLiteral("provider.consumeResetCredit"), [&node](const FakeNode::Rpc& rpc) {
-    FakeUsage& fake = node.part<FakeUsage>();
+  mc.onRpc(QStringLiteral("provider.consumeResetCredit"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeUsage& fake = mc.part<FakeUsage>();
     fake.redeemed.append(rpc.payload);
     if (fake.creditOutcome == QLatin1String("reset")) {
       // The credit is spent and the windows clear.
-      QJsonArray providers = fakeConfig(node).config.value(QLatin1String("providers")).toArray();
+      QJsonArray providers = fakeConfig(mc).config.value(QLatin1String("providers")).toArray();
       for (qsizetype i = 0; i < providers.size(); ++i) {
         QJsonObject provider = providers[i].toObject();
         if (provider.value(QLatin1String("instanceId")) != rpc.payload.value(QLatin1String("instanceId"))) continue;
@@ -115,16 +115,16 @@ const FakeNode::Extension extension([](FakeNode& node) {
         provider.insert(QStringLiteral("usageLimits"), limits);
         providers[i] = provider;
       }
-      fakeConfig(node).config.insert(QStringLiteral("providers"), providers);
+      fakeConfig(mc).config.insert(QStringLiteral("providers"), providers);
     }
-    node.reply(rpc, QJsonObject{{QStringLiteral("outcome"), fake.creditOutcome}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("outcome"), fake.creditOutcome}});
   });
-  node.onRpc(QStringLiteral("server.refreshProviders"), [&node](const FakeNode::Rpc& rpc) {
-    ++node.part<FakeUsage>().limitChecks;
+  mc.onRpc(QStringLiteral("server.refreshProviders"), [&mc](const FakeMc::Rpc& rpc) {
+    ++mc.part<FakeUsage>().limitChecks;
     // Each environment re-reads its own providers.
-    const FakeConfig& config = fakeConfig(node);
+    const FakeConfig& config = fakeConfig(mc);
     const QJsonObject& own = config.elsewhere.contains(rpc.environment) ? config.elsewhere[rpc.environment] : config.config;
-    node.reply(rpc, QJsonObject{{QStringLiteral("providers"), own.value(QLatin1String("providers"))}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("providers"), own.value(QLatin1String("providers"))}});
   });
 });
 
@@ -165,20 +165,20 @@ bool counted(World& world, const QString& provider) {
 }
 
 void expectShown(World& world, const QString& environment) {
-  const QString provider = providerOf(world.node, environment);
+  const QString provider = providerOf(world.mc, environment);
   world.waitFor([&] { return environmentRow(world, environment).value(QStringLiteral("status")) == QLatin1String("ready") && counted(world, provider); },
                 [&] { return QStringLiteral("the usage of %1 to be shown; the page is %2").arg(environment, show(usage(world))); });
 }
 
 void link(World& world, const QString& environment, const QString& provider) {
   fake(world).providers.insert(environment, provider);
-  world.node.link(environment);
+  world.mc.link(environment);
 }
 
-QList<FakeNode::Rpc> summariesFor(World& world, const QString& environment) {
-  QList<FakeNode::Rpc> calls;
-  for (const FakeNode::Rpc& rpc : fake(world).summaries) {
-    if (environmentOf(world.node, rpc) == environment) calls.append(rpc);
+QList<FakeMc::Rpc> summariesFor(World& world, const QString& environment) {
+  QList<FakeMc::Rpc> calls;
+  for (const FakeMc::Rpc& rpc : fake(world).summaries) {
+    if (environmentOf(world.mc, rpc) == environment) calls.append(rpc);
   }
   return calls;
 }
@@ -213,10 +213,10 @@ QVariantMap credit(World& world) {
 }
 
 void setProviders(World& world, const QJsonArray& providers) {
-  fakeConfig(world.node).config.insert(QStringLiteral("providers"), providers);
+  fakeConfig(world.mc).config.insert(QStringLiteral("providers"), providers);
 }
 
-// One hub (a usage-limit source) on this node, as HalC2.UsageLimitSources publishes it.
+// One hub (a usage-limit source) on this MC, as HalC2.UsageLimitSources publishes it.
 void setHub(World& world, const QString& label, const QJsonArray& accounts, const QString& error = {}) {
   QJsonObject hub{{QStringLiteral("id"), QStringLiteral("team-hub")},
                   {QStringLiteral("kind"), QStringLiteral("cliproxy")},
@@ -224,7 +224,7 @@ void setHub(World& world, const QString& label, const QJsonArray& accounts, cons
                   {QStringLiteral("checkedAt"), world.now().toUTC().toString(Qt::ISODateWithMs)},
                   {QStringLiteral("accounts"), accounts}};
   if (!error.isEmpty()) hub.insert(QStringLiteral("error"), error);
-  fakeConfig(world.node).sources.insert(world.node.environmentId, QJsonArray{hub});
+  fakeConfig(world.mc).sources.insert(world.mc.environmentId, QJsonArray{hub});
 }
 
 QJsonObject hubAccount(World& world, const QString& email, bool credit) {
@@ -274,14 +274,14 @@ const Steps steps([] {
                   {QStringLiteral("untilDay"), today.toString(Qt::ISODate)}};
     }
     world.waitFor([&] {
-      const QList<FakeNode::Rpc> calls = summariesFor(world, world.node.environmentId);
+      const QList<FakeMc::Rpc> calls = summariesFor(world, world.mc.environmentId);
       if (calls.isEmpty()) return false;
       for (auto it = expected.begin(); it != expected.end(); ++it) {
         if (calls.last().payload.value(it.key()) != it.value()) return false;
       }
       return !at(usage(world), QStringLiteral("summary.periods")).toList().isEmpty();
     }, [&] {
-      const QList<FakeNode::Rpc> calls = summariesFor(world, world.node.environmentId);
+      const QList<FakeMc::Rpc> calls = summariesFor(world, world.mc.environmentId);
       return QStringLiteral("usage to be read over %1; it was asked for %2 and shows %3")
           .arg(QString::fromUtf8(QJsonDocument(expected).toJson(QJsonDocument::Compact)),
                calls.isEmpty() ? QStringLiteral("nothing") : QString::fromUtf8(QJsonDocument(calls.last().payload).toJson(QJsonDocument::Compact)),
@@ -295,7 +295,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 is offline").arg(q), [](World& world, const Captures& c, const Table&) {
     link(world, c[0], QStringLiteral("claude"));
-    world.node.setLinkProblem(c[0], QStringLiteral("unreachable"));
+    world.mc.setLinkProblem(c[0], QStringLiteral("unreachable"));
   });
   step(QStringLiteral("%1 runs an older server version").arg(q), [](World& world, const Captures& c, const Table&) {
     link(world, c[0], QStringLiteral("claude"));
@@ -315,7 +315,7 @@ const Steps steps([] {
     expectShown(world, c[0].isEmpty() ? c[1] : c[0]);
   });
   step(QStringLiteral("the usage of this environment is shown"), [](World& world, const Captures&, const Table&) {
-    expectShown(world, world.node.environmentId);
+    expectShown(world, world.mc.environmentId);
   });
   step(QStringLiteral("%1 is shown as still scanning").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return environmentRow(world, c[0]).value(QStringLiteral("status")) == QLatin1String("scanning") &&
@@ -323,12 +323,12 @@ const Steps steps([] {
                   [&] { return QStringLiteral("%1 to be scanning; the page is %2").arg(c[0], show(usage(world))); });
   });
   step(QStringLiteral("the usage of (this environment|%1) is not counted").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString environment = c.size() < 2 || c[1].isEmpty() ? world.node.environmentId : c[1];
+    const QString environment = c.size() < 2 || c[1].isEmpty() ? world.mc.environmentId : c[1];
     // What is counted has landed.
     world.waitFor([&] { return !at(usage(world), QStringLiteral("summary")).isNull(); },
                   [&] { return QStringLiteral("usage to be shown; the page is %1").arg(show(usage(world))); });
     world.sync();
-    expect(!counted(world, providerOf(world.node, environment)),
+    expect(!counted(world, providerOf(world.mc, environment)),
            QStringLiteral("the usage of %1 to be left out; the page is %2").arg(environment, show(usage(world))));
   });
   step(QStringLiteral("the user is told some environments could not report usage"), [](World& world, const Captures&, const Table&) {
@@ -348,27 +348,27 @@ const Steps steps([] {
       return said.contains(c[0]);
     }, [&] { return QStringLiteral("usage to say %1; the page is %2").arg(c[0], show(usage(world))); });
   });
-  step(QStringLiteral("the node cannot read usage"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC cannot read usage"), [](World& world, const Captures&, const Table&) {
     fake(world).refusal = QStringLiteral("Usage read failed (scanFailed): Transcripts could not be scanned.");
   });
-  step(QStringLiteral("the node can read usage again"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC can read usage again"), [](World& world, const Captures&, const Table&) {
     fake(world).refusal.clear();
   });
   step(QStringLiteral("the user refreshes usage"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return !usage(world).value(QStringLiteral("refreshing")).toBool(); }, QStringLiteral("no refresh to be running"));
-    fake(world).readsAtRefresh = summariesFor(world, world.node.environmentId).size();
+    fake(world).readsAtRefresh = summariesFor(world, world.mc.environmentId).size();
     world.bridge().dispatch(QStringLiteral("usage.refresh"), {});
   });
-  step(QStringLiteral("the node is asked for the latest model prices"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC is asked for the latest model prices"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return fake(world).rates == 1; },
                   [&] { return QStringLiteral("prices to be fetched once; they were fetched %1 times").arg(fake(world).rates); });
   });
   step(QStringLiteral("usage is read again"), [](World& world, const Captures&, const Table&) {
     const qsizetype before = fake(world).readsAtRefresh;
-    world.waitFor([&] { return summariesFor(world, world.node.environmentId).size() == before + 1 &&
+    world.waitFor([&] { return summariesFor(world, world.mc.environmentId).size() == before + 1 &&
                                !usage(world).value(QStringLiteral("refreshing")).toBool(); },
                   [&] { return QStringLiteral("usage to be read once more than %1 times; it was read %2 times")
-                            .arg(before).arg(summariesFor(world, world.node.environmentId).size()); });
+                            .arg(before).arg(summariesFor(world, world.mc.environmentId).size()); });
   });
   step(QStringLiteral("the user switched usage to tokens"), [](World& world, const Captures&, const Table&) {
     showUsage(world, QStringLiteral("tokens"));
@@ -407,9 +407,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user views limits"), [](World& world, const Captures&, const Table&) {
     ensureConnected(world);
-    fake(world).followedBefore = world.node.subscribers(QStringLiteral("config")).size();
+    fake(world).followedBefore = world.mc.subscribers(QStringLiteral("config")).size();
     showUsage(world, QStringLiteral("limits"));
-    world.waitFor([&] { return world.node.subscribers(QStringLiteral("config")).size() > fake(world).followedBefore; },
+    world.waitFor([&] { return world.mc.subscribers(QStringLiteral("config")).size() > fake(world).followedBefore; },
                   QStringLiteral("limits to be followed"));
   });
   step(QStringLiteral("Codex shows one 5-hour number made up of both accounts"), [](World& world, const Captures&, const Table&) {
@@ -451,8 +451,8 @@ const Steps steps([] {
     world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("home")));
   });
   step(QStringLiteral("limits are no longer followed"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return world.node.subscribers(QStringLiteral("config")).size() == fake(world).followedBefore; },
-                  [&] { return QStringLiteral("only the shell's own config to be followed; %1 are").arg(world.node.subscribers(QStringLiteral("config")).size()); });
+    world.waitFor([&] { return world.mc.subscribers(QStringLiteral("config")).size() == fake(world).followedBefore; },
+                  [&] { return QStringLiteral("only the shell's own config to be followed; %1 are").arg(world.mc.subscribers(QStringLiteral("config")).size()); });
   });
   // Reset credits.
   step(QStringLiteral("Codex has a reset credit banked"), [](World& world, const Captures&, const Table&) {
@@ -483,7 +483,7 @@ const Steps steps([] {
   step(QStringLiteral("the credit is spent on the Codex instance"), [](World& world, const Captures&, const Table&) {
     const QList<QJsonObject>& redeemed = fake(world).redeemed;
     expect(redeemed.size() == 1 && redeemed[0].value(QLatin1String("instanceId")) == QLatin1String("codex"),
-           QStringLiteral("one redemption on the codex instance; the node was asked %1 times").arg(redeemed.size()));
+           QStringLiteral("one redemption on the codex instance; the MC was asked %1 times").arg(redeemed.size()));
   });
   step(QStringLiteral("the credit is still banked"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return credit(world).value(QStringLiteral("available")).toInt() == 1; },
@@ -514,11 +514,11 @@ const Steps steps([] {
                                                                             {QStringLiteral("windowDurationMins"), 10080}}}}};
     };
     setProviders(world, {codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits(40, 3))});
-    fakeConfig(world.node).elsewhere.insert(
+    fakeConfig(world.mc).elsewhere.insert(
         QStringLiteral("Studio"),
         QJsonObject{{QStringLiteral("providers"),
                      QJsonArray{codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits(60, 1))}}});
-    world.node.link(QStringLiteral("Studio"));
+    world.mc.link(QStringLiteral("Studio"));
     // The hub's read is the oldest, the other environment's the freshest.
     QJsonObject account = hubAccount(world, QStringLiteral("sam@example.com"), false);
     QJsonObject read = account.value(QLatin1String("usageLimits")).toObject();
@@ -549,7 +549,7 @@ const Steps steps([] {
   });
 
   // Usage-limit sources (hubs).
-  step(QStringLiteral("a node the user administers"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("an MC the user administers"), [](World& world, const Captures&, const Table&) {
     ensureConnected(world);
   });
   step(QStringLiteral("the hub %1 reports a Codex account").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -581,9 +581,9 @@ const Steps steps([] {
     world.sync();
     expect(codexAccounts(world).size() == 1, QStringLiteral("one Codex account; they are %1").arg(show(codexAccounts(world))));
   });
-  // A hub the user added, its key sealed on the node, its account in limits.
+  // A hub the user added, its key sealed on the MC, its account in limits.
   step(QStringLiteral("a hub %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakeConfig& config = fakeConfig(world.node);
+    FakeConfig& config = fakeConfig(world.mc);
     config.settings.insert(QStringLiteral("usageLimitSources"),
                            QJsonObject{{QStringLiteral("team-hub"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("cliproxy")},
                                                                               {QStringLiteral("label"), c[0]},
@@ -606,7 +606,7 @@ const Steps steps([] {
     expect(input.value(QLatin1String("sourceId")) == QLatin1String("team-hub") &&
                input.value(QLatin1String("accountId")) == QLatin1String("codex-ops.json") &&
                input.value(QLatin1String("creditId")) == QLatin1String("credit-1"),
-           QStringLiteral("the hub's credit to be spent; the node was asked %1").arg(QString::fromUtf8(QJsonDocument(input).toJson(QJsonDocument::Compact))));
+           QStringLiteral("the hub's credit to be spent; the MC was asked %1").arg(QString::fromUtf8(QJsonDocument(input).toJson(QJsonDocument::Compact))));
   });
 });
 

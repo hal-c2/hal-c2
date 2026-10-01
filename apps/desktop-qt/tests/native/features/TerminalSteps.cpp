@@ -1,4 +1,4 @@
-// The native terminal drawer, and the node's terminals behind it
+// The native terminal drawer, and the MC's terminals behind it
 // (features/terminal/drawer.feature).
 
 #include <QJsonArray>
@@ -16,9 +16,9 @@
 
 namespace {
 
-// The node's terminal manager: terminals attach with the `terminal` shape and
+// The MC's terminal manager: terminals attach with the `terminal` shape and
 // are listed by `terminals`; `terminal.*` calls are recorded and act on them
-// the way the node's does.
+// the way the MC's does.
 struct FakeTerminals {
   struct Terminal {
     QJsonObject summary;
@@ -55,57 +55,57 @@ QJsonObject terminalSummary(const QString& threadId, const QString& terminalId, 
   };
 }
 
-void sendTerminal(FakeNode& node, const QString& key, const QJsonObject& event) {
-  for (const int id : node.subscribers(QStringLiteral("terminal"))) {
-    if (terminalKey(node.shapeOf(id).value(QLatin1String("input")).toObject()) != key) continue;
-    node.send({{QStringLiteral("t"), QStringLiteral("terminal")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
+void sendTerminal(FakeMc& mc, const QString& key, const QJsonObject& event) {
+  for (const int id : mc.subscribers(QStringLiteral("terminal"))) {
+    if (terminalKey(mc.shapeOf(id).value(QLatin1String("input")).toObject()) != key) continue;
+    mc.send({{QStringLiteral("t"), QStringLiteral("terminal")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
   }
 }
 
 // To the latest `terminals` subscription.
-void sendTerminals(FakeNode& node, const QJsonObject& event) {
-  const QList<int> ids = node.subscribers(QStringLiteral("terminals"));
+void sendTerminals(FakeMc& mc, const QJsonObject& event) {
+  const QList<int> ids = mc.subscribers(QStringLiteral("terminals"));
   if (ids.isEmpty()) return;
-  node.send({{QStringLiteral("t"), QStringLiteral("terminals")}, {QStringLiteral("id"), ids.last()}, {QStringLiteral("event"), event}});
+  mc.send({{QStringLiteral("t"), QStringLiteral("terminals")}, {QStringLiteral("id"), ids.last()}, {QStringLiteral("event"), event}});
 }
 
-// A terminal the node already runs, as another client left it.
-void addTerminal(FakeNode& node, const QString& threadId, const QString& terminalId, const QString& label, bool busy) {
+// A terminal the MC already runs, as another client left it.
+void addTerminal(FakeMc& mc, const QString& threadId, const QString& terminalId, const QString& label, bool busy) {
   QJsonObject summary = terminalSummary(threadId, terminalId, QStringLiteral("/work"));
   summary.insert(QStringLiteral("label"), label);
   summary.insert(QStringLiteral("hasRunningSubprocess"), busy);
-  node.part<FakeTerminals>().terminals.insert(threadId + QLatin1Char('/') + terminalId, {summary, QString()});
-  sendTerminals(node, {{QStringLiteral("type"), QStringLiteral("upsert")}, {QStringLiteral("terminal"), summary}});
+  mc.part<FakeTerminals>().terminals.insert(threadId + QLatin1Char('/') + terminalId, {summary, QString()});
+  sendTerminals(mc, {{QStringLiteral("type"), QStringLiteral("upsert")}, {QStringLiteral("terminal"), summary}});
 }
 
-void print(FakeNode& node, const QString& threadId, const QString& terminalId, const QString& data) {
+void print(FakeMc& mc, const QString& threadId, const QString& terminalId, const QString& data) {
   const QString key = threadId + QLatin1Char('/') + terminalId;
-  node.part<FakeTerminals>().terminals[key].history += data;
-  sendTerminal(node, key, {{QStringLiteral("type"), QStringLiteral("output")}, {QStringLiteral("data"), data}});
+  mc.part<FakeTerminals>().terminals[key].history += data;
+  sendTerminal(mc, key, {{QStringLiteral("type"), QStringLiteral("output")}, {QStringLiteral("data"), data}});
 }
 
-void closeTerminal(FakeNode& node, const QString& threadId, const QString& terminalId) {
+void closeTerminal(FakeMc& mc, const QString& threadId, const QString& terminalId) {
   const QString key = threadId + QLatin1Char('/') + terminalId;
-  if (!node.part<FakeTerminals>().terminals.remove(key)) return;
-  sendTerminal(node, key, {{QStringLiteral("type"), QStringLiteral("closed")}});
-  sendTerminals(node, {{QStringLiteral("type"), QStringLiteral("remove")},
+  if (!mc.part<FakeTerminals>().terminals.remove(key)) return;
+  sendTerminal(mc, key, {{QStringLiteral("type"), QStringLiteral("closed")}});
+  sendTerminals(mc, {{QStringLiteral("type"), QStringLiteral("remove")},
                        {QStringLiteral("threadId"), threadId},
                        {QStringLiteral("terminalId"), terminalId}});
 }
 
 // The `terminal` subscriptions still attached, by terminal key.
-QStringList attached(FakeNode& node) {
+QStringList attached(FakeMc& mc) {
   QStringList keys;
-  for (const int id : node.subscribers(QStringLiteral("terminal"))) {
-    keys.append(terminalKey(node.shapeOf(id).value(QLatin1String("input")).toObject()));
+  for (const int id : mc.subscribers(QStringLiteral("terminal"))) {
+    keys.append(terminalKey(mc.shapeOf(id).value(QLatin1String("input")).toObject()));
   }
   return keys;
 }
 
 // Opens the terminal when the input says where (as terminal.open does);
 // returns false when it does not exist and cannot be opened.
-bool ensureTerminal(FakeNode& node, const QJsonObject& input) {
-  FakeTerminals& fake = node.part<FakeTerminals>();
+bool ensureTerminal(FakeMc& mc, const QJsonObject& input) {
+  FakeTerminals& fake = mc.part<FakeTerminals>();
   const QString key = terminalKey(input);
   if (fake.terminals.contains(key)) return true;
   if (!input.contains(QLatin1String("cwd")) || !fake.refuseOpen.isEmpty()) return false;
@@ -113,56 +113,56 @@ bool ensureTerminal(FakeNode& node, const QJsonObject& input) {
                                               input.value(QLatin1String("terminalId")).toString(),
                                               input.value(QLatin1String("cwd")).toString());
   fake.terminals.insert(key, {summary, QString()});
-  sendTerminals(node, {{QStringLiteral("type"), QStringLiteral("upsert")}, {QStringLiteral("terminal"), summary}});
+  sendTerminals(mc, {{QStringLiteral("type"), QStringLiteral("upsert")}, {QStringLiteral("terminal"), summary}});
   return true;
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
-  node.onShape(QStringLiteral("terminals"), [&node](int id, const QJsonObject& shape) {
-    // Only its own environment's list; another environment's goes to the node serving it.
-    if (shape.value(QLatin1String("environment")) != node.environmentId) {
-      node.forget(id);
+const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("terminals"), [&mc](int id, const QJsonObject& shape) {
+    // Only its own environment's list; another environment's goes to the MC serving it.
+    if (shape.value(QLatin1String("environment")) != mc.environmentId) {
+      mc.forget(id);
       return;
     }
     QJsonArray list;
-    for (const FakeTerminals::Terminal& terminal : std::as_const(node.part<FakeTerminals>().terminals)) {
+    for (const FakeTerminals::Terminal& terminal : std::as_const(mc.part<FakeTerminals>().terminals)) {
       list.append(terminal.summary);
     }
-    sendTerminals(node, {{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("terminals"), list}});
+    sendTerminals(mc, {{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("terminals"), list}});
   });
-  node.onShape(QStringLiteral("terminal"), [&node](int id, const QJsonObject& shape) {
+  mc.onShape(QStringLiteral("terminal"), [&mc](int id, const QJsonObject& shape) {
     const QJsonObject input = shape.value(QLatin1String("input")).toObject();
-    if (!ensureTerminal(node, input)) {
-      node.forget(id);
-      node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("Unknown terminal")}});
+    if (!ensureTerminal(mc, input)) {
+      mc.forget(id);
+      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("Unknown terminal")}});
       return;
     }
-    const FakeTerminals::Terminal& terminal = node.part<FakeTerminals>().terminals[terminalKey(input)];
+    const FakeTerminals::Terminal& terminal = mc.part<FakeTerminals>().terminals[terminalKey(input)];
     QJsonObject snapshot = terminal.summary;
     snapshot.insert(QStringLiteral("history"), terminal.history);
-    node.send({{QStringLiteral("t"), QStringLiteral("terminal")},
+    mc.send({{QStringLiteral("t"), QStringLiteral("terminal")},
                {QStringLiteral("id"), id},
                {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("snapshot"), snapshot}}}});
   });
-  node.onRpc(QStringLiteral("terminal."), [&node](const FakeNode::Rpc& rpc) {
-    node.part<FakeTerminals>().calls.append({{QStringLiteral("method"), rpc.method}, {QStringLiteral("payload"), rpc.payload}});
+  mc.onRpc(QStringLiteral("terminal."), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeTerminals>().calls.append({{QStringLiteral("method"), rpc.method}, {QStringLiteral("payload"), rpc.payload}});
     if (rpc.method == QLatin1String("terminal.open")) {
-      if (const QString refusal = node.part<FakeTerminals>().refuseOpen; !refusal.isEmpty()) {
-        node.refuse(rpc, refusal);
+      if (const QString refusal = mc.part<FakeTerminals>().refuseOpen; !refusal.isEmpty()) {
+        mc.refuse(rpc, refusal);
         return;
       }
-      ensureTerminal(node, rpc.payload);
+      ensureTerminal(mc, rpc.payload);
     }
-    auto answer = [&node, rpc] {
-      if (!node.current(rpc)) return;
+    auto answer = [&mc, rpc] {
+      if (!mc.current(rpc)) return;
       if (rpc.method == QLatin1String("terminal.close")) {
-        closeTerminal(node, rpc.payload.value(QLatin1String("threadId")).toString(),
+        closeTerminal(mc, rpc.payload.value(QLatin1String("threadId")).toString(),
                       rpc.payload.value(QLatin1String("terminalId")).toString());
       }
-      node.reply(rpc, QJsonValue::Null);
+      mc.reply(rpc, QJsonValue::Null);
     };
-    if (node.holding(QStringLiteral("answers"))) {
-      node.defer(answer);
+    if (mc.holding(QStringLiteral("answers"))) {
+      mc.defer(answer);
     } else {
       answer();
     }
@@ -189,8 +189,8 @@ TerminalSession* terminalSession(World& world, const QString& terminalId) {
 
 // The latest `terminal` subscription for the terminal: {type, environment, input}.
 std::optional<QJsonObject> terminalShape(World& world, const QString& threadId, const QString& terminalId) {
-  for (qsizetype index = world.node.subscriptions.size() - 1; index >= 0; --index) {
-    const QJsonObject shape = world.node.subscriptions.at(index).value(QLatin1String("shape")).toObject();
+  for (qsizetype index = world.mc.subscriptions.size() - 1; index >= 0; --index) {
+    const QJsonObject shape = world.mc.subscriptions.at(index).value(QLatin1String("shape")).toObject();
     const QJsonObject input = shape.value(QLatin1String("input")).toObject();
     if (shape.value(QLatin1String("type")) == QLatin1String("terminal") &&
         input.value(QLatin1String("threadId")) == threadId && input.value(QLatin1String("terminalId")) == terminalId) {
@@ -208,7 +208,7 @@ std::optional<QJsonObject> terminalAttach(World& world, const QString& threadId,
 
 std::optional<QJsonObject> terminalCall(World& world, const QString& method, const QString& threadId,
                                         const QString& terminalId) {
-  for (const QJsonObject& call : world.node.part<FakeTerminals>().calls) {
+  for (const QJsonObject& call : world.mc.part<FakeTerminals>().calls) {
     const QJsonObject payload = call.value(QLatin1String("payload")).toObject();
     if (call.value(QLatin1String("method")) == method && payload.value(QLatin1String("threadId")) == threadId &&
         payload.value(QLatin1String("terminalId")) == terminalId) {
@@ -220,7 +220,7 @@ std::optional<QJsonObject> terminalCall(World& world, const QString& method, con
 
 QString describeTerminalCalls(World& world) {
   QStringList lines;
-  for (const QJsonObject& call : world.node.part<FakeTerminals>().calls) {
+  for (const QJsonObject& call : world.mc.part<FakeTerminals>().calls) {
     lines.append(QString::fromUtf8(QJsonDocument(call).toJson(QJsonDocument::Compact)));
   }
   return lines.isEmpty() ? QStringLiteral("(none)") : lines.join(QStringLiteral("; "));
@@ -228,7 +228,7 @@ QString describeTerminalCalls(World& world) {
 
 QStringList terminalWrites(World& world, const QString& terminalId) {
   QStringList writes;
-  for (const QJsonObject& call : world.node.part<FakeTerminals>().calls) {
+  for (const QJsonObject& call : world.mc.part<FakeTerminals>().calls) {
     const QJsonObject payload = call.value(QLatin1String("payload")).toObject();
     if (call.value(QLatin1String("method")) == QLatin1String("terminal.write") &&
         payload.value(QLatin1String("terminalId")) == terminalId) {
@@ -244,7 +244,7 @@ QString actionId(const QString& name) {
 }
 
 void addAction(World& world, const QString& project, const QString& name, const QString& command) {
-  QJsonObject row = world.node.projects.value(project);
+  QJsonObject row = world.mc.projects.value(project);
   QJsonArray scripts = row.value(QLatin1String("scripts")).toArray();
   scripts.append(QJsonObject{{QStringLiteral("id"), actionId(name)},
                              {QStringLiteral("name"), name},
@@ -252,10 +252,10 @@ void addAction(World& world, const QString& project, const QString& name, const 
                              {QStringLiteral("icon"), QStringLiteral("play")},
                              {QStringLiteral("runOnWorktreeCreate"), false}});
   row.insert(QStringLiteral("scripts"), scripts);
-  world.node.projects.insert(project, row);
+  world.mc.projects.insert(project, row);
   QJsonArray rows;
   rows.append(QJsonArray{project, QStringLiteral("project"), row});
-  world.node.sendRows(world.node.name, rows);
+  world.mc.sendRows(world.mc.name, rows);
   world.sync();
 }
 
@@ -265,9 +265,9 @@ void showThread(World& world, const QString& project, const QString& worktree = 
   QJsonObject row{{QStringLiteral("id"), threadId}, {QStringLiteral("title"), QStringLiteral("Cart")}, {QStringLiteral("projectId"), project},
                   {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}};
   if (!worktree.isEmpty()) row.insert(QStringLiteral("worktreePath"), worktree);
-  world.node.threads.insert(threadId, row);
-  world.node.sendRow(threadId, row);
-  const QString key = world.node.environmentId + QLatin1Char(':') + threadId;
+  world.mc.threads.insert(threadId, row);
+  world.mc.sendRow(threadId, row);
+  const QString key = world.mc.environmentId + QLatin1Char(':') + threadId;
   world.native().controller<NavigationController>()->open(NavigationController::Route::thread(key));
   world.waitFor([&] { return at(world.state(QStringLiteral("workspace")), QStringLiteral("threadKey")) == key; },
                 [&] { return QStringLiteral("the header to show %1; it shows %2").arg(key, show(world.state(QStringLiteral("workspace")))); });
@@ -279,11 +279,11 @@ QString shownThread(World& world) {
   return key.mid(key.indexOf(QLatin1Char(':')) + 1);
 }
 
-// The thread the header shows, or one of the node's first project shown now.
+// The thread the header shows, or one of the MC's first project shown now.
 QString ensureThread(World& world) {
   // A draft the window landed on is not a thread yet.
   if (shownThread(world).isEmpty() || at(world.state(QStringLiteral("route")), QStringLiteral("kind")) != QLatin1String("thread")) {
-    showThread(world, world.node.projects.firstKey());
+    showThread(world, world.mc.projects.firstKey());
   }
   return shownThread(world);
 }
@@ -326,10 +326,10 @@ bool toastShown(World& world, const QString& title) {
   return false;
 }
 
-// The node's project "p1" at /work/p1, connected, unless a Background set one up.
+// The MC's project "p1" at /work/p1, connected, unless a Background set one up.
 void ensureProject(World& world) {
-  if (world.node.projects.isEmpty()) {
-    world.node.projects.insert(QStringLiteral("p1"), {{QStringLiteral("id"), QStringLiteral("p1")}, {QStringLiteral("title"), QStringLiteral("p1")},
+  if (world.mc.projects.isEmpty()) {
+    world.mc.projects.insert(QStringLiteral("p1"), {{QStringLiteral("id"), QStringLiteral("p1")}, {QStringLiteral("title"), QStringLiteral("p1")},
                                                       {QStringLiteral("workspaceRoot"), QStringLiteral("/work/p1")}, {QStringLiteral("scripts"), QJsonArray()}});
   }
   if (world.shellSubscriptions() == 0) world.connect();
@@ -341,43 +341,43 @@ const Steps steps([] {
 
   // The terminal drawer.
   const auto terminals = [](World& world) { return world.native().controller<TerminalController>(); };
-  step(QStringLiteral("the node runs these terminals for %1:").arg(q), [](World& world, const Captures& c, const Table& table) {
+  step(QStringLiteral("the MC runs these terminals for %1:").arg(q), [](World& world, const Captures& c, const Table& table) {
     const QStringList& header = table.first();
     for (qsizetype row = 1; row < table.size(); ++row) {
       const QStringList& cells = table.at(row);
-      addTerminal(world.node, c[0], cells.value(header.indexOf(QStringLiteral("terminal"))),
+      addTerminal(world.mc, c[0], cells.value(header.indexOf(QStringLiteral("terminal"))),
                              header.contains(QStringLiteral("label")) ? cells.value(header.indexOf(QStringLiteral("label"))) : QString(),
                              header.contains(QStringLiteral("busy")) && cells.value(header.indexOf(QStringLiteral("busy"))) == QLatin1String("yes"));
     }
     world.sync();
   });
-  step(QStringLiteral("the node prints %1 in %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    print(world.node, c[2], c[1], unescaped(c[0]));
+  step(QStringLiteral("the MC prints %1 in %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    print(world.mc, c[2], c[1], unescaped(c[0]));
     world.sync();
   });
-  step(QStringLiteral("the node closes %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    closeTerminal(world.node, c[1], c[0]);
+  step(QStringLiteral("the MC closes %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    closeTerminal(world.mc, c[1], c[0]);
     world.sync();
   });
   step(QStringLiteral("the user toggles the terminal drawer"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("terminal.toggle"));
-    world.sync();  // what it asked of the node has been answered
+    world.sync();  // what it asked of the MC has been answered
   });
   step(QStringLiteral("the user opens a new terminal"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("terminal.new"));
-    world.sync();  // what it asked of the node has been answered
+    world.sync();  // what it asked of the MC has been answered
   });
   step(QStringLiteral("the user selects %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("terminal.select"), QVariantMap{{QStringLiteral("terminalId"), c[0]}});
-    world.sync();  // what it asked of the node has been answered
+    world.sync();  // what it asked of the MC has been answered
   });
   step(QStringLiteral("the user closes the active terminal"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("terminal.close"));
-    world.sync();  // what it asked of the node has been answered
+    world.sync();  // what it asked of the MC has been answered
   });
   step(QStringLiteral("the user runs the script %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), c[0]}});
-    world.sync();  // what it asked of the node has been answered
+    world.sync();  // what it asked of the MC has been answered
   });
 
   // Project actions (files/project-scripts-and-actions.feature): the header's
@@ -393,16 +393,16 @@ const Steps steps([] {
   });
   step(QStringLiteral("the thread's terminal is running a command"), [](World& world, const Captures&, const Table&) {
     const QString threadId = ensureThread(world);
-    addTerminal(world.node, threadId, QStringLiteral("term-1"), QString(), true);
+    addTerminal(world.mc, threadId, QStringLiteral("term-1"), QString(), true);
     world.sync();
   });
   step(QStringLiteral("terminals cannot be opened for the thread"), [](World& world, const Captures&, const Table&) {
-    world.node.part<FakeTerminals>().refuseOpen = QStringLiteral("Terminal limit reached on this machine");
+    world.mc.part<FakeTerminals>().refuseOpen = QStringLiteral("Terminal limit reached on this machine");
   });
   step(QStringLiteral("the user runs the action %1").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureThread(world);
     world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), actionId(c[0])}});
-    world.sync();  // what it asked of the node has been answered
+    world.sync();  // what it asked of the MC has been answered
   });
   step(QStringLiteral("a terminal in the worktree runs %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString worktree = at(world.state(QStringLiteral("workspace")), QStringLiteral("worktreePath")).toString();
@@ -410,12 +410,12 @@ const Steps steps([] {
     world.waitFor([&] {
       const auto open = terminalCall(world, QStringLiteral("terminal.open"), threadId, QStringLiteral("term-1"));
       return open && open->value(QLatin1String("cwd")) == worktree && terminalWrites(world, QStringLiteral("term-1")) == QStringList{c[0] + QLatin1Char('\r')};
-    }, [&] { return QStringLiteral("%1 in %2; the node got %3").arg(c[0], worktree, describeTerminalCalls(world)); });
+    }, [&] { return QStringLiteral("%1 in %2; the MC got %3").arg(c[0], worktree, describeTerminalCalls(world)); });
   });
   step(QStringLiteral("the command knows the project folder and the worktree folder"), [](World& world, const Captures&, const Table&) {
     const QVariant workspace = world.state(QStringLiteral("workspace"));
     const auto open = terminalCall(world, QStringLiteral("terminal.open"), shownThread(world), QStringLiteral("term-1"));
-    expect(open.has_value(), QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
+    expect(open.has_value(), QStringLiteral("the MC got %1").arg(describeTerminalCalls(world)));
     const QJsonObject env = open->value(QLatin1String("env")).toObject();
     expect(env.value(QLatin1String("HAL_C2_PROJECT_ROOT")).toString() == at(workspace, QStringLiteral("projectRoot")).toString() &&
                env.value(QLatin1String("HAL_C2_WORKTREE_PATH")).toString() == at(workspace, QStringLiteral("worktreePath")).toString(),
@@ -425,14 +425,14 @@ const Steps steps([] {
     world.waitFor([&] {
       return terminalCall(world, QStringLiteral("terminal.open"), shownThread(world), QStringLiteral("term-2")) &&
              terminalWrites(world, QStringLiteral("term-2")) == QStringList{c[0] + QLatin1Char('\r')};
-    }, [&] { return QStringLiteral("%1 in term-2; the node got %2").arg(c[0], describeTerminalCalls(world)); });
+    }, [&] { return QStringLiteral("%1 in term-2; the MC got %2").arg(c[0], describeTerminalCalls(world)); });
   });
   step(QStringLiteral("the busy terminal keeps running"), [](World& world, const Captures&, const Table&) {
     world.sync();
     const QString threadId = shownThread(world);
     expect(!terminalCall(world, QStringLiteral("terminal.close"), threadId, QStringLiteral("term-1")) && terminalWrites(world, QStringLiteral("term-1")).isEmpty() &&
-               world.node.part<FakeTerminals>().terminals.contains(threadId + QStringLiteral("/term-1")),
-           QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
+               world.mc.part<FakeTerminals>().terminals.contains(threadId + QStringLiteral("/term-1")),
+           QStringLiteral("the MC got %1").arg(describeTerminalCalls(world)));
   });
   step(QStringLiteral("%1 is offered first the next time the user runs an action in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
@@ -468,13 +468,13 @@ const Steps steps([] {
     world.waitFor([&] { return terminals(world)->activeTerminalId() == c[0]; },
                   [&] { return QStringLiteral("%1 to be active; it is %2").arg(c[0], terminals(world)->activeTerminalId()); });
   });
-  step(QStringLiteral("the node attaches %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC attaches %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
       const auto input = terminalAttach(world, c[1], c[0]);
       return input && input->value(QLatin1String("cwd")) == c[2];
     }, QStringLiteral("%1 of %2 to attach in %3").arg(c[0], c[1], c[2]));
   });
-  step(QStringLiteral("the node attaches %1 of the new thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC attaches %1 of the new thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const auto draft = world.native().controller<DraftController>()->draft(world.draftId);
     expect(draft.has_value(), QStringLiteral("the window shows no new thread"));
     world.waitFor([&] {
@@ -500,33 +500,33 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 of %1 is still attached").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(attached(world.node).contains(c[1] + QLatin1Char('/') + c[0]), QStringLiteral("%1 of %2 was let go").arg(c[0], c[1]));
+    expect(attached(world.mc).contains(c[1] + QLatin1Char('/') + c[0]), QStringLiteral("%1 of %2 was let go").arg(c[0], c[1]));
   });
-  step(QStringLiteral("the node is asked to open %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to open %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
       const auto payload = terminalCall(world, QStringLiteral("terminal.open"), c[1], c[0]);
       return payload && payload->value(QLatin1String("cwd")) == c[2];
-    }, [&] { return QStringLiteral("terminal.open; the node got %1").arg(describeTerminalCalls(world)); });
+    }, [&] { return QStringLiteral("terminal.open; the MC got %1").arg(describeTerminalCalls(world)); });
   });
-  step(QStringLiteral("the node is not asked to open a terminal"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC is not asked to open a terminal"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    for (const QJsonObject& call : world.node.part<FakeTerminals>().calls) {
-      expect(call.value(QLatin1String("method")) != QLatin1String("terminal.open"), QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
+    for (const QJsonObject& call : world.mc.part<FakeTerminals>().calls) {
+      expect(call.value(QLatin1String("method")) != QLatin1String("terminal.open"), QStringLiteral("the MC got %1").arg(describeTerminalCalls(world)));
     }
   });
-  step(QStringLiteral("the node is asked to close %1 of %1 and delete its history").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to close %1 of %1 and delete its history").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
       const auto payload = terminalCall(world, QStringLiteral("terminal.close"), c[1], c[0]);
       return payload && payload->value(QLatin1String("deleteHistory")).toBool();
-    }, [&] { return QStringLiteral("terminal.close; the node got %1").arg(describeTerminalCalls(world)); });
+    }, [&] { return QStringLiteral("terminal.close; the MC got %1").arg(describeTerminalCalls(world)); });
   });
-  step(QStringLiteral("the node receives these writes to %1:").arg(q), [](World& world, const Captures& c, const Table& table) {
+  step(QStringLiteral("the MC receives these writes to %1:").arg(q), [](World& world, const Captures& c, const Table& table) {
     QStringList wanted;
     for (qsizetype row = 1; row < table.size(); ++row) wanted.append(unescaped(table.at(row).value(0)));
     world.waitFor([&] { return terminalWrites(world, c[0]).size() >= wanted.size(); },
-                  [&] { return QStringLiteral("%1 writes; the node got %2").arg(wanted.size()).arg(describeTerminalCalls(world)); });
+                  [&] { return QStringLiteral("%1 writes; the MC got %2").arg(wanted.size()).arg(describeTerminalCalls(world)); });
     world.sync();
-    expect(terminalWrites(world, c[0]) == wanted, QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
+    expect(terminalWrites(world, c[0]) == wanted, QStringLiteral("the MC got %1").arg(describeTerminalCalls(world)));
   });
   step(QStringLiteral("%1 shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString transcript = terminalSession(world, c[0])->transcript();
@@ -600,15 +600,15 @@ const Steps steps([] {
     world.sync();
     const QString threadId = shownThread(world);
     expect(!terminalCall(world, QStringLiteral("terminal.close"), threadId, QStringLiteral("term-1")) &&
-               attached(world.node).contains(threadId + QStringLiteral("/term-1")) && rowsIn(world, false).size() == 1,
-           describeRows(world) + QStringLiteral("; the node got ") + describeTerminalCalls(world));
+               attached(world.mc).contains(threadId + QStringLiteral("/term-1")) && rowsIn(world, false).size() == 1,
+           describeRows(world) + QStringLiteral("; the MC got ") + describeTerminalCalls(world));
   });
 
   // Right panel terminal tabs (terminal/tabs.feature, navigation/layout.feature).
   const auto addPanelTab = [](World& world) {
     world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("terminal")}});
     world.waitFor([&] { return rowsIn(world, true).size() == 1; }, [&] { return describeRows(world); });
-    world.node.part<FakeTerminals>().panelTerminal = rowsIn(world, true).first().terminalId;
+    world.mc.part<FakeTerminals>().panelTerminal = rowsIn(world, true).first().terminalId;
   };
   step(QStringLiteral("the terminal tab runs a terminal of its own"), [](World& world, const Captures&, const Table&) {
     const QString threadId = shownThread(world);
@@ -617,7 +617,7 @@ const Steps steps([] {
       return rows.size() == 1 && at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == QStringLiteral("terminal:") + rows.first().group &&
              terminalAttach(world, threadId, rows.first().terminalId).has_value();
     }, [&] { return describeRows(world) + QStringLiteral("; the panel shows ") + show(world.state(QStringLiteral("panel"))); });
-    world.node.part<FakeTerminals>().panelTerminal = rowsIn(world, true).first().terminalId;
+    world.mc.part<FakeTerminals>().panelTerminal = rowsIn(world, true).first().terminalId;
   });
   step(QStringLiteral("the terminal drawer still shows only its first terminal"), [terminals](World& world, const Captures&, const Table&) {
     world.sync();
@@ -636,18 +636,18 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the tab's terminal stops and its history is deleted"), [](World& world, const Captures&, const Table&) {
-    const QString terminalId = world.node.part<FakeTerminals>().panelTerminal;
+    const QString terminalId = world.mc.part<FakeTerminals>().panelTerminal;
     world.waitFor([&] {
       const auto payload = terminalCall(world, QStringLiteral("terminal.close"), shownThread(world), terminalId);
       return payload && payload->value(QLatin1String("deleteHistory")).toBool() && rowsIn(world, true).isEmpty();
-    }, [&] { return describeRows(world) + QStringLiteral("; the node got ") + describeTerminalCalls(world); });
+    }, [&] { return describeRows(world) + QStringLiteral("; the MC got ") + describeTerminalCalls(world); });
     for (const QVariant& tab : at(world.state(QStringLiteral("panel")), QStringLiteral("tabs")).toList()) {
       expect(at(tab, QStringLiteral("kind")) != QStringLiteral("terminal"), show(world.state(QStringLiteral("panel"))));
     }
   });
   step(QStringLiteral("the user splits the terminal tab (horizontally|vertically)"), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(c[0] == QLatin1String("vertically") ? QStringLiteral("terminal.splitVertical") : QStringLiteral("terminal.split"),
-                            QVariantMap{{QStringLiteral("terminalId"), world.node.part<FakeTerminals>().panelTerminal}});
+                            QVariantMap{{QStringLiteral("terminalId"), world.mc.part<FakeTerminals>().panelTerminal}});
     world.sync();
   });
   step(QStringLiteral("the terminal tab shows two terminals (side by side|stacked)"), [](World& world, const Captures& c, const Table&) {
@@ -665,9 +665,9 @@ const Steps steps([] {
   step(QStringLiteral("a terminal tab in the right panel has output"), [addPanelTab](World& world, const Captures&, const Table&) {
     addPanelTab(world);
     const QString threadId = shownThread(world);
-    const QString terminalId = world.node.part<FakeTerminals>().panelTerminal;
-    world.waitFor([&] { return attached(world.node).contains(threadId + QLatin1Char('/') + terminalId); }, [&] { return describeRows(world); });
-    print(world.node, threadId, terminalId, QStringLiteral("built in 3s\r\n"));
+    const QString terminalId = world.mc.part<FakeTerminals>().panelTerminal;
+    world.waitFor([&] { return attached(world.mc).contains(threadId + QLatin1Char('/') + terminalId); }, [&] { return describeRows(world); });
+    print(world.mc, threadId, terminalId, QStringLiteral("built in 3s\r\n"));
     world.waitFor([&] { return terminalSession(world, terminalId)->transcript().contains(QStringLiteral("built in 3s")); },
                   [&] { return QStringLiteral("%1 shows \"%2\"").arg(terminalId, terminalSession(world, terminalId)->transcript()); });
   });
@@ -680,32 +680,32 @@ const Steps steps([] {
   });
   step(QStringLiteral("the terminal tab still has its output"), [](World& world, const Captures&, const Table&) {
     const QString threadId = shownThread(world);
-    const QString terminalId = world.node.part<FakeTerminals>().panelTerminal;
+    const QString terminalId = world.mc.part<FakeTerminals>().panelTerminal;
     const QList<TerminalTabs::Row> rows = rowsIn(world, true);
     expect(rows.size() == 1 && rows.first().terminalId == terminalId && at(world.state(QStringLiteral("panel")), QStringLiteral("isOpen")).toBool() &&
                at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == QStringLiteral("terminal:") + rows.first().group,
            describeRows(world) + QStringLiteral("; the panel shows ") + show(world.state(QStringLiteral("panel"))));
-    expect(!terminalCall(world, QStringLiteral("terminal.close"), threadId, terminalId) && attached(world.node).contains(threadId + QLatin1Char('/') + terminalId) &&
+    expect(!terminalCall(world, QStringLiteral("terminal.close"), threadId, terminalId) && attached(world.mc).contains(threadId + QLatin1Char('/') + terminalId) &&
                terminalSession(world, terminalId)->transcript().contains(QStringLiteral("built in 3s")),
-           QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
+           QStringLiteral("the MC got %1").arg(describeTerminalCalls(world)));
   });
 
   // navigation/layout.feature's header: the run button runs the action the
   // user ran last in the project (or its first), its menu any of them.
   const auto shownProject = [](World& world) {
-    return world.node.threads.value(ensureThread(world)).value(QLatin1String("projectId")).toString();
+    return world.mc.threads.value(ensureThread(world)).value(QLatin1String("projectId")).toString();
   };
   step(QStringLiteral("the thread's project has the actions %1 and %1").arg(q), [shownProject](World& world, const Captures& c, const Table&) {
     const QString project = shownProject(world);
     for (const QString& name : c) addAction(world, project, name, QStringLiteral("bun ") + name.toLower());
   });
   step(QStringLiteral("the thread's project has no actions"), [shownProject](World& world, const Captures&, const Table&) {
-    expect(world.node.projects.value(shownProject(world)).value(QLatin1String("scripts")).toArray().isEmpty(), QStringLiteral("the project has actions"));
+    expect(world.mc.projects.value(shownProject(world)).value(QLatin1String("scripts")).toArray().isEmpty(), QStringLiteral("the project has actions"));
   });
   step(QStringLiteral("the user last ran %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), actionId(c[0])}});
     world.sync();
-    world.node.part<FakeTerminals>().calls.clear();
+    world.mc.part<FakeTerminals>().calls.clear();
   });
   step(QStringLiteral("the user runs the action offered in the header"), [](World& world, const Captures&, const Table&) {
     world.sync();
@@ -730,14 +730,14 @@ const Steps steps([] {
     const QString threadId = shownThread(world);
     world.waitFor([&] {
       QStringList written;
-      for (const QJsonObject& call : world.node.part<FakeTerminals>().calls) {
+      for (const QJsonObject& call : world.mc.part<FakeTerminals>().calls) {
         const QJsonObject payload = call.value(QLatin1String("payload")).toObject();
         if (call.value(QLatin1String("method")) != QLatin1String("terminal.write")) continue;
-        const QString cwd = world.node.part<FakeTerminals>().terminals.value(terminalKey(payload)).summary.value(QLatin1String("cwd")).toString();
+        const QString cwd = world.mc.part<FakeTerminals>().terminals.value(terminalKey(payload)).summary.value(QLatin1String("cwd")).toString();
         if (payload.value(QLatin1String("threadId")) == threadId && cwd == folder) written.append(payload.value(QLatin1String("data")).toString());
       }
       return written == QStringList{command};
-    }, [&] { return QStringLiteral("only %1 in %2; the node got %3").arg(command.trimmed(), folder, describeTerminalCalls(world)); });
+    }, [&] { return QStringLiteral("only %1 in %2; the MC got %3").arg(command.trimmed(), folder, describeTerminalCalls(world)); });
   });
   step(QStringLiteral("the header offers no action to run"), [](World& world, const Captures&, const Table&) {
     world.sync();

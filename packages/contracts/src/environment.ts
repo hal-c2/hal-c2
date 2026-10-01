@@ -73,8 +73,8 @@ export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.T
     New servers only advertise the stable launcher-backed "boot-service" path;
     "respawn" remains decodable for compatibility with older servers.
     "desktop-app" means the supervising desktop app updated and relaunched
-    itself, bringing the server back with it. "hot-upgrade" means an Elixir
-    node loaded the new version's code in place (or restarted into it when the
+    itself, bringing the server back with it. "hot-upgrade" means the
+    MC loaded the new version's code in place (or restarted into it when the
     change needed that); the connection may stay up throughout. */
 export const ServerSelfUpdateMethod = Schema.Literals([
   "boot-service",
@@ -210,7 +210,7 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   orchestrationProtocolVersion: Schema.optionalKey(Schema.Int),
   capabilities: ExecutionEnvironmentCapabilities,
   /**
-   * Protocol-3 nodes list every environment in their cluster, this one included.
+   * Protocol-3 MCs list every environment in their cluster, this one included.
    * A client paired with any member reaches the others through it.
    */
   cluster: Schema.optionalKey(

@@ -160,7 +160,7 @@ void resetDesktop(World& world, const QProcessEnvironment& env = environment(QSt
   desktop().image = image;
   SnapShotBackend::setEnvironment(env);
   world.restart();
-  // The shell's controllers start once the node has answered.
+  // The shell's controllers start once the MC has answered.
   world.connect();
   world.sync();
   // Snap Shot is Linux's, so its shortcuts are too, whatever runs the tests.
@@ -169,13 +169,13 @@ void resetDesktop(World& world, const QProcessEnvironment& env = environment(QSt
 
 // A thread of "shop", open in the window.
 void openThread(World& world) {
-  if (!world.node.part<FakeStreams>().thread.isEmpty()) return;
+  if (!world.mc.part<FakeStreams>().thread.isEmpty()) return;
   const QJsonObject project{{QStringLiteral("id"), kProject},
                             {QStringLiteral("title"), kProject},
                             {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
                             {QStringLiteral("scripts"), QJsonArray()}};
-  world.node.projects.insert(kProject, project);
-  world.node.sendRow(kProject, project, QStringLiteral("project"));
+  world.mc.projects.insert(kProject, project);
+  world.mc.sendRow(kProject, project, QStringLiteral("project"));
   world.sync();
   lookAtThread(world, kProject);
 }
@@ -235,7 +235,7 @@ void capture(World& world) {
 }
 
 QString threadKey(World& world) {
-  return world.node.environmentId + QLatin1Char(':') + kThread;
+  return world.mc.environmentId + QLatin1Char(':') + kThread;
 }
 
 QVariantList attachments(World& world, const QString& target) {
@@ -447,8 +447,8 @@ const Steps steps([] {
                               {QStringLiteral("title"), c[0]},
                               {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[0]},
                               {QStringLiteral("scripts"), QJsonArray()}};
-    world.node.projects.insert(c[0], project);
-    world.node.sendRow(c[0], project, QStringLiteral("project"));
+    world.mc.projects.insert(c[0], project);
+    world.mc.sendRow(c[0], project, QStringLiteral("project"));
     world.sync();
   });
   step(QStringLiteral("a new draft in %1 holds the capture").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -527,7 +527,7 @@ const Steps steps([] {
     expectToast(world, QStringLiteral("Snapshot failed"), QStringLiteral("Snapshot was cancelled."));
   });
   step(QStringLiteral("no project has been added"), [](World& world, const Captures&, const Table&) {
-    expect(world.node.projects.isEmpty(), QStringLiteral("the node has projects"));
+    expect(world.mc.projects.isEmpty(), QStringLiteral("the MC has projects"));
   });
   step(QStringLiteral("nothing is attached and the user is asked to add a project first"), [](World& world, const Captures&, const Table&) {
     expect(desktop().captures.size() == 1, QStringLiteral("the window to be captured"));

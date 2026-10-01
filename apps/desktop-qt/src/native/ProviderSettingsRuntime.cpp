@@ -1,12 +1,12 @@
-// The runtime the node installs itself (Antigravity) on its Providers card
+// The runtime the MC installs itself (Antigravity) on its Providers card
 // (ProviderSettingsController), as the web's ProviderSetupSection: each such
-// instance follows its node-addressed `providerInstall` shape, so every
+// instance follows its MC-addressed `providerInstall` shape, so every
 // client shows the same download.
 //
 // Actions: `providerSettings.runtimeInstall {instanceId}`, `.runtimeCancel
 // {instanceId}`, `.runtimeRemove {instanceId}` (asks first).
 //
-// Each such entry's `runtime`: null until the node reports it, else {status,
+// Each such entry's `runtime`: null until the MC reports it, else {status,
 // message, progress (0..1, or -1 without a known size), installLabel ("" when
 // it cannot install), canCancel, canRemove, busy, error}.
 
@@ -14,7 +14,7 @@
 
 #include "MenuController.h"
 #include "NativeShell.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ProviderSettingsController.h"
 #include "ShellStore.h"
 
@@ -36,9 +36,9 @@ QString megabytes(double bytes) {
 }  // namespace
 
 void ProviderSettingsController::followRuntime() {
-  const QString node = m_store->nodeServing(m_followed);
+  const QString mc = m_store->mcServing(m_followed);
   QSet<QString> wanted;
-  if (!node.isEmpty() && m_providers) {
+  if (!mc.isEmpty() && m_providers) {
     for (const QJsonValue& value : *m_providers) {
       if (manages(value.toObject())) wanted.insert(value.toObject().value(QLatin1String("instanceId")).toString());
     }
@@ -55,7 +55,7 @@ void ProviderSettingsController::followRuntime() {
   for (const QString& instanceId : std::as_const(wanted)) {
     if (m_install.contains(instanceId)) continue;
     m_install.insert(instanceId, m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("providerInstall")},
-                                                      {QStringLiteral("node"), node},
+                                                      {QStringLiteral("mc"), mc},
                                                       {QStringLiteral("instanceId"), instanceId}},
                                                      [this, instanceId](const QJsonObject& frame) {
                                                        if (frame.value(QLatin1String("t")) != QLatin1String("providerInstall")) return;

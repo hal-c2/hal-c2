@@ -9,8 +9,8 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @me "monalisa"
 
@@ -67,7 +67,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   defp checks?(pr, conclusion),
     do: Enum.any?(pr["statusCheckRollup"], &(&1["conclusion"] == conclusion))
 
-  # What GitHub's search does with each qualifier the node may send.
+  # What GitHub's search does with each qualifier the MC may send.
   defp qualifiers do
     [
       {"review-requested:#{@me}", &requested?/1},
@@ -325,7 +325,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context
   end
 
-  # Backlog: the node has no change request driver for hosts other than GitHub.
+  # Backlog: the MC has no change request driver for hosts other than GitHub.
   step "the open change requests of {string} are listed", %{args: [title]} = context do
     id = World.project(context, title).id
     assert Enum.any?(entries(context), &(&1["projectId"] == id)), inspect(context.reply)
@@ -387,11 +387,11 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   end
 
   step "the user is looking at the pull request list", context do
-    Node.ensure(HalC2.PullRequests.Refreshes)
+    Mc.ensure(HalC2.PullRequests.Refreshes)
     id = System.unique_integer([:positive])
-    shape = %{"type" => "pullRequestRefreshes", "node" => Atom.to_string(node())}
-    client = Node.sub(World.client(context), id, shape)
-    {frame, client} = Node.await(client, &(&1["t"] == "pullRequestRefreshes" and &1["id"] == id))
+    shape = %{"type" => "pullRequestRefreshes", "mc" => Atom.to_string(node())}
+    client = Mc.sub(World.client(context), id, shape)
+    {frame, client} = Mc.await(client, &(&1["t"] == "pullRequestRefreshes" and &1["id"] == id))
 
     context
     |> World.put_client(client)
@@ -427,7 +427,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     {id, before} = context.refreshes
 
     {frame, client} =
-      Node.await(World.client(context), &(&1["t"] == "pullRequestRefreshes" and &1["id"] == id))
+      Mc.await(World.client(context), &(&1["t"] == "pullRequestRefreshes" and &1["id"] == id))
 
     assert frame["revision"] > before
     World.put_client(context, client)
@@ -445,7 +445,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     Map.put(context, :calls_before, before)
   end
 
-  step "the node reads the pull requests afresh", context do
+  step "the MC reads the pull requests afresh", context do
     context = list(context)
     assert length(World.cli_calls(context, "api user")) == context.calls_before.user + 1
     assert length(World.cli_calls(context, "pr list")) > context.calls_before.list

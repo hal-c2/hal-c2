@@ -1,16 +1,16 @@
 defmodule Mix.Tasks.HalC2.Pair do
-  @shortdoc "Prints a one-time pairing URL for this node"
+  @shortdoc "Prints a one-time pairing URL for this MC"
   @moduledoc """
   Mints a pairing token (valid 5 minutes, single use) and prints the URL a client
-  opens or pastes to pair with this node:
+  opens or pastes to pair with this MC:
 
       mix hal_c2.pair [BASE_URL]
       mix hal_c2.pair --tailscale [--tailscale-serve-port PORT]
 
-  `BASE_URL` defaults to the node's own address (`HalC2.Web.base_url/1`), such as
+  `BASE_URL` defaults to the MC's own address (`HalC2.Web.base_url/1`), such as
   `http://127.0.0.1:3780`, or the LAN or tailnet address it was bound to.
 
-  `--tailscale` publishes the node over Tailscale Serve HTTPS (port 443 unless
+  `--tailscale` publishes the MC over Tailscale Serve HTTPS (port 443 unless
   `--tailscale-serve-port` names another) and pairs through the machine's tailnet
   name. The mapping stays in tailscaled across restarts; a port that already serves
   something else is left alone.
@@ -44,7 +44,7 @@ defmodule Mix.Tasks.HalC2.Pair do
 
     if opts[:tailscale] do
       Mix.shell().info(
-        "Tailscale Serve maps #{base} to this node and keeps it across restarts. Remove it with `tailscale serve --https=#{serve_port} off`."
+        "Tailscale Serve maps #{base} to this MC and keeps it across restarts. Remove it with `tailscale serve --https=#{serve_port} off`."
       )
     end
   end

@@ -3,8 +3,8 @@ defmodule HalC2.Steps.SourceControl.PushPullAndDefaultBranch do
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # --- checkouts and their upstreams ---------------------------------------------
 
@@ -220,7 +220,7 @@ defmodule HalC2.Steps.SourceControl.PushPullAndDefaultBranch do
   defp auto_pull(context, title) do
     id = World.project(context, title).id
 
-    # `Node.restart/1` runs the boot's auto-pull, as the application does.
+    # `Mc.restart/1` runs the boot's auto-pull, as the application does.
     World.put_settings(context, %{
       "projectSettingsOverrides" => %{id => %{"defaultAutoPull" => true}}
     })
@@ -310,16 +310,16 @@ defmodule HalC2.Steps.SourceControl.PushPullAndDefaultBranch do
     World.capture_log(context)
   end
 
-  step "the failure is written to the node's log", context do
+  step "the failure is written to the MC's log", context do
     log = World.logged(context)
     assert log =~ "automatic pull of #{context.cwd} failed"
     assert head(context.cwd) == context.checkout_before.head
     context
   end
 
-  step "the node finishes starting", context do
-    # The config snapshot arrives once the node serves clients again.
-    client = context.node |> Node.connect() |> Node.config()
+  step "the MC finishes starting", context do
+    # The config snapshot arrives once the MC serves clients again.
+    client = context.mc |> Mc.connect() |> Mc.config()
     assert Process.whereis(HalC2.Shell)
     World.put_client(context, client)
   end

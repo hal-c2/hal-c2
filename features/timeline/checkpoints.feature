@@ -21,7 +21,7 @@ Feature: Checkpoints and rewinding
     Given a connected environment with the project "shop"
     And a thread in "shop" with three finished turns
 
-  @node
+  @mc
   Scenario: A finished turn leaves a checkpoint
     When the agent finishes a turn that changed "src/cart.ts"
     Then a checkpoint of the workspace is recorded for that turn
@@ -46,13 +46,13 @@ Feature: Checkpoints and rewinding
     And the user is told "Reverted to turn 1."
 
     Examples:
-      | where          | answer           | files                                            |
-      | its reply      | Keep files       | the node is asked to leave the files as they are |
-      | its reply      | Revert files too | the workspace files match the end of turn 1      |
-      | the diff panel | Keep files       | the node is asked to leave the files as they are |
-      | the diff panel | Revert files too | the workspace files match the end of turn 1      |
+      | where          | answer           | files                                          |
+      | its reply      | Keep files       | the MC is asked to leave the files as they are |
+      | its reply      | Revert files too | the workspace files match the end of turn 1    |
+      | the diff panel | Keep files       | the MC is asked to leave the files as they are |
+      | the diff panel | Revert files too | the workspace files match the end of turn 1    |
 
-  @node
+  @mc
   Scenario: Rewinding hides the later turns from the timeline
     When the thread is rolled back to the checkpoint after turn 1
     Then turns 2 and 3 are no longer shown
@@ -65,7 +65,7 @@ Feature: Checkpoints and rewinding
     Then the conversation rewinds to before the second message
     And the second message's prompt and attachments are added to the draft
 
-  @node
+  @mc
   Scenario Outline: Rewinding can keep or restore the files
     When the thread is rewound to before turn 2 <files>
     Then the conversation ends at turn 1
@@ -95,13 +95,13 @@ Feature: Checkpoints and rewinding
     And turns 1 to 3 are still shown
 
   @desktop
-  Scenario: A revert the node refuses says why
-    Given the node refuses rollbacks with "Interrupt the current turn before rewinding."
+  Scenario: A revert the MC refuses says why
+    Given the MC refuses rollbacks with "Interrupt the current turn before rewinding."
     When the user reverts the thread to the checkpoint after turn 1
     Then the user sees an "error" toast "Could not revert to turn 1" saying "Interrupt the current turn before rewinding."
     And turns 1 to 3 are still shown
 
-  @node
+  @mc
   Scenario Outline: A rewind that cannot happen says why
     Given <situation>
     When the user rewinds to before turn 2 and restores files
@@ -125,7 +125,7 @@ Feature: Checkpoints and rewinding
       | the message's attachments are still preparing | Wait for attachments to finish preparing before rewinding.                                 |
       | the composer has no room for the attachments  | Make room for this message's attachments in the composer before rewinding.                 |
 
-  @node
+  @mc
   Scenario: A checkpoint that no longer exists cannot be restored
     Given the checkpoint after turn 1 has gone stale
     When the user rewinds to it

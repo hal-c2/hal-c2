@@ -107,19 +107,19 @@ Feature: Unread and status in the thread list
     When the user moves the pointer across the actions of "Build search"
     Then the row stays highlighted the whole time
 
-  @node
+  @mc
   Scenario: Opening a thread marks it read on every device
     Given "Build search" finished work the user has not seen
     When the user opens "Build search" on the desktop
     Then "Build search" is read on the phone too
 
-  @node
+  @mc
   Scenario: A late visit from another device does not make a thread unread again
     Given "Build search" was visited at 10:05 on the desktop
     When the phone reports a visit at 10:01
     Then "Build search" stays read as of 10:05
 
-  @node
+  @mc
   Scenario: Marking a thread unread
     Given "Build search" is read
     When a client marks "Build search" unread

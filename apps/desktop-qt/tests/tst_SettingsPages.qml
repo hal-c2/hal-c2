@@ -174,7 +174,7 @@ Item {
 
         function test_turningInactiveSettlingOnShowsTheDefaultDays() {
             Settings.defaults = { sidebarAutoSettleAfterDays: 3 };
-            Settings.nodeKeys = ["sidebarAutoSettleAfterDays"];
+            Settings.mcKeys = ["sidebarAutoSettleAfterDays"];
             Settings.set("sidebarAutoSettleAfterDays", null);
             const spec = Rows.general.find(row => row.key === "sidebarAutoSettleAfterDays");
             const row = createTemporaryObject(rowComponent, root, { spec: spec });

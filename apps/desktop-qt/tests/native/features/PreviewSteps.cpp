@@ -1,5 +1,5 @@
 // The right panel's Previews tab (ThreadPreviews): a thread's browser tabs as
-// the node keeps them (apps/server-ex preview.ex: `preview.list`,
+// the MC keeps them (apps/server-ex preview.ex: `preview.list`,
 // `preview.close`, and PreviewEvents on the `preview` shape), listed and
 // opened in the user's browser. features/preview/surfaces.feature.
 
@@ -17,7 +17,7 @@ namespace {
 
 using namespace stream;
 
-// The node's browser tabs of the thread, oldest change first, and how it
+// The MC's browser tabs of the thread, oldest change first, and how it
 // answers a close.
 struct FakePreviews {
   QString epoch = QStringLiteral("epoch-1");
@@ -39,15 +39,15 @@ QJsonObject tabAt(const QString& url, int n) {
 }
 
 // A PreviewEvent to every watcher, as preview.ex emit/4.
-void emitEvent(FakeNode& node, const QJsonObject& tab, const QString& type, QJsonObject fields = {}) {
-  FakePreviews& fake = node.part<FakePreviews>();
+void emitEvent(FakeMc& mc, const QJsonObject& tab, const QString& type, QJsonObject fields = {}) {
+  FakePreviews& fake = mc.part<FakePreviews>();
   fields.insert(QStringLiteral("type"), type);
   fields.insert(QStringLiteral("threadId"), tab.value(QLatin1String("threadId")));
   fields.insert(QStringLiteral("tabId"), tab.value(QLatin1String("tabId")));
   fields.insert(QStringLiteral("serverEpoch"), fake.epoch);
   fields.insert(QStringLiteral("revision"), ++fake.revision);
-  for (const int id : node.subscribers(QStringLiteral("preview"))) {
-    node.send({{QStringLiteral("t"), QStringLiteral("preview")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), fields}});
+  for (const int id : mc.subscribers(QStringLiteral("preview"))) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("preview")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), fields}});
   }
 }
 
@@ -58,30 +58,30 @@ int indexOfTab(const QList<QJsonObject>& tabs, const QString& tabId) {
   return -1;
 }
 
-const FakeNode::Extension previews([](FakeNode& node) {
-  // The node sends nothing on subscribing; events follow as they happen.
-  node.onShape(QStringLiteral("preview"), [](int, const QJsonObject&) {});
-  node.onRpc(QStringLiteral("preview.list"), [&node](const FakeNode::Rpc& rpc) {
-    FakePreviews& fake = node.part<FakePreviews>();
+const FakeMc::Extension previews([](FakeMc& mc) {
+  // The MC sends nothing on subscribing; events follow as they happen.
+  mc.onShape(QStringLiteral("preview"), [](int, const QJsonObject&) {});
+  mc.onRpc(QStringLiteral("preview.list"), [&mc](const FakeMc::Rpc& rpc) {
+    FakePreviews& fake = mc.part<FakePreviews>();
     QJsonArray sessions;
     for (const QJsonObject& tab : std::as_const(fake.tabs)) {
       if (tab.value(QLatin1String("threadId")) == rpc.payload.value(QLatin1String("threadId"))) sessions.append(tab);
     }
-    node.reply(rpc, QJsonObject{{QStringLiteral("sessions"), sessions}, {QStringLiteral("serverEpoch"), fake.epoch}, {QStringLiteral("revision"), fake.revision}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("sessions"), sessions}, {QStringLiteral("serverEpoch"), fake.epoch}, {QStringLiteral("revision"), fake.revision}});
   });
-  node.onRpc(QStringLiteral("preview.close"), [&node](const FakeNode::Rpc& rpc) {
-    auto answer = [&node, rpc] {
-      FakePreviews& fake = node.part<FakePreviews>();
+  mc.onRpc(QStringLiteral("preview.close"), [&mc](const FakeMc::Rpc& rpc) {
+    auto answer = [&mc, rpc] {
+      FakePreviews& fake = mc.part<FakePreviews>();
       if (fake.refuseClose) {
-        node.refuse(rpc, QStringLiteral("Preview is busy"));
+        mc.refuse(rpc, QStringLiteral("Preview is busy"));
         return;
       }
       const int at = indexOfTab(fake.tabs, rpc.payload.value(QLatin1String("tabId")).toString());
-      if (at >= 0) emitEvent(node, fake.tabs.takeAt(at), QStringLiteral("closed"));
-      node.reply(rpc, QJsonValue::Null);
+      if (at >= 0) emitEvent(mc, fake.tabs.takeAt(at), QStringLiteral("closed"));
+      mc.reply(rpc, QJsonValue::Null);
     };
-    if (node.part<FakePreviews>().holdClose) {
-      node.defer(answer);
+    if (mc.part<FakePreviews>().holdClose) {
+      mc.defer(answer);
     } else {
       answer();
     }
@@ -122,9 +122,9 @@ void waitForUrls(World& world, const QStringList& wanted) {
   world.waitFor([&] { return model(world).status() == QLatin1String("ready") && urls(world) == wanted; }, [&] { return describe(world); });
 }
 
-// The node has the thread's tabs at `addresses` before the user looks.
+// The MC has the thread's tabs at `addresses` before the user looks.
 void haveTabs(World& world, const QStringList& addresses) {
-  FakePreviews& fake = world.node.part<FakePreviews>();
+  FakePreviews& fake = world.mc.part<FakePreviews>();
   for (const QString& url : addresses) {
     fake.tabs.append(tabAt(url, int(fake.tabs.size()) + 1));
     ++fake.revision;
@@ -133,10 +133,10 @@ void haveTabs(World& world, const QStringList& addresses) {
 
 // Looks at the thread with its Previews tab showing, as mod+shift+j does.
 void showPreviews(World& world) {
-  FakePreviews& fake = world.node.part<FakePreviews>();
+  FakePreviews& fake = world.mc.part<FakePreviews>();
   if (!fake.looking) {
     fake.looking = true;
-    world.node.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject},
+    world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject},
                                           {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + kProject}, {QStringLiteral("scripts"), QJsonArray()}});
     world.connect();
     world.sync();
@@ -145,7 +145,7 @@ void showPreviews(World& world) {
   RightPanelController* panel = world.native().controller<RightPanelController>();
   if (!panel->isOpen() || panel->activeTab() != QLatin1String("previews")) panel->togglePreviews();
   world.sync();
-  world.waitFor([&] { return model(world).status() == QLatin1String("ready") && !world.node.subscribers(QStringLiteral("preview")).isEmpty(); },
+  world.waitFor([&] { return model(world).status() == QLatin1String("ready") && !world.mc.subscribers(QStringLiteral("preview")).isEmpty(); },
                 [&] { return describe(world); });
   expect(at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == QLatin1String("previews"), show(world.state(QStringLiteral("panel"))));
 }
@@ -175,17 +175,17 @@ const Steps steps([] {
     model(world).open(tabIdOf(world, c[0]));
   });
 
-  // What the node tells every client.
+  // What the MC tells every client.
   step(QStringLiteral("the agent opens a browser tab at %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakePreviews& fake = world.node.part<FakePreviews>();
+    FakePreviews& fake = world.mc.part<FakePreviews>();
     fake.tabs.append(tabAt(c[0], int(fake.tabs.size()) + 1));
-    emitEvent(world.node, fake.tabs.last(), QStringLiteral("opened"), {{QStringLiteral("snapshot"), fake.tabs.last()}});
+    emitEvent(world.mc, fake.tabs.last(), QStringLiteral("opened"), {{QStringLiteral("snapshot"), fake.tabs.last()}});
     world.sync();
   });
   step(QStringLiteral("the page at %1 fails to load").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakePreviews& fake = world.node.part<FakePreviews>();
+    FakePreviews& fake = world.mc.part<FakePreviews>();
     const QJsonObject tab = fake.tabs.value(indexOfTab(fake.tabs, tabIdOf(world, c[0])));
-    emitEvent(world.node, tab, QStringLiteral("failed"),
+    emitEvent(world.mc, tab, QStringLiteral("failed"),
               {{QStringLiteral("url"), c[0]}, {QStringLiteral("title"), QString()}, {QStringLiteral("code"), QStringLiteral("ERR_CONNECTION_REFUSED")},
                {QStringLiteral("description"), QStringLiteral("Connection refused")}});
     world.sync();
@@ -198,16 +198,16 @@ const Steps steps([] {
              index.data(ThreadPreviews::ProblemRole) == QLatin1String("Connection refused");
     }, [&] { return describe(world); });
   });
-  step(QStringLiteral("the tab at %1 is closed on the node").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakePreviews& fake = world.node.part<FakePreviews>();
-    emitEvent(world.node, fake.tabs.takeAt(indexOfTab(fake.tabs, tabIdOf(world, c[0]))), QStringLiteral("closed"));
+  step(QStringLiteral("the tab at %1 is closed on the MC").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    emitEvent(world.mc, fake.tabs.takeAt(indexOfTab(fake.tabs, tabIdOf(world, c[0]))), QStringLiteral("closed"));
     world.sync();
   });
 
   // Closing.
-  step(QStringLiteral("the node refuses to close a browser tab"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC refuses to close a browser tab"), [](World& world, const Captures&, const Table&) {
     haveTabs(world, {QStringLiteral("http://localhost:5173"), QStringLiteral("http://localhost:6006")});
-    world.node.part<FakePreviews>().refuseClose = true;
+    world.mc.part<FakePreviews>().refuseClose = true;
     showPreviews(world);
   });
   step(QStringLiteral("the user closes the tab"), [](World& world, const Captures&, const Table&) {
@@ -224,23 +224,23 @@ const Steps steps([] {
   step(QStringLiteral("the user closes a browser tab"), [](World& world, const Captures&, const Table&) {
     haveTabs(world, {QStringLiteral("http://localhost:5173")});
     showPreviews(world);
-    world.node.part<FakePreviews>().holdClose = true;
+    world.mc.part<FakePreviews>().holdClose = true;
     model(world).close(tabIdOf(world, QStringLiteral("http://localhost:5173")));
     world.sync();
   });
   step(QStringLiteral("the tab disappears at once, even if an older update about it arrives"), [](World& world, const Captures&, const Table&) {
     expect(urls(world).isEmpty(), describe(world));
-    // The page finished loading before the close reached the node.
-    FakePreviews& fake = world.node.part<FakePreviews>();
+    // The page finished loading before the close reached the MC.
+    FakePreviews& fake = world.mc.part<FakePreviews>();
     QJsonObject tab = fake.tabs.first();
     tab.insert(QStringLiteral("navStatus"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("Success")}, {QStringLiteral("url"), QStringLiteral("http://localhost:5173")},
                                                         {QStringLiteral("title"), QStringLiteral("Vite")}});
-    emitEvent(world.node, tab, QStringLiteral("navigated"), {{QStringLiteral("snapshot"), tab}});
+    emitEvent(world.mc, tab, QStringLiteral("navigated"), {{QStringLiteral("snapshot"), tab}});
     world.sync();
     expect(urls(world).isEmpty(), describe(world));
-    world.node.answerHeld();
+    world.mc.answerHeld();
     world.sync();
-    expect(urls(world).isEmpty() && world.node.part<FakePreviews>().tabs.isEmpty(), describe(world));
+    expect(urls(world).isEmpty() && world.mc.part<FakePreviews>().tabs.isEmpty(), describe(world));
   });
 });
 

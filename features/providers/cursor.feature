@@ -1,7 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
-#   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: node + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
+#   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: MC + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
 #   apps/server-ex/lib/hal_c2/acp/auth.ex, apps/server-ex/lib/hal_c2/acp/url_auth.ex (server.acceptAcpRegistryUrlAuth)
 #   apps/server-ex/lib/hal_c2/provider_auth.ex (provider.auth.start, provider.auth.cancel, provider.auth.logout)
 #   packages/cursor-acp/src/agent.ts, packages/cursor-acp/src/main.ts
@@ -11,9 +11,9 @@
 #   apps/server/src/orchestration-v2/Adapters/CursorAdapterV2.ts
 #   apps/server/src/provider/Layers/cursorUsageLimits.ts
 
-@plugin-cursor @node
+@plugin-cursor @mc
 Feature: Cursor
-  Cursor runs through the Cursor SDK behind a small ACP agent that ships with the node.
+  Cursor runs through the Cursor SDK behind a small ACP agent that ships with the MC.
   There is no Cursor binary to install. The user signs in with a Cursor account in the
   browser, or sets an API key for the instance.
 
@@ -21,8 +21,8 @@ Feature: Cursor
     Given a connected environment with the project "shop"
 
   Scenario: Cursor does nothing until the user enables it
-    Given Cursor is not enabled on the node
-    When the node starts
+    Given Cursor is not enabled on the MC
+    When the MC starts
     Then no Cursor process is started
 
   Scenario: Enabling Cursor lists its models
@@ -33,7 +33,7 @@ Feature: Cursor
   Scenario: Signing in to Cursor opens the Cursor sign-in page
     Given Cursor is enabled and signed out
     When the user signs in to Cursor
-    Then every client of the node is offered the Cursor sign-in page
+    Then every client of the MC is offered the Cursor sign-in page
     And Cursor is signed in once the user finishes on the website
 
   # Both servers end a sign-in after five minutes (ProviderAuth, CursorAuth AUTH_TIMEOUT_MS).
@@ -134,18 +134,18 @@ Feature: Cursor
     Then Cursor receives the skill reference
 
   @backlog
-  Scenario: Credentials from an older Cursor login move to the node's secrets once
+  Scenario: Credentials from an older Cursor login move to the MC's secrets once
     Given an older Cursor login file exists
     When Cursor starts for the first time on this version
-    Then the login moves into the node's secrets and the old file is removed
+    Then the login moves into the MC's secrets and the old file is removed
 
   @dropped
   Scenario: Cursor turns can be recorded and replayed against the SDK boundary
     Given a recorded Cursor replay fixture
-    When the node's tests replay it
+    When the MC's tests replay it
     Then the thread receives the recorded updates, results and cancellation in order
     # docs/user/cursor.md "Replay And Live Testing" is contributor tooling for the TypeScript
-    # adapter (record:cursor-replay), not product behaviour; the Elixir node does not carry it.
+    # adapter (record:cursor-replay), not product behaviour; the MC does not carry it.
 
   # Cursor's SDK says nothing once a run finishes, and nothing Cursor starts outlives it.
   Scenario: A command Cursor leaves running ends with its turn
@@ -169,7 +169,7 @@ Feature: Cursor
   Scenario: Cursor text generation that its sandbox blocks is retried without the sandbox
     Given Cursor is picked for text generation
     And generating a title fails only because Cursor's sandbox blocks it
-    When the node retries the request
+    When the MC retries the request
     Then the retry removes only the restriction that blocked it
     And the thread gets its title
 
@@ -194,7 +194,7 @@ Feature: Cursor
 
   @backlog
   Scenario: A Cursor send whose run was abandoned is ended
-    Given a message was sent to Cursor but the node kept only its local run record and no live Cursor session
-    When the node checks its Cursor sessions
+    Given a message was sent to Cursor but the MC kept only its local run record and no live Cursor session
+    When the MC checks its Cursor sessions
     Then the send is completed or failed explicitly
     And the user's next message starts a new Cursor run

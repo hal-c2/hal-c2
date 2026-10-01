@@ -20,18 +20,18 @@ Feature: What each turn changed
     Given a connected environment with the thread "Tax work" in the git project "shop"
     And the agent finished 3 turns in "Tax work" that each edited files
 
-  @node
+  @mc
   Scenario: Each finished turn leaves a checkpoint
     When the user lists the checkpoints of "Tax work"
     Then there is one checkpoint for each of the 3 turns
     And the user's branches and staging area are unchanged by them
 
-  @node @tui
+  @mc @tui
   Scenario: Seeing what one turn changed
     When the user opens the diff of turn 2
     Then only the changes the agent made during turn 2 are shown
 
-  @node @tui
+  @mc @tui
   Scenario: Seeing everything the thread changed
     When the user opens all changes of "Tax work"
     Then the changes of turns 1 to 3 are shown together against the checkout before turn 1
@@ -42,20 +42,20 @@ Feature: What each turn changed
     Then all changes are shown first
     And the user can step to each turn's own diff
 
-  @node
+  @mc
   Scenario: Whitespace-only changes are hidden unless asked for
     Given turn 3 only re-indented "src/cart.ts"
     When the user opens the diff of turn 3
     Then no changes are shown
     But asking to keep whitespace shows the re-indentation
 
-  @node @tui
+  @mc @tui
   Scenario: A turn that changed nothing
     Given turn 2 only answered a question
     When the user opens the diff of turn 2
     Then the user is told there are no changes
 
-  @node
+  @mc
   Scenario: A turn without a finished checkpoint
     Given turn 4 is still running
     When the user opens the diff of turn 4
@@ -63,11 +63,11 @@ Feature: What each turn changed
 
   @tui
   Scenario: A diff that cannot be loaded says so
-    Given the node cannot read the checkpoints of "Tax work"
+    Given the MC cannot read the checkpoints of "Tax work"
     When the user opens the diff in the terminal client
     Then the diff viewer reports an error instead of an empty diff
 
-  @node
+  @mc
   Scenario: Imported threads keep their diffs
     Given "Tax work" was imported with checkpoints made by the previous server
     When the user opens the diff of turn 2
@@ -81,10 +81,10 @@ Feature: What each turn changed
 
   @desktop @mobile @backlog-mobile
   Scenario: A turn's diff that cannot be loaded can be asked for again
-    Given the node cannot read the checkpoints of "Tax work"
+    Given the MC cannot read the checkpoints of "Tax work"
     When the user opens the diff of the latest turn
     Then the user is told the diff could not be loaded
-    When the node can read the checkpoints again
+    When the MC can read the checkpoints again
     And the user asks for the diff again
     Then the changes of turn 3 are shown
 

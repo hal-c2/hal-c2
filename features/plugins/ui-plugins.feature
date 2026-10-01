@@ -212,7 +212,7 @@ Feature: UI plugins
     And no error is reported
 
   @backlog @desktop @mobile @tui
-  Scenario: A plugin can be loaded from a paired node
+  Scenario: A plugin can be loaded from a paired MC
     Given the paired environment "workstation" offers the plugin "team-status"
     When the user loads "team-status" from "workstation"
     Then "team-status" is loaded and listed with "workstation" as its source

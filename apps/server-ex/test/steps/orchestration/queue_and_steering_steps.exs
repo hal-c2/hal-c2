@@ -3,8 +3,8 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # Turns run on the scripted fakes (`World.providers/1`): a message containing "wait"
   # keeps its turn running until it is completed or interrupted. Messages are found by
@@ -165,7 +165,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   end
 
   step "the provider refuses the steer", context do
-    # The node names a turn the app-server does not have; the fake refuses a steer for it
+    # The MC names a turn the app-server does not have; the fake refuses a steer for it
     # while its own turn keeps running.
     {pid, _} = World.codex_runtime(context, context.thread)
     :sys.replace_state(pid, &put_in(&1.turn.native_turn_id, "turn-elsewhere"))
@@ -378,7 +378,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
 
   # --- a held queue ------------------------------------------------------------------
 
-  step "{string} had a queued message when the node restarted", %{args: [thread]} = context do
+  step "{string} had a queued message when the MC restarted", %{args: [thread]} = context do
     held_queue(context, thread, ["Later"])
   end
 
@@ -446,7 +446,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   end
 
   # Queued runs arranged before a restart: the active run is only a record (the
-  # provider process died with the node), and the restart holds the queue.
+  # provider process died with the MC), and the restart holds the queue.
   defp held_queue(context, thread, texts) do
     context =
       context
@@ -455,7 +455,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
       |> World.numbered_run(thread, 1, "running")
 
     context = Enum.reduce(texts, context, &World.queue_message(&2, thread, &1))
-    context = %{context | node: Node.restart(context.node), clients: %{}}
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
     assert run(context, "run-1")["status"] == "interrupted"
     context
   end

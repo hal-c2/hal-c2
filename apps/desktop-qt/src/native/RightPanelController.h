@@ -14,7 +14,7 @@
 #include "ThreadPullRequests.h"
 #include "WorkspaceFiles.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
@@ -82,7 +82,7 @@ public:
   static constexpr int defaultWidth = 540;
   static constexpr int minimumWidth = 360;
 
-  RightPanelController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  RightPanelController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   // The file each thread's panel is kept in, read now.
   void setStorePath(const QString& path);
@@ -172,7 +172,7 @@ private:
   void closeTabIn(const QString& threadKey, const QString& id);
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   ThreadDiff m_diff;
   WorkspaceFiles m_files;

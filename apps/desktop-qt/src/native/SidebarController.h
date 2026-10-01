@@ -14,12 +14,12 @@
 
 #include "SidebarModel.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 class ToastController;
 
-// Owns the `sidebar` key once the shell has its node's first snapshot: rows
+// Owns the `sidebar` key once the shell has its MC's first snapshot: rows
 // and projects come from ShellStore, grouped as the web app groups them
 // (sidebar::groupProjects), drafts from DraftController, and the row actions
 // (settle, snooze, wake, mark unread, dismiss the woke pill) and the project
@@ -33,7 +33,7 @@ class SidebarController : public QObject {
   Q_OBJECT
 
 public:
-  SidebarController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  SidebarController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   // Starts publishing `sidebar` and claiming its actions.
   void activate();
@@ -72,7 +72,7 @@ public:
   // showed the thread, once the command lands. Failures toast `failureTitle`.
   void park(const QString& key, QJsonObject command, const QString& failureTitle, Leave leave,
             std::function<void()> onSuccess = {});
-  // Whether park() is waiting on the node for the thread `key`.
+  // Whether park() is waiting on the MC for the thread `key`.
   bool parking(const QString& key) const { return m_pending.contains(key); }
   // The snooze choices now, and snoozing the thread `key` until one's time,
   // with an Undo toast.
@@ -97,7 +97,7 @@ private:
   QString activeThreadKey() const;
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTime(); };
   QLocale m_locale;

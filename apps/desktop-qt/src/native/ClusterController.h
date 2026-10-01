@@ -8,11 +8,11 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 
 // This machine's cluster, a settings page the shell owns (apps/server-ex
-// `HalC2.Cluster`): the node does the work of status, invite, join and remove
+// `HalC2.Cluster`): the MC does the work of status, invite, join and remove
 // over the shell's own connection (`cluster.*` RPCs). Publishes `cluster`:
 // {busy, status, error, invite, notice}. The page shows while the route is
 // the settings section "/settings/cluster" (NavigationController, which takes
@@ -21,9 +21,9 @@ class ClusterController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  ClusterController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  ClusterController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
-  // Once the shell has its node: publishes `cluster`, so the settings nav
+  // Once the shell has its MC: publishes `cluster`, so the settings nav
   // offers the page.
   void activate() override;
   bool isActive() const { return m_active; }
@@ -41,7 +41,7 @@ private:
   void publish();
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   QVariantMap m_state;
   bool m_active = false;
   // Whether the route shows this page.

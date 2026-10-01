@@ -316,10 +316,10 @@ defmodule HalC2.AgentSessions do
     end
   end
 
-  # Active projects on this node by root.
+  # Active projects on this MC by root.
   defp projects_by_root do
-    for {{node, id}, {"project", project}} <- HalC2.Shell.rows(),
-        node == node() and project["deletedAt"] == nil and is_binary(project["workspaceRoot"]),
+    for {{mc, id}, {"project", project}} <- HalC2.Shell.rows(),
+        mc == node() and project["deletedAt"] == nil and is_binary(project["workspaceRoot"]),
         into: %{},
         do: {Path.expand(project["workspaceRoot"]), project["id"] || id}
   end
@@ -433,12 +433,12 @@ defmodule HalC2.AgentSessions do
 
   defp imported?(_transcript, _project_id), do: false
 
-  # The sessions of threads that moved from this node to another (`HalC2.ThreadMove`),
+  # The sessions of threads that moved from this MC to another (`HalC2.ThreadMove`),
   # as "source:id": they belong to those threads, not to an import.
   defp moved_sessions do
-    for {{node, _id}, {"thread", %{"movedTo" => %{"sessions" => sessions}}}} <-
+    for {{mc, _id}, {"thread", %{"movedTo" => %{"sessions" => sessions}}}} <-
           HalC2.Shell.rows(),
-        node == node(),
+        mc == node(),
         session <- sessions,
         into: MapSet.new(),
         do: session

@@ -2,14 +2,14 @@ defmodule HalC2.Steps.Providers.Models do
   @moduledoc """
   Steps for `features/providers/models.feature`: the models each provider reports, the
   defaults a new thread and text generation start from, and how they fall back.
-  Providers run on the test fakes (`HalC2.Test.Node.World.fake_providers/2`).
+  Providers run on the test fakes (`HalC2.Test.Mc.World.fake_providers/2`).
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
-  # --- the TUI's pickers (they flatten the node's provider list, `apps/tui/src/models.ts`) ---
+  # --- the TUI's pickers (they flatten the MC's provider list, `apps/tui/src/models.ts`) ---
 
   step "Codex and Claude are enabled and Grok is disabled", context do
     context = World.fake_providers(context)
@@ -196,15 +196,15 @@ defmodule HalC2.Steps.Providers.Models do
 
   # --- the bundled manifest ----------------------------------------------------------------
 
-  # The manifest is compiled into the node (`HalC2.Claude.Provider`); a download
+  # The manifest is compiled into the MC (`HalC2.Claude.Provider`); a download
   # would be a file in its home.
-  step "the node has never fetched the model manifest", context do
+  step "the MC has never fetched the model manifest", context do
     assert downloaded_manifests(context) == []
     context
   end
 
-  step "the node starts without network access", context do
-    %{context | node: HalC2.Test.Node.restart(context.node), clients: %{}}
+  step "the MC starts without network access", context do
+    %{context | mc: HalC2.Test.Mc.restart(context.mc), clients: %{}}
   end
 
   step "models are listed from the bundled manifest", context do
@@ -301,8 +301,8 @@ defmodule HalC2.Steps.Providers.Models do
   end
 
   step "it is saved on the environment", context do
-    # Written to the node's settings file, so it outlives the client and a restart.
-    saved = context.node.home |> Path.join("settings.json") |> File.read!() |> JSON.decode!()
+    # Written to the MC's settings file, so it outlives the client and a restart.
+    saved = context.mc.home |> Path.join("settings.json") |> File.read!() |> JSON.decode!()
     assert context.custom_model in get_in(saved, ["providers", "claudeAgent", "customModels"])
     context
   end
@@ -392,7 +392,7 @@ defmodule HalC2.Steps.Providers.Models do
   end
 
   defp downloaded_manifests(context),
-    do: Path.wildcard(Path.join(context.node.home, "**/*manifest*"))
+    do: Path.wildcard(Path.join(context.mc.home, "**/*manifest*"))
 
   defp claude_model(context, slug) do
     {providers, _context} = World.provider_list(context)

@@ -1,8 +1,8 @@
 defmodule HalC2.TailscaleServe do
   @moduledoc """
-  Publishes this node over Tailscale Serve HTTPS for `mix hal_c2.pair --tailscale`, as
+  Publishes this MC over Tailscale Serve HTTPS for `mix hal_c2.pair --tailscale`, as
   the Node server's `hal-c2 pair --tailscale` does: the machine's MagicDNS name fronts
-  the local listener, and tailscaled keeps the mapping across node restarts.
+  the local listener, and tailscaled keeps the mapping across MC restarts.
 
   A mapping already on the HTTPS port is reused when it reaches this environment
   and never replaced otherwise. The Node server probes the HTTPS URL; this probes

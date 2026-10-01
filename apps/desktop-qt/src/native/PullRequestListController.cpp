@@ -11,7 +11,7 @@
 #include "Keybindings.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -42,7 +42,7 @@ const QHash<QString, QStringList> kChoices{
     {QStringLiteral("checks"), {QString(), QStringLiteral("passing"), QStringLiteral("failing")}},
 };
 
-// As many as the node lists by default.
+// As many as the MC lists by default.
 constexpr int kLimit = 99;
 
 QString text(const QJsonObject& object, const char* field) {
@@ -57,7 +57,7 @@ QString rowKey(const QString& environmentId, const QJsonObject& entry) {
 
 }  // namespace
 
-PullRequestListController::PullRequestListController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+PullRequestListController::PullRequestListController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                                      QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_filters(kDefaults) {}
 
@@ -150,7 +150,7 @@ void PullRequestListController::setOpen(bool open) {
   load();
 }
 
-// The environments asked: every one the node reaches, or the one the filters name.
+// The environments asked: every one the MC reaches, or the one the filters name.
 QStringList PullRequestListController::targets() const {
   QString only = m_filters.value(QStringLiteral("environmentId")).toString();
   const QString project = m_filters.value(QStringLiteral("projectKey")).toString();
@@ -256,7 +256,7 @@ void PullRequestListController::subscribe() {
     m_subscriptions.insert(environmentId, m_client->subscribe(this, shape, [this, environmentId](const QJsonObject& frame) {
       if (frame.value(QLatin1String("t")).toString() != QLatin1String("pullRequestRefreshes")) return;
       const int revision = frame.value(QLatin1String("revision")).toInt();
-      // The first frame is where the node is now; only a later one is news.
+      // The first frame is where the MC is now; only a later one is news.
       const bool known = m_revisions.contains(environmentId);
       const int last = m_revisions.value(environmentId);
       m_revisions.insert(environmentId, revision);

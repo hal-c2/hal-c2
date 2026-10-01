@@ -1,21 +1,21 @@
 defmodule HalC2.Steps.Settings.ScopesAndInheritance do
   @moduledoc """
-  How a node stores its settings document (versioned `hal-c2.readSettings` /
+  How an MC stores its settings document (versioned `hal-c2.readSettings` /
   `hal-c2.writeSettings`, pushed to `config` subscribers) and how a project's
-  overrides resolve over it (`HalC2.Settings.for_project/1`). The scenario's node
+  overrides resolve over it (`HalC2.Settings.for_project/1`). The scenario's MC
   is the first environment the Background names.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @environment_default %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}
 
   step "the user has environments {string} and {string}", %{args: [here, _other]} = context do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
 
     context
     |> Map.put(:environment_label, here)
@@ -36,12 +36,12 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
     write(context, "default", "24-hour")
   end
 
-  step "the node saves the document", context do
+  step "the MC saves the document", context do
     assert HalC2.Settings.settings()["timestampFormat"] == "24-hour"
     context
   end
 
-  step "the node answers with the next version", context do
+  step "the MC answers with the next version", context do
     assert {:ok, %{"version" => version}} = context.reply
     assert version == context.read["default"]["version"] + 1
     assert {_, ^version} = HalC2.Settings.get()
@@ -64,7 +64,7 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
     write(context, "second", "12-hour")
   end
 
-  step "the node refuses the write as stale settings", context do
+  step "the MC refuses the write as stale settings", context do
     assert {:error, _, detail} = context.reply
     assert inspect(detail) =~ "StaleSettings"
     context
@@ -75,8 +75,8 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
     context
   end
 
-  step "a client is subscribed to this node's settings", context do
-    World.put_client(context, "subscriber", Node.config(World.client(context, "subscriber")))
+  step "a client is subscribed to this MC's settings", context do
+    World.put_client(context, "subscriber", Mc.config(World.client(context, "subscriber")))
   end
 
   step "another client saves a settings change", context do
@@ -85,7 +85,7 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
 
   step "the subscribed client receives the new settings document", context do
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context, "subscriber"),
         &(&1["t"] == "config.settings" and &1["settings"]["timestampFormat"] == "24-hour")
       )
@@ -109,7 +109,7 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
     override(context, project, %{"defaultRuntimeMode" => "approval-required"})
   end
 
-  step "the node resolves the settings for {string}", %{args: [project]} = context do
+  step "the MC resolves the settings for {string}", %{args: [project]} = context do
     Map.put(context, :resolved, HalC2.Settings.for_project(World.project(context, project).id))
   end
 

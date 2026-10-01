@@ -12,8 +12,8 @@ defmodule HalC2.Streams.Server do
     * `{:hal_c2_stream, stream_id, {:events, events}}` for every later commit.
 
   Snapshots are split into chunks of about `@chunk_bytes` because a subscriber may be
-  on another node, and one large message would stall every other message on that
-  node connection until it finished.
+  on another MC, and one large message would stall every other message on that
+  MC connection until it finished.
 
   Replay reads the log, not memory, so a reconnecting client costs one query rather
   than a buffered copy of the thread. The process hibernates between bursts and stops
@@ -86,7 +86,7 @@ defmodule HalC2.Streams.Server do
 
   @impl true
   def init(stream_id) do
-    # A node stopping still writes the pending sidebar row (`terminate/2`), which is
+    # An MC stopping still writes the pending sidebar row (`terminate/2`), which is
     # what boot recovery reads to find the turns it cut off.
     Process.flag(:trap_exit, true)
     path = Store.path()

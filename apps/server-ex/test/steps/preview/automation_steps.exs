@@ -13,8 +13,8 @@ defmodule HalC2.Steps.Preview.Automation do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
   alias HalC2.Test.WsClient
 
   @host_sub 81
@@ -59,11 +59,11 @@ defmodule HalC2.Steps.Preview.Automation do
 
   # --- hosts and routing -------------------------------------------------------------------
 
-  step "a desktop offers its browser to the node", context do
+  step "a desktop offers its browser to the MC", context do
     connect_desktop(context, "desktop-1")
   end
 
-  step "the node confirms the connection", context do
+  step "the MC confirms the connection", context do
     %{connection_id: connection_id} = context.desktops["desktop-1"]
     assert is_binary(connection_id) and connection_id != ""
     assert %{connection_id: ^connection_id} = broker().clients["desktop-1"]
@@ -169,9 +169,9 @@ defmodule HalC2.Steps.Preview.Automation do
     |> act("click a button")
   end
 
-  step "the node drops that desktop so it has to register again", context do
+  step "the MC drops that desktop so it has to register again", context do
     %{client: client} = context.desktops["desktop-1"]
-    {_end, _client} = Node.await(client, &(&1["t"] == "end" and &1["id"] == @host_sub))
+    {_end, _client} = Mc.await(client, &(&1["t"] == "end" and &1["id"] == @host_sub))
     refute Map.has_key?(broker().clients, "desktop-1")
     context
   end
@@ -255,7 +255,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   # As the tools do when they look up the page an action left a tab on.
-  step "the node checks another tab's page for a tool result", context do
+  step "the MC checks another tab's page for a tool result", context do
     scope = caller(context)
     opts = [tab_id: "tab-2", update_current_tab: false]
     context = serve(context, fn -> HalC2.PreviewAutomation.invoke(scope, "status", %{}, opts) end)
@@ -466,7 +466,7 @@ defmodule HalC2.Steps.Preview.Automation do
     tool(context, "preview_snapshot", %{"save" => true})
   end
 
-  step "the screenshot is saved under the node's browser artifacts named for {string}",
+  step "the screenshot is saved under the MC's browser artifacts named for {string}",
        %{args: [slug]} = context do
     assert {:ok, %{"screenshotPath" => path}, _content} = context.result
     assert Path.dirname(path) == artifacts()
@@ -482,7 +482,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   # A file where the folder should be.
-  step "the node cannot write its browser artifacts folder", context do
+  step "the MC cannot write its browser artifacts folder", context do
     File.mkdir_p!(Path.dirname(artifacts()))
     File.write!(artifacts(), "")
     context
@@ -571,7 +571,7 @@ defmodule HalC2.Steps.Preview.Automation do
     |> finish()
   end
 
-  step "the node waits up to {int} seconds for the desktop browser to answer",
+  step "the MC waits up to {int} seconds for the desktop browser to answer",
        %{args: [seconds]} = context do
     timeout = seconds * 1_000
     assert %{timeout_ms: ^timeout, left: left} = context.wait
@@ -624,12 +624,12 @@ defmodule HalC2.Steps.Preview.Automation do
       })
 
     watcher =
-      context.node
-      |> Node.connect()
-      |> Node.sub(@watch, %{"type" => "preview", "node" => Atom.to_string(node())})
+      context.mc
+      |> Mc.connect()
+      |> Mc.sub(@watch, %{"type" => "preview", "mc" => Atom.to_string(node())})
 
     {{:ok, _}, watcher} =
-      Node.call(watcher, context.node.environment, "preview.list", %{"threadId" => "none"})
+      Mc.call(watcher, context.mc.environment, "preview.list", %{"threadId" => "none"})
 
     context
     |> Map.put(:tab, tab["tabId"])
@@ -648,7 +648,7 @@ defmodule HalC2.Steps.Preview.Automation do
     tab = context.tab
 
     {_frame, _watcher} =
-      Node.await(World.client(context, "watcher"), fn frame ->
+      Mc.await(World.client(context, "watcher"), fn frame ->
         frame["t"] == "preview" and frame["id"] == @watch and
           match?(%{"type" => "closed", "tabId" => ^tab}, frame["event"])
       end)
@@ -663,8 +663,8 @@ defmodule HalC2.Steps.Preview.Automation do
   # --- desktops --------------------------------------------------------------------------------
 
   defp services do
-    Node.ensure(HalC2.Preview)
-    Node.ensure(HalC2.PreviewAutomation)
+    Mc.ensure(HalC2.Preview)
+    Mc.ensure(HalC2.PreviewAutomation)
   end
 
   defp broker, do: :sys.get_state(HalC2.PreviewAutomation)
@@ -676,15 +676,15 @@ defmodule HalC2.Steps.Preview.Automation do
 
     host = %{
       "clientId" => client_id,
-      "environmentId" => context.node.environment,
+      "environmentId" => context.mc.environment,
       "supportedOperations" => operations || @all_operations
     }
 
-    shape = %{"type" => "previewAutomation", "node" => Atom.to_string(node()), "host" => host}
-    client = context.node |> Node.connect() |> Node.sub(@host_sub, shape)
+    shape = %{"type" => "previewAutomation", "mc" => Atom.to_string(node()), "host" => host}
+    client = context.mc |> Mc.connect() |> Mc.sub(@host_sub, shape)
 
     {frame, client} =
-      Node.await(client, fn frame ->
+      Mc.await(client, fn frame ->
         frame["t"] == "previewAutomation" and frame["event"]["type"] == "connected"
       end)
 
@@ -707,7 +707,7 @@ defmodule HalC2.Steps.Preview.Automation do
     }
 
     {nil, client} =
-      Node.call!(desktop.client, context.node.environment, "previewAutomation.focusHost", payload)
+      Mc.call!(desktop.client, context.mc.environment, "previewAutomation.focusHost", payload)
 
     put_in(context, [:desktops, name, :client], client)
   end
@@ -799,7 +799,7 @@ defmodule HalC2.Steps.Preview.Automation do
         "type" => "file"
       })
 
-    url = ~c"http://127.0.0.1:#{context.node.port}#{path}"
+    url = ~c"http://127.0.0.1:#{context.mc.port}#{path}"
 
     {:ok, {{_, 204, _}, _, _}} =
       :httpc.request(:post, {url, [], ~c"video/webm", @recording}, [], [])
@@ -947,7 +947,7 @@ defmodule HalC2.Steps.Preview.Automation do
     id = System.unique_integer([:positive])
 
     client =
-      Node.rpc(desktop.client, context.node.environment, id, "previewAutomation.respond", payload)
+      Mc.rpc(desktop.client, context.mc.environment, id, "previewAutomation.respond", payload)
 
     put_in(context, [:desktops, name, :client], client)
   end

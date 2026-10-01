@@ -1,19 +1,19 @@
 defmodule HalC2.Devices.Proxy do
   @moduledoc """
-  `/api/device-hub/*`: the device hub (`HalC2.Devices`) of any node in the cluster,
-  served by the node a client is connected to.
+  `/api/device-hub/*`: the device hub (`HalC2.Devices`) of any MC in the cluster,
+  served by the MC a client is connected to.
 
-  A path names the node that owns the devices, `/api/device-hub/nodes/<node>/…` (the
-  `hubBasePath` each node reports); a path without one is this node's. The receiving
-  node checks the credential and relays the request to a process on the owning
-  node, which talks to that node's loopback hub. Responses stream (MJPEG never
+  A path names the MC that owns the devices, `/api/device-hub/mcs/<mc>/…` (the
+  `hubBasePath` each MC reports); a path without one is this MC's. The receiving
+  MC checks the credential and relays the request to a process on the owning
+  MC, which talks to that MC's loopback hub. Responses stream (MJPEG never
   ends), and WebSockets are relayed frame by frame, both paced by the client.
 
   The hub exposes shell execution and unauthenticated device control, so only the
   routes the Device panel needs pass: reading needs `orchestration:read`, controlling
   a device `orchestration:operate`. `<img>` and WebSocket cannot set headers, so the
   credential is the `wsTicket` query parameter (reusable while it lasts), a bearer
-  header, or the node's own `token`.
+  header, or the MC's own `token`.
   """
 
   import Plug.Conn
@@ -43,7 +43,7 @@ defmodule HalC2.Devices.Proxy do
                       authorization dpop content-length accept-encoding)
   @dropped_response ~w(connection keep-alive transfer-encoding content-length)
   @credentials ~w(wsTicket hostId token)
-  @unavailable "The node with this device is unavailable."
+  @unavailable "The MC with this device is unavailable."
 
   @doc "Serves one `/api/device-hub` request; `segments` is the path after the prefix."
   def serve(conn, segments) do
@@ -51,7 +51,7 @@ defmodule HalC2.Devices.Proxy do
 
     {owner, rest} =
       case segments do
-        ["nodes", name | rest] -> {known_node(URI.decode_www_form(name)), rest}
+        ["mcs", name | rest] -> {known_mc(URI.decode_www_form(name)), rest}
         rest -> {node(), rest}
       end
 
@@ -159,7 +159,7 @@ defmodule HalC2.Devices.Proxy do
   defp forward_headers(conn),
     do: for({name, value} <- conn.req_headers, name not in @dropped_request, do: {name, value})
 
-  # Every credential is this node's business; the hub never sees one.
+  # Every credential is this MC's business; the hub never sees one.
   defp search(%{query_string: ""}), do: ""
 
   defp search(conn) do
@@ -175,7 +175,7 @@ defmodule HalC2.Devices.Proxy do
     do: Enum.any?(get_req_header(conn, "upgrade"), &(String.downcase(&1) == "websocket"))
 
   # A member the shell still lists but that is not connected is `:offline`, not unknown.
-  defp known_node(name) do
+  defp known_mc(name) do
     case Enum.find([node() | Node.list()], &(Atom.to_string(&1) == name)) do
       nil -> if offline?(name), do: :offline
       owner -> owner

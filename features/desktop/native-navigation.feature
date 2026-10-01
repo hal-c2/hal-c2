@@ -1,7 +1,7 @@
 # Sources:
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route, back stack and restore)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (title, settings and cluster from `route`)
-#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
+#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   Shared domain: settings/search-and-navigation.feature owns leaving settings and moving
 #   between sections, navigation/windows.feature the window title, and
 #   composer/sending-turns.feature that the composer acts on the thread the window shows.
@@ -14,13 +14,13 @@ Feature: The desktop shell decides where the window is
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
-    And the desktop's node "node-a" serves the environment "env-a"
-    And the node has these threads:
+    And the desktop's MC "mc-a" serves the environment "env-a"
+    And the MC has these threads:
       | id | project | title  | createdAt            |
       | t1 | p1      | First  | 2026-09-23T09:50:00Z |
       | t2 | p1      | Second | 2026-09-23T09:40:00Z |
-    And the node has the project "p1" titled "proj-1"
-    And the desktop shell is connected to its node
+    And the MC has the project "p1" titled "proj-1"
+    And the desktop shell is connected to its MC
     And the window shows a new draft in "proj-1"
 
   Rule: The shell moves the window
@@ -113,23 +113,23 @@ Feature: The desktop shell decides where the window is
     Scenario: Reopening the desktop returns to the last thread
       Given the user opens "env-a:t2" from the sidebar
       When the desktop quits and starts again
-      And the desktop shell is connected to its node
+      And the desktop shell is connected to its MC
       Then the window shows "env-a:t2"
 
     @desktop
     Scenario: A thread deleted while the desktop was closed is not reopened
       Given the user opens "env-a:t2" from the sidebar
       When the desktop quits and starts again
-      And the node deletes the thread "t2"
-      And the desktop shell is connected to its node
+      And the MC deletes the thread "t2"
+      And the desktop shell is connected to its MC
       Then the window shows a new draft in "proj-1"
 
-    # Only the page could go anywhere before the node's first snapshot; the shell's sidebar
+    # Only the page could go anywhere before the MC's first snapshot; the shell's sidebar
     # lists nothing until then, so the last route is the only one to restore.
     @dropped @desktop
     Scenario: Where the user goes while the desktop starts wins over the last route
       Given the user opens "env-a:t2" from the sidebar
       When the desktop quits and starts again
       And the page's own link takes it to "env-a:t1"
-      And the desktop shell is connected to its node
+      And the desktop shell is connected to its MC
       Then the window shows "env-a:t1"

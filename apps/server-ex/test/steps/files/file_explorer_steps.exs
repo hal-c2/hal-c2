@@ -7,8 +7,8 @@ defmodule HalC2.Steps.Files.FileExplorer do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   step "{string} holds {string}, {string}, {string} and an ignored {string} folder",
        %{args: [project, a, b, c, ignored]} = context do
@@ -51,7 +51,7 @@ defmodule HalC2.Steps.Files.FileExplorer do
     context
   end
 
-  step "the node answers with a folder listing failure", context do
+  step "the MC answers with a folder listing failure", context do
     assert {:error, _message, %{"_tag" => "ProjectListEntriesError"}} = context.reply
     context
   end
@@ -102,9 +102,9 @@ defmodule HalC2.Steps.Files.FileExplorer do
   end
 
   step "a client writes {string} in {string}", %{args: [file, project]} = context do
-    Node.ensure(HalC2.Workspace)
+    Mc.ensure(HalC2.Workspace)
     # Absolute paths are the scenario's host paths, so a stray write stays in it.
-    path = HalC2.Test.Node.Host.path(context, file)
+    path = HalC2.Test.Mc.Host.path(context, file)
     contents = "export const written = #{System.unique_integer([:positive])};\n"
 
     {reply, context} =
@@ -118,7 +118,7 @@ defmodule HalC2.Steps.Files.FileExplorer do
   end
 
   defp list(context, project, input) do
-    Node.ensure(HalC2.Workspace)
+    Mc.ensure(HalC2.Workspace)
     input = Map.put(input, "cwd", World.project(context, project).root)
     {reply, context} = World.call(context, "projects.listEntries", input)
 

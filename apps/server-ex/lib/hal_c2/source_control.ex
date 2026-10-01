@@ -47,7 +47,7 @@ defmodule HalC2.SourceControl do
         Map.merge(item, %{"kind" => kind, "auth" => auth})
       end)
 
-    # Like the Node server, Forgejo reads the node's own checkout for its remote.
+    # Like the Node server, Forgejo reads the MC's own checkout for its remote.
     forgejo = Task.async(fn -> HalC2.SourceControl.Forgejo.discover(File.cwd!()) end)
     {github_gitlab, azure} = Enum.split(for({:ok, item} <- providers, do: item), 2)
 

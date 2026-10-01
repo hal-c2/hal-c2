@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#MISE description="Run @mc scenarios for the given globs on the MC (mix features)"
+#MISE dir="{{config_root}}/apps/server-ex"
+#USAGE flag "--backlog" help="Also run @backlog scenarios (or set INCLUDE_BACKLOG=1)"
+#USAGE arg "[glob]" var=#true help="Feature globs relative to features/, e.g. threads/*.feature"
+set -euo pipefail
+
+if (($# == 0)); then
+  cat >&2 <<'USAGE'
+usage: mise run features:mc [--backlog] <glob>...
+
+Globs are relative to features/, e.g. `mise run features:mc 'threads/*.feature'`.
+They are required: the whole suite in one run is slow. `mise run features:mc:all`
+runs it one top-level directory at a time. --backlog or INCLUDE_BACKLOG=1 also runs
+@backlog scenarios, which fail until the MC has what they describe.
+USAGE
+  exit 2
+fi
+
+exec mix features "$@"

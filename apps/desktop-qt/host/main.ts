@@ -3,18 +3,18 @@
  * Desktop host for the Qt shell.
  *
  * Spawned by hal-c2-qt (see src/BackendProcess.cpp). Starts the desktop app's
- * own Elixir node (elixirNode.ts) and announces where the shell's client
- * connects. With `--attach=<url>` it starts no node and pairs the shell with the
- * node a pairing link names instead.
+ * own Elixir MC (elixirMc.ts) and announces where the shell's client
+ * connects. With `--attach=<url>` it starts no MC and pairs the shell with the
+ * MC a pairing link names instead.
  *
- * Arguments: `--base-dir=<HAL-C2 home>` (the node's home), `--attach=<url>`.
+ * Arguments: `--base-dir=<HAL-C2 home>` (the MC's home), `--attach=<url>`.
  *
  * Protocol (stdout, newline-delimited JSON):
- *   {"type":"ready","node":{"origin","token"}}  where the shell's own client
+ *   {"type":"ready","MC":{"origin","token"}}  where the shell's own client
  *                                               connects, and its bearer
  *   {"type":"error","message":"..."}            fatal, the host is exiting
- *   {"type":"exit","code":n}                    the node ended on its own
- * stdin closing means the shell is gone: stop the node and exit.
+ *   {"type":"exit","code":n}                    the MC ended on its own
+ * stdin closing means the shell is gone: stop the MC and exit.
  */
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -22,32 +22,32 @@ import * as NodeURL from "node:url";
 import {
   exchangePairingToken,
   fetchDescriptor,
-  findLocalNodeToken,
-  nodeDataDir,
-  nodePort,
+  findLocalMcToken,
+  mcDataDir,
+  mcPort,
   readAccessToken,
-  resolveNodeLaunch,
-  startNode,
-  waitForNode,
-  type RunningNode,
-} from "./elixirNode.ts";
+  resolveMcLaunch,
+  startMc,
+  waitForMc,
+  type RunningMc,
+} from "./elixirMc.ts";
 import { HostError } from "./hostError.ts";
 import { readPairingLink } from "./pairingUrl.ts";
 
-interface NodeAccess {
+interface McAccess {
   readonly origin: string;
   readonly token: string;
 }
 
 type HostMessage =
-  | { readonly type: "ready"; readonly node: NodeAccess }
+  | { readonly type: "ready"; readonly mc: McAccess }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "exit"; readonly code: number | null; readonly signal: string | null };
 
-/** A checkout's first start may compile the node. */
-const NODE_START_TIMEOUT_MS = 10 * 60_000;
-/** How long quitting waits for the node before the host exits anyway. */
-const NODE_STOP_GRACE_MS = 1_500;
+/** A checkout's first start may compile the MC. */
+const MC_START_TIMEOUT_MS = 10 * 60_000;
+/** How long quitting waits for the MC before the host exits anyway. */
+const MC_STOP_GRACE_MS = 1_500;
 
 function emit(message: HostMessage): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -80,63 +80,63 @@ function parseArgs(argv: ReadonlyArray<string>): HostArgs {
 }
 
 const hostDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-let node: RunningNode | undefined;
+let mc: RunningMc | undefined;
 let stopping = false;
 
 async function stop(code: number): Promise<never> {
   stopping = true;
-  const running = node;
+  const running = mc;
   if (running !== undefined) {
     running.stop();
     await Promise.race([
       running.exited,
-      new Promise((resolve) => setTimeout(resolve, NODE_STOP_GRACE_MS)),
+      new Promise((resolve) => setTimeout(resolve, MC_STOP_GRACE_MS)),
     ]);
   }
   process.exit(code);
 }
 
-async function standalone(home: string | undefined): Promise<NodeAccess> {
-  const port = await nodePort(process.env);
-  const launch = resolveNodeLaunch(hostDir, process.env);
-  const started = startNode({ launch, port, home, env: process.env });
-  node = started;
-  await waitForNode(started, NODE_START_TIMEOUT_MS);
+async function standalone(home: string | undefined): Promise<McAccess> {
+  const port = await mcPort(process.env);
+  const launch = resolveMcLaunch(hostDir, process.env);
+  const started = startMc({ launch, port, home, env: process.env });
+  mc = started;
+  await waitForMc(started, MC_START_TIMEOUT_MS);
   void started.exited.then(({ code, signal }) => {
     if (stopping) return;
     emit({ type: "exit", code, signal });
     process.exit(code ?? 1);
   });
-  const token = readAccessToken(nodeDataDir({ launch, home, env: process.env }));
+  const token = readAccessToken(mcDataDir({ launch, home, env: process.env }));
   if (token === undefined) {
-    throw new HostError("The node started but wrote no access token for the desktop app.");
+    throw new HostError("The MC started but wrote no access token for the desktop app.");
   }
   return { origin: started.origin, token };
 }
 
-function notANode(address: string): HostError {
+function notAnMc(address: string): HostError {
   return new HostError(
-    `${address} is not a HAL-C2 node. Start the desktop app with a node's pairing link to attach to it.`,
+    `${address} is not a HAL-C2 MC. Start the desktop app with an MC's pairing link to attach to it.`,
   );
 }
 
-async function attach(url: string, home: string | undefined): Promise<NodeAccess> {
+async function attach(url: string, home: string | undefined): Promise<McAccess> {
   const link = readPairingLink(url);
-  if (link === undefined) throw notANode(url);
+  if (link === undefined) throw notAnMc(url);
   const descriptor = await fetchDescriptor(link.origin).catch((error: unknown) => {
     const reason = error instanceof Error && error.cause instanceof Error ? error.cause : error;
     throw new HostError(
-      `Cannot reach the node at ${link.origin}: ${reason instanceof Error ? reason.message : String(reason)}`,
+      `Cannot reach the MC at ${link.origin}: ${reason instanceof Error ? reason.message : String(reason)}`,
     );
   });
-  if (descriptor === undefined) throw notANode(link.origin);
-  // A node on this machine lets the shell in with its own access token.
-  const local = findLocalNodeToken({ origin: link.origin, home, env: process.env });
+  if (descriptor === undefined) throw notAnMc(link.origin);
+  // An MC on this machine lets the shell in with its own access token.
+  const local = findLocalMcToken({ origin: link.origin, home, env: process.env });
   if (local !== undefined) return { origin: link.origin, token: local };
-  // Any other node pairs the shell with the link's token, which is single use.
+  // Any other MC pairs the shell with the link's token, which is single use.
   if (link.token === undefined) {
     throw new HostError(
-      `The link to ${link.origin} has no pairing token, and no node on this machine records that origin.`,
+      `The link to ${link.origin} has no pairing token, and no MC on this machine records that origin.`,
     );
   }
   const token = await exchangePairingToken(link.origin, link.token).catch(() => undefined);
@@ -160,7 +160,7 @@ try {
     args.attach === undefined
       ? await standalone(args.baseDir)
       : await attach(args.attach, args.baseDir);
-  if (!stopping) emit({ type: "ready", node: access });
+  if (!stopping) emit({ type: "ready", mc: access });
 } catch (error) {
   if (!stopping) {
     emit({

@@ -1,9 +1,9 @@
 // The right panel beside a thread (RightPanelController): its tabs, the Diff
-// tab over the node's checkpoint diffs, and the Files tab over the node's
+// tab over the MC's checkpoint diffs, and the Files tab over the MC's
 // workspace (features/source-control/checkpoint-diffs.feature,
 // timeline/checkpoints.feature, files/file-explorer.feature,
 // files/file-viewer-and-editing.feature, navigation/layout.feature's right
-// panel). The node's side is faked here: one patch per finished turn, and a
+// panel). The MC's side is faked here: one patch per finished turn, and a
 // project's files as a map of paths.
 
 #include <QJsonArray>
@@ -27,7 +27,7 @@ namespace {
 
 using namespace stream;
 
-// The node's checkpoints: each finished turn's patch.
+// The MC's checkpoints: each finished turn's patch.
 struct FakeDiffs {
   QMap<int, QString> patches;
   bool failing = false;
@@ -44,24 +44,24 @@ QString patchAdding(const QString& path, const QStringList& lines) {
   return patch;
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
+const FakeMc::Extension extension([](FakeMc& mc) {
   // A turn's diff is the patches of the turns in its range (a fake's
   // stand-in for diffing two checkpoints).
-  const auto diff = [&node](const FakeNode::Rpc& rpc, int from) {
-    FakeDiffs& fake = node.part<FakeDiffs>();
+  const auto diff = [&mc](const FakeMc::Rpc& rpc, int from) {
+    FakeDiffs& fake = mc.part<FakeDiffs>();
     fake.asked.append(QJsonObject{{QStringLiteral("method"), rpc.method}, {QStringLiteral("payload"), rpc.payload}});
     if (fake.failing) {
-      node.refuse(rpc, QStringLiteral("Checkpoint unavailable for turn %1.").arg(rpc.payload.value(QLatin1String("toTurnCount")).toInt()));
+      mc.refuse(rpc, QStringLiteral("Checkpoint unavailable for turn %1.").arg(rpc.payload.value(QLatin1String("toTurnCount")).toInt()));
       return;
     }
     QString patch;
     for (int turn = from + 1; turn <= rpc.payload.value(QLatin1String("toTurnCount")).toInt(); ++turn) patch += fake.patches.value(turn);
-    node.reply(rpc, QJsonObject{{QStringLiteral("diff"), patch}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("diff"), patch}});
   };
-  node.onRpc(QStringLiteral("orchestration.getTurnDiff"), [diff](const FakeNode::Rpc& rpc) {
+  mc.onRpc(QStringLiteral("orchestration.getTurnDiff"), [diff](const FakeMc::Rpc& rpc) {
     diff(rpc, rpc.payload.value(QLatin1String("fromTurnCount")).toInt());
   });
-  node.onRpc(QStringLiteral("orchestration.getFullThreadDiff"), [diff](const FakeNode::Rpc& rpc) { diff(rpc, 0); });
+  mc.onRpc(QStringLiteral("orchestration.getFullThreadDiff"), [diff](const FakeMc::Rpc& rpc) { diff(rpc, 0); });
 });
 
 RightPanelController* panel(World& world) {
@@ -82,8 +82,8 @@ void finishTurn(World& world, int turn, const QString& patch) {
   set(world, QStringLiteral("checkpoint"), QStringLiteral("cp-%1").arg(turn),
       {{QStringLiteral("id"), QStringLiteral("cp-%1").arg(turn)}, {QStringLiteral("scopeId"), QStringLiteral("scope-1")},
        {QStringLiteral("runId"), run}, {QStringLiteral("appRunOrdinal"), turn}, {QStringLiteral("status"), QStringLiteral("ready")}});
-  world.node.part<FakeDiffs>().patches.insert(turn, patch);
-  world.node.part<FakeDiffs>().runs.insert(turn, run);
+  world.mc.part<FakeDiffs>().patches.insert(turn, patch);
+  world.mc.part<FakeDiffs>().runs.insert(turn, run);
 }
 
 void finishTurns(World& world, int count) {
@@ -93,15 +93,15 @@ void finishTurns(World& world, int count) {
   }
 }
 
-// checkpoint.rollback as the node does it (lib/hal_c2/orchestration/rollback.ex):
+// checkpoint.rollback as the MC does it (lib/hal_c2/orchestration/rollback.ex):
 // the later runs are rolled back and their checkpoints go stale.
 void rollBackOnCommand(World& world) {
-  world.node.effects.append([&world](const QJsonObject& command) {
+  world.mc.effects.append([&world](const QJsonObject& command) {
     if (command.value(QLatin1String("type")).toString() != QLatin1String("checkpoint.rollback")) return;
     const int target = command.value(QLatin1String("checkpointId")).toString().section(QLatin1Char('-'), 1).toInt();
-    // After the command's answer, as the node's events follow it.
+    // After the command's answer, as the MC's events follow it.
     QTimer::singleShot(0, &world.bridge(), [&world, target] {
-      const QMap<int, QString> runs = world.node.part<FakeDiffs>().runs;
+      const QMap<int, QString> runs = world.mc.part<FakeDiffs>().runs;
       for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
         if (it.key() <= target) continue;
         set(world, QStringLiteral("run"), *it, {{QStringLiteral("status"), QStringLiteral("rolled_back")}});
@@ -255,7 +255,7 @@ const QHash<QString, QString> kKinds{{QStringLiteral("diff"), QStringLiteral("di
                                      {QStringLiteral("pull request"), QStringLiteral("pull-requests")},
                                      {QStringLiteral("previews"), QStringLiteral("previews")}};
 
-// The thread's row with `links` linked pull requests, as the node sends it.
+// The thread's row with `links` linked pull requests, as the MC sends it.
 void linkPullRequests(World& world, int links) {
   QJsonArray pullRequests;
   for (int number = 1; number <= links; ++number) {
@@ -263,10 +263,10 @@ void linkPullRequests(World& world, int links) {
                                     {QStringLiteral("number"), number}, {QStringLiteral("url"), QStringLiteral("https://github.com/acme/shop/pull/%1").arg(number)},
                                     {QStringLiteral("source"), QStringLiteral("agent")}, {QStringLiteral("snapshot"), QJsonValue()}});
   }
-  QJsonObject row = world.node.threads.value(kThread);
+  QJsonObject row = world.mc.threads.value(kThread);
   row.insert(QStringLiteral("pullRequests"), pullRequests);
-  world.node.threads.insert(kThread, row);
-  world.node.sendRow(kThread, row);
+  world.mc.threads.insert(kThread, row);
+  world.mc.sendRow(kThread, row);
   world.sync();
 }
 
@@ -275,7 +275,7 @@ const Steps steps([] {
 
   // Backgrounds.
   step(QStringLiteral("a connected environment with the thread %1 in the git project %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.projects.insert(c[1], {{QStringLiteral("id"), c[1]}, {QStringLiteral("title"), c[1]}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[1]}, {QStringLiteral("scripts"), QJsonArray()}});
+    world.mc.projects.insert(c[1], {{QStringLiteral("id"), c[1]}, {QStringLiteral("title"), c[1]}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[1]}, {QStringLiteral("scripts"), QJsonArray()}});
     world.connect();
     world.sync();
     lookAtThread(world, c[1]);
@@ -289,7 +289,7 @@ const Steps steps([] {
     rollBackOnCommand(world);
   });
   step(QStringLiteral("the user is looking at a thread"), [](World& world, const Captures&, const Table&) {
-    world.node.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + kProject}, {QStringLiteral("scripts"), QJsonArray()}});
+    world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + kProject}, {QStringLiteral("scripts"), QJsonArray()}});
     world.connect();
     world.sync();
     lookAtThread(world, kProject);
@@ -300,7 +300,7 @@ const Steps steps([] {
   step(QStringLiteral("the changes of turn (\\d+) are shown"), [](World& world, const Captures& c, const Table&) {
     const int turn = c[0].toInt();
     expectDiffOf(world, turnFiles(turn, turn));
-    const QJsonObject asked = world.node.part<FakeDiffs>().asked.last();
+    const QJsonObject asked = world.mc.part<FakeDiffs>().asked.last();
     expect(asked.value(QLatin1String("method")) == QLatin1String("orchestration.getTurnDiff") &&
                asked.value(QLatin1String("payload")).toObject().value(QLatin1String("fromTurnCount")).toInt() == turn - 1,
            QStringLiteral("the diff asked %1").arg(show(asked.toVariantMap())));
@@ -316,14 +316,14 @@ const Steps steps([] {
     }
     diff(world).select(0);
     expectDiffOf(world, turnFiles(1, 3));
-    expect(world.node.part<FakeDiffs>().asked.last().value(QLatin1String("method")) == QLatin1String("orchestration.getFullThreadDiff"),
+    expect(world.mc.part<FakeDiffs>().asked.last().value(QLatin1String("method")) == QLatin1String("orchestration.getFullThreadDiff"),
            QStringLiteral("all changes were not asked of the whole thread"));
   });
-  step(QStringLiteral("the node cannot read the checkpoints of %1").arg(q), [](World& world, const Captures&, const Table&) {
-    world.node.part<FakeDiffs>().failing = true;
+  step(QStringLiteral("the MC cannot read the checkpoints of %1").arg(q), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakeDiffs>().failing = true;
   });
-  step(QStringLiteral("the node can read the checkpoints again"), [](World& world, const Captures&, const Table&) {
-    world.node.part<FakeDiffs>().failing = false;
+  step(QStringLiteral("the MC can read the checkpoints again"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakeDiffs>().failing = false;
   });
   step(QStringLiteral("the user is told the diff could not be loaded"), [](World& world, const Captures&, const Table&) {
     waitForDiff(world);
@@ -337,7 +337,7 @@ const Steps steps([] {
   step(QStringLiteral("turn (\\d+) changed (\\d+) lines of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QStringList lines;
     for (int line = 1; line <= c[1].toInt(); ++line) lines.append(QStringLiteral("export const rate%1 = %1;").arg(line));
-    world.node.part<FakeDiffs>().patches.insert(c[0].toInt(), patchAdding(c[2], lines));
+    world.mc.part<FakeDiffs>().patches.insert(c[0].toInt(), patchAdding(c[2], lines));
   });
   step(QStringLiteral("%1 is listed collapsed").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForDiff(world);
@@ -372,7 +372,7 @@ const Steps steps([] {
     }
   });
   step(QStringLiteral("turn (\\d+) rewrote a line of %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<FakeDiffs>().patches.insert(
+    world.mc.part<FakeDiffs>().patches.insert(
         c[0].toInt(), QStringLiteral("diff --git a/%1 b/%1\n--- a/%1\n+++ b/%1\n@@ -1,2 +1,2 @@\n const cart = [];\n-export const tax = 0;\n+export const tax = 0.2;\n").arg(c[1]));
   });
   step(QStringLiteral("the user shows the diff side by side"), [](World& world, const Captures&, const Table&) {
@@ -418,7 +418,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user is asked to confirm that the rollback cannot be undone"), [](World& world, const Captures&, const Table&) {
     expect(diff(world).revertTurn() == 3, QStringLiteral("the user is asked about turn %1").arg(diff(world).revertTurn()));
-    const auto sent = std::count_if(world.node.commands.cbegin(), world.node.commands.cend(), [](const QJsonObject& command) {
+    const auto sent = std::count_if(world.mc.commands.cbegin(), world.mc.commands.cend(), [](const QJsonObject& command) {
       return command.value(QLatin1String("type")) == QLatin1String("checkpoint.rollback");
     });
     expect(sent == 0, QStringLiteral("a rollback was sent before the user confirmed"));
@@ -428,13 +428,13 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("no rollback is sent"), [](World& world, const Captures&, const Table&) {
-    for (const QJsonObject& command : std::as_const(world.node.commands)) {
+    for (const QJsonObject& command : std::as_const(world.mc.commands)) {
       expect(command.value(QLatin1String("type")) != QLatin1String("checkpoint.rollback"), QStringLiteral("a rollback was sent"));
     }
     expect(diff(world).revertTurn() == 0, QStringLiteral("the user is still asked to revert"));
   });
-  step(QStringLiteral("the node refuses rollbacks with %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.refusals.insert(QStringLiteral("checkpoint.rollback"), c[0]);
+  step(QStringLiteral("the MC refuses rollbacks with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.refusals.insert(QStringLiteral("checkpoint.rollback"), c[0]);
   });
   step(QStringLiteral("turns 2 and 3 are removed from the conversation"), [](World& world, const Captures&, const Table&) {
     const QStringList answers{QStringLiteral("Answer 2"), QStringLiteral("Answer 3")};
@@ -455,7 +455,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the workspace files match the end of turn (\\d+)"), [](World& world, const Captures& c, const Table&) {
     const QJsonObject rollback = [&] {
-      for (const QJsonObject& command : std::as_const(world.node.commands)) {
+      for (const QJsonObject& command : std::as_const(world.mc.commands)) {
         if (command.value(QLatin1String("type")) == QLatin1String("checkpoint.rollback")) return command;
       }
       fail(world.describeCommands());
@@ -470,14 +470,14 @@ const Steps steps([] {
 
   // The Files tab.
   step(QStringLiteral("%1 holds %1, %1, %1 and an ignored %1 folder").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakeFiles& fake = fakeFiles(world.node);
+    FakeFiles& fake = fakeFiles(world.mc);
     for (const QString& path : {c[1], c[2], c[3]}) fake.files.insert(path, QStringLiteral("// %1\n").arg(path));
     fake.files.insert(c[4] + QStringLiteral("/left-pad/index.js"), QStringLiteral("module.exports = {};\n"));
     fake.ignored.insert(c[4]);
     lookAtThread(world, c[0]);
   });
   step(QStringLiteral("%1 holds the text file %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeFiles(world.node).files.insert(c[1], linesOf(12));
+    fakeFiles(world.mc).files.insert(c[1], linesOf(12));
     lookAtThread(world, c[0]);
   });
   step(QStringLiteral("the user expands %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -492,7 +492,7 @@ const Steps steps([] {
     expectShownUnder(world, {c[0]}, c[1]);
   });
   step(QStringLiteral("listing %1 fails once").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeFiles(world.node).failOnce.insert(c[0]);
+    fakeFiles(world.mc).failOnce.insert(c[0]);
   });
   step(QStringLiteral("the user is told the folder could not be loaded"), [](World& world, const Captures&, const Table&) {
     FileTreeModel& model = tree(world);
@@ -527,10 +527,10 @@ const Steps steps([] {
     waitForTree(world);
   });
   step(QStringLiteral("the environment cannot list %1").arg(q), [](World& world, const Captures&, const Table&) {
-    fakeFiles(world.node).cannotList = true;
+    fakeFiles(world.mc).cannotList = true;
   });
   step(QStringLiteral("the environment can list %1 again").arg(q), [](World& world, const Captures&, const Table&) {
-    fakeFiles(world.node).cannotList = false;
+    fakeFiles(world.mc).cannotList = false;
   });
   step(QStringLiteral("the user opens the Files tab"), [](World& world, const Captures&, const Table&) { openFiles(world); });
   step(QStringLiteral("the user is told the files could not be listed"), [](World& world, const Captures&, const Table&) {
@@ -567,7 +567,7 @@ const Steps steps([] {
 
   // The file viewer.
   step(QStringLiteral("%1 in %1 is 3 MB").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakeFiles& fake = fakeFiles(world.node);
+    FakeFiles& fake = fakeFiles(world.mc);
     fake.files.insert(c[0], linesOf(200));
     fake.truncated.insert(c[0], 3 * 1024 * 1024);
   });
@@ -581,7 +581,7 @@ const Steps steps([] {
            QStringLiteral("the viewer says \"%1\"").arg(files(world).truncatedNotice()));
   });
   step(QStringLiteral("%1 has (\\d+) lines").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeFiles(world.node).files.insert(c[0], linesOf(c[1].toInt()));
+    fakeFiles(world.mc).files.insert(c[0], linesOf(c[1].toInt()));
   });
   step(QStringLiteral("line (\\d+) is revealed"), [](World& world, const Captures& c, const Table&) {
     expect(files(world).revealLine() == c[0].toInt(), QStringLiteral("line %1 is revealed").arg(files(world).revealLine()));
@@ -599,14 +599,14 @@ const Steps steps([] {
     expect(!files(world).wrap(), QStringLiteral("the viewer wraps"));
   });
   step(QStringLiteral("reading %1 fails once").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeFiles(world.node).readFailsOnce.insert(c[0]);
+    fakeFiles(world.mc).readFailsOnce.insert(c[0]);
   });
   step(QStringLiteral("the user is told the file could not be read"), [](World& world, const Captures&, const Table&) {
     expect(files(world).fileStatus() == QLatin1String("error") && files(world).fileProblem().startsWith(QStringLiteral("Could not read")),
            QStringLiteral("the viewer is %1: %2").arg(files(world).fileStatus(), files(world).fileProblem()));
   });
   step(QStringLiteral("the contents of %1 are shown").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString contents = fakeFiles(world.node).files.value(c[0]);
+    const QString contents = fakeFiles(world.mc).files.value(c[0]);
     expect(files(world).openPath() == c[0] && files(world).fileStatus() == QLatin1String("ready") &&
                files(world).lines()->rowCount() == contents.count(QLatin1Char('\n')),
            QStringLiteral("the viewer shows %1 (%2, %3 lines)").arg(files(world).openPath(), files(world).fileStatus()).arg(files(world).lines()->rowCount()));
@@ -709,13 +709,13 @@ const Steps steps([] {
   });
   step(QStringLiteral("the thread was forked from %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString parent = QStringLiteral("thread-parent");
-    world.node.threads.insert(parent, {{QStringLiteral("id"), parent}, {QStringLiteral("title"), c[0]}, {QStringLiteral("projectId"), kProject},
+    world.mc.threads.insert(parent, {{QStringLiteral("id"), parent}, {QStringLiteral("title"), c[0]}, {QStringLiteral("projectId"), kProject},
                                        {QStringLiteral("createdAt"), QStringLiteral("2026-09-22T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-22T09:00:00Z")}});
-    world.node.sendRow(parent, world.node.threads.value(parent));
-    QJsonObject row = world.node.threads.value(kThread);
+    world.mc.sendRow(parent, world.mc.threads.value(parent));
+    QJsonObject row = world.mc.threads.value(kThread);
     row.insert(QStringLiteral("lineage"), QJsonObject{{QStringLiteral("parentThreadId"), parent}, {QStringLiteral("relationshipToParent"), QStringLiteral("fork")}});
-    world.node.threads.insert(kThread, row);
-    world.node.sendRow(kThread, row);
+    world.mc.threads.insert(kThread, row);
+    world.mc.sendRow(kThread, row);
     world.sync();
   });
   step(QStringLiteral("the thread details panel names %1 as the thread it was forked from").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -733,7 +733,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the thread %1 is open").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString key = world.node.environmentId + QStringLiteral(":thread-parent");
+    const QString key = world.mc.environmentId + QStringLiteral(":thread-parent");
     world.waitFor([&] { return store(world)->activeThread() == key; }, [&] { return QStringLiteral("%1 to open").arg(c[0]); });
   });
   step(QStringLiteral("the user looks at what can be added to the right panel"), [](World& world, const Captures&, const Table&) { world.sync(); });
@@ -753,7 +753,7 @@ const Steps steps([] {
     finishTurns(world, 3);
     openDiff(world, -1);
     world.sync();
-    world.node.part<Visit>() = {world.state(QStringLiteral("panel")), world.node.part<FakeDiffs>().asked.size()};
+    world.mc.part<Visit>() = {world.state(QStringLiteral("panel")), world.mc.part<FakeDiffs>().asked.size()};
   });
   step(QStringLiteral("the user opens settings and comes back"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("settings.open"), {});
@@ -772,19 +772,19 @@ const Steps steps([] {
     expect(!panel(world)->isOpen(), describePanel(world));
   });
   step(QStringLiteral("the right panel stops updating until it is opened again"), [](World& world, const Captures&, const Table&) {
-    const qsizetype asked = world.node.part<FakeDiffs>().asked.size();
+    const qsizetype asked = world.mc.part<FakeDiffs>().asked.size();
     finishTurn(world, 4, patchAdding(QStringLiteral("src/turn4.ts"), {QStringLiteral("export const turn = 4;")}));
     world.sync();
-    expect(world.node.part<FakeDiffs>().asked.size() == asked, QStringLiteral("the closed panel asked for a diff: %1").arg(describeDiff(world)));
+    expect(world.mc.part<FakeDiffs>().asked.size() == asked, QStringLiteral("the closed panel asked for a diff: %1").arg(describeDiff(world)));
     world.bridge().dispatch(QStringLiteral("rightPanel.toggle"), QVariantMap());
     expectDiffOf(world, {QStringLiteral("src/turn4.ts")});
-    expect(world.node.part<FakeDiffs>().asked.size() == asked + 1, QStringLiteral("opening asked %1 times").arg(world.node.part<FakeDiffs>().asked.size() - asked));
+    expect(world.mc.part<FakeDiffs>().asked.size() == asked + 1, QStringLiteral("opening asked %1 times").arg(world.mc.part<FakeDiffs>().asked.size() - asked));
   });
   step(QStringLiteral("the diff is at the same scroll position"), [](World& world, const Captures&, const Table&) {
-    const Visit& visit = world.node.part<Visit>();
+    const Visit& visit = world.mc.part<Visit>();
     world.waitFor([&] { return world.state(QStringLiteral("panel")) == visit.panel; },
                   [&] { return QStringLiteral("the panel as it was, %1; it is %2").arg(show(visit.panel), show(world.state(QStringLiteral("panel")))); });
-    expect(diff(world).status() == QLatin1String("ready") && world.node.part<FakeDiffs>().asked.size() == visit.asked,
+    expect(diff(world).status() == QLatin1String("ready") && world.mc.part<FakeDiffs>().asked.size() == visit.asked,
            QStringLiteral("the diff was asked for again: %1").arg(describeDiff(world)));
   });
 });

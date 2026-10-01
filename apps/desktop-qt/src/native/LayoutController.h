@@ -4,7 +4,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 
 // The window's layout the shell keeps itself: whether the thread list is
@@ -21,7 +21,7 @@ class LayoutController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  LayoutController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  LayoutController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;

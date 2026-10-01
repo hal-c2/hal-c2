@@ -6,7 +6,7 @@
 #   apps/desktop-qt/src/native/SidebarController.cpp (which drafts the sidebar lists)
 #   apps/desktop-qt/src/native/ComposerController.cpp (a draft's first send promotes it; draftPreview)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (draft rows and their menu)
-#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
+#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   navigation/landing.feature owns the draft a window with no thread lands on, which is here
 #   from the start: the window opens on a draft in "proj-1".
 #   threads/creating.feature owns what a new thread is; this file owns how the desktop keeps
@@ -20,14 +20,14 @@ Feature: Drafts on the desktop
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
-    And the desktop's node "node-a" serves the environment "env-a"
-    And the node has these threads:
+    And the desktop's MC "mc-a" serves the environment "env-a"
+    And the MC has these threads:
       | id | project | title  | createdAt            |
       | t1 | p1      | First  | 2026-09-23T09:50:00Z |
       | t3 | p2      | Third  | 2026-09-23T09:30:00Z |
-    And the node has the project "p1" titled "proj-1"
-    And the node has the project "p2" titled "proj-2"
-    And the desktop shell is connected to its node
+    And the MC has the project "p1" titled "proj-1"
+    And the MC has the project "p2" titled "proj-2"
+    And the desktop shell is connected to its MC
 
   Rule: A new thread opens its project's draft
 
@@ -106,9 +106,9 @@ Feature: Drafts on the desktop
   Rule: A draft ends when it is sent or deleted
 
     @desktop
-    Scenario: The draft becomes its thread when the node creates it
+    Scenario: The draft becomes its thread when the MC creates it
       Given the user starts a new thread in "proj-1"
-      When the node creates the draft's thread
+      When the MC creates the draft's thread
       Then the window shows the draft's thread
       And the sidebar lists no drafts
 
@@ -138,9 +138,9 @@ Feature: Drafts on the desktop
       And the desktop keeps the draft
 
     @desktop
-    Scenario: A draft whose project the node removes goes with it
+    Scenario: A draft whose project the MC removes goes with it
       Given the user starts a new thread in "proj-1"
-      When the node removes the project "p1"
+      When the MC removes the project "p1"
       Then the window shows a new draft in "proj-2"
       And the desktop keeps 1 draft
 
@@ -151,7 +151,7 @@ Feature: Drafts on the desktop
       Given the user starts a new thread in "proj-1"
       And the user types "Fix the build" into the new thread
       When the desktop quits and starts again
-      And the desktop shell is connected to its node
+      And the desktop shell is connected to its MC
       Then the window shows the draft
       And the sidebar lists the draft reading "Fix the build"
       And the composer offers the new thread's text "Fix the build"

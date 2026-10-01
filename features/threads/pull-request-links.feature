@@ -13,51 +13,51 @@ Feature: Linking pull requests to threads
   Background:
     Given a connected environment with the thread "Cart totals" on the branch "feature/cart"
 
-  @node
+  @mc
   Scenario: A thread finds the pull request for its branch
     Given a pull request is opened for "feature/cart"
     When the environment looks for pull requests
     Then "Cart totals" is linked to that pull request
     And no client needs to be open for this to happen
 
-  @node
+  @mc
   Scenario: Archived threads are not linked to new pull requests
     Given "Cart totals" is archived
     When the environment finds a pull request for "feature/cart"
     Then "Cart totals" is not linked to it
 
-  @node
+  @mc
   Scenario: Linking a different pull request by hand keeps the branch pull request beside it
     Given "Cart totals" is linked to the pull request for "feature/cart"
     When the user links "Cart totals" to pull request 42
     Then "Cart totals" is linked to pull request 42 and the branch pull request
 
-  @node
+  @mc
   Scenario: Linking the same pull request twice changes nothing
     Given "Cart totals" is linked to pull request 42
     When the user links "Cart totals" to pull request 42 again
     Then "Cart totals" has one link to pull request 42
 
-  @node
+  @mc
   Scenario: Unlinking a pull request
     Given "Cart totals" is linked to pull request 42
     When the user unlinks pull request 42 from "Cart totals"
     Then "Cart totals" is no longer linked to pull request 42
 
-  @node
+  @mc
   Scenario: An unlinked layer of a stack stays unlinked
     Given "Cart totals" is linked to a stack of pull requests
     When the user unlinks one layer of the stack
     And the environment refreshes the stack
     Then that layer is not linked again
 
-  @node
+  @mc
   Scenario: A user can bring back a stack layer they unlinked
     Given the user unlinked a layer of the stack from "Cart totals"
     When the user links that layer again
     Then "Cart totals" is linked to that layer
 
-  @node
+  @mc
   Scenario: The agent links the pull request it opened
     Given the agent in "Cart totals" opened pull request 43
     When the agent links pull request 43 to its thread
@@ -75,7 +75,7 @@ Feature: Linking pull requests to threads
     When the user unlinks pull request 41 from the thread
     Then "Cart totals" shows the pull request for "feature/cart" again
 
-  @node
+  @mc
   Scenario: Settled threads keep their links
     Given "Cart totals" is settled and linked to pull request 42
     When a new pull request is opened for "feature/cart"

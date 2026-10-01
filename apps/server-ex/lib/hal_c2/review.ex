@@ -5,7 +5,7 @@ defmodule HalC2.Review do
   plus whole-file contents for expanding a diff (`review.getDiffFileContents`).
 
   Untracked files are shown by adding them intent-to-add to a copy of the index, so
-  the user's own index is never touched. Only directories inside this node's
+  the user's own index is never touched. Only directories inside this MC's
   projects may be reviewed.
   """
 
@@ -357,14 +357,14 @@ defmodule HalC2.Review do
     cwd = Path.expand(cwd)
 
     roots =
-      for {{node, _}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
-          node == node() and is_binary(root) and project["deletedAt"] == nil,
+      for {{mc, _}, {"project", %{"workspaceRoot" => root} = project}} <- HalC2.Shell.rows(),
+          mc == node() and is_binary(root) and project["deletedAt"] == nil,
           do: Path.expand(root)
 
     if Enum.any?(roots, &inside?(cwd, &1)) do
       :ok
     else
-      detail = "Review cwd must be inside one of this node's projects."
+      detail = "Review cwd must be inside one of this MC's projects."
 
       {:error,
        %{

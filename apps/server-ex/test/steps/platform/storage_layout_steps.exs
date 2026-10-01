@@ -1,19 +1,19 @@
 defmodule HalC2.Steps.Platform.StorageLayout do
   @moduledoc """
-  Steps for features/node/platform/storage-layout.feature, and the storage
-  steps node-startup.feature and storage-migration.feature share.
+  Steps for features/mc/platform/storage-layout.feature, and the storage
+  steps mc-startup.feature and storage-migration.feature share.
 
-  Linux and macOS users start a real node (`HalC2.Test.Storage`) with the
+  Linux and macOS users start a real MC (`HalC2.Test.Storage`) with the
   scenario's `/home/sam` as their home. A Windows user is resolved with
-  `HalC2.Paths.app_dirs/4` under Windows path rules, since the node cannot start
+  `HalC2.Paths.app_dirs/4` under Windows path rules, since the MC cannot start
   as one here.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.Paths
-  alias HalC2.Test.{Node, Storage}
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.{Mc, Storage}
+  alias HalC2.Test.Mc.World
 
   # --- the user ------------------------------------------------------------------------
 
@@ -45,7 +45,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
   step "HAL_C2_HOME is {string}", %{args: [home]} = context do
     context = Storage.user(context)
     World.put_os_env("HAL_C2_HOME", Storage.path(context, home))
-    put_in(context, [:node, :spec], Storage.release_spec())
+    put_in(context, [:mc, :spec], Storage.release_spec())
   end
 
   step "HAL_C2_HOME is {string} in the developer's shell", %{args: [home]} = context do
@@ -54,18 +54,18 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     context
   end
 
-  step "HAL_C2_NODE_HOME is {string}", %{args: [home]} = context do
+  step "HAL_C2_MC_HOME is {string}", %{args: [home]} = context do
     context = Storage.user(context)
-    World.put_os_env("HAL_C2_NODE_HOME", Storage.path(context, home))
-    put_in(context, [:node, :spec], Storage.release_spec())
+    World.put_os_env("HAL_C2_MC_HOME", Storage.path(context, home))
+    put_in(context, [:mc, :spec], Storage.release_spec())
   end
 
-  step "HAL_C2_NODE_HOME is {string} and HAL_C2_HOME is {string}",
-       %{args: [node_home, home]} = context do
+  step "HAL_C2_MC_HOME is {string} and HAL_C2_HOME is {string}",
+       %{args: [mc_home, home]} = context do
     context = Storage.user(context)
-    World.put_os_env("HAL_C2_NODE_HOME", Storage.path(context, node_home))
+    World.put_os_env("HAL_C2_MC_HOME", Storage.path(context, mc_home))
     World.put_os_env("HAL_C2_HOME", Storage.path(context, home))
-    put_in(context, [:node, :spec], Storage.release_spec())
+    put_in(context, [:mc, :spec], Storage.release_spec())
   end
 
   # --- starting ------------------------------------------------------------------------
@@ -135,7 +135,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
       nil ->
         assert dir(kind) == expected
 
-        # The node keeps nothing in the runtime directory, so it only resolves it; its
+        # The MC keeps nothing in the runtime directory, so it only resolves it; its
         # own files are under an `elixir` level in each of the other kinds.
         if kind != "runtime" do
           assert File.dir?(expected), "#{expected} was not created"
@@ -157,8 +157,8 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     assert private?(dir(kind)), "#{dir(kind)} is not private"
 
     if kind != "runtime" do
-      node_dir = Map.fetch!(Paths.dirs(), String.to_atom(kind))
-      assert private?(node_dir), "#{node_dir} is not private"
+      mc_dir = Map.fetch!(Paths.dirs(), String.to_atom(kind))
+      assert private?(mc_dir), "#{mc_dir} is not private"
     end
 
     context
@@ -195,9 +195,9 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     context
   end
 
-  # --- the node's files ----------------------------------------------------------------
+  # --- the MC's files ----------------------------------------------------------------
 
-  step(~r/^the node keeps (?<what>.+) at "(?<path>[^"]+)"$/, context, do: keeps(context))
+  step(~r/^the MC keeps (?<what>.+) at "(?<path>[^"]+)"$/, context, do: keeps(context))
 
   step "its database is {string}", %{args: [path]} = context do
     expected = Storage.path(context, path)
@@ -206,7 +206,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     context
   end
 
-  step "the node has threads, settings, provider sign-ins and secrets", context do
+  step "the MC has threads, settings, provider sign-ins and secrets", context do
     context = context |> Storage.start() |> World.create_thread("Kept")
     :ok = World.merge_settings(%{"providers" => %{"grok" => %{"enabled" => false}}})
     credentials = HalC2.Acp.cursor_credentials("cursor")
@@ -220,7 +220,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     Map.put(context, :archive_fetches, archive_fetches(context))
   end
 
-  step "the user deletes {string} and restarts the node", %{args: [path]} = context do
+  step "the user deletes {string} and restarts the MC", %{args: [path]} = context do
     File.rm_rf!(Storage.path(context, path))
     :persistent_term.erase({HalC2.Acp.Catalog, :index})
     Storage.restart(context)
@@ -249,14 +249,14 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     if context.storage_user.platform == "Windows" do
       Map.update(context, :windows_env, %{var => value}, &Map.put(&1, var, value))
     else
-      # Relative values stay as they are: the node must ignore them.
+      # Relative values stay as they are: the MC must ignore them.
       value = if String.starts_with?(value, "/"), do: Storage.path(context, value), else: value
       World.put_os_env(var, value)
       context
     end
   end
 
-  # HAL-C2's own directory for `kind` (runtime included) as the running node resolves it.
+  # HAL-C2's own directory for `kind` (runtime included) as the running MC resolves it.
   defp dir(kind), do: Map.fetch!(Storage.app_dirs(), String.to_atom(kind))
 
   defp expected_path(context, ~s(the worktree's ") <> rest),
@@ -281,7 +281,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
         assert HalC2.Environment.server_config()["keybindingsConfigPath"] == expected
 
       "its themes" ->
-        Node.ensure(HalC2.EnvironmentThemes)
+        Mc.ensure(HalC2.EnvironmentThemes)
         assert File.dir?(expected)
 
       "its database" ->
@@ -289,7 +289,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
         assert File.regular?(expected)
 
       "its environment id" ->
-        assert File.read!(expected) == context.node.environment
+        assert File.read!(expected) == context.mc.environment
 
       "its access token" ->
         assert File.regular?(expected)
@@ -304,8 +304,8 @@ defmodule HalC2.Steps.Platform.StorageLayout do
         assert under.(HalC2.Vcs.worktree_path("/code/app", "feature/login"))
 
       "installed plugins" ->
-        Node.ensure(HalC2.Settings)
-        Node.ensure(HalC2.Plugins)
+        Mc.ensure(HalC2.Settings)
+        Mc.ensure(HalC2.Plugins)
         assert :sys.get_state(HalC2.Plugins).dir == expected
 
       "secrets" ->
@@ -319,16 +319,16 @@ defmodule HalC2.Steps.Platform.StorageLayout do
         assert under.(HalC2.Acp.Antigravity.profile("antigravity"))
 
       "cluster membership" ->
-        # The node makes its cluster certificate when `HalC2.Cluster` starts.
-        Node.ensure(HalC2.Cluster)
+        # The MC makes its cluster certificate when `HalC2.Cluster` starts.
+        Mc.ensure(HalC2.Cluster)
         assert HalC2.Cluster.dir(Paths.data_dir()) == expected
-        assert File.regular?(Path.join(expected, "node.pem"))
+        assert File.regular?(Path.join(expected, "mc.pem"))
 
       "staged upgrades" ->
         assert under.(HalC2.Upgrade.Source.cache_dir("9.9.9"))
 
       "scheduled tasks" ->
-        Node.ensure(HalC2.ScheduledTasks)
+        Mc.ensure(HalC2.ScheduledTasks)
         assert :sys.get_state(HalC2.ScheduledTasks).path == expected
 
       "device hub state" ->
@@ -362,7 +362,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     context =
       if Map.has_key?(context.clients, "ops"),
         do: context,
-        else: World.put_client(context, "ops", Node.connect(context.node))
+        else: World.put_client(context, "ops", Mc.connect(context.mc))
 
     {reply, context} =
       World.call(context, "server.prepareAcpRegistryAgent", %{"agentId" => "acme"}, "ops")

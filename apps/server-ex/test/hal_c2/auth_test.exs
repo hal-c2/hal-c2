@@ -185,7 +185,7 @@ defmodule HalC2.AuthTest do
     assert {{:ok, [%{"sessionId" => ^admin_session}]}, _} = call(admin, "hal-c2.clients", %{})
   end
 
-  test "paired clients are only managed on the node the caller's session belongs to",
+  test "paired clients are only managed on the MC the caller's session belongs to",
        %{port: port} do
     admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
     {admin, _admin_session} = paired_socket(port, admin_scopes, "Admin")
@@ -208,7 +208,7 @@ defmodule HalC2.AuthTest do
         assert {:error,
                 %{
                   "_tag" => "EnvironmentOperationForbiddenError",
-                  "reason" => "session_on_another_node"
+                  "reason" => "session_on_another_mc"
                 }} = reply
 
         admin
@@ -217,7 +217,7 @@ defmodule HalC2.AuthTest do
     assert length(HalC2.Auth.clients()) == 2
   end
 
-  test "a desktop bootstrap line sets where the node listens and keeps its state" do
+  test "a desktop bootstrap line sets where the MC listens and keeps its state" do
     previous = for key <- [:home, :port, :host], do: {key, Application.fetch_env(:hal_c2, key)}
 
     on_exit(fn ->
@@ -241,7 +241,7 @@ defmodule HalC2.AuthTest do
     assert Application.get_env(:hal_c2, :home) == {:root, "/home/me/hal-c2-profile"}
   end
 
-  test "browsers on other origins may call the node", %{port: port} do
+  test "browsers on other origins may call the MC", %{port: port} do
     {:ok, {{_, 204, _}, headers, _}} =
       :httpc.request(:options, {"http://127.0.0.1:#{port}/oauth/token", []}, [], [])
 
@@ -268,7 +268,7 @@ defmodule HalC2.AuthTest do
     {client, session.id}
   end
 
-  # One RPC on this node's environment: `{:ok, result}` or `{:error, detail or message}`,
+  # One RPC on this MC's environment: `{:ok, result}` or `{:error, detail or message}`,
   # and the client.
   defp call(client, method, payload, environment \\ HalC2.Environment.id()) do
     id = System.unique_integer([:positive])

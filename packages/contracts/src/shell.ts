@@ -6,7 +6,7 @@ import { TimestampFormat } from "./settings.ts";
  * Contract between the web app and a native shell hosting it (the Qt shell
  * in apps/desktop-qt). The shell exposes `window.halC2Shell`; the page publishes
  * derived view models with `publish(key, value)` and receives user intent
- * from shell-rendered chrome as actions. Once its own connection to the node
+ * from shell-rendered chrome as actions. Once its own connection to the MC
  * has a snapshot the shell also builds the sidebar and sends the sidebar's
  * row actions and plain turns itself (`ShellNativeState`); everything else
  * still goes through the page.
@@ -102,8 +102,8 @@ export type ShellSidebarState = typeof ShellSidebarState.Type;
 
 /**
  * Published under the `native` key, and sent to the page as `shell.native`,
- * once the shell's own node connection has its first snapshot: the shell
- * builds the sidebar and sends row actions and plain turns to the node itself.
+ * once the shell's own MC connection has its first snapshot: the shell
+ * builds the sidebar and sends row actions and plain turns to the MC itself.
  */
 export const ShellNativeState = Schema.Struct({
   sidebar: Schema.Boolean,
@@ -564,7 +564,7 @@ export const ShellGitState = Schema.Struct({
       featureBranchLabel: Schema.String,
     }),
   ),
-  /** Why git is unavailable for a checkout the node cannot reach (a linked thread's). */
+  /** Why git is unavailable for a checkout the MC cannot reach (a linked thread's). */
   unavailableReason: Schema.optional(Schema.String),
   /** Set while the publish-repository dialog is open. */
   publishing: Schema.optional(

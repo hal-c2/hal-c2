@@ -13,7 +13,7 @@
 #include <functional>
 #include <optional>
 
-// The native sidebar's rules: the node's thread rows in, the `sidebar` view
+// The native sidebar's rules: the MC's thread rows in, the `sidebar` view
 // model out. A port of the web app's shell sidebar (apps/web/src/shell/
 // shellSidebarState.ts, Sidebar.logic.ts and client-runtime's
 // state/threadSettled.ts, state/threadSort.ts), so both render the same rows.
@@ -37,7 +37,7 @@ struct RuntimeSummary {
   QString updatedAt;
 };
 
-// One thread row of the node's shell shape, as the sidebar and composer read it.
+// One thread row of the MC's shell shape, as the sidebar and composer read it.
 struct Thread {
   QString environmentId;
   QString id;
@@ -94,7 +94,7 @@ Nullable visibleWokeAt(const Thread& thread, qint64 nowMs);
 struct Capabilities {
   bool settlement = false;
   bool snooze = false;
-  // The node keeps the visited watermark; without it there are no unread markers.
+  // The MC keeps the visited watermark; without it there are no unread markers.
   bool visitedTracking = false;
   bool pinning = false;
   bool titleRegeneration = false;
@@ -112,7 +112,7 @@ struct Partition {
 Partition partition(const QList<Thread>& threads, const std::optional<QSet<QString>>& scopedProjectKeys,
                     const CapabilitiesFor& capabilitiesFor, qint64 nowMs);
 
-// One project row of the node's shell shape.
+// One project row of the MC's shell shape.
 struct RepositoryIdentity {
   QString canonicalKey;
   Nullable rootPath;
@@ -179,7 +179,7 @@ std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const Q
 
 struct Input {
   QList<ProjectGroup> projects;
-  // The environment of the node the shell runs against; its folders are the
+  // The environment of the MC the shell runs against; its folders are the
   // ones the folder explorer lists.
   Nullable localEnvironmentId;
   // Environments that are listed but unreachable; their rows stay, marked

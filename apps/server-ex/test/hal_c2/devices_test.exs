@@ -38,7 +38,7 @@ defmodule HalC2.DevicesTest do
     assert {:ok, %{"hostStatus" => "disabled", "devices" => []}} = HalC2.Devices.list(%{})
 
     {:ok, state} = HalC2.Devices.configure(%{"enabled" => true})
-    assert %{"hostStatus" => "ready", "hubBasePath" => "/api/device-hub/nodes/" <> _} = state
+    assert %{"hostStatus" => "ready", "hubBasePath" => "/api/device-hub/mcs/" <> _} = state
 
     assert [%{"id" => "Pixel_9", "booted" => false}, %{"id" => "Broken"}] =
              Enum.filter(state["devices"], &(&1["platform"] == "android"))
@@ -140,7 +140,7 @@ defmodule HalC2.DevicesTest do
              HalC2.Devices.action(%{"deviceId" => "Pixel_9", "type" => "shake"})
   end
 
-  test "the hub proxy forwards a request to the node that owns the hub" do
+  test "the hub proxy forwards a request to the MC that owns the hub" do
     {:ok, _} = HalC2.Devices.configure(%{"enabled" => true})
     base = HalC2.Devices.hub_base_path()
 

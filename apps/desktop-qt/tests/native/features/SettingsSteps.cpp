@@ -1,4 +1,4 @@
-// The node's settings document and this device's preferences, as the desktop's
+// The MC's settings document and this device's preferences, as the desktop's
 // settings store keeps them (features/settings/saving-settings.feature).
 
 #include <QDir>
@@ -21,19 +21,19 @@ struct Outcome {
   std::optional<QString> error;
 };
 
-QList<int> configSubscribers(FakeNode& node, const QString& environment) {
+QList<int> configSubscribers(FakeMc& mc, const QString& environment) {
   QList<int> result;
-  for (const int id : node.subscribers(QStringLiteral("config"))) {
-    if (node.shapeOf(id).value(QLatin1String("environment")) == environment) result.append(id);
+  for (const int id : mc.subscribers(QStringLiteral("config"))) {
+    if (mc.shapeOf(id).value(QLatin1String("environment")) == environment) result.append(id);
   }
   return result;
 }
 
-void sendConfig(FakeNode& node, const QString& environment, const QJsonObject& frame) {
-  for (const int id : configSubscribers(node, environment)) {
+void sendConfig(FakeMc& mc, const QString& environment, const QJsonObject& frame) {
+  for (const int id : configSubscribers(mc, environment)) {
     QJsonObject withId = frame;
     withId.insert(QStringLiteral("id"), id);
-    node.send(withId);
+    mc.send(withId);
   }
 }
 
@@ -95,70 +95,70 @@ QJsonObject sealed(FakeConfig& fake, QJsonObject settings) {
   return settings;
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
-  node.onShape(QStringLiteral("config"), [&node](int id, const QJsonObject& shape) {
+const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("config"), [&mc](int id, const QJsonObject& shape) {
     const QString environment = shape.value(QLatin1String("environment")).toString();
-    FakeConfig& fake = fakeConfig(node);
-    // As the node answers: the snapshot, then what it publishes.
-    if (environment == node.environmentId) {
+    FakeConfig& fake = fakeConfig(mc);
+    // As the MC answers: the snapshot, then what it publishes.
+    if (environment == mc.environmentId) {
       QJsonObject config = fake.config;
       config.insert(QStringLiteral("settings"), fake.settings);
-      node.send({{QStringLiteral("t"), QStringLiteral("config")},
+      mc.send({{QStringLiteral("t"), QStringLiteral("config")},
                  {QStringLiteral("id"), id},
-                 {QStringLiteral("node"), node.name},
+                 {QStringLiteral("mc"), mc.name},
                  {QStringLiteral("config"), config}});
     } else if (fake.elsewhere.contains(environment) || fake.documents.contains(environment)) {
       QJsonObject config = fake.elsewhere.value(environment);
       config.insert(QStringLiteral("settings"), fake.documents.value(environment).settings);
-      node.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), config}});
+      mc.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), config}});
     }
-    node.send({{QStringLiteral("t"), QStringLiteral("config.themes")},
+    mc.send({{QStringLiteral("t"), QStringLiteral("config.themes")},
                {QStringLiteral("id"), id},
                {QStringLiteral("themes"), fake.themes.value(environment)}});
     if (fake.sources.contains(environment)) {
-      node.send({{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")},
+      mc.send({{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")},
                  {QStringLiteral("id"), id},
                  {QStringLiteral("sources"), fake.sources.value(environment)}});
     }
   });
-  node.onRpc(QStringLiteral("hal-c2.readSettings"), [&node](const FakeNode::Rpc& rpc) {
-    FakeConfig& fake = fakeConfig(node);
+  mc.onRpc(QStringLiteral("hal-c2.readSettings"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeConfig& fake = fakeConfig(mc);
     if (ownsDocument(fake, rpc.environment)) {
       const FakeConfig::Document& document = fake.documents.value(rpc.environment);
-      node.reply(rpc, QJsonObject{{QStringLiteral("settings"), document.settings}, {QStringLiteral("version"), document.version}});
+      mc.reply(rpc, QJsonObject{{QStringLiteral("settings"), document.settings}, {QStringLiteral("version"), document.version}});
       return;
     }
     if (fake.holdReads) return;
-    node.reply(rpc, QJsonObject{{QStringLiteral("settings"), fake.settings}, {QStringLiteral("version"), fake.version}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("settings"), fake.settings}, {QStringLiteral("version"), fake.version}});
     if (fake.editOnRead) {
-      saveElsewhere(node, QStringLiteral("otherEdits"), fake.settings.value(QLatin1String("otherEdits")).toInt() + 1, true);
+      saveElsewhere(mc, QStringLiteral("otherEdits"), fake.settings.value(QLatin1String("otherEdits")).toInt() + 1, true);
     }
   });
-  node.onRpc(QStringLiteral("hal-c2.writeSettings"), [&node](const FakeNode::Rpc& rpc) {
-    FakeConfig& fake = fakeConfig(node);
+  mc.onRpc(QStringLiteral("hal-c2.writeSettings"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeConfig& fake = fakeConfig(mc);
     if (ownsDocument(fake, rpc.environment)) {
       FakeConfig::Document& document = fake.documents[rpc.environment];
       if (!document.refuseWrites.isEmpty()) {
-        node.refuse(rpc, document.refuseWrites);
+        mc.refuse(rpc, document.refuseWrites);
       } else if (rpc.payload.value(QLatin1String("version")).toInt(-1) != document.version) {
-        node.refuse(rpc, QStringLiteral("settings changed"), {{QStringLiteral("_tag"), QStringLiteral("StaleSettings")}});
+        mc.refuse(rpc, QStringLiteral("settings changed"), {{QStringLiteral("_tag"), QStringLiteral("StaleSettings")}});
       } else {
         document.settings = rpc.payload.value(QLatin1String("settings")).toObject();
         document.version++;
-        node.reply(rpc, QJsonObject{{QStringLiteral("version"), document.version}});
-        sendConfig(node, rpc.environment, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), document.settings}});
+        mc.reply(rpc, QJsonObject{{QStringLiteral("version"), document.version}});
+        sendConfig(mc, rpc.environment, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), document.settings}});
       }
       return;
     }
     fake.writes.append(rpc.payload);
     if (!fake.refuseWrites.isEmpty()) {
       fake.saved.append(false);
-      node.refuse(rpc, fake.refuseWrites);
+      mc.refuse(rpc, fake.refuseWrites);
       return;
     }
     if (rpc.payload.value(QLatin1String("version")).toInt(-1) != fake.version) {
       fake.saved.append(false);
-      node.refuse(rpc, QStringLiteral("settings changed"),
+      mc.refuse(rpc, QStringLiteral("settings changed"),
                   {{QStringLiteral("_tag"), QStringLiteral("StaleSettings")},
                    {QStringLiteral("message"), QStringLiteral("settings changed")}});
       return;
@@ -167,19 +167,19 @@ const FakeNode::Extension extension([](FakeNode& node) {
     const QJsonObject before = fake.settings.value(QLatin1String("providerInstances")).toObject();
     fake.settings = sealed(fake, rpc.payload.value(QLatin1String("settings")).toObject());
     fake.version++;
-    node.reply(rpc, QJsonObject{{QStringLiteral("version"), fake.version}});
-    sendConfig(node, node.environmentId,
+    mc.reply(rpc, QJsonObject{{QStringLiteral("version"), fake.version}});
+    sendConfig(mc, mc.environmentId,
                {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
-    // A dropped hub's accounts leave what the node publishes.
-    if (fake.sources.contains(node.environmentId)) {
+    // A dropped hub's accounts leave what the MC publishes.
+    if (fake.sources.contains(mc.environmentId)) {
       const QJsonObject hubs = fake.settings.value(QLatin1String("usageLimitSources")).toObject();
       QJsonArray kept;
-      for (const QJsonValue& source : fake.sources.value(node.environmentId)) {
+      for (const QJsonValue& source : fake.sources.value(mc.environmentId)) {
         if (hubs.contains(source.toObject().value(QLatin1String("id")).toString())) kept.append(source);
       }
-      if (kept.size() != fake.sources.value(node.environmentId).size()) {
-        fake.sources.insert(node.environmentId, kept);
-        sendConfig(node, node.environmentId, {{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")}, {QStringLiteral("sources"), kept}});
+      if (kept.size() != fake.sources.value(mc.environmentId).size()) {
+        fake.sources.insert(mc.environmentId, kept);
+        sendConfig(mc, mc.environmentId, {{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")}, {QStringLiteral("sources"), kept}});
       }
     }
     // As HalC2.Settings provider_enabled? reads it: an instance's own entry
@@ -221,7 +221,7 @@ const FakeNode::Extension extension([](FakeNode& node) {
       providers.replace(i, entry);
       changed = true;
     }
-    if (changed) publishProviders(node, providers);
+    if (changed) publishProviders(mc, providers);
   });
 });
 
@@ -234,11 +234,11 @@ bool isOn(const QString& state) {
 }
 
 void turn(World& world, const QString& key, bool on) {
-  // Connected, the shell reads the settings next; unless the node holds them back.
-  if (!fakeConfig(world.node).holdReads) {
+  // Connected, the shell reads the settings next; unless the MC holds them back.
+  if (!fakeConfig(world.mc).holdReads) {
     world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the settings"));
   }
-  Outcome& outcome = world.node.part<Outcome>();
+  Outcome& outcome = world.mc.part<Outcome>();
   outcome = {};
   settings(world)->change(
       [key, on](QJsonObject document) {
@@ -259,45 +259,45 @@ QString preferencesPath(World& world) {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  // The node's document.
-  step(QStringLiteral("the node's settings are at version (\\d+) with %1 on").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakeConfig& fake = fakeConfig(world.node);
+  // The MC's document.
+  step(QStringLiteral("the MC's settings are at version (\\d+) with %1 on").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeConfig& fake = fakeConfig(world.mc);
     fake.version = c[0].toInt();
     fake.settings.insert(c[1], true);
   });
-  step(QStringLiteral("the node holds back its settings"), [](World& world, const Captures&, const Table&) {
-    fakeConfig(world.node).holdReads = true;
+  step(QStringLiteral("the MC holds back its settings"), [](World& world, const Captures&, const Table&) {
+    fakeConfig(world.mc).holdReads = true;
   });
   step(QStringLiteral("another client saved %1 on without the desktop hearing of it").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the settings"));
-    saveElsewhere(world.node, c[0], true, true);
+    saveElsewhere(world.mc, c[0], true, true);
   });
   step(QStringLiteral("another client saves %1 on").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the settings"));
-    saveElsewhere(world.node, c[0], true);
+    saveElsewhere(world.mc, c[0], true);
   });
   step(QStringLiteral("another client saves the settings each time the desktop reads them"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the settings"));
-    fakeConfig(world.node).editOnRead = true;
-    saveElsewhere(world.node, QStringLiteral("otherEdits"), 1, true);
+    fakeConfig(world.mc).editOnRead = true;
+    saveElsewhere(world.mc, QStringLiteral("otherEdits"), 1, true);
   });
-  step(QStringLiteral("the node refuses to save settings with %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeConfig(world.node).refuseWrites = c[0];
+  step(QStringLiteral("the MC refuses to save settings with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeConfig(world.mc).refuseWrites = c[0];
   });
-  step(QStringLiteral("the node restarts with %1 on").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakeConfig& fake = fakeConfig(world.node);
+  step(QStringLiteral("the MC restarts with %1 on").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeConfig& fake = fakeConfig(world.mc);
     fake.settings = {{c[0], true}};
     fake.version = 0;
-    world.node.drop();
+    world.mc.drop();
     world.waitFor([&world] { return !world.native().client()->isReady(); }, QStringLiteral("the shell to see the drop"));
   });
-  step(QStringLiteral("the node's configuration lists the provider %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeConfig(world.node).config.insert(QStringLiteral("providers"), QJsonArray{QJsonObject{{QStringLiteral("provider"), c[0]}}});
+  step(QStringLiteral("the MC's configuration lists the provider %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeConfig(world.mc).config.insert(QStringLiteral("providers"), QJsonArray{QJsonObject{{QStringLiteral("provider"), c[0]}}});
   });
-  step(QStringLiteral("the node's providers become %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC's providers become %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QJsonArray providers{QJsonObject{{QStringLiteral("provider"), c[0]}}};
-    fakeConfig(world.node).config.insert(QStringLiteral("providers"), providers);
-    sendConfig(world.node, world.node.environmentId,
+    fakeConfig(world.mc).config.insert(QStringLiteral("providers"), providers);
+    sendConfig(world.mc, world.mc.environmentId,
                {{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("providers"), providers}});
   });
 
@@ -305,7 +305,7 @@ const Steps steps([] {
   step(QStringLiteral("the desktop (?:turns|turned) %1 (on|off)").arg(q), [](World& world, const Captures& c, const Table&) {
     turn(world, c[0], isOn(c[1]));
   });
-  step(QStringLiteral("the desktop holds the node's settings at version (\\d+)"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the desktop holds the MC's settings at version (\\d+)"), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return settings(world)->ready() && settings(world)->version() == c[0].toInt(); }, [&] {
       return QStringLiteral("version %1; the shell holds version %2 (%3)")
           .arg(c[0])
@@ -319,7 +319,7 @@ const Steps steps([] {
     });
   });
   step(QStringLiteral("the desktop reports %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const Outcome& outcome = world.node.part<Outcome>();
+    const Outcome& outcome = world.mc.part<Outcome>();
     expect(outcome.error == c[0], QStringLiteral("the change ended with %1").arg(outcome.error.value_or(QStringLiteral("no error"))));
     expect(settings(world)->error() == c[0], QStringLiteral("the store reports \"%1\"").arg(settings(world)->error()));
   });
@@ -329,31 +329,31 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("the provider %1 in %2").arg(c[0], show(settings(world)->config().toVariantMap())); });
   });
 
-  // What the node was sent.
-  step(QStringLiteral("the node saved the change at version (\\d+)"), [](World& world, const Captures& c, const Table&) {
-    const FakeConfig& fake = fakeConfig(world.node);
-    expect(!fake.writes.isEmpty() && fake.saved.last(), QStringLiteral("the node saved nothing"));
+  // What the MC was sent.
+  step(QStringLiteral("the MC saved the change at version (\\d+)"), [](World& world, const Captures& c, const Table&) {
+    const FakeConfig& fake = fakeConfig(world.mc);
+    expect(!fake.writes.isEmpty() && fake.saved.last(), QStringLiteral("the MC saved nothing"));
     const int version = fake.writes.last().value(QLatin1String("version")).toInt();
     expect(version == c[0].toInt(), QStringLiteral("saved at version %1").arg(version));
   });
-  step(QStringLiteral("the node holds %1 (on|off)").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QJsonValue value = fakeConfig(world.node).settings.value(c[0]);
-    expect(value == QJsonValue(isOn(c[1])), QStringLiteral("the node holds %1").arg(show(fakeConfig(world.node).settings.toVariantMap())));
+  step(QStringLiteral("the MC holds %1 (on|off)").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonValue value = fakeConfig(world.mc).settings.value(c[0]);
+    expect(value == QJsonValue(isOn(c[1])), QStringLiteral("the MC holds %1").arg(show(fakeConfig(world.mc).settings.toVariantMap())));
   });
-  step(QStringLiteral("the node does not hold %1 off").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(fakeConfig(world.node).settings.value(c[0]) != QJsonValue(false),
-           QStringLiteral("the node holds %1").arg(show(fakeConfig(world.node).settings.toVariantMap())));
+  step(QStringLiteral("the MC does not hold %1 off").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(fakeConfig(world.mc).settings.value(c[0]) != QJsonValue(false),
+           QStringLiteral("the MC holds %1").arg(show(fakeConfig(world.mc).settings.toVariantMap())));
   });
-  step(QStringLiteral("the node refused the desktop's first save as stale"), [](World& world, const Captures&, const Table&) {
-    const FakeConfig& fake = fakeConfig(world.node);
+  step(QStringLiteral("the MC refused the desktop's first save as stale"), [](World& world, const Captures&, const Table&) {
+    const FakeConfig& fake = fakeConfig(world.mc);
     QStringList answers;
     for (const bool saved : fake.saved) answers.append(saved ? QStringLiteral("saved") : QStringLiteral("refused"));
     expect(fake.saved.size() >= 2 && !fake.saved.first() && fake.saved.last(),
-           QStringLiteral("the node's answers to the saves were [%1]").arg(answers.join(u", ")));
+           QStringLiteral("the MC's answers to the saves were [%1]").arg(answers.join(u", ")));
   });
-  step(QStringLiteral("the node's settings were not written"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC's settings were not written"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    expect(fakeConfig(world.node).writes.isEmpty(), QStringLiteral("the node was sent %1 write(s)").arg(fakeConfig(world.node).writes.size()));
+    expect(fakeConfig(world.mc).writes.isEmpty(), QStringLiteral("the MC was sent %1 write(s)").arg(fakeConfig(world.mc).writes.size()));
   });
 
   // This device's preferences.
@@ -401,40 +401,40 @@ const Steps steps([] {
 
 }  // namespace
 
-FakeConfig& fakeConfig(FakeNode& node) {
-  return node.part<FakeConfig>();
+FakeConfig& fakeConfig(FakeMc& mc) {
+  return mc.part<FakeConfig>();
 }
 
-void publishThemes(FakeNode& node, const QString& environment, const QJsonArray& themes) {
-  fakeConfig(node).themes.insert(environment, themes);
-  sendConfig(node, environment, {{QStringLiteral("t"), QStringLiteral("config.themes")}, {QStringLiteral("themes"), themes}});
+void publishThemes(FakeMc& mc, const QString& environment, const QJsonArray& themes) {
+  fakeConfig(mc).themes.insert(environment, themes);
+  sendConfig(mc, environment, {{QStringLiteral("t"), QStringLiteral("config.themes")}, {QStringLiteral("themes"), themes}});
 }
 
-void saveElsewhere(FakeNode& node, const QString& key, const QJsonValue& value, bool quietly) {
-  FakeConfig& fake = fakeConfig(node);
+void saveElsewhere(FakeMc& mc, const QString& key, const QJsonValue& value, bool quietly) {
+  FakeConfig& fake = fakeConfig(mc);
   fake.settings.insert(key, value);
   fake.version++;
   if (quietly) return;
-  sendConfig(node, node.environmentId,
+  sendConfig(mc, mc.environmentId,
              {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
 }
 
-void saveOn(FakeNode& node, const QString& environment, const QString& key, const QJsonValue& value) {
-  if (environment.isEmpty() || environment == node.environmentId) {
-    saveElsewhere(node, key, value);
+void saveOn(FakeMc& mc, const QString& environment, const QString& key, const QJsonValue& value) {
+  if (environment.isEmpty() || environment == mc.environmentId) {
+    saveElsewhere(mc, key, value);
     return;
   }
-  FakeConfig::Document& document = documentOf(node, environment);
+  FakeConfig::Document& document = documentOf(mc, environment);
   document.settings.insert(key, value);
   document.version++;
-  sendConfig(node, environment, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), document.settings}});
+  sendConfig(mc, environment, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), document.settings}});
 }
 
-FakeConfig::Document& documentOf(FakeNode& node, const QString& environment) {
-  return fakeConfig(node).documents[environment];
+FakeConfig::Document& documentOf(FakeMc& mc, const QString& environment) {
+  return fakeConfig(mc).documents[environment];
 }
 
-void publishProviders(FakeNode& node, const QJsonArray& providers) {
-  fakeConfig(node).config.insert(QStringLiteral("providers"), providers);
-  sendConfig(node, node.environmentId, {{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("providers"), providers}});
+void publishProviders(FakeMc& mc, const QJsonArray& providers) {
+  fakeConfig(mc).config.insert(QStringLiteral("providers"), providers);
+  sendConfig(mc, mc.environmentId, {{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("providers"), providers}});
 }

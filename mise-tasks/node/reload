@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Compile and load changed modules into the running dev node without a restart (mix hal_c2.upgrade --dev [NODE ...])"
-#MISE dir="{{config_root}}/apps/server-ex"
-set -euo pipefail
-exec mix hal_c2.upgrade --dev "$@"

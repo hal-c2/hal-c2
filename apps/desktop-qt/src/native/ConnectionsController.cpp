@@ -6,7 +6,7 @@
 
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 
@@ -15,7 +15,7 @@ namespace {
 const NativeControllerRegistrar<ConnectionsController> registrar(QStringLiteral("connections"),
                                                                  {QStringLiteral("connections")});
 
-// The node refuses access calls and the access list to a session without
+// The MC refuses access calls and the access list to a session without
 // access:read / access:write ("access:write is required").
 const QString kNeedsAdmin =
     QStringLiteral("Managing this machine's access needs an administrator session. Pair this desktop with a link "
@@ -38,7 +38,7 @@ QString pairingUrl(const QString& host, const QString& code) {
 
 }  // namespace
 
-ConnectionsController::ConnectionsController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
       m_client(client),
@@ -216,7 +216,7 @@ void ConnectionsController::publishAccess() {
                                             {QStringLiteral("clients"), m_clients.toVariantList()}});
 }
 
-// The node's links, from the shell shape, with what each row says.
+// The MC's links, from the shell shape, with what each row says.
 void ConnectionsController::updateLinks() {
   QVariantList links;
   for (const QJsonValue& value : m_store->links()) {
@@ -246,7 +246,7 @@ void ConnectionsController::updateLinks() {
   set(QStringLiteral("links"), links);
 }
 
-// Pairs the node with the environment behind `pairingUrl`, or behind
+// Pairs the MC with the environment behind `pairingUrl`, or behind
 // `fallbackUrl` when the first cannot be reached.
 void ConnectionsController::link(const QString& pairingUrl, const QString& fallbackUrl) {
   set(QStringLiteral("busy"), true);

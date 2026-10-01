@@ -9,12 +9,12 @@
 
 #include "DeviceDecoder.h"
 
-class NodeClient;
+class McClient;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QWebSocket;
 
-// One device's live screen and input, through the node's device hub proxy
+// One device's live screen and input, through the MC's device hub proxy
 // (`<hubBase>/vendor/...`, never the device directly), the native twin of
 // client-runtime's device/stream.ts:
 //
@@ -53,7 +53,7 @@ class DeviceStream : public QObject {
   Q_PROPERTY(double aspect READ aspect NOTIFY screenChanged)
 
 public:
-  explicit DeviceStream(NodeClient* client, QObject* parent = nullptr);
+  explicit DeviceStream(McClient* client, QObject* parent = nullptr);
   ~DeviceStream() override;
 
   // The device to stream: its hub base path (DeviceServiceState's
@@ -117,7 +117,7 @@ private:
   void send(const QByteArray& message, bool binary);
   void setScreen(int width, int height, const QString& orientation);
 
-  NodeClient* m_client;
+  McClient* m_client;
   QNetworkAccessManager* m_http;
   DeviceDecoder m_decoder;
   QString m_hubBase;

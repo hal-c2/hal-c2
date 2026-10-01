@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Settings.General do
   @moduledoc """
-  General settings the node itself acts on: auto-settling, response streaming,
+  General settings the MC itself acts on: auto-settling, response streaming,
   continuing after a restart, where new worktrees start and the text generation
   model. Each scenario's thread is "Ship checkout" in the project "shop".
   """
@@ -10,8 +10,8 @@ defmodule HalC2.Steps.Settings.General do
 
   alias HalC2.Orchestration.{Settlement, TurnWriter}
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @thread "Ship checkout"
   @toggles %{
@@ -70,8 +70,8 @@ defmodule HalC2.Steps.Settings.General do
     |> World.add_message(@thread, "user", "Ship it", at)
   end
 
-  step "the node sweeps threads", context do
-    Node.ensure({Settlement, interval: nil})
+  step "the MC sweeps threads", context do
+    Mc.ensure({Settlement, interval: nil})
     :ok = Settlement.sweep()
     context
   end
@@ -137,8 +137,8 @@ defmodule HalC2.Steps.Settings.General do
 
   # --- continuing after a restart --------------------------------------------------------
 
-  # A codex run mid-turn on a provider thread that can resume, as the node left it.
-  step "a turn was running when the node stopped", context do
+  # A codex run mid-turn on a provider thread that can resume, as the MC left it.
+  step "a turn was running when the MC stopped", context do
     context = ship_checkout(context)
     id = World.thread_id(context, @thread)
     at = World.iso_from_now(-60_000)
@@ -196,12 +196,12 @@ defmodule HalC2.Steps.Settings.General do
   step "an agent creates a worktree for a thread without choosing a base", context do
     context = ship_checkout(context)
     root = World.project(context, "shop").root
-    origin = Node.tmp_dir(context.node, "origin")
+    origin = Mc.tmp_dir(context.mc, "origin")
     World.git!(origin, ["clone", "-q", "--bare", root, "."])
     World.git!(root, ["remote", "add", "origin", origin])
     World.git!(root, ~w(fetch -q origin))
 
-    upstream = Node.tmp_dir(context.node, "upstream")
+    upstream = Mc.tmp_dir(context.mc, "upstream")
     World.git!(upstream, ["clone", "-q", origin, "."])
     World.git!(upstream, ~w(config user.email hal-c2@example.com))
     World.git!(upstream, ~w(config user.name HAL-C2))
@@ -244,8 +244,8 @@ defmodule HalC2.Steps.Settings.General do
     })
   end
 
-  # The title the node generates for a new thread's first message (`generate_title`).
-  step "the node names a new thread", context do
+  # The title the MC generates for a new thread's first message (`generate_title`).
+  step "the MC names a new thread", context do
     context = shop(context)
     root = World.project(context, "shop").root
     {:ok, title} = HalC2.TextGeneration.thread_title(root, "Fix the checkout total")

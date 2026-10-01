@@ -1,18 +1,18 @@
 defmodule HalC2.Test.Machines do
   @moduledoc """
-  Several machines in one scenario, by label. The scenario's node (`context.node`, this
-  VM) is the first; each other one is a `:peer` running the whole node in its own
+  Several machines in one scenario, by label. The scenario's MC (`context.mc`, this
+  VM) is the first; each other one is a `:peer` running the whole MC in its own
   directory under the scenario's, with `HAL_C2_LABEL` naming it.
 
   A member of the cluster is a distributed peer connected to this VM. A machine that
   is not in a cluster is a peer driven over stdio: it never joins this VM's cluster.
   `on/5` runs a function on a machine either way. `context.machines` maps each label
-  to `:local` or `%{node, peer, home, mode, environment}`.
+  to `:local` or `%{mc, peer, home, mode, environment}`.
   """
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
+  alias HalC2.Test.Mc
 
   @support Path.expand(".", __DIR__)
 
@@ -21,12 +21,12 @@ defmodule HalC2.Test.Machines do
   member. Returns the context with `:machines`.
   """
   def cluster(context, local, others) do
-    Node.World.put_env("HAL_C2_LABEL", local)
-    for {key, value} <- sessions(context.node.home), do: Node.World.put_env(key, value)
-    Node.World.put_app_env(:agent_sessions_home, user_home(context.node.home))
-    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(user_home(context.node.home)) end)
+    Mc.World.put_env("HAL_C2_LABEL", local)
+    for {key, value} <- sessions(context.mc.home), do: Mc.World.put_env(key, value)
+    Mc.World.put_app_env(:agent_sessions_home, user_home(context.mc.home))
+    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(user_home(context.mc.home)) end)
     distribute()
-    context = %{context | node: Node.restart(context.node)}
+    context = %{context | mc: Mc.restart(context.mc)}
 
     Enum.reduce(others, Map.put(context, :machines, %{local => :local}), fn label, context ->
       put_in(context, [:machines, label], start(context, label, :cluster))
@@ -35,7 +35,7 @@ defmodule HalC2.Test.Machines do
 
   @doc "Starts `label` as a member (`:cluster`) or a machine on its own (`:alone`)."
   def start(context, label, mode, home \\ nil) do
-    home = home || Node.tmp_dir(context.node, label)
+    home = home || Mc.tmp_dir(context.mc, label)
 
     env =
       for {key, value} <- [{"HAL_C2_LABEL", label} | sessions(home)],
@@ -58,17 +58,17 @@ defmodule HalC2.Test.Machines do
           %{connection: :standard_io, args: args, env: env}
       end
 
-    {:ok, peer, node} =
+    {:ok, peer, mc} =
       case :peer.start(opts) do
         {:ok, peer} -> {:ok, peer, nil}
-        {:ok, peer, node} -> {:ok, peer, node}
+        {:ok, peer, mc} -> {:ok, peer, mc}
       end
 
     ExUnit.Callbacks.on_exit(fn -> if Process.alive?(peer), do: :peer.stop(peer) end)
-    machine = %{node: node, peer: peer, home: home, mode: mode, label: label}
+    machine = %{mc: mc, peer: peer, home: home, mode: mode, label: label}
 
     app_env =
-      [start_node: true, home: home, port: 0, agent_sessions_home: user_home(home)] ++
+      [start_mc: true, home: home, port: 0, agent_sessions_home: user_home(home)] ++
         fakes(home)
 
     for {key, value} <- app_env,
@@ -77,7 +77,7 @@ defmodule HalC2.Test.Machines do
     {:ok, _} = call(machine, Application, :ensure_all_started, [:hal_c2], 30_000)
 
     if mode == :cluster do
-      assert_receive {:hal_c2_shell, {:environment, ^node, %{"environmentId" => environment}}},
+      assert_receive {:hal_c2_shell, {:environment, ^mc, %{"environmentId" => environment}}},
                      10_000
 
       Map.put(machine, :environment, environment)
@@ -94,9 +94,9 @@ defmodule HalC2.Test.Machines do
   end
 
   @doc "Stops a peer machine, as a machine that goes offline."
-  def stop(%{peer: peer, node: node, mode: mode}) do
+  def stop(%{peer: peer, mc: mc, mode: mode}) do
     :peer.stop(peer)
-    if mode == :cluster, do: assert_receive({:hal_c2_shell, {:node, ^node, :down}}, 5_000)
+    if mode == :cluster, do: assert_receive({:hal_c2_shell, {:mc, ^mc, :down}}, 5_000)
     :ok
   end
 
@@ -116,24 +116,24 @@ defmodule HalC2.Test.Machines do
   defp call(machine, mod, fun, args, timeout \\ 60_000)
   defp call(:local, mod, fun, args, _timeout), do: apply(mod, fun, args)
 
-  defp call(%{mode: :cluster, node: node}, mod, fun, args, timeout),
-    do: :erpc.call(node, mod, fun, args, timeout)
+  defp call(%{mode: :cluster, mc: mc}, mod, fun, args, timeout),
+    do: :erpc.call(mc, mod, fun, args, timeout)
 
   defp call(%{mode: :alone, peer: peer}, mod, fun, args, timeout),
     do: :peer.call(peer, mod, fun, args, timeout)
 
-  @doc "The Erlang node of a machine."
-  def node_of(context, label) do
+  @doc "The Erlang MC of a machine."
+  def mc_of(context, label) do
     case machine(context, label) do
       :local -> node()
-      %{node: node} -> node
+      %{mc: mc} -> mc
     end
   end
 
   @doc "A machine's data directories' root: its home."
   def home(context, label) do
     case machine(context, label) do
-      :local -> context.node.home
+      :local -> context.mc.home
       %{home: home} -> home
     end
   end
@@ -160,7 +160,7 @@ defmodule HalC2.Test.Machines do
 
   # --- run on a machine ----------------------------------------------------------------
 
-  @doc "This node's own sidebar rows, as `{kind, row}`, once pending ones are written."
+  @doc "This MC's own sidebar rows, as `{kind, row}`, once pending ones are written."
   def rows do
     for %{id: id} <- HalC2.Store.list_streams(HalC2.Store.path()),
         do: HalC2.Streams.flush_shell(id)
@@ -168,16 +168,16 @@ defmodule HalC2.Test.Machines do
     for {_id, kind, row} <- HalC2.Store.list_shell(HalC2.Store.path()), do: {kind, row}
   end
 
-  @doc "A stream's entities of `kind` on this node."
+  @doc "A stream's entities of `kind` on this MC."
   def entities(stream_id, kind) do
     HalC2.Streams.Server.state(HalC2.Streams.ensure(stream_id))
     |> HalC2.StreamState.list(kind)
   end
 
-  @doc "The ids of this node's streams."
+  @doc "The ids of this MC's streams."
   def streams, do: for(%{id: id} <- HalC2.Store.list_streams(HalC2.Store.path()), do: id)
 
-  @doc "Threads this node is receiving in a move (`HalC2.ThreadMove.accept/2`)."
+  @doc "Threads this MC is receiving in a move (`HalC2.ThreadMove.accept/2`)."
   def incoming_moves do
     dir = Path.join(HalC2.Paths.data_dir(), "incoming-moves")
     if File.dir?(dir), do: File.ls!(dir), else: []
@@ -197,13 +197,13 @@ defmodule HalC2.Test.Machines do
 
   def hold_move(_test, _held, _stage, _id), do: :ok
 
-  @doc "The diff of a thread's runs `from` to `to` on this node (`HalC2.Checkpoint.turn_diff/5`)."
+  @doc "The diff of a thread's runs `from` to `to` on this MC (`HalC2.Checkpoint.turn_diff/5`)."
   def turn_diff(id, from, to) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
     HalC2.Checkpoint.turn_diff(state, id, from, to, false)
   end
 
-  @doc "Creates a project on this node and waits until its row is stored."
+  @doc "Creates a project on this MC and waits until its row is stored."
   def create_project(id, title, root) do
     {:ok, _} =
       HalC2.Projects.mutate(%{
@@ -217,7 +217,7 @@ defmodule HalC2.Test.Machines do
   end
 
   @doc """
-  Sends `text` to the thread `id` on this node and waits for its run to finish;
+  Sends `text` to the thread `id` on this MC and waits for its run to finish;
   returns the run.
   """
   def send_message(id, text, selection \\ %{"instanceId" => "codex", "model" => "gpt-5.4"}) do
@@ -259,14 +259,14 @@ defmodule HalC2.Test.Machines do
     end
   end
 
-  @doc "Deletes a project on this node."
+  @doc "Deletes a project on this MC."
   def delete_project(id) do
     {:ok, _} = HalC2.Projects.mutate(%{"type" => "project.delete", "projectId" => id})
     HalC2.Streams.flush_shell(id)
   end
 
   @doc """
-  Makes the scripted fake Pi (`fake_pi_rpc.py`) this node's `pi`, keeping its
+  Makes the scripted fake Pi (`fake_pi_rpc.py`) this MC's `pi`, keeping its
   `config.json` and `log.jsonl` in `dir`.
   """
   def install_pi(dir) do
@@ -293,7 +293,7 @@ defmodule HalC2.Test.Machines do
   end
 
   @doc """
-  Makes the fake ACP agent (`fake_acp.py`) this node's `instance`, enabled, with each
+  Makes the fake ACP agent (`fake_acp.py`) this MC's `instance`, enabled, with each
   prompt it is sent logged to `acp-inputs.jsonl` and every message to
   `acp-trace.jsonl` in `dir`. With `agent_id` the
   instance is an ACP registry agent's.
@@ -381,7 +381,7 @@ defmodule HalC2.Test.Machines do
     ]
   end
 
-  # Makes this VM a named node, as a clustered node boots.
+  # Makes this VM a named MC, as a clustered MC boots.
   defp distribute do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])

@@ -1,7 +1,7 @@
 defmodule HalC2.Cluster.Tailscale do
   @moduledoc """
   Discovery strategy: the online peers on this machine's tailnet, from the local
-  daemon's `tailscale status --json` (no API key). Machines without a HAL-C2 node refuse
+  daemon's `tailscale status --json` (no API key). Machines without a HAL-C2 MC refuse
   the connection and ones outside the cluster fail the handshake, so every peer is
   worth a try.
   """

@@ -1,7 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - Drives the real host process against a fake node on disk.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - Drives the real host process against a fake MC on disk.
 /**
  * Mirrors features/desktop/shell-host.feature: each `it` is named after the
- * scenario it covers. The host (main.ts) runs as the shell runs it; the node is
+ * scenario it covers. The host (main.ts) runs as the shell runs it; the MC is
  * a fake release (`bin/hal_c2 start`) that reads the bootstrap line, serves the
  * descriptor and `/oauth/token`, and records how it was started.
  */
@@ -15,12 +15,12 @@ import * as NodeReadline from "node:readline";
 import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { nodeDataDir, resolveNodeLaunch } from "./elixirNode.ts";
+import { mcDataDir, resolveMcLaunch } from "./elixirMc.ts";
 
 const hostEntry = NodeURL.fileURLToPath(new URL("./main.ts", import.meta.url));
 const nodeBin = process.execPath;
 
-const FAKE_NODE = String.raw`
+const FAKE_MC = String.raw`
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
@@ -35,9 +35,9 @@ fs.writeFileSync(path.join(dir, "record.json"), JSON.stringify({
   environment: Object.values(process.env),
   bootstrap,
 }));
-if (process.env.FAKE_NODE_FAIL) {
-  process.stderr.write("fake node: boom\n");
-  process.exit(Number(process.env.FAKE_NODE_FAIL));
+if (process.env.FAKE_MC_FAIL) {
+  process.stderr.write("fake MC: boom\n");
+  process.exit(Number(process.env.FAKE_MC_FAIL));
 }
 const home = bootstrap.halC2Home ?? dir;
 fs.mkdirSync(home, { recursive: true });
@@ -48,7 +48,7 @@ const dataDir = bootstrap.halC2Home
   : path.join(process.env.XDG_DATA_HOME ?? dir, "hal-c2", "elixir");
 fs.mkdirSync(dataDir, { recursive: true });
 if (!fs.existsSync(path.join(dataDir, "access-token")))
-  fs.writeFileSync(path.join(dataDir, "access-token"), "node-access-" + Math.random().toString(36).slice(2) + "\n");
+  fs.writeFileSync(path.join(dataDir, "access-token"), "mc-access-" + Math.random().toString(36).slice(2) + "\n");
 const idFile = path.join(home, "environment-id");
 if (!fs.existsSync(idFile)) fs.writeFileSync(idFile, "env-" + Math.random().toString(36).slice(2));
 const environmentId = fs.readFileSync(idFile, "utf8");
@@ -96,17 +96,17 @@ afterEach(() => {
     NodeFS.rmSync(directory, { recursive: true, force: true });
 });
 
-/** A fake node release: `<dir>/bin/hal_c2`, recording to `<dir>/record.json`. */
+/** A fake MC release: `<dir>/bin/hal_c2`, recording to `<dir>/record.json`. */
 function fakeRelease(): string {
   const dir = temporaryDirectory();
   NodeFS.mkdirSync(NodePath.join(dir, "bin"));
-  NodeFS.writeFileSync(NodePath.join(dir, "bin/hal_c2"), `#!${nodeBin}\n${FAKE_NODE}`, {
+  NodeFS.writeFileSync(NodePath.join(dir, "bin/hal_c2"), `#!${nodeBin}\n${FAKE_MC}`, {
     mode: 0o755,
   });
   return dir;
 }
 
-interface NodeRecord {
+interface McRecord {
   readonly argv: string[];
   readonly bootstrapStdin: string | undefined;
   readonly nodeCommand: string | undefined;
@@ -118,10 +118,10 @@ interface NodeRecord {
   };
 }
 
-function readRecord(release: string): NodeRecord | undefined {
+function readRecord(release: string): McRecord | undefined {
   const file = NodePath.join(release, "record.json");
   return NodeFS.existsSync(file)
-    ? (JSON.parse(NodeFS.readFileSync(file, "utf8")) as NodeRecord)
+    ? (JSON.parse(NodeFS.readFileSync(file, "utf8")) as McRecord)
     : undefined;
 }
 
@@ -146,7 +146,7 @@ async function occupy(port = 0): Promise<number | undefined> {
 }
 
 type HostMessage =
-  | { readonly type: "ready"; readonly node: { readonly origin: string; readonly token: string } }
+  | { readonly type: "ready"; readonly mc: { readonly origin: string; readonly token: string } }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "exit"; readonly code: number | null };
 
@@ -164,13 +164,13 @@ function startHost(input: {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
-      HAL_C2_NODE_PORT: undefined,
+      HAL_C2_MC_PORT: undefined,
       HAL_C2_HOME: undefined,
-      HAL_C2_NODE_HOME: undefined,
+      HAL_C2_MC_HOME: undefined,
       // Never the user's own data or state directory.
       XDG_DATA_HOME: temporaryDirectory(),
       XDG_STATE_HOME: temporaryDirectory(),
-      HAL_C2_NODE_RELEASE: undefined,
+      HAL_C2_MC_RELEASE: undefined,
       ...input.env,
     },
   });
@@ -197,7 +197,7 @@ function startHost(input: {
 async function ready(host: Host) {
   const message = await host.message;
   if (message.type !== "ready") throw new Error(`expected ready, got ${JSON.stringify(message)}`);
-  return message.node;
+  return message.mc;
 }
 
 async function errorMessage(host: Host): Promise<string> {
@@ -218,12 +218,12 @@ async function standalone(
   const host = startHost({
     args: options.home === undefined ? [] : [`--base-dir=${options.home}`],
     env: {
-      HAL_C2_NODE_RELEASE: release,
-      HAL_C2_NODE_PORT: String(await freePort()),
+      HAL_C2_MC_RELEASE: release,
+      HAL_C2_MC_PORT: String(await freePort()),
       ...options.env,
     },
   });
-  return { host, release, node: await ready(host) };
+  return { host, release, mc: await ready(host) };
 }
 
 async function descriptorOf(origin: string): Promise<{ environmentId: string }> {
@@ -231,8 +231,8 @@ async function descriptorOf(origin: string): Promise<{ environmentId: string }> 
   return (await response.json()) as { environmentId: string };
 }
 
-/** A fake node the test starts itself, as `mise run node` would. */
-async function runningNode() {
+/** A fake MC the test starts itself, as `mise run mc` would. */
+async function runningMc() {
   const release = fakeRelease();
   const port = await freePort();
   const child = NodeChildProcess.spawn(NodePath.join(release, "bin/hal_c2"), ["start"], {
@@ -247,8 +247,8 @@ async function runningNode() {
   return { origin: `http://127.0.0.1:${port}`, release };
 }
 
-/** The hal-c2-dev profile's node directories under temporary XDG data and state homes. */
-function devNodeDirs(xdg: { readonly data: string; readonly state: string }) {
+/** The hal-c2-dev profile's MC directories under temporary XDG data and state homes. */
+function devMcDirs(xdg: { readonly data: string; readonly state: string }) {
   const dirs = {
     data: NodePath.join(xdg.data, "hal-c2-dev", "elixir"),
     state: NodePath.join(xdg.state, "hal-c2-dev", "elixir"),
@@ -267,9 +267,9 @@ function writeRuntimeRecord(stateDir: string, origin: string): void {
 }
 
 // oxlint-disable-next-line hal-c2/no-global-process-runtime -- The skip decision needs the real host, outside any Effect runtime.
-describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own node", () => {
-  describe("Starting the desktop app starts its node and connects to it", () => {
-    it("Starting the desktop app starts a node with the desktop's HAL-C2 home", async () => {
+describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC", () => {
+  describe("Starting the desktop app starts its MC and connects to it", () => {
+    it("Starting the desktop app starts an MC with the desktop's HAL-C2 home", async () => {
       const home = temporaryDirectory();
       const { release, host } = await standalone({ home });
       const record = readRecord(release);
@@ -280,23 +280,23 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       await host.quit();
     });
 
-    it("The desktop's own client is given the node and its access token", async () => {
+    it("The desktop's own client is given the MC and its access token", async () => {
       const home = temporaryDirectory();
-      const { release, host, node } = await standalone({ home });
+      const { release, host, mc } = await standalone({ home });
       const record = readRecord(release);
       const accessToken = NodeFS.readFileSync(
         NodePath.join(home, "data/elixir/access-token"),
         "utf8",
       ).trim();
 
-      expect(node).toEqual({
+      expect(mc).toEqual({
         origin: `http://127.0.0.1:${record?.bootstrap.port}`,
         token: accessToken,
       });
       await host.quit();
     });
 
-    it("A configured node release is the node the desktop app runs", async () => {
+    it("A configured MC release is the MC the desktop app runs", async () => {
       const release = fakeRelease();
       const { host } = await standalone({ release });
 
@@ -304,9 +304,9 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       await host.quit();
     });
 
-    it("In a checkout without a release the node runs from source", () => {
+    it("In a checkout without a release the MC runs from source", () => {
       const hostDir = "/checkout/apps/desktop-qt/host";
-      const launch = resolveNodeLaunch(
+      const launch = resolveMcLaunch(
         hostDir,
         {},
         (path) => path === "/checkout/apps/server-ex/mix.exs",
@@ -319,15 +319,15 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       });
     });
 
-    it("A node run from source keeps its access token in the development profile", () => {
+    it("An MC run from source keeps its access token in the development profile", () => {
       const launch = { command: "mix", args: ["hal_c2.server"], cwd: "/checkout/apps/server-ex" };
       const env = { XDG_DATA_HOME: "/xdg/data" };
 
-      expect(nodeDataDir({ launch, home: undefined, env, homeDir: "/home/user" })).toBe(
+      expect(mcDataDir({ launch, home: undefined, env, homeDir: "/home/user" })).toBe(
         "/xdg/data/hal-c2-dev/elixir",
       );
       expect(
-        nodeDataDir({
+        mcDataDir({
           launch: { command: "/release/bin/hal_c2", args: ["start"] },
           home: undefined,
           env,
@@ -336,17 +336,17 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       ).toBe("/xdg/data/hal-c2/elixir");
     });
 
-    it("The node's JavaScript sidecars run on the desktop app's Node", async () => {
+    it("The MC's JavaScript sidecars run on the desktop app's Node", async () => {
       const { release, host } = await standalone();
 
       expect(readRecord(release)?.nodeCommand).toBe(nodeBin);
       await host.quit();
     });
 
-    it("Without a configured port the node takes the next free one", async () => {
-      // Taken either by this test or by a node already running on this machine.
+    it("Without a configured port the MC takes the next free one", async () => {
+      // Taken either by this test or by an MC already running on this machine.
       await occupy(3780);
-      const { release, host } = await standalone({ env: { HAL_C2_NODE_PORT: "" } });
+      const { release, host } = await standalone({ env: { HAL_C2_MC_PORT: "" } });
 
       expect(readRecord(release)?.bootstrap.port).toBeGreaterThan(3780);
       await host.quit();
@@ -357,76 +357,76 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
     it("Restarting the desktop app connects to the same environment again", async () => {
       const home = temporaryDirectory();
       const first = await standalone({ home });
-      const firstEnvironment = await descriptorOf(first.node.origin);
+      const firstEnvironment = await descriptorOf(first.mc.origin);
       await first.host.quit();
 
       const second = await standalone({ home });
 
-      expect((await descriptorOf(second.node.origin)).environmentId).toBe(
+      expect((await descriptorOf(second.mc.origin)).environmentId).toBe(
         firstEnvironment.environmentId,
       );
       await second.host.quit();
     });
   });
 
-  describe("Attaching to a running node with its pairing link", () => {
-    it("Attaching to a node with its pairing link", async () => {
-      const node = await runningNode();
+  describe("Attaching to a running MC with its pairing link", () => {
+    it("Attaching to an MC with its pairing link", async () => {
+      const mc = await runningMc();
       const ownRelease = fakeRelease();
       const host = startHost({
-        args: [`--attach=${node.origin}/?token=pairing-token`],
-        env: { HAL_C2_NODE_RELEASE: ownRelease },
+        args: [`--attach=${mc.origin}/?token=pairing-token`],
+        env: { HAL_C2_MC_RELEASE: ownRelease },
       });
 
-      expect(await ready(host)).toEqual({ origin: node.origin, token: "access" });
+      expect(await ready(host)).toEqual({ origin: mc.origin, token: "access" });
       expect(readRecord(ownRelease)).toBeUndefined();
       await host.quit();
     });
 
-    it("An attached desktop's own client is given the token of a node on this machine", async () => {
-      const node = await runningNode();
+    it("An attached desktop's own client is given the token of an MC on this machine", async () => {
+      const mc = await runningMc();
       const data = temporaryDirectory();
       const state = temporaryDirectory();
-      // Where `mise run node` keeps its files: the hal-c2-dev profile's elixir level.
-      const nodeDirs = devNodeDirs({ data, state });
-      writeRuntimeRecord(nodeDirs.state, node.origin);
-      NodeFS.writeFileSync(NodePath.join(nodeDirs.data, "access-token"), "local-node-token\n");
+      // Where `mise run mc` keeps its files: the hal-c2-dev profile's elixir level.
+      const mcDirs = devMcDirs({ data, state });
+      writeRuntimeRecord(mcDirs.state, mc.origin);
+      NodeFS.writeFileSync(NodePath.join(mcDirs.data, "access-token"), "local-mc-token\n");
       const host = startHost({
-        args: [`--attach=${node.origin}/?token=pairing-token`],
+        args: [`--attach=${mc.origin}/?token=pairing-token`],
         env: { XDG_DATA_HOME: data, XDG_STATE_HOME: state },
       });
 
-      expect(await ready(host)).toEqual({ origin: node.origin, token: "local-node-token" });
+      expect(await ready(host)).toEqual({ origin: mc.origin, token: "local-mc-token" });
       await host.quit();
     });
 
-    it("An attached desktop's own client pairs with a node it has no files for", async () => {
-      const node = await runningNode();
+    it("An attached desktop's own client pairs with an MC it has no files for", async () => {
+      const mc = await runningMc();
       const data = temporaryDirectory();
       const state = temporaryDirectory();
-      const nodeDirs = devNodeDirs({ data, state });
-      writeRuntimeRecord(nodeDirs.state, `http://127.0.0.1:${await freePort()}`);
-      NodeFS.writeFileSync(NodePath.join(nodeDirs.data, "access-token"), "other-node-token\n");
+      const mcDirs = devMcDirs({ data, state });
+      writeRuntimeRecord(mcDirs.state, `http://127.0.0.1:${await freePort()}`);
+      NodeFS.writeFileSync(NodePath.join(mcDirs.data, "access-token"), "other-mc-token\n");
       const host = startHost({
-        args: [`--attach=${node.origin}/#token=pairing-token`],
+        args: [`--attach=${mc.origin}/#token=pairing-token`],
         env: { XDG_DATA_HOME: data, XDG_STATE_HOME: state },
       });
 
-      expect(await ready(host)).toEqual({ origin: node.origin, token: "access" });
+      expect(await ready(host)).toEqual({ origin: mc.origin, token: "access" });
       await host.quit();
     });
 
-    it("Attaching with a pairing link the node refuses", async () => {
-      const node = await runningNode();
-      const host = startHost({ args: [`--attach=${node.origin}/?token=spent`] });
+    it("Attaching with a pairing link the MC refuses", async () => {
+      const mc = await runningMc();
+      const host = startHost({ args: [`--attach=${mc.origin}/?token=spent`] });
 
       expect(await errorMessage(host)).toBe(
-        `The pairing link for ${node.origin} is invalid or expired.`,
+        `The pairing link for ${mc.origin} is invalid or expired.`,
       );
       expect(await host.exited).toBe(1);
     });
 
-    it("An address that is not a node is refused", async () => {
+    it("An address that is not an MC is refused", async () => {
       const server = NodeHttp.createServer((_request, response) => {
         response.writeHead(404).end();
       });
@@ -436,70 +436,68 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       const host = startHost({ args: [`--attach=http://127.0.0.1:${port}/some/page?x=1`] });
 
       expect(await errorMessage(host)).toBe(
-        `http://127.0.0.1:${port} is not a HAL-C2 node. ` +
-          "Start the desktop app with a node's pairing link to attach to it.",
+        `http://127.0.0.1:${port} is not a HAL-C2 MC. ` +
+          "Start the desktop app with an MC's pairing link to attach to it.",
       );
       expect(await host.exited).toBe(1);
     });
 
-    it("Attaching to a node that is not running", async () => {
+    it("Attaching to an MC that is not running", async () => {
       const port = await freePort();
       const host = startHost({ args: [`--attach=http://127.0.0.1:${port}/?token=abc`] });
 
-      expect(await errorMessage(host)).toContain(
-        `Cannot reach the node at http://127.0.0.1:${port}`,
-      );
+      expect(await errorMessage(host)).toContain(`Cannot reach the MC at http://127.0.0.1:${port}`);
       expect(await host.exited).toBe(1);
     });
   });
 
-  describe("Quitting the desktop app stops the node it started", () => {
-    it("Quitting the desktop app stops its node", async () => {
-      const { release, host, node } = await standalone();
+  describe("Quitting the desktop app stops the MC it started", () => {
+    it("Quitting the desktop app stops its MC", async () => {
+      const { release, host, mc } = await standalone();
 
       expect(await host.quit()).toBe(0);
       expect(NodeFS.existsSync(NodePath.join(release, "stopped"))).toBe(true);
-      await expect(descriptorOf(node.origin)).rejects.toThrow();
+      await expect(descriptorOf(mc.origin)).rejects.toThrow();
     });
 
-    it("Quitting an attached desktop app leaves the node running", async () => {
-      const node = await runningNode();
-      const host = startHost({ args: [`--attach=${node.origin}/?token=pairing-token`] });
+    it("Quitting an attached desktop app leaves the MC running", async () => {
+      const mc = await runningMc();
+      const host = startHost({ args: [`--attach=${mc.origin}/?token=pairing-token`] });
       await ready(host);
 
       expect(await host.quit()).toBe(0);
-      expect(NodeFS.existsSync(NodePath.join(node.release, "stopped"))).toBe(false);
-      expect((await descriptorOf(node.origin)).environmentId).toMatch(/^env-/);
+      expect(NodeFS.existsSync(NodePath.join(mc.release, "stopped"))).toBe(false);
+      expect((await descriptorOf(mc.origin)).environmentId).toMatch(/^env-/);
     });
   });
 
   describe("Start-up failures say what went wrong", () => {
-    it("The node fails to start", async () => {
+    it("The MC fails to start", async () => {
       const host = startHost({
         env: {
-          HAL_C2_NODE_RELEASE: fakeRelease(),
-          HAL_C2_NODE_PORT: String(await freePort()),
-          FAKE_NODE_FAIL: "3",
+          HAL_C2_MC_RELEASE: fakeRelease(),
+          HAL_C2_MC_PORT: String(await freePort()),
+          FAKE_MC_FAIL: "3",
         },
       });
 
       const message = await errorMessage(host);
-      expect(message).toContain("The node failed to start (exit code 3)");
-      expect(message).toContain("fake node: boom");
+      expect(message).toContain("The MC failed to start (exit code 3)");
+      expect(message).toContain("fake MC: boom");
       expect(await host.exited).toBe(1);
     });
 
-    it("The node's port the desktop app was told to use is taken", async () => {
+    it("The MC's port the desktop app was told to use is taken", async () => {
       const release = fakeRelease();
       const taken = await occupy();
       const host = startHost({
-        env: { HAL_C2_NODE_RELEASE: release, HAL_C2_NODE_PORT: String(taken) },
+        env: { HAL_C2_MC_RELEASE: release, HAL_C2_MC_PORT: String(taken) },
       });
 
       const message = await errorMessage(host);
       expect(message).toContain(`Port ${taken}`);
       expect(message).toContain("in use");
-      expect(message).toContain("HAL_C2_NODE_PORT");
+      expect(message).toContain("HAL_C2_MC_PORT");
       expect(await host.exited).toBe(1);
       expect(readRecord(release)).toBeUndefined();
     });

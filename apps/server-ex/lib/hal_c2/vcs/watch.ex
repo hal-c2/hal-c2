@@ -45,7 +45,7 @@ defmodule HalC2.Vcs.Watch do
   def start_link(cwd),
     do: GenServer.start_link(__MODULE__, cwd, name: {:via, Registry, {@registry, cwd}})
 
-  # Nil also when the registry is not running (a node started without watchers).
+  # Nil also when the registry is not running (an MC started without watchers).
   defp lookup(cwd) do
     case Registry.lookup(@registry, cwd) do
       [{pid, _}] -> pid

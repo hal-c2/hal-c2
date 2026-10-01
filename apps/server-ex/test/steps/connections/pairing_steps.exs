@@ -7,12 +7,12 @@ defmodule HalC2.Steps.Connections.Pairing do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
+  alias HalC2.Test.Mc
 
   # --- printed on the host ---------------------------------------------------------
 
-  step "an operator asks the node for a pairing link with its LAN address", context do
-    base = "http://#{Node.lan_address()}:#{context.node.port}"
+  step "an operator asks the MC for a pairing link with its LAN address", context do
+    base = "http://#{Mc.lan_address()}:#{context.mc.port}"
     context |> Map.put(:base, base) |> Map.put(:printed, print_link(base))
   end
 
@@ -34,24 +34,24 @@ defmodule HalC2.Steps.Connections.Pairing do
     {:ok, expires, _} = DateTime.from_iso8601(link["expiresAt"])
     assert DateTime.diff(expires, created) == 5 * 60
 
-    assert {200, %{"scope" => scope}} = Node.pair_http(context.node, context.token)
+    assert {200, %{"scope" => scope}} = Mc.pair_http(context.mc, context.token)
     assert String.split(scope) == HalC2.Auth.standard_scopes()
     # One time only.
-    assert {400, %{"error" => "invalid_grant"}} = Node.pair_http(context.node, context.token)
+    assert {400, %{"error" => "invalid_grant"}} = Mc.pair_http(context.mc, context.token)
     context
   end
 
   step "the printed link starts with that address", context do
     assert String.starts_with?(context.printed, context.base <> "/?token=")
     token = String.replace_prefix(context.printed, context.base <> "/?token=", "")
-    assert {200, %{"access_token" => _}} = Node.pair_http(context.node, token)
+    assert {200, %{"access_token" => _}} = Mc.pair_http(context.mc, token)
     context
   end
 
   # --- minted by an administrator --------------------------------------------------
 
   step "an administrator's client", context do
-    Map.put(context, :admin_access, Node.pair(Node.admin_scopes(), "Admin"))
+    Map.put(context, :admin_access, Mc.pair(Mc.admin_scopes(), "Admin"))
   end
 
   step "it creates a pairing link labelled {string} with standard scopes",
@@ -59,7 +59,7 @@ defmodule HalC2.Steps.Connections.Pairing do
     create_link(context, label)
   end
 
-  step "the node returns the link's credential once", context do
+  step "the MC returns the link's credential once", context do
     assert is_binary(context.link["credential"]) and context.link["credential"] != ""
     assert %{"id" => _} = listed = listed_link(context)
     refute Map.has_key?(listed, "credential")
@@ -70,7 +70,7 @@ defmodule HalC2.Steps.Connections.Pairing do
   step "the link is listed under that label until it is used", context do
     assert listed_link(context)["label"] == context.link_label
     assert listed_link(context)["scopes"] == HalC2.Auth.standard_scopes()
-    assert {200, _} = Node.pair_http(context.node, context.link["credential"])
+    assert {200, _} = Mc.pair_http(context.mc, context.link["credential"])
     assert listed_link(context) == nil
     context
   end
@@ -78,7 +78,7 @@ defmodule HalC2.Steps.Connections.Pairing do
   step "a listed pairing link", context do
     context =
       context
-      |> Map.put(:admin_access, Node.pair(Node.admin_scopes(), "Admin"))
+      |> Map.put(:admin_access, Mc.pair(Mc.admin_scopes(), "Admin"))
       |> create_link("Kitchen tablet")
 
     assert listed_link(context)
@@ -87,7 +87,7 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   step "a device pairs with it", context do
     assert {200, %{"access_token" => _}} =
-             Node.pair_http(context.node, context.link["credential"], "Kitchen tablet")
+             Mc.pair_http(context.mc, context.link["credential"], "Kitchen tablet")
 
     context
   end
@@ -99,7 +99,7 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   step "the device is listed as a client", context do
     {200, clients} =
-      Node.http(context.node, :get, "/api/auth/clients", bearer: context.admin_access)
+      Mc.http(context.mc, :get, "/api/auth/clients", bearer: context.admin_access)
 
     assert Enum.any?(clients, &(&1["client"]["label"] == "Kitchen tablet"))
     context
@@ -107,7 +107,7 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   step "an administrator revokes it", context do
     assert {200, %{"revoked" => true}} =
-             Node.http(context.node, :post, "/api/auth/pairing-links/revoke",
+             Mc.http(context.mc, :post, "/api/auth/pairing-links/revoke",
                bearer: context.admin_access,
                json: %{"id" => context.link["id"]}
              )
@@ -118,7 +118,7 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   step "pairing with it fails", context do
     assert {400, %{"error" => "invalid_grant"}} =
-             Node.pair_http(context.node, context.link["credential"])
+             Mc.pair_http(context.mc, context.link["credential"])
 
     context
   end
@@ -126,13 +126,13 @@ defmodule HalC2.Steps.Connections.Pairing do
   # --- helpers -----------------------------------------------------------------------
 
   defp print_link(base) do
-    assert [line] = Node.run_task(Mix.Tasks.HalC2.Pair, [base])
+    assert [line] = Mc.run_task(Mix.Tasks.HalC2.Pair, [base])
     line
   end
 
   defp create_link(context, label) do
     assert {200, link} =
-             Node.http(context.node, :post, "/api/auth/pairing-token",
+             Mc.http(context.mc, :post, "/api/auth/pairing-token",
                bearer: context.admin_access,
                json: %{"label" => label, "scopes" => HalC2.Auth.standard_scopes()}
              )
@@ -142,7 +142,7 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   defp listed_link(context) do
     {200, links} =
-      Node.http(context.node, :get, "/api/auth/pairing-links", bearer: context.admin_access)
+      Mc.http(context.mc, :get, "/api/auth/pairing-links", bearer: context.admin_access)
 
     Enum.find(links, &(&1["id"] == context.link["id"]))
   end

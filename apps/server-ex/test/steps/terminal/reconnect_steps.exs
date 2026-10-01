@@ -3,8 +3,8 @@ defmodule HalC2.Steps.Terminal.Reconnect do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.{Terminal, World}
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.{Terminal, World}
 
   # --- attaching replays history, then streams --------------------------------------
 
@@ -213,14 +213,14 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     context
   end
 
-  step "the history is written to the node's terminal store", context do
-    # The node saves at most every 500 ms while output arrives.
+  step "the history is written to the MC's terminal store", context do
+    # The MC saves at most every 500 ms while output arrives.
     saved = Terminal.await_persisted(context, context.terminal, line("tick-50"))
     assert saved =~ line("tick-1")
     context
   end
 
-  # Printed with no client attached, so the test does not stream it; the node's
+  # Printed with no client attached, so the test does not stream it; the MC's
   # own save of the scrollback says when printing finished.
   step ~r/^a terminal that has printed (?<amount>6,000 lines|10 MiB of text)$/,
        %{args: [amount]} = context do
@@ -346,13 +346,13 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     end
   end
 
-  # --- watching the node's terminals ------------------------------------------------
+  # --- watching the MC's terminals ------------------------------------------------
 
-  step "the node runs terminals for two threads", context do
+  step "the MC runs terminals for two threads", context do
     open_threads(context, ["th-one", "th-two"])
   end
 
-  step "a client starts watching the node's terminals", context do
+  step "a client starts watching the MC's terminals", context do
     watch(context)
   end
 
@@ -396,7 +396,7 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     await_watch(context, &match?(%{"type" => "remove", "threadId" => "th-three"}, &1))
   end
 
-  step "a client is watching the node's terminals", context do
+  step "a client is watching the MC's terminals", context do
     context |> open_threads(["th-one", "th-two"]) |> watch()
   end
 
@@ -419,9 +419,9 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     )
   end
 
-  # --- terminals on other nodes -----------------------------------------------------
+  # --- terminals on other MCs -----------------------------------------------------
 
-  step "a thread whose terminal runs on the second node", context do
+  step "a thread whose terminal runs on the second MC", context do
     peer = context.peer
     :ok = :erpc.call(peer, System, :put_env, ["SHELL", "/bin/sh"])
 
@@ -447,13 +447,13 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     Terminal.put_input(context, input)
   end
 
-  step "a client connected to the first node attaches to that terminal", context do
+  step "a client connected to the first MC attaches to that terminal", context do
     input = attach_input(context)
     {frame, context} = Terminal.attach(context, "default", input, Atom.to_string(context.peer))
     Map.merge(context, %{frame: frame, snapshot: snapshot(frame)})
   end
 
-  step "the client receives the terminal's history and live output from the second node",
+  step "the client receives the terminal's history and live output from the second MC",
        context do
     assert context.snapshot["history"] =~ line("peer-history")
     assert context.snapshot["cwd"] == context.terminal["cwd"]
@@ -463,7 +463,7 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     context
   end
 
-  step "a client attaches to a terminal on a node the cluster does not know", context do
+  step "a client attaches to a terminal on an MC the cluster does not know", context do
     {frame, context} =
       Terminal.attach(context, "default", Terminal.input(context), "ghost@nowhere")
 
@@ -530,12 +530,12 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     id = System.unique_integer([:positive])
 
     client =
-      Node.sub(World.client(context, "watcher"), id, %{
+      Mc.sub(World.client(context, "watcher"), id, %{
         "type" => "terminals",
-        "node" => Atom.to_string(node())
+        "mc" => Atom.to_string(node())
       })
 
-    {frame, client} = Node.await(client, &(&1["id"] == id))
+    {frame, client} = Mc.await(client, &(&1["id"] == id))
 
     context
     |> World.put_client("watcher", client)
@@ -546,7 +546,7 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     id = context.watch_id
 
     {_, client} =
-      Node.await(
+      Mc.await(
         World.client(context, "watcher"),
         &(&1["t"] == "terminals" and &1["id"] == id and fun.(&1["event"])),
         5_000

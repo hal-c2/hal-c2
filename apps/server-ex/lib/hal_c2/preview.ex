@@ -1,12 +1,12 @@
 defmodule HalC2.Preview do
   @moduledoc """
   The desktop's in-app browser tabs, per thread (`preview.*`). The desktop owns
-  the actual webview and reports navigation here; the node keeps each tab's
+  the actual webview and reports navigation here; the MC keeps each tab's
   snapshot so it survives reconnects and reaches every window. Tabs live in
   memory: `serverEpoch` changes on restart and `revision` orders every change.
   Clients normalize URLs (`normalizePreviewUrl`) before sending them.
 
-  Watchers (client sockets) get `{:hal_c2_preview, node, PreviewEvent}`.
+  Watchers (client sockets) get `{:hal_c2_preview, mc, PreviewEvent}`.
   """
 
   use GenServer

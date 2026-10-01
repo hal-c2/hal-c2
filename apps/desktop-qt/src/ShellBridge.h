@@ -30,12 +30,12 @@ public:
   QQmlPropertyMap* state() const { return m_state; }
   bool localFolderImportEnabled() const { return m_localFolderImportEnabled; }
   void setLocalFolderImportEnabled(bool enabled) { m_localFolderImportEnabled = enabled; }
-  // The node the shell is connected to; local folders are its only when it
+  // The MC the shell is connected to; local folders are its only when it
   // runs on this machine (a loopback origin).
-  QUrl nodeOrigin() const { return m_nodeOrigin; }
-  void setNodeOrigin(const QUrl& origin) { m_nodeOrigin = origin; }
-  // Whether this machine's folders are the node's: import is allowed and the
-  // node runs here.
+  QUrl mcOrigin() const { return m_mcOrigin; }
+  void setMcOrigin(const QUrl& origin) { m_mcOrigin = origin; }
+  // Whether this machine's folders are the MC's: import is allowed and the
+  // MC runs here.
   bool localFolders() const;
 
   // A key bindings can follow before anything publishes it; see kStateKeys.
@@ -73,7 +73,7 @@ private:
   QQmlPropertyMap* m_state;
   QList<Interceptor> m_interceptors;
   std::function<void(const QUrl&)> m_openUrl;
-  QUrl m_nodeOrigin;
+  QUrl m_mcOrigin;
   bool m_localFolderImportEnabled = false;
 };
 

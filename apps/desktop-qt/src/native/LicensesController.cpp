@@ -37,7 +37,7 @@ QVariant nullable(const QString& value) {
 
 }  // namespace
 
-LicensesController::LicensesController(ShellBridge* bridge, NodeClient*, QObject* parent)
+LicensesController::LicensesController(ShellBridge* bridge, McClient*, QObject* parent)
     : QObject(parent), m_bridge(bridge) {}
 
 void LicensesController::activate() {

@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Settings.ResourceTelemetry do
   @moduledoc """
-  The resource monitor on a node: the `resourceTelemetry` socket shape streams a
+  The resource monitor on an MC: the `resourceTelemetry` socket shape streams a
   snapshot after every sample (every 2s while watched, 15s otherwise), and the
   sampler keeps an hour of samples (`HalC2.Diagnostics`).
   """
@@ -8,20 +8,20 @@ defmodule HalC2.Steps.Settings.ResourceTelemetry do
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @hour 60 * 60_000
 
   step "the user watches the resource monitor", context do
-    Node.ensure(HalC2.Diagnostics)
+    Mc.ensure(HalC2.Diagnostics)
 
     client =
       context
       |> World.client("monitor")
-      |> Node.sub(1, %{"type" => "resourceTelemetry", "node" => Atom.to_string(node())})
+      |> Mc.sub(1, %{"type" => "resourceTelemetry", "mc" => Atom.to_string(node())})
 
-    {%{"snapshot" => snapshot}, client} = Node.await(client, &(&1["t"] == "resourceTelemetry"))
+    {%{"snapshot" => snapshot}, client} = Mc.await(client, &(&1["t"] == "resourceTelemetry"))
     context |> World.put_client("monitor", client) |> Map.put(:snapshot, snapshot)
   end
 
@@ -29,7 +29,7 @@ defmodule HalC2.Steps.Settings.ResourceTelemetry do
     assert context.snapshot["sampleIntervalMs"] == 2_000
 
     {%{"snapshot" => next}, client} =
-      Node.await(World.client(context, "monitor"), &(&1["t"] == "resourceTelemetry"), 3_000)
+      Mc.await(World.client(context, "monitor"), &(&1["t"] == "resourceTelemetry"), 3_000)
 
     assert next["readAt"] > context.snapshot["readAt"]
     assert [%{"category" => "server", "depth" => 0} | _] = next["processes"]
@@ -37,12 +37,12 @@ defmodule HalC2.Steps.Settings.ResourceTelemetry do
   end
 
   step "no client watches the resource monitor", context do
-    Node.ensure(HalC2.Diagnostics)
+    Mc.ensure(HalC2.Diagnostics)
     assert :sys.get_state(HalC2.Diagnostics).watchers == %{}
     context
   end
 
-  step "the node samples every 15 seconds", context do
+  step "the MC samples every 15 seconds", context do
     {{:ok, history}, context} = history(context, @hour)
     assert history["sampleIntervalMs"] == 15_000
     context
@@ -69,7 +69,7 @@ defmodule HalC2.Steps.Settings.ResourceTelemetry do
   end
 
   step "the user retries the resource monitor", context do
-    Node.ensure(HalC2.Diagnostics)
+    Mc.ensure(HalC2.Diagnostics)
     asked = DateTime.utc_now() |> DateTime.truncate(:millisecond)
     {reply, context} = World.call(context, "server.retryResourceTelemetry")
     Map.merge(context, %{reply: reply, asked: asked})
@@ -91,10 +91,10 @@ defmodule HalC2.Steps.Settings.ResourceTelemetry do
     context
   end
 
-  # Through the node's own writers: a span while tracing is on, and a provider's
+  # Through the MC's own writers: a span while tracing is on, and a provider's
   # line while provider event logging is on.
-  step "the node has written trace records and provider event logs", context do
-    Node.ensure(HalC2.Diagnostics)
+  step "the MC has written trace records and provider event logs", context do
+    Mc.ensure(HalC2.Diagnostics)
     World.put_app_env(:trace, true)
     World.put_app_env(:provider_event_log, true)
 
@@ -108,7 +108,7 @@ defmodule HalC2.Steps.Settings.ResourceTelemetry do
 
   # Application I/O is the instrumented, per-operation attribution. The storage
   # counters each process reports from /proc/<pid>/io are separate
-  # (node/platform/diagnostics.feature, "The node reports per-process I/O").
+  # (mc/platform/diagnostics.feature, "The MC reports per-process I/O").
   step "logical bytes read and written are shown per operation", context do
     entries = context.snapshot["attribution"]["entries"]
 

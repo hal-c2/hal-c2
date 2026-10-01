@@ -358,7 +358,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_info(_other, state), do: {:noreply, state}
 
   # The app-server, and the terminals it runs, stop with this process: released when
-  # idle, or stopped with its thread. Its writes may fail when the node itself is
+  # idle, or stopped with its thread. Its writes may fail when the MC itself is
   # stopping; the next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do

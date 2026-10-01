@@ -37,7 +37,7 @@ bool offered(const QList<MenuController::Item>& items, const QString& id) {
 
 }  // namespace
 
-MenuController::MenuController(ShellBridge* bridge, NodeClient*, QObject* parent)
+MenuController::MenuController(ShellBridge* bridge, McClient*, QObject* parent)
     : QObject(parent), m_bridge(bridge) {}
 
 bool MenuController::handle(const QString& action, const QVariant& payload) {

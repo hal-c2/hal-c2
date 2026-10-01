@@ -10,8 +10,8 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @stages %{
     "Fetch base branch" => "fetch",
@@ -39,7 +39,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
        context do
     %{path: path, root: root, branch: branch} = context.worktree
     name = String.replace(branch, "/", "-")
-    assert path == Path.join([context.node.home, "worktrees", Path.basename(root), name])
+    assert path == Path.join([context.mc.home, "worktrees", Path.basename(root), name])
     assert File.dir?(path)
     assert path in World.worktrees(root)
     assert World.git!(path, ~w(branch --show-current)) == branch
@@ -92,7 +92,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
 
     # Origin moves ahead of the local branch, so the worktree shows which one it
     # started from.
-    other = Path.join(Node.tmp_dir(context.node, "other"), "shop")
+    other = Path.join(Mc.tmp_dir(context.mc, "other"), "shop")
     World.git!(Path.dirname(other), ["clone", "-q", origin, other])
 
     World.git!(
@@ -207,7 +207,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
 
   step "{string} has a setup script set to run when a worktree is created",
        %{args: [title]} = context do
-    log = Path.join(Node.tmp_dir(context.node, "setup"), "cwd")
+    log = Path.join(Mc.tmp_dir(context.mc, "setup"), "cwd")
     context |> put_setup(title, "pwd > '#{log}'", false) |> Map.put(:setup_log, log)
   end
 
@@ -283,7 +283,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     # A post-checkout hook holds `git worktree add` open; it reports its pid and
     # folder through a pipe once the files are on disk.
     root = World.project(context).root
-    pipe = Path.join(Node.tmp_dir(context.node, "hook"), "checkout")
+    pipe = Path.join(Mc.tmp_dir(context.mc, "hook"), "checkout")
     {_, 0} = System.cmd("mkfifo", [pipe])
     hook = Path.join(root, ".git/hooks/post-checkout")
     File.write!(hook, "#!/bin/sh\necho \"$$ $(pwd)\" > '#{pipe}'\nexec sleep 600\n")
@@ -385,7 +385,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     Mint.HTTP.close(conn)
     # What the old socket had already received is gone with it.
     flush_socket(socket)
-    context = World.put_client(context, Node.connect(context.node))
+    context = World.put_client(context, Mc.connect(context.mc))
     watch_setup(context)
   end
 
@@ -464,7 +464,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
 
   step "the agent works in {string} without a worktree", %{args: [title]} = context do
     World.worktree_services()
-    log = Path.join(Node.tmp_dir(context.node, "setup"), "cwd")
+    log = Path.join(Mc.tmp_dir(context.mc, "setup"), "cwd")
 
     context
     |> put_setup(title, "pwd > '#{log}'; echo setup-$((6*7))", false)
@@ -594,7 +594,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
 
   defp add_worktree(context, branch) do
     root = World.project(context).root
-    path = Path.join(Node.tmp_dir(context.node, "worktree"), String.replace(branch, "/", "-"))
+    path = Path.join(Mc.tmp_dir(context.mc, "worktree"), String.replace(branch, "/", "-"))
     World.git!(root, ["worktree", "add", "-q", "-b", branch, path, "main"])
     Map.put(context, :worktree, %{path: path, root: root, branch: branch})
   end
@@ -662,12 +662,12 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
 
     shape = %{
       "type" => "worktreeSetup",
-      "node" => Atom.to_string(node()),
+      "mc" => Atom.to_string(node()),
       "threadId" => context.setup_thread
     }
 
-    client = Node.sub(World.client(context), id, shape)
-    {frame, client} = Node.await(client, &(&1["t"] == "worktreeSetup" and &1["id"] == id), 5_000)
+    client = Mc.sub(World.client(context), id, shape)
+    {frame, client} = Mc.await(client, &(&1["t"] == "worktreeSetup" and &1["id"] == id), 5_000)
     context |> World.put_client(client) |> Map.put(:watched, frame["event"])
   end
 
@@ -712,7 +712,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
 
   # Calls one of the agent's tools as the agent of the thread "Work".
   defp tool(context, name, arguments) do
-    Node.ensure(HalC2.Mcp)
+    Mc.ensure(HalC2.Mcp)
     %{authorization: auth} = HalC2.Mcp.server(World.thread_id(context, "Work"), "codex")
 
     body =

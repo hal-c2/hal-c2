@@ -8,7 +8,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 
 // The quit shortcut (mod+Q), guarded as this device's `confirmQuit` says
@@ -35,7 +35,7 @@ public:
   static constexpr int kHintLingerMs = 1200;
   static inline const QString kQuit = QStringLiteral("app.quit");
 
-  QuitController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  QuitController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
   void activate() override;
   void attach(NativeWindow* window) override;

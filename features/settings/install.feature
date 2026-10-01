@@ -12,7 +12,7 @@ Feature: Installing and uninstalling
 
   # Blocked: how does a release reach the user's machine? The install script and the
   # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
-  @backlog @blocked @node
+  @backlog @blocked @mc
   Scenario Outline: The install script puts hal-c2 on the machine
     When the user runs the install script <options>
     Then hal-c2 <result> is installed in the user's local bin folder
@@ -27,7 +27,7 @@ Feature: Installing and uninstalling
   # Dropped: a release runs under the operating system's service manager
   # (background-service.feature) and a checkout under a mise daemon. There is no web app
   # to open and no npm package to run.
-  @dropped @node
+  @dropped @mc
   Scenario Outline: The user starts the server
     When the user runs "<command>"
     Then the server starts <how>
@@ -40,7 +40,7 @@ Feature: Installing and uninstalling
 
   # Blocked: how does a release reach the user's machine? The install script and the
   # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
-  @backlog @blocked @node
+  @backlog @blocked @mc
   Scenario Outline: The user updates from the command line
     When the user runs "<command>"
     Then <result>
@@ -54,14 +54,14 @@ Feature: Installing and uninstalling
 
   # Blocked: how does a release reach the user's machine? The install script and the
   # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
-  @backlog @blocked @node
+  @backlog @blocked @mc
   Scenario: Declining the restart leaves the old server running
     When the user runs "hal-c2 update" and declines the restart
     Then the old version keeps running until the user restarts the service
 
   # Blocked: how does a release reach the user's machine? The install script and the
   # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
-  @backlog @blocked @node
+  @backlog @blocked @mc
   Scenario: Uninstalling keeps the user's data
     When the user runs "hal-c2 uninstall"
     Then the user is shown everything that will be removed and asked once
@@ -70,7 +70,7 @@ Feature: Installing and uninstalling
 
   # Blocked: how does a release reach the user's machine? The install script and the
   # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
-  @backlog @blocked @node
+  @backlog @blocked @mc
   Scenario: An Intel Mac has no prebuilt server
     Given an Intel Mac
     When the user runs the install script
@@ -83,7 +83,7 @@ Feature: Installing and uninstalling
     Then the desktop app opens a new thread for "api", adding the project if needed
     But if the desktop app cannot be reached the command fails with an error
 
-  @backlog @node
+  @backlog @mc
   Scenario: The background service on macOS needs Full Disk Access for protected folders
     Given the background service runs on macOS without Full Disk Access
     And a project lives in the user's Documents folder

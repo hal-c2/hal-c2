@@ -1,10 +1,10 @@
 defmodule HalC2.Service do
   @moduledoc """
-  The node as a background service for the operator's user (`hal-c2 service`,
+  The MC as a background service for the operator's user (`hal-c2 service`,
   `apps/server/src/cloud/bootService.ts`): a systemd user unit on Linux, a
   LaunchAgent on macOS. The unit runs the release's `bin/hal-c2-service` (or
   `mix hal_c2.server` from a checkout). It names a home only when the user chose one
-  (`HAL_C2_NODE_HOME`, or a `HAL_C2_HOME` that is not an old home); otherwise the
+  (`HAL_C2_MC_HOME`, or a `HAL_C2_HOME` that is not an old home); otherwise the
   service uses the XDG directories (`HalC2.Paths`). A unit written before, by
   T3 Code or before the rename (`t3code.service`, `com.t3tools.t3code.service`,
   `io.github.halc2.halc2.service`) and with `T3CODE_HOME` or an old home in it, is
@@ -132,7 +132,7 @@ defmodule HalC2.Service do
   @doc """
   `%{"supported", "installed", "current", "problems", "unitPath", "logPath"}`: whether
   this platform has a service manager, whether the unit exists, what keeps it from
-  running (`problem_message/1`), and whether it is the one this node would write
+  running (`problem_message/1`), and whether it is the one this MC would write
   with nothing in its way.
   """
   def status do
@@ -254,7 +254,7 @@ defmodule HalC2.Service do
       else: result
   end
 
-  # The units on disk as `{name, path}`, this node's first, then any from before the rename.
+  # The units on disk as `{name, path}`, this MC's first, then any from before the rename.
   defp installed(manager) do
     for name <- [name(manager) | old_names(manager)],
         path = unit_path(manager, name),
@@ -361,9 +361,9 @@ defmodule HalC2.Service do
   defp log_path, do: Path.join([HalC2.Paths.state_dir(), "logs", "boot-service.log"])
 
   # The home variables the user set for this process that the unit should keep:
-  # `HAL_C2_NODE_HOME`, or a `HAL_C2_HOME` root. An old home is never written back.
+  # `HAL_C2_MC_HOME`, or a `HAL_C2_HOME` root. An old home is never written back.
   defp chosen_home do
-    for {name, kind} <- [{"HAL_C2_NODE_HOME", :node}, {"HAL_C2_HOME", :root}],
+    for {name, kind} <- [{"HAL_C2_MC_HOME", :mc}, {"HAL_C2_HOME", :root}],
         dir = System.get_env(name),
         dir not in [nil, ""],
         HalC2.Paths.root?(dir, kind, HalC2.Paths.user_home()),

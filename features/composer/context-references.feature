@@ -88,7 +88,7 @@ Feature: Referencing files, skills, commands and context
     Then the draft references pull request 42
 
   @backlog @desktop
-  Scenario: Another thread on the same node can be referenced
+  Scenario: Another thread on the same MC can be referenced
     Given the environment has a thread "Auth refactor"
     When the user references the thread "Auth refactor"
     Then the draft references "Auth refactor"
@@ -132,8 +132,8 @@ Feature: Referencing files, skills, commands and context
     And the message carries no excerpt
 
   @desktop
-  Scenario: A send the node rejects gives its terminal excerpt back
-    Given the node refuses "message.dispatch" with "Provider unavailable"
+  Scenario: A send the MC rejects gives its terminal excerpt back
+    Given the MC refuses "message.dispatch" with "Provider unavailable"
     And the draft holds an excerpt from "Terminal 1" lines 3 to 5
     When the user sends "Why does this fail?"
     Then the user sees an "error" toast "Failed to send message" saying "Provider unavailable"
@@ -152,14 +152,14 @@ Feature: Referencing files, skills, commands and context
     Then the reference is marked unresolved
     And the user is told the environment it came from is not connected
 
-  @node
+  @mc
   Scenario: References reach the provider as labelled markers with their content appended
     Given a message "Look at README" references the file README.md
     When the message is sent to the provider
     Then the provider reads a marker naming the file README in place of the reference
     And the referenced content follows the message in a context envelope
 
-  @node
+  @mc
   Scenario: Referenced content cannot close the context envelope
     Given a terminal excerpt reference whose label contains "</hal_c2_context>"
     When the message is sent to the provider

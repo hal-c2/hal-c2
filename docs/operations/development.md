@@ -17,27 +17,27 @@ manager. Without mise: `vp i` at the root, `mix deps.get` in `apps/server-ex`.
 ## Running the target surfaces
 
 ```sh
-mise run node              # Elixir node in the foreground, ready to cluster (`mix hal_c2.cluster`)
-mise run node:pair         # one-time pairing URL for that node (--tailscale to publish it)
-mise run node:reload       # compile and load what changed into that node; sockets and agents stay up
-mise run desktop           # build the Qt shell, pair it with the running node, launch
+mise run mc              # MC in the foreground, ready to cluster (`mix hal_c2.cluster`)
+mise run mc:pair         # one-time pairing URL for that MC (--tailscale to publish it)
+mise run mc:reload       # compile and load what changed into that MC; sockets and agents stay up
+mise run desktop           # build the Qt shell, pair it with the running MC, launch
 mise run desktop:build     # build only (--release for a Release build)
-mise run tui               # bundle apps/tui and open it on the running node
+mise run tui               # bundle apps/tui and open it on the running MC
 mise run tui:build         # the TUI bundle; tui depends on it
 ```
 
 Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own
 flags). The build tasks declare their sources, so a dependent task skips them while nothing
-changed. The Qt shell pairs with the node on
-`HAL_C2_NODE_PORT` (default 3780); `--url` takes a pairing link for another node, and
-`--standalone` starts the shell's own node from source, as the installed app does, so do not
-combine it with `mise run node` on the same home.
+changed. The Qt shell pairs with the MC on
+`HAL_C2_MC_PORT` (default 3780); `--url` takes a pairing link for another MC, and
+`--standalone` starts the shell's own MC from source, as the installed app does, so do not
+combine it with `mise run mc` on the same home.
 
-The TUI finds the node through the runtime record and access token the node keeps in the
-XDG `hal-c2-dev` profile, so start `mise run node` first;
-`mise run tui -- --url <link>` pairs it with another node from a `node:pair` link instead and
-keeps that session for the next `--url <origin>`. Pair the Elixir node into a web client from Settings → Connections with the
-URL `node:pair` prints.
+The TUI finds the MC through the runtime record and access token the MC keeps in the
+XDG `hal-c2-dev` profile, so start `mise run mc` first;
+`mise run tui -- --url <link>` pairs it with another MC from an `mc:pair` link instead and
+keeps that session for the next `--url <origin>`. Pair the MC into a web client from Settings → Connections with the
+URL `mc:pair` prints.
 
 Open the pairing URL printed by the dev runner. The bare origin does not authenticate
 a new browser.
@@ -152,9 +152,9 @@ vp lint <files>
 vp run --filter <package> typecheck
 ```
 
-Behaviour scenarios run per surface with `mise run features:node <globs>`, `features:tui` and
+Behaviour scenarios run per surface with `mise run features:mc <globs>`, `features:tui` and
 `features:desktop`; see [running features](../../features/README.md#running).
-Use `vp run lint:mobile` for native mobile changes. CI covers the node, the TUI and the Qt desktop
+Use `vp run lint:mobile` for native mobile changes. CI covers the MC, the TUI and the Qt desktop
 ([ci.yml](../../.github/workflows/ci.yml), [desktop-qt.yml](../../.github/workflows/desktop-qt.yml));
 the legacy Node server, web, Electron and React Native apps have no CI, so check what you touch there
 by hand.

@@ -1,6 +1,6 @@
 defmodule HalC2.Environment do
   @moduledoc """
-  This node's identity as a client-facing environment.
+  This MC's identity as a client-facing environment.
 
   The environment id is generated once and kept in the HAL-C2 home directory, so it
   survives restarts, address changes, and cluster membership. Clients key their
@@ -18,7 +18,7 @@ defmodule HalC2.Environment do
       "platform" => platform(),
       "serverVersion" => version(),
       "orchestrationProtocolVersion" => @protocol,
-      # Commands are resolved against the thread on the node, so clients need not
+      # Commands are resolved against the thread on the MC, so clients need not
       # read the projection before sending.
       "capabilities" => %{
         # Projects carry their checkout's repository (`HalC2.Projects.repository_identity/1`).
@@ -124,7 +124,7 @@ defmodule HalC2.Environment do
   end
 
   @doc """
-  The client's `ServerConfig` for this node. Only what a node serves today is
+  The client's `ServerConfig` for this MC. Only what an MC serves today is
   filled in: Codex and Claude when installed, the user's keybinding rules, the installed editors, and
   the stored settings (`HalC2.Settings`), which decode to their defaults.
   """
@@ -161,7 +161,7 @@ defmodule HalC2.Environment do
     }
   end
 
-  @doc "`ServerConfig.providers`: the agents this node can run."
+  @doc "`ServerConfig.providers`: the agents this MC can run."
   def providers do
     (HalC2.Plugins.providers() || builtin_providers())
     |> Enum.map(

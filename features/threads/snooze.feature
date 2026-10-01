@@ -18,13 +18,13 @@ Feature: Snoozing threads
     Given a connected environment with the idle thread "Refactor cart"
     And the local time is Wednesday 10:00
 
-  @node
+  @mc
   Scenario: Snoozing a thread until a time
     When a client snoozes "Refactor cart" until Wednesday 15:00
     Then "Refactor cart" is snoozed until Wednesday 15:00
     And every connected client lists it as snoozed
 
-  @node
+  @mc
   Scenario: Unsnoozing a thread
     Given "Refactor cart" is snoozed until tomorrow
     When a client unsnoozes "Refactor cart"
@@ -131,7 +131,7 @@ Feature: Snoozing threads
     When the user snoozes "Refactor cart" until tomorrow
     Then "Refactor cart" is snoozed
 
-  @node @desktop @mobile @backlog
+  @mc @desktop @mobile @backlog
   Scenario: A late failure from an earlier run does not wake a snoozed thread
     Given "Refactor cart" is snoozed until tomorrow
     When a run that started before the snooze reports a failure

@@ -16,7 +16,7 @@
 #   apps/tui/src/features.backlog.test.ts (environment-connections)
 #   Shared domain: tui/reconnect.feature holds the terminal client's reconnects;
 #   mobile/offline-and-lifecycle.feature holds the phone's foreground and offline journeys;
-#   node/platform/websocket-protocol.feature holds resuming streams on the node.
+#   mc/platform/websocket-protocol.feature holds resuming streams on the MC.
 
 Feature: Connection health
   Each environment has one connection owner in a client. It retries transport failures with
@@ -159,7 +159,7 @@ Feature: Connection health
 
   @backlog @shared
   Scenario Outline: A protocol mismatch blocks the connection with advice
-    Given an environment whose node speaks <protocol>
+    Given an environment whose MC speaks <protocol>
     When the client connects
     Then the connection is blocked
     And the client says <advice>
@@ -175,7 +175,7 @@ Feature: Connection health
   @backlog @shared
   Scenario Outline: A server on another HAL-C2 version warns only when it is behind
     Given this client runs HAL-C2 <client>
-    And the environment's node runs HAL-C2 <server>
+    And the environment's MC runs HAL-C2 <server>
     When the client connects
     Then the connection is used as normal
     And the client <warning>
@@ -188,10 +188,10 @@ Feature: Connection health
       | 1.4.0-nightly.20260902 | 1.4.0-nightly.20260901 | warns of a version mismatch |
 
   @backlog @shared
-  Scenario: One connection serves every node of a cluster
-    Given a client connected to a cluster of three nodes
+  Scenario: One connection serves every MC of a cluster
+    Given a client connected to a cluster of three MCs
     Then the client keeps one connection for the cluster
-    And streams from every node arrive over it
+    And streams from every MC arrive over it
 
   @backlog @shared
   Scenario: A cluster connection resumes each stream from where it stopped

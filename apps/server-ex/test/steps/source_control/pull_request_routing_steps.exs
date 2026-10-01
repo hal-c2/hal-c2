@@ -1,14 +1,14 @@
 defmodule HalC2.Steps.SourceControl.PullRequestRouting do
   @moduledoc """
   Steps for `features/source-control/pull-request-routing.feature`. The scenario's
-  node is the remote environment (`context.remote`); its fake `gh` is signed in as
+  MC is the remote environment (`context.remote`); its fake `gh` is signed in as
   one account at a time, each with its own token.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @accounts %{"octocat" => 583_231, "hubot" => 480_938, "monalisa" => 7}
 
@@ -110,7 +110,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestRouting do
     fingerprint = :crypto.hash(:sha256, token("octocat")) |> Base.encode16(case: :lower)
     at = System.monotonic_time(:millisecond) - minutes * 60_000
     identity = %{"id" => "#{@accounts["octocat"]}", "login" => "octocat"}
-    # The node's clock cannot be moved, so the verification is dated back where it is held.
+    # The MC's clock cannot be moved, so the verification is dated back where it is held.
     :persistent_term.put({HalC2.PullRequests, :viewers}, %{
       {"github.com", fingerprint} => {at, identity}
     })

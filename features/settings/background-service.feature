@@ -2,7 +2,7 @@
 #   docs/user/background-service.md
 #   apps/server-ex/lib/hal_c2/background_policy.ex (profiles, leases, host power, pause rules)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (server.reportClientActivity)
-#   apps/server-ex/test/node_parity_test.exs (reportHostPowerState, getBackgroundPolicy, reportClientActivity aligned)
+#   apps/server-ex/test/mc_parity_test.exs (reportHostPowerState, getBackgroundPolicy, reportClientActivity aligned)
 #   apps/server-ex/rel/overlays/bin/hal-c2-service
 #   packages/contracts/src/rpc.ts (server.getBackgroundPolicy, server.reportHostPowerState, server.reportClientActivity)
 #   apps/web/src/components/settings/SettingsPanels.tsx (background activity profile and dialog)
@@ -12,13 +12,13 @@
 #   apps/server-ex/lib/hal_c2/service.ex
 
 Feature: Background activity and the background service
-  The node does periodic work such as fetching git and checking providers only
+  The MC does periodic work such as fetching git and checking providers only
   while someone is looking, and backs off on battery or when the machine is
-  locked. The background service keeps the node running without a client.
+  locked. The background service keeps the MC running without a client.
 
   Rule: Background activity follows the user's profile
 
-    @node
+    @mc
     Scenario Outline: Each profile sets how often background work runs
       Given the background profile is <profile>
       Then git is fetched <fetch> and providers are checked every <health>
@@ -29,7 +29,7 @@ Feature: Background activity and the background service
         | balanced      | every 30 seconds  | 5 minutes    |
         | battery saver | never             | 15 minutes   |
 
-    @node
+    @mc
     Scenario Outline: Background work pauses when the host is constrained
       Given the background profile is <profile>
       And the host reports it is <state>
@@ -43,45 +43,45 @@ Feature: Background activity and the background service
         | battery saver | on battery    | pauses   |
         | performance   | on low power  | continues |
 
-    @node
+    @mc
     Scenario: Background work runs only while a client is watching
       Given a client reported it is watching git status for thread "Fix login"
       When the client closes its connection
-      Then the node stops fetching git for "Fix login"
+      Then the MC stops fetching git for "Fix login"
 
-    @node
+    @mc
     Scenario: A client's activity report expires if not renewed
       Given a client reported it is watching provider status
       When the client does not renew the report for its lifetime
-      Then the node stops checking provider health for it
+      Then the MC stops checking provider health for it
 
     @backlog @shared
     Scenario: Clients report what the user is looking at
       When the user opens a thread in the client
-      Then the client tells the node it is watching that thread's git status
+      Then the client tells the MC it is watching that thread's git status
 
     @backlog @shared
     Scenario: The user sets custom background intervals
       When the user chooses advanced background activity for the environment
       And the user sets git fetch to every 2 minutes and turns off pausing when locked
-      Then the node fetches git every 2 minutes, even when locked
+      Then the MC fetches git every 2 minutes, even when locked
 
-  Rule: The background service keeps the node running
+  Rule: The background service keeps the MC running
 
-    @node
-    Scenario: The service starts the node again after an update restart
-      Given the node runs under its service
-      When the node stops to finish an update
+    @mc
+    Scenario: The service starts the MC again after an update restart
+      Given the MC runs under its service
+      When the MC stops to finish an update
       Then the service starts it again on the new version
 
-    @node
+    @mc
     Scenario: The user installs and removes the background service
       When the user installs the background service
       Then the server starts at login and runs without a client
       When the user uninstalls the service
       Then the server no longer starts at login
 
-    @node
+    @mc
     Scenario Outline: Service status explains what needs fixing
       Given the service <problem>
       When the user checks the service status
@@ -94,7 +94,7 @@ Feature: Background activity and the background service
         | is stopped                               |
         | is waiting for a restart                 |
 
-    @node
+    @mc
     Scenario: Reinstalling repairs a broken service
       Given the service definition was damaged
       When the user installs the background service again

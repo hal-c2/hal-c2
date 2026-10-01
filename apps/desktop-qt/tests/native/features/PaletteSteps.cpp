@@ -2,7 +2,7 @@
 // features/navigation/command-palette.feature, and opening it from the
 // thread list in features/threads/search.feature): a project with more threads
 // than the palette's recent list holds, threads on linked environments and
-// other nodes of the cluster, and the palette driven as the CommandPalette
+// other MCs of the cluster, and the palette driven as the CommandPalette
 // brick drives it. The brick's own keys (mod+1..9) are in KeybindingSteps.cpp.
 
 #include <QJSEngine>
@@ -18,7 +18,7 @@
 #include "Keybindings.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "RightPanelController.h"
 #include "SettingsController.h"
 #include "Stream.h"
@@ -47,32 +47,32 @@ struct PaletteState {
   std::unique_ptr<QJSEngine> engine;
 };
 
-// What each thread's messages say (by thread id, on this node), for
-// `orchestration.searchThreads`; answers wait while the node holds "messages".
+// What each thread's messages say (by thread id, on this MC), for
+// `orchestration.searchThreads`; answers wait while the MC holds "messages".
 struct FakeMessages {
   QHash<QString, QString> text;
   int asked = 0;
 };
 
-const FakeNode::Extension messages([](FakeNode& node) {
-  node.onRpc(QStringLiteral("orchestration.searchThreads"), [&node](const FakeNode::Rpc& rpc) {
-    FakeMessages& fake = node.part<FakeMessages>();
+const FakeMc::Extension messages([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("orchestration.searchThreads"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeMessages& fake = mc.part<FakeMessages>();
     ++fake.asked;
-    const auto answer = [&node, rpc] {
+    const auto answer = [&mc, rpc] {
       const QString query = rpc.payload.value(QLatin1String("query")).toString();
       QJsonArray matches;
-      if (rpc.environment.isEmpty() || rpc.environment == node.environmentId) {
-        const FakeMessages& fake = node.part<FakeMessages>();
+      if (rpc.environment.isEmpty() || rpc.environment == mc.environmentId) {
+        const FakeMessages& fake = mc.part<FakeMessages>();
         for (auto it = fake.text.cbegin(); it != fake.text.cend(); ++it) {
           if (it->contains(query, Qt::CaseInsensitive)) {
             matches.append(QJsonObject{{QStringLiteral("threadId"), it.key()}, {QStringLiteral("snippet"), *it}});
           }
         }
       }
-      node.reply(rpc, QJsonObject{{QStringLiteral("matches"), matches}});
+      mc.reply(rpc, QJsonObject{{QStringLiteral("matches"), matches}});
     };
-    if (node.holding(QStringLiteral("messages"))) {
-      node.defer(answer);
+    if (mc.holding(QStringLiteral("messages"))) {
+      mc.defer(answer);
     } else {
       answer();
     }
@@ -80,7 +80,7 @@ const FakeNode::Extension messages([](FakeNode& node) {
 });
 
 PaletteState& state(World& world) {
-  return world.node.part<PaletteState>();
+  return world.mc.part<PaletteState>();
 }
 
 CommandPaletteController& palette(World& world) {
@@ -106,7 +106,7 @@ struct Listed {
 QList<Listed> rows(World& world) {
   world.sync();
   CommandPaletteController& model = palette(world);
-  // What the palette lists once its searches against the node are answered.
+  // What the palette lists once its searches against the MC are answered.
   world.waitFor([&model] { return !model.searching(); }, QStringLiteral("the palette's searches to be answered"));
   QList<Listed> out;
   for (int row = 0; row < model.rowCount(); ++row) {
@@ -174,12 +174,12 @@ void addProject(World& world, const QString& id) {
                         {QStringLiteral("createdAt"), iso(stream::now())},
                         {QStringLiteral("updatedAt"), iso(stream::now())},
                         {QStringLiteral("scripts"), QJsonArray()}};
-  world.node.projects.insert(id, row);
-  world.node.sendRow(id, row, QStringLiteral("project"));
+  world.mc.projects.insert(id, row);
+  world.mc.sendRow(id, row, QStringLiteral("project"));
 }
 
-// A thread newer than every one before it, on this node unless `environment`
-// (a linked one) or `peer` (another node of the cluster) serves it.
+// A thread newer than every one before it, on this MC unless `environment`
+// (a linked one) or `peer` (another MC of the cluster) serves it.
 QString addThread(World& world, const QString& title, QJsonObject row = {}, const QString& environment = {},
                   const QString& peer = {}) {
   PaletteState& fake = state(world);
@@ -192,15 +192,15 @@ QString addThread(World& world, const QString& title, QJsonObject row = {}, cons
   row.insert(QStringLiteral("updatedAt"), at);
   QString key;
   if (!environment.isEmpty()) {
-    world.node.sendLinkRow(environment, id, row);
+    world.mc.sendLinkRow(environment, id, row);
     key = environment + QLatin1Char(':') + id;
   } else if (!peer.isEmpty()) {
-    world.node.sendRows(peer, QJsonArray{QJsonValue(QJsonArray{id, QStringLiteral("thread"), row})});
+    world.mc.sendRows(peer, QJsonArray{QJsonValue(QJsonArray{id, QStringLiteral("thread"), row})});
     key = stream::kPeerEnvironment + QLatin1Char(':') + id;
   } else {
-    world.node.threads.insert(id, row);
-    world.node.sendRow(id, row);
-    key = world.node.environmentId + QLatin1Char(':') + id;
+    world.mc.threads.insert(id, row);
+    world.mc.sendRow(id, row);
+    key = world.mc.environmentId + QLatin1Char(':') + id;
   }
   world.sync();
   fake.keys[title].append(key);
@@ -208,15 +208,15 @@ QString addThread(World& world, const QString& title, QJsonObject row = {}, cons
   return key;
 }
 
-// This node's environment with `changes` to what it can do, as the node says
+// This MC's environment with `changes` to what it can do, as the MC says
 // when a capability changes.
 void setCapabilities(World& world, const QJsonObject& changes) {
-  QJsonObject capabilities = world.node.capabilities;
+  QJsonObject capabilities = world.mc.capabilities;
   for (auto it = changes.begin(); it != changes.end(); ++it) capabilities.insert(it.key(), it.value());
-  world.node.send({{QStringLiteral("t"), QStringLiteral("shell.environment")},
-                   {QStringLiteral("id"), world.node.subscribers(QStringLiteral("shell")).value(0)},
-                   {QStringLiteral("node"), world.node.name},
-                   {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), world.node.environmentId},
+  world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.environment")},
+                   {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
+                   {QStringLiteral("mc"), world.mc.name},
+                   {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), world.mc.environmentId},
                                                                {QStringLiteral("capabilities"), capabilities}}}});
   world.sync();
 }
@@ -290,14 +290,14 @@ const Steps steps([] {
   step(QStringLiteral("the thread %1 is on branch %1").arg(q), [](World& world, const Captures& c, const Table&) {
     addThread(world, c[0], {{QStringLiteral("branch"), c[1]}});
   });
-  step(QStringLiteral("the thread %1 is on (a linked environment|another node of the cluster)").arg(q),
+  step(QStringLiteral("the thread %1 is on (a linked environment|another MC of the cluster)").arg(q),
        [](World& world, const Captures& c, const Table&) {
          if (c[1] == QLatin1String("a linked environment")) {
-           world.node.link(QStringLiteral("laptop"));
+           world.mc.link(QStringLiteral("laptop"));
            world.sync();
            addThread(world, c[0], {}, QStringLiteral("laptop"));
          } else {
-           world.node.join(stream::kPeer, stream::kPeerEnvironment);
+           world.mc.join(stream::kPeer, stream::kPeerEnvironment);
            world.sync();
            addThread(world, c[0], {}, {}, stream::kPeer);
          }
@@ -328,7 +328,7 @@ const Steps steps([] {
            addThread(world, QStringLiteral("Tidy"), {{QStringLiteral("projectId"), word + QStringLiteral("-lab")}});
          } else if (c[0] == QLatin1String("message content")) {
            addThread(world, QStringLiteral("Tidy"), {{QStringLiteral("id"), QStringLiteral("thread-talk")}});
-           world.node.part<FakeMessages>().text.insert(QStringLiteral("thread-talk"), QStringLiteral("The %1 crossing is striped").arg(word));
+           world.mc.part<FakeMessages>().text.insert(QStringLiteral("thread-talk"), QStringLiteral("The %1 crossing is striped").arg(word));
          } else if (c[0] == QLatin1String("branch")) {
            addThread(world, QStringLiteral("Tidy"), {{QStringLiteral("branch"), QStringLiteral("feature/") + word}});
          } else {
@@ -529,17 +529,17 @@ const Steps steps([] {
 
   // Searching thread messages.
   step(QStringLiteral("the user searches for text that only appears inside messages"), [](World& world, const Captures&, const Table&) {
-    world.node.hold(QStringLiteral("messages"));
+    world.mc.hold(QStringLiteral("messages"));
     addThread(world, QStringLiteral("Tidy"), {{QStringLiteral("id"), QStringLiteral("thread-talk")}});
-    world.node.part<FakeMessages>().text.insert(QStringLiteral("thread-talk"), QStringLiteral("The flamingo stands on one leg"));
+    world.mc.part<FakeMessages>().text.insert(QStringLiteral("thread-talk"), QStringLiteral("The flamingo stands on one leg"));
     search(world, QStringLiteral("flamingo"));
   });
   step(QStringLiteral("the palette says %1 until the results arrive").arg(q), [](World& world, const Captures& c, const Table&) {
     CommandPaletteController& model = palette(world);
-    world.waitFor([&world] { return world.node.part<FakeMessages>().asked > 0; }, QStringLiteral("the palette to search messages"));
+    world.waitFor([&world] { return world.mc.part<FakeMessages>().asked > 0; }, QStringLiteral("the palette to search messages"));
     world.sync();
     expect(model.count() == 0 && model.emptyText() == c[0], QStringLiteral("the palette says \"%1\" with %2 rows").arg(model.emptyText()).arg(model.count()));
-    world.node.answerHeld();
+    world.mc.answerHeld();
     const QList<Listed> listed = rows(world);
     expect(std::any_of(listed.cbegin(), listed.cend(), [&](const Listed& row) { return row.id == state(world).that; }), describe(world));
   });
@@ -634,10 +634,10 @@ const Steps steps([] {
   step(QStringLiteral("the thread has a linked pull request"), [](World& world, const Captures&, const Table&) {
     const QString key = world.native().controller<NavigationController>()->threadKey();
     const QString id = key.mid(key.indexOf(QLatin1Char(':')) + 1);
-    QJsonObject row = world.node.threads.value(id);
+    QJsonObject row = world.mc.threads.value(id);
     row.insert(QStringLiteral("linkedPullRequest"), QJsonObject{{QStringLiteral("url"), QStringLiteral("https://github.com/acme/shop/pull/7")}});
-    world.node.threads.insert(id, row);
-    world.node.sendRow(id, row);
+    world.mc.threads.insert(id, row);
+    world.mc.sendRow(id, row);
     world.sync();
   });
   step(QStringLiteral("the pull request URL is on the clipboard"), [](World& world, const Captures&, const Table&) {
@@ -645,7 +645,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the thread has no linked pull request"), [](World& world, const Captures&, const Table&) {
     const QString key = world.native().controller<NavigationController>()->threadKey();
-    expect(world.node.threads.value(key.mid(key.indexOf(QLatin1Char(':')) + 1)).value(QLatin1String("pullRequests")).toArray().isEmpty(),
+    expect(world.mc.threads.value(key.mid(key.indexOf(QLatin1Char(':')) + 1)).value(QLatin1String("pullRequests")).toArray().isEmpty(),
            QStringLiteral("%1 has pull requests").arg(key));
   });
   step(QStringLiteral("%1 cannot be run").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -659,15 +659,15 @@ const Steps steps([] {
     setCapabilities(world, {{QStringLiteral("threadPullRequests"), false}, {QStringLiteral("threadPullRequestLinking"), false}});
   });
   step(QStringLiteral("one connected environment supports pull requests and another does not"), [](World& world, const Captures&, const Table&) {
-    world.node.join(stream::kPeer, stream::kPeerEnvironment);
+    world.mc.join(stream::kPeer, stream::kPeerEnvironment);
     setCapabilities(world, {{QStringLiteral("pullRequests"), false}});
   });
   step(QStringLiteral("the user gives pull request (\\d+)"), [](World& world, const Captures& c, const Table&) {
     // The project's repository is on the host, so its pull requests can be read.
-    QJsonObject project = world.node.projects.value(kProject);
+    QJsonObject project = world.mc.projects.value(kProject);
     project.insert(QStringLiteral("repositoryIdentity"), QJsonObject{{QStringLiteral("canonicalKey"), QStringLiteral("github.com/acme/shop")}});
-    world.node.projects.insert(kProject, project);
-    world.node.sendRow(kProject, project, QStringLiteral("project"));
+    world.mc.projects.insert(kProject, project);
+    world.mc.sendRow(kProject, project, QStringLiteral("project"));
     world.sync();
     ThreadPullRequests* prs = world.native().controller<RightPanelController>()->pullRequests();
     expect(prs->linkOpen(), QStringLiteral("the link field is closed"));
@@ -686,7 +686,7 @@ const Steps steps([] {
 
   // Add project.
   step(QStringLiteral("the user chooses a local folder %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakeFiles& files = fakeFiles(world.node);
+    FakeFiles& files = fakeFiles(world.mc);
     files.folders << files.home + QStringLiteral("/code") << files.home + QStringLiteral("/code/shop");
     const int row = indexOf(world, QStringLiteral("Local folder"));
     expect(row >= 0 && palette(world).run(row), describe(world));
@@ -698,8 +698,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 is added as a project").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
-      for (const QJsonObject& project : std::as_const(world.node.projects)) {
-        if (project.value(QLatin1String("title")) == c[0] && project.value(QLatin1String("workspaceRoot")) == fakeFiles(world.node).home + u"/code/" + c[0]) return true;
+      for (const QJsonObject& project : std::as_const(world.mc.projects)) {
+        if (project.value(QLatin1String("title")) == c[0] && project.value(QLatin1String("workspaceRoot")) == fakeFiles(world.mc).home + u"/code/" + c[0]) return true;
       }
       return false;
     }, QStringLiteral("the project %1").arg(c[0]));
@@ -708,7 +708,7 @@ const Steps steps([] {
     world.waitFor([&] { return at(world.state(QStringLiteral("route")), QStringLiteral("kind")) == QLatin1String("draft"); },
                   [&] { return show(world.state(QStringLiteral("route"))); });
     const auto draft = world.native().controller<DraftController>()->draft(at(world.state(QStringLiteral("route")), QStringLiteral("draftId")).toString());
-    expect(draft && world.node.projects.value(draft->projectId).value(QLatin1String("title")) == QLatin1String("shop"), show(world.state(QStringLiteral("route"))));
+    expect(draft && world.mc.projects.value(draft->projectId).value(QLatin1String("title")) == QLatin1String("shop"), show(world.state(QStringLiteral("route"))));
   });
 });
 

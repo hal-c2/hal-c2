@@ -1,5 +1,5 @@
 // Calls one RPC through the protocol 3 client adapter (makeV3Session) against a
-// running node, recording every frame the adapter sends while the call runs.
+// running MC, recording every frame the adapter sends while the call runs.
 // Usage: bun v3_unsupported_call.ts <ws url> <environment id> <method>
 // Prints {"error": <message>, "sent": [<frames sent during the call>]} as JSON.
 import { ClusterSocket } from "../../../../packages/client-runtime/src/v3/clusterSocket.ts";

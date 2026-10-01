@@ -1,12 +1,12 @@
 defmodule HalC2.Test.Features do
   @moduledoc """
-  Runs the repo's Gherkin specification (`features/`) against this node.
+  Runs the repo's Gherkin specification (`features/`) against this MC.
 
-  Only scenarios tagged `@node` and not `@dropped` become tests; the rest belong
-  to other surfaces. `@backlog` and `@backlog-node` scenarios (and example tables)
+  Only scenarios tagged `@mc` and not `@dropped` become tests; the rest belong
+  to other surfaces. `@backlog` and `@backlog-mc` scenarios (and example tables)
   are left out unless `backlog: true` (`mix features --backlog`), since they name
-  behaviour the node does not have yet. Step definitions live in `test/steps/`, one file per feature
-  directory, on the harness in `HalC2.Test.Node`. `mix features` runs them, or
+  behaviour the MC does not have yet. Step definitions live in `test/steps/`, one file per feature
+  directory, on the harness in `HalC2.Test.Mc`. `mix features` runs them, or
   `HAL_C2_FEATURES=<globs> mix test --only cucumber`; globs are relative to `features/`.
   """
 
@@ -15,7 +15,7 @@ defmodule HalC2.Test.Features do
   @doc "The feature directory the specification lives in."
   def root, do: @root
 
-  @doc "Compiles the selected `@node` scenarios into ExUnit modules."
+  @doc "Compiles the selected `@mc` scenarios into ExUnit modules."
   def compile!(globs, opts \\ []) do
     backlog? = Keyword.get(opts, :backlog, false)
     patterns = Enum.map(globs, &Path.join(@root, &1))
@@ -34,7 +34,7 @@ defmodule HalC2.Test.Features do
 
     features =
       features
-      |> Enum.map(&select_node_scenarios(&1, backlog?))
+      |> Enum.map(&select_mc_scenarios(&1, backlog?))
       |> Enum.reject(&(&1.scenarios == [] and &1.rules == []))
       # Module names come from the file path: `Features.Threads.SettleTest`.
       |> Enum.map(&%{&1 | file: Path.relative_to(&1.file, Path.dirname(@root))})
@@ -50,10 +50,10 @@ defmodule HalC2.Test.Features do
     )
   end
 
-  defp select_node_scenarios(feature, backlog?) do
+  defp select_mc_scenarios(feature, backlog?) do
     select = fn scenarios, inherited ->
       scenarios
-      |> Enum.filter(&node?(&1, inherited))
+      |> Enum.filter(&mc?(&1, inherited))
       |> Enum.flat_map(&without_backlog(&1, inherited, backlog?))
     end
 
@@ -83,16 +83,16 @@ defmodule HalC2.Test.Features do
     end
   end
 
-  defp backlog?(tags), do: "backlog" in tags or "backlog-node" in tags
+  defp backlog?(tags), do: "backlog" in tags or "backlog-mc" in tags
 
   # Example tables carry tags too; an outline runs when any of its tables is a
-  # node table. (No feature uses per-table surface tags today.)
-  defp node?(scenario, inherited) do
+  # MC table. (No feature uses per-table surface tags today.)
+  defp mc?(scenario, inherited) do
     tags =
       inherited ++
         scenario.tags ++
         Enum.flat_map(Map.get(scenario, :examples) || [], & &1.tags)
 
-    "node" in tags and "dropped" not in tags
+    "mc" in tags and "dropped" not in tags
   end
 end

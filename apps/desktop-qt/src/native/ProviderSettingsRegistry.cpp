@@ -18,7 +18,7 @@
 #include <QJsonObject>
 #include <QUrl>
 
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ProviderDrivers.h"
 #include "ProviderInstances.h"
 #include "ProviderSettingsController.h"

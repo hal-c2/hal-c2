@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Orchestration.ScheduledTasks do
   @moduledoc """
-  Steps for `features/node/orchestration/scheduled-tasks.feature`.
+  Steps for `features/mc/orchestration/scheduled-tasks.feature`.
 
   Clients act over the socket (`scheduledTasks.*`), agents through the MCP tools.
   The scheduler's clock is pinned (`:scheduled_tasks_clock`) so times of day are
@@ -12,8 +12,8 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
   import ExUnit.Assertions
 
   alias HalC2.ScheduledTasks
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @hour 3_600_000
   @monday ~D[2026-07-06]
@@ -22,9 +22,9 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
 
   # --- background ----------------------------------------------------------------------
 
-  step "the local time zone of the node is used for times of day", context do
-    Node.ensure(HalC2.ScheduledTasks)
-    Node.ensure(HalC2.WorktreeSetup)
+  step "the local time zone of the MC is used for times of day", context do
+    Mc.ensure(HalC2.ScheduledTasks)
+    Mc.ensure(HalC2.WorktreeSetup)
     at = DateTime.utc_now()
     noon = ScheduledTasks.next_run(%{"type" => "fixed_time", "timeOfDay" => "12:00"}, at)
     assert %NaiveDateTime{hour: 12, minute: 0} = local(noon)
@@ -330,7 +330,7 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     task(context, name, %{"threadId" => "thread-gone"})
   end
 
-  # A task the node already found due is awaited; otherwise it is made due first.
+  # A task the MC already found due is awaited; otherwise it is made due first.
   step("task {string} runs", %{args: [name]} = context, do: run_due(context, name))
 
   step "task {string} last failed with the reason and its run count grows by 1",
@@ -382,9 +382,9 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     request = System.unique_integer([:positive])
 
     client =
-      Node.rpc(
+      Mc.rpc(
         World.client(context),
-        context.node.environment,
+        context.mc.environment,
         request,
         "scheduledTasks.runNow",
         %{"id" => task_id(context, name)}
@@ -413,7 +413,7 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
   end
 
   step "the client is told {string}", %{args: [message]} = context do
-    {frame, client} = Node.await(World.client(context), Node.reply?(context.request), 5_000)
+    {frame, client} = Mc.await(World.client(context), Mc.reply?(context.request), 5_000)
     assert %{"t" => "rpc.error", "error" => ^message} = frame
     assert :sys.get_state(ScheduledTasks).runs == %{}
     assert tasks() == []
@@ -422,7 +422,7 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
 
   # --- the scheduler ---------------------------------------------------------------------------
 
-  step "task {string} was due at {word} and the node was asleep until {word}",
+  step "task {string} was due at {word} and the MC was asleep until {word}",
        %{args: [name, due, woke]} = context do
     schedule = %{"type" => "fixed_time", "timeOfDay" => due}
 
@@ -432,13 +432,13 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     |> pin(at(context, woke))
   end
 
-  step "task {string} runs every hour and was due while the node was asleep",
+  step "task {string} runs every hour and was due while the MC was asleep",
        %{args: [name]} = context do
     context = context |> pin(at(context, "08:00")) |> task(name)
     context |> pin(at(context, "12:00")) |> Map.put(:run_count, 0)
   end
 
-  step "the node checks its schedule", context do
+  step "the MC checks its schedule", context do
     {:ok, _} = ScheduledTasks.subscribe(self())
     tick()
     # The check is done once the scheduler has handled the wake-up.
@@ -464,18 +464,18 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     context
   end
 
-  step "the node checks its schedule again within a minute", context do
+  step "the MC checks its schedule again within a minute", context do
     %{timer: timer} = :sys.get_state(ScheduledTasks)
     left = Process.read_timer(timer)
     assert is_integer(left) and left > 0 and left <= 60_000
     context
   end
 
-  step "task {string} was running when the node stopped", %{args: [name]} = context do
+  step "task {string} was running when the MC stopped", %{args: [name]} = context do
     context = running(context, name)
 
     stored =
-      Path.join(context.node.home, "scheduled-tasks.json") |> File.read!() |> JSON.decode!()
+      Path.join(context.mc.home, "scheduled-tasks.json") |> File.read!() |> JSON.decode!()
 
     assert [%{"lastRunStatus" => "running"}] = stored
     context
@@ -499,9 +499,9 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
   end
 
   step "a client watches the scheduled tasks", context do
-    shape = %{"type" => "scheduledTasks", "node" => Atom.to_string(node())}
-    client = context.node |> Node.connect() |> Node.sub(1, shape)
-    {_, client} = Node.await(client, &(&1["t"] == "scheduledTasks" and &1["tasks"] == []))
+    shape = %{"type" => "scheduledTasks", "mc" => Atom.to_string(node())}
+    client = context.mc |> Mc.connect() |> Mc.sub(1, shape)
+    {_, client} = Mc.await(client, &(&1["t"] == "scheduledTasks" and &1["tasks"] == []))
     World.put_client(context, "watcher", client)
   end
 
@@ -519,13 +519,13 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     id = task_id(context, name)
     frames = &(&1["t"] == "scheduledTasks" and pred(&1["tasks"], id, &2))
     client = World.client(context, "watcher")
-    {_, client} = Node.await(client, &frames.(&1, fn task -> task["runCount"] == 0 end))
+    {_, client} = Mc.await(client, &frames.(&1, fn task -> task["runCount"] == 0 end))
 
     {_, client} =
-      Node.await(client, &frames.(&1, fn task -> task["lastRunStatus"] == "running" end))
+      Mc.await(client, &frames.(&1, fn task -> task["lastRunStatus"] == "running" end))
 
-    {_, client} = Node.await(client, &frames.(&1, fn task -> task["runCount"] == 1 end))
-    {_, client} = Node.await(client, &(&1["t"] == "scheduledTasks" and &1["tasks"] == []))
+    {_, client} = Mc.await(client, &frames.(&1, fn task -> task["runCount"] == 1 end))
+    {_, client} = Mc.await(client, &(&1["t"] == "scheduledTasks" and &1["tasks"] == []))
     World.put_client(context, "watcher", client)
   end
 
@@ -663,12 +663,12 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
         "runCount" => 0
       })
 
-    File.write!(Path.join(context.node.home, "scheduled-tasks.json"), JSON.encode!([legacy]))
+    File.write!(Path.join(context.mc.home, "scheduled-tasks.json"), JSON.encode!([legacy]))
     put_in(context, [:tasks, "legacy"], "legacy-task")
   end
 
-  step "the node loads it", context do
-    Node.ensure(HalC2.ScheduledTasks)
+  step "the MC loads it", context do
+    Mc.ensure(HalC2.ScheduledTasks)
     assert %{"schedule" => %{"everyMs" => 30_000}} = current(context, "legacy")
     run_due(context, "legacy")
   end
@@ -815,7 +815,7 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
   defp tick, do: send(ScheduledTasks, :tick)
 
   # Moves the clock past the task's next run, wakes the scheduler and waits for the run.
-  # A task already due by the clock (the node checked its schedule) is only awaited.
+  # A task already due by the clock (the MC checked its schedule) is only awaited.
   defp run_due(context, name) do
     context = task(context, name)
     task = current(context, name)
@@ -915,7 +915,7 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
 
   # A thread of `project` with a turn running, whose agent calls the MCP tools.
   defp caller(context, thread, project) do
-    Node.ensure(HalC2.Mcp)
+    Mc.ensure(HalC2.Mcp)
 
     context =
       if (context[:threads] || %{})[thread],

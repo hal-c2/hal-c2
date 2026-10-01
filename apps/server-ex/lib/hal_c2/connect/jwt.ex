@@ -1,6 +1,6 @@
 defmodule HalC2.Connect.Jwt do
   @moduledoc """
-  The signatures HAL-C2 Connect trades in: Ed25519 (`EdDSA`) JWTs between the node and
+  The signatures HAL-C2 Connect trades in: Ed25519 (`EdDSA`) JWTs between the MC and
   the relay, and the P-256 DPoP proofs (RFC 9449) devices bind credentials with.
   Keys travel as PEM (SPKI / PKCS8) as the Node server writes them.
   """
@@ -42,7 +42,7 @@ defmodule HalC2.Connect.Jwt do
     _ -> :error
   end
 
-  @doc "The node's own link key pair `{public, private}` (raw), made on first use."
+  @doc "The MC's own link key pair `{public, private}` (raw), made on first use."
   def key_pair do
     case HalC2.Connect.Secrets.get(@key_pair) do
       nil ->

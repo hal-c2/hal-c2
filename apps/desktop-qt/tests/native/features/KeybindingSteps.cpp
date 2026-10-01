@@ -1,5 +1,5 @@
 // The shell's keymap (KeybindingController): pressing keys the way
-// ShellWindow's window shortcuts hand them over, the rules the node keeps in
+// ShellWindow's window shortcuts hand them over, the rules the MC keeps in
 // keybindings.json, and Settings → Keybindings over them
 // (features/navigation/keybinding*.feature, desktop/native-keybindings.feature for
 // who takes a key under focus).
@@ -58,7 +58,7 @@ struct KeyState {
 };
 
 KeyState& keys(World& world) {
-  return world.node.part<KeyState>();
+  return world.mc.part<KeyState>();
 }
 
 KeybindingController* keymap(World& world) {
@@ -70,52 +70,52 @@ const QJsonArray& noRules() {
   return empty;
 }
 
-QJsonArray storedRules(FakeNode& node) {
-  return fakeConfig(node).config.value(QLatin1String("keybindingRules")).toArray();
+QJsonArray storedRules(FakeMc& mc) {
+  return fakeConfig(mc).config.value(QLatin1String("keybindingRules")).toArray();
 }
 
-void sendRules(FakeNode& node) {
-  const QJsonArray rules = storedRules(node);
-  for (const int id : node.subscribers(QStringLiteral("config"))) {
-    if (node.shapeOf(id).value(QLatin1String("environment")) != node.environmentId) continue;
-    node.send({{QStringLiteral("t"), QStringLiteral("config.keybindings")},
+void sendRules(FakeMc& mc) {
+  const QJsonArray rules = storedRules(mc);
+  for (const int id : mc.subscribers(QStringLiteral("config"))) {
+    if (mc.shapeOf(id).value(QLatin1String("environment")) != mc.environmentId) continue;
+    mc.send({{QStringLiteral("t"), QStringLiteral("config.keybindings")},
                {QStringLiteral("id"), id},
                {QStringLiteral("rules"), rules}});
   }
 }
 
-// hal-c2.upsertKeybinding and removeKeybinding as the node does them
+// hal-c2.upsertKeybinding and removeKeybinding as the MC does them
 // (apps/server-ex lib/hal_c2/keybindings.ex): the rules back, pushed to every
 // client as `config.keybindings`.
-const FakeNode::Extension extension([](FakeNode& node) {
-  const auto refused = [&node](const FakeNode::Rpc& rpc) {
-    if (!node.refusals.contains(rpc.method)) return false;
-    node.refuse(rpc, node.refusals.value(rpc.method));
+const FakeMc::Extension extension([](FakeMc& mc) {
+  const auto refused = [&mc](const FakeMc::Rpc& rpc) {
+    if (!mc.refusals.contains(rpc.method)) return false;
+    mc.refuse(rpc, mc.refusals.value(rpc.method));
     return true;
   };
-  node.onRpc(QStringLiteral("hal-c2.upsertKeybinding"), [&node, refused](const FakeNode::Rpc& rpc) {
+  mc.onRpc(QStringLiteral("hal-c2.upsertKeybinding"), [&mc, refused](const FakeMc::Rpc& rpc) {
     if (refused(rpc)) return;
     QJsonObject rule = rpc.payload;
     const QJsonObject replace = rule.take(QStringLiteral("replace")).toObject();
     QJsonArray rules;
-    for (const QJsonValue& value : storedRules(node)) {
+    for (const QJsonValue& value : storedRules(mc)) {
       if (value.toObject() != rule && value.toObject() != replace) rules.append(value);
     }
     rules.append(rule);
     while (rules.size() > 256) rules.removeFirst();
-    fakeConfig(node).config.insert(QStringLiteral("keybindingRules"), rules);
-    node.reply(rpc, QJsonObject{{QStringLiteral("rules"), rules}});
-    sendRules(node);
+    fakeConfig(mc).config.insert(QStringLiteral("keybindingRules"), rules);
+    mc.reply(rpc, QJsonObject{{QStringLiteral("rules"), rules}});
+    sendRules(mc);
   });
-  node.onRpc(QStringLiteral("hal-c2.removeKeybinding"), [&node, refused](const FakeNode::Rpc& rpc) {
+  mc.onRpc(QStringLiteral("hal-c2.removeKeybinding"), [&mc, refused](const FakeMc::Rpc& rpc) {
     if (refused(rpc)) return;
     QJsonArray rules;
-    for (const QJsonValue& value : storedRules(node)) {
+    for (const QJsonValue& value : storedRules(mc)) {
       if (value.toObject() != rpc.payload) rules.append(value);
     }
-    fakeConfig(node).config.insert(QStringLiteral("keybindingRules"), rules);
-    node.reply(rpc, QJsonObject{{QStringLiteral("rules"), rules}});
-    sendRules(node);
+    fakeConfig(mc).config.insert(QStringLiteral("keybindingRules"), rules);
+    mc.reply(rpc, QJsonObject{{QStringLiteral("rules"), rules}});
+    sendRules(mc);
   });
 });
 
@@ -138,24 +138,24 @@ void ensureShell(World& world) {
   }
 }
 
-// The node's keybindings.json becomes `rules`, pushed when the shell is
+// The MC's keybindings.json becomes `rules`, pushed when the shell is
 // connected and in the snapshot when it connects.
 void setRules(World& world, const QJsonArray& rules) {
-  fakeConfig(world.node).config.insert(QStringLiteral("keybindingRules"), rules);
+  fakeConfig(world.mc).config.insert(QStringLiteral("keybindingRules"), rules);
   if (!connected(world)) return;
-  sendRules(world.node);
+  sendRules(world.mc);
   world.sync();
 }
 
 void addRule(World& world, const QString& key, const QString& command, const QString& when = {}) {
   QJsonObject rule{{QStringLiteral("key"), key}, {QStringLiteral("command"), command}};
   if (!when.isEmpty()) rule.insert(QStringLiteral("when"), when);
-  QJsonArray rules = storedRules(world.node);
+  QJsonArray rules = storedRules(world.mc);
   rules.append(rule);
   setRules(world, rules);
 }
 
-// Waits for a save or removal to come back from the node.
+// Waits for a save or removal to come back from the MC.
 void settle(World& world) {
   world.waitFor([&world] { return !keymap(world)->saving(); }, QStringLiteral("the keybinding change to settle"));
   world.sync();
@@ -235,7 +235,7 @@ void pressSequence(World& world, const QString& sequence) {
 }  // namespace
 
 bool sendKey(World& world, QEvent::Type type, int key, Qt::KeyboardModifiers modifiers, bool autoRepeat) {
-  KeyWindow* window = world.node.part<KeyTarget>().window.get();
+  KeyWindow* window = world.mc.part<KeyTarget>().window.get();
   window->reached = false;
   QKeyEvent event(type, key, modifiers, QString(), autoRepeat);
   QCoreApplication::sendEvent(window, &event);
@@ -295,7 +295,7 @@ void showThread(World& world) {
   KeyState& state = keys(world);
   if (state.threadShown) return;
   state.threadShown = true;
-  world.node.projects.insert(
+  world.mc.projects.insert(
       QStringLiteral("p1"),
       {{QStringLiteral("id"), QStringLiteral("p1")},
        {QStringLiteral("title"), QStringLiteral("p1")},
@@ -305,7 +305,7 @@ void showThread(World& world) {
        {QStringLiteral("scripts"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("test")},
                                                           {QStringLiteral("name"), QStringLiteral("Test")},
                                                           {QStringLiteral("command"), QStringLiteral("bun test")}}}}});
-  world.node.threads.insert(QStringLiteral("t1"), {{QStringLiteral("id"), QStringLiteral("t1")},
+  world.mc.threads.insert(QStringLiteral("t1"), {{QStringLiteral("id"), QStringLiteral("t1")},
                                                    {QStringLiteral("projectId"), QStringLiteral("p1")},
                                                    {QStringLiteral("title"), QStringLiteral("One")},
                                                    {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
@@ -317,16 +317,16 @@ void showThread(World& world) {
 }
 
 // Threads titled as given (ids "t" + title) in projects named by id, as the
-// node's snapshot has them when the shell connects.
+// MC's snapshot has them when the shell connects.
 void addThreads(World& world, const QList<std::pair<QString, QString>>& threads) {
   for (const auto& [title, project] : threads) {
-    world.node.projects.insert(project, {{QStringLiteral("id"), project},
+    world.mc.projects.insert(project, {{QStringLiteral("id"), project},
                                          {QStringLiteral("title"), project},
                                          {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + project},
                                          {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")},
                                          {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:00:00Z")},
                                          {QStringLiteral("scripts"), QJsonArray()}});
-    world.node.threads.insert(QStringLiteral("t") + title, {{QStringLiteral("id"), QStringLiteral("t") + title},
+    world.mc.threads.insert(QStringLiteral("t") + title, {{QStringLiteral("id"), QStringLiteral("t") + title},
                                                            {QStringLiteral("projectId"), project},
                                                            {QStringLiteral("title"), title},
                                                            {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
@@ -336,7 +336,7 @@ void addThreads(World& world, const QList<std::pair<QString, QString>>& threads)
 }
 
 void openThread(World& world, const QString& title) {
-  const QString key = world.node.environmentId + QStringLiteral(":t") + title;
+  const QString key = world.mc.environmentId + QStringLiteral(":t") + title;
   world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
   world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },
                 QStringLiteral("the window to show ") + key);
@@ -473,7 +473,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("thread %1 is shown").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString key = world.node.environmentId + QStringLiteral(":t") + c[0];
+    const QString key = world.mc.environmentId + QStringLiteral(":t") + c[0];
     world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },
                   [&] { return QStringLiteral("%1; the window shows %2").arg(key, show(world.state(QStringLiteral("route")))); });
   });
@@ -559,11 +559,11 @@ const Steps steps([] {
     setRules(world, noRules());
     ensureShell(world);
   });
-  step(QStringLiteral("the node adds the rule ([^ ]+) for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC adds the rule ([^ ]+) for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     keys(world).acted = true;
     addRule(world, c[0], c[1]);
   });
-  step(QStringLiteral("the node removes every custom rule"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC removes every custom rule"), [](World& world, const Captures&, const Table&) {
     keys(world).acted = true;
     setRules(world, {});
   });
@@ -762,8 +762,8 @@ const Steps steps([] {
     settle(world);
   });
   step(QStringLiteral("the environment will reject keybinding changes"), [](World& world, const Captures&, const Table&) {
-    world.node.refusals.insert(QStringLiteral("hal-c2.upsertKeybinding"), QStringLiteral("Read-only file system"));
-    world.node.refusals.insert(QStringLiteral("hal-c2.removeKeybinding"), QStringLiteral("Read-only file system"));
+    world.mc.refusals.insert(QStringLiteral("hal-c2.upsertKeybinding"), QStringLiteral("Read-only file system"));
+    world.mc.refusals.insert(QStringLiteral("hal-c2.removeKeybinding"), QStringLiteral("Read-only file system"));
   });
   step(QStringLiteral("the user (saves|removes) a binding"), [](World& world, const Captures& c, const Table&) {
     keys(world).acted = true;

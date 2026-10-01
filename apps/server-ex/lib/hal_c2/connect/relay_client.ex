@@ -4,8 +4,8 @@ defmodule HalC2.Connect.RelayClient do
   where it is (`cloud.getRelayClientStatus`) and installing the pinned release
   into the HAL-C2 home (`cloud.installRelayClient`), as `packages/shared/src/relayClient.ts`.
 
-  It is found, in order, at `HAL_C2_CLOUDFLARED_PATH`, at the node's managed
-  install, then on the `PATH`. Installs from several clients, or several nodes on
+  It is found, in order, at `HAL_C2_CLOUDFLARED_PATH`, at the MC's managed
+  install, then on the `PATH`. Installs from several clients, or several MCs on
   one home, take turns through a lock file next to the managed binary.
 
   Tests replace the host through app env: `:relay_client_env` (a map standing in
@@ -121,7 +121,7 @@ defmodule HalC2.Connect.RelayClient do
   end
 
   @doc """
-  `cloud.installRelayClient` off the caller: sends `pid` `{:hal_c2_relay_client_install, node, event}`
+  `cloud.installRelayClient` off the caller: sends `pid` `{:hal_c2_relay_client_install, mc, event}`
   for each progress event, then `complete` with the status, or `{:error, detail}`.
   """
   def start_install(pid) do

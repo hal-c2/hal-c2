@@ -74,9 +74,9 @@ export class DesktopEnvironment extends Context.Service<
     readonly appUpdateYmlPath: string;
     readonly devServerUrl: Option.Option<URL>;
     readonly devRemoteHalC2ServerEntryPath: Option.Option<string>;
-    // `bin/hal_c2` of an Elixir node release (apps/server-ex); when set, the primary
-    // backend is that node instead of the Node server.
-    readonly elixirNodeRelease: Option.Option<string>;
+    // `bin/hal_c2` of an MC release (apps/server-ex); when set, the primary
+    // backend is that MC instead of the Node server.
+    readonly mcRelease: Option.Option<string>;
     readonly configuredBackendPort: Option.Option<number>;
     readonly commitHashOverride: Option.Option<string>;
     readonly otlpTracesUrl: Option.Option<string>;
@@ -236,7 +236,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : path.join(input.appPath, "dev-app-update.yml"),
     devServerUrl,
     devRemoteHalC2ServerEntryPath: config.devRemoteHalC2ServerEntryPath,
-    elixirNodeRelease: config.elixirNodeRelease,
+    mcRelease: config.mcRelease,
     configuredBackendPort: config.configuredBackendPort,
     commitHashOverride: config.commitHashOverride,
     otlpTracesUrl: config.otlpTracesUrl,

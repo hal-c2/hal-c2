@@ -25,48 +25,48 @@ Feature: Settings scopes and inheritance
     Given the user has environments "Laptop" and "Build box"
     And the project "hal-c2" has a checkout on each environment
 
-  Rule: The node stores one versioned settings document
+  Rule: The MC stores one versioned settings document
 
-    @node
+    @mc
     Scenario: A write at the version the client read is saved
       Given a client has read the settings at their current version
       When the client writes a changed settings document at that version
-      Then the node saves the document
-      And the node answers with the next version
+      Then the MC saves the document
+      And the MC answers with the next version
 
-    @node
+    @mc
     Scenario: A stale write is refused instead of overwriting another editor
       Given two clients have read the settings at the same version
       And the first client has saved a change
       When the second client writes its change at the old version
-      Then the node refuses the write as stale settings
+      Then the MC refuses the write as stale settings
       And the first client's change is kept
 
-    @node
+    @mc
     Scenario: Connected clients receive every saved change
-      Given a client is subscribed to this node's settings
+      Given a client is subscribed to this MC's settings
       When another client saves a settings change
       Then the subscribed client receives the new settings document
 
-    @node
+    @mc
     Scenario: A project sees its overrides over the environment's values
       Given the environment's default runtime mode is full access
       And the project "hal-c2" overrides the default runtime mode to approval required
-      When the node resolves the settings for "hal-c2"
+      When the MC resolves the settings for "hal-c2"
       Then the default runtime mode is approval required
       And settings the project does not override keep the environment's values
 
-    @node
+    @mc
     Scenario: A project cannot override an environment-wide setting
       Given the project "hal-c2" has an override for an environment-wide setting
-      When the node resolves the settings for "hal-c2"
+      When the MC resolves the settings for "hal-c2"
       Then that setting keeps the environment's value
 
-    @node
+    @mc
     Scenario: A project model override on a disabled provider falls back to the environment's
       Given the project "hal-c2" overrides the default model with a model from "Codex"
       And the "Codex" provider is disabled on this environment
-      When the node resolves the settings for "hal-c2"
+      When the MC resolves the settings for "hal-c2"
       Then the default model is the environment's default model
 
   Rule: The user chooses where settings apply

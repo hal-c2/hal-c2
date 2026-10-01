@@ -631,15 +631,15 @@ step(
   },
 );
 
-step("the user sends it and the node rejects the message", async (ctx: World) => {
-  ctx.fake!.override("sendReply", () => Promise.reject(new Error("turn rejected by the node")));
+step("the user sends it and the MC rejects the message", async (ctx: World) => {
+  ctx.fake!.override("sendReply", () => Promise.reject(new Error("turn rejected by the MC")));
   await pressKey(ctx, "Enter");
   await settle(ctx);
 });
 
 step("the user sees why the send failed", async (ctx: World) => {
   await settle(ctx);
-  expect(String(findObject(ctx, "statusText").get("text"))).toContain("turn rejected by the node");
+  expect(String(findObject(ctx, "statusText").get("text"))).toContain("turn rejected by the MC");
 });
 
 step("the draft reads {string} again", async (ctx: World, text: string) => {

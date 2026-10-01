@@ -70,19 +70,19 @@ Feature: Settling threads
     When the pull request is merged on GitHub
     Then "Ship checkout" is shown as settled on the phone
 
-  @node
+  @mc
   Scenario: A thread settles after a quiet spell
     Given the auto-settle rule is "after 3 days of inactivity"
     When "Ship checkout" has had no activity for 3 days
     Then "Ship checkout" is settled automatically
 
-  @node
+  @mc
   Scenario: A thread settles when its pull request merges
     Given "Ship checkout" is linked to a pull request
     When the pull request is merged
     Then "Ship checkout" is settled automatically
 
-  @node
+  @mc
   Scenario: A closed pull request settles an idle thread
     Given "Ship checkout" is linked to a pull request
     And the user has not written since the pull request was closed
@@ -91,14 +91,14 @@ Feature: Settling threads
 
   # A pull request the user linked by hand keeps the thread active while it is open;
   # one only discovered from the branch does not.
-  @node
+  @mc
   Scenario: An open pull request found on the branch does not keep a quiet thread active
     Given "Ship checkout" is on a branch with an open pull request
     And the auto-settle rule is "after 3 days of inactivity"
     When "Ship checkout" has had no activity for 3 days
     Then "Ship checkout" is settled automatically
 
-  @node
+  @mc
   Scenario Outline: Work in progress keeps a thread from settling on its own
     Given "Ship checkout" has had no activity for 3 days
     And "Ship checkout" <state>
@@ -112,48 +112,48 @@ Feature: Settling threads
       | is still snoozed                          |
       | received a message from the user just now |
 
-  @node
+  @mc
   Scenario: A thread resumed after its pull request merged does not settle again from that merge
     Given "Ship checkout" was linked to a pull request that merged last week
     When the user sends a new message in "Ship checkout"
     And the settle sweep runs
     Then "Ship checkout" stays active
 
-  @node
+  @mc
   Scenario: Un-settling keeps a thread from settling until there is new activity
     Given "Ship checkout" settled automatically
     When the user un-settles "Ship checkout"
     And the settle sweep runs
     Then "Ship checkout" stays active
 
-  @node
+  @mc
   Scenario: An automatic settle that races new activity is dropped
     Given the settle sweep decided to settle "Ship checkout"
     When the user writes in "Ship checkout" before the settle is applied
     Then "Ship checkout" stays active
 
-  @node
+  @mc
   Scenario: A project can have its own quiet spell
     Given the environment settles threads after 3 days
     And the project "shop" settles threads after 1 day
     When "Ship checkout" has had no activity for 1 day
     Then "Ship checkout" is settled automatically
 
-  @node
+  @mc
   Scenario: Changing the rules does not reopen settled threads
     Given "Ship checkout" settled automatically after 3 days
     When the user changes the rule to "after 7 days of inactivity"
     Then "Ship checkout" stays settled
 
-  @node
+  @mc
   Scenario: The settle sweep runs again when something relevant changes
     When an agent run ends, a pull request changes or the auto-settle settings change
     Then the settle sweep runs without waiting for the next minute
 
   # docs/user/thread-sidebar.md says pinning does not prevent automatic settlement, but
   # both servers skip pinned threads and HAL-C2 keeps that: a pin means "leave this alone".
-  # The docs line is stale. Engine detail: node/orchestration/auto-settle.feature.
-  @node
+  # The docs line is stale. Engine detail: mc/orchestration/auto-settle.feature.
+  @mc
   Scenario: A pinned thread is never settled on its own
     Given "Ship checkout" is pinned
     And the auto-settle rule is "after 3 days of inactivity"

@@ -5,7 +5,7 @@ import HalC2.Shell
 
 // The first-run gate and the welcome wizard (the web's FirstRunGate and
 // WelcomeWizard), drawn from `onboarding` (OnboardingController): nothing once
-// the app opens, a blank window until the node confirms the workspace, the
+// the app opens, a blank window until the MC confirms the workspace, the
 // recovery page when it cannot, and otherwise the three steps (Connect,
 // Agents, Projects) over the whole window.
 Item {

@@ -1,14 +1,14 @@
 defmodule HalC2.Settings do
   @moduledoc """
-  This node's `ServerSettings`, kept in `<home>/settings.json` (owner-only, since
+  This MC's `ServerSettings`, kept in `<home>/settings.json` (owner-only, since
   provider environments can hold secrets).
 
-  The node stores the document; it does not interpret patches. A client applies a
+  The MC stores the document; it does not interpret patches. A client applies a
   `server.updateSettings` patch with the shared `applyServerSettingsPatch` to the
   version it read and writes the whole result back with `put/2`, which refuses a
   stale version so concurrent editors retry instead of overwriting each other.
-  Watchers (client sockets) get `{:hal_c2_settings, node, settings}` on every change,
-  and `{:hal_c2_providers_changed, node}` when something else changes the node's
+  Watchers (client sockets) get `{:hal_c2_settings, mc, settings}` on every change,
+  and `{:hal_c2_providers_changed, mc}` when something else changes the MC's
   provider list (`notify_providers/0`).
 
   Another process may edit the file too (`mix hal_c2.theme`), so it is checked every
@@ -16,7 +16,7 @@ defmodule HalC2.Settings do
 
   Reads come from a table the server keeps current, not from a call: nearly every
   service reads settings, and a server slow to answer (a machine deep in swap) would
-  otherwise time them all out at once and exhaust the node's restart budget.
+  otherwise time them all out at once and exhaust the MC's restart budget.
 
   Hub management keys and sensitive provider variables never stay in the document:
   `HalC2.UsageLimitSources.seal_keys/2` and `HalC2.ProviderSecrets.seal/2` move them to
@@ -123,7 +123,7 @@ defmodule HalC2.Settings do
   def get do
     :ets.lookup_element(__MODULE__, :settings, 2)
   rescue
-    # A node started without settings (tests, tools) has defaults.
+    # An MC started without settings (tests, tools) has defaults.
     ArgumentError -> {%{}, 0}
   end
 
@@ -140,8 +140,8 @@ defmodule HalC2.Settings do
 
   @doc """
   Saves `fun.(settings)` as one step, whatever the version. Without a running
-  settings server (a mix task beside a live node) it edits settings.json
-  directly, keeping keys it does not know; the node's file check picks it up.
+  settings server (a mix task beside a live MC) it edits settings.json
+  directly, keeping keys it does not know; the MC's file check picks it up.
   """
   def update(fun) do
     GenServer.call(__MODULE__, {:update, fun})
@@ -163,7 +163,7 @@ defmodule HalC2.Settings do
   @doc "Tells watchers to read the provider list again, such as after a model probe."
   def notify_providers, do: GenServer.cast(__MODULE__, :providers_changed)
 
-  @doc "Tells watchers this node now runs another version (`HalC2.Upgrade`)."
+  @doc "Tells watchers this MC now runs another version (`HalC2.Upgrade`)."
   def notify_upgraded(outcome), do: GenServer.cast(__MODULE__, {:upgraded, outcome})
 
   @doc "Tells watchers the published themes changed (`HalC2.EnvironmentThemes`)."
@@ -202,7 +202,7 @@ defmodule HalC2.Settings do
     {:ok, %{path: path, settings: settings, version: 0, watchers: %{}, stamp: stamp(path)}}
   end
 
-  @doc "The document as settings.json holds it, for tools running beside a node."
+  @doc "The document as settings.json holds it, for tools running beside an MC."
   def saved, do: read(path())
 
   defp path, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
@@ -288,7 +288,7 @@ defmodule HalC2.Settings do
   def handle_info({:DOWN, _ref, :process, pid, _}, state),
     do: {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
 
-  # The file changed under the node: adopt it unless it is unreadable.
+  # The file changed under the MC: adopt it unless it is unreadable.
   def handle_info(:check, state) do
     schedule_check()
     stamp = stamp(state.path)

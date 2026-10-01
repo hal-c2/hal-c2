@@ -37,7 +37,7 @@ Feature: Source control writing settings
     When the user writes custom instructions
     Then both environments use those instructions
 
-  # Writing to the template is the node's (node/orchestration/text-generation.feature).
+  # Writing to the template is the MC's (mc/orchestration/text-generation.feature).
   @desktop @mobile @backlog-mobile
   Scenario: Pull request templates are followed until turned off
     Then following change request templates is shown on
@@ -71,14 +71,14 @@ Feature: Source control writing settings
     When the user picks a writer model
     Then the user is told "Source control writer model not saved"
 
-  @node
+  @mc
   Scenario: A project's own writing style wins over the environment's
     Given the environment's writing style is Conventional Commits
     And the project "shop" overrides it with Repository conventions
     When a commit message is generated in "shop"
     Then it follows the repository's conventions
 
-  @node
+  @mc
   Scenario: An unusable writer model falls back to the text generation model
     Given the separate writer model's provider is not installed
     When a commit message is generated

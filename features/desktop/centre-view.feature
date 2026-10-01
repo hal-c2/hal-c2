@@ -44,8 +44,8 @@ Feature: The desktop shell draws the thread in the window's centre
       And the centre says the thread runs in a new worktree from "main"
 
     @desktop
-    Scenario: A thread whose node cannot be reached offers a retry
-      Given the thread's node cannot be reached
+    Scenario: A thread whose MC cannot be reached offers a retry
+      Given the thread's MC cannot be reached
       Then the centre says why the thread cannot be reached
       When the user retries
       Then the shell follows the thread again

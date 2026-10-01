@@ -2,7 +2,7 @@ defmodule HalC2.Steps.Providers.UsageLimits.Hub do
   @moduledoc false
   # A CLIProxyAPI hub: its management API, and the upstream answers to its `api-call`
   # relays. It tells the scenario (`test`) about every request, and keeps whether a
-  # credit was redeemed and whether it answers with a usage payload the node chokes on
+  # credit was redeemed and whether it answers with a usage payload the MC chokes on
   # in `state`.
   @behaviour Plug
 
@@ -173,8 +173,8 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   import ExUnit.Assertions
 
   alias HalC2.Steps.Providers.UsageLimits.{Hub, Vendor}
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @marker "••••••"
 
@@ -183,12 +183,12 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   step "a connected environment with Codex and Claude signed in with subscriptions", context do
     context = World.fake_providers(context)
     System.put_env("FAKE_CODEX_CONSUME_LOG", consumed(context))
-    Node.ensure(HalC2.BackgroundPolicy)
+    Mc.ensure(HalC2.BackgroundPolicy)
     # Connected before any thread's stream messages reach this process.
     World.put_client(context, World.client(context))
   end
 
-  # The usage-limit service starts lazily, so "the node starts" can come first.
+  # The usage-limit service starts lazily, so "the MC starts" can come first.
   step "Codex and Claude report their session and weekly windows", context do
     context = limits(context)
     # One read each, the boot probe: nobody asked for it.
@@ -255,7 +255,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
-  step "the node checks Codex's limits", context do
+  step "the MC checks Codex's limits", context do
     context = limits(context)
     {_, context} = World.call!(context, "server.refreshProviders", %{"instanceId" => "codex"})
     context
@@ -356,7 +356,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     consume(context, %{"instanceId" => "codex"})
   end
 
-  # Codex failing the redemption stands in for a timeout: the node keeps the attempt's
+  # Codex failing the redemption stands in for a timeout: the MC keeps the attempt's
   # key after either.
   step "a reset credit redemption timed out", context do
     context = limits(context)
@@ -410,7 +410,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
 
   step "the hub's accounts are reported with their limits", context do
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["t"] == "config.usageLimitSources" and
             match?([%{"accounts" => [_ | _]}], &1["sources"])),
@@ -442,7 +442,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   step "the settings show the key only as hidden", context do
     {%{"settings" => settings}, context} = World.call!(context, "hal-c2.readSettings")
     assert %{"hub" => %{"managementKey" => @marker}} = settings["usageLimitSources"]
-    refute File.read!(Path.join(context.node.home, "settings.json")) =~ "hub-key"
+    refute File.read!(Path.join(context.mc.home, "settings.json")) =~ "hub-key"
     context
   end
 
@@ -502,7 +502,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     end
   end
 
-  step "a hub whose Codex account reports usage the node cannot read", context do
+  step "a hub whose Codex account reports usage the MC cannot read", context do
     context |> add_hub() |> put_hub(:crash, true)
   end
 
@@ -520,7 +520,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
-  step "the node reads the hub", context do
+  step "the MC reads the hub", context do
     Map.put(context, :hubs, read_hubs())
   end
 
@@ -622,13 +622,13 @@ defmodule HalC2.Steps.Providers.UsageLimits do
        %{args: [answers]} = context do
     context = limits(context)
     id = System.unique_integer([:positive])
-    shape = %{"type" => "config", "node" => Atom.to_string(node())}
+    shape = %{"type" => "config", "mc" => Atom.to_string(node())}
     shape = if answers == "answers", do: Map.put(shape, "usageLimitsCommand", true), else: shape
 
     {frame, client} =
       World.client(context)
-      |> Node.sub(id, shape)
-      |> Node.await(&(&1["t"] == "config" and &1["id"] == id))
+      |> Mc.sub(id, shape)
+      |> Mc.await(&(&1["t"] == "config" and &1["id"] == id))
 
     context
     |> World.put_client(client)
@@ -664,7 +664,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     id = context.config_sub
 
     {_frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["t"] == "config.providers" and &1["id"] == id and
             offers?(&1["providers"], "pi", command))
@@ -680,10 +680,10 @@ defmodule HalC2.Steps.Providers.UsageLimits do
 
   # --- helpers -----------------------------------------------------------------------
 
-  # Starts the node's usage-limit service (if it is not running yet) and waits for its
+  # Starts the MC's usage-limit service (if it is not running yet) and waits for its
   # boot probe of Codex and Claude.
   defp limits(context) do
-    Node.ensure(HalC2.ProviderUsageLimits)
+    Mc.ensure(HalC2.ProviderUsageLimits)
     :ok = HalC2.ProviderUsageLimits.refresh([])
     context
   end
@@ -747,7 +747,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   # a client writes.
   defp add_hub(context, extra \\ %{}) do
     context = serve_hub(context)
-    Node.ensure(HalC2.UsageLimitSources)
+    Mc.ensure(HalC2.UsageLimitSources)
 
     source =
       Map.merge(
@@ -814,7 +814,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   defp key_path(context),
     do:
       Path.join([
-        context.node.home,
+        context.mc.home,
         "secrets",
         "usage-limit-source-#{Base.url_encode64("hub", padding: false)}.bin"
       ])
@@ -831,7 +831,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
 
   step ~r/^(?<provider>Cursor|Grok|OpenCode Go) is signed in with a subscription$/,
        %{args: [provider]} = context do
-    dir = Path.join(context.node.home, "vendor-auth")
+    dir = Path.join(context.mc.home, "vendor-auth")
 
     case provider do
       "Grok" ->
@@ -860,7 +860,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   # Off macOS a Cursor login that is not in a file is its "memory" store, as the Node
   # server's own test has it. A file left by an earlier login must not be read.
   step "Cursor is signed in through the system keychain", context do
-    dir = Path.join(context.node.home, "vendor-auth")
+    dir = Path.join(context.mc.home, "vendor-auth")
     write_json(Path.join(dir, "config/cursor/auth.json"), %{"accessToken" => "vendor-token"})
     store = if match?({:unix, :darwin}, :os.type()), do: "default", else: "memory"
 
@@ -884,7 +884,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
 
   step "Grok is connected with an explicit API key", context do
     # A grok.com sign-in is stored too: the explicit key decides whose quota it is.
-    home = Path.join(context.node.home, "vendor-auth/.grok")
+    home = Path.join(context.mc.home, "vendor-auth/.grok")
 
     write_json(Path.join(home, "auth.json"), %{
       "https://accounts.x.ai/sign-in" => %{"key" => "vendor-token"}
@@ -894,7 +894,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   end
 
   step "OpenCode runs on an external server", context do
-    data = Path.join(context.node.home, "vendor-auth/data")
+    data = Path.join(context.mc.home, "vendor-auth/data")
 
     write_json(Path.join(data, "opencode/auth.json"), %{
       "opencode-go" => %{"type" => "api", "key" => "vendor-token"}
@@ -905,8 +905,8 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
-  step "the node checks limits", context do
-    Node.ensure(HalC2.ProviderUsageLimits)
+  step "the MC checks limits", context do
+    Mc.ensure(HalC2.ProviderUsageLimits)
 
     {_, context} =
       World.call!(context, "server.refreshProviders", %{"instanceId" => context.vendor_instance})

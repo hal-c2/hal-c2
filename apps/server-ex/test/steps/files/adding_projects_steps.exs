@@ -9,8 +9,8 @@ defmodule HalC2.Steps.Files.AddingProjects do
   import ExUnit.Assertions
   import ExUnit.Callbacks, only: [on_exit: 1, start_supervised!: 1]
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.{Host, World}
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.{Host, World}
 
   @fake_cli Path.expand("../../support/fake_gh.py", __DIR__)
   @clones_sub 7_001
@@ -39,7 +39,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
     context
   end
 
-  step "{string} cannot be read by the node", %{args: [dir]} = context do
+  step "{string} cannot be read by the MC", %{args: [dir]} = context do
     real = Host.path(context, dir)
     File.mkdir_p!(Path.join(real, "secret"))
     File.chmod!(real, 0o000)
@@ -62,7 +62,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
     create(context, path, %{"createWorkspaceRootIfMissing" => true})
   end
 
-  step "the node answers that {string} does not exist on this machine",
+  step "the MC answers that {string} does not exist on this machine",
        %{args: [path]} = context do
     assert {:error, error, _} = context.reply
     assert error =~ "#{Host.path(context, path)} does not exist on this machine"
@@ -138,7 +138,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
     id = context.clone.id
 
     {_, client} =
-      Node.await(World.client(context), fn frame ->
+      Mc.await(World.client(context), fn frame ->
         frame["t"] == "projectClones" and not Enum.any?(frame["clones"], &(&1["projectId"] == id))
       end)
 
@@ -183,7 +183,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
     context
   end
 
-  step "the node answers that nothing was applied", context do
+  step "the MC answers that nothing was applied", context do
     assert context.reply == {:ok, %{"applied" => false}}
     assert current_clone(context)["phase"] == "running"
     context
@@ -216,8 +216,8 @@ defmodule HalC2.Steps.Files.AddingProjects do
   end
 
   step "no clone is reported", context do
-    client = Node.sub(World.client(context), @clones_sub, clones_shape())
-    {%{"clones" => clones}, client} = Node.await(client, &(&1["t"] == "projectClones"))
+    client = Mc.sub(World.client(context), @clones_sub, clones_shape())
+    {%{"clones" => clones}, client} = Mc.await(client, &(&1["t"] == "projectClones"))
     assert clones == []
     World.put_client(context, client)
   end
@@ -271,7 +271,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
   # --- helpers -----------------------------------------------------------------------
 
   defp create(context, path, fields) do
-    # `~` paths go to the node as typed; it expands them itself.
+    # `~` paths go to the MC as typed; it expands them itself.
     root = if String.starts_with?(path, "~"), do: path, else: Host.path(context, path)
     id = World.slug(Path.basename(path))
 
@@ -297,8 +297,8 @@ defmodule HalC2.Steps.Files.AddingProjects do
   end
 
   defp projects do
-    for {{node, _}, {"project", row}} <- HalC2.Shell.rows(),
-        node == node(),
+    for {{mc, _}, {"project", row}} <- HalC2.Shell.rows(),
+        mc == node(),
         row["deletedAt"] == nil,
         do: row
   end
@@ -314,8 +314,8 @@ defmodule HalC2.Steps.Files.AddingProjects do
   # queued on the socket for `await_clone/3`.
   defp call(context, method, payload) do
     id = System.unique_integer([:positive])
-    client = Node.rpc(World.client(context), context.node.environment, id, method, payload)
-    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Node.reply?(id), 5_000)
+    client = Mc.rpc(World.client(context), context.mc.environment, id, method, payload)
+    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Mc.reply?(id), 5_000)
     context = World.put_client(context, %{client | inbox: skipped ++ client.inbox})
 
     case frame do
@@ -324,15 +324,15 @@ defmodule HalC2.Steps.Files.AddingProjects do
     end
   end
 
-  defp clones_shape, do: %{"type" => "projectClones", "node" => Atom.to_string(node())}
+  defp clones_shape, do: %{"type" => "projectClones", "mc" => Atom.to_string(node())}
 
   defp start_clone(context, url, dest) do
-    Node.ensure(HalC2.ProjectClones)
+    Mc.ensure(HalC2.ProjectClones)
     real = Host.path(context, dest)
     File.mkdir_p!(Path.dirname(real))
     id = World.slug(Path.basename(dest))
-    client = Node.sub(World.client(context), @clones_sub, clones_shape())
-    {_, client} = Node.await(client, &(&1["t"] == "projectClones"))
+    client = Mc.sub(World.client(context), @clones_sub, clones_shape())
+    {_, client} = Mc.await(client, &(&1["t"] == "projectClones"))
     context = World.put_client(context, client)
 
     {{:ok, _}, context} =
@@ -382,7 +382,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
     id = context.clone.id
 
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         fn frame ->
           frame["t"] == "projectClones" and
@@ -397,9 +397,9 @@ defmodule HalC2.Steps.Files.AddingProjects do
 
   # The clone as a client subscribing now sees it.
   defp current_clone(context) do
-    client = Node.connect(context.node)
-    client = Node.sub(client, 1, clones_shape())
-    {%{"clones" => clones}, _client} = Node.await(client, &(&1["t"] == "projectClones"))
+    client = Mc.connect(context.mc)
+    client = Mc.sub(client, 1, clones_shape())
+    {%{"clones" => clones}, _client} = Mc.await(client, &(&1["t"] == "projectClones"))
 
     Enum.find(clones, &(&1["projectId"] == context.clone.id)) ||
       flunk("the clone is not reported")
@@ -448,7 +448,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
     end
   end
 
-  # git configuration for every git the node runs, for this scenario.
+  # git configuration for every git the MC runs, for this scenario.
   defp git_env(config) do
     vars =
       config
@@ -528,7 +528,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
 
   # Stands a fake CLI in for `exe`, answering from `rules` (see fake_gh.py).
   defp fake_cli(context, exe, rules) do
-    dir = Node.tmp_dir(context.node, "fake-#{exe}")
+    dir = Mc.tmp_dir(context.mc, "fake-#{exe}")
     File.write!(Path.join(dir, "rules.json"), JSON.encode!(rules))
     key = :"#{exe}_command"
     previous = Application.get_env(:hal_c2, key)

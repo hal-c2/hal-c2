@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Orchestration.LaunchingThreads do
   @moduledoc """
-  Steps for features/node/orchestration/launching-threads.feature.
+  Steps for features/mc/orchestration/launching-threads.feature.
 
   A launch goes through `orchestration.launchThread` on the scenario's socket and
   names the thread it makes "new" (`context.thread`). A new worktree is held while
@@ -10,8 +10,8 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @fake_text Path.expand("../../support/fake_text_cli.py", __DIR__)
   @png <<137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3>>
@@ -274,13 +274,13 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     Map.merge(context, %{thread: thread, started_run: run["id"]})
   end
 
-  step "the node releases that run as prepared", context do
+  step "the MC releases that run as prepared", context do
     thread_id = World.thread_id(context, context.thread)
     {:error, message} = HalC2.Orchestration.release_prepared(thread_id, context.started_run)
     Map.put(context, :reply, {:error, message, nil})
   end
 
-  step "a client launches a thread in a new worktree of a project this node does not have",
+  step "a client launches a thread in a new worktree of a project this MC does not have",
        context do
     fields = %{
       "projectId" => "project-elsewhere",
@@ -404,12 +404,12 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
   step "no setup progress is reported for that thread", context do
     shape = %{
       "type" => "worktreeSetup",
-      "node" => Atom.to_string(node()),
+      "mc" => Atom.to_string(node()),
       "threadId" => World.thread_id(context, "new")
     }
 
-    client = context.node |> Node.connect() |> Node.sub(7, shape)
-    {frame, _client} = Node.await(client, &(&1["t"] == "worktreeSetup" and &1["id"] == 7))
+    client = context.mc |> Mc.connect() |> Mc.sub(7, shape)
+    {frame, _client} = Mc.await(client, &(&1["t"] == "worktreeSetup" and &1["id"] == 7))
     assert frame["event"] == nil
     context
   end
@@ -468,7 +468,7 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
   # directory is gone.
   defp hold(context, project) do
     %{id: id, root: root} = World.project(context, project)
-    dir = Node.tmp_dir(context.node, "gates")
+    dir = Mc.tmp_dir(context.mc, "gates")
     gates = %{checkout: Path.join(dir, "checkout"), setup: Path.join(dir, "setup")}
 
     for {name, gate} <- gates do
@@ -558,7 +558,7 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
   # Title generation runs `codex exec` through a per-scenario fake: it fails its
   # first `fails` calls and then answers `title`, logging each call.
   defp text_model(context, fails, title) do
-    dir = Node.tmp_dir(context.node, "text")
+    dir = Mc.tmp_dir(context.mc, "text")
     script = Path.join(dir, "codex")
 
     File.write!(script, """
@@ -587,7 +587,7 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     ExUnit.Callbacks.on_exit(fn -> restore_app_env(:text_codex_command, previous) end)
   end
 
-  defp text_log(context), do: Path.join(context.node.home, "text-calls.jsonl")
+  defp text_log(context), do: Path.join(context.mc.home, "text-calls.jsonl")
 
   defp text_calls(context) do
     case File.read(text_log(context)) do

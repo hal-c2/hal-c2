@@ -18,7 +18,7 @@ struct StashState {
 };
 
 StashState& stashState(World& world) {
-  return world.node.part<StashState>();
+  return world.mc.part<StashState>();
 }
 
 QString target(World& world) {

@@ -1,15 +1,15 @@
 defmodule HalC2.Steps.Settings.Storage do
   @moduledoc """
-  Steps for `features/settings/storage.feature`: the node's storage sweep
+  Steps for `features/settings/storage.feature`: the MC's storage sweep
   (`HalC2.StorageCleanup`) against real worktrees of the scenario's project. Merged
   pull requests come from the fake `gh` (`test/support/fake_gh.py`); the
-  project gets an `origin` on "github.com" so the node asks it.
+  project gets an `origin` on "github.com" so the MC asks it.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @fake_gh Path.expand("../../support/fake_gh.py", __DIR__)
 
@@ -46,7 +46,7 @@ defmodule HalC2.Steps.Settings.Storage do
         })
 
       "rotated logs" ->
-        # A node that has run a while has rotated logs, some of them old.
+        # An MC that has run a while has rotated logs, some of them old.
         context
         |> World.update_settings(%{"storageCleanup" => %{"logsAfterDays" => days}})
         |> Map.put(:logs, logs(context, days))
@@ -160,9 +160,9 @@ defmodule HalC2.Steps.Settings.Storage do
 
   # --- defaults and changes ----------------------------------------------------------
 
-  # Worktrees and files every rule would remove, on a node whose settings were
+  # Worktrees and files every rule would remove, on an MC whose settings were
   # never touched.
-  step "a fresh node", context do
+  step "a fresh MC", context do
     context = origin(context)
 
     {context, worktrees} =
@@ -221,7 +221,7 @@ defmodule HalC2.Steps.Settings.Storage do
 
   # No hourly tick is scheduled in scenarios (`World.start_storage_cleanup/1`), so
   # the removal can only come from the settings change.
-  step "the node sweeps without waiting for the next hour", context do
+  step "the MC sweeps without waiting for the next hour", context do
     assert Application.get_env(:hal_c2, :storage_cleanup_first_ms) == nil
     _ = :sys.get_state(HalC2.StorageCleanup)
     refute File.exists?(context.worktree.path)
@@ -359,12 +359,12 @@ defmodule HalC2.Steps.Settings.Storage do
 
   # Adds a rule to the fake `gh`, installing it on first use.
   defp gh_rule(context, rule) do
-    rules_path = Path.join(context.node.home, "gh-rules.json")
+    rules_path = Path.join(context.mc.home, "gh-rules.json")
 
     unless context[:gh_rules] do
       World.put_app_env(:gh_command, @fake_gh)
       World.put_env("FAKE_GH_RULES", rules_path)
-      World.put_env("FAKE_GH_LOG", Path.join(context.node.home, "gh.log"))
+      World.put_env("FAKE_GH_LOG", Path.join(context.mc.home, "gh.log"))
     end
 
     rules = (context[:gh_rules] || []) ++ [rule]
@@ -373,7 +373,7 @@ defmodule HalC2.Steps.Settings.Storage do
   end
 
   defp capture(context, days_ago) do
-    dir = Path.join(context.node.home, "browser-artifacts")
+    dir = Path.join(context.mc.home, "browser-artifacts")
     File.mkdir_p!(dir)
     path = Path.join(dir, "browser-screenshot-#{System.unique_integer([:positive])}.png")
     File.write!(path, <<137, 80, 78, 71, 13, 10, 26, 10>>)
@@ -381,10 +381,10 @@ defmodule HalC2.Steps.Settings.Storage do
     path
   end
 
-  # The node's logs: rotated ones older than `days`, a rotated one newer than
+  # The MC's logs: rotated ones older than `days`, a rotated one newer than
   # that, and the current files (as old as the oldest, so only rotation spares them).
   defp logs(context, days) do
-    dir = Path.join(context.node.home, "logs")
+    dir = Path.join(context.mc.home, "logs")
     old_at = System.os_time(:second) - (days + 10) * 86_400
     write = fn name, at -> write_log(Path.join(dir, name), at) end
 
@@ -412,7 +412,7 @@ defmodule HalC2.Steps.Settings.Storage do
 
   defp get(context, url) do
     Application.ensure_all_started(:inets)
-    target = ~c"http://127.0.0.1:#{context.node.port}#{url}"
+    target = ~c"http://127.0.0.1:#{context.mc.port}#{url}"
     {:ok, {{_, status, _}, _, _}} = :httpc.request(:get, {target, []}, [], [])
     status
   end

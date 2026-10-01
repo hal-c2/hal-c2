@@ -1,6 +1,6 @@
 defmodule HalC2.Traces do
   @moduledoc """
-  The node's local trace file and the client spans it accepts (Settings → Diagnostics).
+  The MC's local trace file and the client spans it accepts (Settings → Diagnostics).
 
   While tracing is on (`config :hal_c2, trace: true`, `HAL_C2_TRACE=1`), `span/3` appends
   one `effect-span` record per finished span to `<home>/logs/server.trace.ndjson`,
@@ -20,7 +20,7 @@ defmodule HalC2.Traces do
   @top 10
   @recent 20
 
-  @doc "Whether this node records spans."
+  @doc "Whether this MC records spans."
   def enabled?, do: Application.get_env(:hal_c2, :trace, false) == true
 
   @doc "The collector client spans are forwarded to, if any."
@@ -242,7 +242,7 @@ defmodule HalC2.Traces do
 
   # --- diagnostics (aggregateTraceDiagnostics) ---------------------------------------
 
-  @doc "`server.getTraceDiagnostics` for the node's trace files."
+  @doc "`server.getTraceDiagnostics` for the MC's trace files."
   def diagnostics do
     path = path()
     paths = for(n <- @max_files..1//-1, do: "#{path}.#{n}") ++ [path]

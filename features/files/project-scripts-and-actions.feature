@@ -65,14 +65,14 @@ Feature: Project actions
     Background:
       Given "shop" has the setup action "Install" running "bun install"
 
-    @node
+    @mc
     Scenario: The setup script runs in a new worktree before the agent starts
       Given "Install" waits for it to finish
       When a thread in "shop" starts on a new worktree
       Then "bun install" runs in the new worktree's setup terminal
       And the agent starts after "bun install" exits
 
-    @node
+    @mc
     Scenario: A setup script that fails and must finish first stops the thread
       Given "Install" waits for it to finish
       And "bun install" exits with 1
@@ -80,14 +80,14 @@ Feature: Project actions
       Then the worktree setup fails with "Setup script exited with 1."
       And the agent does not start
 
-    @node
+    @mc
     Scenario: A setup script that runs alongside the agent does not hold it back
       Given "Install" runs alongside the agent
       When a thread in "shop" starts on a new worktree
       Then the agent starts while "bun install" is still running
       And the setup reports how the script exited
 
-    @node
+    @mc
     Scenario: A project without a setup script skips that step
       Given "shop" has no setup action
       When a thread in "shop" starts on a new worktree

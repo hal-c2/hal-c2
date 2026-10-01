@@ -12,7 +12,7 @@
 #include <algorithm>
 
 #include "FFmpeg.h"
-#include "NodeClient.h"
+#include "McClient.h"
 
 namespace {
 
@@ -45,7 +45,7 @@ QByteArray json(const QJsonObject& payload) {
   return QJsonDocument(payload).toJson(QJsonDocument::Compact);
 }
 
-// Whether the node turned the socket away: its proxy refuses a handshake with
+// Whether the MC turned the socket away: its proxy refuses a handshake with
 // 401 or 403, which Qt reports only in the error string (a 401 without a
 // challenge it can answer as "Unsupported WWW-Authenticate challenges"), or a
 // relay closes with a policy code.
@@ -148,7 +148,7 @@ int androidKeycode(int key) {
 
 }  // namespace
 
-DeviceStream::DeviceStream(NodeClient* client, QObject* parent)
+DeviceStream::DeviceStream(McClient* client, QObject* parent)
     : QObject(parent), m_client(client), m_http(new QNetworkAccessManager(this)) {
   for (QTimer* timer : {&m_firstFrame, &m_readStall, &m_videoRetry, &m_inputRetry}) timer->setSingleShot(true);
   setTimeouts(kFirstFrameMs, kRetryMs);
@@ -296,7 +296,7 @@ void DeviceStream::fail(const QString& detail) {
 }
 
 void DeviceStream::unauthorized() {
-  fail(QStringLiteral("The node refused the device stream. Reconnect to try again."));
+  fail(QStringLiteral("The MC refused the device stream. Reconnect to try again."));
 }
 
 void DeviceStream::onFrame() {

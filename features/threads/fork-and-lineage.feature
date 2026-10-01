@@ -15,86 +15,86 @@ Feature: Forking threads and merging work back
   Background:
     Given a connected environment with the thread "Plan billing" whose last agent run finished
 
-  @node
+  @mc
   Scenario: Forking from the latest finished point
     When a client forks "Plan billing"
     Then a new thread "Plan billing fork" exists
     And it holds the history of "Plan billing" up to its last finished run
 
-  @node
+  @mc
   Scenario: Forking from a chosen run
     Given "Plan billing" has three finished runs
     When a client forks "Plan billing" at its second run with the title "Try Stripe"
     Then the thread "Try Stripe" holds the history through the second run only
 
-  @node
+  @mc
   Scenario: A run that has not finished cannot be forked
     Given the agent is still working in "Plan billing"
     When a client forks "Plan billing" at the running run
     Then the fork is rejected because only finished runs can be used
 
-  @node
+  @mc
   Scenario: A thread with nothing finished cannot be forked
     Given the thread "Empty" has no finished runs
     When a client forks "Empty"
     Then the fork is rejected with "No stable source run was found."
 
-  @node
+  @mc
   Scenario: A fork does not start an agent until it is used
     When a client forks "Plan billing"
     Then no agent session is started for the fork
     And the fork's context is carried over when its first message is sent
 
-  @node
+  @mc
   Scenario: A fork on the same agent continues the agent's own conversation
     Given "Plan billing" ran on Codex
     When the user sends the first message in a fork of "Plan billing" on Codex
     Then the agent continues from its own copy of the conversation
 
-  @node
+  @mc
   Scenario: A fork on another agent receives a written account of the history
     Given "Plan billing" ran on Codex
     When the user sends the first message in a fork of "Plan billing" on Claude
     Then Claude receives a transcript of the history ahead of the message
 
-  @node
+  @mc
   Scenario: A long history leaves out the message that does not fit
     Given "Plan billing" has more history than fits in a handoff
     When the user sends the first message in a fork on another agent
     Then the first request and the newest messages are kept whole
     And the message that does not fit is left out
 
-  @node
+  @mc
   Scenario: A fork outlives the thread it came from
     Given "Try Stripe" is a fork of "Plan billing"
     When "Plan billing" is deleted
     Then "Try Stripe" still holds its history
 
-  @node
+  @mc
   Scenario: Merging a fork back
     Given "Try Stripe" is a fork of "Plan billing" with a finished run
     When a client merges "Try Stripe" back into "Plan billing"
     Then the next message in "Plan billing" carries a summary of the work done in "Try Stripe"
 
-  @node
+  @mc
   Scenario: Only a fork can be merged back into its parent
     Given "Other work" was not forked from "Plan billing"
     When a client merges "Other work" back into "Plan billing"
     Then the merge is rejected because "Other work" is not a fork of "Plan billing"
 
-  @node
+  @mc
   Scenario: A newer merge replaces one that has not been delivered
     Given "Try Stripe" was merged back into "Plan billing" but no message has been sent since
     When "Try Stripe" is merged back again after more work
     Then only the newer merge is carried with the next message
 
-  @node
+  @mc
   Scenario: Switching agents mid-thread carries the conversation
     Given "Plan billing" ran on Codex
     When the user switches "Plan billing" to Claude and sends a message
     Then Claude receives the conversation so far ahead of the message
 
-  @node
+  @mc
   Scenario: Returning to an earlier agent only bridges what it missed
     Given "Plan billing" ran on Codex and then on Claude
     When the user switches "Plan billing" back to Codex and sends a message

@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
   @moduledoc """
-  Steps for `features/node/orchestration/forks-and-merge-back.feature`: real turns on
+  Steps for `features/mc/orchestration/forks-and-merge-back.feature`: real turns on
   the fake provider CLIs (`test/support/fake_codex.py`, `fake_claude.py`,
   `fake_acp.py`), forks and merge-backs dispatched as a client does. What each fake
   was sent is read back with `World.provider_prompts/2`.
@@ -10,7 +10,7 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @models %{
     "codex" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
@@ -34,7 +34,7 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
   # Also threads/fork-and-lineage.feature, whose threads fork through `World.fork_thread/3`
   # (the source's latest finished run).
   step "{string} is a fork of {string}", %{args: [fork, source]} = context do
-    if String.contains?(context.feature_file, "/node/orchestration/") do
+    if String.contains?(context.feature_file, "/mc/orchestration/") do
       fork!(context, source, fork, :latest)
     else
       context = World.fork_thread(context, source, fork)
@@ -147,7 +147,7 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
 
   # threads/fork-and-lineage.feature gives the unrelated thread a finished turn of its own.
   step "{string} was not forked from {string}", %{args: [thread, source]} = context do
-    if String.contains?(context.feature_file, "/node/orchestration/") do
+    if String.contains?(context.feature_file, "/mc/orchestration/") do
       World.create_thread(context, thread)
     else
       context = World.finished_turns(World.create_thread(context, thread), thread, ["other"])
@@ -164,7 +164,7 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
     context
   end
 
-  step "{string} was removed from this node", %{args: [thread]} = context do
+  step "{string} was removed from this MC", %{args: [thread]} = context do
     context = fork!(context, thread, "f1", :latest)
     id = World.thread_id(context, thread)
     {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})

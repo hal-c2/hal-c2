@@ -5,20 +5,20 @@ defmodule HalC2.LiveSteerTest do
   use ExUnit.Case, async: false
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @moduletag timeout: 300_000
 
   setup %{tmp_dir: dir} do
-    node = Node.start(dir)
+    mc = Mc.start(dir)
     # What `World.agents/1` starts, without swapping in its fake CLIs.
     for name <- [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry],
-        do: Node.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
+        do: Mc.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
-    Node.ensure(HalC2.Settings)
-    Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
-    {:ok, context: %{node: node, clients: %{}, projects: %{}, threads: %{}, agents: true}}
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    {:ok, context: %{mc: mc, clients: %{}, projects: %{}, threads: %{}, agents: true}}
   end
 
   @tag :tmp_dir

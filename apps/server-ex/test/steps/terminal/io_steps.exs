@@ -3,7 +3,7 @@ defmodule HalC2.Steps.Terminal.Io do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.{Terminal, World}
+  alias HalC2.Test.Mc.{Terminal, World}
 
   @clients ["default", "second"]
 
@@ -190,7 +190,7 @@ defmodule HalC2.Steps.Terminal.Io do
   end
 
   step "within a second the terminal is marked as running a command", context do
-    # The node looks at the shell's children once a second.
+    # The MC looks at the shell's children once a second.
     {event, context} =
       Terminal.await_event(context, "default", &(&1["type"] == "activity"), 2_500)
 

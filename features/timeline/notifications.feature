@@ -123,23 +123,23 @@ Feature: Alerts when a thread needs the user
   @desktop
   Scenario: Threads that finished while the connection was down do not alert
     Given the thread "Tax fix" is working in the background
-    And the node holds back its snapshot
-    And the node drops the connection
-    And the shell reconnects to the node
+    And the MC holds back its snapshot
+    And the MC drops the connection
+    And the shell reconnects to the MC
     And "Tax fix" completes
-    When the node sends its snapshot
+    When the MC sends its snapshot
     Then no alert is raised for "Tax fix"
 
   @desktop
-  Scenario Outline: Threads of other environments alert like the node's own
+  Scenario Outline: Threads of other environments alert like the MC's own
     Given the thread "Tax fix" is working in the background on <where>
     When the thread completes
     Then the user is alerted "Thread completed" for "Tax fix"
 
     Examples:
-      | where                       |
-      | a linked environment        |
-      | another node of the cluster |
+      | where                     |
+      | a linked environment      |
+      | another MC of the cluster |
 
   @desktop
   Scenario: A notification's action runs it

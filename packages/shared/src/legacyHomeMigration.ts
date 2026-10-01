@@ -3,7 +3,7 @@
 /**
  * The one-shot copy from an old home (`~/.t3`, `~/.hal-c2`, or one named by
  * `T3CODE_HOME`/`T3_HOME`) into HAL-C2's XDG directories
- * (`features/node/platform/storage-migration.feature`).
+ * (`features/mc/platform/storage-migration.feature`).
  *
  * It copies, never moves or links, and only what the user cannot get back:
  * settings, the database, secrets, attachments, sign-ins, logs. Caches, tools,

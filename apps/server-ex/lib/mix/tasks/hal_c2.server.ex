@@ -1,11 +1,11 @@
 defmodule Mix.Tasks.HalC2.Server do
-  @shortdoc "Runs the node and prints its client URL"
+  @shortdoc "Runs the MC and prints its client URL"
   @moduledoc """
-  Starts the node in the foreground and prints the WebSocket URL with its token.
+  Starts the MC in the foreground and prints the WebSocket URL with its token.
 
       mix hal_c2.server
 
-  It clusters when the VM was booted for it (`mise run node`, `HalC2.Cluster`).
+  It clusters when the VM was booted for it (`mise run mc`, `HalC2.Cluster`).
   """
 
   use Mix.Task
@@ -18,16 +18,16 @@ defmodule Mix.Tasks.HalC2.Server do
   end
 
   @doc """
-  Prints the running node's WebSocket URL with its access token, and how to pair a
+  Prints the running MC's WebSocket URL with its access token, and how to pair a
   client: the access token is for local tools, and pairing takes a one-time code.
   """
   def announce do
     Mix.shell().info(
-      "HAL-C2 node #{node()} #{HalC2.Web.base_url("ws")}/ws?token=#{HalC2.Web.token()}"
+      "HAL-C2 MC #{node()} #{HalC2.Web.base_url("ws")}/ws?token=#{HalC2.Web.token()}"
     )
 
     Mix.shell().info(
-      "To pair a client, run `mise run node:pair` (`--tailscale` to reach it from other devices); the token above is not a pairing code."
+      "To pair a client, run `mise run mc:pair` (`--tailscale` to reach it from other devices); the token above is not a pairing code."
     )
   end
 end

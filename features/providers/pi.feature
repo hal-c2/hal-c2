@@ -8,7 +8,7 @@
 #   apps/server/src/orchestration-v2/Adapters/piHalC2McpInjection.ts, apps/server/src/provider/PiCommands.ts
 #   apps/server/src/provider/Layers/piThinkingCapabilities.ts, apps/server/src/textGeneration/PiTextGeneration.ts
 
-@plugin-pi @node
+@plugin-pi @mc
 Feature: Pi
   Pi uses the user's existing Pi installation with its own models, logins, extensions,
   skills and session files. Pi is early access.
@@ -18,15 +18,15 @@ Feature: Pi
 
   Scenario: Pi does nothing until the user enables it
     Given Pi is installed but not enabled
-    When the node starts
+    When the MC starts
     Then no Pi process is started
 
   Scenario: Pi is only offered when the pi command is installed
-    Given the pi command is not installed on the node
+    Given the pi command is not installed on the MC
     When the user opens the list of agents to enable
     Then Pi is not offered
 
-  # The node runs Pi in its own RPC mode, as the TS server does (PiAdapterV2), not through pi-acp.
+  # The MC runs Pi in its own RPC mode, as the TS server does (PiAdapterV2), not through pi-acp.
   Scenario: Pi runs in its own RPC mode
     Given Pi is installed and enabled
     When the user sends a message to Pi

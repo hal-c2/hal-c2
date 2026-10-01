@@ -1,7 +1,7 @@
 defmodule HalC2.Web.Router do
   @moduledoc """
   HTTP entry point: environment discovery, pairing and session auth (`HalC2.Auth`), and
-  the client WebSocket. A socket needs a WebSocket ticket, or the node's own access
+  the client WebSocket. A socket needs a WebSocket ticket, or the MC's own access
   token (`HalC2.Web.token/0`) for local tools.
   """
 
@@ -20,7 +20,7 @@ defmodule HalC2.Web.Router do
   plug Plug.Parsers, parsers: [:urlencoded], pass: ["*/*"]
   plug :dispatch
 
-  # Clients reach a node from other origins (the hosted app, another dev server)
+  # Clients reach an MC from other origins (the hosted app, another dev server)
   # with bearer tokens rather than cookies, so any origin may call it.
   defp cors(%{method: "OPTIONS"} = conn, _opts),
     do: conn |> merge_resp_headers(@cors_headers) |> send_resp(204, "") |> halt()
@@ -30,14 +30,14 @@ defmodule HalC2.Web.Router do
   get "/.well-known/hal-c2/environment" do
     body =
       HalC2.Environment.descriptor()
-      |> Map.put("node", Atom.to_string(node()))
+      |> Map.put("mc", Atom.to_string(node()))
       |> Map.put("cluster", cluster())
       |> JSON.encode_to_iodata!()
 
     conn |> put_resp_content_type("application/json") |> send_resp(200, body)
   end
 
-  # A pairing link opened in a browser lands here. The node serves no app, so the
+  # A pairing link opened in a browser lands here. The MC serves no app, so the
   # page says where the link goes instead of answering "not found".
   get "/" do
     label = HalC2.Environment.descriptor()["label"]
@@ -45,10 +45,10 @@ defmodule HalC2.Web.Router do
     conn
     |> put_resp_content_type("text/html")
     |> send_resp(200, """
-    <!doctype html><meta charset="utf-8"><title>HAL-C2 node #{Plug.HTML.html_escape(label)}</title>
+    <!doctype html><meta charset="utf-8"><title>HAL-C2 MC #{Plug.HTML.html_escape(label)}</title>
     <body style="font:15px system-ui;max-width:34em;margin:4em auto;padding:0 1em;line-height:1.5">
-    <h1 style="font-size:1.3em">HAL-C2 node: #{Plug.HTML.html_escape(label)}</h1>
-    <p>This is a pairing link for a HAL-C2 node. To connect, copy the full address from the
+    <h1 style="font-size:1.3em">HAL-C2 MC: #{Plug.HTML.html_escape(label)}</h1>
+    <p>This is a pairing link for a HAL-C2 MC. To connect, copy the full address from the
     address bar and paste it into <b>HAL-C2 → Settings → Connections → Add environment</b>.</p>
     <p>Pairing links work once and expire after 5 minutes.</p>
     </body>
@@ -141,7 +141,7 @@ defmodule HalC2.Web.Router do
   get "/mcp", do: send_resp(conn, 405, "")
   delete "/mcp", do: send_resp(conn, 200, "")
 
-  # Settings → Connections: pairing links and the clients paired with this node.
+  # Settings → Connections: pairing links and the clients paired with this MC.
   post "/api/auth/pairing-token" do
     with_scope(conn, "access:write", fn _session ->
       with {:ok, body} <- json_body(conn),
@@ -242,7 +242,7 @@ defmodule HalC2.Web.Router do
   post "/api/pull-requests/diff" do
     with_scope(conn, "orchestration:read", fn _session ->
       with {:ok, input} <- json_body(conn) do
-        case HalC2.PullRequests.diff_on_project_node(input) do
+        case HalC2.PullRequests.diff_on_project_mc(input) do
           {:ok, result} ->
             {200, result}
 
@@ -254,7 +254,7 @@ defmodule HalC2.Web.Router do
     end)
   end
 
-  # Client spans (OTLP JSON), kept in the node's trace file and forwarded to its
+  # Client spans (OTLP JSON), kept in the MC's trace file and forwarded to its
   # collector (`HalC2.Traces.accept/1`).
   post "/api/observability/v1/traces" do
     with_scope(conn, "orchestration:operate", fn _session ->
@@ -281,7 +281,7 @@ defmodule HalC2.Web.Router do
 
         json(conn, 426, %{
           "code" => "protocol_incompatible",
-          "message" => "Update this #{side}: the node speaks protocol #{version}.",
+          "message" => "Update this #{side}: the MC speaks protocol #{version}.",
           "protocolVersion" => version
         })
 
@@ -298,15 +298,15 @@ defmodule HalC2.Web.Router do
     ours = HalC2.Web.Protocol.version()
 
     case Integer.parse(protocol) do
-      {theirs, ""} when theirs > ours -> {:incompatible, "node"}
+      {theirs, ""} when theirs > ours -> {:incompatible, "MC"}
       {theirs, ""} when theirs < ours -> {:incompatible, "client"}
       _ -> :ok
     end
   end
 
-  # Every node this one knows, so a client paired here can reach all of them.
+  # Every MC this one knows, so a client paired here can reach all of them.
   defp cluster do
-    for {_node, descriptor} <- HalC2.Shell.environments(),
+    for {_mc, descriptor} <- HalC2.Shell.environments(),
         do: Map.take(descriptor, ["environmentId", "label"])
   end
 
@@ -318,10 +318,10 @@ defmodule HalC2.Web.Router do
       {409,
        %{"reason" => HalC2.Cluster.reason(reason), "message" => HalC2.Cluster.describe(reason)}}
 
-  # The session a socket opens for, or nil for one opened with the node's own token.
+  # The session a socket opens for, or nil for one opened with the MC's own token.
   defp socket_session(%{"wsTicket" => ticket}), do: HalC2.Auth.take_ticket(ticket)
 
-  # The node's own access token, for local tools and development.
+  # The MC's own access token, for local tools and development.
   defp socket_session(%{"token" => token}),
     do: if(Plug.Crypto.secure_compare(token, HalC2.Web.token()), do: {:ok, nil}, else: :error)
 
@@ -375,7 +375,7 @@ defmodule HalC2.Web.Router do
 
   @scopes ~w(orchestration:read orchestration:operate terminal:operate review:write access:read access:write relay:read relay:write)
 
-  # `scope` on a token exchange: space-separated, each one the node knows.
+  # `scope` on a token exchange: space-separated, each one the MC knows.
   defp requested_scopes(nil), do: {:ok, nil}
 
   defp requested_scopes(scope) do
@@ -423,15 +423,15 @@ defmodule HalC2.Web.Router do
 
   defp iso(ms), do: ms |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
 
-  # Signed URLs are their own authorization. Each names the node that issued it,
-  # which holds the file and checks the signature; this node only forwards.
+  # Signed URLs are their own authorization. Each names the MC that issued it,
+  # which holds the file and checks the signature; this MC only forwards.
   post "/api/attachments/upload/:token" do
-    with {:ok, node} <- HalC2.Attachments.issuer(token),
+    with {:ok, mc} <- HalC2.Attachments.issuer(token),
          {:ok, body, conn} <- read_all(conn, 50 * 1024 * 1024 + 1, []) do
-      case remote(node, HalC2.Attachments, :store, [token, body]) do
+      case remote(mc, HalC2.Attachments, :store, [token, body]) do
         :ok -> send_resp(conn, 204, "")
         {:error, status, message} -> send_resp(conn, status, message)
-        _ -> send_resp(conn, 502, "The node holding this upload is unavailable.")
+        _ -> send_resp(conn, 502, "The MC holding this upload is unavailable.")
       end
     else
       :too_large -> send_resp(conn, 413, "The upload is too large.")
@@ -452,8 +452,8 @@ defmodule HalC2.Web.Router do
     end
   end
 
-  # A node run from a checkout loads what `mix compile` changed since it started
-  # (`mix hal_c2.upgrade --dev` with no node names). Only the node's own token may ask.
+  # An MC run from a checkout loads what `mix compile` changed since it started
+  # (`mix hal_c2.upgrade --dev` with no MC names). Only the MC's own token may ask.
   post "/api/dev/reload" do
     bearer = conn |> get_req_header("authorization") |> List.first("")
 
@@ -488,9 +488,9 @@ defmodule HalC2.Web.Router do
   defp serve_asset(conn, token) do
     headers = for {k, v} <- conn.req_headers, k in ["range", "if-range"], into: %{}, do: {k, v}
 
-    with {:ok, node} <- HalC2.Attachments.issuer(token),
+    with {:ok, mc} <- HalC2.Attachments.issuer(token),
          {:ok, status, resp_headers, body} <-
-           remote(node, HalC2.Attachments, :serve, [token, headers]) do
+           remote(mc, HalC2.Attachments, :serve, [token, headers]) do
       conn
       |> merge_resp_headers(resp_headers)
       |> send_resp(status, body)
@@ -517,17 +517,17 @@ defmodule HalC2.Web.Router do
     end
   end
 
-  defp remote(node, module, fun, args) do
-    :erpc.call(node, module, fun, args, 60_000)
+  defp remote(mc, module, fun, args) do
+    :erpc.call(mc, module, fun, args, 60_000)
   catch
-    _, _ -> {:error, 502, "The node holding this file is unavailable."}
+    _, _ -> {:error, 502, "The MC holding this file is unavailable."}
   end
 
   # HAL-C2 Connect: a client's link settings, and the relay's signed requests.
   forward "/api/connect", to: HalC2.Connect.Http
   forward "/api/hal-c2-connect", to: HalC2.Connect.Http
 
-  # Every node's device hub, relayed to the node that owns it (`HalC2.Devices.Proxy`).
+  # Every MC's device hub, relayed to the MC that owns it (`HalC2.Devices.Proxy`).
   match "/api/device-hub/*rest", do: HalC2.Devices.Proxy.serve(conn, rest)
 
   match _ do

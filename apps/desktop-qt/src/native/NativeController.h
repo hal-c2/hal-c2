@@ -11,11 +11,11 @@
 #include <type_traits>
 
 class NativeWindow;
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
-// A piece of the shell NativeShell runs on its own node connection. Each one
+// A piece of the shell NativeShell runs on its own MC connection. Each one
 // registers itself from its .cpp file:
 //
 //   namespace {
@@ -23,7 +23,7 @@ class ShellStore;
 //   }
 //
 // and NativeShell builds every registered controller, activates them once the
-// node's first snapshot lands, and offers them the bridge's actions. Most are
+// MC's first snapshot lands, and offers them the bridge's actions. Most are
 // one per window (NativeWindow): what the window shows and the state behind
 // it. A shared one (NativeControllerScope::Shared) is one per process, for
 // what every window has alike (the settings, alerts, the quit shortcut); its keys
@@ -34,7 +34,7 @@ class NativeController {
 public:
   virtual ~NativeController() = default;
 
-  // Once the shell has its node's first snapshot. Called again when the
+  // Once the shell has its MC's first snapshot. Called again when the
   // sidebar changes hands, so it must be idempotent.
   virtual void activate() = 0;
   // The ShellBridge interceptor: true when the action was handled here.
@@ -55,7 +55,7 @@ struct NativeControllerRegistration {
   // Registered as this `HalC2.Shell` singleton when set.
   const char* qmlName = nullptr;
   NativeControllerScope scope = NativeControllerScope::Window;
-  std::function<QObject*(ShellBridge*, NodeClient*, ShellStore*, QObject* parent)> create;
+  std::function<QObject*(ShellBridge*, McClient*, ShellStore*, QObject* parent)> create;
   // Registers the type as singleton qmlName, each engine's from `lookup`.
   std::function<void(std::function<QObject*(QQmlEngine*)> lookup)> registerSingleton;
 };
@@ -71,8 +71,8 @@ struct NativeControllerRegistrar {
                                      NativeControllerScope scope = NativeControllerScope::Window) {
     static_assert(std::is_base_of_v<QObject, T> && std::is_base_of_v<NativeController, T>);
     nativeControllerRegistry().append(
-        {name, stateKeys, qmlName, scope, [](ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent) {
-           if constexpr (std::is_constructible_v<T, ShellBridge*, NodeClient*, ShellStore*, QObject*>) {
+        {name, stateKeys, qmlName, scope, [](ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent) {
+           if constexpr (std::is_constructible_v<T, ShellBridge*, McClient*, ShellStore*, QObject*>) {
              return static_cast<QObject*>(new T(bridge, client, store, parent));
            } else {
              return static_cast<QObject*>(new T(bridge, client, parent));

@@ -8,7 +8,7 @@
 #   apps/mobile/src/state/client-cache-state.ts
 #   apps/mobile/src/persistence/mobile-database.ts
 #   apps/mobile/src/Stack.tsx (outbox drain worker)
-# Node reconnection and replay are specified in features/connections/. This file covers
+# MC reconnection and replay are specified in features/connections/. This file covers
 # what a phone does as the system suspends and resumes it, and what it keeps offline.
 
 Feature: Staying useful through backgrounding and bad connections

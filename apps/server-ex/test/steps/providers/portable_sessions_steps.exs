@@ -10,8 +10,8 @@ defmodule HalC2.Steps.Providers.PortableSessions do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.{Machines, Node}
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.{Machines, Mc}
+  alias HalC2.Test.Mc.World
 
   @repository "acme/shop"
   @history "<conversation_history>"
@@ -276,8 +276,8 @@ defmodule HalC2.Steps.Providers.PortableSessions do
   step "the user exports {string} on {string} and imports the file on {string}",
        %{args: [title, local, other]} = context do
     assert Machines.machine(context, local) == :local
-    path = Path.join(Node.tmp_dir(context.node, "exports"), "#{World.slug(title)}.hal-c2-thread")
-    assert [line] = Node.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path])
+    path = Path.join(Mc.tmp_dir(context.mc, "exports"), "#{World.slug(title)}.hal-c2-thread")
+    assert [line] = Mc.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path])
     assert line =~ "Exported #{title}"
     project = context.checkouts[other] |> Map.keys() |> hd()
 
@@ -661,7 +661,7 @@ defmodule HalC2.Steps.Providers.PortableSessions do
 
   def acp_dir(context, machine) do
     case Machines.machine(context, machine) do
-      :local -> Path.join([context.node.home, "tmp", "fake-acp"])
+      :local -> Path.join([context.mc.home, "tmp", "fake-acp"])
       %{home: home} -> Path.join(home, "fake-acp")
     end
   end
@@ -674,8 +674,8 @@ defmodule HalC2.Steps.Providers.PortableSessions do
 
     for {label, _machine} <- context.machines do
       if label == local(context) do
-        Node.ensure(HalC2.Settings)
-        Node.ensure(HalC2.Plugins)
+        Mc.ensure(HalC2.Settings)
+        Mc.ensure(HalC2.Plugins)
       end
 
       dir = Path.join(Machines.home(context, label), "plugins")

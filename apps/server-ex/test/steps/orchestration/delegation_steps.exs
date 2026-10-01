@@ -1,10 +1,10 @@
 defmodule HalC2.Steps.Orchestration.Delegation do
   @moduledoc """
-  Steps for `features/node/orchestration/delegation.feature`.
+  Steps for `features/mc/orchestration/delegation.feature`.
 
   The caller is the parent thread's agent on the fake Codex CLI; its `delegate_task`,
   `task_status` and `task_cancel` calls go through the MCP server
-  (`HalC2.Test.Node.World.mcp_tool/5`). A task's child thread is named "subagent" in
+  (`HalC2.Test.Mc.World.mcp_tool/5`). A task's child thread is named "subagent" in
   the scenario. Children run on the fake CLIs too: a task "wait for it" keeps
   working until the scenario steers it with "say <answer>", which ends its turn
   with that answer.
@@ -13,8 +13,8 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # --- the caller ----------------------------------------------------------------
 
@@ -22,7 +22,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
        %{args: [thread, "codex", path]} = context do
     context = World.providers(context)
     root = World.project(context).root
-    dir = Node.tmp_dir(context.node, "worktree")
+    dir = Mc.tmp_dir(context.mc, "worktree")
     World.git!(root, ["worktree", "add", "-q", "-b", "work", dir])
 
     context =
@@ -49,7 +49,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
-  step "the task names a provider this node does not have", context do
+  step "the task names a provider this MC does not have", context do
     Map.put(context, :delegate_input, %{"target" => %{"providerInstanceId" => "nowhere"}})
   end
 

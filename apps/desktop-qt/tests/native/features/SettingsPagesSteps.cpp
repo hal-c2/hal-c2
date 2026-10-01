@@ -44,15 +44,15 @@ const QString kRows = QStringLiteral("(project grouping|auto-settle on merge|con
 const QString kSettleDays = QStringLiteral("sidebarAutoSettleAfterDays");
 
 QString describe(World& world, const QString& key) {
-  return QStringLiteral("%1 is %2 (default %3); the node holds %4")
+  return QStringLiteral("%1 is %2 (default %3); the MC holds %4")
       .arg(key, show(settings(world)->setting(key)), show(settings(world)->defaultOf(key)),
-           show(fakeConfig(world.node).settings.toVariantMap()));
+           show(fakeConfig(world.mc).settings.toVariantMap()));
 }
 
 void ready(World& world) {
   if (settings(world)->ready()) return;
-  if (world.node.connections.isEmpty()) world.connect();
-  world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the node's settings"));
+  if (world.mc.connections.isEmpty()) world.connect();
+  world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the MC's settings"));
 }
 
 // Sets a row as its control does, and waits for the store that keeps it.
@@ -60,11 +60,11 @@ void set(World& world, const QString& key, const QVariant& value) {
   settings(world)->set(key, value);
   world.waitFor([&] { return settings(world)->setting(key) == value; }, [&] { return describe(world, key); });
   if (!settings(world)->onDevice(key)) {
-    // The node stores a default as its absence, and null as null.
+    // The MC stores a default as its absence, and null as null.
     world.waitFor([&] {
-      const QJsonObject& node = fakeConfig(world.node).settings;
-      return settings(world)->isDefault(key) ? !node.contains(key) || node.value(key).toVariant() == value
-                                             : node.value(key).toVariant() == value;
+      const QJsonObject& mc = fakeConfig(world.mc).settings;
+      return settings(world)->isDefault(key) ? !mc.contains(key) || mc.value(key).toVariant() == value
+                                             : mc.value(key).toVariant() == value;
     }, [&] { return describe(world, key); });
   }
 }

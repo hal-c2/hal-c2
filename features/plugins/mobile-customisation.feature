@@ -6,7 +6,7 @@
 
 Feature: Customising the mobile app
   The mobile app is QML too, so the user can load UI plugins onto it the same way as
-  on the other surfaces: from a file on the phone, from a paired node, or from a
+  on the other surfaces: from a file on the phone, from a paired MC, or from a
   pasted URL. Plugins can replace or extend screens, are checked before they load,
   are remembered per environment, and survive app updates. The stock app is always
   one step away.
@@ -21,7 +21,7 @@ Feature: Customising the mobile app
     Then "compact-threads" is loaded and listed with the phone as its source
 
   @backlog @mobile
-  Scenario: A plugin offered by a paired node can be loaded
+  Scenario: A plugin offered by a paired MC can be loaded
     Given "workstation" offers the plugin "team-status"
     When the user picks "team-status" from the plugins "workstation" offers
     Then "team-status" is loaded and listed with "workstation" as its source

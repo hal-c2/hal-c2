@@ -17,23 +17,23 @@ Feature: Removing and updating projects
   Background:
     Given a connected environment "laptop" with the project "shop" at "/home/sam/shop"
 
-  @node
+  @mc
   Scenario: Updating a project changes only the fields that were sent
     Given "shop" has the default model "Sonnet"
     When a client renames "shop" to "Shop web"
     Then the project is titled "Shop web"
     And its default model is still "Sonnet"
 
-  @node
+  @mc
   Scenario: Deleting a project removes it from every sidebar
     When a client deletes the project "shop"
     Then "shop" is no longer listed for "laptop"
     And "/home/sam/shop" still exists on disk
 
-  @node
+  @mc
   Scenario: Changing a project that does not exist fails
     When a client renames an unknown project
-    Then the node answers "unknown project"
+    Then the MC answers "unknown project"
 
   @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Removing a project asks for confirmation and explains what is lost
@@ -58,7 +58,7 @@ Feature: Removing and updating projects
   @desktop
   Scenario: A confirmation for a project that goes away closes
     Given the user asks to remove "shop"
-    When the node removes the project "shop"
+    When the MC removes the project "shop"
     Then the removal confirmation is closed
 
   @desktop @mobile @tui @backlog-mobile @backlog-tui
@@ -82,20 +82,20 @@ Feature: Removing and updating projects
 
   Rule: Automatic pull at startup
 
-    @node
-    Scenario: A clean checkout behind its upstream is pulled when the node starts
+    @mc
+    Scenario: A clean checkout behind its upstream is pulled when the MC starts
       Given "shop" has automatic pull on
       And "shop" is a clean checkout of its default branch that is behind its upstream
-      When the node starts
+      When the MC starts
       Then "shop" is fast-forwarded to its upstream
 
-    @node
+    @mc
     Scenario Outline: Checkouts that are not safe to pull are left alone
       Given "shop" has automatic pull on
       And "shop" <state>
-      When the node starts
+      When the MC starts
       Then "shop" is not pulled
-      And the node starts normally
+      And the MC starts normally
 
       Examples:
         | state                                  |
@@ -104,9 +104,9 @@ Feature: Removing and updating projects
         | has no upstream                        |
         | has commits its upstream does not have |
 
-    @node
+    @mc
     Scenario: Automatic pull is off unless the project opts in
       Given "shop" is a clean checkout behind its upstream
       And automatic pull was never turned on for "shop"
-      When the node starts
+      When the MC starts
       Then "shop" is not pulled

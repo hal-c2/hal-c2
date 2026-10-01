@@ -1,6 +1,6 @@
 defmodule HalC2.Orchestration do
   @moduledoc """
-  Client commands on this node's threads: start a thread, send a message, answer
+  Client commands on this MC's threads: start a thread, send a message, answer
   an approval, and interrupt a run, for threads whose provider is Codex, Claude, or an
   ACP agent such as OpenCode;
   plus the diffs of their checkpoints.
@@ -77,9 +77,9 @@ defmodule HalC2.Orchestration do
             }}
   end
 
-  # This node's archived threads, with the projects they belong to.
+  # This MC's archived threads, with the projects they belong to.
   def handle("orchestration.getArchivedShellSnapshot", _input) do
-    rows = for {{node, _id}, row} <- HalC2.Shell.rows(), node == node(), do: row
+    rows = for {{mc, _id}, row} <- HalC2.Shell.rows(), mc == node(), do: row
 
     {:ok,
      %{
@@ -101,7 +101,7 @@ defmodule HalC2.Orchestration do
   def handle("orchestration.getFullThreadDiff", %{"threadId" => thread_id} = input),
     do: turn_diff(thread_id, 0, input["toTurnCount"], input)
 
-  def handle(method, _payload), do: {:error, "#{method} is not served by this node yet"}
+  def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
   defp turn_diff(thread_id, from, to, input) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
@@ -572,7 +572,7 @@ defmodule HalC2.Orchestration do
           HalC2.Orchestration.Delegation.resolve_delivery(command)
 
         type ->
-          {:error, "#{type} is not supported by this node yet"}
+          {:error, "#{type} is not supported by this MC yet"}
       end
 
     with :ok <- result, do: {:ok, %{"sequence" => sequence(thread_id)}}
@@ -601,14 +601,14 @@ defmodule HalC2.Orchestration do
                do: {:error, not_preparing(run_id)}
 
         _ ->
-          {:error, "prepared-run.#{action} is not supported by this node yet"}
+          {:error, "prepared-run.#{action} is not supported by this MC yet"}
       end
 
     with ok when ok in [:ok, {:ok, :ok}] <- result,
          do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
-  def dispatch(%{"type" => type}), do: {:error, "#{type} is not supported by this node yet"}
+  def dispatch(%{"type" => type}), do: {:error, "#{type} is not supported by this MC yet"}
 
   defp response(thread_id, %{"answers" => %{} = answers} = command) do
     by_question = command["attachmentsByQuestionId"] || %{}
@@ -920,7 +920,7 @@ defmodule HalC2.Orchestration do
         _ -> nil
       end
 
-    with %{"workspaceRoot" => _} <- project || {:error, "The project is not on this node."},
+    with %{"workspaceRoot" => _} <- project || {:error, "The project is not on this MC."},
          {:ok, attachments} <- HalC2.Attachments.claim(thread_id, command["attachments"] || []),
          command =
            command
@@ -1473,7 +1473,7 @@ defmodule HalC2.Orchestration do
     }
   end
 
-  # The files providers read, from this node's attachment store.
+  # The files providers read, from this MC's attachment store.
   defp provider_attachments(attachments) do
     for attachment <- attachments || [],
         path = HalC2.Attachments.path(attachment),
@@ -2157,7 +2157,7 @@ defmodule HalC2.Orchestration do
   end
 
   # Why a message cannot run on its thread's provider instance, or nil. No other
-  # provider stands in for one this node no longer has: an instance nothing binds
+  # provider stands in for one this MC no longer has: an instance nothing binds
   # (not built in, not an ACP agent, not in settings) is unknown, one whose plugin
   # went away is unavailable.
   defp instance_refusal(thread, command) do
@@ -2192,13 +2192,13 @@ defmodule HalC2.Orchestration do
         nil
 
       missing == :none ->
-        "No provider is set up on this node. Add a provider before starting a thread."
+        "No provider is set up on this MC. Add a provider before starting a thread."
 
       not bound? ->
         "No provider instance bound to id '#{instance}'"
 
       true ->
-        "The provider \"#{instance}\" is not available on this node; its plugin may have been removed. Pick another provider for this thread."
+        "The provider \"#{instance}\" is not available on this MC; its plugin may have been removed. Pick another provider for this thread."
     end
   end
 
@@ -2608,7 +2608,7 @@ defmodule HalC2.Orchestration do
 
   defp project_root(project_id) do
     Enum.find_value(HalC2.Shell.rows(), fn
-      {{node, ^project_id}, {"project", row}} when node == node() -> row["workspaceRoot"]
+      {{mc, ^project_id}, {"project", row}} when mc == node() -> row["workspaceRoot"]
       _ -> nil
     end)
   end

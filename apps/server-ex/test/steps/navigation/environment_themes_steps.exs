@@ -3,7 +3,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
   Steps for `features/navigation/environment-themes.feature`.
 
   Published themes are observed the way a client sees them: a socket subscribed to
-  the node's config receives `config.themes` frames. A client following the
+  the MC's config receives `config.themes` frames. A client following the
   environment's default theme is modelled by `context.theme_clients` (name →
   `%{theme, applied, published, settings, synced}`) and applies the settings it
   receives with the web client's rule (`apps/web/src/hooks/useDefaultTheme.ts`).
@@ -11,15 +11,15 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
   alias HalC2.Test.WsClient
 
   @built_in ~w(t3-chat grove ocean ember iris)
 
-  # --- publishing themes from the node ---------------------------------------------
+  # --- publishing themes from the MC ---------------------------------------------
 
-  step "the node's themes folder is empty", context do
+  step "the MC's themes folder is empty", context do
     context = watch_themes(context)
     assert File.ls!(themes_dir(context)) == []
     assert context.published == []
@@ -32,12 +32,12 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
     context
   end
 
-  step "within a few seconds the node publishes a theme with the id {string}",
+  step "within a few seconds the MC publishes a theme with the id {string}",
        %{args: [id]} = context do
     await_themes(context, &(id in ids(&1)))
   end
 
-  step "a client is watching the node's configuration", context do
+  step "a client is watching the MC's configuration", context do
     watch_themes(context)
   end
 
@@ -52,7 +52,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
     context
   end
 
-  step "the node publishes {string}", %{args: [id]} = context do
+  step "the MC publishes {string}", %{args: [id]} = context do
     context = watch_themes(context)
     write_theme(context, "#{id}.json", palette(String.capitalize(id), "#7aa2f7"))
     await_themes(context, &(id in ids(&1)))
@@ -98,7 +98,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
   end
 
   # A good theme is published first, so "the other themes" exist; the bad file
-  # follows, then a second good one: once that one is published, the node has
+  # follows, then a second good one: once that one is published, the MC has
   # read the bad file too.
   step ~r/^a theme file that is (?<problem>.+) is written into the themes folder$/,
        %{args: [problem]} = context do
@@ -141,7 +141,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
     context = await_themes(context, &(length(&1) >= max))
     assert length(context.published) == max
 
-    # All of them are in the folder; the node's current set, what it publishes, stays capped.
+    # All of them are in the folder; the MC's current set, what it publishes, stays capped.
     assert length(File.ls!(themes_dir(context))) == context.written_count
     assert length(HalC2.EnvironmentThemes.current()) == max
     context
@@ -186,7 +186,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
     context
   end
 
-  # `hal-c2 theme ...` is `mix hal_c2.theme ...` on the node. A theme must be published
+  # `hal-c2 theme ...` is `mix hal_c2.theme ...` on the MC. A theme must be published
   # before it can be set, so "nightfall" is published first when it is not yet.
   step ~r/^the server operator runs "hal-c2 theme (?<args>[^"]+)"(?: again)?$/,
        %{args: [args]} = context do
@@ -233,7 +233,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
 
   # --- helpers -----------------------------------------------------------------------
 
-  defp themes_dir(context), do: Path.join(context.node.home, "themes")
+  defp themes_dir(context), do: Path.join(context.mc.home, "themes")
 
   # Starts the theme service with a short check interval (restored afterwards)
   # and the settings service, whose watchers the pushes go through.
@@ -248,8 +248,8 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
           else: Application.delete_env(:hal_c2, :theme_check_ms)
       end)
 
-      Node.ensure(HalC2.Settings)
-      Node.ensure(HalC2.EnvironmentThemes)
+      Mc.ensure(HalC2.Settings)
+      Mc.ensure(HalC2.EnvironmentThemes)
     end
 
     Map.put(context, :theme_services, true)
@@ -274,7 +274,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
       do: write_theme(context, "#{id}.json", palette(String.capitalize(id), "#7aa2f7"))
   end
 
-  # Writes a file the node must skip; returns the id it would have had.
+  # Writes a file the MC must skip; returns the id it would have had.
   defp write_unusable(context, problem) do
     dir = themes_dir(context)
 
@@ -293,7 +293,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
         "bulky"
 
       "a symbolic link" ->
-        target = Path.join(Node.tmp_dir(context.node, "theme"), "linked.json")
+        target = Path.join(Mc.tmp_dir(context.mc, "theme"), "linked.json")
         File.write!(target, JSON.encode!(palette("Linked", "#7aa2f7")))
         File.ln_s!(target, Path.join(dir, "linked.json"))
         "linked"
@@ -318,32 +318,32 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
 
   defp themes_client(context), do: context.clients["themes"]
 
-  # A socket subscribed to the node's config, keeping the last published set.
+  # A socket subscribed to the MC's config, keeping the last published set.
   defp watch_themes(context) do
     context = services(context)
 
     if context.clients["themes"] do
       context
     else
-      client = Node.sub(Node.connect(context.node), 1, config_shape())
-      {frame, client} = Node.await(client, &themes_frame?/1)
+      client = Mc.sub(Mc.connect(context.mc), 1, config_shape())
+      {frame, client} = Mc.await(client, &themes_frame?/1)
       context |> World.put_client("themes", client) |> Map.put(:published, frame["themes"])
     end
   end
 
-  # Waits (the node checks every 50 ms here) for a published set matching `fun`.
+  # Waits (the MC checks every 50 ms here) for a published set matching `fun`.
   defp await_themes(context, fun) do
     if fun.(context.published) do
       context
     else
       {frame, client} =
-        Node.await(themes_client(context), &(themes_frame?(&1) and fun.(&1["themes"])))
+        Mc.await(themes_client(context), &(themes_frame?(&1) and fun.(&1["themes"])))
 
       context |> World.put_client("themes", client) |> Map.put(:published, frame["themes"])
     end
   end
 
-  defp config_shape, do: %{"type" => "config", "node" => Atom.to_string(node())}
+  defp config_shape, do: %{"type" => "config", "mc" => Atom.to_string(node())}
 
   defp server_default(context, theme) do
     context = services(context)
@@ -355,12 +355,12 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
   defp choose(context, theme),
     do: update_in(context, [:theme_clients, "default"], &%{&1 | theme: theme})
 
-  # Connects each of `names` to the node's config as a client following its default
+  # Connects each of `names` to the MC's config as a client following its default
   # theme. A client starts on its own theme and has applied no default yet. All
   # sockets open before any subscribes, as opening one reads the process mailbox.
   defp follow_default(context, names) when is_list(names) do
     context = services(context)
-    context = Enum.reduce(names, context, &World.put_client(&2, &1, Node.connect(&2.node)))
+    context = Enum.reduce(names, context, &World.put_client(&2, &1, Mc.connect(&2.mc)))
 
     Enum.reduce(names, context, fn name, context ->
       model =
@@ -368,7 +368,7 @@ defmodule HalC2.Steps.Navigation.EnvironmentThemes do
           %{theme: "t3-chat", applied: nil, published: [], settings: nil}
 
       context
-      |> World.put_client(name, Node.sub(context.clients[name], 1, config_shape()))
+      |> World.put_client(name, Mc.sub(context.clients[name], 1, config_shape()))
       |> put_in([Access.key(:theme_clients, %{}), name], Map.put(model, :synced, false))
       |> Map.put(:on_choose, fn context, choice -> choose(context, choice) end)
       |> Map.put(:after_reconnect, fn context -> follow_default(context, "default") end)

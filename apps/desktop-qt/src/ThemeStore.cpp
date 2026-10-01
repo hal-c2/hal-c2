@@ -198,7 +198,7 @@ QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
 
 namespace {
 
-// The node's theme carries CSS font-family lists; QML wants one family and falls
+// The MC's theme carries CSS font-family lists; QML wants one family and falls
 // back on its own, so take the first installed non-generic entry, or the
 // first non-generic one when nothing in the list is installed.
 QString firstFontFamily(const QString& list) {

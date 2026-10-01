@@ -7,7 +7,7 @@ import HalC2.Shell
 // The prompt: text input, model/effort/mode pickers, send/stop, with the
 // checkout context strip welded under it. Rendered from Shell.state.composer
 // and Shell.state.workspace; every change is dispatched back to
-// ComposerController, which keeps the drafts and sends over the node.
+// ComposerController, which keeps the drafts and sends over the MC.
 Rectangle {
     id: composer
 

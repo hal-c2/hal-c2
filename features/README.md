@@ -5,7 +5,7 @@ This tree is the feature-loss ledger for the move from the legacy surfaces to th
 
 | Legacy, to be deleted                     | Replaced by                            |
 | ----------------------------------------- | -------------------------------------- |
-| the Node server (`apps/server`)           | the Elixir node (`apps/server-ex`)     |
+| the Node server (`apps/server`)           | the MC (`apps/server-ex`)              |
 | the Electron desktop app (`apps/desktop`) | the Qt/QML desktop (`apps/desktop-qt`) |
 | the React Native app (`apps/mobile`)      | the QML mobile client                  |
 | the web app (`apps/web`)                  | nothing; there is no web client        |
@@ -30,9 +30,9 @@ One directory per product domain, not per surface. Surfaces are tags.
 | `files/`          | project files, explorer, folder operations, project scripts and actions      |
 | `settings/`       | every settings panel, scopes and inheritance, storage, diagnostics, updates  |
 | `connections/`    | pairing, devices, remote access, HAL-C2 Connect, clustering                  |
-| `node/`           | the Elixir node itself: protocol, auth, orchestration engine, checkpoints    |
+| `mc/`             | the MC (hal-c2-mc) itself: protocol, auth, orchestration engine, checkpoints |
 | `providers/`      | each agent provider as a plugin: install, auth, models, usage, sessions      |
-| `plugins/`        | the plugin system: UI plugins, node plugins, agent plugins                   |
+| `plugins/`        | the plugin system: UI plugins, MC plugins, agent plugins                     |
 | `mobile/`         | behaviour that only exists on phones and tablets                             |
 | `desktop/`        | behaviour that only exists in the desktop client                             |
 | `tui/`            | behaviour that only exists in the terminal client                            |
@@ -42,21 +42,21 @@ One directory per product domain, not per surface. Surfaces are tags.
 
 Surface tags say where a scenario must hold. A scenario carries every surface it applies to.
 
-- `@node` runs against a node with no client.
+- `@mc` runs against an MC with no client.
 - `@desktop` runs against the QML desktop client.
 - `@mobile` runs against the QML mobile client.
 - `@tui` runs against the terminal client rendered by opentui-qml.
 - `@shared` is shorthand for `@desktop @mobile @tui` and means the QML is shared between them.
 
 Status tags say whether the HAL-C2 stack delivers the scenario today. The HAL-C2 stack is the
-Elixir node, native QML, and the TUI. Anything served by `apps/server`, `apps/web` or
+MC, native QML, and the TUI. Anything served by `apps/server`, `apps/web` or
 `apps/mobile` does not count.
 
 - No status tag means the scenario passes on every one of its surfaces now.
 - `@backlog` means it passes on none of its surfaces yet: the product does this today through
   code that is going away, or it is new intended behaviour. This is the list of things we
   must not lose.
-- `@backlog-node`, `@backlog-desktop`, `@backlog-mobile` and `@backlog-tui` mean it does not
+- `@backlog-mc`, `@backlog-desktop`, `@backlog-mobile` and `@backlog-tui` mean it does not
   pass on that one surface yet. When a `@backlog @desktop @mobile` scenario starts passing on
   the desktop it becomes `@desktop @mobile @backlog-mobile`; `@shared @backlog-mobile
 @backlog-tui` passes only on the desktop. Each runner treats its own surface's tag like
@@ -75,7 +75,7 @@ work with that plugin absent.
 `@priority-high` and `@priority-low` weight a backlog scenario for `mise run features:pick`,
 which picks random backlog scenarios to work on. Low priority still comes up, just less often.
 It takes a count, `@tag`s to require, `-@tag`s to exclude, and files or globs under `features/`:
-`mise run features:pick 8 @node -@plugin-antigravity 'providers/**'`. Requiring a surface keeps
+`mise run features:pick 8 @mc -@plugin-antigravity 'providers/**'`. Requiring a surface keeps
 only work still missing on it, so `@desktop` draws `@backlog` and `@backlog-desktop` scenarios.
 `@blocked` work is left out; `mise run features:pick 20 @blocked` lists it with what each
 scenario waits for.
@@ -87,7 +87,7 @@ scenario waits for.
 - One behaviour per scenario. Each scenario stands alone; a `Background` carries shared setup.
 - Tables of the same behaviour use `Scenario Outline` with `Examples`, never copy-pasted scenarios.
 - Reverse states are scenarios too. Snooze has unsnooze. Open has close. Pair has revoke.
-- Failure and offline paths are scenarios. A node that is unreachable, a provider that is not
+- Failure and offline paths are scenarios. An MC that is unreachable, a provider that is not
   installed, a file that no longer exists.
 - Every file starts with a comment block naming the sources it was derived from, so the ledger
   can be audited:
@@ -120,19 +120,19 @@ T3 Code keeps shipping, and its behaviour is ledgered here even though its code 
 ## Running
 
 The mise tasks in `mise-tasks/` are the way to run them (`mise tasks ls`); globs are relative to
-`features/`. On the node and the TUI, `@backlog` scenarios, and those tagged `@backlog-node` or
+`features/`. On the MC and the TUI, `@backlog` scenarios, and those tagged `@backlog-mc` or
 `@backlog-tui` respectively, run only with `--backlog` or `INCLUDE_BACKLOG=1`, and are expected
 to fail there.
 
 | Surface    | Task                                                      | Raw command                                                                                  |
 | ---------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| node       | `mise run features:node <globs>`, `features:node:all`     | `mix features [--backlog] <globs>` in `apps/server-ex`                                       |
+| MC         | `mise run features:mc <globs>`, `features:mc:all`         | `mix features [--backlog] <globs>` in `apps/server-ex`                                       |
 | TUI        | `mise run features:tui <globs>`, `features:tui:all`       | `TUI_FEATURES="<globs>" [TUI_INCLUDE_BACKLOG=1] bun test ./features/runner.ts` in `apps/tui` |
 | Qt desktop | `mise run features:desktop` (`:qml` and `:native` halves) | `vp run --filter @hal-c2/desktop-qt test:qml`, ctest per `apps/desktop-qt/README.md`         |
 
-Node globs are required; `features:node:all` runs the suite one top-level directory at a time,
+MC globs are required; `features:mc:all` runs the suite one top-level directory at a time,
 because one run of everything is slow. `features:tui:all` runs every file with a `@tui` or
 `@shared` scenario. On the desktop, the native tests' `tst_Features` runs the `@desktop` scenarios
-of `desktop/native-*.feature` and the desktop-passing `@shared` timeline scenarios against a fake node (`HAL_C2_FEATURES="<globs>"` picks other files);
+of `desktop/native-*.feature` and the desktop-passing `@shared` timeline scenarios against a fake MC (`HAL_C2_FEATURES="<globs>"` picks other files);
 `apps/desktop-qt/tests/tst_Scenarios.qml` still mirrors the `qt-scenarios.feature` files by hand. `mise run features` runs all three and reports
 each. Step definitions live in `apps/server-ex/test/steps/` and `apps/tui/features/`.

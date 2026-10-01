@@ -29,7 +29,7 @@ CommandPaletteController& palette(World& world) {
   return *palette;
 }
 
-// Waits for the palette's answers from the node.
+// Waits for the palette's answers from the MC.
 void settle(World& world) {
   world.sync();
   world.waitFor([&world] { return !palette(world).searching(); }, QStringLiteral("the palette's searches to be answered"));
@@ -74,12 +74,12 @@ const Steps steps([] {
   const QString q = kQuoted;
 
   step(QStringLiteral("%1 holds %1, %1, %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakeFiles& fake = fakeFiles(world.node);
+    FakeFiles& fake = fakeFiles(world.mc);
     for (const QString& path : {c[1], c[2], c[3], c[4]}) fake.files.insert(path, QStringLiteral("// %1\n").arg(path));
     lookAtThread(world, c[0]);
   });
   step(QStringLiteral("%1 contains the line %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    fakeFiles(world.node).files[c[0]].append(c[1] + QLatin1Char('\n'));
+    fakeFiles(world.mc).files[c[0]].append(c[1] + QLatin1Char('\n'));
   });
 
   // Go to file.
@@ -112,7 +112,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("%1 opens at the matching line").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QStringList lines = fakeFiles(world.node).files.value(c[0]).split(QLatin1Char('\n'));
+    const QStringList lines = fakeFiles(world.mc).files.value(c[0]).split(QLatin1Char('\n'));
     int line = -1;
     for (int n = 0; n < lines.size() && line < 0; ++n) {
       if (lines.at(n).contains(QLatin1String("Total"))) line = n + 1;
@@ -131,27 +131,27 @@ const Steps steps([] {
     expect(matches > 0 && model.status() == QStringLiteral("%1 results in %2 files").arg(matches).arg(files.size()), describe(world));
   });
   step(QStringLiteral("the query is empty"), [](World& world, const Captures&, const Table&) {
-    world.node.part<PendingSearch>() = {};
+    world.mc.part<PendingSearch>() = {};
   });
   step(QStringLiteral("nothing matches %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<PendingSearch>() = {c[0], false};
+    world.mc.part<PendingSearch>() = {c[0], false};
   });
   step(QStringLiteral("the query is the regular expression %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<PendingSearch>() = {c[0], true};
+    world.mc.part<PendingSearch>() = {c[0], true};
   });
   step(QStringLiteral("no project is open"), [](World& world, const Captures&, const Table&) {
     world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("usage")));
     world.sync();
   });
   step(QStringLiteral("the user searches the project contents"), [](World& world, const Captures&, const Table&) {
-    const PendingSearch pending = world.node.part<PendingSearch>();
+    const PendingSearch pending = world.mc.part<PendingSearch>();
     palette(world).setUseRegex(pending.regex);
     searchIn(world, QStringLiteral("content"), pending.query);
   });
   step(QStringLiteral("the user switches to the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.projects.insert(c[0], {{QStringLiteral("id"), c[0]}, {QStringLiteral("title"), c[0]},
+    world.mc.projects.insert(c[0], {{QStringLiteral("id"), c[0]}, {QStringLiteral("title"), c[0]},
                                       {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[0]}, {QStringLiteral("scripts"), QJsonArray()}});
-    world.node.sendRow(c[0], world.node.projects.value(c[0]), QStringLiteral("project"));
+    world.mc.sendRow(c[0], world.mc.projects.value(c[0]), QStringLiteral("project"));
     lookAtThread(world, c[0]);
   });
   step(QStringLiteral("the content search is empty"), [](World& world, const Captures&, const Table&) {

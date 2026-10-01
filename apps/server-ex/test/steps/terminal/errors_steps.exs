@@ -3,8 +3,8 @@ defmodule HalC2.Steps.Terminal.Errors do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.{Terminal, World}
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.{Terminal, World}
 
   # --- why a terminal cannot open ------------------------------------------------------------
 
@@ -36,8 +36,8 @@ defmodule HalC2.Steps.Terminal.Errors do
     context
   end
 
-  step "the folder {string} cannot be read by the node", %{args: [path]} = context do
-    # The folder sits in a directory the node may not enter.
+  step "the folder {string} cannot be read by the MC", %{args: [path]} = context do
+    # The folder sits in a directory the MC may not enter.
     dir = Terminal.mkdir(context, path)
     parent = Path.dirname(dir)
     File.chmod!(parent, 0o000)
@@ -59,7 +59,7 @@ defmodule HalC2.Steps.Terminal.Errors do
     context
   end
 
-  step "the node's machine has no login shell, zsh, bash or sh", context do
+  step "the MC's machine has no login shell, zsh, bash or sh", context do
     context = Terminal.ensure(context)
     Terminal.put_env("SHELL", nil)
 
@@ -204,7 +204,7 @@ defmodule HalC2.Steps.Terminal.Errors do
   step "both requests succeed", context do
     for {name, id} <- [{"first", context.closing}, {"second", context.racing}], reduce: context do
       context ->
-        {frame, client} = Node.await(World.client(context, name), Node.reply?(id))
+        {frame, client} = Mc.await(World.client(context, name), Mc.reply?(id))
         assert %{"t" => "rpc.result", "result" => nil} = frame
         World.put_client(context, name, client)
     end
@@ -246,9 +246,9 @@ defmodule HalC2.Steps.Terminal.Errors do
     id = System.unique_integer([:positive])
 
     client =
-      Node.rpc(
+      Mc.rpc(
         World.client(context, name),
-        context.node.environment,
+        context.mc.environment,
         id,
         "terminal.close",
         session(context)

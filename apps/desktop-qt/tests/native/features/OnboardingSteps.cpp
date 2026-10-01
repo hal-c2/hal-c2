@@ -19,12 +19,12 @@
 
 namespace {
 
-// The node's `agentSessions.*`: what a scan finds, and what importing does.
+// The MC's `agentSessions.*`: what a scan finds, and what importing does.
 struct FakeSessions {
   QJsonArray candidates;
   QString refuseImport;
   bool holdImport = false;
-  QList<FakeNode::Rpc> heldImports;
+  QList<FakeMc::Rpc> heldImports;
   QList<QJsonObject> imports;
   // What the setup terminal was sent (terminal.write payloads).
   QList<QJsonObject> writes;
@@ -34,23 +34,23 @@ struct FakeSessions {
 };
 
 FakeSessions& fake(World& world) {
-  return world.node.part<FakeSessions>();
+  return world.mc.part<FakeSessions>();
 }
 
-void answerImport(FakeNode& node, const FakeNode::Rpc& rpc) {
-  node.reply(rpc, QJsonObject{{QStringLiteral("importedCount"), 2}, {QStringLiteral("skippedCount"), 0}});
+void answerImport(FakeMc& mc, const FakeMc::Rpc& rpc) {
+  mc.reply(rpc, QJsonObject{{QStringLiteral("importedCount"), 2}, {QStringLiteral("skippedCount"), 0}});
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
-  node.onRpc(QStringLiteral("agentSessions.scan"), [&node](const FakeNode::Rpc& rpc) {
-    node.reply(rpc, QJsonObject{{QStringLiteral("candidates"), node.part<FakeSessions>().candidates}});
+const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("agentSessions.scan"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.reply(rpc, QJsonObject{{QStringLiteral("candidates"), mc.part<FakeSessions>().candidates}});
   });
-  node.onRpc(QStringLiteral("agentSessions.import"), [&node](const FakeNode::Rpc& rpc) {
-    FakeSessions& sessions = node.part<FakeSessions>();
+  mc.onRpc(QStringLiteral("agentSessions.import"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeSessions& sessions = mc.part<FakeSessions>();
     sessions.imports.append(rpc.payload);
-    if (!sessions.refuseImport.isEmpty()) return node.refuse(rpc, sessions.refuseImport);
+    if (!sessions.refuseImport.isEmpty()) return mc.refuse(rpc, sessions.refuseImport);
     if (sessions.holdImport) return sessions.heldImports.append(rpc);
-    answerImport(node, rpc);
+    answerImport(mc, rpc);
   });
 });
 
@@ -71,10 +71,10 @@ QString preferencesPath(World& world) {
   return QDir(world.configDir()).filePath(QStringLiteral("preferences.json"));
 }
 
-// The node's own computer, its config as the node publishes it.
+// The MC's own computer, its config as the MC publishes it.
 void describeComputer(World& world, const QString& label) {
-  world.node.label = label;
-  FakeConfig& config = fakeConfig(world.node);
+  world.mc.label = label;
+  FakeConfig& config = fakeConfig(world.mc);
   config.config.insert(QStringLiteral("cwd"), QStringLiteral("/home/ada"));
   config.config.insert(QStringLiteral("environment"),
                        QJsonObject{{QStringLiteral("platform"), QJsonObject{{QStringLiteral("os"), QStringLiteral("linux")}}}});
@@ -84,7 +84,7 @@ QString driverOf(const QString& agent) {
   return agent == QLatin1String("Claude Code") ? QStringLiteral("claudeAgent") : QStringLiteral("codex");
 }
 
-// An agent on the node's computer, as its provider probe reports it.
+// An agent on the MC's computer, as its provider probe reports it.
 void giveAgent(World& world, const QString& agent, const QString& state, const QString& instanceId = {}) {
   const QString driver = driverOf(agent);
   const bool installed = state != QLatin1String("not installed");
@@ -98,7 +98,7 @@ void giveAgent(World& world, const QString& agent, const QString& state, const Q
                                                                                   : signedIn ? QStringLiteral("authenticated")
                                                                                              : QStringLiteral("unauthenticated")}}}};
   if (!installed) provider.insert(QStringLiteral("message"), agent + QStringLiteral(" is not installed."));
-  FakeConfig& config = fakeConfig(world.node);
+  FakeConfig& config = fakeConfig(world.mc);
   QJsonArray providers = config.config.value(QLatin1String("providers")).toArray();
   for (qsizetype i = providers.size() - 1; i >= 0; --i) {
     if (providers.at(i).toObject().value(QLatin1String("driver")) == driver) providers.removeAt(i);
@@ -128,11 +128,11 @@ QVariantMap computer(World& world, const QString& label) {
   return {};
 }
 
-// Links a computer the node reaches, named `label`.
+// Links a computer the MC reaches, named `label`.
 void linkComputer(World& world, const QString& label, const QString& problem = {}) {
-  world.node.linkLabels.insert(label, label);
-  if (!problem.isEmpty()) world.node.linkProblems.insert(label, problem);
-  world.node.link(label);
+  world.mc.linkLabels.insert(label, label);
+  if (!problem.isEmpty()) world.mc.linkProblems.insert(label, problem);
+  world.mc.link(label);
 }
 
 void continueTo(World& world, const QString& step) {
@@ -156,14 +156,14 @@ QVariantMap card(World& world, const QString& agent, const QString& label) {
   return {};
 }
 
-// The agents step, with the node's providers checked.
+// The agents step, with the MC's providers checked.
 void checkAgents(World& world) {
   openWizard(world);
   continueTo(world, QStringLiteral("agents"));
   world.waitFor([&] {
     const QVariantList sections = onboarding(world).value(QStringLiteral("agents")).toList();
     if (sections.isEmpty()) return false;
-    // An agent the node does not report stays "checking", as on the web.
+    // An agent the MC does not report stays "checking", as on the web.
     for (const QVariant& entry : sections.first().toMap().value(QStringLiteral("cards")).toList()) {
       if (entry.toMap().value(QStringLiteral("state")) != QLatin1String("checking")) return true;
     }
@@ -171,15 +171,15 @@ void checkAgents(World& world) {
   }, [&] { return QStringLiteral("the agents to be checked; the wizard is %1").arg(show(onboarding(world))); });
 }
 
-// Opens the setup terminal for `agent` on the node's computer.
+// Opens the setup terminal for `agent` on the MC's computer.
 void setUp(World& world, const QString& agent) {
-  world.node.onRpc(QStringLiteral("terminal.write"), [&world](const FakeNode::Rpc& rpc) {
+  world.mc.onRpc(QStringLiteral("terminal.write"), [&world](const FakeMc::Rpc& rpc) {
     fake(world).writes.append(rpc.payload);
-    world.node.passOn(rpc);
+    world.mc.passOn(rpc);
   });
   checkAgents(world);
   act(world, QStringLiteral("onboarding.agent"),
-      {{QStringLiteral("environmentId"), world.node.environmentId}, {QStringLiteral("driver"), driverOf(agent)}});
+      {{QStringLiteral("environmentId"), world.mc.environmentId}, {QStringLiteral("driver"), driverOf(agent)}});
   world.waitFor([&] {
     const QString status = onboarding(world).value(QStringLiteral("terminal")).toMap().value(QStringLiteral("status")).toString();
     return status == QLatin1String("ready") || status == QLatin1String("openFailed");
@@ -188,7 +188,7 @@ void setUp(World& world, const QString& agent) {
 
 QList<QJsonObject> terminalInputs(World& world) {
   QList<QJsonObject> inputs;
-  for (const QJsonObject& subscription : std::as_const(world.node.subscriptions)) {
+  for (const QJsonObject& subscription : std::as_const(world.mc.subscriptions)) {
     const QJsonObject shape = subscription.value(QLatin1String("shape")).toObject();
     if (shape.value(QLatin1String("type")) == QLatin1String("terminal")) inputs.append(shape);
   }
@@ -267,11 +267,11 @@ const Steps steps([] {
 
   // ---- When the wizard appears ----
   step(QStringLiteral("a fresh installation with no workspace"), [](World& world, const Captures&, const Table&) {
-    expect(world.node.projects.isEmpty() && world.node.threads.isEmpty() && !QFile::exists(preferencesPath(world)),
+    expect(world.mc.projects.isEmpty() && world.mc.threads.isEmpty() && !QFile::exists(preferencesPath(world)),
            QStringLiteral("the installation is not fresh"));
   });
   step(QStringLiteral("a workspace that already has projects"), [](World& world, const Captures&, const Table&) {
-    world.node.projects.insert(QStringLiteral("shop"), {{QStringLiteral("id"), QStringLiteral("shop")},
+    world.mc.projects.insert(QStringLiteral("shop"), {{QStringLiteral("id"), QStringLiteral("shop")},
                                                         {QStringLiteral("title"), QStringLiteral("shop")},
                                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
                                                         {QStringLiteral("scripts"), QJsonArray()}});
@@ -279,22 +279,22 @@ const Steps steps([] {
   step(QStringLiteral("the user opens HAL-C2"), [](World& world, const Captures&, const Table&) { openHalC2(world); });
   step(QStringLiteral("the app opens without the wizard"), [](World& world, const Captures&, const Table&) {
     appOpens(world);
-    // Saved quietly, so the next start decides without the node.
+    // Saved quietly, so the next start decides without the MC.
     world.waitFor([&] { return !world.native().controller<SettingsController>()->deviceSettings().value(QLatin1String("onboardingCompletedAt")).toString().isEmpty(); },
                   QStringLiteral("setup to be saved as done"));
   });
   step(QStringLiteral("the app cannot confirm the workspace during startup"), [](World& world, const Captures&, const Table&) {
-    world.node.holdSnapshot = true;
+    world.mc.holdSnapshot = true;
     controller(world)->setDecisionTimeout(20);
   });
   step(QStringLiteral("the user reloads"), [](World& world, const Captures&, const Table&) {
-    world.node.connections.clear();
+    world.mc.connections.clear();
     // Long enough for the step after to see it waiting again.
     controller(world)->setDecisionTimeout(60000);
     act(world, QStringLiteral("onboarding.reload"));
   });
   step(QStringLiteral("the app tries again"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return !world.node.connections.isEmpty() && world.shellSubscriptions() >= 1; },
+    world.waitFor([&] { return !world.mc.connections.isEmpty() && world.shellSubscriptions() >= 1; },
                   QStringLiteral("the shell to connect again"));
     const QVariantMap state = onboarding(world);
     expect(state.value(QStringLiteral("gate")) == QLatin1String("pending") && state.value(QStringLiteral("recovery")).isNull(),
@@ -344,7 +344,7 @@ const Steps steps([] {
 
   // ---- Connect your computers ----
   step(QStringLiteral("the user opened HAL-C2 from a desktop app named %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.label = c[0];
+    world.mc.label = c[0];
     openWizard(world);
   });
   step(QStringLiteral("%1 is connected and selected").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -354,10 +354,10 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("%1 connected and selected; the wizard is %2").arg(c[0], show(onboarding(world))); });
   });
   step(QStringLiteral("a saved computer and a computer discovered through HAL-C2 Connect"), [](World& world, const Captures&, const Table&) {
-    world.node.label = QStringLiteral("studio");
+    world.mc.label = QStringLiteral("studio");
     linkComputer(world, QStringLiteral("laptop"));
     openWizard(world);
-    world.node.join(QStringLiteral("node-b"), QStringLiteral("env-found"));
+    world.mc.join(QStringLiteral("mc-b"), QStringLiteral("env-found"));
     world.sync();
   });
   step(QStringLiteral("both computers are selected"), [](World& world, const Captures&, const Table&) {
@@ -387,15 +387,15 @@ const Steps steps([] {
     }), QStringLiteral("the wizard sets up %1").arg(show(sections)));
   });
   step(QStringLiteral("%1 stays connected").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(computer(world, c[0]).value(QStringLiteral("connected")).toBool() && world.node.linked.contains(c[0]),
+    expect(computer(world, c[0]).value(QStringLiteral("connected")).toBool() && world.mc.linked.contains(c[0]),
            QStringLiteral("%1 is no longer connected; the wizard is %2").arg(c[0], show(onboarding(world))));
   });
   step(QStringLiteral("the user adds a computer by pasting a pairing link"), [](World& world, const Captures&, const Table&) {
-    world.node.onRpc(QStringLiteral("hal-c2.linkEnvironment"), [&world](const FakeNode::Rpc& rpc) {
+    world.mc.onRpc(QStringLiteral("hal-c2.linkEnvironment"), [&world](const FakeMc::Rpc& rpc) {
       expect(rpc.payload.value(QLatin1String("pairingUrl")) == QLatin1String("http://desk:3773/pair#token=abc"),
              QStringLiteral("paired with %1").arg(rpc.payload.value(QLatin1String("pairingUrl")).toString()));
       linkComputer(world, QStringLiteral("desk"));
-      world.node.reply(rpc, QJsonObject{{QStringLiteral("environmentId"), QStringLiteral("desk")}, {QStringLiteral("label"), QStringLiteral("desk")}});
+      world.mc.reply(rpc, QJsonObject{{QStringLiteral("environmentId"), QStringLiteral("desk")}, {QStringLiteral("label"), QStringLiteral("desk")}});
     });
     openWizard(world);
     act(world, QStringLiteral("onboarding.pair"), {{QStringLiteral("pairingUrl"), QStringLiteral(" http://desk:3773/pair#token=abc ")}});
@@ -408,8 +408,8 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("desk selected; the wizard is %1").arg(show(onboarding(world))); });
   });
   step(QStringLiteral("the user adds a computer with a pairing link that fails"), [](World& world, const Captures&, const Table&) {
-    world.node.onRpc(QStringLiteral("hal-c2.linkEnvironment"), [&world](const FakeNode::Rpc& rpc) {
-      world.node.refuse(rpc, QStringLiteral("the pairing link is invalid or expired"));
+    world.mc.onRpc(QStringLiteral("hal-c2.linkEnvironment"), [&world](const FakeMc::Rpc& rpc) {
+      world.mc.refuse(rpc, QStringLiteral("the pairing link is invalid or expired"));
     });
     openWizard(world);
     act(world, QStringLiteral("onboarding.pair"), {{QStringLiteral("pairingUrl"), QStringLiteral("http://desk:3773/pair#token=old")}});
@@ -426,7 +426,7 @@ const Steps steps([] {
     expect(onboarding(world).value(QStringLiteral("step")) == QLatin1String("connection"), QStringLiteral("the wizard moved on"));
   });
   step(QStringLiteral("that computer connects"), [](World& world, const Captures&, const Table&) {
-    world.node.setLinkProblem(QStringLiteral("laptop"), {});
+    world.mc.setLinkProblem(QStringLiteral("laptop"), {});
     world.sync();
   });
   step(QStringLiteral("the user can continue"), [](World& world, const Captures&, const Table&) {
@@ -470,8 +470,8 @@ const Steps steps([] {
       return list;
     }()).toVariantList())); });
     const QList<QJsonObject> inputs = terminalInputs(world);
-    expect(!inputs.isEmpty() && inputs.last().value(QLatin1String("environment")) == world.node.environmentId &&
-               world.node.label == c[0] &&
+    expect(!inputs.isEmpty() && inputs.last().value(QLatin1String("environment")) == world.mc.environmentId &&
+               world.mc.label == c[0] &&
                inputs.last().value(QLatin1String("input")).toObject().value(QLatin1String("cwd")) == QLatin1String("/home/ada"),
            QStringLiteral("the terminal opened as %1").arg(show(inputs.isEmpty() ? QVariant() : inputs.last().toVariantMap())));
     expect(controller(world)->terminal() != nullptr, QStringLiteral("the wizard has no terminal to show"));
@@ -487,7 +487,7 @@ const Steps steps([] {
   step(QStringLiteral("the Codex instance on %1 has its own home directory and a secret variable").arg(q), [](World& world, const Captures& c, const Table&) {
     describeComputer(world, c[0]);
     giveAgent(world, QStringLiteral("Codex"), QStringLiteral("installed but signed out"), QStringLiteral("codex_work"));
-    FakeConfig& config = fakeConfig(world.node);
+    FakeConfig& config = fakeConfig(world.mc);
     config.settings.insert(QStringLiteral("providerInstances"), QJsonObject{{QStringLiteral("codex_work"), QJsonObject{
         {QStringLiteral("driver"), QStringLiteral("codex")},
         {QStringLiteral("config"), QJsonObject{{QStringLiteral("binaryPath"), QStringLiteral("~/bin/codex work")},
@@ -501,7 +501,7 @@ const Steps steps([] {
     setUp(world, QStringLiteral("Codex"));
   });
   step(QStringLiteral("the terminal runs with that home and variable"), [](World& world, const Captures&, const Table&) {
-    // The node starts it with the instance's env and home (HalC2.Terminal).
+    // The MC starts it with the instance's env and home (HalC2.Terminal).
     const QList<QJsonObject> inputs = terminalInputs(world);
     expect(!inputs.isEmpty() && inputs.last().value(QLatin1String("input")).toObject().value(QLatin1String("providerInstanceId")) == QLatin1String("codex_work"),
            QStringLiteral("the terminal opened as %1").arg(show(inputs.isEmpty() ? QVariant() : inputs.last().toVariantMap())));
@@ -524,9 +524,9 @@ const Steps steps([] {
   step(QStringLiteral("terminals cannot start on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     describeComputer(world, c[0]);
     giveAgent(world, QStringLiteral("Codex"), QStringLiteral("not installed"));
-    world.node.onShape(QStringLiteral("terminal"), [&world](int id, const QJsonObject&) {
-      world.node.forget(id);
-      world.node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("Terminal limit reached on this machine")}});
+    world.mc.onShape(QStringLiteral("terminal"), [&world](int id, const QJsonObject&) {
+      world.mc.forget(id);
+      world.mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("Terminal limit reached on this machine")}});
     });
   });
 
@@ -584,7 +584,7 @@ const Steps steps([] {
     act(world, QStringLiteral("onboarding.skip"));
     expect(onboarding(world).value(QStringLiteral("gate")) == QLatin1String("wizard"), QStringLiteral("the wizard closed mid-import"));
     // Once it lands, the app opens on the imported project.
-    for (const FakeNode::Rpc& rpc : std::exchange(fake(world).heldImports, {})) answerImport(world.node, rpc);
+    for (const FakeMc::Rpc& rpc : std::exchange(fake(world).heldImports, {})) answerImport(world.mc, rpc);
     appOpens(world);
   });
 });

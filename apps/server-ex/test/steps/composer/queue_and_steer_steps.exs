@@ -10,7 +10,7 @@ defmodule HalC2.Steps.Composer.QueueAndSteer do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   step "a thread whose agent is working on a turn", context do
     context
@@ -89,7 +89,7 @@ defmodule HalC2.Steps.Composer.QueueAndSteer do
   end
 
   step "the provider rejects the steer", context do
-    File.write!(Path.join(context.node.home, "reject-steer"), "")
+    File.write!(Path.join(context.mc.home, "reject-steer"), "")
     context
   end
 
@@ -208,16 +208,16 @@ defmodule HalC2.Steps.Composer.QueueAndSteer do
     context
   end
 
-  step "{string} was queued when the node restarted", %{args: [text]} = context do
+  step "{string} was queued when the MC restarted", %{args: [text]} = context do
     {{:ok, _}, context} = World.send_message(context, World.current(context), text)
     context
   end
 
-  step "the node comes back", context do
-    %{context | node: HalC2.Test.Node.restart(context.node), clients: %{}}
+  step "the MC comes back", context do
+    %{context | mc: HalC2.Test.Mc.restart(context.mc), clients: %{}}
   end
 
-  # The node recovers before it takes requests; nothing starts the queue after that.
+  # The MC recovers before it takes requests; nothing starts the queue after that.
   step "the queue is held and {string} does not start on its own", %{args: [text]} = context do
     title = World.current(context)
     assert [{^text, %{"queueHeld" => true}}] = World.queued(context, title)

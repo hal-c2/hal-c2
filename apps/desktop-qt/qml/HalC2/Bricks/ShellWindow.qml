@@ -29,8 +29,8 @@ Window {
     readonly property bool editableFocused: root.activeFocusItem !== null && root.activeFocusItem.cursorPosition !== undefined
 
     function hasAncestor(item, objectName) {
-        for (let node = item; node; node = node.parent) {
-            if (node.objectName === objectName) {
+        for (let mc = item; mc; mc = mc.parent) {
+            if (mc.objectName === objectName) {
                 return true;
             }
         }

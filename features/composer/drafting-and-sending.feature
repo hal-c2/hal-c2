@@ -105,9 +105,9 @@ Feature: Drafting and sending a message
     And the draft still reads "are you there"
 
   @desktop @tui @mobile @backlog-tui @backlog-mobile
-  Scenario: A send the node rejects restores the draft
+  Scenario: A send the MC rejects restores the draft
     Given the user has typed "do the thing"
-    When the user sends it and the node rejects the message
+    When the user sends it and the MC rejects the message
     Then the user sees why the send failed
     And the draft reads "do the thing" again
 

@@ -11,11 +11,11 @@
 #include "NativeController.h"
 
 class EnvironmentSettings;
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
-// Adding and removing projects on the node the shell runs against, through
+// Adding and removing projects on the MC the shell runs against, through
 // `projects.mutate`.
 //
 // `project.add {path}` and `project.folder.open {path}` (the sidebar's folder
@@ -39,7 +39,7 @@ class ProjectController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  ProjectController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  ProjectController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   static inline const QString kAdd = QStringLiteral("project.add");
 
@@ -73,14 +73,14 @@ private:
   void publish();
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   // The settings of the environment whose sources Add project last showed.
   EnvironmentSettings* m_settings;
   bool m_active = false;
   // The projects waiting for the user's answer.
   std::optional<Removal> m_removal;
-  // A project the node created whose row has not reached the shell yet; its
+  // A project the MC created whose row has not reached the shell yet; its
   // draft opens when the row does.
   std::optional<std::pair<QString, QString>> m_created;
 };

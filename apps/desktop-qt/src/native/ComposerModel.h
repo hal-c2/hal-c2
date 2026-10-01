@@ -12,7 +12,7 @@
 
 #include "Keybindings.h"
 
-// What the composer offers, worked out from the node's own words: the
+// What the composer offers, worked out from the MC's own words: the
 // provider instances and models of the environment's config (`providers`),
 // this device's favourites and model order, the model's options, the
 // permission modes, what Enter sends, and the @, $ and / suggestions. Pure

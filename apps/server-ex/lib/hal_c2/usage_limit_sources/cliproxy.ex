@@ -3,7 +3,7 @@ defmodule HalC2.UsageLimitSources.Cliproxy do
   A CLIProxyAPI hub's management API, used as the Node server's cliproxyApi.ts uses
   it: `auth-files` lists the pooled accounts, and `api-call` makes a request with one
   account's own token, which is how each account's usage and a Codex account's reset
-  credits are read and redeemed. The hub makes the upstream request, not this node.
+  credits are read and redeemed. The hub makes the upstream request, not this MC.
 
   Every failure is a short message fit for the source's `error` row.
   """

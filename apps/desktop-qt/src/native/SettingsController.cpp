@@ -8,7 +8,7 @@
 #include <QSaveFile>
 
 #include "NativeShell.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ToastController.h"
 
 namespace {
@@ -32,8 +32,8 @@ QJsonObject withPath(QJsonObject object, const QStringList& path, const QJsonVal
 }
 
 // The rows of the settings pages: the store a key is in and its default.
-// Device rows are the web's ClientSettings; node rows
-// its ServerSettings, which the node's document leaves out while at default.
+// Device rows are the web's ClientSettings; MC rows
+// its ServerSettings, which the MC's document leaves out while at default.
 struct Row {
   const char* key;
   bool device;
@@ -110,11 +110,11 @@ const Row* rowOf(const QString& key) {
 
 }  // namespace
 
-SettingsController::SettingsController(ShellBridge*, NodeClient* client, QObject* parent)
+SettingsController::SettingsController(ShellBridge*, McClient* client, QObject* parent)
     : QObject(parent), m_client(client) {
-  // A reconnect may reach a restarted node, whose versions start again; the
+  // A reconnect may reach a restarted MC, whose versions start again; the
   // config snapshot that follows the re-sent subscription reads them afresh.
-  connect(m_client, &NodeClient::readyChanged, this, [this](bool ready) {
+  connect(m_client, &McClient::readyChanged, this, [this](bool ready) {
     if (ready || !m_ready) return;
     m_ready = false;
     ++m_generation;
@@ -200,7 +200,7 @@ void SettingsController::attempt(Edit edit, Done done, int retries) {
     if (done) done(error);
   };
   if (!m_ready) {
-    const QString message = QStringLiteral("The node's settings are not loaded.");
+    const QString message = QStringLiteral("The MC's settings are not loaded.");
     fail(message);
     finish(message);
     return;
@@ -314,18 +314,18 @@ void SettingsController::reset(const QString& key) {
 
 void SettingsController::resetAll(const QStringList& keys) {
   QJsonObject device = m_device;
-  QStringList node;
+  QStringList mc;
   for (const QString& key : keys) {
     const Row* row = rowOf(key);
     if (!row) continue;
     if (row->device) device.remove(key);
-    else node.append(key);
+    else mc.append(key);
   }
   if (!setDeviceSettings(device)) toast(QStringLiteral("Settings not restored"), m_deviceError);
-  if (node.isEmpty()) return;
+  if (mc.isEmpty()) return;
   change(
-      [node](QJsonObject settings) {
-        for (const QString& key : node) settings.remove(key);
+      [mc](QJsonObject settings) {
+        for (const QString& key : mc) settings.remove(key);
         return settings;
       },
       [this, window = QPointer<NativeWindow>(NativeShell::of(this))](const std::optional<QString>& error) {

@@ -17,7 +17,7 @@
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ProviderDrivers.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -44,7 +44,7 @@ QString hubId(const QString& url) {
   return QStringLiteral("cliproxy-") + (slug.isEmpty() ? QStringLiteral("hub") : slug);
 }
 
-// The node's background activity presets' provider health intervals
+// The MC's background activity presets' provider health intervals
 // (HalC2.BackgroundPolicy), in seconds.
 int presetHealthSeconds(const QString& profile) {
   if (profile == QLatin1String("performance")) return 60;
@@ -60,7 +60,7 @@ QString baseProfile(const QJsonObject& activity) {
   return base == QLatin1String("performance") || base == QLatin1String("battery-saver") ? base : QStringLiteral("balanced");
 }
 
-// The provider health interval the node uses, in seconds (BackgroundPolicy.settings).
+// The provider health interval the MC uses, in seconds (BackgroundPolicy.settings).
 int healthSeconds(const QJsonObject& settings) {
   const QJsonObject activity = settings.value(QLatin1String("backgroundActivity")).toObject();
   const QJsonObject overrides = activity.value(QLatin1String("overrides")).toObject();
@@ -218,7 +218,7 @@ bool signsIn(const QJsonObject& provider) {
 
 QPair<QString, QString> providerSummary(const QJsonObject& provider) { return summary(provider); }
 
-ProviderSettingsController::ProviderSettingsController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+ProviderSettingsController::ProviderSettingsController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_scope(new EnvironmentSettings(client, this)) {
   connect(m_scope, &EnvironmentSettings::frame, this, [this](const QString&, const QJsonObject& frame) {
@@ -300,7 +300,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     const QString key = input.value(QStringLiteral("key")).toString().trimmed();
     const QString name = input.value(QStringLiteral("label")).toString().trimmed();
     if (url.isEmpty() || key.isEmpty()) return true;
-    // The node moves the key to its secret store; settings keep a marker.
+    // The MC moves the key to its secret store; settings keep a marker.
     QJsonObject hub{{QStringLiteral("kind"), QStringLiteral("cliproxy")}, {QStringLiteral("url"), url},
                     {QStringLiteral("managementKey"), key}, {QStringLiteral("enabled"), true}};
     if (!name.isEmpty()) hub.insert(QStringLiteral("label"), name);
@@ -566,11 +566,11 @@ void ProviderSettingsController::unfollow() {
 }
 
 // Follows the sign-in of each provider that signs in from HAL-C2; the shape
-// is node-addressed, so only where a cluster node serves the environment.
+// is MC-addressed, so only where a cluster MC serves the environment.
 void ProviderSettingsController::followAuth() {
-  const QString node = m_store->nodeServing(m_followed);
+  const QString mc = m_store->mcServing(m_followed);
   QSet<QString> wanted;
-  if (!node.isEmpty() && m_providers) {
+  if (!mc.isEmpty() && m_providers) {
     for (const QJsonValue& value : *m_providers) {
       if (signsIn(value.toObject())) wanted.insert(value.toObject().value(QLatin1String("instanceId")).toString());
     }
@@ -587,7 +587,7 @@ void ProviderSettingsController::followAuth() {
   for (const QString& instanceId : std::as_const(wanted)) {
     if (m_auth.contains(instanceId)) continue;
     m_auth.insert(instanceId, m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("providerAuth")},
-                                                   {QStringLiteral("node"), node},
+                                                   {QStringLiteral("mc"), mc},
                                                    {QStringLiteral("instanceId"), instanceId}},
                                                   [this, instanceId](const QJsonObject& frame) {
                                                     if (frame.value(QLatin1String("t")) != QLatin1String("providerAuth")) return;
@@ -620,7 +620,7 @@ QJsonObject ProviderSettingsController::provider(const QString& instanceId) cons
   return {};
 }
 
-// Turns an instance on or off where the node reads it: its providerInstances
+// Turns an instance on or off where the MC reads it: its providerInstances
 // entry when it has one, and a built-in driver's `providers` entry.
 void ProviderSettingsController::setEnabled(const QString& instanceId, bool enabled) {
   const QString driver = driverOf(instanceId);
@@ -741,7 +741,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                                                                       {QStringLiteral("url"), urlAuth.value(QLatin1String("url")).toString()}}));
   if (!signsIn(provider)) return result;
   // ProviderAuthenticationSection.
-  const bool served = !m_store->nodeServing(m_followed).isEmpty();
+  const bool served = !m_store->mcServing(m_followed).isEmpty();
   const bool known = m_authState.contains(instanceId);
   const QJsonObject state = m_authState.value(instanceId);
   const QString phase = state.value(QLatin1String("phase")).toString();
@@ -758,7 +758,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                              ((setup.contains(QLatin1String("canAuthenticate")) && !setup.value(QLatin1String("canAuthenticate")).toBool()) ||
                               (registry && state.value(QLatin1String("methods")).isArray() &&
                                state.value(QLatin1String("methods")).toArray().isEmpty()));
-  // The node refuses a browser sign-in while Cursor carries its own API key.
+  // The MC refuses a browser sign-in while Cursor carries its own API key.
   const QVariantList secrets = result.value(QStringLiteral("secrets")).toList();
   const bool apiKey = driver == QLatin1String("cursor") && std::any_of(secrets.cbegin(), secrets.cend(), [](const QVariant& secret) {
     return secret.toMap().value(QStringLiteral("name")) == QLatin1String("CURSOR_API_KEY") &&
@@ -848,7 +848,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   return result;
 }
 
-// The provider health check row: the interval the node uses and its preset.
+// The provider health check row: the interval the MC uses and its preset.
 QVariant ProviderSettingsController::health() const {
   const std::optional<QJsonObject> settings = m_followed.isEmpty() ? std::nullopt : m_scope->settings(m_followed);
   if (!m_open || !settings) return null();
@@ -858,7 +858,7 @@ QVariant ProviderSettingsController::health() const {
 }
 
 // The environment's usage-limit hubs, named by their label or else the
-// host the node names them by.
+// host the MC names them by.
 QVariant ProviderSettingsController::hubs() const {
   const std::optional<QJsonObject> settings = m_followed.isEmpty() ? std::nullopt : m_scope->settings(m_followed);
   if (!m_open || !settings) return null();
@@ -887,7 +887,7 @@ void ProviderSettingsController::publish() {
   for (const QString& environmentId : m_store->environments()) {
     if (environmentId == local || m_store->reaches(environmentId)) ids.append(environmentId);
   }
-  ids.removeDuplicates();  // an environment several cluster nodes serve
+  ids.removeDuplicates();  // an environment several cluster MCs serve
   // This machine first, the others by name.
   std::sort(ids.begin(), ids.end(), [this, &local](const QString& a, const QString& b) {
     if ((a == local) != (b == local)) return a == local;

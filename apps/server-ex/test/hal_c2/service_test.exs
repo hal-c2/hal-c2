@@ -14,7 +14,7 @@ defmodule HalC2.ServiceTest do
 
     env =
       [
-        home: Path.join(dir, "node"),
+        home: Path.join(dir, "mc"),
         service_platform: {:unix, :linux},
         service_user_home: Path.join(dir, "user"),
         systemctl_command: Path.join(bin, "systemctl"),

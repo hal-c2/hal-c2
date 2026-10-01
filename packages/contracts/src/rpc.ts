@@ -471,7 +471,7 @@ export const WS_METHODS = {
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
 
-  // The cluster of this person's machines (nodes only)
+  // The cluster of this person's machines (MCs only)
   clusterStatus: "cluster.status",
   clusterInvite: "cluster.invite",
   clusterJoin: "cluster.join",
@@ -851,7 +851,7 @@ const WsClusterInviteRpc = Rpc.make(WS_METHODS.clusterInvite, {
   error: ClusterRpcError,
 });
 
-/** Joins the node to the cluster of the machine the invite is from; answers the new status. */
+/** Joins the MC to the cluster of the machine the invite is from; answers the new status. */
 const WsClusterJoinRpc = Rpc.make(WS_METHODS.clusterJoin, {
   payload: ClusterJoinInput,
   success: ClusterStatus,

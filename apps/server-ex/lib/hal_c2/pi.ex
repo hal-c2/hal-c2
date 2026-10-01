@@ -129,7 +129,7 @@ defmodule HalC2.Pi do
       mcp = if extension, do: opts[:mcp]
       mode = if opts[:runtime_mode] == "auto", do: "approval-required", else: opts[:runtime_mode]
 
-      # A Pi child never reuses HAL-C2 credentials it inherited from the node.
+      # A Pi child never reuses HAL-C2 credentials it inherited from the MC.
       env =
         HalC2.Acp.instance_env(instance) ++
           [
@@ -157,7 +157,7 @@ defmodule HalC2.Pi do
     |> Enum.reject(&(&1 in ["--tools", "-t"]))
   end
 
-  @doc "HAL-C2's Pi extension, written to the node's cache directory where Pi can load it."
+  @doc "HAL-C2's Pi extension, written to the MC's cache directory where Pi can load it."
   def extension_path do
     path = Path.join([HalC2.Paths.cache_dir(), "pi", "pi-hal-c2-mcp-extension.ts"])
 

@@ -33,7 +33,7 @@
 #include "NativeController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ProjectController.h"
 #include "SettingsScopeController.h"
 #include "ShellBridge.h"
@@ -140,7 +140,7 @@ QString iconLabel(const QJsonObject& row) {
 
 class ProjectSettingsController : public QObject, public NativeController {
 public:
-  ProjectSettingsController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+  ProjectSettingsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
       : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
 
   void activate() override {
@@ -478,7 +478,7 @@ private:
   }
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   bool m_open = false;

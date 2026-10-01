@@ -13,26 +13,26 @@ Feature: Sharing GitHub access between environments
   Background:
     Given the user is connected to the local environment and the remote environment "build-box"
 
-  @node
+  @mc
   Scenario: An environment names the GitHub account it acts as
     Given "build-box" has the GitHub CLI signed in as "octocat"
     When a client asks "build-box" who it is on "github.com"
     Then "build-box" answers with the account id and login of "octocat"
 
-  @node
+  @mc
   Scenario: An environment without a GitHub project cannot route
     Given "build-box" has no project on "github.com"
     When a client asks "build-box" who it is on "github.com"
     Then the answer is that the provider is unsupported there
 
-  @node
+  @mc
   Scenario: An operation checks it acts as the expected account
     Given the client expects "build-box" to act as the account of "octocat"
     And "build-box" is now signed in as "hubot"
     When the client merges a pull request through "build-box"
     Then the merge is refused with "The GitHub account could not be verified before starting the operation."
 
-  @node
+  @mc
   Scenario: The signed-in account is believed for ten minutes
     Given "build-box" verified its GitHub account 5 minutes ago
     When a client asks "build-box" who it is on "github.com"

@@ -12,15 +12,15 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
 // The header and the composer's context strip for the route's thread (a
-// draft too), from the node: publishes `workspace` in the web's
+// draft too), from the MC: publishes `workspace` in the web's
 // ShellWorkspaceState shape (packages/contracts shell.ts) less the terminal
 // fields, which the Terminals singleton owns. The thread and its project are
-// ShellStore rows, the checkout's git status the node's `vcs` shape, the refs
+// ShellStore rows, the checkout's git status the MC's `vcs` shape, the refs
 // `vcs.listRefs`, the editors each environment's `config`.
 //
 // It takes every `workspace.*` action: `workspace.newThread` opens a draft
@@ -59,20 +59,20 @@ public:
     QString threadId;
     QString projectId;
     QString draftId;  // empty for a server thread
-    QString root;  // empty while the node does not know the project
+    QString root;  // empty while the MC does not know the project
     QString worktreePath;  // empty without a worktree
     QJsonArray scripts;
 
     QString threadKey() const { return environmentId + QLatin1Char(':') + threadId; }
     QString cwd() const { return worktreePath.isEmpty() ? root : worktreePath; }
   };
-  // The checkout's git status as the node's `vcs` shape has it.
+  // The checkout's git status as the MC's `vcs` shape has it.
   struct Git {
     QJsonObject local;
     QJsonObject remote;  // empty while unknown
   };
 
-  WorkspaceController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  WorkspaceController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
   ~WorkspaceController() override;
 
   void activate() override;
@@ -80,11 +80,11 @@ public:
 
   const std::optional<Place>& place() const { return m_place; }
   // The route's checkout status; none while unknown or not followed (a linked
-  // environment's, whose `vcs` the node does not route).
+  // environment's, whose `vcs` the MC does not route).
   const std::optional<Git>& git() const { return m_git; }
   // Why the checkout's status could not be followed (a link that is down).
   const QString& gitError() const { return m_gitError; }
-  // Asks the node to read the checkout's status again.
+  // Asks the MC to read the checkout's status again.
   void refreshGit();
   // How drafts resolve; without one a draft route has no workspace.
   void setDraftResolver(std::function<std::optional<DraftPlace>(const QString& draftId)> resolve);
@@ -93,7 +93,7 @@ public:
   // Sets a draft's checkout (a new thread on another thread's branch).
   void setCheckout(const QString& draftId, const Checkout& checkout);
   // Where a draft's first message starts its thread: the environment and
-  // project it runs in, and the node's `workspaceStrategy` for
+  // project it runs in, and the MC's `workspaceStrategy` for
   // `orchestration.launchThread` ({type: "root" | "existing_worktree" |
   // "worktree", ...}), or `problem` when it cannot start yet.
   struct Launch {
@@ -158,7 +158,7 @@ private:
   void openPullRequest();
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   std::function<std::optional<DraftPlace>(const QString&)> m_resolveDraft;
@@ -177,8 +177,8 @@ private:
   QString m_vcsKey;
   std::optional<Git> m_git;
   QString m_gitError;
-  // Editors of environments other than the node's own (`config` shape); the
-  // node's own come with SettingsController.
+  // Editors of environments other than the MC's own (`config` shape); the
+  // MC's own come with SettingsController.
   int m_config = 0;
   QString m_configEnvironment;
   QJsonObject m_configElsewhere;

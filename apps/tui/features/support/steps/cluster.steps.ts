@@ -1,5 +1,5 @@
 // Steps for connections/cluster.feature (@tui): the cluster in settings, and
-// invite, join and remove from the command palette, against the fake node's
+// invite, join and remove from the command palette, against the fake MC's
 // cluster (fakeClient.ts `cluster`).
 import { expect } from "bun:test";
 
@@ -21,7 +21,7 @@ import {
 } from "../world.ts";
 
 /**
- * Set up the fake node's cluster right before boot, so a step that replaces
+ * Set up the fake MC's cluster right before boot, so a step that replaces
  * the fake client first (settings' checkout) keeps it.
  */
 const configure = (ctx: World, apply: (cluster: FakeCluster) => void) => {
@@ -67,7 +67,7 @@ step("this machine is clustered with {string}, which is connected", (ctx: World,
   });
 });
 
-step("the node listens only on loopback", (ctx: World) => {
+step("the MC listens only on loopback", (ctx: World) => {
   configure(ctx, (cluster) => {
     cluster.invite = {
       ...cluster.invite,
@@ -77,7 +77,7 @@ step("the node listens only on loopback", (ctx: World) => {
   });
 });
 
-step("the node refuses joins saying {string}", (ctx: World, reason: string) => {
+step("the MC refuses joins saying {string}", (ctx: World, reason: string) => {
   configure(ctx, (cluster) => {
     cluster.joinRefusal = reason;
   });
@@ -101,7 +101,7 @@ step("the user picks {string} in the command palette", async (ctx: World, title:
   await runPaletteCommand(ctx, title);
 });
 
-step("the node is asked for a cluster invite", async (ctx: World) => {
+step("the MC is asked for a cluster invite", async (ctx: World) => {
   await settle(ctx);
   expect(callsTo(ctx, "clusterInvite").map((call) => call.args[0])).toEqual([{}]);
 });
@@ -136,7 +136,7 @@ step("the user pastes the invite {string} and presses Enter", async (ctx: World,
   await settle(ctx);
 });
 
-step("the node is asked to join with {string}", (ctx: World, link: string) => {
+step("the MC is asked to join with {string}", (ctx: World, link: string) => {
   expect(callsTo(ctx, "clusterJoin").map((call) => call.args[0])).toEqual([link]);
 });
 
@@ -151,16 +151,16 @@ step("the prompt has the keys again", async (ctx: World) => {
   expect(geometry(findObject(ctx, "composerAux")).visible).toBe(false);
 });
 
-step("the node was not asked to join", (ctx: World) => {
+step("the MC was not asked to join", (ctx: World) => {
   expect(callsTo(ctx, "clusterJoin")).toEqual([]);
 });
 
-step("the node is asked to remove {string}", async (ctx: World, id: string) => {
+step("the MC is asked to remove {string}", async (ctx: World, id: string) => {
   await settle(ctx);
   expect(callsTo(ctx, "clusterRemove").map((call) => call.args[0])).toEqual([id]);
 });
 
-/** Cluster reads the node holds back, answered by "the node answers". */
+/** Cluster reads the MC holds back, answered by "the MC answers". */
 const heldReads = new WeakMap<World, Array<() => void>>();
 
 step("the terminal has read the cluster", async (ctx: World) => {
@@ -169,7 +169,7 @@ step("the terminal has read the cluster", async (ctx: World) => {
   await settle(ctx);
 });
 
-step("the node is slow to read its cluster", async (ctx: World) => {
+step("the MC is slow to read its cluster", async (ctx: World) => {
   // Every read from now on answers with the cluster as it is now, once released.
   const earlier = await ctx.fake!.client.clusterStatus();
   const held: Array<() => void> = [];
@@ -181,7 +181,7 @@ step("the node is slow to read its cluster", async (ctx: World) => {
   ctx.held = (ctx.held ?? 0) + 1;
 });
 
-step("the node answers", async (ctx: World) => {
+step("the MC answers", async (ctx: World) => {
   for (const release of heldReads.get(ctx)?.splice(0) ?? []) release();
   ctx.held = (ctx.held ?? 1) - 1;
   await settle(ctx);

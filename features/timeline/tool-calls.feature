@@ -90,10 +90,10 @@ Feature: Tool calls and file changes
       | called an MCP tool | wrench         |
       | asked for approval | message-circle |
 
-  @node @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: An ACP agent's read, search and fetch tools keep their meaning
     Given an ACP agent's tool call is of kind "<provider kind>"
-    When the node projects the call
+    When the MC projects the call
     Then the timeline shows it as <timeline kind>
 
     Examples:
@@ -103,10 +103,10 @@ Feature: Tool calls and file changes
       | fetch         | a web search  |
 
   # OpenCode announces a tool call before it has its input and names it once it runs.
-  @node
+  @mc
   Scenario Outline: An ACP read or search named only once it runs still says what it looked for
     Given an ACP agent announces a call of kind "<provider kind>" and names its input <when>
-    When the node projects the call
+    When the MC projects the call
     Then the timeline shows it as <timeline kind>
 
     Examples:
@@ -137,8 +137,8 @@ Feature: Tool calls and file changes
     When the user opens "src/cart.ts" from the list of changed files
     Then the diff shows only "src/cart.ts"
 
-  @node
-  Scenario: The node serves a turn's diff and the whole thread's diff
+  @mc
+  Scenario: The MC serves a turn's diff and the whole thread's diff
     Given a thread with three finished turns
     When a client asks for the diff of the second turn
     Then it receives the changes made during the second turn

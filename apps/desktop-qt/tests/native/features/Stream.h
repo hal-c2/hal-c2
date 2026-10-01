@@ -1,5 +1,5 @@
 #pragma once
-// The node's `stream` shape for a thread, faked as entity rows steps change
+// The MC's `stream` shape for a thread, faked as entity rows steps change
 // (the Extension serving it is in TimelineSteps.cpp), and the ThreadStore's
 // TimelineModel showing it. Shared by the steps files that drive a thread.
 
@@ -21,7 +21,7 @@
 
 namespace stream {
 
-// Every stream the node serves: the entities of each thread, by "kind\nid".
+// Every stream the MC serves: the entities of each thread, by "kind\nid".
 // Events sent while nobody follows the thread (the connection is down) only
 // change the entities, so the next snapshot carries them.
 struct FakeStreams {
@@ -43,7 +43,7 @@ struct FakeStreams {
 
 inline const QString kProject = QStringLiteral("shop");
 inline const QString kThread = QStringLiteral("thread-1");
-inline const QString kPeer = QStringLiteral("node-b");
+inline const QString kPeer = QStringLiteral("mc-b");
 inline const QString kPeerEnvironment = QStringLiteral("env-b");
 inline const QString kPeerThread = QStringLiteral("thread-remote");
 
@@ -57,17 +57,17 @@ inline QDateTime now() {
 
 inline QList<int> followers(World& world, const QString& thread) {
   QList<int> ids;
-  for (const int id : world.node.subscribers(QStringLiteral("stream"))) {
-    if (world.node.shapeOf(id).value(QLatin1String("stream")).toString() == thread) ids.append(id);
+  for (const int id : world.mc.subscribers(QStringLiteral("stream"))) {
+    if (world.mc.shapeOf(id).value(QLatin1String("stream")).toString() == thread) ids.append(id);
   }
   return ids;
 }
 
-// One change to the current thread, as the node's `events` frame carries it
+// One change to the current thread, as the MC's `events` frame carries it
 // ({"s": set, "a": append, "u": unset, "d": delete}). `quiet` changes only
-// the node's copy, as if the frame were lost.
+// the MC's copy, as if the frame were lost.
 inline void change(World& world, const QString& kind, const QString& id, const QJsonObject& patch, bool quiet = false) {
-  FakeStreams& fake = world.node.part<FakeStreams>();
+  FakeStreams& fake = world.mc.part<FakeStreams>();
   QJsonObject& entity = fake.threads[fake.thread][kind + QLatin1Char('\n') + id];
   const QJsonObject set = patch.value(QLatin1String("s")).toObject();
   for (auto it = set.begin(); it != set.end(); ++it) entity.insert(it.key(), it.value());
@@ -80,7 +80,7 @@ inline void change(World& world, const QString& kind, const QString& id, const Q
   // QJsonValue keeps the event nested: Apple clang before 20 reads
   // QJsonArray{QJsonArray{...}} as a copy of the inner array.
   for (const int follower : followers(world, fake.thread)) {
-    world.node.send({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), follower}, {QStringLiteral("offset"), seq},
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), follower}, {QStringLiteral("offset"), seq},
                      {QStringLiteral("events"), QJsonArray{QJsonValue(QJsonArray{seq, kind, id, patch, iso(now())})}}});
   }
   world.sync();
@@ -93,7 +93,7 @@ inline void set(World& world, const QString& kind, const QString& id, const QJso
 // A new run of the current thread, started `since` seconds ago (not started
 // when negative), with the user message that asked for it.
 inline QString startRun(World& world, int since = 0, const QString& status = QStringLiteral("running")) {
-  FakeStreams& fake = world.node.part<FakeStreams>();
+  FakeStreams& fake = world.mc.part<FakeStreams>();
   const QString run = QStringLiteral("run-%1").arg(fake.ordinal + 1);
   fake.run = run;
   fake.runStarted = since >= 0 ? now().addSecs(-since) : QDateTime();
@@ -111,7 +111,7 @@ inline QString startRun(World& world, int since = 0, const QString& status = QSt
 
 // A turn item of the current run; `fields` adds to and overrides the defaults.
 inline QString addItem(World& world, const QString& type, const QJsonObject& fields = {}) {
-  FakeStreams& fake = world.node.part<FakeStreams>();
+  FakeStreams& fake = world.mc.part<FakeStreams>();
   const QString id = QStringLiteral("%1:%2").arg(type).arg(fake.ordinal + 1);
   QJsonObject item{{QStringLiteral("id"), id},
                    {QStringLiteral("type"), type},
@@ -130,7 +130,7 @@ inline QString addCommand(World& world, int n, const QString& status = QStringLi
 }
 
 inline void settleRun(World& world, const QString& status, int after) {
-  FakeStreams& fake = world.node.part<FakeStreams>();
+  FakeStreams& fake = world.mc.part<FakeStreams>();
   QJsonObject fields{{QStringLiteral("status"), status}};
   if (fake.runStarted.isValid()) fields.insert(QStringLiteral("completedAt"), iso(fake.runStarted.addSecs(after)));
   set(world, QStringLiteral("run"), fake.run, fields);
@@ -173,19 +173,19 @@ inline void look(World& world, const QString& threadKey, bool live = true) {
                 QStringLiteral("the thread to open"));
   if (!live) return;
   world.waitFor([&] { return timeline(world).status() == QLatin1String("live"); },
-                [&] { return QStringLiteral("the thread to follow its node; %1").arg(describe(timeline(world))); });
+                [&] { return QStringLiteral("the thread to follow its MC; %1").arg(describe(timeline(world))); });
 }
 
 // The thread "thread-1" of `project`, opened and followed.
 inline void lookAtThread(World& world, const QString& project) {
-  world.node.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), project},
+  world.mc.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), project},
                                       {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
-  world.node.sendRow(kThread, world.node.threads.value(kThread));
+  world.mc.sendRow(kThread, world.mc.threads.value(kThread));
   world.sync();
-  FakeStreams& fake = world.node.part<FakeStreams>();
+  FakeStreams& fake = world.mc.part<FakeStreams>();
   fake.thread = kThread;
-  fake.environment = world.node.environmentId;
-  look(world, world.node.environmentId + QLatin1Char(':') + kThread);
+  fake.environment = world.mc.environmentId;
+  look(world, world.mc.environmentId + QLatin1Char(':') + kThread);
 }
 
 }  // namespace stream

@@ -142,21 +142,21 @@ Feature: Keymaps
   # The desktop's window shortcuts, and how they stand down for a focused page, are
   # navigation/keybindings.feature and navigation/keybinding-customisation.feature.
 
-  @node
-  Scenario: A keybinding rule saved on one client reaches every client of the node
+  @mc
+  Scenario: A keybinding rule saved on one client reaches every client of the MC
     Given two clients are connected to the same environment
     When the user binds "ctrl+shift+n" to "thread.new" on the first client
     Then the second client receives the new rule
 
-  @node
+  @mc
   Scenario: Removing a saved keybinding rule restores the default for that key
     Given the user bound "ctrl+shift+n" to "thread.new"
     When the user removes that rule
     Then "ctrl+shift+n" does what it does by default
 
-  @node
+  @mc
   Scenario: Malformed entries in the keybindings file are skipped
-    Given the node's keybindings file contains one valid rule and one entry without a command
+    Given the MC's keybindings file contains one valid rule and one entry without a command
     When a client reads the keybindings
     Then only the valid rule is applied
 
@@ -174,13 +174,13 @@ Feature: Keymaps
     And no error is reported
 
   @backlog @desktop @mobile @tui
-  Scenario: A keymap file can be installed as a plugin from a paired node or a URL
-    When the user installs the keymap "vim-nav" from a paired node
+  Scenario: A keymap file can be installed as a plugin from a paired MC or a URL
+    When the user installs the keymap "vim-nav" from a paired MC
     Then "vim-nav" is listed with the installed plugins
     And its bindings take effect
 
   @backlog @desktop @tui
-  Scenario: The TUI reads the node's saved keybinding rules
+  Scenario: The TUI reads the MC's saved keybinding rules
     Given the user bound "ctrl+shift+n" to "thread.new" on the desktop app
     When the user connects the TUI to the same environment
     Then pressing "ctrl+shift+n" in the TUI starts a new thread

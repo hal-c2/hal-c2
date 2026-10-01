@@ -2,7 +2,7 @@ defmodule HalC2.Attachments.GitHubMedia do
   @moduledoc """
   Media a pull request body points at on GitHub (`github-media` assets), as the Node
   server serves it (`GitHubMediaFetch.ts`, `githubMedia.ts`). A private repository
-  answers an unauthenticated request for one with 404, so the node fetches it with
+  answers an unauthenticated request for one with 404, so the MC fetches it with
   the host's `gh` credential and hands the bytes back; the token rides only on
   requests to GitHub's own hosts and never reaches the client.
 

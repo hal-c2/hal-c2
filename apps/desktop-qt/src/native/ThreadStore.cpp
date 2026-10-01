@@ -4,7 +4,7 @@
 
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
 
@@ -12,10 +12,10 @@ namespace {
 const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads"), {}, "Threads");
 }
 
-ThreadStore::ThreadStore(ShellBridge*, NodeClient* client, ShellStore* store, QObject* parent)
+ThreadStore::ThreadStore(ShellBridge*, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_client(client), m_store(store) {
   connect(store, &ShellStore::changed, this, &ThreadStore::retry);
-  connect(client, &NodeClient::readyChanged, this, [this](bool ready) {
+  connect(client, &McClient::readyChanged, this, [this](bool ready) {
     if (ready) retry();
   });
 }
@@ -147,18 +147,18 @@ void ThreadStore::onFrame(const QString& threadKey, const QJsonObject& frame) {
   } else if (type == QLatin1String("live")) {
     model->setStatus(QStringLiteral("live"));
   } else if (type == QLatin1String("error") || type == QLatin1String("end")) {
-    // The node ends a refused subscription itself; forget it and retry when
-    // the node (or the connection) comes back.
+    // The MC ends a refused subscription itself; forget it and retry when
+    // the MC (or the connection) comes back.
     unfollow(*it);
     it->waitOnline = !m_store->threadOnline(threadKey);
     const QString reason = frame.value(QLatin1String("reason")).toString();
     model->setStatus(QStringLiteral("unreachable"),
-                     reason.isEmpty() ? QStringLiteral("The node stopped sending this thread.") : reason);
+                     reason.isEmpty() ? QStringLiteral("The MC stopped sending this thread.") : reason);
   }
 }
 
 // Follows the open threads that are not: ones the sidebar did not list yet,
-// and unreachable ones whose node is online again or whose connection is back.
+// and unreachable ones whose MC is online again or whose connection is back.
 void ThreadStore::retry() {
   if (!m_client->isReady()) return;
   for (auto it = m_threads.begin(); it != m_threads.end(); ++it) {

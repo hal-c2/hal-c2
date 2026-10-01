@@ -1,5 +1,5 @@
 // The desktop's Connections settings page (ConnectionsController): the
-// environments its node is linked to, pairing them, and who may reach this
+// environments its MC is linked to, pairing them, and who may reach this
 // machine (features/settings/connections.feature, the desktop scenarios of
 // connections/pairing.feature and connections/links.feature).
 
@@ -16,7 +16,7 @@
 
 namespace {
 
-// Who may reach the node and the environments it can pair with, as
+// Who may reach the MC and the environments it can pair with, as
 // apps/server-ex lib/hal_c2/rpc.ex answers `hal-c2.*` access calls and the
 // `authAccess` shape. Other machines serve plain HTTP only, so an HTTPS
 // pairing link cannot reach them.
@@ -46,18 +46,18 @@ struct FakeAccess {
 };
 
 FakeAccess& fake(World& world) {
-  return world.node.part<FakeAccess>();
+  return world.mc.part<FakeAccess>();
 }
 
-void sendAccess(FakeNode& node, const QString& type, const QJsonObject& payload, int only = -1) {
-  FakeAccess& access = node.part<FakeAccess>();
+void sendAccess(FakeMc& mc, const QString& type, const QJsonObject& payload, int only = -1) {
+  FakeAccess& access = mc.part<FakeAccess>();
   const QJsonObject event{{QStringLiteral("version"), 1},
                           {QStringLiteral("revision"), ++access.revision},
                           {QStringLiteral("type"), type},
                           {QStringLiteral("payload"), payload}};
-  for (const int id : node.subscribers(QStringLiteral("authAccess"))) {
+  for (const int id : mc.subscribers(QStringLiteral("authAccess"))) {
     if (only >= 0 && id != only) continue;
-    node.send({{QStringLiteral("t"), QStringLiteral("authAccess")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
+    mc.send({{QStringLiteral("t"), QStringLiteral("authAccess")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
   }
 }
 
@@ -67,18 +67,18 @@ void removeWhere(QJsonArray& list, const QString& key, const QString& value) {
   }
 }
 
-void answerAccess(FakeNode& node, const FakeNode::Rpc& rpc) {
-  FakeAccess& access = node.part<FakeAccess>();
+void answerAccess(FakeMc& mc, const FakeMc::Rpc& rpc) {
+  FakeAccess& access = mc.part<FakeAccess>();
   access.calls.append({rpc.method, rpc.payload});
   const QString method = rpc.method;
   const bool reads = method == QLatin1String("hal-c2.pairingLinks") || method == QLatin1String("hal-c2.clients");
   if (!access.admin) {
-    node.refuse(rpc, reads ? QStringLiteral("access:read is required") : QStringLiteral("access:write is required"));
+    mc.refuse(rpc, reads ? QStringLiteral("access:read is required") : QStringLiteral("access:write is required"));
     return;
   }
   if (method == QLatin1String("hal-c2.createPairingLink")) {
     if (access.refuseCreate) {
-      node.refuse(rpc, QStringLiteral("the node could not store the pairing link"));
+      mc.refuse(rpc, QStringLiteral("the MC could not store the pairing link"));
       return;
     }
     const QString id = QStringLiteral("link-%1").arg(access.next);
@@ -91,77 +91,77 @@ void answerAccess(FakeNode& node, const FakeNode::Rpc& rpc) {
     if (rpc.payload.contains(QLatin1String("label"))) link.insert(QStringLiteral("label"), rpc.payload.value(QLatin1String("label")));
     access.pairingLinks.append(link);
     access.credentials.insert(id, credential);
-    sendAccess(node, QStringLiteral("pairingLinkUpserted"), link);
+    sendAccess(mc, QStringLiteral("pairingLinkUpserted"), link);
     QJsonObject result = link;
     result.insert(QStringLiteral("credential"), credential);
-    node.reply(rpc, result);
+    mc.reply(rpc, result);
   } else if (method == QLatin1String("hal-c2.revokePairingLink")) {
     const QString id = rpc.payload.value(QLatin1String("id")).toString();
     removeWhere(access.pairingLinks, QStringLiteral("id"), id);
     access.credentials.remove(id);
-    sendAccess(node, QStringLiteral("pairingLinkRemoved"), {{QStringLiteral("id"), id}});
-    node.reply(rpc, QJsonObject{{QStringLiteral("revoked"), true}});
+    sendAccess(mc, QStringLiteral("pairingLinkRemoved"), {{QStringLiteral("id"), id}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("revoked"), true}});
   } else if (method == QLatin1String("hal-c2.revokeClient")) {
     const QString id = rpc.payload.value(QLatin1String("sessionId")).toString();
     removeWhere(access.clients, QStringLiteral("sessionId"), id);
-    sendAccess(node, QStringLiteral("clientRemoved"), {{QStringLiteral("sessionId"), id}});
-    node.reply(rpc, QJsonObject{{QStringLiteral("revoked"), true}});
+    sendAccess(mc, QStringLiteral("clientRemoved"), {{QStringLiteral("sessionId"), id}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("revoked"), true}});
   } else if (method == QLatin1String("hal-c2.revokeOtherClients")) {
     int count = 0;
     for (qsizetype index = access.clients.size() - 1; index >= 0; --index) {
       const QJsonObject client = access.clients.at(index).toObject();
       if (client.value(QLatin1String("current")).toBool()) continue;
       access.clients.removeAt(index);
-      sendAccess(node, QStringLiteral("clientRemoved"), {{QStringLiteral("sessionId"), client.value(QLatin1String("sessionId"))}});
+      sendAccess(mc, QStringLiteral("clientRemoved"), {{QStringLiteral("sessionId"), client.value(QLatin1String("sessionId"))}});
       count++;
     }
-    node.reply(rpc, QJsonObject{{QStringLiteral("revokedCount"), count}});
+    mc.reply(rpc, QJsonObject{{QStringLiteral("revokedCount"), count}});
   } else if (method == QLatin1String("hal-c2.linkEnvironment")) {
     const QUrl url(rpc.payload.value(QLatin1String("pairingUrl")).toString());
     const QString token = QUrlQuery(url.fragment()).queryItemValue(QStringLiteral("token"));
     const QString origin = url.adjusted(QUrl::RemovePath | QUrl::RemoveFragment | QUrl::RemoveQuery).toString();
     if (url.scheme() != QLatin1String("http") || !access.hosts.contains(url.host())) {
-      node.refuse(rpc, QStringLiteral("cannot reach %1: connection refused").arg(origin));
+      mc.refuse(rpc, QStringLiteral("cannot reach %1: connection refused").arg(origin));
       return;
     }
     if (token.isEmpty() || access.usedTokens.contains(token)) {
-      node.refuse(rpc, QStringLiteral("the pairing link is invalid or expired"));
+      mc.refuse(rpc, QStringLiteral("the pairing link is invalid or expired"));
       return;
     }
     access.usedTokens.insert(token);
     const QString label = access.hosts.value(url.host());
-    node.linkLabels.insert(url.host(), label);
-    node.linkProblems.remove(url.host());
-    node.link(url.host());
-    node.reply(rpc, QJsonObject{{QStringLiteral("environmentId"), url.host()}, {QStringLiteral("label"), label}});
+    mc.linkLabels.insert(url.host(), label);
+    mc.linkProblems.remove(url.host());
+    mc.link(url.host());
+    mc.reply(rpc, QJsonObject{{QStringLiteral("environmentId"), url.host()}, {QStringLiteral("label"), label}});
   } else if (method == QLatin1String("hal-c2.unlinkEnvironment")) {
     const QString id = rpc.payload.value(QLatin1String("environmentId")).toString();
-    if (!node.linked.contains(id)) {
-      node.refuse(rpc, QStringLiteral("no link to %1").arg(id));
+    if (!mc.linked.contains(id)) {
+      mc.refuse(rpc, QStringLiteral("no link to %1").arg(id));
       return;
     }
-    node.unlink(id);
-    node.reply(rpc, QJsonValue::Null);
+    mc.unlink(id);
+    mc.reply(rpc, QJsonValue::Null);
   } else {
-    node.reply(rpc, QJsonValue::Null);
+    mc.reply(rpc, QJsonValue::Null);
   }
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
+const FakeMc::Extension extension([](FakeMc& mc) {
   for (const char* method : {"createPairingLink", "revokePairingLink", "pairingLinks", "clients", "revokeClient",
                              "revokeOtherClients", "linkEnvironment", "unlinkEnvironment"}) {
-    node.onRpc(QStringLiteral("hal-c2.") + QLatin1String(method), [&node](const FakeNode::Rpc& rpc) { answerAccess(node, rpc); });
+    mc.onRpc(QStringLiteral("hal-c2.") + QLatin1String(method), [&mc](const FakeMc::Rpc& rpc) { answerAccess(mc, rpc); });
   }
-  node.onShape(QStringLiteral("authAccess"), [&node](int id, const QJsonObject&) {
-    FakeAccess& access = node.part<FakeAccess>();
+  mc.onShape(QStringLiteral("authAccess"), [&mc](int id, const QJsonObject&) {
+    FakeAccess& access = mc.part<FakeAccess>();
     if (!access.admin) {
-      node.send({{QStringLiteral("t"), QStringLiteral("error")},
+      mc.send({{QStringLiteral("t"), QStringLiteral("error")},
                  {QStringLiteral("id"), id},
                  {QStringLiteral("reason"), QStringLiteral("access:read is required")}});
-      node.forget(id);
+      mc.forget(id);
       return;
     }
-    sendAccess(node, QStringLiteral("snapshot"),
+    sendAccess(mc, QStringLiteral("snapshot"),
                {{QStringLiteral("pairingLinks"), access.pairingLinks}, {QStringLiteral("clientSessions"), access.clients}}, id);
   });
 });
@@ -218,9 +218,9 @@ void ensureListed(World& world, const QString& label) {
   const QString host = hostOf(label);
   fake(world).hosts.insert(host, label);
   fake(world).environment = label;
-  if (!world.node.linked.contains(host)) {
-    world.node.linkLabels.insert(host, label);
-    world.node.link(host);
+  if (!world.mc.linked.contains(host)) {
+    world.mc.linkLabels.insert(host, label);
+    world.mc.link(host);
   }
   expect(!linkRow(world, label).isEmpty(), QStringLiteral("the Connections page is %1").arg(show(connections(world))));
 }
@@ -240,7 +240,7 @@ void addClient(World& world, const QString& label) {
       {QStringLiteral("current"), false},
   };
   access.clients.append(client);
-  sendAccess(world.node, QStringLiteral("clientUpserted"), client);
+  sendAccess(world.mc, QStringLiteral("clientUpserted"), client);
 }
 
 bool clientListed(World& world, const QString& label) {
@@ -257,8 +257,8 @@ const QStringList kStandardScopes{QStringLiteral("orchestration:read"), QStringL
 const Steps steps([] {
   const QString q = kQuoted;
 
-  // The node and the session.
-  step(QStringLiteral("a running node"), [](World& world, const Captures&, const Table&) {
+  // The MC and the session.
+  step(QStringLiteral("a running MC"), [](World& world, const Captures&, const Table&) {
     world.connect();
     world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
   });
@@ -311,7 +311,7 @@ const Steps steps([] {
     expectNotice(world, QStringLiteral("error"), [](const QString& text) { return text == QLatin1String("Select at least one permission."); });
   });
   step(QStringLiteral("no link is created"), [](World& world, const Captures&, const Table&) {
-    expect(!called(world, QStringLiteral("hal-c2.createPairingLink")), QStringLiteral("the node was asked for a pairing link"));
+    expect(!called(world, QStringLiteral("hal-c2.createPairingLink")), QStringLiteral("the MC was asked for a pairing link"));
     expect(listed(world, QStringLiteral("pairingLinks")).isEmpty(), QStringLiteral("the Connections page is %1").arg(show(connections(world))));
   });
   step(QStringLiteral("the server refuses to create pairing links"), [](World& world, const Captures&, const Table&) {
@@ -341,7 +341,7 @@ const Steps steps([] {
     const QString url = at(connections(world), QStringLiteral("created.url")).toString();
     const QString copied = QGuiApplication::clipboard()->text();
     expect(!url.isEmpty() && copied == url && copied.endsWith(QLatin1String("/pair#token=secret-1")) &&
-               copied.startsWith(world.node.origin().toString()),
+               copied.startsWith(world.mc.origin().toString()),
            QStringLiteral("copied \"%1\", the page is %2").arg(copied, show(connections(world))));
   });
   step(QStringLiteral("the user is told it was copied"), [](World& world, const Captures&, const Table&) {
@@ -357,7 +357,7 @@ const Steps steps([] {
     expect(listed(world, QStringLiteral("pairingLinks")).isEmpty(), QStringLiteral("the Connections page is %1").arg(show(connections(world))));
   });
   step(QStringLiteral("a device can no longer pair with it"), [](World& world, const Captures&, const Table&) {
-    expect(fake(world).credentials.isEmpty(), QStringLiteral("the node still pairs with %1").arg(fake(world).credentials.values().join(u", ")));
+    expect(fake(world).credentials.isEmpty(), QStringLiteral("the MC still pairs with %1").arg(fake(world).credentials.values().join(u", ")));
     expect(connections(world).value(QStringLiteral("created")).isNull(), QStringLiteral("the revoked link can still be copied"));
   });
   step(QStringLiteral("the user leaves the Connections page and comes back"), [](World& world, const Captures&, const Table&) {
@@ -387,7 +387,7 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("connections.client.revoke"), QVariantMap{{QStringLiteral("sessionId"), QStringLiteral("session-") + hostOf(c[0])}});
   });
   step(QStringLiteral("%1 is signed out and no longer listed").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(called(world, QStringLiteral("hal-c2.revokeClient")), QStringLiteral("the node was not asked to revoke it"));
+    expect(called(world, QStringLiteral("hal-c2.revokeClient")), QStringLiteral("the MC was not asked to revoke it"));
     expect(!clientListed(world, c[0]), QStringLiteral("the Connections page is %1").arg(show(connections(world))));
     expectNotice(world, QStringLiteral("success"), [&c](const QString& text) { return text == c[0] + QStringLiteral(" was signed out."); });
   });
@@ -453,7 +453,7 @@ const Steps steps([] {
   step(QStringLiteral("the user is told the backend could not be added"), [settled](World& world, const Captures&, const Table&) {
     settled(world);
     expectNotice(world, QStringLiteral("error"), [](const QString& text) { return text.startsWith(QLatin1String("Could not add the environment: cannot reach")); });
-    expect(world.node.linked.isEmpty(), QStringLiteral("the node is linked to %1").arg(world.node.linked.join(u", ")));
+    expect(world.mc.linked.isEmpty(), QStringLiteral("the MC is linked to %1").arg(world.mc.linked.join(u", ")));
   });
   step(QStringLiteral("a pairing link from %1 that was already used").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).hosts.insert(hostOf(c[0]), c[0]);
@@ -467,18 +467,18 @@ const Steps steps([] {
     expectNotice(world, QStringLiteral("error"), [](const QString& text) { return text.endsWith(QLatin1String("Ask for a fresh link.")); });
   });
   step(QStringLiteral("no environment is added"), [](World& world, const Captures&, const Table&) {
-    expect(world.node.linked.isEmpty() && connections(world).value(QStringLiteral("links")).toList().isEmpty(),
+    expect(world.mc.linked.isEmpty() && connections(world).value(QStringLiteral("links")).toList().isEmpty(),
            QStringLiteral("the Connections page is %1").arg(show(connections(world))));
   });
   step(QStringLiteral("%1 is linked and has revoked this machine's access").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureListed(world, c[0]);
-    world.node.linkProblems.insert(hostOf(c[0]), QStringLiteral("refused"));
-    world.node.sendLinks();
+    world.mc.linkProblems.insert(hostOf(c[0]), QStringLiteral("refused"));
+    world.mc.sendLinks();
   });
   step(QStringLiteral("%1 is linked and stops answering").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureListed(world, c[0]);
-    world.node.linkProblems.insert(hostOf(c[0]), QStringLiteral("unreachable"));
-    world.node.sendLinks();
+    world.mc.linkProblems.insert(hostOf(c[0]), QStringLiteral("unreachable"));
+    world.mc.sendLinks();
   });
   step(QStringLiteral("its row reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QVariantMap row = linkRow(world, fake(world).environment);
@@ -495,8 +495,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("its pairing, credentials and cached threads are forgotten here"), [](World& world, const Captures&, const Table&) {
     const QString label = fake(world).environment;
-    expect(called(world, QStringLiteral("hal-c2.unlinkEnvironment")) && !world.node.linked.contains(hostOf(label)),
-           QStringLiteral("the node is linked to %1").arg(world.node.linked.join(u", ")));
+    expect(called(world, QStringLiteral("hal-c2.unlinkEnvironment")) && !world.mc.linked.contains(hostOf(label)),
+           QStringLiteral("the MC is linked to %1").arg(world.mc.linked.join(u", ")));
     expectNotice(world, QStringLiteral("success"), [&label](const QString& text) { return text == label + QStringLiteral(" was removed."); });
   });
   step(QStringLiteral("%1 is no longer listed").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -516,8 +516,8 @@ const Steps steps([] {
            QStringLiteral("the Connections page is %1").arg(show(page)));
   });
 
-  // connections/links.feature: the node links from the desktop's settings.
-  step(QStringLiteral("another node %1 outside the node's cluster").arg(q), [](World& world, const Captures& c, const Table&) {
+  // connections/links.feature: the MC links from the desktop's settings.
+  step(QStringLiteral("another MC %1 outside the MC's cluster").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).hosts.insert(c[0], c[0]);
   });
   step(QStringLiteral("the user has a pairing link from %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -535,7 +535,7 @@ const Steps steps([] {
   step(QStringLiteral("the user can remove the link there"), [](World& world, const Captures&, const Table&) {
     const QString environment = fake(world).environment;
     world.bridge().dispatch(QStringLiteral("connections.unlink"), QVariantMap{{QStringLiteral("environmentId"), environment}});
-    expect(linkRow(world, environment).isEmpty() && !world.node.linked.contains(environment),
+    expect(linkRow(world, environment).isEmpty() && !world.mc.linked.contains(environment),
            QStringLiteral("the Connections page is %1").arg(show(connections(world))));
   });
 });

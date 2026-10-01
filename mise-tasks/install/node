@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Fetch and compile the node's Elixir deps (apps/server-ex)"
-#MISE dir="{{config_root}}/apps/server-ex"
-set -euo pipefail
-# A fresh Elixir has no Hex or rebar, and mix would stop to ask for them.
-mix local.hex --force --if-missing
-mix local.rebar --force --if-missing
-mix deps.get
-mix compile

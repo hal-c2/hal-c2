@@ -13,7 +13,7 @@
 #   apps/desktop-qt/src/native/ProviderSettingsController.cpp (the desktop's sign-out and email)
 #   packages/contracts/src/rpc.ts (provider.install.start, provider.install.cancel, provider.install.remove, provider.install.subscribe, server.updateProvider)
 
-@node
+@mc
 Feature: Provider setup, updates and sign-in
   Every provider plugin goes through the same setup: find or install its runtime, keep
   it current through whatever installed it, and sign in when the provider supports
@@ -24,7 +24,7 @@ Feature: Provider setup, updates and sign-in
 
   Scenario: Checking provider status never installs or signs in anything
     Given Grok is enabled but not signed in
-    When the node checks its providers in the background
+    When the MC checks its providers in the background
     Then no sign-in or installation is started
 
   Scenario: An update is run by the installer that owns the provider
@@ -41,7 +41,7 @@ Feature: Provider setup, updates and sign-in
   # (provider_updates.ex update_command/2, providerMaintenance.ts manual-only);
   # settings/updates.feature covers the refusal when the user updates anyway.
   Scenario: A provider no installer owns is not offered an update
-    Given Claude was installed in a way the node cannot identify
+    Given Claude was installed in a way the MC cannot identify
     When the user opens Claude's update details
     Then no update command is offered for Claude
 
@@ -49,8 +49,8 @@ Feature: Provider setup, updates and sign-in
     When the user tries to sign in to Codex from HAL-C2
     Then the user is told this provider does not sign in here
 
-  Scenario: A sign-in is shared by every client of the node
-    Given two clients are connected to the node
+  Scenario: A sign-in is shared by every client of the MC
+    Given two clients are connected to the MC
     When the user starts signing in to an ACP agent on one client
     Then the other client shows the same sign-in in progress
     And either client can finish or cancel it
@@ -101,12 +101,12 @@ Feature: Provider setup, updates and sign-in
     When the user opens the provider list
     Then Codex is not offered an update to that release
 
-  # Antigravity is the one provider whose runtime the node installs itself
+  # Antigravity is the one provider whose runtime the MC installs itself
   # (apps/server/src/provider/AntigravityInstallation.ts, installation.ex).
   @plugin-antigravity
   Scenario: A managed runtime reports install progress to every client
     Given Antigravity is enabled on that environment
-    And two clients are connected to the node
+    And two clients are connected to the MC
     When the user installs a managed provider runtime on one client
     Then both clients show the download progress
 
@@ -135,16 +135,16 @@ Feature: Provider setup, updates and sign-in
   Scenario: Answering a terminal sign-in from the mobile app
     Given a terminal sign-in for an ACP agent is waiting for input
     When the user sends a response from the mobile app
-    Then the response reaches the sign-in terminal on the node
+    Then the response reaches the sign-in terminal on the MC
 
-  @desktop @mobile @backlog-mobile @backlog-node
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: Signing out asks for confirmation and keeps history
     Given the user is signed in to an ACP agent
     When the user signs out and confirms
     Then running threads sharing that sign-in stop
     And thread history is kept
 
-  @desktop @mobile @backlog-mobile @backlog-node
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: The signed-in email is hidden until the user reveals it
     Given a provider is signed in as "me@example.com"
     When the user opens the provider

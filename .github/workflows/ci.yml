@@ -1,6 +1,6 @@
 name: CI
 
-# The node (apps/server-ex) and the TUI (apps/tui). The Qt desktop builds and
+# The MC (apps/server-ex) and the TUI (apps/tui). The Qt desktop builds and
 # tests in desktop-qt.yml. The legacy Node server, web, Electron and React Native
 # apps have no CI of their own; desktop-qt.yml still builds the web app it hosts.
 
@@ -36,8 +36,8 @@ jobs:
             exit 1
           fi
 
-  node:
-    name: Node (server-ex)
+  mc:
+    name: MC (server-ex)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -85,13 +85,13 @@ jobs:
       - name: Test
         run: mix test
 
-  # The @node scenarios of features/, one directory per job so a slow or hung
-  # directory stays visible; node/ is split in two to fit the time limit.
+  # The @mc scenarios of features/, one directory per job so a slow or hung
+  # directory stays visible; mc/ is split in two to fit the time limit.
   # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);
-  # naming scenarios_test.exs keeps the unit suite, which the node job runs, out.
-  # Add a directory here when it gains @node scenarios.
-  node_scenarios:
-    name: Node scenarios (${{ matrix.dir }})
+  # naming scenarios_test.exs keeps the unit suite, which the mc job runs, out.
+  # Add a directory here when it gains @mc scenarios.
+  mc_scenarios:
+    name: MC scenarios (${{ matrix.dir }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -102,8 +102,8 @@ jobs:
           - connections
           - files
           - navigation
-          - node/orchestration
-          - node/platform
+          - mc/orchestration
+          - mc/platform
           - parity
           - plugins
           - preview

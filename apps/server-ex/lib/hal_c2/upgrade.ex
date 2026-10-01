@@ -1,10 +1,10 @@
 defmodule HalC2.Upgrade do
   @moduledoc """
-  A node moving to another HAL-C2 version (`server.updateServer`), in place when it can.
+  An MC moving to another HAL-C2 version (`server.updateServer`), in place when it can.
 
   A version arrives as a bundle: a release's `lib/`, `releases/<vsn>/` and ERTS,
   with the `upgrade.json` manifest `mix release` writes (`HalC2.Upgrade.Source` finds
-  one). The node compares it with the manifest of the release it runs:
+  one). The MC compares it with the manifest of the release it runs:
 
     * Same runtime, applications, native libraries and configuration, and no
       supervisor among the changed modules: the bundle is installed next to the
@@ -12,14 +12,14 @@ defmodule HalC2.Upgrade do
       modules, migrating running processes through `code_change/3`. Nothing
       restarts; sockets and provider sessions stay up.
     * Anything else: the bundle is installed, `releases/start_erl.data` names it,
-      and the node exits with status 75, which `bin/hal-c2-service` answers by starting
+      and the MC exits with status 75, which `bin/hal-c2-service` answers by starting
       it again, now on the new version. Turns cut off go on where the project asks
       for that (`HalC2.Orchestration.Recovery`). The previous `start_erl.data` is kept
       beside it until the new version boots; if it cannot, `bin/hal-c2-service` puts it
       back and starts the old version again.
 
   Either way the next boot runs the new version. The outcome is kept in
-  `<home>/upgrades/outcome.json` and reported with the node's next `ready`, so a
+  `<home>/upgrades/outcome.json` and reported with the MC's next `ready`, so a
   client that asked can tell success from a rollback. One update runs at a time;
   another asked for meanwhile is refused.
   """
@@ -28,19 +28,19 @@ defmodule HalC2.Upgrade do
 
   require Logger
 
-  # `bin/hal-c2-service` starts the node again when it exits with this status. The exit
+  # `bin/hal-c2-service` starts the MC again when it exits with this status. The exit
   # itself is `:restart_exit` in the app env (`System.stop/1` unless a test swaps it).
   @restart_status 75
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  @doc "The version this node runs, including one loaded in place."
+  @doc "The version this MC runs, including one loaded in place."
   def version do
     :persistent_term.get({__MODULE__, :version}, nil) ||
       to_string(Application.spec(:hal_c2, :vsn))
   end
 
-  @doc "The release this node runs from, or nil when it runs from a checkout."
+  @doc "The release this MC runs from, or nil when it runs from a checkout."
   def release_root, do: System.get_env("RELEASE_ROOT")
 
   @doc "`serverSelfUpdate` for the descriptor: only a release can install a version."
@@ -62,24 +62,24 @@ defmodule HalC2.Upgrade do
   end
 
   @doc """
-  `server.updateServer`: moves this node to `targetVersion`. `progress` gets
-  `{:hal_c2_server_update, node, %{"type" => "progress", "stage" => stage}}` as it goes. `{:ok, ServerSelfUpdateResult}` once
+  `server.updateServer`: moves this MC to `targetVersion`. `progress` gets
+  `{:hal_c2_server_update, mc, %{"type" => "progress", "stage" => stage}}` as it goes. `{:ok, ServerSelfUpdateResult}` once
   the new version runs (hot) or is about to (restart).
   """
   def update(input, progress \\ nil) do
     GenServer.call(__MODULE__, {:update, input, progress}, :timer.minutes(15))
   catch
-    :exit, {:noproc, _} -> failure("This node cannot update itself.")
+    :exit, {:noproc, _} -> failure("This MC cannot update itself.")
   end
 
   @doc """
   `server.updateServerWithProgress`: runs `update/2` off the caller and sends `pid`
-  `{:hal_c2_server_update, node, event}` with `ServerSelfUpdateProgressEvent`s, ending
+  `{:hal_c2_server_update, mc, event}` with `ServerSelfUpdateProgressEvent`s, ending
   with `complete`, or `{:error, ServerSelfUpdateError}`.
   """
   def start(input, pid) do
-    # Progress comes from this node's updater and the end from this task, both on
-    # this node, so they reach `pid` in order.
+    # Progress comes from this MC's updater and the end from this task, both on
+    # this MC, so they reach `pid` in order.
     Task.start(fn ->
       event =
         case update(input, pid) do
@@ -94,7 +94,7 @@ defmodule HalC2.Upgrade do
   end
 
   @doc """
-  Loads what changed in this node's own checkout after `mix compile`, for nodes run
+  Loads what changed in this MC's own checkout after `mix compile`, for MCs run
   from source (`mix hal_c2.upgrade --dev`). Supervisors are left alone: they only take
   effect at start, so they are reported to restart for instead.
   """
@@ -125,7 +125,7 @@ defmodule HalC2.Upgrade do
     end
   end
 
-  @doc "The outcome of the last update this node finished, for `ready` events."
+  @doc "The outcome of the last update this MC finished, for `ready` events."
   def outcome, do: :persistent_term.get({__MODULE__, :outcome}, nil)
 
   @doc """
@@ -185,7 +185,7 @@ defmodule HalC2.Upgrade do
           else:
             Map.merge(pending, %{
               "status" => "rolled-back",
-              "reason" => "The node started #{booted} instead of #{pending["targetVersion"]}."
+              "reason" => "The MC started #{booted} instead of #{pending["targetVersion"]}."
             })
 
       record(outcome)
@@ -230,10 +230,10 @@ defmodule HalC2.Upgrade do
 
     cond do
       root == nil ->
-        failure("This node runs from a checkout; update it with `mix hal_c2.upgrade`.")
+        failure("This MC runs from a checkout; update it with `mix hal_c2.upgrade`.")
 
       target == from ->
-        failure("This node already runs #{target}.")
+        failure("This MC already runs #{target}.")
 
       true ->
         notify(progress, "downloading")
@@ -289,7 +289,7 @@ defmodule HalC2.Upgrade do
       {:ok, result}
     else
       failure(
-        "#{target} needs a restart (#{why}), and this node was not started by bin/hal-c2-service, which would start it again."
+        "#{target} needs a restart (#{why}), and this MC was not started by bin/hal-c2-service, which would start it again."
       )
     end
   end
@@ -464,7 +464,7 @@ defmodule HalC2.Upgrade do
       do: :persistent_term.put({__MODULE__, :outcome}, outcome)
   end
 
-  # Clients watching this node's config see its new descriptor and the outcome.
+  # Clients watching this MC's config see its new descriptor and the outcome.
   defp announce, do: HalC2.Settings.notify_upgraded(outcome())
 
   defp outcome_path,

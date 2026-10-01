@@ -1,21 +1,21 @@
 defmodule HalC2.Steps.Settings.ProvidersPanel do
   @moduledoc """
   Steps for features/settings/providers-panel.feature: what the Providers settings
-  page asks of a node.
+  page asks of an MC.
 
-  The page is two sockets subscribed to the node's config ("default", and "other"
+  The page is two sockets subscribed to the MC's config ("default", and "other"
   for a second client). The environment has an ACP agent "gemini", an
   `acpRegistry` instance of the registry agent "gemini-cli", run as the fake ACP
   agent (`test/support/fake_acp.py`) with a state file, so separate runs of it
   (probes, session and provider calls) show what it was asked. The ACP Registry is
-  served from the node's home: "gemini-cli" ships a binary for this machine.
+  served from the MC's home: "gemini-cli" ships a binary for this machine.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.Steps.Settings.Updates
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @fake_acp Path.expand("../../support/fake_acp.py", __DIR__)
   @instance "gemini"
@@ -27,8 +27,8 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
     World.put_app_env(:claude_command, ["hal-c2-test-no-claude"])
 
     context = registry(context)
-    state = Path.join(context.node.home, "gemini-state.json")
-    auth = Path.join(context.node.home, "gemini-signed-in")
+    state = Path.join(context.mc.home, "gemini-state.json")
+    auth = Path.join(context.mc.home, "gemini-signed-in")
     File.write!(auth, "signed in")
 
     World.put_app_env(:acp_commands, %{@instance => ["python3", "-u", @fake_acp]})
@@ -50,19 +50,19 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
         }
       })
 
-    # The node read the agent when it was added.
+    # The MC read the agent when it was added.
     :ok = HalC2.Acp.reload(@instance)
     assert %{"models" => [_ | _]} = HalC2.Acp.entry(@instance)
 
     context
-    |> World.put_client(Node.config(World.client(context)))
-    |> World.put_client("other", Node.config(Node.connect(context.node)))
+    |> World.put_client(Mc.config(World.client(context)))
+    |> World.put_client("other", Mc.config(Mc.connect(context.mc)))
     |> Map.merge(%{acp_state: state, acp_auth: auth, acp_calls: length(calls(state))})
   end
 
   # --- refreshing ------------------------------------------------------------------------
 
-  step "the node reads each provider's installation, sign-in and models again", context do
+  step "the MC reads each provider's installation, sign-in and models again", context do
     assert {:ok, %{"providers" => providers}} = context.reply
     assert %{"version" => "9.9", "models" => [_ | _]} = gemini(providers)
     assert %{"auth" => %{"status" => "authenticated"}} = gemini(providers)
@@ -77,7 +77,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
 
   step "every connected client receives the new provider list", context do
     Enum.reduce(["default", "other"], context, fn name, context ->
-      {frame, client} = Node.await(World.client(context, name), &providers_frame?/1)
+      {frame, client} = Mc.await(World.client(context, name), &providers_frame?/1)
       assert %{"models" => [_ | _]} = gemini(frame["providers"])
       World.put_client(context, name, client)
     end)
@@ -99,7 +99,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
     context
   end
 
-  step "the node prepares the agent's current version for this machine", context do
+  step "the MC prepares the agent's current version for this machine", context do
     assert {:ok,
             %{
               "agentId" => "gemini-cli",
@@ -110,7 +110,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
 
     exe =
       Path.join([
-        context.node.home,
+        context.mc.home,
         "tools/gemini-cli/1.2.3",
         HalC2.Acp.Catalog.platform(),
         "bin/gemini"
@@ -129,7 +129,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
     Map.put(context, :agent, agent)
   end
 
-  step "the node is asked to uninstall {string}", %{args: [agent]} = context do
+  step "the MC is asked to uninstall {string}", %{args: [agent]} = context do
     {reply, context} =
       World.call(context, "server.uninstallAcpRegistryManagedBinary", %{"agentId" => agent})
 
@@ -138,7 +138,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
 
   step "the uninstall is refused", context do
     assert {:ok, %{"agentId" => agent, "removed" => false}} = context.reply
-    assert File.dir?(Path.join([context.node.home, "tools", agent]))
+    assert File.dir?(Path.join([context.mc.home, "tools", agent]))
     context
   end
 
@@ -248,7 +248,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
     refute File.exists?(context.acp_auth)
 
     {_frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(providers_frame?(&1) and
             gemini(&1["providers"])["auth"]["status"] == "unauthenticated"),
@@ -268,8 +268,8 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
 
   # `the user updates "Codex"` is the common `the user updates {string}` step.
 
-  step "the node runs the Codex updater", context do
-    prefix = Path.join(context.node.home, "npm")
+  step "the MC runs the Codex updater", context do
+    prefix = Path.join(context.mc.home, "npm")
     assert {:ok, %{"providers" => providers}} = context.reply
 
     assert File.read!(Path.join(prefix, "npm.log")) =~
@@ -282,7 +282,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
     assert Updates.advisory(context, "Codex")["currentVersion"] == "9.9.9"
 
     {_frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(providers_frame?(&1) and codex_version(&1["providers"]) == "9.9.9")
       )
@@ -292,11 +292,11 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
 
   # --- helpers ---------------------------------------------------------------------------
 
-  # The ACP Registry, served from the node's home: "gemini-cli" with a binary for
+  # The ACP Registry, served from the MC's home: "gemini-cli" with a binary for
   # this machine (a script running the fake agent), agents that match "gemini" less
   # well, one without a build for this machine, and one that does not match.
   defp registry(context) do
-    served = Node.tmp_dir(context.node, "registry")
+    served = Mc.tmp_dir(context.mc, "registry")
     script = Path.join(served, "gemini")
     File.write!(script, "#!/bin/sh\nexec python3 -u #{@fake_acp} \"$@\"\n")
     File.chmod!(script, 0o755)
@@ -308,7 +308,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
     sha = :crypto.hash(:sha256, File.read!(archive)) |> Base.encode16(case: :lower)
 
     server =
-      Node.ensure(
+      Mc.ensure(
         Supervisor.child_spec(
           {Bandit, plug: {Plug.Static, at: "/", from: served}, port: 0, ip: :loopback},
           id: :acp_registry
@@ -380,7 +380,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
     )
   end
 
-  # The thread the import wrote is awaited in the read model, where the node checks
+  # The thread the import wrote is awaited in the read model, where the MC checks
   # for it before deleting a session.
   defp import_session(context) do
     {reply, context} =

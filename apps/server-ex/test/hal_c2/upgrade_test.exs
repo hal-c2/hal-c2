@@ -77,7 +77,7 @@ defmodule HalC2.UpgradeTest do
              Upgrade.plan(Path.join(dir, "bundle"), nil)
   end
 
-  test "a node run from a checkout does not install versions" do
+  test "an MC run from a checkout does not install versions" do
     start_supervised!(Upgrade)
 
     assert {:error, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} =

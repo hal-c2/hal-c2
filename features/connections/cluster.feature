@@ -4,89 +4,89 @@
 #   apps/server-ex/lib/hal_c2/cluster/discovery.ex (reconnecting, strategies)
 #   apps/server-ex/lib/hal_c2/cluster/tailscale.ex, cluster/static.ex (discovery strategies)
 #   apps/server-ex/lib/hal_c2/cluster/command.ex, lib/mix/tasks/hal_c2.cluster.ex (status, invite, join, remove)
-#   apps/server-ex/rel/env.sh.eex, mise-tasks/node/_default (boot flags)
+#   apps/server-ex/rel/env.sh.eex, mise-tasks/mc/_default (boot flags)
 #   apps/server-ex/lib/hal_c2/shell.ex (cluster-wide sidebar, offline peers)
 #   apps/server-ex/lib/hal_c2/environment.ex (descriptor cluster list)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/api/cluster, /.well-known/hal-c2/environment, forwarded uploads)
 #   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove)
 #   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
 #   apps/desktop-qt/src/ClusterController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
-#   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any node)
-#   apps/server-ex/lib/hal_c2/web/protocol.ex, web/socket.ex (streams by node or by environment)
+#   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any MC)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex, web/socket.ex (streams by MC or by environment)
 #   packages/client-runtime/src/v3/clusterSocket.ts (one socket per cluster)
 #   packages/client-runtime/src/v3/clusterMembers.ts (registering members that join later)
 #   packages/client-runtime/src/connection/compatibility.ts (descriptorServesEnvironment)
 
 Feature: Clustering one person's machines
-  Nodes on one person's machines form a cluster. A machine joins with a pairing link from
+  MCs on one person's machines form a cluster. A machine joins with a pairing link from
   any member, over whatever network reaches it: a LAN, a tailnet, another VPN. Members pin
   each other's certificates and talk over mutually authenticated TLS, and a client paired
   with any member reaches every member's environment through that one connection. Nobody
-  sets up node names, cookies, boot flags or certificates, and nothing restarts.
+  sets up MC names, cookies, boot flags or certificates, and nothing restarts.
 
-  @node
-  Scenario: A node is ready to cluster without any setup
-    When a node starts
+  @mc
+  Scenario: An MC is ready to cluster without any setup
+    When an MC starts
     Then it has its own certificate, named after its environment
     And it listens for members over TLS on the cluster port without a port mapper
     And its cluster has only itself
 
-  @node
+  @mc
   Scenario: A machine joins another with a pairing link
-    Given two nodes that are not clustered
+    Given two MCs that are not clustered
     When the user joins the second to the first with a pairing link from the first
     Then each lists the other as a member
     And they are connected without restarting
     And the command lists both machines as connected
 
-  @node
+  @mc
   Scenario: Joining needs a link that grants access
-    Given two nodes that are not clustered
+    Given two MCs that are not clustered
     When the user joins the second with a standard pairing link from the first
     Then the join is refused because the link does not grant access:write
     And neither lists the other
 
-  @node
-  Scenario: A node started without cluster support refuses to join
-    Given a node started without the cluster boot flags
+  @mc
+  Scenario: An MC started without cluster support refuses to join
+    Given an MC started without the cluster boot flags
     When the user joins it to another machine
-    Then the join is refused saying the node was not started for clustering
+    Then the join is refused saying the MC was not started for clustering
 
-  @node
+  @mc
   Scenario: A client joins its machine to another's cluster and removes it again
-    Given two nodes that are not clustered
+    Given two MCs that are not clustered
     When a client of the first asks it for a cluster invite
     And a client of the second joins it with that invite
     Then the client sees both machines connected
     When a client of the first removes the second
     Then the client sees the first alone again
 
-  @node
+  @mc
   Scenario: Only a client that manages access sees or changes the cluster
-    Given two nodes that are not clustered
+    Given two MCs that are not clustered
     When a client paired with a standard link asks the first for a cluster invite
-    Then the node refuses both, saying access is required
+    Then the MC refuses both, saying access is required
 
-  @node
+  @mc
   Scenario: A machine that joins one member reaches every member
     Given a cluster of two members
     When a third machine joins through the second member
     Then all three are connected to each other
 
-  @node
-  Scenario: A node that is not a member is turned away
-    Given a member of a cluster and a node that never joined it
-    When the node tries to connect to the member
+  @mc
+  Scenario: An MC that is not a member is turned away
+    Given a member of a cluster and an MC that never joined it
+    When the MC tries to connect to the member
     Then the TLS handshake fails
     And it never joins the cluster
 
-  @node
+  @mc
   Scenario: Members find each other again after restarting
     Given a cluster of two members
     When both restart
     Then they connect again at the addresses they reported
 
-  @node
+  @mc
   Scenario Outline: A discovery strategy finds a member the others lost track of
     Given a cluster of two members whose recorded addresses are out of date
     And <strategy> lists the second member's address
@@ -98,71 +98,71 @@ Feature: Clustering one person's machines
       | the tailnet  |
       | HAL_C2_PEERS |
 
-  @node
+  @mc
   Scenario: A member removed from the cluster can no longer connect
     Given a cluster of three members
     When the user removes the third member on the first
     Then no member admits the third any more
     And the first two stay connected
 
-  @node
+  @mc
   Scenario: The sidebar lists every member's projects and threads
     Given a client connected to one member of a two-machine cluster
     When it follows the shell
     Then it sees projects and threads from both machines
     And each row names the machine it lives on
 
-  @node
+  @mc
   Scenario: A member going offline keeps its rows, marked offline
     Given a client follows the shell of a two-machine cluster
     When the other machine goes to sleep
     Then its threads stay listed
     And they are marked offline
 
-  @node
+  @mc
   Scenario: A member coming back is marked online again
     Given a member's rows are marked offline
     When that member reconnects
     Then its rows are marked online
 
-  @node
+  @mc
   Scenario: The environment descriptor lists the cluster
     When a client reads a member's environment descriptor
     Then it lists every member's environment id and label
 
-  @node
-  Scenario: A thread on another member streams through the connected node
+  @mc
+  Scenario: A thread on another member streams through the connected MC
     Given a client connected to the first member
     When it follows a thread that lives on the second member
     Then the thread streams over the client's one socket
 
-  @node
+  @mc
   Scenario: A client follows a thread on another member by its environment
     Given a client connected to the first member
     When it follows a thread that lives on the second member by that member's environment
     Then the thread streams over the client's one socket
 
-  @node
+  @mc
   Scenario: A request for an offline member fails without closing the socket
     Given the second member is offline
     When a client asks for something only the second member can serve
-    Then that request fails saying the node is unavailable
+    Then that request fails saying the MC is unavailable
     And the socket stays up
 
-  @node
-  Scenario: An upload is forwarded to the node that issued its link
+  @mc
+  Scenario: An upload is forwarded to the MC that issued its link
     Given an upload link issued by the second member
     When a client uploads to the first member with that link
     Then the first member forwards the upload to the second
 
-  @node
+  @mc
   Scenario: An upload for a member that left fails
     Given an upload link issued by a member that is no longer connected
     When a client uploads with it
     Then the upload fails as a bad gateway
 
-  @node
-  Scenario: A device on another member streams through the connected node
+  @mc
+  Scenario: A device on another member streams through the connected MC
     Given a simulator running on the second member
     When a client connected to the first member watches it
     Then the first member relays the stream from the second
@@ -176,13 +176,13 @@ Feature: Clustering one person's machines
   @tui
   Scenario: A user invites a machine from the terminal
     When the user picks "Invite a machine to this cluster" in the command palette
-    Then the node is asked for a cluster invite
+    Then the MC is asked for a cluster invite
     And the invite link is copied
     And settings show the invite link
 
   @tui
   Scenario: An invite only this machine can open says so
-    Given the node listens only on loopback
+    Given the MC listens only on loopback
     When the user picks "Invite a machine to this cluster" in the command palette
     Then the user is warned that only this machine can open the invite
 
@@ -190,13 +190,13 @@ Feature: Clustering one person's machines
   Scenario: A user joins this machine to another's cluster with an invite
     When the user picks "Join another machine's cluster…" in the command palette
     And the user pastes the invite "http://studio:3773/pair#token=abc" and presses Enter
-    Then the node is asked to join with "http://studio:3773/pair#token=abc"
+    Then the MC is asked to join with "http://studio:3773/pair#token=abc"
     And the status line says "Joined the cluster."
     And settings list "studio" as connected
 
   @tui
-  Scenario: A join the node refuses says why
-    Given the node refuses joins saying "The pairing link cannot add machines to a cluster; make a cluster invite instead."
+  Scenario: A join the MC refuses says why
+    Given the MC refuses joins saying "The pairing link cannot add machines to a cluster; make a cluster invite instead."
     When the user picks "Join another machine's cluster…" in the command palette
     And the user pastes the invite "http://studio:3773/pair#token=abc" and presses Enter
     Then the status line says "Join failed: The pairing link cannot add machines to a cluster; make a cluster invite instead."
@@ -206,62 +206,62 @@ Feature: Clustering one person's machines
     When the user picks "Join another machine's cluster…" in the command palette
     And the user presses "Esc"
     Then the prompt has the keys again
-    And the node was not asked to join
+    And the MC was not asked to join
 
   @tui
   Scenario: A user removes a member from the terminal
     Given this machine is clustered with "laptop", which is connected
     When the user picks "Remove laptop from the cluster" in the command palette
-    Then the node is asked to remove "env-laptop"
+    Then the MC is asked to remove "env-laptop"
     And the status line says "Removed laptop from the cluster."
 
   @tui
   Scenario: A cluster read that lands after a removal does not bring the member back in the terminal
     Given this machine is clustered with "laptop", which is connected
     And the terminal has read the cluster
-    And the node is slow to read its cluster
+    And the MC is slow to read its cluster
     When the user picks "Remove laptop from the cluster" in the command palette
-    And the node answers
+    And the MC answers
     Then the terminal's cluster no longer lists "laptop"
 
   @desktop
   Scenario: The desktop's settings show this machine's cluster
     Given this machine is clustered with "studio", which is connected, and "laptop", which is offline
-    And the desktop shell is connected to its node
+    And the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
-    Then the node is asked for its cluster status
+    Then the MC is asked for its cluster status
     And the cluster page lists "studio" as connected and "laptop" as offline
 
   @desktop
   Scenario: A user invites a machine from the desktop
-    Given the desktop shell is connected to its node
+    Given the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
     And the user makes a cluster invite
-    Then the node is asked for a cluster invite
+    Then the MC is asked for a cluster invite
     And the invite link is copied
     And the cluster page shows the invite link
 
   @desktop
   Scenario: The desktop says when only this machine can open an invite
-    Given the node listens only on loopback
-    And the desktop shell is connected to its node
+    Given the MC listens only on loopback
+    And the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
     And the user makes a cluster invite
     Then the user is warned that only this machine can open the invite
 
   @desktop
   Scenario: A user joins the desktop's machine to another's cluster with an invite
-    Given the desktop shell is connected to its node
+    Given the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
     And the user joins with "http://studio:3773/pair#token=abc"
-    Then the node is asked to join with "http://studio:3773/pair#token=abc"
+    Then the MC is asked to join with "http://studio:3773/pair#token=abc"
     And the cluster page says "Joined the cluster."
     And the cluster page lists "studio" as connected
 
   @desktop
-  Scenario: A join the node refuses says why on the desktop
-    Given the node refuses joins saying "The pairing link cannot add machines to a cluster; make a cluster invite instead."
-    And the desktop shell is connected to its node
+  Scenario: A join the MC refuses says why on the desktop
+    Given the MC refuses joins saying "The pairing link cannot add machines to a cluster; make a cluster invite instead."
+    And the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
     And the user joins with "http://studio:3773/pair#token=abc"
     Then the cluster page says "Join failed: The pairing link cannot add machines to a cluster; make a cluster invite instead."
@@ -269,42 +269,42 @@ Feature: Clustering one person's machines
   @desktop
   Scenario: A user removes a member from the desktop
     Given this machine is clustered with "laptop", which is connected
-    And the desktop shell is connected to its node
+    And the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
     And the user removes "laptop" from the cluster
-    Then the node is asked to remove "env-laptop"
+    Then the MC is asked to remove "env-laptop"
     And the cluster page says "Removed laptop from the cluster."
 
   @desktop
   Scenario: A cluster read that lands after a removal does not bring the member back
     Given this machine is clustered with "laptop", which is connected
-    And the desktop shell is connected to its node
-    And the node is slow to read its cluster
+    And the desktop shell is connected to its MC
+    And the MC is slow to read its cluster
     When the user opens Cluster in the desktop's settings
     And the user removes "laptop" from the cluster
-    And the node answers
+    And the MC answers
     Then the cluster page does not list "laptop"
 
   @desktop
-  Scenario: A cluster the node can no longer read is not shown as it was
+  Scenario: A cluster the MC can no longer read is not shown as it was
     Given this machine is clustered with "laptop", which is connected
-    And the desktop shell is connected to its node
+    And the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
-    And the node can no longer read its cluster, saying "The node is shutting down."
+    And the MC can no longer read its cluster, saying "The MC is shutting down."
     And the user goes back from settings
     And the user opens Cluster in the desktop's settings
-    Then the cluster page shows the error "The node is shutting down." instead of the machines
+    Then the cluster page shows the error "The MC is shutting down." instead of the machines
 
   @desktop
   Scenario: Back leaves the desktop's cluster page
-    Given the desktop shell is connected to its node
+    Given the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
     And the user goes back from settings
     Then the cluster page closes
 
   @desktop
   Scenario: Another settings section takes the cluster page's place
-    Given the desktop shell is connected to its node
+    Given the desktop shell is connected to its MC
     When the user opens Cluster in the desktop's settings
     And the user picks the settings section "/settings/general"
     Then the cluster page closes
@@ -330,7 +330,7 @@ Feature: Clustering one person's machines
     Then the app asks the first for a pairing link that grants access and gives it to the second
     And the two machines join without the command line
 
-  @backlog @node
+  @backlog @mc
   Scenario: Members on one network find each other without being told where
     Given a cluster of two members on one LAN whose addresses changed
     When both are online

@@ -8,7 +8,7 @@ defmodule HalC2.Orchestration.LimitRecovery do
 
   The due work is derived from the threads' persisted failures and recovery choices,
   so a restart needs no timers restored: the sweep after it finds what became due
-  while the node was down. Archived, settled and waiting-on-you threads are left
+  while the MC was down. Archived, settled and waiting-on-you threads are left
   alone, and a newer run (the user sent a message) ends the opportunity.
   """
 
@@ -32,7 +32,7 @@ defmodule HalC2.Orchestration.LimitRecovery do
 
   @impl true
   def handle_info(:tick, interval) do
-    # A node too slow to answer (a machine deep in swap) skips a sweep; the next finds the same work.
+    # An MC too slow to answer (a machine deep in swap) skips a sweep; the next finds the same work.
     try do
       sweep()
     catch
@@ -45,7 +45,7 @@ defmodule HalC2.Orchestration.LimitRecovery do
   end
 
   @doc """
-  Arms and resumes every limited thread on this node as of `now_ms` (the clock by
+  Arms and resumes every limited thread on this MC as of `now_ms` (the clock by
   default); returns the commands dispatched.
   """
   def sweep(now_ms \\ System.system_time(:millisecond)) do
@@ -53,8 +53,8 @@ defmodule HalC2.Orchestration.LimitRecovery do
     auto_resume = settings["autoResumeLimitedThreads"] == true
     snooze = settings["snoozeLimitedThreads"] == true
 
-    for {{node, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
-        node == node(),
+    for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
+        mc == node(),
         row["lastErrorClass"] == "usage_limit" or row["limitRecovery"] != nil,
         # Rows trail their streams; decide on the thread as it is now.
         shell =

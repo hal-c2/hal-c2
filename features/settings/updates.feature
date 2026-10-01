@@ -3,7 +3,7 @@
 #   docs/internals/server-updates.md
 #   apps/server-ex/lib/hal_c2/upgrade.ex (server.updateServer, server.updateServerWithProgress)
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (server.updateProvider, version advisories)
-#   apps/server-ex/test/node_parity_test.exs (server.commitDesktopUpdate not applicable)
+#   apps/server-ex/test/mc_parity_test.exs (server.commitDesktopUpdate not applicable)
 #   packages/contracts/src/rpc.ts (server.updateServer, server.updateServerWithProgress, server.commitDesktopUpdate, server.updateProvider)
 #   apps/web/src/components/ServerUpdateAction.tsx
 #   apps/web/src/components/desktopUpdate.logic.ts
@@ -11,26 +11,26 @@
 #   apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts
 #   apps/web/src/components/ProviderUpdatePrimaryNotification.tsx (the launch offer)
 #   apps/desktop-qt/src/native/ProviderUpdateNotice.cpp (the desktop's launch offer)
-#   apps/desktop-qt/tests/native/features/ProviderSettingsSteps.cpp (runs the @desktop scenarios against a fake node)
+#   apps/desktop-qt/tests/native/features/ProviderSettingsSteps.cpp (runs the @desktop scenarios against a fake MC)
 #   apps/desktop/src/updates/DesktopUpdates.ts
 #   apps/desktop/src/updates/updateChannels.ts
 #   apps/desktop-qt/parity/features.backlog.test.ts (app-updates)
 #   apps/tui/src/features.backlog.test.ts (provider maintenance)
 
 Feature: Updating the server, the desktop app and providers
-  The app and the node can live on different machines and update separately.
+  The app and the MC can live on different machines and update separately.
   Updates are offered where the user already is, report progress, and say
   clearly whether they worked.
 
   Rule: Updating a server
 
-    @node
+    @mc
     Scenario: A server update reports its progress to the end
       When the user updates the server to "1.4.0" with progress
       Then the user sees it downloading, then installing
       And the update ends as complete
 
-    @node
+    @mc
     Scenario: Only one server update runs at a time
       Given a server update is in progress
       When the user starts another server update
@@ -101,19 +101,19 @@ Feature: Updating the server, the desktop app and providers
       When the user checks for updates
       Then the user is warned to install the Apple Silicon build
 
-    @dropped @node
-    Scenario: The node commits a desktop update after relaunch
+    @dropped @mc
+    Scenario: The MC commits a desktop update after relaunch
       Given the desktop app prepared an update and relaunched
-      When it commits the update with the node
-      Then the node confirms the update
-      # The node updates itself with a hot code upgrade instead; see hot-code-upgrade.feature.
+      When it commits the update with the MC
+      Then the MC confirms the update
+      # The MC updates itself with a hot code upgrade instead; see hot-code-upgrade.feature.
 
   Rule: Updating providers
 
-    @node
+    @mc
     Scenario Outline: A provider behind the latest release offers an update
       Given <provider> is installed with <installer> and a newer version is released
-      When the node checks provider versions
+      When the MC checks provider versions
       Then <provider> is reported behind the latest version with an update command
 
       Examples:
@@ -122,14 +122,14 @@ Feature: Updating the server, the desktop app and providers
         | Codex    | a global npm install |
         | Claude   | its own updater   |
 
-    @node
+    @mc
     Scenario: Updating a provider installs the latest release
       Given Codex is behind the latest version
       When the user updates Codex
-      Then the node runs Codex's update command
+      Then the MC runs Codex's update command
       And Codex is reported current
 
-    @node
+    @mc
     Scenario Outline: A provider update that cannot run
       Given Codex <state>
       When the user updates Codex
@@ -138,49 +138,49 @@ Feature: Updating the server, the desktop app and providers
       Examples:
         | state                                  | message                                         |
         | is not installed                       | Codex is not installed on this machine.         |
-        | was installed in a way the node cannot update | This installation cannot be updated from here. |
+        | was installed in a way the MC cannot update | This installation cannot be updated from here. |
 
-    @node
+    @mc
     Scenario: The user turns off provider update checks
       Given the user turned off provider update checks
-      When the node would check provider versions
+      When the MC would check provider versions
       Then no version check is made
 
     @desktop
     Scenario: At launch an outdated provider is offered its update
       Given "Codex" is behind its latest release
-      When the desktop shell is connected to its node
+      When the desktop shell is connected to its MC
       Then the user sees a "warning" toast "Update Available: Codex v0.51.0" saying "Install the update now or review provider settings."
       And the toast "Update Available: Codex v0.51.0" offers "Update" and "Settings"
 
     @desktop
     Scenario: At launch the offered update runs and reports it finished
       Given "Codex" is behind its latest release
-      And the desktop shell is connected to its node
+      And the desktop shell is connected to its MC
       When the user chooses "Update" on the toast "Update Available: Codex v0.51.0"
       And the update finishes
-      And the node reports "Codex" updated
+      And the MC reports "Codex" updated
       Then the user sees a "success" toast "Provider updated" saying "New sessions will use the updated provider."
 
     @desktop
     Scenario: At launch an offered update that is refused says why
       Given "Codex" is behind its latest release
       And updating "Codex" fails with "npm is not installed"
-      And the desktop shell is connected to its node
+      And the desktop shell is connected to its MC
       When the user chooses "Update" on the toast "Update Available: Codex v0.51.0"
       Then the user sees an "error" toast "Provider update failed" saying "npm is not installed"
 
     @desktop
     Scenario: At launch the update offer leads to the provider settings
       Given "Codex" is behind its latest release
-      And the desktop shell is connected to its node
+      And the desktop shell is connected to its MC
       When the user chooses "Settings" on the toast "Update Available: Codex v0.51.0"
       Then the Providers settings open
 
     @desktop
     Scenario: At launch a closed update offer stays closed for that version
       Given "Codex" is behind its latest release
-      And the desktop shell is connected to its node
+      And the desktop shell is connected to its MC
       When the user dismisses the toast "Update Available: Codex v0.51.0"
       And the user restarts the app
       Then the user sees no toast

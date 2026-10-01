@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// Settings → Storage, natively: the cleanup rules the node sweeps by, across
+// Settings → Storage, natively: the cleanup rules the MC sweeps by, across
 // the settings scope (StorageSettingsController's `storageSettings`). A rule
 // that differs between the selected environments shows as mixed until one
 // value is chosen for all of them.

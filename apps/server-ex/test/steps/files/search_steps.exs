@@ -7,8 +7,8 @@ defmodule HalC2.Steps.Files.Search do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   step "{string} holds {string}, {string}, {string} and {string}",
        %{args: [project, a, b, c, d]} = context do
@@ -180,7 +180,7 @@ defmodule HalC2.Steps.Files.Search do
   end
 
   defp search_entries(context, project, query, kind, limit) do
-    Node.ensure(HalC2.Workspace)
+    Mc.ensure(HalC2.Workspace)
 
     input =
       case kind do
@@ -210,7 +210,7 @@ defmodule HalC2.Steps.Files.Search do
   end
 
   defp search_contents(context, project, query, options) do
-    Node.ensure(HalC2.Workspace)
+    Mc.ensure(HalC2.Workspace)
 
     {reply, context} =
       World.call(

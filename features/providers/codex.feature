@@ -13,32 +13,32 @@
 #   apps/server/src/provider/Layers/codexUsageLimits.ts, apps/server/src/provider/Layers/codexResetCredit.ts
 #   packages/contracts/src/rpc.ts (provider.uploadFeedback, provider.consumeResetCredit)
 
-@plugin-codex @node
+@plugin-codex @mc
 Feature: Codex
   Codex runs as a bundled provider plugin through the codex app-server protocol. The
-  node reads Codex's own model list, maps HAL-C2's access modes to Codex's approval
+  MC reads Codex's own model list, maps HAL-C2's access modes to Codex's approval
   and sandbox policies, and keeps Codex's login where Codex keeps it.
 
   Background:
     Given a connected environment with the project "shop"
 
-  Scenario: Codex is offered when the codex command is on the node's path
-    Given the codex command is installed on the node
+  Scenario: Codex is offered when the codex command is on the MC's path
+    Given the codex command is installed on the MC
     When the user opens the provider list
     Then Codex is listed as ready with its installed version
 
   Scenario: Codex is not offered when the codex command is missing
-    Given the codex command is not installed on the node
+    Given the codex command is not installed on the MC
     When the user opens the provider list
     Then Codex is not offered as a provider
 
   Scenario: Codex models come from Codex itself
     Given Codex reports the models "GPT-6 Astra" and "GPT-6 Luna"
-    When the node has read the Codex model list
+    When the MC has read the Codex model list
     Then both models are offered in the model picker with Codex's default marked
 
   Scenario: A default model is offered until Codex's list has been read
-    Given the node has just started and has not read the Codex model list yet
+    Given the MC has just started and has not read the Codex model list yet
     When the user opens the model picker for Codex
     Then a single default Codex model is offered
 
@@ -128,9 +128,9 @@ Feature: Codex
     Then Codex is started with those arguments
 
     Examples:
-      | occasion                                  |
-      | the node checks Codex's version           |
-      | Codex writes a title for a new thread     |
+      | occasion                              |
+      | the MC checks Codex's version         |
+      | Codex writes a title for a new thread |
 
   Scenario: Reverting a Codex turn rolls Codex back too
     Given a Codex thread with three turns
@@ -151,7 +151,7 @@ Feature: Codex
     Then a new thread continues from a fork of Codex's thread at the second turn
 
   Scenario: Feedback about a Codex thread is sent to OpenAI
-    Given a Codex thread has run at least one turn on this node
+    Given a Codex thread has run at least one turn on this MC
     When the user sends feedback "The agent stopped early"
     Then the conversation and Codex logs are uploaded to OpenAI
     And the user is given the feedback thread id
@@ -202,7 +202,7 @@ Feature: Codex
   @backlog
   Scenario: Unanswered Codex questions survive a reconnect
     Given Codex asked a question that is not answered yet
-    When the client reconnects to the node
+    When the client reconnects to the MC
     Then the question is still waiting for an answer
 
   @backlog
@@ -259,7 +259,7 @@ Feature: Codex
     Then Codex's automatic reviewer decides instead of asking the user
 
   Scenario: A signed-out Codex explains how to sign in
-    Given the Codex CLI on the node is not signed in
+    Given the Codex CLI on the MC is not signed in
     When the user opens the provider list
     Then Codex is shown as not signed in with a hint to run the Codex login command
 

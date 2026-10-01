@@ -5,47 +5,47 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   alias HalC2.Connect.Secrets
   alias HalC2.Test.FakeRelay
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @fake_cloudflared Path.expand("../../support/fake_cloudflared.sh", __DIR__)
   @target {"linux", "x64"}
 
   # The account's relay, a relay client for linking to put on the PATH, and HAL-C2
-  # Connect running on the node.
+  # Connect running on the MC.
   step "a user signed in to HAL-C2 Connect", context do
     relay = FakeRelay.start()
-    bin = Node.tmp_dir(context.node, "bin")
+    bin = Mc.tmp_dir(context.mc, "bin")
     install_fake(Path.join(bin, "cloudflared"))
     Application.put_env(:hal_c2, :connect_relay_url, relay.url)
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :connect_relay_url) end)
-    Node.ensure(HalC2.Connect.Supervisor)
+    Mc.ensure(HalC2.Connect.Supervisor)
 
     context
     |> Map.put(:relay, relay)
     |> Map.put(:relay_bin, bin)
-    |> Map.put(:admin, Node.pair(Node.admin_scopes(), "Web"))
+    |> Map.put(:admin, Mc.pair(Mc.admin_scopes(), "Web"))
   end
 
   # --- relay client ------------------------------------------------------------------
 
-  step ~r/^the relay client is (?<state>installed by the node|found on the PATH|given by an override path|not installed|not built for this platform|missing)$/,
+  step ~r/^the relay client is (?<state>installed by the MC|found on the PATH|given by an override path|not installed|not built for this platform|missing)$/,
        %{args: [state]} = context do
     relay_host(context, %{"PATH" => ""})
 
     case state do
-      "installed by the node" ->
+      "installed by the MC" ->
         install_fake(managed_path(context))
         Map.put(context, :relay_source, "managed")
 
       "found on the PATH" ->
-        dir = Node.tmp_dir(context.node, "bin")
+        dir = Mc.tmp_dir(context.mc, "bin")
         install_fake(Path.join(dir, "cloudflared"))
         relay_host(context, %{"PATH" => dir})
         Map.put(context, :relay_source, "path")
 
       "given by an override path" ->
-        path = Path.join(Node.tmp_dir(context.node, "override"), "my-cloudflared")
+        path = Path.join(Mc.tmp_dir(context.mc, "override"), "my-cloudflared")
         install_fake(path)
         relay_host(context, %{"PATH" => "", "HAL_C2_CLOUDFLARED_PATH" => path})
         Map.put(context, :relay_source, "override")
@@ -82,7 +82,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   step("a client installs it", context, do: install(context, "default"))
   step("a client installs the relay client", context, do: install(context, "default"))
 
-  step "the node reports checking, downloading, verifying, installing, validating and activating",
+  step "the MC reports checking, downloading, verifying, installing, validating and activating",
        context do
     stages = for %{"type" => "progress", "stage" => stage} <- context.install_events, do: stage
 
@@ -106,14 +106,14 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     context = serve_download(context, File.read!(@fake_cloudflared))
     FakeRelay.set(context.relay, block: true)
     client = World.client(context, "first")
-    client = Node.sub(client, 71, install_shape())
+    client = Mc.sub(client, 71, install_shape())
     assert_receive {:fake_relay, :download_held, _}, 5_000
     World.put_client(context, "first", client)
   end
 
   step "another client installs it", context do
-    client = Node.sub(World.client(context, "second"), 72, install_shape())
-    {_, client} = Node.await(client, &(&1["event"]["stage"] == "waiting_for_lock"))
+    client = Mc.sub(World.client(context, "second"), 72, install_shape())
+    {_, client} = Mc.await(client, &(&1["event"]["stage"] == "waiting_for_lock"))
     World.put_client(context, "second", client)
   end
 
@@ -166,7 +166,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   step "the install folder cannot be written", context do
     context = serve_download(context, File.read!(@fake_cloudflared))
     # A file where the tools folder should be.
-    File.write!(Path.join(context.node.home, "tools"), "")
+    File.write!(Path.join(context.mc.home, "tools"), "")
     context
   end
 
@@ -182,7 +182,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   defp install(context, name) do
     context = if context[:relay_download], do: context, else: default_download(context)
-    client = Node.sub(World.client(context, name), 70, install_shape())
+    client = Mc.sub(World.client(context, name), 70, install_shape())
     {events, client} = collect(client, 70)
     context = World.put_client(context, name, client)
 
@@ -197,7 +197,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   # The events of an install subscription up to its end or error frame.
   defp collect(client, id, acc \\ []) do
-    {frame, client} = Node.await(client, &(&1["id"] == id), 10_000)
+    {frame, client} = Mc.await(client, &(&1["id"] == id), 10_000)
 
     case frame do
       %{"t" => "end"} -> {Enum.reverse(acc), client}
@@ -208,7 +208,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   defp default_download(context), do: serve_download(context, File.read!(@fake_cloudflared))
 
-  defp install_shape, do: %{"type" => "relayClientInstall", "node" => Atom.to_string(node())}
+  defp install_shape, do: %{"type" => "relayClientInstall", "mc" => Atom.to_string(node())}
 
   # The relay serves `bytes` as the release for this host, which has no relay client yet.
   defp serve_download(context, bytes) do
@@ -245,7 +245,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     {platform, arch} = @target
 
     Path.join([
-      context.node.home,
+      context.mc.home,
       "tools",
       "cloudflared",
       "2026.5.2",
@@ -264,16 +264,16 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   # --- linking -----------------------------------------------------------------------
 
-  step "the user links the node to their account", context do
+  step "the user links the MC to their account", context do
     link(context)
   end
 
-  step "a linked node", context do
+  step "a linked MC", context do
     link(context)
   end
 
-  step "the node proves its identity to the relay", context do
-    env = context.node.environment
+  step "the MC proves its identity to the relay", context do
+    env = context.mc.environment
     {public, _} = HalC2.Connect.Jwt.key_pair()
     %{"claims" => claims} = FakeRelay.get(context.relay, :links)[env]
 
@@ -289,8 +289,8 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     context
   end
 
-  step "the node joins the account's environment list", context do
-    assert %{"user" => "user-1"} = FakeRelay.get(context.relay, :links)[context.node.environment]
+  step "the MC joins the account's environment list", context do
+    assert %{"user" => "user-1"} = FakeRelay.get(context.relay, :links)[context.mc.environment]
 
     assert %{"linked" => true, "cloudUserId" => "user-1", "managedTunnelActive" => true} =
              link_state(context)
@@ -304,15 +304,15 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     device = device_key()
 
     {status, body, claims} =
-      FakeRelay.ask(context.relay, base(context), {:mint, device.jkt}, context.node.environment)
+      FakeRelay.ask(context.relay, base(context), {:mint, device.jkt}, context.mc.environment)
 
     Map.merge(context, %{device: device, minted: {status, body, claims}})
   end
 
-  step "the node mints a one-time credential bound to that device's key", context do
+  step "the MC mints a one-time credential bound to that device's key", context do
     {200, %{"credential" => credential, "proof" => proof}, claims} = context.minted
     {public, _} = HalC2.Connect.Jwt.key_pair()
-    env = context.node.environment
+    env = context.mc.environment
 
     assert {:ok, signed} =
              HalC2.Connect.Jwt.verify(
@@ -331,7 +331,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     context
   end
 
-  step "the device exchanges it with the node for a session", context do
+  step "the device exchanges it with the MC for a session", context do
     {200, %{"credential" => credential}, _} = context.minted
     assert {200, %{"access_token" => access}} = exchange(context, credential, context.device)
 
@@ -340,7 +340,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
              dpop_request(base(context), :get, "/api/auth/session", access, context.device)
 
     assert {200, %{"authenticated" => false}} =
-             Node.http(context.node, :get, "/api/auth/session", bearer: access)
+             Mc.http(context.mc, :get, "/api/auth/session", bearer: access)
 
     # One use only.
     assert {400, _} = exchange(context, credential, context.device)
@@ -359,7 +359,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     device = device_key()
 
     {200, %{"credential" => credential}, _} =
-      FakeRelay.ask(context.relay, base(context), {:mint, device.jkt}, context.node.environment)
+      FakeRelay.ask(context.relay, base(context), {:mint, device.jkt}, context.mc.environment)
 
     Map.merge(context, %{device: device, credential: credential})
   end
@@ -373,7 +373,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     Map.put(context, :refusals, attempts)
   end
 
-  step "the node refuses it", context do
+  step "the MC refuses it", context do
     for {status, _body} <- context.refusals, do: assert(status in 400..499)
 
     # Refusing a stranger leaves the credential to the device it was minted for.
@@ -392,14 +392,14 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     Map.put(
       context,
       :health,
-      FakeRelay.ask(context.relay, base(context), :health, context.node.environment)
+      FakeRelay.ask(context.relay, base(context), :health, context.mc.environment)
     )
   end
 
-  step "the node answers with a response bound to that nonce", context do
+  step "the MC answers with a response bound to that nonce", context do
     {200, %{"status" => "online", "proof" => proof} = body, claims} = context.health
     {public, _} = HalC2.Connect.Jwt.key_pair()
-    env = context.node.environment
+    env = context.mc.environment
     assert body["environmentId"] == env
 
     assert {:ok, signed} =
@@ -424,7 +424,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   end
 
   step "a relay request arrives for another environment or another account", context do
-    env = context.node.environment
+    env = context.mc.environment
     other = "env-other"
     jkt = device_key().jkt
 
@@ -460,7 +460,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     Map.put(context, :forwarded, reply)
   end
 
-  step "the node's link proof rejects it", context do
+  step "the MC's link proof rejects it", context do
     assert {400, %{"message" => "Invalid managed endpoint origin."}} = context.forwarded
     context
   end
@@ -477,7 +477,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   end
 
   step "the relay no longer reaches it", context do
-    env = context.node.environment
+    env = context.mc.environment
     assert {401, _, _} = FakeRelay.ask(context.relay, base(context), :health, env)
 
     assert {401, _, _} =
@@ -496,36 +496,36 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   # --- links made from the command line ----------------------------------------------------
 
-  step "the user linked the node while it was stopped", context do
+  step "the user linked the MC while it was stopped", context do
     cli_link(context)
   end
 
   step "it brings up its tunnel", context do
     assert %{"state" => "linked"} = HalC2.Connect.Link.status()
-    env = context.node.environment
+    env = context.mc.environment
 
     assert %{"status" => "running", "tunnelId" => tunnel, "pid" => pid} =
              HalC2.Connect.Tunnel.status()
 
     assert tunnel == FakeRelay.get(context.relay, :links)[env]["tunnelId"]
     assert os_alive?(pid)
-    # The connector runs with the token the relay issued for this node.
+    # The connector runs with the token the relay issued for this MC.
     assert File.read!("/proc/#{pid}/environ") =~ "TUNNEL_TOKEN=connector-" <> env
     context
   end
 
-  step "a node linked from the command line", context do
+  step "an MC linked from the command line", context do
     linked_from_command_line(context)
   end
 
-  step "the node shuts down", context do
+  step "the MC shuts down", context do
     %{"pid" => pid, "tunnelId" => tunnel} = HalC2.Connect.Tunnel.status()
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.Connect.Supervisor)
     Map.merge(context, %{tunnel_pid: pid, tunnel_id: tunnel})
   end
 
   step "its tunnel is released", context do
-    env = context.node.environment
+    env = context.mc.environment
     path = "/v1/client/environment-links/#{env}/tunnel"
     assert_receive {:fake_relay, "DELETE", ^path, _}, 1_000
     refute os_alive?(context.tunnel_pid)
@@ -535,29 +535,29 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   step "the account shows it offline rather than unauthorized", context do
     assert %{"online" => false, "user" => "user-1"} =
-             FakeRelay.get(context.relay, :links)[context.node.environment]
+             FakeRelay.get(context.relay, :links)[context.mc.environment]
 
-    # The node keeps its link, so the relay can still vouch for it.
+    # The MC keeps its link, so the relay can still vouch for it.
     assert HalC2.Connect.Secrets.get("cloud-linked-user-id") == "user-1"
     context
   end
 
   step "the next start reuses its address", context do
-    Node.ensure(HalC2.Connect.Supervisor)
+    Mc.ensure(HalC2.Connect.Supervisor)
     assert %{"state" => "linked"} = HalC2.Connect.Link.status()
     assert %{"status" => "running", "tunnelId" => tunnel} = HalC2.Connect.Tunnel.status()
     assert tunnel == context.tunnel_id
 
     assert %{"online" => true, "tunnelId" => ^tunnel} =
-             FakeRelay.get(context.relay, :links)[context.node.environment]
+             FakeRelay.get(context.relay, :links)[context.mc.environment]
 
     context
   end
 
-  step "the node upgrades itself", context do
+  step "the MC upgrades itself", context do
     context = if context[:relay_config], do: context, else: link(context)
     %{"pid" => pid} = HalC2.Connect.Tunnel.status()
-    dir = Node.tmp_dir(context.node, "upgrade")
+    dir = Mc.tmp_dir(context.mc, "upgrade")
     src = Path.join(dir, "tunnel.ex")
     source = File.read!(Path.expand("../../../lib/hal_c2/connect/tunnel.ex", __DIR__))
     File.write!(src, String.replace(source, "@state_version 1", "@state_version 2"))
@@ -584,21 +584,21 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     context
   end
 
-  step "an operator signed in without starting the node", context do
+  step "an operator signed in without starting the MC", context do
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.Connect.Supervisor)
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.RuntimeRecord)
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.Web)
     cli_link(context)
   end
 
-  step "no device can reach the node until it runs", context do
-    env = context.node.environment
+  step "no device can reach the MC until it runs", context do
+    env = context.mc.environment
     assert {:error, _} = :httpc.request(~c"#{base(context)}/.well-known/hal-c2/environment")
     assert FakeRelay.get(context.relay, :links)[env] == nil
     refute File.exists?(runs_log(context))
 
-    context = %{context | node: Node.restart(context.node), clients: %{}}
-    Node.ensure(HalC2.Connect.Supervisor)
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    Mc.ensure(HalC2.Connect.Supervisor)
     assert %{"state" => "linked"} = HalC2.Connect.Link.status()
     assert %{"user" => "user-1"} = FakeRelay.get(context.relay, :links)[env]
     assert {200, _, _} = FakeRelay.ask(context.relay, base(context), :health, env)
@@ -607,7 +607,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   step "the operator asks for the connect status", context do
     context = cli_link(context)
-    Map.put(context, :printed, Node.run_task(Mix.Tasks.HalC2.Connect, ["status"]))
+    Map.put(context, :printed, Mc.run_task(Mix.Tasks.HalC2.Connect, ["status"]))
   end
 
   step "it prints the saved authorization and link settings", context do
@@ -638,12 +638,12 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     )
 
     pid = tunnel_pid()
-    printed = Node.run_task(Mix.Tasks.HalC2.Connect, ["unlink"])
+    printed = Mc.run_task(Mix.Tasks.HalC2.Connect, ["unlink"])
     Map.merge(context, %{printed: printed, tunnel_pid: pid})
   end
 
-  step "the node stops being exposed", context do
-    env = context.node.environment
+  step "the MC stops being exposed", context do
+    env = context.mc.environment
     assert "HAL-C2 Connect is disabled locally." in context.printed
     assert "Revoked the relay-side environment record." in context.printed
     refute os_alive?(context.tunnel_pid)
@@ -660,7 +660,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   # --- startup failures --------------------------------------------------------------------
 
-  step ~r/^the relay answers the node with (?<failure>.+)$/, %{args: [failure]} = context do
+  step ~r/^the relay answers the MC with (?<failure>.+)$/, %{args: [failure]} = context do
     {suffix, status, body} =
       case failure do
         "the environment link limit" ->
@@ -740,18 +740,18 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     context
   end
 
-  # --- reaching a node through its tunnel ------------------------------------------------
+  # --- reaching an MC through its tunnel ------------------------------------------------
 
   step "a device signed in to the same account chooses it", context do
     choose(context)
   end
 
-  step "the device connects through the node's tunnel address", context do
-    env = context.node.environment
+  step "the device connects through the MC's tunnel address", context do
+    env = context.mc.environment
     %{"endpoint" => endpoint} = context.chosen
     edge = context.relay.edge
 
-    # The account lists the node at its tunnel address, not the host's own origin.
+    # The account lists the MC at its tunnel address, not the host's own origin.
     assert endpoint["httpBaseUrl"] == edge
     assert endpoint["wsBaseUrl"] == String.replace_prefix(edge, "http", "ws")
     refute edge == base(context)
@@ -766,7 +766,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
     context = tunnel_session(context)
     assert_receive {:fake_relay_edge, ^env}, 1_000
-    {settings, client} = Node.call!(context.tunnel_client, env, "server.getSettings")
+    {settings, client} = Mc.call!(context.tunnel_client, env, "server.getSettings")
     assert is_map(settings)
     Map.put(context, :tunnel_client, client)
   end
@@ -792,7 +792,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   end
 
   step "it is renewed without closing the connection", context do
-    env = context.node.environment
+    env = context.mc.environment
     old = context.tunnel_access
 
     # The client asks the relay for a fresh credential for its key and retries once.
@@ -806,12 +806,12 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
              dpop_request(context.relay.edge, :get, "/api/auth/session", access, context.device)
 
     # The socket opened with the first session still answers on the same connection.
-    {_, client} = Node.call!(context.tunnel_client, env, "server.getSettings")
+    {_, client} = Mc.call!(context.tunnel_client, env, "server.getSettings")
     %{context | tunnel_client: client} |> Map.put(:tunnel_access, access)
   end
 
   step "a renewal that fails affects only that request", context do
-    env = context.node.environment
+    env = context.mc.environment
     expire(context.tunnel_access)
 
     FakeRelay.set(context.relay,
@@ -824,13 +824,13 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     assert {:error, 503} = renew(context)
 
     # The connection stays open and working, and the next request renews.
-    {_, client} = Node.call!(context.tunnel_client, env, "server.getSettings")
+    {_, client} = Mc.call!(context.tunnel_client, env, "server.getSettings")
     assert {:ok, access} = renew(context)
 
     assert {200, %{"authenticated" => true}} =
              dpop_request(context.relay.edge, :get, "/api/auth/session", access, context.device)
 
-    {_, client} = Node.call!(client, env, "server.getSettings")
+    {_, client} = Mc.call!(client, env, "server.getSettings")
     %{context | tunnel_client: client} |> Map.put(:tunnel_access, access)
   end
 
@@ -841,7 +841,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   step "the relay's database refuses the change", context do
     FakeRelay.set(context.relay,
       fail_once: [
-        {"/environment-links/#{context.node.environment}", 500,
+        {"/environment-links/#{context.mc.environment}", 500,
          relay_error("RelayInternalError", "Could not update the environment link")}
       ]
     )
@@ -850,14 +850,14 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   end
 
   step "the user deregisters it from their account", context do
-    env = context.node.environment
+    env = context.mc.environment
     credential = FakeRelay.get(context.relay, :links)[env]["credential"]
     reply = HalC2.Connect.relay(:delete, relay_link_url(context), "clerk-token", nil)
     Map.merge(context, %{deregistered: reply, env_credential: credential})
   end
 
   step "the link stays usable", context do
-    env = context.node.environment
+    env = context.mc.environment
     assert {:error, 500, _} = context.deregistered
     assert %{"user" => "user-1", "online" => true} = FakeRelay.get(context.relay, :links)[env]
     assert {200, _, _} = FakeRelay.ask(context.relay, base(context), :health, env)
@@ -871,17 +871,17 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     assert {:ok, %{"ok" => true}} =
              HalC2.Connect.relay(:delete, relay_link_url(context), "clerk-token", nil)
 
-    assert FakeRelay.get(context.relay, :links)[context.node.environment] == nil
+    assert FakeRelay.get(context.relay, :links)[context.mc.environment] == nil
     assert {401, _} = publish_activity(context, context.env_credential)
     context
   end
 
   # Offline as after a normal shutdown: the relay keeps the link, without a tunnel.
-  step "a linked node that is offline", context do
+  step "a linked MC that is offline", context do
     context = linked_from_command_line(context)
     FakeRelay.set(context.relay, limit: 1)
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.Connect.Supervisor)
-    env = context.node.environment
+    env = context.mc.environment
     path = "/v1/client/environment-links/#{env}/tunnel"
     assert_receive {:fake_relay, "DELETE", ^path, _}, 1_000
     assert %{"online" => false} = FakeRelay.get(context.relay, :links)[env]
@@ -895,7 +895,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   end
 
   step "its cloud access is revoked", context do
-    env = context.node.environment
+    env = context.mc.environment
     assert {:ok, %{"ok" => true}} = context.deregistered
     assert {401, _} = publish_activity(context, context.env_credential)
 
@@ -1032,7 +1032,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     )
 
     pid = tunnel_pid()
-    printed = Node.run_task(Mix.Tasks.HalC2.Connect, ["logout"])
+    printed = Mc.run_task(Mix.Tasks.HalC2.Connect, ["logout"])
     Map.merge(context, %{printed: printed, tunnel_pid: pid})
   end
 
@@ -1049,7 +1049,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     assert "HAL-C2 Connect is disabled locally." in context.printed
     assert HalC2.Connect.desired_link() == nil
     refute os_alive?(context.tunnel_pid)
-    assert FakeRelay.get(context.relay, :links)[context.node.environment] == nil
+    assert FakeRelay.get(context.relay, :links)[context.mc.environment] == nil
     assert %{"linked" => false, "managedTunnelActive" => false} = link_state(context)
     context
   end
@@ -1063,9 +1063,9 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   # --- tunnel and relay helpers -------------------------------------------------------------
 
-  # A device on the account picks the node from the relay's list and asks for access.
+  # A device on the account picks the MC from the relay's list and asks for access.
   defp choose(context) do
-    env = context.node.environment
+    env = context.mc.environment
     relay = context.relay
 
     {:ok, %{"environments" => environments}} =
@@ -1097,14 +1097,14 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     assert {200, %{"ticket" => ticket}} =
              dpop_request(edge, :post, "/api/auth/websocket-ticket", access, device)
 
-    client = Node.connect(%{port: URI.parse(edge).port}, "wsTicket=" <> ticket)
+    client = Mc.connect(%{port: URI.parse(edge).port}, "wsTicket=" <> ticket)
     Map.merge(context, %{tunnel_access: access, tunnel_client: client})
   end
 
-  # What the client does when the node rejects its token: a fresh credential from
+  # What the client does when the MC rejects its token: a fresh credential from
   # the relay, redeemed through the tunnel.
   defp renew(context) do
-    env = context.node.environment
+    env = context.mc.environment
 
     case HalC2.Connect.relay(
            :post,
@@ -1160,7 +1160,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   end
 
   defp relay_link_url(context),
-    do: "#{context.relay.url}/v1/client/environment-links/#{context.node.environment}"
+    do: "#{context.relay.url}/v1/client/environment-links/#{context.mc.environment}"
 
   # A raw relay request, keeping the status and the error body.
   defp relay_raw(url, bearer, body) do
@@ -1177,10 +1177,10 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     {status, JSON.decode!(reply)}
   end
 
-  # Agent activity sent with an environment credential, as a linked node publishes it.
+  # Agent activity sent with an environment credential, as a linked MC publishes it.
   defp publish_activity(context, credential) do
     relay_raw(
-      "#{context.relay.url}/v1/environments/#{context.node.environment}/threads/thread-1/agent-activity",
+      "#{context.relay.url}/v1/environments/#{context.mc.environment}/threads/thread-1/agent-activity",
       credential,
       %{"proof" => "activity-#{System.unique_integer([:positive])}"}
     )
@@ -1222,8 +1222,8 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   defp operator_host(context) do
     relay = context.relay
     relay_host(context, %{"PATH" => context.relay_bin})
-    home = Node.tmp_dir(context.node, "service-home")
-    bin = Node.tmp_dir(context.node, "service-bin")
+    home = Mc.tmp_dir(context.mc, "service-home")
+    bin = Mc.tmp_dir(context.mc, "service-bin")
 
     HalC2.Test.Storage.fake_service_manager(bin)
 
@@ -1264,7 +1264,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     end)
   end
 
-  # The command finished signed in with `grant` and set the node to link.
+  # The command finished signed in with `grant` and set the MC to link.
   defp signed_in(context, grant) do
     {printed, asked} = shell_output([], [])
 
@@ -1299,8 +1299,8 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   # --- link helpers ------------------------------------------------------------------------
 
-  # Links the node as the web client does (`linkEnvironment.ts`): a relay challenge,
-  # the node's proof for it, the relay's link, and the relay's answer back to the node.
+  # Links the MC as the web client does (`linkEnvironment.ts`): a relay challenge,
+  # the MC's proof for it, the relay's link, and the relay's answer back to the MC.
   defp link(context) do
     relay_host(context, %{"PATH" => context.relay_bin})
 
@@ -1350,12 +1350,12 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
         "wsBaseUrl" => String.replace_prefix(origin, "http", "ws"),
         "providerKind" => "cloudflare_tunnel"
       },
-      "origin" => %{"localHttpHost" => "127.0.0.1", "localHttpPort" => context.node.port}
+      "origin" => %{"localHttpHost" => "127.0.0.1", "localHttpPort" => context.mc.port}
     }
   end
 
   # What `hal-c2 connect link` saves on the host: the wish for a managed link and the
-  # operator's sign-in. The node acts on it when it starts.
+  # operator's sign-in. The MC acts on it when it starts.
   defp cli_link(context) do
     relay_host(context, %{"PATH" => context.relay_bin})
     Secrets.put("cloud-cli-desired-link", "managed")
@@ -1374,7 +1374,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   defp linked_from_command_line(context) do
     context = cli_link(context)
-    context = %{context | node: Node.restart(context.node), clients: %{}}
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
     assert %{"state" => "linked"} = HalC2.Connect.Link.status()
     context
   end
@@ -1384,9 +1384,9 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     state
   end
 
-  defp admin(context), do: context[:admin] || Node.pair(Node.admin_scopes(), "Web")
+  defp admin(context), do: context[:admin] || Mc.pair(Mc.admin_scopes(), "Web")
 
-  defp base(context), do: "http://127.0.0.1:#{context.node.port}"
+  defp base(context), do: "http://127.0.0.1:#{context.mc.port}"
 
   defp relay_post(context, path, body) do
     {:ok, reply} = HalC2.Connect.relay(:post, context.relay.url <> path, "clerk-token", body)

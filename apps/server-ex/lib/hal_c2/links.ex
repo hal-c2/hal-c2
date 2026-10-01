@@ -1,22 +1,22 @@
 defmodule HalC2.Links do
   @moduledoc """
-  Environments this node reaches without clustering with them: other nodes the user
+  Environments this MC reaches without clustering with them: other MCs the user
   paired this one with. A link keeps the access token its pairing gave and one
   websocket (`HalC2.Links.Connection`) that forwards client RPCs and subscriptions,
-  so a client that only talks to this node reaches the linked environment and the
+  so a client that only talks to this MC reaches the linked environment and the
   other members of its cluster too (`HalC2.Web.Socket`). `route/1` says where an
-  environment id is served: this node, a cluster member, or a link. The other side
-  checks the link token's scopes; this node widens nothing.
+  environment id is served: this MC, a cluster member, or a link. The other side
+  checks the link token's scopes; this MC widens nothing.
 
   Links persist in the `environment-links` secret. Subscribers get
   `{:hal_c2_links, links}` with the whole list (`list/0`) whenever a link is added,
   removed, goes on- or offline, or fails in a new way.
 
   A subscriber can also ask for the linked environments' sidebars (`subscribe_rows/1`).
-  While one does, each link follows its environment's `shell` and keeps its nodes and
+  While one does, each link follows its environment's `shell` and keeps its MCs and
   rows (`HalC2.Links.Rows`); such subscribers also get `{:hal_c2_link_rows, id, change}`
   for each change, with `change` as `HalC2.Shell` notifies its own. When a link drops,
-  its rows stay and its nodes go offline; when the last such subscriber leaves, the
+  its rows stay and its MCs go offline; when the last such subscriber leaves, the
   links stop following and forget the rows.
   """
 
@@ -47,7 +47,7 @@ defmodule HalC2.Links do
 
   @doc """
   Subscribes `pid` as `subscribe/1` does, and to the linked environments' rows too.
-  Returns `list/0` with each link's `"nodes"` and `"rows"` as far as they are known.
+  Returns `list/0` with each link's `"mcs"` and `"rows"` as far as they are known.
   """
   @spec subscribe_rows(pid) :: [map]
   def subscribe_rows(pid) do
@@ -65,7 +65,7 @@ defmodule HalC2.Links do
   end
 
   @doc """
-  Pairs this node with the environment behind `pairing_url`, a one-time pairing link
+  Pairs this MC with the environment behind `pairing_url`, a one-time pairing link
   with its token in the query or the fragment, and keeps the link. Pairing an
   environment again replaces its link. Returns the environment's descriptor.
   """
@@ -92,27 +92,27 @@ defmodule HalC2.Links do
   def remove(environment_id), do: GenServer.call(__MODULE__, {:remove, environment_id})
 
   @doc """
-  Where a client's shape or RPC for `environment_id` is served: `{:node, node}` on this
-  node or the cluster member serving it, `:link` through the link to it or to a cluster
+  Where a client's shape or RPC for `environment_id` is served: `{:mc, mc}` on this
+  MC or the cluster member serving it, `:link` through the link to it or to a cluster
   it is a member of (`rpc/4`, `watch/4`), else `:unknown`. A linked cluster's members
   are known from its descriptor when the link connects and from any of its shells the
-  link passes on; the linked node routes to them itself.
+  link passes on; the linked MC routes to them itself.
   """
-  @spec route(String.t()) :: {:node, node} | :link | :unknown
+  @spec route(String.t()) :: {:mc, node} | :link | :unknown
   def route(environment_id) do
     cond do
-      # Even if the node became distributed (and changed its name) after the shell
+      # Even if the MC became distributed (and changed its name) after the shell
       # recorded it.
-      environment_id == HalC2.Environment.id() -> {:node, node()}
-      node = cluster_node(environment_id) -> {:node, node}
+      environment_id == HalC2.Environment.id() -> {:mc, node()}
+      mc = cluster_mc(environment_id) -> {:mc, mc}
       connection(environment_id) -> :link
       true -> :unknown
     end
   end
 
-  defp cluster_node(environment_id) do
-    Enum.find_value(HalC2.Shell.environments(), fn {node, descriptor} ->
-      if descriptor["environmentId"] == environment_id, do: node
+  defp cluster_mc(environment_id) do
+    Enum.find_value(HalC2.Shell.environments(), fn {mc, descriptor} ->
+      if descriptor["environmentId"] == environment_id, do: mc
     end)
   end
 
@@ -172,7 +172,7 @@ defmodule HalC2.Links do
       [] -> nil
     end
   rescue
-    # No links on this node (tools, tests without them).
+    # No links on this MC (tools, tests without them).
     ArgumentError -> nil
   end
 
@@ -204,20 +204,20 @@ defmodule HalC2.Links do
     case http(:get, origin <> "/.well-known/hal-c2/environment", [], nil) do
       {:ok, 200, %{"environmentId" => id, "orchestrationProtocolVersion" => v} = descriptor}
       when is_binary(id) and is_integer(v) and v >= 3 ->
-        {:ok, Map.drop(descriptor, ["node", "cluster"])}
+        {:ok, Map.drop(descriptor, ["mc", "cluster"])}
 
       {:ok, _, _} ->
-        {:error, "#{origin} is not a HAL-C2 node"}
+        {:error, "#{origin} is not a HAL-C2 MC"}
 
       {:error, reason} ->
         {:error, "cannot reach #{origin}: #{inspect(reason)}"}
     end
   end
 
-  # This node and its cluster are reached without a link.
+  # This MC and its cluster are reached without a link.
   defp not_reachable(%{"environmentId" => id}) do
-    if match?({:node, _}, route(id)),
-      do: {:error, "this node already reaches that environment"},
+    if match?({:mc, _}, route(id)),
+      do: {:error, "this MC already reaches that environment"},
       else: :ok
   end
 
@@ -388,7 +388,7 @@ defmodule HalC2.Links do
 
     persist(state)
     start_connection(link)
-    # A link paired again follows its environment afresh; until then its nodes are offline.
+    # A link paired again follows its environment afresh; until then its MCs are offline.
     state = %{state | following: Map.reject(state.following, &(elem(&1, 1) == id))}
     state = rows_changed(state, id, &Rows.offline/1)
     state = if rows_wanted?(state), do: follow_link(state, id), else: state

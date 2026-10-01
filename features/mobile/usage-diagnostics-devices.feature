@@ -9,7 +9,7 @@
 #   apps/mobile/src/features/devices/ (device viewer, stream fallbacks, device options)
 #   apps/mobile/src/features/showcase/ (screenshot capture scenes, sample environments)
 #   docs/user/devices.md (mobile device viewer)
-# Usage accounting and devices are specified in features/providers/ and the node domains.
+# Usage accounting and devices are specified in features/providers/ and the MC domains.
 # This file covers the phone screens that show them.
 
 Feature: Usage, diagnostics and devices on a phone

@@ -139,7 +139,7 @@ function historyToPage(history: ThreadHistoryMeta): TuiThreadPage {
 
 /**
  * Connection inputs the entry provides: from the `hal-c2 tui` launcher (a bearer
- * session and socket URLs over IPC) or from `nodeDiscovery.ts` (the node's access
+ * session and socket URLs over IPC) or from `mcDiscovery.ts` (the MC's access
  * token or a paired session, with socket tickets bought over HTTP). Either way
  * `mintSocketUrl` returns a freshly-ticketed `ws(s)://…/ws?wsTicket=…` URL on
  * every (re)connect.
@@ -155,13 +155,13 @@ export interface TuiOptions {
   readonly logPath: string;
   /** Pause between a dropped connection and the next attempt (2 seconds). */
   readonly reconnectDelay?: Duration.Input;
-  /** The node's environment id from its descriptor; a protocol-3 session addresses it. */
+  /** The MC's environment id from its descriptor; a protocol-3 session addresses it. */
   readonly environmentId?: string;
-  /** The node's wire protocol from its descriptor; absent is the Node server's. */
+  /** The MC's wire protocol from its descriptor; absent is the Node server's. */
   readonly orchestrationProtocolVersion?: number | undefined;
 }
 
-/** The id used when the host did not read the node's descriptor (the Node launcher). */
+/** The id used when the host did not read the MC's descriptor (the Node launcher). */
 const TUI_ENVIRONMENT_ID = EnvironmentId.make("local-tui");
 const TUI_LABEL = "HAL-C2";
 const RECONNECT_DELAY = Duration.seconds(2);

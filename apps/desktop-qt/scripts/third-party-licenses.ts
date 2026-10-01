@@ -3,7 +3,7 @@
  * Writes the third-party license manifest the Qt desktop's Open source
  * licenses page reads (src/native/LicensesController): the web app's packages,
  * which the bricks' icons come from (scripts/gen-icons.mjs), and the notices
- * tagged `desktop-qt` in third-party-licenses.config.json (Qt, the node's
+ * tagged `desktop-qt` in third-party-licenses.config.json (Qt, the MC's
  * runtime, Node.js).
  *
  * stage-runtime.mjs writes it to <runtime>/licenses/; `vp run licenses` writes

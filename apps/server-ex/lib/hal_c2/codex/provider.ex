@@ -1,9 +1,9 @@
 defmodule HalC2.Codex.Provider do
   @moduledoc """
-  The Codex entry in this node's `ServerConfig.providers`, which is what lets a
+  The Codex entry in this MC's `ServerConfig.providers`, which is what lets a
   client's composer send to Codex here.
 
-  The entry appears when the `codex` command is on the node's PATH. Its model list
+  The entry appears when the `codex` command is on the MC's PATH. Its model list
   comes from `codex app-server`'s `model/list`, read once in the background at boot
   (`load/0`); until then a single default model is offered.
   """
@@ -13,7 +13,7 @@ defmodule HalC2.Codex.Provider do
   @key {__MODULE__, :models}
   @default_models [%{"slug" => "gpt-5.5", "name" => "GPT-5.5", "isDefault" => true}]
 
-  @doc "The provider entry, or nil when Codex is not installed on this node."
+  @doc "The provider entry, or nil when Codex is not installed on this MC."
   @spec entry() :: map | nil
   def entry do
     with [executable | _] <- command(),

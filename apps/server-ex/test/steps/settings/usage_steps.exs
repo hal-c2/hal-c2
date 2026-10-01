@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Settings.Usage do
   @moduledoc """
-  Settings → Usage against a node: the usage summary read from the provider CLIs'
+  Settings → Usage against an MC: the usage summary read from the provider CLIs'
   transcripts (`server.getUsageSummary`), model prices (`server.refreshUsageRates`,
   `usagePriceOverrides`), and the Codex and Claude limits published on the provider
   entries (`HalC2.ProviderUsageLimits`, driven by `test/support/fake_codex.py` and
@@ -13,8 +13,8 @@ defmodule HalC2.Steps.Settings.Usage do
   import ExUnit.Assertions
 
   alias HalC2.ProviderUsageLimits, as: Limits
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @fake_codex Path.expand("../../support/fake_codex.py", __DIR__)
   @fake_claude Path.expand("../../support/fake_claude.py", __DIR__)
@@ -57,7 +57,7 @@ defmodule HalC2.Steps.Settings.Usage do
   end
 
   step "Claude Code keeps its history under a custom config directory", context do
-    custom = Path.join(context.node.home, "custom-claude")
+    custom = Path.join(context.mc.home, "custom-claude")
 
     context =
       usage(context, %{
@@ -75,7 +75,7 @@ defmodule HalC2.Steps.Settings.Usage do
   end
 
   step "two Codex accounts point at the same history directory", context do
-    shared = Path.join(context.node.home, "shared-codex")
+    shared = Path.join(context.mc.home, "shared-codex")
     instance = &%{"driver" => "codex", "config" => %{"homePath" => shared}, "label" => &1}
 
     context =
@@ -113,7 +113,7 @@ defmodule HalC2.Steps.Settings.Usage do
 
   # The first line sits more than the resume guard (64 bytes) before the end, so a
   # changed first line is only seen by a scan that reads the whole file again.
-  step "the node has scanned the history once", context do
+  step "the MC has scanned the history once", context do
     context = usage(context)
     path = Path.join(claude_dir(context), "a.jsonl")
     filler = JSON.encode!(%{"type" => "user", "text" => String.duplicate("x", 200)}) <> "\n"
@@ -281,12 +281,12 @@ defmodule HalC2.Steps.Settings.Usage do
 
   # --- prices --------------------------------------------------------------------
 
-  step "the node fetched model prices yesterday", context do
+  step "the MC fetched model prices yesterday", context do
     context = usage(context)
     fetched = System.system_time(:millisecond) - 25 * 60 * 60 * 1000
 
     File.write!(
-      Path.join(context.node.home, "usage-model-rates.json"),
+      Path.join(context.mc.home, "usage-model-rates.json"),
       JSON.encode!(%{"fetchedAtMs" => fetched, "document" => @rates})
     )
 
@@ -295,7 +295,7 @@ defmodule HalC2.Steps.Settings.Usage do
   end
 
   step "the machine is offline", context do
-    World.put_app_env(:usage_rates_url, Path.join(context.node.home, "unreachable.json"))
+    World.put_app_env(:usage_rates_url, Path.join(context.mc.home, "unreachable.json"))
     context
   end
 
@@ -313,14 +313,14 @@ defmodule HalC2.Steps.Settings.Usage do
     context
   end
 
-  # The node read a smaller table two minutes ago; the source now has more models.
+  # The MC read a smaller table two minutes ago; the source now has more models.
   step "the user refreshes usage prices", context do
     context = usage(context)
     stale = System.system_time(:millisecond) - 2 * 60 * 1000
     [first | _] = Map.keys(@rates)
 
     File.write!(
-      Path.join(context.node.home, "usage-model-rates.json"),
+      Path.join(context.mc.home, "usage-model-rates.json"),
       JSON.encode!(%{"fetchedAtMs" => stale, "document" => Map.take(@rates, [first])})
     )
 
@@ -328,7 +328,7 @@ defmodule HalC2.Steps.Settings.Usage do
     Map.merge(context, %{reply: reply, stale_at: stale})
   end
 
-  step "the node fetches the latest model prices", context do
+  step "the MC fetches the latest model prices", context do
     assert {:ok, %{"status" => "fresh", "knownModels" => known, "fetchedAt" => fetched}} =
              context.reply
 
@@ -373,7 +373,7 @@ defmodule HalC2.Steps.Settings.Usage do
     Map.merge(context, %{reply: reply, checked_before: before})
   end
 
-  step "the node checks Codex and Claude rate limits", context do
+  step "the MC checks Codex and Claude rate limits", context do
     {:ok, %{"providers" => providers}} = context.reply
 
     for instance <- ~w(codex claudeAgent) do
@@ -401,7 +401,7 @@ defmodule HalC2.Steps.Settings.Usage do
   end
 
   step "the next limit check fails", context do
-    World.put_app_env(:codex_command, ["python3", Path.join(context.node.home, "missing.py")])
+    World.put_app_env(:codex_command, ["python3", Path.join(context.mc.home, "missing.py")])
     {reply, context} = World.call(context, "server.refreshProviders", %{"instanceId" => "codex"})
     Map.put(context, :reply, reply)
   end
@@ -448,7 +448,7 @@ defmodule HalC2.Steps.Settings.Usage do
   end
 
   # What the clients show for each outcome (`OUTCOME_TEXT` in the web and mobile
-  # usage limits); the node answers with the outcome.
+  # usage limits); the MC answers with the outcome.
   @outcome_text %{
     "reset" => "Reset applied. Your windows have cleared.",
     "nothingToReset" => "Nothing to reset right now.",
@@ -470,7 +470,7 @@ defmodule HalC2.Steps.Settings.Usage do
       end
 
     assert [_key] =
-             context.node.home |> Path.join("consumed") |> File.read!() |> String.split()
+             context.mc.home |> Path.join("consumed") |> File.read!() |> String.split()
 
     Map.put(context, :reply, reply)
   end
@@ -483,7 +483,7 @@ defmodule HalC2.Steps.Settings.Usage do
     if context[:usage] do
       context
     else
-      home = context.node.home
+      home = context.mc.home
       homes = %{codex: Path.join(home, "codex"), claude: Path.join(home, "claude")}
       grok = Path.join(home, "grok")
       rates = Path.join(home, "rates.json")
@@ -504,7 +504,7 @@ defmodule HalC2.Steps.Settings.Usage do
       }
 
       context = World.update_settings(context, World.deep_merge(base, patch))
-      Node.ensure(HalC2.Usage)
+      Mc.ensure(HalC2.Usage)
       Map.put(context, :usage, Map.put(homes, :grok, grok))
     end
   end
@@ -513,9 +513,9 @@ defmodule HalC2.Steps.Settings.Usage do
   defp limits(context) do
     World.put_app_env(:codex_command, ["python3", @fake_codex])
     World.put_app_env(:claude_command, ["python3", @fake_claude])
-    World.put_env("FAKE_CODEX_CONSUME_LOG", Path.join(context.node.home, "consumed"))
-    Node.ensure(HalC2.Settings)
-    Node.ensure(Limits)
+    World.put_env("FAKE_CODEX_CONSUME_LOG", Path.join(context.mc.home, "consumed"))
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure(Limits)
     :ok = Limits.refresh([])
     assert Limits.get("codex") && Limits.get("claudeAgent")
     context
@@ -559,7 +559,7 @@ defmodule HalC2.Steps.Settings.Usage do
 
   defp yesterday, do: Date.add(Date.utc_today(), -1)
   defp at(day, time), do: "#{Date.to_iso8601(day)}T#{time}:00Z"
-  # As the node writes times: UTC with milliseconds.
+  # As the MC writes times: UTC with milliseconds.
   defp iso(at),
     do:
       at

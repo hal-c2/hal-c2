@@ -5,8 +5,8 @@ defmodule HalC2.Steps.Threads do
 
   alias HalC2.Orchestration.{LimitRecovery, Settlement}
   alias HalC2.Projection.JS
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # --- settle.feature ------------------------------------------------------------------
 
@@ -349,7 +349,7 @@ defmodule HalC2.Steps.Threads do
 
   defp phone_rows(context, ids, writes, seen) do
     client = World.client(context, "phone")
-    {frame, client} = Node.await(client, &(&1["t"] == "shell.rows"))
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell.rows"))
     context = World.put_client(context, "phone", client)
 
     seen =
@@ -650,15 +650,15 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
-  # The node keeps the stream, as the TypeScript server does; what a client reads
+  # The MC keeps the stream, as the TypeScript server does; what a client reads
   # from it is the thread marked deleted, which it treats as `thread.deleted`.
   step "its history can no longer be read", context do
     id = World.thread_id(context, "Old spike")
 
     client =
-      context.node
-      |> Node.connect()
-      |> Node.sub(1, %{"type" => "stream", "node" => Atom.to_string(node()), "stream" => id})
+      context.mc
+      |> Mc.connect()
+      |> Mc.sub(1, %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => id})
 
     rows = snapshot_rows(client, [])
     assert [thread] = for(["thread", ^id, row] <- rows, do: row)
@@ -667,7 +667,7 @@ defmodule HalC2.Steps.Threads do
   end
 
   defp snapshot_rows(client, rows) do
-    {frame, client} = Node.await(client, &(&1["t"] == "snapshot"))
+    {frame, client} = Mc.await(client, &(&1["t"] == "snapshot"))
     rows = rows ++ frame["rows"]
     if frame["done"], do: rows, else: snapshot_rows(client, rows)
   end
@@ -770,7 +770,7 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
-  # The index is emptied behind the node's back, as a log from before it existed.
+  # The index is emptied behind the MC's back, as a log from before it existed.
   step "the environment has threads written before it kept a search index", context do
     context =
       context
@@ -796,7 +796,7 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the environment starts", context do
-    %{context | node: Node.restart(context.node), clients: %{}}
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
   step "the old threads are indexed once and can be searched", context do
@@ -935,7 +935,7 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the agent renames its thread to {string}", %{args: [title]} = context do
-    Node.ensure(HalC2.Mcp)
+    Mc.ensure(HalC2.Mcp)
 
     %{authorization: auth} =
       HalC2.Mcp.server(World.thread_id(context, World.current(context)), "codex")
@@ -970,7 +970,7 @@ defmodule HalC2.Steps.Threads do
   step "the thread's worktree changed after the client last saw it", context do
     title = World.current(context)
     seen = World.row(context, title)["worktreePath"]
-    moved = Node.tmp_dir(context.node, "moved-worktree")
+    moved = Mc.tmp_dir(context.mc, "moved-worktree")
 
     context
     |> World.patch_thread(title, %{"worktreePath" => moved})
@@ -1008,7 +1008,7 @@ defmodule HalC2.Steps.Threads do
           {%{"type" => "root"}, context}
 
         "existing worktree" ->
-          path = Path.join(Node.tmp_dir(context.node, "worktrees"), "cart")
+          path = Path.join(Mc.tmp_dir(context.mc, "worktrees"), "cart")
           World.git!(root, ["worktree", "add", "-q", "-b", "feature/cart", path])
 
           {%{"type" => "existing_worktree", "worktreePath" => path, "branch" => "feature/cart"},
@@ -1185,7 +1185,7 @@ defmodule HalC2.Steps.Threads do
     open_pull_request(context, branch, 7)
   end
 
-  # With every client gone, so the node finds it on its own.
+  # With every client gone, so the MC finds it on its own.
   step "the environment looks for pull requests", context do
     for {_, client} <- context.clients, do: Mint.HTTP.close(client.conn)
     discover(%{context | clients: %{}})
@@ -1321,7 +1321,7 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the agent links pull request {int} to its thread", %{args: [number]} = context do
-    Node.ensure(HalC2.Mcp)
+    Mc.ensure(HalC2.Mcp)
 
     %{authorization: auth} =
       HalC2.Mcp.server(World.thread_id(context, World.current(context)), "codex")
@@ -1489,16 +1489,16 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the environment starts again", context do
-    Map.put(context, :node, Node.restart(context.node))
+    Map.put(context, :mc, Mc.restart(context.mc))
   end
 
-  # The sweep a started node runs finds the resume that became due while it was down.
+  # The sweep a started MC runs finds the resume that became due while it was down.
   step "{string} continues", %{args: [thread]} = context do
     continues(context, thread, context.clock)
   end
 
   step "the user turned on auto-resume for limited threads", context do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
     write_settings(context, %{"autoResumeLimitedThreads" => true})
     assert HalC2.Settings.settings()["autoResumeLimitedThreads"] == true
     context
@@ -2103,12 +2103,12 @@ defmodule HalC2.Steps.Threads do
   step "a client is watching the setup of {string}", %{args: [title]} = context do
     shape = %{
       "type" => "worktreeSetup",
-      "node" => Atom.to_string(node()),
+      "mc" => Atom.to_string(node()),
       "threadId" => World.thread_id(context, title)
     }
 
-    client = context |> World.client() |> Node.sub(7, shape)
-    {%{"event" => nil}, client} = Node.await(client, &(&1["t"] == "worktreeSetup"))
+    client = context |> World.client() |> Mc.sub(7, shape)
+    {%{"event" => nil}, client} = Mc.await(client, &(&1["t"] == "worktreeSetup"))
     World.put_client(context, client)
   end
 
@@ -2122,7 +2122,7 @@ defmodule HalC2.Steps.Threads do
     client = World.client(context)
 
     {_moved, client} =
-      Node.await(
+      Mc.await(
         client,
         &(event.(&1) and statuses(&1["event"])["checkout"] == "done" and
             stage.(&1)["status"] == "running"),
@@ -2130,7 +2130,7 @@ defmodule HalC2.Steps.Threads do
       )
 
     {_output, client} =
-      Node.await(client, &(event.(&1) and "linking" in stage.(&1)["tail"]), 10_000)
+      Mc.await(client, &(event.(&1) and "linking" in stage.(&1)["tail"]), 10_000)
 
     World.put_client(context, client)
   end
@@ -2175,21 +2175,21 @@ defmodule HalC2.Steps.Threads do
     Map.put(context, :worktree_path, snapshot["worktreePath"])
   end
 
-  # Setup progress is held by `HalC2.WorktreeSetup`, which the node starts afresh.
+  # Setup progress is held by `HalC2.WorktreeSetup`, which the MC starts afresh.
   step "the environment restarts", context do
     ExUnit.Callbacks.stop_supervised(HalC2.WorktreeSetup)
-    %{context | node: Node.restart(context.node), clients: %{}} |> World.thread_worktrees()
+    %{context | mc: Mc.restart(context.mc), clients: %{}} |> World.thread_worktrees()
   end
 
   step "{string} shows no setup progress", %{args: [title]} = context do
     shape = %{
       "type" => "worktreeSetup",
-      "node" => Atom.to_string(node()),
+      "mc" => Atom.to_string(node()),
       "threadId" => World.thread_id(context, title)
     }
 
-    client = context |> World.client() |> Node.sub(8, shape)
-    {frame, client} = Node.await(client, &(&1["t"] == "worktreeSetup"))
+    client = context |> World.client() |> Mc.sub(8, shape)
+    {frame, client} = Mc.await(client, &(&1["t"] == "worktreeSetup"))
     assert frame["event"] == nil
     assert World.thread(context, title)["worktreePath"] == context.worktree_path
     World.put_client(context, client)
@@ -2197,7 +2197,7 @@ defmodule HalC2.Steps.Threads do
 
   step "the user did not ask to start from origin", context do
     root = World.project(context).root
-    origin = Node.tmp_dir(context.node, "origin")
+    origin = Mc.tmp_dir(context.mc, "origin")
     World.git!(origin, ~w(init -q --bare -b main))
     World.git!(root, ["remote", "add", "origin", origin])
     World.git!(root, ~w(push -q origin main))
@@ -2235,7 +2235,7 @@ defmodule HalC2.Steps.Threads do
 
   step "\"origin\" has no branch {string}", %{args: [branch]} = context do
     root = World.project(context).root
-    origin = Node.tmp_dir(context.node, "origin")
+    origin = Mc.tmp_dir(context.mc, "origin")
     World.git!(origin, ~w(init -q --bare -b main))
     World.git!(root, ["remote", "add", "origin", origin])
     World.git!(root, ~w(push -q origin main:elsewhere))
@@ -2287,17 +2287,17 @@ defmodule HalC2.Steps.Threads do
   step "the user can open that terminal to follow it", context do
     shape = %{
       "type" => "terminal",
-      "node" => Atom.to_string(node()),
+      "mc" => Atom.to_string(node()),
       "input" => %{
         "threadId" => World.thread_id(context, World.current(context)),
         "terminalId" => context.setup_terminal
       }
     }
 
-    client = context |> World.client() |> Node.sub(9, shape)
+    client = context |> World.client() |> Mc.sub(9, shape)
 
     {%{"event" => %{"snapshot" => snapshot}}, client} =
-      Node.await(client, &(&1["t"] == "terminal" and &1["event"]["type"] == "snapshot"))
+      Mc.await(client, &(&1["t"] == "terminal" and &1["event"]["type"] == "snapshot"))
 
     assert snapshot["cwd"] == context.worktree_path
 
@@ -2306,7 +2306,7 @@ defmodule HalC2.Steps.Threads do
         client
       else
         {_, client} =
-          Node.await(
+          Mc.await(
             client,
             &(&1["t"] == "terminal" and &1["event"]["type"] == "output" and
                 &1["event"]["data"] =~ "linking"),
@@ -2437,7 +2437,7 @@ defmodule HalC2.Steps.Threads do
   defp stage_id("setup script"), do: "setup-script"
 
   defp branch_prompts(context) do
-    case File.read(Path.join(context.node.home, "text-calls.log")) do
+    case File.read(Path.join(context.mc.home, "text-calls.log")) do
       {:ok, log} ->
         for line <- String.split(log, "\n", trim: true),
             %{"prompt" => prompt} = JSON.decode!(line),
@@ -2513,11 +2513,11 @@ defmodule HalC2.Steps.Threads do
     )
   end
 
-  step "the node imports that log", context do
+  step "the MC imports that log", context do
     {log, titles} = context.v2_log
     assert {:ok, %{streams: streams}} = HalC2.Import.V2.run(log, HalC2.Store)
     assert streams > 0
-    context = %{context | node: Node.restart(context.node), clients: %{}}
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
     Enum.reduce(titles, context, &put_in(&2, [:threads, &1], "v2-#{String.downcase(&1)}"))
   end
 
@@ -2554,7 +2554,7 @@ defmodule HalC2.Steps.Threads do
   end
 
   # A thread the first version (the Node server's version 1 orchestrator) logged, with
-  # a user and an agent message and whatever `detail` names; the node's import folds it
+  # a user and an agent message and whatever `detail` names; the MC's import folds it
   # (`HalC2.Import.V1Thread`) as the Node server's startup migration does.
   step ~r/^the first version's thread "(?<title>[^"]+)" had (?<detail>.+)$/,
        %{args: [title, detail]} = context do
@@ -2588,7 +2588,7 @@ defmodule HalC2.Steps.Threads do
   step "the thread is migrated", context do
     {log, [title]} = context.v2_log
     assert {:ok, %{streams: 2}} = HalC2.Import.V2.run(log, HalC2.Store)
-    context = %{context | node: Node.restart(context.node), clients: %{}}
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
 
     Map.update(
       context,
@@ -3024,7 +3024,7 @@ defmodule HalC2.Steps.Threads do
     Map.put(context, :left_out, Enum.at(texts, 1))
   end
 
-  # Claude, now the thread's agent, pages to the thread's second request with the node's tool.
+  # Claude, now the thread's agent, pages to the thread's second request with the MC's tool.
   step "the agent needs one of the left-out parts", context do
     read =
       World.mcp_tool(
@@ -3062,7 +3062,7 @@ defmodule HalC2.Steps.Threads do
   # Writes a Node server event log (its `orchestration_events` table) of
   # `{aggregate, stream, type, occurred_at, payload}` events.
   defp v2_log(context, events, titles, version \\ 2) do
-    path = Path.join(context.node.home, "previous-state.sqlite")
+    path = Path.join(context.mc.home, "previous-state.sqlite")
     {:ok, db} = Exqlite.Sqlite3.open(path)
 
     :ok =
@@ -3141,7 +3141,7 @@ defmodule HalC2.Steps.Threads do
 
   # Answers `gh` with `rules` (see test/support/fake_gh.py).
   defp gh(context, rules) do
-    home = context.node.home
+    home = context.mc.home
     File.write!(Path.join(home, "gh-rules.json"), JSON.encode!(rules))
 
     unless context[:gh] do
@@ -3175,7 +3175,7 @@ defmodule HalC2.Steps.Threads do
   end
 
   defp discover(context) do
-    Node.ensure({HalC2.PullRequests.Discovery, interval: nil})
+    Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
     :ok = HalC2.PullRequests.Discovery.sweep()
     context
   end
@@ -3259,7 +3259,7 @@ defmodule HalC2.Steps.Threads do
         }
       ])
 
-    Node.ensure({HalC2.PullRequests.Sync, interval: nil})
+    Mc.ensure({HalC2.PullRequests.Sync, interval: nil})
     context = manual_link(context, thread, 5)
     # The sync reads links from the sidebar rows.
     World.await_row(World.thread_id(context, thread), &match?([_], &1["pullRequests"]))
@@ -3365,8 +3365,8 @@ defmodule HalC2.Steps.Threads do
 
   # The settlement service reads settings and sweeps only when asked.
   defp settings(context) do
-    Node.ensure(HalC2.Settings)
-    Node.ensure({Settlement, interval: nil})
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure({Settlement, interval: nil})
     context
   end
 

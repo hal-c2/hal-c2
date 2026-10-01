@@ -20,54 +20,54 @@ Feature: Agent providers are plugins
   Background:
     Given a connected environment with the project "shop"
 
-  @node
-  Scenario: A registry agent can be added without changing the node
+  @mc
+  Scenario: A registry agent can be added without changing the MC
     Given the ACP registry lists the agent "acme"
     When the user adds "acme" as a provider
     Then "acme" can run turns in "shop"
-    And no new node version was needed
+    And no new MC version was needed
 
-  @node
+  @mc
   Scenario: A follow-up to an agent that cannot be steered waits for the turn to end
     Given a turn is running on an ACP agent
     When the user sends a follow-up message
     Then the message waits until the running turn finishes
     And it is then sent as the next turn
 
-  @node
+  @mc
   Scenario: A follow-up to an agent that can be steered joins the running turn
     Given a turn is running on Codex
     When the user sends a follow-up message
     Then the message joins the running turn
 
-  @node
+  @mc
   Scenario: Built-in ACP agents do nothing until the user enables them
     Given OpenCode, Grok, Cursor and Pi are installed but not enabled
-    When the node starts
+    When the MC starts
     Then none of their processes are started
 
-  @node
+  @mc
   Scenario: The core starts with no provider plugins at all
-    Given a node with no provider plugins installed
-    When the node starts
-    Then the node is ready
+    Given an MC with no provider plugins installed
+    When the MC starts
+    Then the MC is ready
     And the user is told to add a provider before starting a thread
 
-  @node
+  @mc
   Scenario: Claude and Codex are bundled plugins that can be turned off
     Given the bundled plugins "claude" and "codex"
     When the user disables the "codex" plugin
     Then Codex is not offered as a provider
     And Claude keeps working
 
-  @node
-  Scenario: A bundled provider plugin can be updated separately from the node
+  @mc
+  Scenario: A bundled provider plugin can be updated separately from the MC
     Given the bundled plugin "claude" has a newer version available
     When the user updates "claude"
     Then Claude runs on the new plugin version
-    And the node version is unchanged
+    And the MC version is unchanged
 
-  @node
+  @mc
   Scenario: A provider plugin written against the adapter contract needs no core change
     Given a provider plugin "acme-native" that implements the adapter contract directly
     When the plugin is installed and enabled
@@ -75,7 +75,7 @@ Feature: Agent providers are plugins
     And it can run turns in "shop"
 
   # The process that calls `TurnWriter.started/1` drives the turn.
-  @node
+  @mc
   Scenario: A plugin's turn ends as failed when the process running it crashes
     Given a provider plugin "acme-native" that implements the adapter contract directly
     And the plugin is installed and enabled
@@ -84,7 +84,7 @@ Feature: Agent providers are plugins
     Then the run fails saying the provider's session ended unexpectedly
     And the queued message runs
 
-  @node
+  @mc
   Scenario: A turn on an instance whose plugin is missing is refused clearly
     Given a thread that used the instance "acme_work"
     And the plugin behind "acme_work" has been removed
@@ -92,14 +92,14 @@ Feature: Agent providers are plugins
     Then the message is refused with a message naming the missing provider
     And no other provider runs the turn in its place
 
-  @node
+  @mc
   Scenario: Removing a provider plugin leaves its threads readable
     Given threads in "shop" that ran on "acme"
     When the user removes the "acme" plugin
     Then those threads still show their full history
     And their diffs and checkpoints can still be viewed
 
-  @node
+  @mc
   Scenario: The settings of a removed provider are kept for when it comes back
     Given the instance "acme_work" has custom settings
     When its plugin is removed
@@ -107,13 +107,13 @@ Feature: Agent providers are plugins
     When the plugin is installed again
     Then "acme_work" works with the same settings
 
-  @node
+  @mc
   Scenario: A thread from a removed provider can continue on another provider
     Given a thread that ran on a provider whose plugin was removed
     When the user switches the thread to Claude and sends a message
     Then the turn runs on Claude with the thread's history as context
 
-  @node
+  @mc
   Scenario Outline: A capability the plugin does not declare changes what the user is offered
     Given a provider plugin that does not declare "<capability>"
     When the user works in a thread on that provider
@@ -134,53 +134,53 @@ Feature: Agent providers are plugins
       | usage limits        | the limits view does not list this provider                                   |
       | sign-in             | the user is pointed to the provider's documentation to sign in                |
 
-  @node
+  @mc
   Scenario: A plugin that declares a capability it does not honour is reported
     Given a provider plugin that declares rollback but fails every rollback
     When the user reverts a turn on that provider
     Then the revert fails with the plugin's error
     And the thread is left as it was before the revert
 
-  @node
+  @mc
   Scenario: ACP is the recommended contract for new providers
     Given a new agent that speaks ACP
     When its author publishes it to the ACP registry
     Then users can add it from the registry without a HAL-C2 plugin
 
-  @node
+  @mc
   Scenario: A provider plugin can extend an ACP agent with extra behaviour
     Given a provider plugin "grok" built on the ACP contract
     And it adds a plan capture that plain ACP does not have
     When a Grok turn proposes a plan
     Then the plan is shown as a proposed plan
 
-  @node
+  @mc
   Scenario: Each provider plugin runs under its own supervisor
     Given threads are running on Claude and on an ACP agent
     When the ACP agent's plugin crashes
     Then the Claude threads keep running
     And the ACP agent's threads show that their session ended
 
-  @node
+  @mc
   Scenario: Provider plugins declare the settings their instances need
     Given the provider plugin "acme" declares a binary path and an API key setting
     When the user adds an "acme" instance
     Then the user is asked for a binary path and an API key
 
-  @node
+  @mc
   Scenario: A provider plugin supplies its own icon, colour and name
     Given the provider plugin "acme" declares an icon and an accent colour
     When the user looks at the provider list
     Then "acme" is shown with its own icon and colour
 
-  @node
+  @mc
   Scenario: Provider plugins declare which runtime modes they support
     Given the provider plugin "pi" supports every mode except auto
     When the user opens the runtime access picker for a Pi thread
     Then auto is not offered
 
-  @node
+  @mc
   Scenario: A client shows a provider it has never heard of from the plugin's declaration alone
-    Given the node has the provider plugin "acme" that no client knows about
+    Given the MC has the provider plugin "acme" that no client knows about
     When the user opens the model picker on any client
     Then "acme" and its models are listed with the plugin's name and icon

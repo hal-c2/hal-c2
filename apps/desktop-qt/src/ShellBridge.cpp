@@ -74,7 +74,7 @@ void ShellBridge::dispatch(const QString& action, const QVariant& payload) {
 }
 
 bool ShellBridge::localFolders() const {
-  const auto host = m_nodeOrigin.host().toLower();
+  const auto host = m_mcOrigin.host().toLower();
   return m_localFolderImportEnabled && (host == QStringLiteral("localhost") || host == QStringLiteral("127.0.0.1") ||
                                         host == QStringLiteral("::1"));
 }

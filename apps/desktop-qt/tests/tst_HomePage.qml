@@ -58,7 +58,7 @@ Item {
             compare(Shell.dispatchedActions[0].action, "landing.retry");
         }
 
-        function test_before_the_node_answers_home_waits() {
+        function test_before_the_mc_answers_home_waits() {
             const home = createTemporaryObject(homeComponent, root);
             compare(findChild(home, "homeTitle").text, "Waiting for the app…");
             verify(!findChild(home, "homeAction").visible);

@@ -1,7 +1,7 @@
 defmodule HalC2.DiagnosticsTest do
   use ExUnit.Case, async: true
 
-  test "the node's own processes are listed and can be signalled, but no others" do
+  test "the MC's own processes are listed and can be signalled, but no others" do
     port = Port.open({:spawn_executable, "/bin/sleep"}, [:binary, args: ["30"]])
     {:os_pid, pid} = Port.info(port, :os_pid)
 

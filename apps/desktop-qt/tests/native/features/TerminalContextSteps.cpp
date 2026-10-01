@@ -65,10 +65,10 @@ QVariantMap selection(const QString& terminal, int start, int end, const QString
           {QStringLiteral("text"), text}};
 }
 
-// The newest message the node was sent.
+// The newest message the MC was sent.
 QJsonObject lastMessage(World& world) {
-  for (qsizetype i = world.node.commands.size() - 1; i >= 0; --i) {
-    const QJsonObject& command = world.node.commands.at(i);
+  for (qsizetype i = world.mc.commands.size() - 1; i >= 0; --i) {
+    const QJsonObject& command = world.mc.commands.at(i);
     if (command.value(QLatin1String("type")).toString() == QLatin1String("message.dispatch")) return command;
   }
   return {};
@@ -141,7 +141,7 @@ const Steps steps([] {
   // What a send carries.
   step(QStringLiteral("the message references the excerpt %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return !terminalRecord(lastMessage(world)).isEmpty(); },
-                  [&] { return QStringLiteral("a message with an excerpt; the node has %1").arg(world.describeCommands()); });
+                  [&] { return QStringLiteral("a message with an excerpt; the MC has %1").arg(world.describeCommands()); });
     const QJsonObject message = lastMessage(world);
     const QJsonObject record = terminalRecord(message);
     const QString link = QStringLiteral("[%1](hal-c2-context://v1/terminal/%2)")
@@ -158,14 +158,14 @@ const Steps steps([] {
   });
   step(QStringLiteral("the message carries no excerpt"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return !lastMessage(world).isEmpty(); },
-                  [&] { return QStringLiteral("a message; the node has %1").arg(world.describeCommands()); });
+                  [&] { return QStringLiteral("a message; the MC has %1").arg(world.describeCommands()); });
     const QJsonObject message = lastMessage(world);
     expect(terminalRecord(message).isEmpty() && !message.value(QLatin1String("text")).toString().contains(QLatin1String("hal-c2-context:")),
            QStringLiteral("the message carries %1").arg(show(message.toVariantMap())));
   });
   step(QStringLiteral("the message starts with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return !lastMessage(world).isEmpty(); },
-                  [&] { return QStringLiteral("a message; the node has %1").arg(world.describeCommands()); });
+                  [&] { return QStringLiteral("a message; the MC has %1").arg(world.describeCommands()); });
     const QString text = lastMessage(world).value(QLatin1String("text")).toString();
     expect(text.startsWith(c[0]), QStringLiteral("the message reads %1").arg(show(text)));
   });

@@ -5,9 +5,9 @@ defmodule HalC2.Import.V2Test do
 
   @tag :tmp_dir
   test "imported streams fold to the same entities as the Node log", %{tmp_dir: dir} do
-    source = Path.join(dir, "node.sqlite")
-    events = node_events()
-    write_node_log(source, events)
+    source = Path.join(dir, "mc.sqlite")
+    events = mc_events()
+    write_mc_log(source, events)
 
     store = start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite"), name: nil})
     assert {:ok, report} = HalC2.Import.V2.run(source, store)
@@ -36,7 +36,7 @@ defmodule HalC2.Import.V2Test do
     end
   end
 
-  defp node_events do
+  defp mc_events do
     thread = %{"id" => "thread-1", "title" => "New thread", "projectId" => "project-1"}
     item = %{"id" => "item-1", "type" => "reasoning", "status" => "running", "text" => ""}
 
@@ -69,7 +69,7 @@ defmodule HalC2.Import.V2Test do
       ]
   end
 
-  defp write_node_log(path, events) do
+  defp write_mc_log(path, events) do
     {:ok, db} = Sqlite3.open(path)
 
     :ok =

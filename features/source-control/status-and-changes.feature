@@ -17,7 +17,7 @@ Feature: Repository status and working tree changes
   Background:
     Given a connected environment with the project "shop" in a git repository
 
-  @node
+  @mc
   Scenario: Status reports the branch and the uncommitted files
     Given the user has changed "src/cart.ts" and added "src/tax.ts" on the branch "feature/tax"
     When status is read for "shop"
@@ -25,7 +25,7 @@ Feature: Repository status and working tree changes
     And it lists both files with their inserted and deleted line counts
     And it says the working tree has changes
 
-  @node
+  @mc
   Scenario: Status reports how the branch stands against its upstream
     Given "feature/tax" tracks "origin/feature/tax" and is 2 commits ahead and 1 behind
     When status is read for "shop"
@@ -33,50 +33,50 @@ Feature: Repository status and working tree changes
     And it reports 2 commits ahead and 1 behind
 
   # Delivered natively (WorkspaceController follows the checkout's vcs status); no desktop test yet.
-  @node @desktop @tui @backlog-desktop
+  @mc @desktop @tui @backlog-desktop
   Scenario: Status follows the checkout while the thread is open
     Given the user is looking at a thread in "shop"
     When the agent's turn ends after editing a file
     Then the thread's status shows the new change without the user asking for a refresh
 
-  @node
+  @mc
   Scenario: Status refreshes after a git action finishes
     Given the user is looking at a thread in "shop" with uncommitted changes
     When the user commits the changes
     Then the thread's status reports a clean working tree
 
-  @node
+  @mc
   Scenario: The remote side is fetched on the automatic fetch interval
     Given the automatic Git fetch interval is 30 seconds
     And a client in front is showing a thread in "shop"
     When 30 seconds pass
-    Then the node fetches from the remote and the ahead and behind counts are updated
+    Then the MC fetches from the remote and the ahead and behind counts are updated
 
-  @node
+  @mc
   Scenario: A fetch interval of zero never fetches on its own
     Given the automatic Git fetch interval is 0 seconds
     When a client shows a thread in "shop" for several minutes
-    Then the node never fetches from the remote without being asked
+    Then the MC never fetches from the remote without being asked
 
-  @node
+  @mc
   Scenario: Nobody watching means no background fetches
     Given no client is showing a thread in "shop"
     When the fetch interval elapses
-    Then the node does not fetch "shop" from the remote
+    Then the MC does not fetch "shop" from the remote
 
-  @node
+  @mc
   Scenario: Status names the open pull request for a GitHub branch
     Given "feature/tax" has an open draft pull request on GitHub
     When status is read for "shop"
     Then the status carries that pull request with its state open and marked as a draft
 
-  @node
+  @mc
   Scenario: On the default branch only an open pull request counts
     Given "main" once had a merged pull request from the same branch name
     When status is read on "main"
     Then the status carries no pull request
 
-  @backlog @node
+  @backlog @mc
   Scenario Outline: Status names the open change request on other hosts
     Given "shop" has its primary remote on <host>
     And the current branch has an open change request there
@@ -90,14 +90,14 @@ Feature: Repository status and working tree changes
       | Azure DevOps |
       | Bitbucket    |
 
-  @node
+  @mc
   Scenario: A folder that is not a repository says so
     Given the project "notes" is not in a git repository
     When status is read for "notes"
     Then the status says it is not a repository
 
   # Delivered natively (GitController, vcs.init); source-control/git-actions.feature runs it in its own words, not these steps.
-  @node @desktop @backlog-desktop
+  @mc @desktop @backlog-desktop
   Scenario: Initializing a repository in a plain folder
     Given the project "notes" is not in a git repository
     When the user initializes Git for "notes"
@@ -110,7 +110,7 @@ Feature: Repository status and working tree changes
     When the user initializes Git for "notes" from the terminal client
     Then "notes" becomes a git repository
 
-  @backlog @node
+  @backlog @mc
   Scenario: A Jujutsu checkout reports its status
     Given the project "shop" is a Jujutsu repository
     When status is read for "shop"

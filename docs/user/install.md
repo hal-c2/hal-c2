@@ -69,7 +69,7 @@ and keeps four kinds of files apart:
 | cache  | Downloaded tools and anything else HAL-C2 can fetch or build again | `~/.cache/hal-c2`       | `%LOCALAPPDATA%\hal-c2\cache` |
 
 To back up HAL-C2, copy its config and data directories. Deleting the cache
-directory loses nothing you made. The HAL-C2 node keeps its own files in an
+directory loses nothing you made. The HAL-C2 MC keeps its own files in an
 `elixir` directory inside each of these.
 
 Set `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, or `XDG_CACHE_HOME` to

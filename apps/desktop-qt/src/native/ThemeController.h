@@ -10,7 +10,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class SettingsController;
 class ShellBridge;
 
@@ -23,7 +23,7 @@ class ShellBridge;
 // look), `themeHalves` ({light, dark}: a theme per appearance, over `theme`)
 // and `customThemes` (ThemeDefinition-shaped). Themes resolve by id from the
 // built-ins (themes.json, generated from packages/shared themePalettes.ts),
-// then this device's own, then those the node publishes (`config.themes`), as
+// then this device's own, then those the MC publishes (`config.themes`), as
 // apps/web themePalette.ts getThemeDefinition does. One no longer published
 // falls back to the standard look. The `Themes` QML singleton.
 class ThemeController : public QObject, public NativeController {
@@ -44,7 +44,7 @@ class ThemeController : public QObject, public NativeController {
   Q_PROPERTY(bool editorOpen READ editorOpen WRITE setEditorOpen NOTIFY editorOpenChanged)
 
 public:
-  ThemeController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  ThemeController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
   // Registers the appearance shortcut's command, and the palette's Change
   // theme (theme.select) and Change appearance (appearance.select) menus and

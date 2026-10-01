@@ -64,7 +64,7 @@ function makeEnvironmentLayer(
     readonly otlpTracesUrl?: string;
     readonly otlpMetricsUrl?: string;
     readonly otlpLogsUrl?: string;
-    readonly elixirNodeRelease?: string;
+    readonly mcRelease?: string;
     readonly withoutHalC2Home?: boolean;
   },
 ) {
@@ -91,7 +91,7 @@ function makeEnvironmentLayer(
           HAL_C2_OTLP_TRACES_URL: options?.otlpTracesUrl,
           HAL_C2_OTLP_METRICS_URL: options?.otlpMetricsUrl,
           HAL_C2_OTLP_LOGS_URL: options?.otlpLogsUrl,
-          HAL_C2_DESKTOP_ELIXIR_RELEASE: options?.elixirNodeRelease,
+          HAL_C2_DESKTOP_ELIXIR_RELEASE: options?.mcRelease,
         }),
       ),
     ),
@@ -285,7 +285,7 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
-  it.effect("resolvePrimary starts an Elixir node release with the bootstrap on stdin", () =>
+  it.effect("resolvePrimary starts an MC release with the bootstrap on stdin", () =>
     withHarness(
       Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -300,20 +300,20 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(config.env.HAL_C2_NODE_ELECTRON, "1");
         assert.equal(config.bootstrap.port, 4888);
         assert.match(config.bootstrap.desktopBootstrapToken, /^[0-9a-f]{48}$/i);
-        // The node has no telemetry fds to write to.
+        // The MC has no telemetry fds to write to.
         assert.isUndefined(config.bootstrap.desktopTelemetryFd);
         assert.isUndefined(config.bootstrap.desktopTelemetryControlFd);
       }),
-      { elixirNodeRelease: "/rel/hal_c2/bin/hal_c2" },
+      { mcRelease: "/rel/hal_c2/bin/hal_c2" },
     ),
   );
 
-  it.effect("a packaged app with a bundled Elixir node runs it", () =>
+  it.effect("a packaged app with a bundled MC runs it", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const resources = yield* fileSystem.makeTempDirectoryScoped({ prefix: "hal-c2-resources-" });
-      yield* fileSystem.makeDirectory(`${resources}/hal-c2-node/bin`, { recursive: true });
-      yield* fileSystem.writeFileString(`${resources}/hal-c2-node/bin/hal_c2`, "#!/bin/sh\n");
+      yield* fileSystem.makeDirectory(`${resources}/hal-c2-mc/bin`, { recursive: true });
+      yield* fileSystem.writeFileString(`${resources}/hal-c2-mc/bin/hal_c2`, "#!/bin/sh\n");
 
       const config = yield* withHarness(
         Effect.flatMap(
@@ -322,7 +322,7 @@ describe("DesktopBackendConfiguration", () => {
         ),
         { resourcesPath: resources },
       );
-      assert.equal(config.executablePath, `${resources}/hal-c2-node/bin/hal_c2`);
+      assert.equal(config.executablePath, `${resources}/hal-c2-mc/bin/hal_c2`);
       assert.equal(config.bootstrapDelivery, "stdin");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

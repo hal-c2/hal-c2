@@ -22,13 +22,13 @@ Feature: Committing with written or generated messages
     Given a connected environment with a thread in the git project "shop"
     And the user has changed "src/cart.ts" and "src/tax.ts"
 
-  @node @desktop @tui
+  @mc @desktop @tui
   Scenario: Committing with a message the user wrote
     When the user commits with the message "Add tax to the cart"
     Then a commit "Add tax to the cart" holds both files
     And the user is told the commit was made with its short hash
 
-  @node @desktop
+  @mc @desktop
   Scenario: A blank message is written by the writer model
     When the user commits without writing a message
     Then the writer model writes the commit message from the staged diff
@@ -45,7 +45,7 @@ Feature: Committing with written or generated messages
     Then nothing is committed
     And the status line reads "Commit needs a message."
 
-  @node @desktop
+  @mc @desktop
   Scenario: Committing only the files the user picked
     When the user leaves "src/tax.ts" out of the commit and commits
     Then the commit holds only "src/cart.ts"
@@ -67,31 +67,31 @@ Feature: Committing with written or generated messages
     When the user starts a commit
     Then the user is warned that the commit lands on "main"
 
-  @node @desktop
+  @mc @desktop
   Scenario: Committing on a new branch
     Given the checkout is on the default branch "main"
     When the user commits on a new branch with the message "Add tax to the cart"
     Then a branch named after the message under "feature/" is created and checked out
     And the commit is made on that branch
 
-  @node
+  @mc
   Scenario: A new branch name that is taken gets a number
     Given a branch "feature/add-tax" already exists
     When the user commits on a new branch with the message "Add tax"
     Then the new branch is "feature/add-tax-2"
 
-  @node
+  @mc
   Scenario: A new branch needs something to commit
     Given the working tree is clean
     When the user asks to commit on a new branch
     Then the action fails with "Cannot create a feature branch because there are no changes to commit."
 
-  @node
+  @mc
   Scenario: Only commit actions may move onto a new branch
     When the user asks to push on a new branch
     Then the action fails with "Feature-branch checkout is only supported for commit actions."
 
-  @node
+  @mc
   Scenario Outline: The generated message follows the writing style
     Given the project's source control writing style is <style>
     When the user commits without writing a message
@@ -103,13 +103,13 @@ Feature: Committing with written or generated messages
       | Conventional Commits   | use Conventional Commits with the narrowest accurate type            |
       | Custom instructions    | follow the user's own instructions                                   |
 
-  @node
+  @mc
   Scenario: Repository conventions read CLAUDE.md only when Claude writes
     Given the writing style is Repository conventions and the writer model is a Claude model
     When the user commits without writing a message
     Then the writer model also sees the repository's CLAUDE.md
 
-  @node
+  @mc
   Scenario Outline: A generated pull request follows the writing style
     Given the project's source control writing style is <style>
     When the user commits, pushes and opens a pull request without writing its text
@@ -121,16 +121,16 @@ Feature: Committing with written or generated messages
       | Conventional Commits   | keep the title concise without forcing Conventional Commit syntax         |
       | Custom instructions    | follow the user's own instructions                                        |
 
-  # node/orchestration/text-generation.feature holds which pull request template the writer
+  # mc/orchestration/text-generation.feature holds which pull request template the writer
   # is given, and which model writes commits, pull requests and branch names.
-  @node
+  @mc
   Scenario: A commit message that cannot be written fails the action
     Given the writer model is unreachable
     When the user commits without writing a message
     Then the action fails with a message starting "Could not write a commit message:"
     And nothing is committed
 
-  @node
+  @mc
   Scenario: Commit hook output is streamed while the hook runs
     Given the repository has a pre-commit hook that prints "lint ok"
     When the user commits
@@ -177,7 +177,7 @@ Feature: Committing with written or generated messages
 
   @desktop
   Scenario: A failed action is reported
-    Given the node fails the action with "pre-commit hook failed"
+    Given the MC fails the action with "pre-commit hook failed"
     When the user starts committing with the message "Add tax"
     Then the user sees an "error" toast "Action failed" saying "pre-commit hook failed"
 
@@ -185,11 +185,11 @@ Feature: Committing with written or generated messages
   Scenario: A commit offers to push it
     When the user commits with the message "Add tax"
     And the user chooses "Push" on the toast "Committed abc0001"
-    Then the node is asked to push
+    Then the MC is asked to push
 
   @desktop
   Scenario: A git action on a linked environment runs through the link
-    Given the node is linked to "env-c"
+    Given the MC is linked to "env-c"
     And "env-c" has the thread "t7" titled "Deploy" in "shop" on the branch "feature/tax"
     When the user goes to "env-c:t7"
     And the user commits with the message "Add tax"

@@ -11,8 +11,8 @@ defmodule HalC2.Steps.Providers.Usage do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # Per-token USD, as LiteLLM's table lists them.
   @rates %{
@@ -32,7 +32,7 @@ defmodule HalC2.Steps.Providers.Usage do
   # --- background -------------------------------------------------------------------------------
 
   step "a connected environment with Codex, Claude and Grok history", context do
-    home = context.node.home
+    home = context.mc.home
 
     dirs = %{
       claude: Path.join(home, "claude"),
@@ -68,7 +68,7 @@ defmodule HalC2.Steps.Providers.Usage do
     ])
 
     grok(dirs.grok, "main", [grok_completed("p1", at, "grok-4", input: 800, output: 200)])
-    Node.ensure(HalC2.Usage)
+    Mc.ensure(HalC2.Usage)
     Map.put(context, :usage_dirs, dirs)
   end
 
@@ -262,12 +262,12 @@ defmodule HalC2.Steps.Providers.Usage do
 
   # --- the price table --------------------------------------------------------------------------
 
-  step "the node fetched the price table before", context do
+  step "the MC fetched the price table before", context do
     snapshot(context, @rates, 2 * 86_400_000)
   end
 
   step "the price table cannot be fetched now", context do
-    rates_url(Path.join(context.node.home, "unreachable-rates.json"))
+    rates_url(Path.join(context.mc.home, "unreachable-rates.json"))
     context
   end
 
@@ -279,9 +279,9 @@ defmodule HalC2.Steps.Providers.Usage do
     context
   end
 
-  step "the node has never fetched the price table and cannot fetch it now", context do
-    rates_url(Path.join(context.node.home, "unreachable-rates.json"))
-    refute File.exists?(Path.join(context.node.home, "usage-model-rates.json"))
+  step "the MC has never fetched the price table and cannot fetch it now", context do
+    rates_url(Path.join(context.mc.home, "unreachable-rates.json"))
+    refute File.exists?(Path.join(context.mc.home, "usage-model-rates.json"))
     context
   end
 
@@ -298,11 +298,11 @@ defmodule HalC2.Steps.Providers.Usage do
       claude_line("new-1", now() - 60_000, model: "claude-new-1", output: 10)
     ])
 
-    # The node's copy is from before the model existed; upstream knows it now.
+    # The MC's copy is from before the model existed; upstream knows it now.
     context = snapshot(context, @rates, 2 * 60_000)
 
     File.write!(
-      Path.join(context.node.home, "rates.json"),
+      Path.join(context.mc.home, "rates.json"),
       JSON.encode!(
         Map.put(@rates, "anthropic/claude-new-1", %{
           "input_cost_per_token" => 1.0e-6,
@@ -441,8 +441,8 @@ defmodule HalC2.Steps.Providers.Usage do
   # --- homes ------------------------------------------------------------------------------------
 
   step "two Claude accounts with their own homes, one of them disabled", context do
-    work = Path.join(context.node.home, "claude-work")
-    personal = Path.join(context.node.home, "claude-personal")
+    work = Path.join(context.mc.home, "claude-work")
+    personal = Path.join(context.mc.home, "claude-personal")
     claude(work, "work", [claude_line("work-1", now() - 60_000, output: 111, session: "work")])
 
     claude(personal, "personal", [
@@ -513,7 +513,7 @@ defmodule HalC2.Steps.Providers.Usage do
     {shared, context} = shared_history(context)
     # The second environment reaches the directory through a link, as another
     # checkout's server configured differently would.
-    link = Path.join(context.node.home, "codex-link")
+    link = Path.join(context.mc.home, "codex-link")
     File.ln_s!(shared, link)
 
     World.merge_settings(%{
@@ -581,7 +581,7 @@ defmodule HalC2.Steps.Providers.Usage do
     cache =
       :erlang.term_to_binary(%{version: 1, files: %{"transcript.jsonl" => %{}}, sources: %{}})
 
-    File.write!(Path.join(context.node.home, "usage-scan-cache.bin"), cache)
+    File.write!(Path.join(context.mc.home, "usage-scan-cache.bin"), cache)
     context
   end
 
@@ -617,7 +617,7 @@ defmodule HalC2.Steps.Providers.Usage do
   # A Codex history of one turn on "gpt-shared", which the scenario's accounts share
   # (`:shared_history`, read by "that history is counted once").
   defp shared_history(context) do
-    dir = Path.join(context.node.home, "codex-shared")
+    dir = Path.join(context.mc.home, "codex-shared")
     codex(dir, "shared", "gpt-shared", [codex_count(now() - 60_000, input: 10, output: 555)])
 
     {dir,
@@ -631,7 +631,7 @@ defmodule HalC2.Steps.Providers.Usage do
 
   defp snapshot(context, rates, age_ms) do
     File.write!(
-      Path.join(context.node.home, "usage-model-rates.json"),
+      Path.join(context.mc.home, "usage-model-rates.json"),
       JSON.encode!(%{"fetchedAtMs" => now() - age_ms, "document" => rates})
     )
 
@@ -640,7 +640,7 @@ defmodule HalC2.Steps.Providers.Usage do
 
   defp rates_url(url), do: World.put_app_env(:usage_rates_url, url)
 
-  defp home_path(context, "~/" <> rest), do: Path.join(context.node.home, rest)
+  defp home_path(context, "~/" <> rest), do: Path.join(context.mc.home, rest)
 
   defp bucket(usage, provider, model) do
     case buckets(usage, provider, model, nil) do

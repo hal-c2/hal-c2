@@ -2,14 +2,14 @@ defmodule HalC2.Steps.Timeline.ApprovalsAndQuestions do
   @moduledoc """
   Steps for `features/timeline/approvals-and-questions.feature`. The agents are the
   fake providers in `test/support`: "approve run: CMD" asks to run a command, "ask: Q"
-  (Codex) asks a question. The fakes log what the node answered them, which is what
+  (Codex) asks a question. The fakes log what the MC answered them, which is what
   "is told to" checks.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   step "the user is looking at a thread in {string} whose agent is working",
        %{args: [project]} = context do
@@ -24,7 +24,7 @@ defmodule HalC2.Steps.Timeline.ApprovalsAndQuestions do
     |> then(&World.put_client(&1, World.client(&1)))
   end
 
-  # ACP agents only ask the user outside full access (the node answers them itself there).
+  # ACP agents only ask the user outside full access (the MC answers them itself there).
   step "the thread runs on an ACP agent such as OpenCode or Cursor", context do
     context =
       context

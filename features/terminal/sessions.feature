@@ -19,32 +19,32 @@
 #   owns terminal fonts.
 
 Feature: Terminal sessions
-  Every thread can run shells on the environment that owns it. The node owns each shell, so
+  Every thread can run shells on the environment that owns it. The MC owns each shell, so
   a terminal keeps running while no client is looking at it, and every client sees the same one.
 
-  Rule: The node starts a shell where the thread works
+  Rule: The MC starts a shell where the thread works
 
-    @node
+    @mc
     Scenario: Opening a terminal starts a shell in the requested folder
       Given a thread whose project lives in "/work/app"
       When a client opens the thread's default terminal in "/work/app"
       Then a shell is running in "/work/app"
       And the terminal reports that it started
 
-    @node
+    @mc
     Scenario: A terminal on a worktree thread starts in the worktree
       Given a thread working in the worktree "/work/app-feature"
       When a client opens a terminal for that thread
       Then the shell starts in "/work/app-feature"
       And the terminal remembers which worktree it belongs to
 
-    @node
+    @mc
     Scenario: A terminal opens at a default size when the client gives none
       When a client opens a terminal without a size
       Then the shell sees a window of 120 columns and 30 rows
 
-    @node
-    Scenario Outline: The node picks the user's shell and falls back to common ones
+    @mc
+    Scenario Outline: The MC picks the user's shell and falls back to common ones
       Given the user's login shell is <login shell>
       When a terminal opens
       Then the shell that runs is <shell>
@@ -56,14 +56,14 @@ Feature: Terminal sessions
         | not set, no zsh   | "bash"      |
         | not set, no bash  | "sh"        |
 
-    @node
+    @mc
     Scenario: The shell advertises a colour terminal
       When a terminal opens
       Then the shell sees TERM "xterm-256color" and COLORTERM "truecolor"
 
-    @node
-    Scenario Outline: The node keeps its own settings out of the user's shell
-      Given the node runs with <variable> set
+    @mc
+    Scenario Outline: The MC keeps its own settings out of the user's shell
+      Given the MC runs with <variable> set
       When a terminal opens
       Then the shell does not see <variable>
 
@@ -77,19 +77,19 @@ Feature: Terminal sessions
         | any variable starting with RELEASE_ |
         | any variable starting with ERL_     |
 
-    @node
+    @mc
     Scenario: A client adds its own variables to a new shell
       When a client opens a terminal with the variable "APP_ENV" set to "preview"
       Then the shell sees "APP_ENV" as "preview"
 
-    @node
+    @mc
     Scenario: Opening a terminal that is already running only resizes it
       Given the thread's default terminal is running in "/work/app"
       When a client opens it again in "/work/app" at 100 columns and 40 rows
       Then the same shell keeps running
       And its window becomes 100 columns and 40 rows
 
-    @node
+    @mc
     Scenario Outline: Opening a terminal with a different launch context starts a fresh shell
       Given the thread's default terminal is running in "/work/app"
       When a client opens it again with <change>
@@ -102,7 +102,7 @@ Feature: Terminal sessions
         | a different worktree          |
         | different extra variables     |
 
-    @node
+    @mc
     Scenario Outline: A terminal is labelled by its number
       When a client opens the terminal "<id>"
       Then the terminal is labelled "<label>"
@@ -114,7 +114,7 @@ Feature: Terminal sessions
         | terminal-7  | Terminal 7  |
         | build-watch | build-watch |
 
-    @node
+    @mc
     Scenario: Worktree cleanup leaves a worktree with a running terminal alone
       Given a finished thread's worktree has a running terminal
       When storage cleanup looks for worktrees to remove

@@ -13,25 +13,25 @@
 #include "NativeController.h"
 
 class NativeWindow;
-class NodeClient;
+class McClient;
 class ShellBridge;
 
 // The settings the shell reads and changes, in two stores. The `Settings`
 // QML singleton; C++ reaches it with NativeShell::controller<SettingsController>().
 //
-// The node's settings document (`hal-c2.readSettings` / `hal-c2.writeSettings`,
+// The MC's settings document (`hal-c2.readSettings` / `hal-c2.writeSettings`,
 // apps/server-ex lib/hal_c2/settings.ex): one versioned document that every
 // client of the environment shares. A change is an edit of the whole document
 // written at the version it was read at; when another client saved first the
-// node refuses it as stale, and the edit is applied again to what the node now
-// holds, so no one's change is lost to a stale copy. The node's `config` shape
-// comes with it: the server config, and the themes the node publishes.
+// MC refuses it as stale, and the edit is applied again to what the MC now
+// holds, so no one's change is lost to a stale copy. The MC's `config` shape
+// comes with it: the server config, and the themes the MC publishes.
 //
 // This device's preferences (a JSON file in the shell's config directory):
 // what belongs to this desktop and no other client, such as its appearance
-// and theme. They are here before the node is.
+// and theme. They are here before the MC is.
 //
-//   Settings.value("textGenerationModelSelection.provider")   // node document
+//   Settings.value("textGenerationModelSelection.provider")   // MC document
 //   Settings.write("enableAssistantStreaming", true)            // null removes
 //   Settings.device.appearance, Settings.writeDevice("appearance", "dark")
 //
@@ -40,16 +40,16 @@ class ShellBridge;
 // DEFAULT_CLIENT_SETTINGS and DEFAULT_SERVER_SETTINGS). Failures are toasted.
 class SettingsController : public QObject, public NativeController {
   Q_OBJECT
-  // The node's document has been read since the shell connected.
+  // The MC's document has been read since the shell connected.
   Q_PROPERTY(bool ready READ ready NOTIFY settingsChanged)
   Q_PROPERTY(QVariantMap document READ documentVariant NOTIFY settingsChanged)
   Q_PROPERTY(int version READ version NOTIFY settingsChanged)
   // Why the last read or change failed; empty once one succeeds.
   Q_PROPERTY(QString error READ error NOTIFY settingsChanged)
-  // The node's ServerConfig (packages/contracts server.ts), as `config` frames
+  // The MC's ServerConfig (packages/contracts server.ts), as `config` frames
   // keep it.
   Q_PROPERTY(QVariantMap config READ configVariant NOTIFY configChanged)
-  // EnvironmentTheme[] the node publishes (`config.themes`).
+  // EnvironmentTheme[] the MC publishes (`config.themes`).
   Q_PROPERTY(QVariantList themes READ themesVariant NOTIFY themesChanged)
   Q_PROPERTY(QVariantMap device READ deviceVariant NOTIFY deviceChanged)
   // Why this device's preferences could not be read or saved; empty otherwise.
@@ -60,9 +60,9 @@ public:
   using Edit = std::function<QJsonObject(const QJsonObject& settings)>;
   using Done = std::function<void(const std::optional<QString>& error)>;
 
-  SettingsController(ShellBridge*, NodeClient* client, QObject* parent = nullptr);
+  SettingsController(ShellBridge*, McClient* client, QObject* parent = nullptr);
 
-  // Subscribes to the node's config and reads its settings.
+  // Subscribes to the MC's config and reads its settings.
   void activate() override;
   bool handle(const QString&, const QVariant&) override { return false; }
 
@@ -73,10 +73,10 @@ public:
   QJsonObject config() const { return m_config; }
   QJsonArray themes() const { return m_themes; }
 
-  // Applies `edit` to the node's document and saves it; `done` says how it
+  // Applies `edit` to the MC's document and saves it; `done` says how it
   // went. A stale save re-reads and applies `edit` again, a few times.
   void change(Edit edit, Done done = {});
-  // A value in the node's document by dotted path; undefined when absent.
+  // A value in the MC's document by dotted path; undefined when absent.
   Q_INVOKABLE QVariant value(const QString& path) const;
   // Sets one value by dotted path; null removes it.
   Q_INVOKABLE void write(const QString& path, const QVariant& value);
@@ -104,11 +104,11 @@ public:
   Q_INVOKABLE QVariant setting(const QString& key) const;
   Q_INVOKABLE QVariant defaultOf(const QString& key) const;
   Q_INVOKABLE bool isDefault(const QString& key) const;
-  // Whether a row is kept on this device rather than by the node.
+  // Whether a row is kept on this device rather than by the MC.
   Q_INVOKABLE bool onDevice(const QString& key) const;
   Q_INVOKABLE void set(const QString& key, const QVariant& value);
   Q_INVOKABLE void reset(const QString& key);
-  // Resets rows together: one save of this device's and one of the node's
+  // Resets rows together: one save of this device's and one of the MC's
   // (restoring defaults).
   Q_INVOKABLE void resetAll(const QStringList& keys);
 
@@ -118,7 +118,7 @@ public:
 signals:
   void settingsChanged();
   void configChanged();
-  // The node pushed changed keybindings (`config.keybindings`), not the
+  // The MC pushed changed keybindings (`config.keybindings`), not the
   // snapshot a subscription starts with.
   void keybindingsPushed();
   void themesChanged();
@@ -136,7 +136,7 @@ private:
   QVariantList themesVariant() const { return m_themes.toVariantList(); }
   QVariantMap deviceVariant() const { return m_device.toVariantMap(); }
 
-  NodeClient* m_client;
+  McClient* m_client;
   bool m_active = false;
   bool m_ready = false;
   QJsonObject m_settings;

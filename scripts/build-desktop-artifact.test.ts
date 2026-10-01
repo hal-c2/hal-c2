@@ -89,7 +89,7 @@ import {
   WSL_RUNTIME_ARCHIVE_HASH_NAME,
   WSL_RUNTIME_ARCHIVE_NAME,
   WSL_RUNTIME_EXTRA_RESOURCES,
-  ELIXIR_NODE_EXTRA_RESOURCE,
+  ELIXIR_MC_EXTRA_RESOURCE,
   WslRuntimeArchiveMissingError,
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
@@ -544,7 +544,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     for (const resource of [
       ...WSL_RUNTIME_EXTRA_RESOURCES,
       ...LINUX_BROWSER_SECRET_EXTRA_RESOURCES,
-      ELIXIR_NODE_EXTRA_RESOURCE,
+      ELIXIR_MC_EXTRA_RESOURCE,
     ]) {
       assert.include(
         DESKTOP_FILE_EXCLUSIONS,
@@ -568,8 +568,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/windows-server/**/*",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
-      "!apps/desktop/prod-resources/elixir-node",
-      "!apps/desktop/prod-resources/elixir-node/**/*",
+      "!apps/desktop/prod-resources/elixir-mc",
+      "!apps/desktop/prod-resources/elixir-mc/**/*",
       "!apps/desktop/gnome-extension",
       "!apps/desktop/gnome-extension/**/*",
     ]);
@@ -651,7 +651,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...DESKTOP_EXTRA_RESOURCES,
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
-      // An Elixir node release is listed only when one was staged.
+      // An MC release is listed only when one was staged.
       const macWithNode = yield* createBuildConfig(
         "mac",
         "dmg",
@@ -666,7 +666,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
       assert.deepStrictEqual(macWithNode.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
-        ELIXIR_NODE_EXTRA_RESOURCE,
+        ELIXIR_MC_EXTRA_RESOURCE,
       ]);
       assert.deepStrictEqual(win.nsis, { differentialPackage: true });
       // The Claude SDK platform packages and .bin shims never ship.
@@ -2201,7 +2201,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
         wslRuntime: Option.none(),
-        elixirNode: Option.none(),
+        elixirMc: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -2242,7 +2242,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
             wslRuntime: Option.none(),
-            elixirNode: Option.none(),
+            elixirMc: Option.none(),
           }),
         );
 
@@ -2267,7 +2267,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
         wslRuntime: Option.none(),
-        elixirNode: Option.none(),
+        elixirMc: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(

@@ -45,7 +45,7 @@ export const DesktopConfig = Config.all({
   devServerUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option),
   appUserModelIdOverride: trimmedString("HAL_C2_DESKTOP_APP_USER_MODEL_ID"),
   devRemoteHalC2ServerEntryPath: trimmedString("HAL_C2_DEV_REMOTE_HAL_C2_SERVER_ENTRY_PATH"),
-  elixirNodeRelease: trimmedString("HAL_C2_DESKTOP_ELIXIR_RELEASE"),
+  mcRelease: trimmedString("HAL_C2_DESKTOP_ELIXIR_RELEASE"),
   configuredBackendPort: Config.Port("HAL_C2_PORT").pipe(Config.option),
   commitHashOverride: trimmedString("HAL_C2_COMMIT_HASH"),
   desktopLanHostOverride: trimmedString("HAL_C2_DESKTOP_LAN_HOST"),

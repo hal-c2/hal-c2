@@ -531,7 +531,7 @@ defmodule HalC2.Orchestration.Delegation do
 
     case Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance)) do
       nil ->
-        {:error, "provider_unavailable", "Provider #{instance} is not available on this node."}
+        {:error, "provider_unavailable", "Provider #{instance} is not available on this MC."}
 
       provider ->
         model =

@@ -43,38 +43,38 @@ Feature: Searching threads
     Then "Add dark mode" is found
     And threads are not found only because their project matches
 
-  @node
+  @mc
   Scenario: Searching what was said in threads
     Given the agent in "Add dark mode" said "the palette now reads prefers-color-scheme"
     When a client searches threads for "prefers-color-scheme"
     Then "Add dark mode" is returned with the matching words in a short excerpt
 
-  @node
+  @mc
   Scenario: A thread is returned once, preferring what the user wrote
     Given the user and the agent both wrote "rate limit" in "Fix OAuth loop"
     When a client searches threads for "rate limit"
     Then "Fix OAuth loop" is returned once
     And its excerpt comes from the user's message
 
-  @node
+  @mc
   Scenario: Archived and deleted threads are not searched
     Given "Add dark mode" is archived
     When a client searches threads for "dark"
     Then "Add dark mode" is not returned
 
-  @node
+  @mc
   Scenario: Messages still being written are not searched
     Given the agent is still writing "flaky test" in "Fix OAuth loop"
     When a client searches threads for "flaky test"
     Then "Fix OAuth loop" is not returned until the message is finished
 
-  @node
+  @mc
   Scenario: Threads from before search existed are searchable
     Given the environment has threads written before it kept a search index
     When the environment starts
     Then the old threads are indexed once and can be searched
 
-  @node
+  @mc
   Scenario: Search returns at most fifty threads by default
     Given 80 threads mention "refactor"
     When a client searches threads for "refactor"

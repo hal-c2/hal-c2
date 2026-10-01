@@ -214,14 +214,14 @@ defmodule HalC2.Orchestration.Rollback do
     Enum.reject([provider_thread | stale ++ turns ++ runs], &is_nil/1)
   end
 
-  # The thread's own worktree, which no other thread on this node points at.
+  # The thread's own worktree, which no other thread on this MC points at.
   defp isolated?(thread, scope) do
     worktree = thread["worktreePath"]
 
     worktree != nil and real(scope["cwd"]) == real(worktree) and
       not Enum.any?(HalC2.Shell.rows(), fn
-        {{node, id}, {"thread", row}} ->
-          node == node() and id != thread["id"] and row["deletedAt"] == nil and
+        {{mc, id}, {"thread", row}} ->
+          mc == node() and id != thread["id"] and row["deletedAt"] == nil and
             row["worktreePath"] != nil and real(row["worktreePath"]) == real(worktree)
 
         _ ->

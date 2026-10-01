@@ -1,17 +1,17 @@
 defmodule HalC2.Cluster do
   @moduledoc """
   One person's machines as one cluster: Erlang distribution over mutual TLS 1.3, with no
-  node names, cookies or port mapper for the user to know about.
+  MC names, cookies or port mapper for the user to know about.
 
-  Each node has its own self-signed certificate (`<data>/cluster/node.pem`), made on
-  first start and never changed, for `<environment id>.hal-c2`; the node is
+  Each MC has its own self-signed certificate (`<data>/cluster/mc.pem`), made on
+  first start and never changed, for `<environment id>.hal-c2`; the MC is
   `hal_c2@<environment id>.hal-c2`. A handshake succeeds only when the peer's
   certificate is a member's (`verify_peer/3` checks its fingerprint against the pins
   taken from `members.json`), so the cookie is a constant and no CA is needed, and a
   change of membership applies from the next handshake.
 
   The VM boots with `-proto_dist inet_tls -ssl_dist_optfile PATH -setcookie hal_c2`
-  (rel/env.sh.eex, `mise run node`) but unnamed. This process writes the TLS options to
+  (rel/env.sh.eex, `mise run mc`) but unnamed. This process writes the TLS options to
   that path and starts distribution before anything reads `node()`, on the cluster
   port (4370) or any free one when that is taken. `HalC2.Cluster.Epmd` stands in for
   EPMD and `HalC2.Cluster.Discovery` finds where members are.
@@ -43,22 +43,22 @@ defmodule HalC2.Cluster do
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  @doc "The port a node listens on for members when it is free."
+  @doc "The port an MC listens on for members when it is free."
   def dist_port, do: Application.get_env(:hal_c2, :cluster_port, @dist_port)
 
   @spec dir(String.t()) :: String.t()
   def dir(data_dir), do: Path.join(data_dir, "cluster")
 
-  @doc "The host a member's node is named after; `HalC2.Cluster.Epmd` maps it to an address."
+  @doc "The host a member's MC is named after; `HalC2.Cluster.Epmd` maps it to an address."
   def host(id), do: "#{id}.#{@domain}"
 
-  @doc "The node name of the member with environment id `id`."
-  def node_name(id), do: :"hal_c2@#{host(id)}"
+  @doc "The MC name of the member with environment id `id`."
+  def mc_name(id), do: :"hal_c2@#{host(id)}"
 
   @doc """
-  This machine and the other members: `%{"clustered" => true, "id", "node", "addresses",
+  This machine and the other members: `%{"clustered" => true, "id", "mc", "addresses",
   "members" => [%{"id", "label", "addresses", "connected"}]}`, or `%{"clustered" =>
-  false, "reason"}` when the node was not started for clustering.
+  false, "reason"}` when the MC was not started for clustering.
   """
   def status, do: GenServer.call(__MODULE__, :status)
 
@@ -67,7 +67,7 @@ defmodule HalC2.Cluster do
 
   @doc """
   Admits the machine described by `entry` (`id`, `fingerprint`, `label`, `addresses`), as
-  asked through `POST /api/cluster/members`. Returns this node's id, cluster port and
+  asked through `POST /api/cluster/members`. Returns this MC's id, cluster port and
   member list for the new machine.
   """
   def admit(entry), do: GenServer.call(__MODULE__, {:admit, entry})
@@ -90,7 +90,7 @@ defmodule HalC2.Cluster do
       address = "#{URI.parse(base).host}:#{port}"
       :ok = GenServer.call(__MODULE__, {:joined, inviter, members, address})
       HalC2.Cluster.Discovery.poll()
-      await_nodeup(node_name(inviter))
+      await_nodeup(mc_name(inviter))
       :net_kernel.monitor_nodes(false)
       flush_node_events()
       {:ok, status()}
@@ -103,8 +103,8 @@ defmodule HalC2.Cluster do
   @doc """
   A one-time pairing link that grants `access:write`, for another machine to `join/1`
   with within five minutes: `%{"link", "expiresAt", "localOnly"}`. It points at
-  `"baseUrl"` when given, else with `"tailscale" => true` at this node's Tailscale Serve
-  name (published if need be), else at the address the node listens on. `localOnly`
+  `"baseUrl"` when given, else with `"tailscale" => true` at this MC's Tailscale Serve
+  name (published if need be), else at the address the MC listens on. `localOnly`
   says no other machine can reach the link.
   """
   def invite(input \\ %{}) do
@@ -134,7 +134,7 @@ defmodule HalC2.Cluster do
     end
   end
 
-  # A node listening on every interface is reached at the address it reports to members.
+  # An MC listening on every interface is reached at the address it reports to members.
   defp invite_base(_input) do
     wildcard? = Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"]
 
@@ -150,7 +150,7 @@ defmodule HalC2.Cluster do
 
   @doc "What went wrong with a cluster request, in words for the user."
   def describe(:not_booted_for_clustering),
-    do: "The node was not started for clustering; start it as the app or service does."
+    do: "The MC was not started for clustering; start it as the app or service does."
 
   def describe(:link_lacks_access),
     do: "The pairing link cannot add machines to a cluster; make a cluster invite instead."
@@ -318,7 +318,7 @@ defmodule HalC2.Cluster do
           "id" => id,
           "label" => entry["label"] || id,
           "addresses" => entry["addresses"] || [],
-          "connected" => node_name(id) in connected
+          "connected" => mc_name(id) in connected
         }
       end
 
@@ -327,7 +327,7 @@ defmodule HalC2.Cluster do
        "clustered" => true,
        "id" => state.id,
        "label" => state.members[state.id]["label"],
-       "node" => Atom.to_string(node()),
+       "mc" => Atom.to_string(node()),
        "addresses" => state.members[state.id]["addresses"],
        "members" => Enum.sort_by(members, &{&1["label"], &1["id"]})
      }, state}
@@ -425,13 +425,13 @@ defmodule HalC2.Cluster do
   def handle_cast(_request, state), do: {:noreply, state}
 
   @impl true
-  def handle_info({:nodeup, node}, state) do
+  def handle_info({:nodeup, mc}, state) do
     state = refresh_own(state) |> commit()
-    GenServer.cast({__MODULE__, node}, {:merge, state.members})
+    GenServer.cast({__MODULE__, mc}, {:merge, state.members})
     {:noreply, state}
   end
 
-  def handle_info({:nodedown, _node}, state), do: {:noreply, state}
+  def handle_info({:nodedown, _mc}, state), do: {:noreply, state}
 
   # --- members -----------------------------------------------------------------
 
@@ -442,7 +442,7 @@ defmodule HalC2.Cluster do
       state
     else
       state = commit(%{state | members: merged})
-      for node <- Node.list(), do: GenServer.cast({__MODULE__, node}, {:merge, merged})
+      for mc <- Node.list(), do: GenServer.cast({__MODULE__, mc}, {:merge, merged})
       state
     end
   end
@@ -456,13 +456,13 @@ defmodule HalC2.Cluster do
     :ets.insert(@table, pins)
     for pin <- stale, do: :ets.delete_object(@table, pin)
 
-    for node <- Node.list(), not Map.has_key?(members, id_of(node)), do: Node.disconnect(node)
+    for mc <- Node.list(), not Map.has_key?(members, id_of(mc)), do: Node.disconnect(mc)
 
     state
   end
 
-  defp id_of(node) do
-    case node |> Atom.to_string() |> String.split("@") do
+  defp id_of(mc) do
+    case mc |> Atom.to_string() |> String.split("@") do
       ["hal_c2", host] -> String.replace_suffix(host, ".#{@domain}", "")
       _ -> nil
     end
@@ -494,7 +494,7 @@ defmodule HalC2.Cluster do
     %{state | members: Map.put(state.members, state.id, own)}
   end
 
-  # Where members can reach this node: the IPv4 address of every interface that is up,
+  # Where members can reach this MC: the IPv4 address of every interface that is up,
   # loopback last, or only the one it listens on.
   defp own_addresses do
     port = Epmd.listen_port()
@@ -547,11 +547,11 @@ defmodule HalC2.Cluster do
     host = host(id)
 
     cert =
-      with {:ok, pem} <- File.read(Path.join(dir, "node.pem")),
+      with {:ok, pem} <- File.read(Path.join(dir, "mc.pem")),
            {:ok, cert} <- X509.Certificate.from_pem(pem),
            true <- X509.Certificate.subject(cert, "CN") == [host],
            true <- X509.Certificate.issuer(cert) == X509.Certificate.subject(cert),
-           true <- File.exists?(Path.join(dir, "node.key")) do
+           true <- File.exists?(Path.join(dir, "mc.key")) do
         cert
       else
         _ -> create_identity(dir, host)
@@ -571,13 +571,13 @@ defmodule HalC2.Cluster do
         extensions: [subject_alt_name: X509.Certificate.Extension.subject_alt_name([host])]
       )
 
-    write(dir, "node.key", X509.PrivateKey.to_pem(key), 0o600)
-    write(dir, "node.pem", X509.Certificate.to_pem(cert), 0o644)
+    write(dir, "mc.key", X509.PrivateKey.to_pem(key), 0o600)
+    write(dir, "mc.pem", X509.Certificate.to_pem(cert), 0o644)
     cert
   end
 
   defp start_distribution(dir, id) do
-    name = node_name(id)
+    name = mc_name(id)
 
     cond do
       # This process restarted; distribution outlives it.
@@ -610,7 +610,7 @@ defmodule HalC2.Cluster do
     end
   end
 
-  # The boot flags arrive in ELIXIR_ERL_OPTIONS, which programs the node starts (an
+  # The boot flags arrive in ELIXIR_ERL_OPTIONS, which programs the MC starts (an
   # agent's `mix test`) would inherit and boot with.
   defp forget_boot_flags do
     with options when is_binary(options) <- System.get_env("ELIXIR_ERL_OPTIONS") do
@@ -639,13 +639,13 @@ defmodule HalC2.Cluster do
   end
 
   # file:consult/1 format: plain terms only, no function calls (an external fun is a term).
-  # The CA file is the node's own certificate: members' certificates are pinned instead.
+  # The CA file is the MC's own certificate: members' certificates are pinned instead.
   defp ssl_dist_conf(dir) do
     opts =
       [
-        certfile: to_charlist(Path.join(dir, "node.pem")),
-        keyfile: to_charlist(Path.join(dir, "node.key")),
-        cacertfile: to_charlist(Path.join(dir, "node.pem")),
+        certfile: to_charlist(Path.join(dir, "mc.pem")),
+        keyfile: to_charlist(Path.join(dir, "mc.key")),
+        cacertfile: to_charlist(Path.join(dir, "mc.pem")),
         verify: :verify_peer,
         verify_fun: {&__MODULE__.verify_peer/3, []},
         versions: [:"tlsv1.3"]
@@ -729,18 +729,18 @@ defmodule HalC2.Cluster do
     end
   end
 
-  defp await_nodeup(node) do
-    node in Node.list() or
+  defp await_nodeup(mc) do
+    mc in Node.list() or
       receive do
-        {:nodeup, ^node} -> true
+        {:nodeup, ^mc} -> true
       after
-        @join_timeout -> node in Node.list()
+        @join_timeout -> mc in Node.list()
       end
   end
 
   defp flush_node_events do
     receive do
-      {event, _node} when event in [:nodeup, :nodedown] -> flush_node_events()
+      {event, _mc} when event in [:nodeup, :nodedown] -> flush_node_events()
     after
       0 -> :ok
     end

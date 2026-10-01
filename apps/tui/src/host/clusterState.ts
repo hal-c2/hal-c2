@@ -6,7 +6,7 @@ import type { TuiMode } from "./layoutState.ts";
 import type { PaletteCommand } from "./paletteState.ts";
 
 /**
- * Published under `cluster`: this machine's cluster as the node reports it
+ * Published under `cluster`: this machine's cluster as the MC reports it
  * (null until first read), the last invite, and whether the one-line join
  * prompt is open (mode "join").
  */
@@ -27,14 +27,14 @@ export const NO_CLUSTER_STATE: TuiClusterState = {
 
 /** What the loopback hint tells the user to do instead. */
 export const LOCAL_ONLY_HINT =
-  "Only this machine can open it: the node listens on loopback. Invite over Tailscale instead.";
+  "Only this machine can open it: the MC listens on loopback. Invite over Tailscale instead.";
 
 const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 /**
  * The cluster from the terminal: status in settings, and invite, join and
- * remove from the palette. The node does the work (`cluster.*`); this reads
+ * remove from the palette. The MC does the work (`cluster.*`); this reads
  * the status again when settings or the palette open and after each change.
  */
 export function createClusterController(ctx: {

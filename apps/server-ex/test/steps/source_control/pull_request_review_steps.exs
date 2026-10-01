@@ -4,13 +4,13 @@ defmodule HalC2.Steps.SourceControl.PullRequestReview do
   `gh` (`HalC2.Steps.SourceControl.Shared.open_pull_request/3` for the pull request
   itself); `context.review` holds its conversation (`pr view` and the review-thread
   read) and `context.viewed` the files the user marked viewed, answered afresh on
-  each change. A write is checked as the call the node made to GitHub.
+  each change. A write is checked as the call the MC made to GitHub.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @me "monalisa"
   @base "1111111111111111111111111111111111111111"
@@ -575,7 +575,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestReview do
 
   defp comment(context, body), do: Enum.find(context.activity["comments"], &(&1["body"] == body))
 
-  # The variables of the one GraphQL mutation named `name` the node sent.
+  # The variables of the one GraphQL mutation named `name` the MC sent.
   defp mutation(context, name) do
     assert [call] =
              context

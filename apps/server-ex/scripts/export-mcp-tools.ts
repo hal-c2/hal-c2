@@ -1,5 +1,5 @@
 // Writes the Node server's MCP tool definitions to priv/mcp_tools.json, so Elixir
-// nodes advertise the same tools with the same descriptions and input schemas.
+// MCs advertise the same tools with the same descriptions and input schemas.
 // Run from the repo root: node apps/server-ex/scripts/export-mcp-tools.ts
 import * as NodeFs from "node:fs";
 import * as NodeModule from "node:module";
@@ -49,7 +49,7 @@ NodeFs.mkdirSync(priv, { recursive: true });
 NodeFs.writeFileSync(NodePath.join(priv, "mcp_tools.json"), JSON.stringify(tools, null, 2) + "\n");
 
 // What agents are told about the tools. Node's ACP terminal fallback names a Node
-// entrypoint nodes do not have, so that paragraph stays out.
+// entrypoint MCs do not have, so that paragraph stays out.
 const { HAL_C2_ORCHESTRATION_INSTRUCTIONS } =
   await import("../../server/src/provider/HalC2OrchestrationInstructions.ts");
 const instructions = (HAL_C2_ORCHESTRATION_INSTRUCTIONS as string)

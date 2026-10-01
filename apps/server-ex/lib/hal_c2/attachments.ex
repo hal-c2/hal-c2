@@ -3,14 +3,14 @@ defmodule HalC2.Attachments do
   Chat attachments and file URLs (`attachments.createUploadUrl`, `attachments.delete`,
   `assets.createUrl`), as the Node server serves them.
 
-  A client asks the thread's node for a signed upload URL, sends the bytes to it,
-  and names the upload in its message; the message's node then claims it into the
+  A client asks the thread's MC for a signed upload URL, sends the bytes to it,
+  and names the upload in its message; the message's MC then claims it into the
   thread (`claim/2`), and providers read the file from `path/1`. Asset URLs are
   signed the same way and serve an attachment or a project file.
 
-  A client reaches every node through one: signed URLs name the node that issued
-  them, the node that receives the request forwards it there (`HalC2.Web.Router`),
-  and only the issuing node checks the signature, with its own key.
+  A client reaches every MC through one: signed URLs name the MC that issued
+  them, the MC that receives the request forwards it there (`HalC2.Web.Router`),
+  and only the issuing MC checks the signature, with its own key.
   """
 
   @upload_ttl_ms 10 * 60_000
@@ -73,7 +73,7 @@ defmodule HalC2.Attachments do
     end
   end
 
-  @doc "Stores an upload's bytes on this node, if its signed token is valid."
+  @doc "Stores an upload's bytes on this MC, if its signed token is valid."
   def store(token, body) do
     with {:ok, %{"kind" => "attachment-upload"} = claims} <- verify(token),
          true <-
@@ -188,7 +188,7 @@ defmodule HalC2.Attachments do
     end
   end
 
-  @doc "The file of an attachment on this node, or `nil`."
+  @doc "The file of an attachment on this MC, or `nil`."
   def path(%{"id" => id}),
     do: if(safe_id?(id), do: List.first(Path.wildcard(Path.join(dir(), id <> ".*"))))
 
@@ -328,7 +328,7 @@ defmodule HalC2.Attachments do
 
   defp saved_favicon(cwd) do
     Enum.find_value(HalC2.Shell.rows(), fn
-      {{_node, _id}, {"project", %{"workspaceRoot" => ^cwd, "faviconPath" => path}}}
+      {{_mc, _id}, {"project", %{"workspaceRoot" => ^cwd, "faviconPath" => path}}}
       when is_binary(path) ->
         path
 
@@ -348,7 +348,7 @@ defmodule HalC2.Attachments do
   end
 
   @doc """
-  Serves a signed asset on this node for a request with `headers` (`range` and
+  Serves a signed asset on this MC for a request with `headers` (`range` and
   `if-range`, lower-case): `{:ok, status, headers, body}` or `{:error, status, message}`.
   A single byte range is answered with 206, so a player seeks a long video without
   downloading it.
@@ -464,7 +464,7 @@ defmodule HalC2.Attachments do
   defp resolve(%{"_tag" => "draft-workspace-file", "cwd" => cwd, "path" => relative} = r),
     do: project_file(r, cwd, relative)
 
-  # A media file may be anywhere the node can read, but only a media type.
+  # A media file may be anywhere the MC can read, but only a media type.
   defp resolve(%{"_tag" => "media-file", "threadId" => thread_id, "path" => path} = resource) do
     full =
       if Path.type(path) == :absolute,
@@ -488,7 +488,7 @@ defmodule HalC2.Attachments do
       error(
         "AssetWorkspaceResolutionError",
         resource,
-        "#{tag} files are not served by this node yet."
+        "#{tag} files are not served by this MC yet."
       )
 
   defp project_file(resource, nil, _relative),
@@ -536,13 +536,13 @@ defmodule HalC2.Attachments do
 
   # --- tokens ----------------------------------------------------------------------
 
-  @doc "The node a signed token was issued by (unverified: only for routing)."
+  @doc "The MC a signed token was issued by (unverified: only for routing)."
   def issuer(token) do
     with [payload, _signature] <- String.split(token, ".", parts: 2),
          {:ok, json} <- Base.url_decode64(payload, padding: false),
-         {:ok, %{"node" => name}} <- JSON.decode(json),
-         node when node != nil <- Enum.find(known_nodes(), &(Atom.to_string(&1) == name)) do
-      {:ok, node}
+         {:ok, %{"mc" => name}} <- JSON.decode(json),
+         mc when mc != nil <- Enum.find(known_mcs(), &(Atom.to_string(&1) == name)) do
+      {:ok, mc}
     else
       _ -> :error
     end
@@ -550,8 +550,8 @@ defmodule HalC2.Attachments do
 
   # Members that went offline stay known to the shell, so their links fail as
   # unavailable rather than invalid.
-  defp known_nodes do
-    [node() | Node.list()] ++ for {node, _} <- HalC2.Shell.environments(), do: node
+  defp known_mcs do
+    [node() | Node.list()] ++ for {mc, _} <- HalC2.Shell.environments(), do: mc
   rescue
     ArgumentError -> [node() | Node.list()]
   end
@@ -559,7 +559,7 @@ defmodule HalC2.Attachments do
   defp sign(claims) do
     payload =
       claims
-      |> Map.merge(%{"v" => 1, "node" => Atom.to_string(node())})
+      |> Map.merge(%{"v" => 1, "mc" => Atom.to_string(node())})
       |> JSON.encode!()
       |> Base.url_encode64(padding: false)
 
@@ -581,7 +581,7 @@ defmodule HalC2.Attachments do
   defp mac(payload),
     do: :crypto.mac(:hmac, :sha256, secret(), payload) |> Base.url_encode64(padding: false)
 
-  # One random key per node, kept owner-only in its home.
+  # One random key per MC, kept owner-only in its home.
   defp secret do
     case :persistent_term.get({__MODULE__, :secret}, nil) do
       nil ->

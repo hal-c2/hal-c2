@@ -252,7 +252,7 @@ defmodule HalC2.UsageLimitSourcesTest do
     refute File.exists?(path)
   end
 
-  test "a key written in plain text moves out when the node starts", %{url: url, dir: dir} do
+  test "a key written in plain text moves out when the MC starts", %{url: url, dir: dir} do
     stop_supervised!(UsageLimitSources)
     stop_supervised!(HalC2.Settings)
 

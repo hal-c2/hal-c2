@@ -6,13 +6,13 @@ HAL-C2 is a minimal GUI for coding agents. It is a fork of [T3 Code](https://git
 
 Upstream's Node server (`apps/server`), React web app (`apps/web`), Electron desktop (`apps/desktop`), and React Native app (`apps/mobile`) are **legacy**. They stay building and working only until the surfaces below can replace them, and then they are deleted. Do not add features to them; fix them only when a change would otherwise break them. The fork's product is:
 
-- **The node**: an Elixir/OTP server in `apps/server-ex`. Each machine runs one node; nodes cluster and share one sidebar. Clients pair with it like any other environment.
+- **The MC** (`hal-c2-mc`, mission control): an Elixir/OTP server in `apps/server-ex`. Each machine runs one MC; MCs cluster and share one sidebar. Clients pair with it like any other environment.
 - **Qt/QML desktop** in `apps/desktop-qt`.
 - **QML mobile**, the phone and tablet client, built from the same QML as the desktop.
 - **QML TUI** in `apps/tui`, rendered by opentui-qml.
 - **No web client.** The hosted web app and the locally served one go away with the Node server.
-- **Threads move between machines**, including the agent's own session, so work started on one node continues on another. Specified under `features/threads/`.
-- **Gherkin as the ledger.** The legacy surfaces can only be deleted once every behaviour they carry passes as a scenario on the node, QML and TUI. Every behaviour HAL-C2 has, will have, or dropped is a scenario under `features/`. Read `features/README.md` before touching behaviour: one directory per domain, surfaces are tags (`@node`, `@desktop`, `@mobile`, `@tui`, `@shared`), status is `@backlog`, a per-surface `@backlog-<surface>`, or `@dropped` (no tag means it passes on all its surfaces today), and `@plugin-<id>` marks plugin behaviour. Every file names its sources in a `# Sources:` comment. Run node scenarios with `mise exec -- mix features <globs relative to features/>` in `apps/server-ex`, never without globs.
+- **Threads move between machines**, including the agent's own session, so work started on one MC continues on another. Specified under `features/threads/`.
+- **Gherkin as the ledger.** The legacy surfaces can only be deleted once every behaviour they carry passes as a scenario on the MC, QML and TUI. Every behaviour HAL-C2 has, will have, or dropped is a scenario under `features/`. Read `features/README.md` before touching behaviour: one directory per domain, surfaces are tags (`@mc`, `@desktop`, `@mobile`, `@tui`, `@shared`), status is `@backlog`, a per-surface `@backlog-<surface>`, or `@dropped` (no tag means it passes on all its surfaces today), and `@plugin-<id>` marks plugin behaviour. Every file names its sources in a `# Sources:` comment. Run MC scenarios with `mise exec -- mix features <globs relative to features/>` in `apps/server-ex`, never without globs.
 
 ## What we keep from upstream
 
@@ -20,8 +20,8 @@ The values are upstream's, and we owe T3 Code and its maintainers the product th
 
 - **Open.** The code and the reasoning are public.
 - **Performance.** Audit for regressions: too much data over websockets, CSS animations spiking the GPU, lists that are hard to render. Every change considers its performance cost.
-- **Remote ready.** The websocket layer (the `hal-c2` CLI and the node) is what makes LAN, Tailscale, and HAL-C2 Connect (a self-hosted relay, also in this repo) work. New features must work over all of them.
-- **Multi-surface.** Desktop (Qt), mobile (QML), and the TUI, all against the node. Features reach every surface where reasonable. The legacy web, Electron and React Native clients are not surfaces new work targets.
+- **Remote ready.** The websocket layer (the `hal-c2` CLI and the MC) is what makes LAN, Tailscale, and HAL-C2 Connect (a self-hosted relay, also in this repo) work. New features must work over all of them.
+- **Multi-surface.** Desktop (Qt), mobile (QML), and the TUI, all against the MC. Features reach every surface where reasonable. The legacy web, Electron and React Native clients are not surfaces new work targets.
 - **Small systems.** Do not preserve complexity because it exists, and do not add machinery because it looks impressive. Understand the real constraint, then build the smallest model that makes the correct behavior unsurprising. Measure twice, cut once, and yagni. Honor the developer's intent minimally and realistically.
 
 The rest of this document is good defaults, not hard rules. The developer's preferences override anything here.
@@ -36,17 +36,17 @@ HAL-C2 is often developed from inside HAL-C2 (or upstream T3 Code), controlled r
 - **agent** means the coding agent a user runs inside HAL-C2. Depending on context, that may also include you.
 - **provider** means the agent runtime or harness HAL-C2 talks to, such as Codex, Claude, Cursor, or OpenCode.
 - **client** means the desktop, mobile, or terminal UI (and, until deleted, the legacy web app).
-- **node** means the Elixir server in `apps/server-ex`.
-- **environment** means one running HAL-C2 server (Node or the node) and the machine, filesystem, provider credentials, and state it owns.
+- **MC** means hal-c2-mc, the Elixir server in `apps/server-ex`.
+- **environment** means one running HAL-C2 server (the Node server or the MC) and the machine, filesystem, provider credentials, and state it owns.
 - **project** means an environment-local workspace record rooted at a directory.
 - **thread** means the durable conversation and work history for a project.
 - **turn** means one user-to-agent cycle, including follow-up work such as checkpointing.
-- **HAL-C2 home** means where an environment keeps its files: the XDG config, data, state, and cache directories named `hal-c2` (`~/.local/share/hal-c2` and siblings), or all four under one root such as `$HAL_C2_HOME`. The Elixir node's files sit one `elixir` level down. See `docs/internals/storage.md`.
+- **HAL-C2 home** means where an environment keeps its files: the XDG config, data, state, and cache directories named `hal-c2` (`~/.local/share/hal-c2` and siblings), or all four under one root such as `$HAL_C2_HOME`. The MC's files sit one `elixir` level down. See `docs/internals/storage.md`.
 
 ## The three ways to hurt yourself
 
 1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or `kill` a PID you found by matching a name, path, or worktree string. Your own agent process has this worktree's path in its argv, and this machine runs several other dev servers at once. Kill only a PID you captured at spawn, or the owner of your port from `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is your worktree.
-2. **Writing to the live install.** `~/.config/hal-c2`, `~/.local/share/hal-c2`, `~/.local/state/hal-c2`, and `~/.cache/hal-c2` (and their `hal-c2-dev` siblings) are the developer's real HAL-C2 install, in use while you work. `~/.t3` and `~/.hal-c2` are just as off limits: they hold the real data HAL-C2 migrates from, and T3 Code may still run against `~/.t3`. Reading and copying from any of them are fine, and a good way to get real test data (see Test data). Never start a server or node against them, never open them read-write, never clean them up.
+2. **Writing to the live install.** `~/.config/hal-c2`, `~/.local/share/hal-c2`, `~/.local/state/hal-c2`, and `~/.cache/hal-c2` (and their `hal-c2-dev` siblings) are the developer's real HAL-C2 install, in use while you work. `~/.t3` and `~/.hal-c2` are just as off limits: they hold the real data HAL-C2 migrates from, and T3 Code may still run against `~/.t3`. Reading and copying from any of them are fine, and a good way to get real test data (see Test data). Never start a server or MC against them, never open them read-write, never clean them up.
 3. **Baking in origins.** Never set `VITE_HTTP_URL` or `VITE_WS_URL` for dev. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`. Setting them bakes localhost into the bundle and silently breaks every remote browser.
 
 ## Hit every surface
@@ -55,9 +55,9 @@ The most common defect in this repo is a change that works on the path you teste
 
 - **Entry points.** A behavior reachable from the chat view is usually also reachable from Settings, the command palette, and a keybinding. Fixing one is not fixing the feature.
 - **Clients.** Qt desktop, QML mobile, and the TUI. QML shared between them is `@shared` in `features/`. The legacy clients (web, Electron, React Native) only need to keep working; `packages/client-runtime` is theirs.
-- **Servers.** New behaviour lives in the node. Behaviour that still only exists in `apps/server` needs a scenario under `features/` tagged `@backlog` so the ledger knows what the node must gain before the Node server is deleted.
+- **Servers.** New behaviour lives in the MC. Behaviour that still only exists in `apps/server` needs a scenario under `features/` tagged `@backlog` so the ledger knows what the MC must gain before the Node server is deleted.
 - **Providers.** Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each have an adapter. Provider-shaped features need a decision per adapter, even if the decision is "not supported here".
-- **Contracts.** Anything crossing the wire is typed in `packages/contracts`; the node and the QML clients follow the same RPC names (see `features/parity/`).
+- **Contracts.** Anything crossing the wire is typed in `packages/contracts`; the MC and the QML clients follow the same RPC names (see `features/parity/`).
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
 - **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything.
@@ -69,7 +69,7 @@ The most common defect in this repo is a change that works on the path you teste
 - Ports derive from the worktree path and are stable across restarts, but read the real ones from the `[dev-runner]` line since occupied ports shift.
 - Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
 - To reuse web dev auth across worktrees, configure one fixed `HAL_C2_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `hal-c2.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
-- The node runs from `apps/server-ex` through mise: `mise exec -- mix hal_c2.server`. From any checkout or worktree it keeps dev state in the `elixir` level of the XDG `hal-c2-dev` directories, which are the developer's (rule 2). To run your own node, set `HAL_C2_NODE_HOME` to a scratch directory and `HAL_C2_NODE_PORT` to a free port.
+- The MC runs from `apps/server-ex` through mise: `mise exec -- mix hal_c2.server`. From any checkout or worktree it keeps dev state in the `elixir` level of the XDG `hal-c2-dev` directories, which are the developer's (rule 2). To run your own MC, set `HAL_C2_MC_HOME` to a scratch directory and `HAL_C2_MC_PORT` to a free port.
 - Stop what you started, by the PID you tracked. See rule 1.
 
 ## Test data
@@ -138,7 +138,7 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 ## Where code lives
 
-- `apps/server-ex` - the node (Elixir/OTP): run and test with `mise exec -- mix ...`; read its README first.
+- `apps/server-ex` - the MC (Elixir/OTP): run and test with `mise exec -- mix ...`; read its README first.
 - `apps/desktop-qt` - the Qt/QML desktop. `apps/tui` - the QML TUI on opentui-qml; its scenarios run with `TUI_FEATURES="<globs>.feature" bun test ./features/runner.ts`.
 - `apps/server` (legacy) - the Node server: WebSocket, orchestration, providers, checkpointing. Effect-heavy: read `.repos/effect-smol/LLMS.md` before writing Effect code.
 - `apps/web`, `apps/desktop`, `apps/mobile` (legacy) - React/Vite UI, the Electron wrapper, and the React Native app. `apps/marketing` is the site.

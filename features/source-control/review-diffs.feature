@@ -21,38 +21,38 @@ Feature: Reviewing working tree and branch changes
   Background:
     Given a connected environment with a thread in the git project "shop" on the branch "feature/tax"
 
-  @node
+  @mc
   Scenario: The working tree diff includes new files
     Given the user changed "src/cart.ts" and created the untracked "src/tax.ts"
     When the user reviews the working tree
     Then both files are in the diff with their line counts
 
-  @node
+  @mc
   Scenario: Reviewing leaves the user's staging area alone
     Given the user staged "src/cart.ts" and left "src/tax.ts" untracked
     When the user reviews the working tree
     Then "src/cart.ts" is still the only staged file afterwards
 
-  @node
+  @mc
   Scenario: Reviewing the branch against its base
     Given "feature/tax" has 3 commits on top of "main"
     When the user reviews the branch against "main"
     Then the diff shows every change the 3 commits made
 
-  @node
+  @mc
   Scenario: Whitespace changes can be hidden
     Given the only change in "src/cart.ts" is re-indentation
     When the user reviews the working tree hiding whitespace changes
     Then "src/cart.ts" shows no changed lines
 
-  @node
+  @mc
   Scenario: A very large diff is cut short but keeps every file's counts
     Given the working tree changes 2000 files
     When the user reviews the working tree
     Then the diff says it was truncated
     And the line counts of every changed file are still reported
 
-  @node
+  @mc
   Scenario Outline: Expanding a file shows both sides as they fit its change
     Given "<file>" was <change>
     When the user expands "<file>"
@@ -66,21 +66,21 @@ Feature: Reviewing working tree and branch changes
       | src/pay.ts  | renamed without changes | the contents are shown once under both names  |
       | src/fee.ts  | renamed and changed     | the old and new contents are shown            |
 
-  @node
+  @mc
   Scenario: A binary file cannot be expanded
     Given "logo.png" changed
     When the user expands "logo.png"
     Then the user is told the file cannot be shown
 
-  @node
+  @mc
   Scenario: Expanding a branch file needs both refs
     When the user expands a file of the branch review without naming the base
     Then the user is told "Branch diff file expansion requires both base and head refs."
 
-  @node
-  Scenario: Only folders inside the node's projects can be reviewed
+  @mc
+  Scenario: Only folders inside the MC's projects can be reviewed
     When a client asks to review "/etc"
-    Then the request is refused with "Review cwd must be inside one of this node's projects."
+    Then the request is refused with "Review cwd must be inside one of this MC's projects."
 
   @tui
   Scenario: Each file is shown with its own highlighting

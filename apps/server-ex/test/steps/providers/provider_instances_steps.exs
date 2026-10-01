@@ -1,7 +1,7 @@
 defmodule HalC2.Steps.Providers.ProviderInstances do
   @moduledoc """
   Steps for `features/providers/provider-instances.feature`: provider instances in
-  the node's settings, how their agents are started, and provider refreshes. Agents
+  the MC's settings, how their agents are started, and provider refreshes. Agents
   are the fakes of `HalC2.Test.AcpFixtures`; an absolute path in the feature (such as
   `/opt/grok/bin/grok`) is created under the scenario's home.
   """
@@ -9,16 +9,16 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
   import ExUnit.Assertions
 
   alias HalC2.Test.AcpFixtures, as: Acp
-  alias HalC2.Test.Node
+  alias HalC2.Test.Mc
 
   @drivers %{"Grok" => "grok", "OpenCode" => "opencode"}
   # What the fake Codex and Claude at a custom binary path report as their version.
   @binary_version "7.7.7"
 
   # A feature's absolute path, inside the scenario's home.
-  defp local(ctx, path), do: Path.join(ctx.node.home, path)
+  defp local(ctx, path), do: Path.join(ctx.mc.home, path)
 
-  defp executable(ctx, "~" <> _ = path), do: Node.Host.path(ctx, path)
+  defp executable(ctx, "~" <> _ = path), do: Mc.Host.path(ctx, path)
   defp executable(ctx, path), do: local(ctx, path)
 
   defp thread_launches(ctx, name) do
@@ -85,7 +85,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
     ctx
   end
 
-  # A Claude instance with `name` sealed in the node's secrets.
+  # A Claude instance with `name` sealed in the MC's secrets.
   defp add_sensitive(context, name) do
     ctx =
       context
@@ -107,7 +107,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
     add_sensitive(context, name)
   end
 
-  step "the value is stored in the node's secrets", context do
+  step "the value is stored in the MC's secrets", context do
     assert HalC2.ProviderSecrets.value(context.instance, context.variable) ==
              "secret-#{context.variable}"
 
@@ -115,7 +115,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
   end
 
   step "clients only see that a value is set", context do
-    {%{"settings" => settings}, ctx} = Node.World.call!(context, "hal-c2.readSettings", %{})
+    {%{"settings" => settings}, ctx} = Mc.World.call!(context, "hal-c2.readSettings", %{})
 
     assert [variable] = get_in(settings, ["providerInstances", ctx.instance, "environment"])
     assert variable["name"] == ctx.variable
@@ -144,7 +144,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
   end
 
   step "clients see {string} with no value set", %{args: [name]} = context do
-    {%{"settings" => settings}, ctx} = Node.World.call!(context, "hal-c2.readSettings", %{})
+    {%{"settings" => settings}, ctx} = Mc.World.call!(context, "hal-c2.readSettings", %{})
 
     assert [variable] = get_in(settings, ["providerInstances", ctx.instance, "environment"])
     assert variable["name"] == name
@@ -224,7 +224,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
     Acp.control(ctx, "grok", %{"models" => [["grok-4", "Grok 4"], ["grok-5", "Grok 5"]]})
 
     {_, ctx} =
-      HalC2.Test.Node.World.call!(ctx, "server.refreshProviders", %{"refreshModels" => true})
+      HalC2.Test.Mc.World.call!(ctx, "server.refreshProviders", %{"refreshModels" => true})
 
     ctx
   end
@@ -241,7 +241,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
 
   step "the user refreshes the provider {string}", %{args: [id]} = context do
     ctx = context |> Acp.ready() |> Acp.run_as(id, id) |> Acp.run_as("grok", "grok")
-    Node.ensure(HalC2.ProviderUsageLimits)
+    Mc.ensure(HalC2.ProviderUsageLimits)
     :ok = HalC2.ProviderUsageLimits.refresh([])
     Acp.put_provider("grok", %{"enabled" => true})
     Acp.put_instance(id, %{"driver" => "grok", "enabled" => true})
@@ -254,7 +254,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
       id => length(Acp.launches(ctx, id))
     }
 
-    {_, ctx} = HalC2.Test.Node.World.call!(ctx, "server.refreshProviders", %{"instanceId" => id})
+    {_, ctx} = HalC2.Test.Mc.World.call!(ctx, "server.refreshProviders", %{"instanceId" => id})
     Map.put(ctx, :refreshed, %{before: before})
   end
 
@@ -270,8 +270,8 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
 
   step "the user enables Grok on one client", context do
     ctx = context |> Acp.ready() |> Acp.run_as("grok", "grok")
-    second = HalC2.Test.Node.World.client(ctx, "second") |> Node.config(7)
-    ctx = HalC2.Test.Node.World.put_client(ctx, "second", second)
+    second = HalC2.Test.Mc.World.client(ctx, "second") |> Mc.config(7)
+    ctx = HalC2.Test.Mc.World.put_client(ctx, "second", second)
 
     Acp.write_settings(
       ctx,
@@ -282,8 +282,8 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
 
   step "the other client lists Grok as enabled", context do
     {frame, client} =
-      Node.await(
-        HalC2.Test.Node.World.client(context, "second"),
+      Mc.await(
+        HalC2.Test.Mc.World.client(context, "second"),
         fn frame ->
           frame["t"] == "config.providers" and
             Enum.any?(frame["providers"], &(&1["instanceId"] == "grok" and &1["enabled"]))
@@ -292,7 +292,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
       )
 
     assert %{"driver" => "grok"} = Enum.find(frame["providers"], &(&1["instanceId"] == "grok"))
-    HalC2.Test.Node.World.put_client(context, "second", client)
+    HalC2.Test.Mc.World.put_client(context, "second", client)
   end
 
   # --- background health checks -------------------------------------------------------
@@ -323,7 +323,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
 
   step "the user sets the provider health check interval to {int}", %{args: [ms]} = context do
     ctx = Acp.ready(context)
-    Node.ensure(HalC2.ProviderUsageLimits)
+    Mc.ensure(HalC2.ProviderUsageLimits)
     :ok = HalC2.ProviderUsageLimits.refresh([])
     health_override(ctx, ms)
   end
@@ -352,7 +352,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
 
   # --- binary paths ------------------------------------------------------------------------
 
-  # A path under `~` is kept as written: the node expands it against the scenario's `$HOME`.
+  # A path under `~` is kept as written: the MC expands it against the scenario's `$HOME`.
   step ~r/^the (?<provider>Grok|OpenCode) instance has the binary path "(?<path>[^"]+)"$/,
        %{args: [provider, path]} = context do
     ctx = Acp.ready(context)
@@ -369,7 +369,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
     Map.merge(ctx, %{instance: driver, binary_path: path})
   end
 
-  # Codex and Claude: the commands the node would find on the path are missing, and the
+  # Codex and Claude: the commands the MC would find on the path are missing, and the
   # executable at `path` is a fake CLI that reports its own version and logs each start
   # the way the fake ACP agent does.
   step ~r/^the (?<provider>Codex|Claude) instance has the binary path "(?<path>[^"]+)"$/,
@@ -387,7 +387,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
            "#{@binary_version} (Claude Code)", "fake_claude.py"}
       end
 
-    log = Path.join([ctx.node.home, "agents", driver <> ".log"])
+    log = Path.join([ctx.mc.home, "agents", driver <> ".log"])
     binary = local(ctx, path)
     File.mkdir_p!(Path.dirname(binary))
 
@@ -430,7 +430,7 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
 
   step "the executable in the user's home directory is started", context do
     assert [launch | _] = thread_launches(context, context.instance)
-    assert launch["argv0"] == Node.Host.path(context, context.binary_path)
+    assert launch["argv0"] == Mc.Host.path(context, context.binary_path)
     context
   end
 
@@ -477,18 +477,18 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
 
   # --- resetting a built-in provider ------------------------------------------------------
 
-  # The node stores the settings document and clients apply patches, so a reset is the
+  # The MC stores the settings document and clients apply patches, so a reset is the
   # client writing back what `resetDefaultInstance` builds: no `providerInstances.codex`
   # and `providers.codex` at its defaults (which decode from an empty map).
   @codex_override %{"instanceId" => "codex", "model" => "gpt-5.5"}
 
   defp codex_override_applies?(ctx) do
-    project_id = Node.World.project(ctx).id
+    project_id = Mc.World.project(ctx).id
     HalC2.Settings.for_project(project_id)["textGenerationModelSelection"] == @codex_override
   end
 
   step "the user changed the settings of the built-in Codex", context do
-    project_id = Node.World.project(context).id
+    project_id = Mc.World.project(context).id
 
     ctx =
       Acp.ready(context)

@@ -7,7 +7,7 @@ defmodule HalC2.Steps.SourceControl do
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   step "a connected environment with a thread in the git project {string}",
        %{args: [title]} = context do

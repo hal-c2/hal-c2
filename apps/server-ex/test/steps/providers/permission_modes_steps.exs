@@ -2,14 +2,14 @@ defmodule HalC2.Steps.Providers.PermissionModes do
   @moduledoc """
   Steps for `features/providers/permission-modes.feature`: how a thread's runtime and
   interaction modes reach each provider (read from what the fakes were started with
-  and sent, `HalC2.Test.Node.World.provider_log/2`), approvals, and delegated children.
+  and sent, `HalC2.Test.Mc.World.provider_log/2`), approvals, and delegated children.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @thread "Work"
   @instances %{
@@ -487,7 +487,7 @@ defmodule HalC2.Steps.Providers.PermissionModes do
       |> World.launch_on(@thread, "codex", "wait for me", fields)
 
     World.await_running(context, @thread)
-    Node.ensure(HalC2.Mcp)
+    Mc.ensure(HalC2.Mcp)
     :ok = HalC2.Shell.subscribe(self())
     World.await_row(World.thread_id(context, @thread), & &1)
     context

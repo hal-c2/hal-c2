@@ -3,14 +3,14 @@ defmodule HalC2.Steps.SourceControl.PullRequestActions do
   Steps for `features/source-control/pull-request-actions.feature`. GitHub is the fake
   `gh`: a Given reshapes pull request 42 as GitHub reports it (and reads it back through
   `pullRequests.detail`), a When runs the action over the WebSocket, and a Then checks
-  what the node asked of GitHub. The fake keeps no state, so the host-side effect of an
+  what the MC asked of GitHub. The fake keeps no state, so the host-side effect of an
   action is the `gh` call that makes it.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @repository "acme/shop"
   @sha Shared.pr_sha()

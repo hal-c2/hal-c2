@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "NativeController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ShellStore.h"
 #include "SidebarController.h"
 
@@ -27,10 +27,10 @@ struct NativeControllerEntry {
   const char* qmlName;
 };
 
-// One window's view of the node: its bridge (the `Shell` its QML reads), its
+// One window's view of the MC: its bridge (the `Shell` its QML reads), its
 // sidebar, and one of each per-window controller (the route, the composer, the
 // panels, the terminal drawer, the palette, toasts...). Everything else, and
-// the node connection itself, is the NativeShell's, one per process: the
+// the MC connection itself, is the NativeShell's, one per process: the
 // drafts and composer text too, which every window's controllers keep in one
 // store (NativeShell::common) so closing a window loses no unsent work.
 class NativeWindow : public QObject {
@@ -74,13 +74,13 @@ private:
   std::vector<NativeController*> m_handlers;
 };
 
-// The shell's own client of its node: one protocol-3 connection, the shell
+// The shell's own client of its MC: one protocol-3 connection, the shell
 // shape folded into rows, and its windows (NativeWindow), each with its own
 // sidebar and controllers (NativeController.h): the composer's turn RPCs, the
 // terminal drawer, navigation and the rest, beside the shared ones every
 // window reads alike (settings, alerts, quitting). The controllers start once
 // the first shell snapshot lands.
-// Environments outside the cluster are the node's links (ConnectionsController).
+// Environments outside the cluster are the MC's links (ConnectionsController).
 class NativeShell : public QObject {
   Q_OBJECT
 
@@ -88,10 +88,10 @@ public:
   explicit NativeShell(ShellBridge* bridge, QObject* parent = nullptr);
   ~NativeShell() override;
 
-  // Connects to the node at `origin`; every window's bridge learns where it is.
+  // Connects to the MC at `origin`; every window's bridge learns where it is.
   void open(const QUrl& origin, const QString& token);
 
-  NodeClient* client() { return &m_client; }
+  McClient* client() { return &m_client; }
   ShellStore* store() { return &m_store; }
   // The main window's.
   SidebarController* sidebar() { return main()->sidebar(); }
@@ -154,7 +154,7 @@ public:
   // publishes (the shared controllers' and `backendError`).
   const QList<NativeControllerRegistration>& registrations() const { return m_registrations; }
   const QStringList& sharedKeys() const { return m_sharedKeys; }
-  // Whether the node's first snapshot has landed and the controllers started.
+  // Whether the MC's first snapshot has landed and the controllers started.
   bool isActive() const { return m_active; }
 
 signals:
@@ -164,7 +164,7 @@ signals:
   // The user closed the one window left, which stays open here: the app
   // quits, or on macOS waits to show it again.
   void lastWindowClosed();
-  // The node's first snapshot arrived and every controller started: the
+  // The MC's first snapshot arrived and every controller started: the
   // windows show the user's projects and threads. Once per run.
   void ready();
 
@@ -177,7 +177,7 @@ private:
   QStringList savedWindows() const;
   QString windowDir(const QString& id) const;
 
-  NodeClient m_client;
+  McClient m_client;
   ShellStore m_store;
   // The bridge the shared controllers publish on, which every window's
   // mirrors: the first window's, which outlives it.

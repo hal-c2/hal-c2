@@ -13,7 +13,7 @@
 #include "Keybindings.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -82,7 +82,7 @@ int kindRank(const QString& kind) {
 
 }  // namespace
 
-UsageController::UsageController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+UsageController::UsageController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
 
 void UsageController::activate() {

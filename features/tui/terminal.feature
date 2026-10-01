@@ -7,8 +7,8 @@
 #   apps/tui/src/components/ChatView.layout.ts (MIN_TERMINAL_DRAWER_ROWS)
 #   apps/tui/src/features.backlog.test.ts (terminal-session-actions, project-scripts terminal output)
 #   apps/server-ex/test/hal_c2/features_backlog_test.exs (TUI terminals outliving the session, closed terminals)
-#   apps/tui/src/connection.ts (subscribeTerminalMetadata names no node, so only the connected node's terminals are listed)
-#   apps/server-ex/lib/hal_c2/web/socket.ex (the terminals subscription is per node)
+#   apps/tui/src/connection.ts (subscribeTerminalMetadata names no MC, so only the connected MC's terminals are listed)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (the terminals subscription is per MC)
 #   Shared domain: terminal/ owns terminal sessions on every surface.
 
 Feature: Terminal drawer in the terminal client
@@ -111,9 +111,9 @@ Feature: Terminal drawer in the terminal client
     Then its tab disappears
 
   @backlog @tui
-  Scenario: Terminals of a thread on another node of the cluster appear as tabs
-    Given the terminal client is connected to one node of a cluster
-    And the thread runs on another node of the cluster
+  Scenario: Terminals of a thread on another MC of the cluster appear as tabs
+    Given the terminal client is connected to one MC of a cluster
+    And the thread runs on another MC of the cluster
     When another client opens a terminal on that thread
     Then a tab for it appears in the terminal client
 
@@ -239,7 +239,7 @@ Feature: Terminal drawer in the terminal client
   Scenario: Terminals that outlived the client come back as tabs
     Given a thread whose terminals outlived the terminal client session
     When the terminal client opens the thread
-    Then its tabs list every terminal the node kept
+    Then its tabs list every terminal the MC kept
 
   @backlog @tui
   Scenario: A terminal the user closed does not come back

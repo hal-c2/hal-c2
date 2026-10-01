@@ -14,10 +14,10 @@
 #     server.listAcpRegistryProviders, server.setAcpRegistryProvider, server.disableAcpRegistryProvider,
 #     server.logoutAcpRegistry, server.acceptAcpRegistryUrlAuth)
 
-@plugin-acp-registry @node
+@plugin-acp-registry @mc
 Feature: ACP registry agents
-  Any agent in the official ACP registry can run on a node. The node installs the exact
-  version the registry publishes under its own home, runs it on the node's machine, and
+  Any agent in the official ACP registry can run on an MC. The MC installs the exact
+  version the registry publishes under its own home, runs it on the MC's machine, and
   talks to it over ACP. The agent brings its own models, tools and sign-in.
 
   Background:
@@ -34,7 +34,7 @@ Feature: ACP registry agents
 
   Scenario: Adding a registry agent installs its published version
     When the user installs the registry agent "acme"
-    Then "acme" is installed under the node's tools folder at the registry's version
+    Then "acme" is installed under the MC's tools folder at the registry's version
     And an instance of "acme" is created and enabled
 
   Scenario: Adding an agent that is already configured is not offered twice
@@ -42,11 +42,11 @@ Feature: ACP registry agents
     When the user searches the registry for "acme"
     Then "acme" is shown as already added
 
-  Scenario: An agent that runs through npx needs npm on the node
+  Scenario: An agent that runs through npx needs npm on the MC
     Given the registry agent "acme" runs through npx
-    And npm is not installed on the node
+    And npm is not installed on the MC
     When the user adds "acme"
-    # Only npx agents need a runner here, and the node (like TS) names npm alone.
+    # Only npx agents need a runner here, and the MC (like TS) names npm alone.
     Then the user is told to install npm to use this agent
 
   Scenario: A download that does not match the registry checksum is rejected
@@ -60,14 +60,14 @@ Feature: ACP registry agents
     Then adding "acme" fails saying the archive is invalid
 
   Scenario: The registry cannot be reached and nothing is cached
-    Given the node has never fetched the registry
+    Given the MC has never fetched the registry
     And the registry cannot be reached
     When the user searches the registry
     Then the user is told the registry is unavailable
 
   Scenario: The registry is refreshed at most daily unless the user searches
-    Given the node fetched the registry an hour ago
-    When the node needs registry data without a search
+    Given the MC fetched the registry an hour ago
+    When the MC needs registry data without a search
     Then the cached copy is used
 
   Scenario: Removing the last instance of an agent removes its downloaded files
@@ -82,13 +82,13 @@ Feature: ACP registry agents
 
   Scenario: An agent that needs sign-in says so
     Given the agent "acme" refuses new sessions until the user signs in
-    When the node checks "acme"
+    When the MC checks "acme"
     Then "acme" is shown as signed out with "Sign in to use this agent."
 
   Scenario: Signing in with a terminal method runs the agent's login in a terminal
     Given "acme" offers a terminal sign-in
     When the user signs in to "acme"
-    Then the agent's login runs in a terminal on the node that the user can type into
+    Then the agent's login runs in a terminal on the MC that the user can type into
     And "acme" is shown as signed in once a fresh session succeeds
 
   Scenario: The sign-in terminal follows the size of the user's view
@@ -112,8 +112,8 @@ Feature: ACP registry agents
     Then the page link is shown to the user
     And the agent is told to proceed only after the user opens or copies the link
 
-  Scenario: Every client of the node sees the same sign-in
-    Given two clients are connected to the node
+  Scenario: Every client of the MC sees the same sign-in
+    Given two clients are connected to the MC
     When the user starts signing in to "acme" on one client
     Then the other client shows the same sign-in in progress
 

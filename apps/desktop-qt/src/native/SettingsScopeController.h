@@ -12,7 +12,7 @@
 #include "EnvironmentSettings.h"
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
@@ -47,7 +47,7 @@ public:
   using Pick = std::function<QJsonValue(const QJsonObject& settings, const QString& projectId)>;
   using Edit = std::function<QJsonObject(QJsonObject settings, const QString& projectId)>;
 
-  SettingsScopeController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  SettingsScopeController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
@@ -106,7 +106,7 @@ private:
   void publish();
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   EnvironmentSettings* m_documents;
   bool m_active = false;

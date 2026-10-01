@@ -1,20 +1,20 @@
 defmodule HalC2.Shell do
   @moduledoc """
-  The cluster-wide sidebar: every project and thread row on every node.
+  The cluster-wide sidebar: every project and thread row on every MC.
 
   Rows are `{kind, row}` where `kind` is `"project"` or `"thread"` and `row` is the
-  shape the client renders (`HalC2.Projection.row/3`). This node's rows come from the
+  shape the client renders (`HalC2.Projection.row/3`). This MC's rows come from the
   store's `shell` table and from stream servers as threads change; peers push theirs.
-  They live in a protected ETS table keyed by `{node, stream_id}`, so any process can
+  They live in a protected ETS table keyed by `{mc, stream_id}`, so any process can
   read the whole shell without copying it through this server. When a peer goes down
   its rows stay, marked offline, so a sleeping laptop's threads remain visible.
 
-  Each node's environment descriptor (`HalC2.Environment.descriptor/0`) travels with its
+  Each MC's environment descriptor (`HalC2.Environment.descriptor/0`) travels with its
   rows, so clients can list and label every machine, online or not.
 
-  Subscribers receive `{:hal_c2_shell, {:rows, node, [{id, {kind, row}}]}}`,
-  `{:hal_c2_shell, {:environment, node, descriptor}}` and
-  `{:hal_c2_shell, {:node, node, :up | :down}}`.
+  Subscribers receive `{:hal_c2_shell, {:rows, mc, [{id, {kind, row}}]}}`,
+  `{:hal_c2_shell, {:environment, mc, descriptor}}` and
+  `{:hal_c2_shell, {:mc, mc, :up | :down}}`.
   """
 
   use GenServer
@@ -22,11 +22,11 @@ defmodule HalC2.Shell do
   require Logger
 
   @table __MODULE__
-  @nodes HalC2.Shell.Nodes
+  @mcs HalC2.Shell.Mcs
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @doc "Every known row as `{{node, stream_id}, {kind, row}}`."
+  @doc "Every known row as `{{mc, stream_id}, {kind, row}}`."
   @spec rows() :: [{{node, String.t()}, {String.t(), map}}]
   def rows do
     # Without the shell (tools, some tests) there are no rows.
@@ -34,20 +34,20 @@ defmodule HalC2.Shell do
   end
 
   @doc "One row as `{kind, row}`, or `nil`."
-  def row(node, id) do
-    case :ets.lookup(@table, {node, id}) do
+  def row(mc, id) do
+    case :ets.lookup(@table, {mc, id}) do
       [{_, row}] -> row
       [] -> nil
     end
   end
 
-  @doc "Every known node's environment descriptor as `{node, descriptor}`."
+  @doc "Every known MC's environment descriptor as `{mc, descriptor}`."
   @spec environments() :: [{node, map}]
-  def environments, do: :ets.tab2list(@nodes)
+  def environments, do: :ets.tab2list(@mcs)
 
-  @doc "Nodes whose shell is currently reachable, this one included."
-  @spec online_nodes() :: [node]
-  def online_nodes, do: GenServer.call(__MODULE__, :online_nodes)
+  @doc "MCs whose shell is currently reachable, this one included."
+  @spec online_mcs() :: [node]
+  def online_mcs, do: GenServer.call(__MODULE__, :online_mcs)
 
   @spec subscribe(pid) :: :ok
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
@@ -62,12 +62,12 @@ defmodule HalC2.Shell do
   @impl true
   def init(_opts) do
     :ets.new(@table, [:named_table, :protected, read_concurrency: true])
-    :ets.new(@nodes, [:named_table, :protected, read_concurrency: true])
+    :ets.new(@mcs, [:named_table, :protected, read_concurrency: true])
     :ok = :net_kernel.monitor_nodes(true)
     path = HalC2.Store.path()
     stored = HalC2.Store.list_shell(path)
     :ets.insert(@table, for({id, kind, row} <- stored, do: {{node(), id}, {kind, row}}))
-    :ets.insert(@nodes, {node(), HalC2.Environment.descriptor()})
+    :ets.insert(@mcs, {node(), HalC2.Environment.descriptor()})
     # Peers already connected (this shell restarted) send theirs back, as on nodeup.
     for peer <- Node.list() do
       push_all(peer)
@@ -91,7 +91,7 @@ defmodule HalC2.Shell do
   defp identify_repositories, do: Task.start(&HalC2.Projects.identify_repositories/0)
 
   @impl true
-  def handle_call(:online_nodes, _from, state), do: {:reply, MapSet.to_list(state.online), state}
+  def handle_call(:online_mcs, _from, state), do: {:reply, MapSet.to_list(state.online), state}
 
   def handle_call({:subscribe, pid}, _from, state) do
     ref = Process.monitor(pid)
@@ -114,7 +114,7 @@ defmodule HalC2.Shell do
   end
 
   def handle_cast({:peer_environment, peer, descriptor}, state) do
-    :ets.insert(@nodes, {peer, descriptor})
+    :ets.insert(@mcs, {peer, descriptor})
     notify(state, {:environment, peer, descriptor})
     {:noreply, state}
   end
@@ -134,12 +134,12 @@ defmodule HalC2.Shell do
   @impl true
   def handle_info({:nodeup, peer}, state) do
     push_all(peer)
-    notify(state, {:node, peer, :up})
+    notify(state, {:mc, peer, :up})
     {:noreply, %{state | online: MapSet.put(state.online, peer)}}
   end
 
   def handle_info({:nodedown, peer}, state) do
-    notify(state, {:node, peer, :down})
+    notify(state, {:mc, peer, :down})
     {:noreply, %{state | online: MapSet.delete(state.online, peer)}}
   end
 

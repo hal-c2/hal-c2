@@ -1,5 +1,5 @@
 // The right panel's Agents tab (AgentsModel): the thread's subagents and
-// running commands, from the node's `stream` shape as the node writes them
+// running commands, from the MC's `stream` shape as the MC writes them
 // (apps/server-ex delegation.ex: a `subagent` entity and its `subagent` turn
 // item). features/timeline/plans-and-subagents.feature.
 
@@ -51,7 +51,7 @@ int rowTitled(World& world, const QString& title) {
 
 // A subagent the agent delegated `since` seconds ago, as delegation.ex records it.
 void startSubagent(World& world, const QString& title, int since) {
-  FakeStreams& fake = world.node.part<FakeStreams>();
+  FakeStreams& fake = world.mc.part<FakeStreams>();
   if (fake.run.isEmpty()) startRun(world);
   world.setTime(now());
   const QString slug = title.toLower().replace(QLatin1Char(' '), QLatin1Char('-'));
@@ -65,8 +65,8 @@ void startSubagent(World& world, const QString& title, int since) {
   addItem(world, QStringLiteral("subagent"),
           {{QStringLiteral("id"), QStringLiteral("turn-item:subagent:") + id}, {QStringLiteral("status"), QStringLiteral("running")},
            {QStringLiteral("subagentId"), id}, {QStringLiteral("childThreadId"), QStringLiteral("thread-") + slug}, {QStringLiteral("startedAt"), started}});
-  world.node.part<FakeAgents>().ids.insert(title, id);
-  world.node.part<FakeAgents>().last = id;
+  world.mc.part<FakeAgents>().ids.insert(title, id);
+  world.mc.part<FakeAgents>().last = id;
 }
 
 void settleSubagent(World& world, const QString& id, const QJsonObject& fields) {
@@ -85,24 +85,24 @@ const Steps steps([] {
     startSubagent(world, c[0], c[1].toInt());
   });
   step(QStringLiteral("%1 finished (\\d+) seconds after it started").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString id = world.node.part<FakeAgents>().ids.value(c[0]);
-    const QString started = world.node.part<FakeStreams>().threads.value(kThread).value(QStringLiteral("subagent\n") + id).value(QLatin1String("startedAt")).toString();
+    const QString id = world.mc.part<FakeAgents>().ids.value(c[0]);
+    const QString started = world.mc.part<FakeStreams>().threads.value(kThread).value(QStringLiteral("subagent\n") + id).value(QLatin1String("startedAt")).toString();
     settleSubagent(world, id, {{QStringLiteral("status"), QStringLiteral("completed")},
                                {QStringLiteral("completedAt"), iso(QDateTime::fromString(started, Qt::ISODate).addSecs(c[1].toInt()))}});
   });
   step(QStringLiteral("the subagent finishes with %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    settleSubagent(world, world.node.part<FakeAgents>().last,
+    settleSubagent(world, world.mc.part<FakeAgents>().last,
                    {{QStringLiteral("status"), QStringLiteral("completed")}, {QStringLiteral("result"), c[0]}, {QStringLiteral("completedAt"), iso(now())}});
   });
 
   step(QStringLiteral("the agent is running the command %1").arg(q), [](World& world, const Captures& c, const Table&) {
     startRun(world);
-    world.node.part<FakeAgents>().command =
+    world.mc.part<FakeAgents>().command =
         addItem(world, QStringLiteral("command_execution"),
                 {{QStringLiteral("input"), c[0]}, {QStringLiteral("status"), QStringLiteral("running")}, {QStringLiteral("startedAt"), iso(now())}});
   });
   step(QStringLiteral("the command finishes"), [](World& world, const Captures&, const Table&) {
-    set(world, QStringLiteral("turn-item"), world.node.part<FakeAgents>().command,
+    set(world, QStringLiteral("turn-item"), world.mc.part<FakeAgents>().command,
         {{QStringLiteral("status"), QStringLiteral("completed")}, {QStringLiteral("exitCode"), 0}});
   });
 
@@ -159,8 +159,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("the subagent's thread is shown"), [](World& world, const Captures&, const Table&) {
     const QString shown = world.native().controller<NavigationController>()->threadKey();
-    const QString child = world.node.environmentId + QStringLiteral(":thread-") +
-                          world.node.part<FakeAgents>().last.mid(QStringLiteral("task-").size());
+    const QString child = world.mc.environmentId + QStringLiteral(":thread-") +
+                          world.mc.part<FakeAgents>().last.mid(QStringLiteral("task-").size());
     expect(shown == child, QStringLiteral("the route shows \"%1\", not \"%2\"").arg(shown, child));
   });
 });

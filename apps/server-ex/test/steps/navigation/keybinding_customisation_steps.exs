@@ -2,17 +2,17 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
   @moduledoc """
   Steps for `features/navigation/keybinding-customisation.feature`. Clients add and
   remove rules with `server.upsertKeybinding` and `server.removeKeybinding`; the
-  node's rules are `HalC2.Keybindings.rules/0` and `<home>/keybindings.json`.
+  MC's rules are `HalC2.Keybindings.rules/0` and `<home>/keybindings.json`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
-  # --- the node stores custom rules --------------------------------------------------
+  # --- the MC stores custom rules --------------------------------------------------
 
-  step "the node has no custom keybindings", context do
+  step "the MC has no custom keybindings", context do
     assert HalC2.Keybindings.rules() == []
     refute File.exists?(file(context))
     context
@@ -31,7 +31,7 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
     add(context, rule(key, command), %{"replace" => context.rule})
   end
 
-  step "the node's keybindings include that rule", context do
+  step "the MC's keybindings include that rule", context do
     assert {:ok, %{"rules" => rules}} = context.reply
     assert context.rule in rules
     assert context.rule in HalC2.Keybindings.rules()
@@ -43,18 +43,18 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
     context
   end
 
-  step "the node has the rule {string} for {string}", %{args: [key, command]} = context do
+  step "the MC has the rule {string} for {string}", %{args: [key, command]} = context do
     rule = rule(key, command)
     assert {:ok, _} = HalC2.Keybindings.upsert(rule)
     Map.put(context, :rule, rule)
   end
 
-  step "the node has exactly one such rule", context do
+  step "the MC has exactly one such rule", context do
     assert Enum.count(HalC2.Keybindings.rules(), &(&1 == context.rule)) == 1
     context
   end
 
-  step "the node's keybindings include {string} for {string}",
+  step "the MC's keybindings include {string} for {string}",
        %{args: [key, command]} = context do
     assert rule(key, command) in HalC2.Keybindings.rules()
     context
@@ -71,13 +71,13 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
     Map.put(context, :reply, reply)
   end
 
-  step "the node's keybindings no longer include it", context do
+  step "the MC's keybindings no longer include it", context do
     refute context.rule in HalC2.Keybindings.rules()
     refute context.rule in JSON.decode!(File.read!(file(context)))
     context
   end
 
-  step "the node has {int} custom rules", %{args: [count]} = context do
+  step "the MC has {int} custom rules", %{args: [count]} = context do
     rules = for i <- 1..count, do: rule("mod+shift+#{i}", "terminal.new")
     File.write!(file(context), JSON.encode!(rules))
     assert length(HalC2.Keybindings.rules()) == count
@@ -88,7 +88,7 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
     add(context, rule("mod+alt+n", "chat.new"))
   end
 
-  step "the node keeps {int} rules", %{args: [count]} = context do
+  step "the MC keeps {int} rules", %{args: [count]} = context do
     rules = HalC2.Keybindings.rules()
     assert length(rules) == count
     assert List.last(rules) == context.rule
@@ -101,14 +101,14 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
   end
 
   step "one client adds a keybinding rule", context do
-    Node.ensure(HalC2.Settings)
-    context = World.put_client(context, "second", Node.config(World.client(context, "second")))
+    Mc.ensure(HalC2.Settings)
+    context = World.put_client(context, "second", Mc.config(World.client(context, "second")))
     add(context, rule("mod+shift+t", "terminal.new"), %{}, "first")
   end
 
   step "the other client receives the updated keybindings", context do
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context, "second"),
         &(&1["t"] == "config.keybindings" and context.rule in &1["rules"])
       )
@@ -144,11 +144,11 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
     Map.put(context, :rule, rule)
   end
 
-  step "the node reads the keybindings", context do
+  step "the MC reads the keybindings", context do
     client =
-      Node.sub(World.client(context), 1, %{"type" => "config", "node" => Atom.to_string(node())})
+      Mc.sub(World.client(context), 1, %{"type" => "config", "mc" => Atom.to_string(node())})
 
-    {frame, client} = Node.await(client, &(&1["t"] == "config"))
+    {frame, client} = Mc.await(client, &(&1["t"] == "config"))
 
     context
     |> World.put_client(client)
@@ -200,7 +200,7 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
 
   # --- helpers -----------------------------------------------------------------------
 
-  defp file(context), do: Path.join(context.node.home, "keybindings.json")
+  defp file(context), do: Path.join(context.mc.home, "keybindings.json")
 
   defp rule(key, command), do: %{"key" => key, "command" => command}
 

@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Settings.Diagnostics do
   @moduledoc """
-  Settings → Diagnostics against a node: the process list, resource history and
+  Settings → Diagnostics against an MC: the process list, resource history and
   signals (`HalC2.Diagnostics`). The provider session is a copy of `sleep` named
   `codex`, started as a port so its exit status shows the signal it got; the
   terminal is a real `HalC2.Terminal` shell.
@@ -9,14 +9,14 @@ defmodule HalC2.Steps.Settings.Diagnostics do
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @windows %{"5 minutes" => 5 * 60_000, "1 hour" => 60 * 60_000}
   @signals %{"SIGINT" => 2, "SIGKILL" => 9}
 
-  step "a node running a provider session and a terminal", context do
-    home = context.node.home
+  step "an MC running a provider session and a terminal", context do
+    home = context.mc.home
     bin = Path.join(home, "bin")
     File.mkdir_p!(bin)
     codex = Path.join(bin, "codex")
@@ -30,7 +30,7 @@ defmodule HalC2.Steps.Settings.Diagnostics do
 
     shell = World.open_terminal("thread-1", home)
 
-    Node.ensure(HalC2.Diagnostics)
+    Mc.ensure(HalC2.Diagnostics)
 
     context
     |> World.put_client("default", World.client(context))
@@ -52,7 +52,7 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     context
   end
 
-  # A sample from 10 minutes ago with the node at an impossible 100000% CPU sets
+  # A sample from 10 minutes ago with the MC at an impossible 100000% CPU sets
   # the one-hour window apart from the five-minute one.
   step ~r/^the user views the last (?<window>5 minutes|1 hour) of resource history$/,
        %{args: [window]} = context do
@@ -82,7 +82,7 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     context
   end
 
-  step "the node collected an hour of history", context do
+  step "the MC collected an hour of history", context do
     World.add_resource_samples(Enum.map(1..239, &(&1 * 15_000)))
     {{:ok, %{"retainedSampleCount" => count}}, context} = history(context, 60 * 60_000)
     assert count >= 240
@@ -117,11 +117,11 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     context
   end
 
-  step "the user signals a process the node did not start", context do
+  step "the user signals a process the MC did not start", context do
     signal(context, 1, 0, "SIGTERM")
   end
 
-  step "the user signals the node itself", context do
+  step "the user signals the MC itself", context do
     {:ok, %{"serverPid" => pid, "processes" => processes}} = processes(context)
     signal(context, pid, Enum.find(processes, &(&1["pid"] == pid))["startTimeMs"], "SIGTERM")
   end
@@ -141,7 +141,7 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     Map.put(context, :reply, reply)
   end
 
-  step "the node recorded failing and slow spans", context do
+  step "the MC recorded failing and slow spans", context do
     now = System.system_time(:nanosecond)
 
     post_traces(context, [
@@ -173,13 +173,13 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     context
   end
 
-  step "a client sends its traces to the node", context do
+  step "a client sends its traces to the MC", context do
     now = System.system_time(:nanosecond)
     post_traces(context, [span("web.thread.render", now - 100_000_000, 12)])
     context
   end
 
-  step "the node records them in its trace file", context do
+  step "the MC records them in its trace file", context do
     [line] = File.read!(HalC2.Traces.path()) |> String.split("\n", trim: true)
 
     assert %{"type" => "otlp-span", "name" => "web.thread.render", "durationMs" => 12.0} =
@@ -209,12 +209,12 @@ defmodule HalC2.Steps.Settings.Diagnostics do
   end
 
   # Posts spans as the web client's OTLP exporter does, with a paired client's token.
-  # The node keeps client spans only while tracing is on (`HalC2.Traces.enabled?/0`).
+  # The MC keeps client spans only while tracing is on (`HalC2.Traces.enabled?/0`).
   defp post_traces(context, spans) do
     World.put_app_env(:trace, true)
 
     {:ok, access, _expires, _scopes} =
-      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{"label" => "Web"})
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.mc.store), %{"label" => "Web"})
 
     body =
       JSON.encode!(%{
@@ -231,7 +231,7 @@ defmodule HalC2.Steps.Settings.Diagnostics do
       })
 
     {:ok, _} = Application.ensure_all_started(:inets)
-    url = ~c"http://127.0.0.1:#{context.node.port}/api/observability/v1/traces"
+    url = ~c"http://127.0.0.1:#{context.mc.port}/api/observability/v1/traces"
     headers = [{~c"authorization", ~c"Bearer #{access}"}]
 
     assert {:ok, {{_, 204, _}, _, _}} =

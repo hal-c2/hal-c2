@@ -15,36 +15,36 @@
 
 Feature: Subscription limits
   Provider plugins that can read a subscription's remaining allowance report it as
-  windows (session, weekly, monthly). Hubs such as CLIProxyAPI add accounts the node
+  windows (session, weekly, monthly). Hubs such as CLIProxyAPI add accounts the MC
   cannot run turns on. Clients pool the same account seen in several places once.
 
   Background:
     Given a connected environment with Codex and Claude signed in with subscriptions
 
-  @node
-  Scenario: Limits are read when the node starts
-    When the node starts
+  @mc
+  Scenario: Limits are read when the MC starts
+    When the MC starts
     Then Codex and Claude report their session and weekly windows
 
-  @node
+  @mc
   Scenario: Limits follow the rate-limit updates a running turn reports
     Given a Codex turn is running
     When Codex reports a new rate-limit reading
     Then the session window shows the new reading without a new check
 
-  @node
+  @mc
   Scenario: A failed check keeps the last good reading
     Given Codex reported its windows a minute ago
     When the next check of Codex fails
     Then the windows from a minute ago are still shown
 
-  @node
+  @mc
   Scenario: An API key account reports that limits are not available
     Given Codex is signed in with an API key
-    When the node checks Codex's limits
+    When the MC checks Codex's limits
     Then Codex's limits are reported as not supported for this account
 
-  @node
+  @mc
   Scenario: A disabled provider shows no limits until it is enabled again
     Given Codex and Claude reported their limits
     When the user turns Claude off
@@ -52,44 +52,44 @@ Feature: Subscription limits
     When the user turns Claude back on
     Then Claude's limits are read again at once
 
-  @node
+  @mc
   Scenario: Refreshing checks every provider and hub again
     Given a hub is connected
     When the user refreshes the providers
     Then Codex, Claude and the hub are checked again
 
-  @node
+  @mc
   Scenario: Limits are checked in the background only while a client shows them
     Given the background activity profile checks provider status every five minutes
     And a client in front shows provider status
     When five minutes pass
     Then Codex and Claude are checked again
 
-  @node
+  @mc
   Scenario: No background checks run while every client is in the background
     Given no client in front shows provider status
     When the background check interval passes
     Then Codex and Claude are not checked
 
-  @node
+  @mc
   Scenario: Using a Codex reset credit restores the limit
     Given Codex has a banked reset credit
     When the user uses the reset credit
     Then Codex's limits are checked again and show the reset
 
-  @node
+  @mc
   Scenario: A reset credit whose new limits cannot be confirmed says so
     Given Codex has a banked reset credit
     When the user uses the reset credit and the following check fails
     Then the user is told "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
 
-  @node
+  @mc
   Scenario: A failed redemption is retried as the same attempt
     Given a reset credit redemption timed out
     When the user uses the reset credit again
     Then Codex receives the same redemption rather than a second one
 
-  @node
+  @mc
   Scenario Outline: Reset credits are refused where they do not exist
     When the user uses a reset credit on <target>
     Then the user is told "<message>"
@@ -101,34 +101,34 @@ Feature: Subscription limits
       | a hub that is disabled        | The usage limit source is missing or disabled.        |
       | a hub without naming a credit | The reset credit request is incomplete.               |
 
-  @node
+  @mc
   Scenario: Adding a CLIProxyAPI hub shows its pooled accounts
     When the user adds a hub with its URL and management key
     Then the hub's accounts are reported with their limits
 
-  @node
+  @mc
   Scenario: A hub's management key is kept out of the settings
     When the user adds a hub with a management key
     Then the settings show the key only as hidden
     And the key is kept in the environment's secret store
 
-  @node
+  @mc
   Scenario: Saving a hub without changing its hidden key keeps the key
     Given a hub with a saved management key
     When the user renames the hub and saves
     Then the hub still reads with its saved key
 
-  @node
+  @mc
   Scenario: Removing a hub forgets its key
     Given a hub with a saved management key
     When the user removes the hub
     Then its accounts are no longer reported
     And its key is removed from the secret store
 
-  @node
+  @mc
   Scenario Outline: A hub that cannot be read keeps its row with the reason
     Given a hub <problem>
-    When the node reads the hub
+    When the MC reads the hub
     Then the hub is reported with no accounts and the error "<error>"
 
     Examples:
@@ -136,22 +136,22 @@ Feature: Subscription limits
       | without a management key      | No management key configured.    |
       | that cannot list its accounts | The hub could not list accounts. |
 
-  @node
+  @mc
   Scenario: An account the hub cannot read keeps its row with the reason
-    Given a hub whose Codex account reports usage the node cannot read
-    When the node reads the hub
+    Given a hub whose Codex account reports usage the MC cannot read
+    When the MC reads the hub
     Then the Codex account is reported as not read, beside the hub's other accounts
 
-  @node
+  @mc
   Scenario: A hub's Codex account reset credit is redeemed through the hub
     Given a hub account with a banked Codex reset credit
     When the user uses that reset credit
     Then the hub redeems it and the account's limits are read again
 
-  @node
+  @mc
   Scenario Outline: Other providers report their own windows
     Given <provider> is signed in with a subscription
-    When the node checks limits
+    When the MC checks limits
     Then <provider> reports <windows>
 
     Examples:
@@ -160,16 +160,16 @@ Feature: Subscription limits
       | Grok          | its billing period allowance and reset time |
       | OpenCode Go   | its session, weekly and monthly allowance  |
 
-  @node
+  @mc
   Scenario: Grok with an explicit API key reports no subscription limits
     Given Grok is connected with an explicit API key
-    When the node checks limits
+    When the MC checks limits
     Then Grok's limits are reported as not supported for this account
 
-  @node
+  @mc
   Scenario: An external OpenCode server reports no limits
     Given OpenCode runs on an external server
-    When the node checks limits
+    When the MC checks limits
     Then OpenCode's limits are reported as not available
 
   @desktop @mobile @backlog-mobile
@@ -184,7 +184,7 @@ Feature: Subscription limits
     When the user opens Limits again
     Then the environment is not checked again yet
 
-  @node
+  @mc
   Scenario: Providers with limits offer /usage-limits to clients that answer it themselves
     Given Pi, which reports no limits, is set up too
     When a client that answers "/usage-limits" itself reads the providers
@@ -192,12 +192,12 @@ Feature: Subscription limits
     And Pi does not offer "/usage-limits"
 
   # An older client would send the command to the agent as an ordinary prompt.
-  @node
+  @mc
   Scenario: Clients that do not answer /usage-limits themselves are not offered it
     When a client that does not answer "/usage-limits" itself reads the providers
     Then no provider offers "/usage-limits"
 
-  @node
+  @mc
   Scenario: A hub that cannot be read offers /usage-limits for every provider
     Given Pi, which reports no limits, is set up too
     And a client that answers "/usage-limits" itself reads the providers

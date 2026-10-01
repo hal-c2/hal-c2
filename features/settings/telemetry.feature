@@ -11,32 +11,32 @@ Feature: Product telemetry
   providers and models are used. Content never leaves the machine, and the
   user can turn collection off.
 
-  @backlog @node
+  @backlog @mc
   Scenario: A finished turn sends one anonymous event
     Given telemetry is on
     When a turn finishes
     Then an event records the provider, model, effort, permission mode, result, duration and token totals
     And the event is tied to a hashed account or installation id
 
-  @backlog @node
+  @backlog @mc
   Scenario: Events never carry content
     Given telemetry is on
     When a turn with prompts, file edits and child agents finishes
     Then no event contains prompts, responses, file contents, conversation ids or child agent output
 
-  @backlog @node
+  @backlog @mc
   Scenario: The user turns telemetry off
-    Given the node is started with telemetry disabled
+    Given the MC is started with telemetry disabled
     When a turn finishes
     Then no event is sent
 
-  @backlog @node
+  @backlog @mc
   Scenario: Client events are only accepted from signed in connections
     Given an unauthenticated connection
     When it reports client use
     Then no event is sent for it
 
-  @backlog @node
+  @backlog @mc
   Scenario: Bad client details do not block a connection
     Given a client that sends malformed device details
     When it connects

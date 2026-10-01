@@ -3,8 +3,8 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   defp git(context, args), do: World.git!(context.cwd, args)
 
@@ -118,7 +118,7 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
   # --- background fetches -----------------------------------------------------------
 
   defp fetch_interval(context, seconds) do
-    Node.ensure(HalC2.BackgroundPolicy)
+    Mc.ensure(HalC2.BackgroundPolicy)
 
     World.put_settings(context, %{
       "backgroundActivity" => %{
@@ -155,7 +155,7 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
 
   # Someone else pushes to the remote; only a fetch shows it here.
   defp upstream_moves(context) do
-    other = Node.tmp_dir(context.node, "other")
+    other = Mc.tmp_dir(context.mc, "other")
     World.git!(other, ["clone", "-q", context.bare, "."])
 
     World.git!(
@@ -194,7 +194,7 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     context
   end
 
-  step "the node fetches from the remote and the ahead and behind counts are updated",
+  step "the MC fetches from the remote and the ahead and behind counts are updated",
        context do
     {event, context} = World.await_vcs(context, &(&1["_tag"] == "remoteUpdated"))
     assert event["remote"]["behindCount"] == 1
@@ -209,7 +209,7 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     Map.put(context, :fired, fired)
   end
 
-  step "the node never fetches from the remote without being asked", context do
+  step "the MC never fetches from the remote without being asked", context do
     assert Enum.all?(context.fired, &(&1 == :fetch_off))
     assert git(context, ~w(rev-parse origin/main)) == context.tracking_before
     context
@@ -227,7 +227,7 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     context
   end
 
-  step "the node does not fetch {string} from the remote", %{args: [_title]} = context do
+  step "the MC does not fetch {string} from the remote", %{args: [_title]} = context do
     assert git(context, ~w(rev-parse origin/main)) == context.tracking_before
     context
   end
@@ -285,7 +285,7 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
   # --- not a repository ---------------------------------------------------------------
 
   step "the project {string} is not in a git repository", %{args: [title]} = context do
-    root = Node.tmp_dir(context.node, World.slug(title))
+    root = Mc.tmp_dir(context.mc, World.slug(title))
     World.create_project(context, title, %{"workspaceRoot" => root})
   end
 

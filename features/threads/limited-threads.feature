@@ -15,7 +15,7 @@ Feature: Threads stopped by a usage limit
   Background:
     Given a connected environment with the thread "Port tests" on Claude
 
-  @node
+  @mc
   Scenario: A thread stopped by a usage limit knows when the limit resets
     When Claude stops "Port tests" on a usage limit that resets at 14:00
     Then "Port tests" is marked as limited
@@ -33,25 +33,25 @@ Feature: Threads stopped by a usage limit
     When the user opens "Port tests"
     Then the agent's explanation of the limit is shown in the conversation
 
-  @node
+  @mc
   Scenario: Resuming at the reset time
     Given "Port tests" stopped on a usage limit that resets at 14:00
     When the user chooses to resume at the reset
     Then "Port tests" continues on its own at 14:00
 
-  @node
+  @mc
   Scenario: Cancelling a scheduled resume
     Given "Port tests" is scheduled to resume at 14:00
     When the user cancels the scheduled resume
     Then "Port tests" does not continue at 14:00
 
-  @node @backlog
+  @mc @backlog
   Scenario: A rejected automatic resume keeps the reset time
     Given "Port tests" is scheduled to resume at 14:00
     When the provider rejects the automatic resume
     Then "Port tests" still records 14:00 as its reset time
 
-  @node
+  @mc
   Scenario Outline: A scheduled resume is dropped when the user moves on
     Given "Port tests" is scheduled to resume at 14:00
     When the user <action> before 14:00
@@ -63,14 +63,14 @@ Feature: Threads stopped by a usage limit
       | archives "Port tests" |
       | settles "Port tests"  |
 
-  @node
+  @mc
   Scenario: An overdue resume runs after a restart
     Given "Port tests" was scheduled to resume at 14:00
     And the environment was stopped from 13:00 until 15:00
     When the environment starts again
     Then "Port tests" continues
 
-  @node
+  @mc
   Scenario: Limit stops resume on their own when the user chose that
     Given the user turned on auto-resume for limited threads
     When Claude stops "Port tests" on a usage limit that resets at 14:00

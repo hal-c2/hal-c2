@@ -194,7 +194,7 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
     run.status = status == QLatin1String("idle") ? QStringLiteral("completed") : status;
     run.requestedAt = stringField(row, "latestRunRequestedAt");
     run.startedAt = stringField(row, "latestRunStartedAt");
-    // Rows from before the node stamped completion close the run at updatedAt.
+    // Rows from before the MC stamped completion close the run at updatedAt.
     if (row.contains(QLatin1String("latestRunCompletedAt"))) {
       run.completedAt = stringField(row, "latestRunCompletedAt");
     } else if (status == QLatin1String("idle") || terminalRunStatus(status)) {

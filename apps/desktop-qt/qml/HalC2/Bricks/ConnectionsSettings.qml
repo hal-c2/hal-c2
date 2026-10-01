@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Connections settings page, native (ConnectionsController publishes
-// `connections`): the environments this machine's node is linked to, adding
+// `connections`): the environments this machine's MC is linked to, adding
 // one from a pairing link or a host and code, and who may reach this machine
 // (pairing links and paired clients).
 Rectangle {
@@ -136,7 +136,7 @@ Rectangle {
             }
 
             Note {
-                text: qsTr("Machines outside this cluster that this machine's node is paired with. Their threads are reached through it.")
+                text: qsTr("Machines outside this cluster that this machine's MC is paired with. Their threads are reached through it.")
             }
 
             Repeater {

@@ -3,11 +3,11 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   import ExUnit.Assertions
 
   alias HalC2.Orchestration.IdleSessions
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # Turns run on the fake Codex (`World.providers/1`). A turn "cut off" by a stop has
-  # its provider process killed first, as provider processes die with the node.
+  # its provider process killed first, as provider processes die with the MC.
   # "No activity for N minutes" moves the thread's timestamps N minutes back.
 
   @continuation "Continue where you left off."
@@ -42,7 +42,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     kill_provider(context, thread)
   end
 
-  step ~r/^thread "(?<thread>[^"]+)" (?:had a running turn|was mid-turn when the node stopped|was mid-turn on a provider conversation that can resume)$/,
+  step ~r/^thread "(?<thread>[^"]+)" (?:had a running turn|was mid-turn when the MC stopped|was mid-turn on a provider conversation that can resume)$/,
        %{args: [thread]} = context do
     context = World.running_turn(context, thread)
     # The provider's conversation can resume: Codex named its native thread.
@@ -56,7 +56,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
   end
 
-  step "thread {string} was idle and thread {string} was running when the node stopped",
+  step "thread {string} was idle and thread {string} was running when the MC stopped",
        %{args: [idle, running]} = context do
     context = idle_turn(context, idle)
     context = World.running_turn(context, running)
@@ -100,10 +100,10 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
-  step "the node restarts and a client connects", context do
-    context = %{context | node: Node.restart(context.node), clients: %{}}
-    client = Node.sub(World.client(context), 900, %{"type" => "shell"})
-    {frame, client} = Node.await(client, &(&1["t"] == "shell"))
+  step "the MC restarts and a client connects", context do
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    client = Mc.sub(World.client(context), 900, %{"type" => "shell"})
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell"))
 
     context
     |> World.put_client(client)
@@ -113,7 +113,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   step "the client never sees {string} as running", %{args: [thread]} = context do
     id = World.thread_id(context, thread)
     # The first rows the client gets already show the turn settled.
-    assert [row] = for([_node, ^id, "thread", row] <- context.shell["rows"], do: row)
+    assert [row] = for([_mc, ^id, "thread", row] <- context.shell["rows"], do: row)
     assert row["status"] == "interrupted"
     assert row["activeRunId"] == nil
     context
@@ -286,10 +286,10 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     background_turn(context, thread)
   end
 
-  step "thread {string} had a Claude subagent and a command running in the background when the node stopped",
+  step "thread {string} had a Claude subagent and a command running in the background when the MC stopped",
        %{args: [thread]} = context do
     context = background_turn(context, thread)
-    # Killed outright, as the node's stop leaves no time to end the work.
+    # Killed outright, as the MC's stop leaves no time to end the work.
     Process.exit(context.runtime, :kill)
     assert_receive {:DOWN, _, :process, _, :killed}
     assert length(World.row(context, thread)["pendingBackgroundTasks"]) == 2
@@ -307,7 +307,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     Map.put(context, :runtime, pid)
   end
 
-  # The turn a task notification wakes Claude for, which the node did not run.
+  # The turn a task notification wakes Claude for, which the MC did not run.
   step "Claude launches a subagent in the background between turns", context do
     claude_says(context, context.thread, %{
       "type" => "assistant",
@@ -339,7 +339,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     await_background(context)
   end
 
-  # A subagent resumed through SendMessage, or one started before the node recorded them.
+  # A subagent resumed through SendMessage, or one started before the MC recorded them.
   step "Claude reports progress on a subagent it resumed between turns", context do
     claude_says(context, context.thread, %{
       "type" => "system",
@@ -610,7 +610,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     assert_released(context, thread)
   end
 
-  step "the node checks for idle sessions", context do
+  step "the MC checks for idle sessions", context do
     check(context)
   end
 
@@ -754,7 +754,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
   defp item(type, id, fields), do: %{"item" => Map.merge(%{"type" => type, "id" => id}, fields)}
 
-  # Kills the thread's Codex process, as a node stop does, so nothing settles the turn.
+  # Kills the thread's Codex process, as an MC stop does, so nothing settles the turn.
   defp runtime(context, thread) do
     id = World.thread_id(context, thread)
 
@@ -870,7 +870,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   end
 
   defp check(context) do
-    Node.ensure(IdleSessions)
+    Mc.ensure(IdleSessions)
     Map.put(context, :released, IdleSessions.check())
   end
 

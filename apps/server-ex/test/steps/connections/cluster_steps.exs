@@ -3,18 +3,18 @@ defmodule HalC2.Steps.Connections.Cluster do
   Steps for `features/connections/cluster.feature`.
 
   The trust, joining and discovery scenarios boot each machine as an unnamed `:peer`
-  VM with the boot flags a release gives it, running the whole node on its own
+  VM with the boot flags a release gives it, running the whole MC on its own
   loopback address and driven over stdio, so the test VM never joins their cluster.
   They cluster through the same commands a user runs (`HalC2.Cluster.Command`). The
-  sidebar, streaming, upload and device scenarios make the scenario's node a
-  distributed node and start the second member as a peer running the whole
+  sidebar, streaming, upload and device scenarios make the scenario's MC a
+  distributed MC and start the second member as a peer running the whole
   application, as `test/hal_c2/cluster_test.exs` does.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.{Node, WsClient}
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.{Mc, WsClient}
+  alias HalC2.Test.Mc.World
 
   @simulator %{
     "id" => "SIM-1",
@@ -25,22 +25,22 @@ defmodule HalC2.Steps.Connections.Cluster do
     "booted" => true
   }
 
-  # --- a node on its own --------------------------------------------------------------
+  # --- an MC on its own --------------------------------------------------------------
 
-  step "a node starts", context do
+  step "an MC starts", context do
     context |> machine(:a) |> boot(:a)
   end
 
   step "it has its own certificate, named after its environment", context do
     a = context.machines.a
     dir = HalC2.Cluster.dir(:peer.call(a.peer, HalC2.Paths, :data_dir, []))
-    cert = X509.Certificate.from_pem!(File.read!(Path.join(dir, "node.pem")))
+    cert = X509.Certificate.from_pem!(File.read!(Path.join(dir, "mc.pem")))
 
     assert a.id == :peer.call(a.peer, HalC2.Environment, :id, [])
     assert X509.Certificate.subject(cert, "CN") == ["#{a.id}.hal-c2"]
     assert X509.Certificate.issuer(cert) == X509.Certificate.subject(cert)
-    assert mode(Path.join(dir, "node.key")) == 0o600
-    assert :peer.call(a.peer, :erlang, :node, []) == HalC2.Cluster.node_name(a.id)
+    assert mode(Path.join(dir, "mc.key")) == 0o600
+    assert :peer.call(a.peer, :erlang, :node, []) == HalC2.Cluster.mc_name(a.id)
     context
   end
 
@@ -67,7 +67,7 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   # --- joining ------------------------------------------------------------------------
 
-  step "two nodes that are not clustered", context do
+  step "two MCs that are not clustered", context do
     context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b)
   end
 
@@ -171,7 +171,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     |> Map.put(:read, client_call(a, :standard, "cluster.status", %{}))
   end
 
-  step "the node refuses both, saying access is required", context do
+  step "the MC refuses both, saying access is required", context do
     for {reply, scope} <- [{context.invited, "access:write"}, {context.read, "access:read"}] do
       assert {:error, _message, %{"_tag" => "EnvironmentScopeRequiredError"} = detail} = reply
       assert detail["requiredScope"] == scope
@@ -181,7 +181,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
-  step "a node started without the cluster boot flags", context do
+  step "an MC started without the cluster boot flags", context do
     context |> machine(:a) |> boot(:a, flags: false)
   end
 
@@ -190,9 +190,9 @@ defmodule HalC2.Steps.Connections.Cluster do
     Map.put(context, :joined, command(context.machines.a, ["join", link]))
   end
 
-  step "the join is refused saying the node was not started for clustering", context do
+  step "the join is refused saying the MC was not started for clustering", context do
     assert {:error, message} = context.joined
-    assert message =~ "node was not started for clustering"
+    assert message =~ "MC was not started for clustering"
     assert {:ok, "Not clustering: " <> _} = command(context.machines.a, ["status"])
     context
   end
@@ -221,16 +221,16 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   # --- strangers ----------------------------------------------------------------------
 
-  step "a member of a cluster and a node that never joined it", context do
+  step "a member of a cluster and an MC that never joined it", context do
     context |> machine(:a) |> boot(:a) |> machine(:stranger) |> boot(:stranger)
   end
 
-  step "the node tries to connect to the member", context do
+  step "the MC tries to connect to the member", context do
     %{a: a, stranger: stranger} = context.machines
     {:ok, ip} = :inet.parse_address(to_charlist(a.address))
     host = HalC2.Cluster.host(a.id)
     :peer.call(stranger.peer, HalC2.Cluster.Epmd, :put, [host, ip, context.cluster_port])
-    connected = :peer.call(stranger.peer, Elixir.Node, :connect, [HalC2.Cluster.node_name(a.id)])
+    connected = :peer.call(stranger.peer, Elixir.Node, :connect, [HalC2.Cluster.mc_name(a.id)])
     Map.put(context, :connected, connected)
   end
 
@@ -243,8 +243,8 @@ defmodule HalC2.Steps.Connections.Cluster do
 
     assert {:tls_alert, _} =
              handshake(context, a,
-               certfile: to_charlist(Path.join(dir, "node.pem")),
-               keyfile: to_charlist(Path.join(dir, "node.key")),
+               certfile: to_charlist(Path.join(dir, "mc.pem")),
+               keyfile: to_charlist(Path.join(dir, "mc.key")),
                verify: :verify_none
              )
 
@@ -321,7 +321,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     for m <- [a, b] do
       assert await_disconnected(m, c)
       refute Enum.any?(status(m)["members"], &(&1["id"] == c.id))
-      refute :peer.call(c.peer, Elixir.Node, :connect, [HalC2.Cluster.node_name(m.id)])
+      refute :peer.call(c.peer, Elixir.Node, :connect, [HalC2.Cluster.mc_name(m.id)])
     end
 
     context
@@ -329,8 +329,8 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   step "the first two stay connected", context do
     %{a: a, b: b, c: c} = context.machines
-    assert :peer.call(a.peer, Elixir.Node, :list, []) == [HalC2.Cluster.node_name(b.id)]
-    assert :peer.call(b.peer, Elixir.Node, :list, []) == [HalC2.Cluster.node_name(a.id)]
+    assert :peer.call(a.peer, Elixir.Node, :list, []) == [HalC2.Cluster.mc_name(b.id)]
+    assert :peer.call(b.peer, Elixir.Node, :list, []) == [HalC2.Cluster.mc_name(a.id)]
     assert :peer.call(c.peer, Elixir.Node, :list, []) == []
     context
   end
@@ -345,17 +345,17 @@ defmodule HalC2.Steps.Connections.Cluster do
       |> World.create_thread("Local work")
 
     context = context |> remote_project("Garden") |> remote_thread("Garden work", "Garden")
-    World.put_client(context, Node.connect(context.node))
+    World.put_client(context, Mc.connect(context.mc))
   end
 
   step "it follows the shell", context do
-    client = context |> World.client() |> Node.sub(1, %{"type" => "shell"})
+    client = context |> World.client() |> Mc.sub(1, %{"type" => "shell"})
     World.put_client(context, client)
   end
 
   step "it sees projects and threads from both machines", context do
     here = :erlang.node()
-    there = context.second.node
+    there = context.second.mc
 
     wanted = [
       {here, World.project(context, "Home").id},
@@ -381,16 +381,16 @@ defmodule HalC2.Steps.Connections.Cluster do
   end
 
   step "each row names the machine it lives on", context do
-    # Rows carry their node; the node names its environment and the machine's label.
+    # Rows carry their MC; the MC names its environment and the machine's label.
     here = Atom.to_string(:erlang.node())
-    there = Atom.to_string(context.second.node)
-    assert context.shell.nodes[here]["environment"]["environmentId"] == context.node.environment
+    there = Atom.to_string(context.second.mc)
+    assert context.shell.mcs[here]["environment"]["environmentId"] == context.mc.environment
 
-    assert context.shell.nodes[there]["environment"]["environmentId"] ==
+    assert context.shell.mcs[there]["environment"]["environmentId"] ==
              context.second.environment
 
-    assert context.shell.nodes[there]["environment"]["label"] == "garden-box"
-    assert context.shell.nodes[there]["online"]
+    assert context.shell.mcs[there]["environment"]["label"] == "garden-box"
+    assert context.shell.mcs[there]["online"]
     context
   end
 
@@ -403,17 +403,17 @@ defmodule HalC2.Steps.Connections.Cluster do
   end
 
   step "its threads stay listed", context do
-    # A fresh follower still gets the thread, from the connected node's copy.
+    # A fresh follower still gets the thread, from the connected MC's copy.
     {shell, client} = resubscribe(context)
 
     assert {"thread", %{"title" => "Garden work"}} =
-             shell.rows[{context.second.node, context.remote["Garden work"]}]
+             shell.rows[{context.second.mc, context.remote["Garden work"]}]
 
     context |> World.put_client(client) |> Map.put(:shell, shell)
   end
 
   step "they are marked offline", context do
-    refute context.shell.nodes[Atom.to_string(context.second.node)]["online"]
+    refute context.shell.mcs[Atom.to_string(context.second.mc)]["online"]
     context
   end
 
@@ -426,24 +426,24 @@ defmodule HalC2.Steps.Connections.Cluster do
   end
 
   step "its rows are marked online", context do
-    there = Atom.to_string(context.second.node)
+    there = Atom.to_string(context.second.mc)
 
     {_, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
-        &(&1 == %{"t" => "shell.node", "id" => 1, "node" => there, "online" => true}),
+        &(&1 == %{"t" => "shell.mc", "id" => 1, "mc" => there, "online" => true}),
         10_000
       )
 
     {shell, client} = resubscribe(World.put_client(context, client))
-    assert shell.nodes[there]["online"]
-    assert {"thread", _} = shell.rows[{context.second.node, context.remote["Garden work"]}]
+    assert shell.mcs[there]["online"]
+    assert {"thread", _} = shell.rows[{context.second.mc, context.remote["Garden work"]}]
     World.put_client(context, client)
   end
 
   step "a client reads a member's environment descriptor", context do
     context = second_member(context)
-    {200, descriptor} = Node.http(context.node, :get, "/.well-known/hal-c2/environment")
+    {200, descriptor} = Mc.http(context.mc, :get, "/.well-known/hal-c2/environment")
     Map.put(context, :descriptor, descriptor)
   end
 
@@ -451,7 +451,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     assert Enum.sort(context.descriptor["cluster"]) ==
              Enum.sort([
                %{
-                 "environmentId" => context.node.environment,
+                 "environmentId" => context.mc.environment,
                  "label" => HalC2.Environment.descriptor()["label"]
                },
                %{"environmentId" => context.second.environment, "label" => "garden-box"}
@@ -464,17 +464,17 @@ defmodule HalC2.Steps.Connections.Cluster do
     context = second_member(context)
 
     {:ok, _} =
-      :erpc.call(context.second.node, HalC2.Streams, :commit, [
+      :erpc.call(context.second.mc, HalC2.Streams, :commit, [
         "remote-th",
         :thread,
         [{"thread", "remote-th", %{"s" => %{"id" => "remote-th", "title" => "On b"}}}]
       ])
 
-    World.put_client(context, Node.connect(context.node))
+    World.put_client(context, Mc.connect(context.mc))
   end
 
   step "it follows a thread that lives on the second member", context do
-    follow_second(context, %{"node" => Atom.to_string(context.second.node)})
+    follow_second(context, %{"mc" => Atom.to_string(context.second.mc)})
   end
 
   step "it follows a thread that lives on the second member by that member's environment",
@@ -484,20 +484,20 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   defp follow_second(context, target) do
     shape = Map.merge(%{"type" => "stream", "stream" => "remote-th"}, target)
-    client = Node.sub(World.client(context), 2, shape)
-    {_, client} = Node.await(client, &(&1["t"] == "live" and &1["id"] == 2), 5_000)
+    client = Mc.sub(World.client(context), 2, shape)
+    {_, client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 2), 5_000)
     World.put_client(context, client)
   end
 
   step "the thread streams over the client's one socket", context do
     {:ok, seq} =
-      :erpc.call(context.second.node, HalC2.Streams, :commit, [
+      :erpc.call(context.second.mc, HalC2.Streams, :commit, [
         "remote-th",
         :thread,
         [{"turn-item", "i1", %{"s" => %{"text" => "from b"}}}]
       ])
 
-    {events, client} = Node.await(World.client(context), &(&1["t"] == "events" and &1["id"] == 2))
+    {events, client} = Mc.await(World.client(context), &(&1["t"] == "events" and &1["id"] == 2))
     assert [[^seq, "turn-item", "i1", %{"s" => %{"text" => "from b"}}, _at]] = events["events"]
     World.put_client(context, client)
   end
@@ -508,14 +508,14 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   step "a client asks for something only the second member can serve", context do
     {reply, client} =
-      Node.call(Node.connect(context.node), context.second.environment, "hal-c2.readSettings")
+      Mc.call(Mc.connect(context.mc), context.second.environment, "hal-c2.readSettings")
 
     context |> World.put_client(client) |> Map.put(:reply, reply)
   end
 
-  step "that request fails saying the node is unavailable", context do
+  step "that request fails saying the MC is unavailable", context do
     assert {:error, error, _} = context.reply
-    assert error =~ "node unavailable"
+    assert error =~ "MC unavailable"
     context
   end
 
@@ -537,9 +537,9 @@ defmodule HalC2.Steps.Connections.Cluster do
     assert context.upload_status == 204
 
     stored =
-      :erpc.call(context.second.node, HalC2.Attachments, :path, [%{"id" => context.upload.id}])
+      :erpc.call(context.second.mc, HalC2.Attachments, :path, [%{"id" => context.upload.id}])
 
-    assert :erpc.call(context.second.node, File, :read!, [stored]) == png()
+    assert :erpc.call(context.second.mc, File, :read!, [stored]) == png()
     assert HalC2.Attachments.path(%{"id" => context.upload.id}) == nil
     context
   end
@@ -558,7 +558,7 @@ defmodule HalC2.Steps.Connections.Cluster do
   end
 
   step "a simulator running on the second member", context do
-    home = Node.tmp_dir(context.node, "second")
+    home = Mc.tmp_dir(context.mc, "second")
     sdk = install_device_tools(home)
 
     context =
@@ -568,7 +568,7 @@ defmodule HalC2.Steps.Connections.Cluster do
       ])
 
     {:ok, state} =
-      :erpc.call(context.second.node, HalC2.Devices, :configure, [%{"enabled" => true}])
+      :erpc.call(context.second.mc, HalC2.Devices, :configure, [%{"enabled" => true}])
 
     assert state["hostStatus"] == "ready"
     Map.put(context, :hub, state["hubBasePath"])
@@ -577,12 +577,12 @@ defmodule HalC2.Steps.Connections.Cluster do
   step "a client connected to the first member watches it", context do
     # The Device panel lists devices, then shows the stream in an <img>.
     {200, devices} =
-      Node.http(context.node, :get, "#{context.hub}/api/devices?token=#{HalC2.Web.token()}")
+      Mc.http(context.mc, :get, "#{context.hub}/api/devices?token=#{HalC2.Web.token()}")
 
     assert [%{"id" => "SIM-1"}] = devices["simulators"]
 
     url =
-      "http://127.0.0.1:#{context.node.port}#{context.hub}/vendor/serve-sim/helper/SIM-1/stream.mjpeg?token=#{HalC2.Web.token()}"
+      "http://127.0.0.1:#{context.mc.port}#{context.hub}/vendor/serve-sim/helper/SIM-1/stream.mjpeg?token=#{HalC2.Web.token()}"
 
     {:ok, ref} = :httpc.request(:get, {to_charlist(url), []}, [], sync: false, stream: :self)
     ExUnit.Callbacks.on_exit(fn -> :httpc.cancel_request(ref) end)
@@ -606,13 +606,13 @@ defmodule HalC2.Steps.Connections.Cluster do
   defp code_path_args, do: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
 
   # A machine for the trust scenarios: its own home, loopback address and label. Every
-  # machine in a scenario listens for members on one free port, apart from any node
+  # machine in a scenario listens for members on one free port, apart from any MC
   # running on this computer.
   defp machine(context, name) do
     context = Map.put_new_lazy(context, :cluster_port, &free_port/0)
 
     machine = %{
-      home: Node.tmp_dir(context.node, "machine-#{name}"),
+      home: Mc.tmp_dir(context.mc, "machine-#{name}"),
       address: loopback_address(),
       label: "member-#{name}",
       tailscale: tailnet(context, nil, []),
@@ -635,10 +635,10 @@ defmodule HalC2.Steps.Connections.Cluster do
   end
 
   # Boots a machine's VM as a release does (`flags: false` leaves out the cluster boot
-  # flags) and starts the whole node in it.
+  # flags) and starts the whole MC in it.
   defp boot(context, name, opts \\ []) do
     machine = context.machines[name]
-    optfile = Path.join(Node.tmp_dir(context.node, "dist"), "ssl_dist.conf")
+    optfile = Path.join(Mc.tmp_dir(context.mc, "dist"), "ssl_dist.conf")
 
     flags =
       if Keyword.get(opts, :flags, true),
@@ -652,11 +652,11 @@ defmodule HalC2.Steps.Connections.Cluster do
              env: [{~c"HAL_C2_LABEL", to_charlist(machine.label)} | machine.env]
            }) do
         {:ok, peer} -> peer
-        {:ok, peer, _node} -> peer
+        {:ok, peer, _mc} -> peer
       end
 
     settings = [
-      start_node: true,
+      start_mc: true,
       home: machine.home,
       port: 0,
       host: machine.address,
@@ -695,7 +695,7 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   defp status(machine), do: :peer.call(machine.peer, HalC2.Cluster, :status, [])
 
-  # One RPC over a fresh socket to the machine's node, as the TUI and desktop send it.
+  # One RPC over a fresh socket to the machine's MC, as the TUI and desktop send it.
   # `:admin` pairs the client with an admin link, `:standard` with a standard one.
   defp client_call(machine, pairing, method, payload) do
     scopes =
@@ -714,9 +714,9 @@ defmodule HalC2.Steps.Connections.Cluster do
     {%{"t" => "hello"}, client} = WsClient.recv(client, 5_000)
 
     id = System.unique_integer([:positive])
-    client = Node.rpc(client, machine.id, id, method, payload)
+    client = Mc.rpc(client, machine.id, id, method, payload)
     reply? = &(&1["id"] == id and &1["t"] in ["rpc.result", "rpc.error"])
-    {frame, _client} = Node.await(client, reply?, 30_000)
+    {frame, _client} = Mc.await(client, reply?, 30_000)
 
     case frame do
       %{"t" => "rpc.result", "result" => result} -> {:ok, result}
@@ -740,21 +740,21 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   # Waits on `machine` itself for its connection to `other` (discovery looks every 10s).
   defp await_connected(machine, other, timeout \\ 15_000) do
-    await_node(machine, :nodeup, HalC2.Cluster.node_name(other.id), timeout)
+    await_mc(machine, :nodeup, HalC2.Cluster.mc_name(other.id), timeout)
   end
 
   defp await_disconnected(machine, other) do
-    await_node(machine, :nodedown, HalC2.Cluster.node_name(other.id), 15_000)
+    await_mc(machine, :nodedown, HalC2.Cluster.mc_name(other.id), 15_000)
   end
 
-  defp await_node(machine, event, node, timeout) do
+  defp await_mc(machine, event, mc, timeout) do
     code = """
     :ok = :net_kernel.monitor_nodes(true)
 
     result =
-      (node in Node.list()) == (event == :nodeup) or
+      (mc in Node.list()) == (event == :nodeup) or
         receive do
-          {^event, ^node} -> true
+          {^event, ^mc} -> true
         after
           timeout -> false
         end
@@ -763,7 +763,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     result
     """
 
-    binding = [node: node, event: event, timeout: timeout]
+    binding = [mc: mc, event: event, timeout: timeout]
     {result, _} = :peer.call(machine.peer, Code, :eval_string, [code, binding], timeout + 5_000)
     result
   end
@@ -789,7 +789,7 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   # A `tailscale` stand-in whose tailnet lists `addresses` as online peers.
   defp tailnet(context, machine, addresses) do
-    state = Path.join(Node.tmp_dir(context.node, "tailscale"), "state.json")
+    state = Path.join(Mc.tmp_dir(context.mc, "tailscale"), "state.json")
 
     File.write!(
       state,
@@ -802,7 +802,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     ["env", "FAKE_TAILSCALE_STATE=#{state}", Path.expand("test/support/fake_tailscale.py")]
   end
 
-  # Makes this VM a named node (as a clustered node boots) and restarts the node on it.
+  # Makes this VM a named MC (as a clustered MC boots) and restarts the MC on it.
   defp distribute do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
@@ -824,15 +824,15 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   defp second_member(context, home, env) do
     distribute()
-    context = %{context | node: Node.restart(context.node)}
+    context = %{context | mc: Mc.restart(context.mc)}
     name = :"hal_c2_member#{System.unique_integer([:positive])}"
-    start_second(context, name, home || Node.tmp_dir(context.node, "second"), env)
+    start_second(context, name, home || Mc.tmp_dir(context.mc, "second"), env)
   end
 
-  # The second machine: a peer running the whole node, labelled "garden-box". Returns
-  # once the connected node knows its environment.
+  # The second machine: a peer running the whole MC, labelled "garden-box". Returns
+  # once the connected MC knows its environment.
   defp start_second(context, name, home, env \\ []) do
-    {:ok, peer, node} =
+    {:ok, peer, mc} =
       :peer.start_link(%{
         name: name,
         host: ~c"127.0.0.1",
@@ -841,35 +841,35 @@ defmodule HalC2.Steps.Connections.Cluster do
         env: [{~c"HAL_C2_LABEL", ~c"garden-box"} | env]
       })
 
-    for {key, value} <- [start_node: true, home: home, port: 0],
-        do: :ok = :erpc.call(node, Application, :put_env, [:hal_c2, key, value])
+    for {key, value} <- [start_mc: true, home: home, port: 0],
+        do: :ok = :erpc.call(mc, Application, :put_env, [:hal_c2, key, value])
 
-    {:ok, _} = :erpc.call(node, Application, :ensure_all_started, [:hal_c2], 30_000)
+    {:ok, _} = :erpc.call(mc, Application, :ensure_all_started, [:hal_c2], 30_000)
 
-    assert_receive {:hal_c2_shell, {:environment, ^node, %{"environmentId" => environment}}},
+    assert_receive {:hal_c2_shell, {:environment, ^mc, %{"environmentId" => environment}}},
                    10_000
 
     Map.put(context, :second, %{
       name: name,
       home: home,
       peer: peer,
-      node: node,
+      mc: mc,
       environment: environment
     })
   end
 
   defp sleep_second(context) do
-    node = context.second.node
+    mc = context.second.mc
     :peer.stop(context.second.peer)
-    assert_receive {:hal_c2_shell, {:node, ^node, :down}}, 5_000
+    assert_receive {:hal_c2_shell, {:mc, ^mc, :down}}, 5_000
     context
   end
 
   defp remote_project(context, title) do
-    root = Node.tmp_dir(context.node, "garden")
+    root = Mc.tmp_dir(context.mc, "garden")
 
     {:ok, _} =
-      :erpc.call(context.second.node, HalC2.Projects, :mutate, [
+      :erpc.call(context.second.mc, HalC2.Projects, :mutate, [
         %{
           "type" => "project.create",
           "projectId" => "garden",
@@ -885,7 +885,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     id = "th-garden-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      :erpc.call(context.second.node, HalC2.Orchestration, :dispatch, [
+      :erpc.call(context.second.mc, HalC2.Orchestration, :dispatch, [
         %{
           "type" => "thread.create",
           "threadId" => id,
@@ -905,26 +905,26 @@ defmodule HalC2.Steps.Connections.Cluster do
       |> remote_project("Garden")
       |> remote_thread("Garden work", "Garden")
 
-    client = context.node |> Node.connect() |> Node.sub(1, %{"type" => "shell"})
-    key = {context.second.node, context.remote["Garden work"]}
+    client = context.mc |> Mc.connect() |> Mc.sub(1, %{"type" => "shell"})
+    key = {context.second.mc, context.remote["Garden work"]}
     {_, client} = shell_until(client, &Map.has_key?(&1.rows, key))
     World.put_client(context, client)
   end
 
   # Subscribes to the shell again (id 3) and returns its first frame, as a new window would.
   defp resubscribe(context) do
-    client = Node.unsub(World.client(context), 1)
-    client = Node.sub(client, 3, %{"type" => "shell"})
-    {frame, client} = Node.await(client, &(&1["t"] == "shell" and &1["id"] == 3), 5_000)
+    client = Mc.unsub(World.client(context), 1)
+    client = Mc.sub(client, 3, %{"type" => "shell"})
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 3), 5_000)
     {shell(frame), client}
   end
 
   # Reads shell frames, folding row updates in, until `done?` holds for the sidebar.
-  defp shell_until(client, done?, shell \\ %{rows: %{}, nodes: %{}}) do
+  defp shell_until(client, done?, shell \\ %{rows: %{}, mcs: %{}}) do
     {frame, client} =
-      Node.await(
+      Mc.await(
         client,
-        &(&1["t"] in ["shell", "shell.rows", "shell.node", "shell.environment"]),
+        &(&1["t"] in ["shell", "shell.rows", "shell.mc", "shell.environment"]),
         5_000
       )
 
@@ -933,30 +933,30 @@ defmodule HalC2.Steps.Connections.Cluster do
         %{"t" => "shell"} ->
           shell(frame)
 
-        %{"t" => "shell.rows", "node" => node, "rows" => rows} ->
-          node = String.to_existing_atom(node)
+        %{"t" => "shell.rows", "mc" => mc, "rows" => rows} ->
+          mc = String.to_existing_atom(mc)
 
           update_in(
             shell.rows,
-            &Enum.into(rows, &1, fn [id, kind, row] -> {{node, id}, {kind, row}} end)
+            &Enum.into(rows, &1, fn [id, kind, row] -> {{mc, id}, {kind, row}} end)
           )
 
-        %{"t" => "shell.node", "node" => node, "online" => online} ->
-          put_in(shell, [:nodes, Access.key(node, %{}), "online"], online)
+        %{"t" => "shell.mc", "mc" => mc, "online" => online} ->
+          put_in(shell, [:mcs, Access.key(mc, %{}), "online"], online)
 
-        %{"t" => "shell.environment", "node" => node, "environment" => environment} ->
-          put_in(shell, [:nodes, Access.key(node, %{}), "environment"], environment)
+        %{"t" => "shell.environment", "mc" => mc, "environment" => environment} ->
+          put_in(shell, [:mcs, Access.key(mc, %{}), "environment"], environment)
       end
 
     if done?.(shell), do: {shell, client}, else: shell_until(client, done?, shell)
   end
 
-  defp shell(%{"nodes" => nodes, "rows" => rows}) do
+  defp shell(%{"mcs" => mcs, "rows" => rows}) do
     %{
-      nodes: Map.new(nodes, &{&1["node"], &1}),
+      mcs: Map.new(mcs, &{&1["mc"], &1}),
       rows:
-        Map.new(rows, fn [node, id, kind, row] ->
-          {{String.to_existing_atom(node), id}, {kind, row}}
+        Map.new(rows, fn [mc, id, kind, row] ->
+          {{String.to_existing_atom(mc), id}, {kind, row}}
         end)
     }
   end
@@ -965,7 +965,7 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   defp upload_link(context) do
     {:ok, link} =
-      :erpc.call(context.second.node, HalC2.Attachments, :create_upload_url, [
+      :erpc.call(context.second.mc, HalC2.Attachments, :create_upload_url, [
         %{"name" => "shot.png", "mimeType" => "image/png", "sizeBytes" => byte_size(png())}
       ])
 
@@ -973,7 +973,7 @@ defmodule HalC2.Steps.Connections.Cluster do
   end
 
   defp upload(context) do
-    url = to_charlist("http://127.0.0.1:#{context.node.port}#{context.upload.path}")
+    url = to_charlist("http://127.0.0.1:#{context.mc.port}#{context.upload.path}")
     {:ok, {{_, status, _}, _, _}} = :httpc.request(:post, {url, [], ~c"image/png", png()}, [], [])
     status
   end

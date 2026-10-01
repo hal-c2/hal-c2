@@ -18,18 +18,18 @@ Feature: Searching project files
 
   Rule: Finding files by name
 
-    @node
+    @mc
     Scenario: Name matches rank above path matches and shorter paths win ties
       When a client searches "shop" for files named "cart"
       Then "src/cart.ts" is ranked first
       And "src/lib/cart-total.ts" is ranked before "docs/shopping-cart.md"
 
-    @node
+    @mc
     Scenario: Letters typed in order find a file even when they are not adjacent
       When a client searches "shop" for files named "sct"
       Then "src/cart.ts" is returned
 
-    @node
+    @mc
     Scenario Outline: A leading mention or relative prefix is ignored
       When a client searches "shop" for files named "<query>"
       Then "src/cart.ts" is returned
@@ -39,7 +39,7 @@ Feature: Searching project files
         | @cart      |
         | ./src/cart |
 
-    @node
+    @mc
     Scenario Outline: A search can be narrowed to one kind of entry
       When a client searches "shop" for <kind> named "<query>"
       Then only <returned> is returned
@@ -49,7 +49,7 @@ Feature: Searching project files
         | folders     | src   | "src"              |
         | image files | logo  | "assets/logo.png"  |
 
-    @node
+    @mc
     Scenario: A search returns a limited number of matches and says there are more
       Given "shop" holds 300 files named like "cart"
       When a client searches "shop" for files named "cart" with a limit of 50
@@ -58,7 +58,7 @@ Feature: Searching project files
 
     # Neither server records which files were opened; both rank an empty search by
     # how recently files changed (the TS index's modification frecency).
-    @node
+    @mc
     Scenario: An empty file search lists the files that changed most recently first
       Given "docs/shopping-cart.md" changed most recently
       When a client searches "shop" for files with an empty query
@@ -80,13 +80,13 @@ Feature: Searching project files
     Background:
       Given "src/cart.ts" contains the line "const Total = cartTotal(items)"
 
-    @node
+    @mc
     Scenario: Content search is case-insensitive by default
       When a client searches the contents of "shop" for "total"
       Then the line "const Total = cartTotal(items)" in "src/cart.ts" is returned
       And each match carries its line number and the character range of the match
 
-    @node
+    @mc
     Scenario Outline: Content search options narrow the matches
       When a client searches the contents of "shop" for "<query>" with <option>
       Then "src/cart.ts" <result>
@@ -98,19 +98,19 @@ Feature: Searching project files
         | cart  | matching whole words    | is not returned    |
         | T.tal | a regular expression    | is returned        |
 
-    @node
+    @mc
     Scenario: An invalid regular expression falls back to a plain text search and says why
       When a client searches the contents of "shop" for "cart(" as a regular expression
       Then matches for the text "cart(" are returned
       And the result explains why the regular expression was not used
 
-    @node
+    @mc
     Scenario: Content search works without ripgrep installed
       Given ripgrep is not installed on the environment
       When a client searches the contents of "shop" for "total"
       Then "src/cart.ts" is returned
 
-    @node
+    @mc
     Scenario: Content search skips files larger than one megabyte
       Given "logs/huge.log" in "shop" is 5 MB and contains "total"
       When a client searches the contents of "shop" for "total"

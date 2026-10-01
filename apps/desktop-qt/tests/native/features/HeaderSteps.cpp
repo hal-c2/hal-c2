@@ -15,7 +15,7 @@ namespace {
 
 using namespace stream;
 
-const QString kLongTitle = QStringLiteral("Move the checkout of every thread onto the node that owns its project, keeping the agent's session");
+const QString kLongTitle = QStringLiteral("Move the checkout of every thread onto the MC that owns its project, keeping the agent's session");
 
 // The width the header is laid out at, set by the "When" steps.
 int headerWidth = 0;
@@ -41,10 +41,10 @@ const Steps steps([] {
   Brick::registerSingletons();
   step(QStringLiteral("a long thread title"), [](World& world, const Captures&, const Table&) {
     // The thread the background looks at, renamed.
-    QJsonObject row = world.node.threads.value(kThread);
+    QJsonObject row = world.mc.threads.value(kThread);
     row.insert(QStringLiteral("title"), kLongTitle);
-    world.node.threads.insert(kThread, row);
-    world.node.sendRow(kThread, row);
+    world.mc.threads.insert(kThread, row);
+    world.mc.sendRow(kThread, row);
     world.waitFor([&] { return at(world.state(QStringLiteral("workspace")), QStringLiteral("threadTitle")) == kLongTitle; },
                   [&] { return QStringLiteral("the header to show the long title; it shows %1").arg(show(world.state(QStringLiteral("workspace")))); });
   });

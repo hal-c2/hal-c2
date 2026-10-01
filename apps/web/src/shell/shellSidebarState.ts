@@ -170,7 +170,7 @@ export interface ShellSidebarInputOptions {
 
 /**
  * What the shell needs from the page to build `sidebar` itself once it owns
- * it: the project grouping (by member key, so it can place the node's
+ * it: the project grouping (by member key, so it can place the MC's
  * threads), the drafts and route only the page has, and the clock format.
  */
 export function buildShellSidebarInput(options: ShellSidebarInputOptions): ShellSidebarInput {

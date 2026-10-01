@@ -10,33 +10,33 @@
 #   apps/web/src/components/settings/ResourceTelemetryDiagnostics.logic.ts
 
 Feature: Resource monitor
-  The resource monitor shows live CPU and memory for everything the node runs,
+  The resource monitor shows live CPU and memory for everything the MC runs,
   grouped by what it is for, and keeps a bounded history.
 
-  @node
+  @mc
   Scenario: Watching the monitor streams live snapshots
     When the user watches the resource monitor
     Then a fresh snapshot of the process tree arrives every few seconds
 
-  @node
-  Scenario: The node samples less often while nobody watches
+  @mc
+  Scenario: The MC samples less often while nobody watches
     Given no client watches the resource monitor
-    Then the node samples every 15 seconds
+    Then the MC samples every 15 seconds
     And it keeps at most one hour of samples
 
-  @node
+  @mc
   Scenario: Retrying the monitor takes a sample now
     When the user retries the resource monitor
     Then a new snapshot is taken immediately
 
-  @node
-  Scenario: Host power is reported as unavailable on the node
+  @mc
+  Scenario: Host power is reported as unavailable on the MC
     When the user watches the resource monitor
     Then host power state is shown as unavailable
 
   @backlog @desktop
   Scenario: The desktop app reports host power to the monitor
-    Given the node runs inside the desktop app on a laptop on battery
+    Given the MC runs inside the desktop app on a laptop on battery
     When the user watches the resource monitor
     Then the monitor shows the host is on battery
 
@@ -46,8 +46,8 @@ Feature: Resource monitor
     Then processes are grouped as server, provider and terminal
     And each group can be collapsed and expanded again
 
-  @node
+  @mc
   Scenario: Application I/O is broken down by operation
-    Given the node has written trace records and provider event logs
+    Given the MC has written trace records and provider event logs
     When the user watches the resource monitor
     Then logical bytes read and written are shown per operation

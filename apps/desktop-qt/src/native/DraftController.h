@@ -10,7 +10,7 @@
 #include "NativeController.h"
 #include "SidebarModel.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 
@@ -34,7 +34,7 @@ class ShellStore;
 // thread.newIn menu ("New thread in...", the window's project first).
 //
 // A window with no thread lands on a draft, as the web's index route does:
-// on `home`, once the node's snapshot is in, it opens the draft of the most
+// on `home`, once the MC's snapshot is in, it opens the draft of the most
 // recently active project (sidebar::mostRecentProject), the same draft every
 // other window landing there opens. With no project it stays home, which
 // offers to add one. A draft that cannot be kept publishes `landing`
@@ -54,7 +54,7 @@ public:
     QString threadKey() const { return environmentId + QLatin1Char(':') + threadId; }
   };
 
-  DraftController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  DraftController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;

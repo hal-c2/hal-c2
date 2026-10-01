@@ -1,17 +1,17 @@
 defmodule Mix.Tasks.HalC2.Link do
-  @shortdoc "Links the running node to an environment outside its cluster"
+  @shortdoc "Links the running MC to an environment outside its cluster"
   @moduledoc """
-  Pairs the running node with another node it is not clustered with, so clients
-  of this node reach that environment's threads and terminals through it
+  Pairs the running MC with another MC it is not clustered with, so clients
+  of this MC reach that environment's threads and terminals through it
   (`HalC2.Links`):
 
       mix hal_c2.link PAIRING_URL            # pair and keep the link
       mix hal_c2.link                        # list the links
       mix hal_c2.link --remove ENVIRONMENT   # forget a link
 
-  `PAIRING_URL` is a one-time pairing link from the other node, such as
-  `mix hal_c2.pair` prints there. The node must be running; the task talks to it
-  over its own socket with the node's access token.
+  `PAIRING_URL` is a one-time pairing link from the other MC, such as
+  `mix hal_c2.pair` prints there. The MC must be running; the task talks to it
+  over its own socket with the MC's access token.
   """
 
   use Mix.Task
@@ -54,12 +54,12 @@ defmodule Mix.Tasks.HalC2.Link do
     "#{env["label"]}  #{env["environmentId"]}  #{link["origin"]}  #{state}"
   end
 
-  # One RPC to the running node, as its own client.
+  # One RPC to the running MC, as its own client.
   defp call(method, payload) do
     record =
       case File.read(HalC2.RuntimeRecord.path()) do
         {:ok, json} -> JSON.decode!(json)
-        {:error, _} -> Mix.raise("no node is running here; start it with `mix hal_c2.server`")
+        {:error, _} -> Mix.raise("no MC is running here; start it with `mix hal_c2.server`")
       end
 
     token = File.read!(Path.join(HalC2.Paths.data_dir(), "access-token")) |> String.trim()
@@ -102,7 +102,7 @@ defmodule Mix.Tasks.HalC2.Link do
       else: recv_upgrade(conn, ref, acc)
   end
 
-  # Linking waits on the other node, so the reply may take a while.
+  # Linking waits on the other MC, so the reply may take a while.
   defp recv_reply(conn, ref, ws, data) do
     {:ok, ws, frames} = Mint.WebSocket.decode(ws, data)
 

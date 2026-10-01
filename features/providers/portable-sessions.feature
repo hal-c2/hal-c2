@@ -13,7 +13,7 @@
 #     pi --fork in the destination directory)
 #   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex, apps/server-ex/lib/hal_c2/acp/sessions.ex
 #     (session/resume, session/load, canLoad and canResume)
-#   apps/server-ex/lib/hal_c2/acp/antigravity.ex (each instance's profile lives in the node's data)
+#   apps/server-ex/lib/hal_c2/acp/antigravity.ex (each instance's profile lives in the MC's data)
 #   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Grok's sessions/**/updates.jsonl)
 #   packages/cursor-acp/src/agent.ts (each session is a Cursor SDK agent, resumed by its id; no load)
 #   Upstream: code.claude.com/docs/en/sessions and /claude-directory (transcripts keyed by the
@@ -52,7 +52,7 @@ Feature: Carrying an agent's own session to another machine
     And the project "shop" is at "~/code/shop" on "laptop" and at "~/src/shop" on "desktop"
     And the thread "Alpha" lives on "laptop" in "shop"
 
-  @node
+  @mc
   Scenario Outline: A provider's session is carried to the destination
     Given "Alpha" runs on <provider> with a native session on "laptop"
     And <provider> keeps that session in <where it lives>
@@ -91,7 +91,7 @@ Feature: Carrying an agent's own session to another machine
       | provider    | where it lives                                                     | where the copy goes                                           | resumes                              |
       | Antigravity | the profile HAL-C2 keeps for that Antigravity instance on "laptop" | the profile of the matching Antigravity instance on "desktop" | resumes the copy by the session's id |
 
-  @node
+  @mc
   Scenario Outline: A provider whose session cannot be carried hands the conversation over
     Given "Alpha" runs on <provider> with a native session on "laptop"
     When "Alpha" moves to "desktop"
@@ -114,7 +114,7 @@ Feature: Carrying an agent's own session to another machine
       | provider             |
       | a registry ACP agent |
 
-  @node
+  @mc
   Scenario Outline: The recorded working directory is rewritten in the copy
     Given "Alpha" runs on <provider> and its session records "~/code/shop" as <record>
     When "Alpha" moves to "desktop"
@@ -136,27 +136,27 @@ Feature: Carrying an agent's own session to another machine
       | provider | record                                        |
       | Pi       | the working directory in the session's header |
 
-  @node
+  @mc
   Scenario: A provider plugin declares how its sessions are carried
     Given a provider plugin that declares native sessions
     And it declares where a session lives and how a copy is placed for another project
     When a thread on it moves to another machine
     Then its session is carried the way the plugin declares
 
-  @node
+  @mc
   Scenario: A provider plugin without native sessions hands the conversation over
     Given a provider plugin that does not declare native sessions
     When a thread on it moves to another machine
     Then the next message on the destination starts a new session with the handoff
 
-  @node
+  @mc
   Scenario: A session in the destination's newer provider continues natively
     Given "Alpha" runs on Codex and "desktop" has a newer Codex than "laptop"
     When "Alpha" moves to "desktop"
     And the user sends a message in "Alpha"
     Then the agent on "desktop" continues the carried session
 
-  @node
+  @mc
   Scenario: A destination provider that cannot read the session falls back to the handoff
     Given "Alpha" runs on Claude and "desktop" has an older Claude than "laptop"
     And the older Claude cannot open the session written by the newer one
@@ -165,7 +165,7 @@ Feature: Carrying an agent's own session to another machine
     Then a new Claude session starts on "desktop" with the handoff
     And the user is told Claude on "desktop" could not continue the session and is older than on "laptop"
 
-  @node
+  @mc
   Scenario Outline: The copy follows the destination's custom agent home
     Given the <provider> instance on "desktop" keeps its sessions under <setting> "~/work-agent"
     And "Alpha" runs on <provider> with a native session on "laptop" in the default home
@@ -188,7 +188,7 @@ Feature: Carrying an agent's own session to another machine
       | provider | setting                     |
       | Pi       | PI_CODING_AGENT_SESSION_DIR |
 
-  @node
+  @mc
   Scenario: A session in a custom home on the source is found there
     Given the Claude instance on "laptop" keeps its sessions under CLAUDE_CONFIG_DIR "~/work-claude"
     And "Alpha" runs on that instance
@@ -196,20 +196,20 @@ Feature: Carrying an agent's own session to another machine
     Then the session is copied from "~/work-claude" on "laptop"
     And the copy is placed in the Claude home of the instance "Alpha" runs on at "desktop"
 
-  @node
+  @mc
   Scenario: The source keeps its copy of the session
     Given "Alpha" runs on Claude with a native session on "laptop"
     When "Alpha" moves to "desktop"
     Then the session is still in the Claude home on "laptop", unchanged
     And the user can still resume it with Claude Code on "laptop"
 
-  @node
+  @mc
   Scenario: The source's copy is not offered for import after the thread moved
     Given "Alpha" moved to "desktop" with its Claude session
     When "laptop" scans for agent history
     Then the session of "Alpha" is marked as already imported
 
-  @node
+  @mc
   Scenario: A session moved twice continues from the latest machine
     Given the cluster also has the machine "server", with "shop" at "~/shop"
     And "Alpha" moved from "laptop" to "desktop" with its Codex session
@@ -219,7 +219,7 @@ Feature: Carrying an agent's own session to another machine
     Then the agent on "server" continues the conversation including the work on "desktop"
     And the copies on "laptop" and "desktop" are still there, unchanged
 
-  @node
+  @mc
   Scenario: A session moved back does not overwrite the copy the machine already had
     Given "Alpha" moved from "laptop" to "desktop" with its Claude session
     And the user worked in "Alpha" on "desktop"
@@ -227,7 +227,7 @@ Feature: Carrying an agent's own session to another machine
     Then "laptop" holds both its original copy of the session and the one from "desktop"
     And the agent on "laptop" continues the conversation including the work on "desktop"
 
-  @backlog @node @plugin-acp-registry
+  @backlog @mc @plugin-acp-registry
   Scenario: An agent that cannot branch a session is handed the conversation rather than overwrite a copy
     Given "Alpha" runs on Gemini and moved from "laptop" to "desktop" with its session
     And the user worked in "Alpha" on "desktop"
@@ -235,14 +235,14 @@ Feature: Carrying an agent's own session to another machine
     Then the copy of the session "laptop" already had is left as it was
     And on the next message a new Gemini session starts on "laptop" with the handoff
 
-  @node @plugin-claude
+  @mc @plugin-claude
   Scenario: Claude Code's own file history is not carried
     Given "Alpha" runs on Claude and Claude Code kept file backups for its session
     When "Alpha" moves to "desktop"
     Then the file backups stay on "laptop"
     And rewinding "Alpha" on "desktop" uses HAL-C2's checkpoints
 
-  @node
+  @mc
   Scenario: A thread file carries the agent's session the same way a move does
     Given "Alpha" runs on Codex with a native session
     When the user exports "Alpha" on "laptop" and imports the file on "desktop"

@@ -10,7 +10,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 class ShellStore;
 class ToastController;
@@ -23,7 +23,7 @@ class WorkspaceController;
 // The recommended action and the menu follow the checkout as the TUI's
 // gitActions.logic.ts decides them (features/source-control/git-actions.feature),
 // named for the host's change requests. Commit, push and pull request run
-// once each through the node's `gitAction` shape, whose stages update one
+// once each through the MC's `gitAction` shape, whose stages update one
 // loading toast; anything that would land on the default branch waits for
 // `git.defaultBranch`. Pull is `vcs.pull`, Initialize Git `vcs.init`, and
 // Publish repository `sourceControl.publishRepository` from the brick's own
@@ -33,7 +33,7 @@ class GitController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  GitController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  GitController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
   ~GitController() override;
 
   void activate() override;
@@ -71,7 +71,7 @@ private:
   WorkspaceController* workspace() const;
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   bool m_pulling = false;

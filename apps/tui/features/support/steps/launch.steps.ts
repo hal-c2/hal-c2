@@ -1,23 +1,23 @@
 // tui/launch.feature: `hal-c2 tui` starts the client next to a running server, the
-// client started on its own finds (or pairs with) a node, and it gives the
+// client started on its own finds (or pairs with) an MC, and it gives the
 // terminal back when it leaves. These run real processes on
 // pipes (see launchWorld.ts); the Ctrl+C key itself goes through the headless host.
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
 import { TUI_RENDERER_CONFIG } from "../../../src/terminalStartup.ts";
-import { FAKE_NODE_ENVIRONMENT_ID, type FakeNode } from "../fakeNode.ts";
+import { FAKE_MC_ENVIRONMENT_ID, type FakeMc } from "../fakeMc.ts";
 import {
   baseDir,
   bunPath,
   closedOrigin,
   deadPid,
   ENTER_ALT_SCREEN,
-  fakeNode,
+  fakeMc,
   leaveDirect,
   savedSessions,
   startDirect,
-  writeNodeRecord,
+  writeMcRecord,
   faultPreload,
   finishLaunch,
   LEAVE_ALT_SCREEN,
@@ -198,24 +198,24 @@ step("it exits with an error naming the missing value", (ctx: LaunchWorld) => {
   expect(run.stderr).toContain("HAL_C2_TUI_BEARER");
 });
 
-// --- the Elixir node, found without a launcher ---
+// --- the MC, found without a launcher ---
 
-function node(ctx: LaunchWorld): FakeNode {
-  if (!ctx.node) throw new Error("no node is running for this scenario");
-  return ctx.node;
+function mc(ctx: LaunchWorld): FakeMc {
+  if (!ctx.mc) throw new Error("no MC is running for this scenario");
+  return ctx.mc;
 }
 
-/** A socket that subscribed the node's config for its own environment. */
+/** A socket that subscribed the MC's config for its own environment. */
 function sessionSockets(ctx: LaunchWorld) {
-  return node(ctx).sockets.filter((socket) =>
+  return mc(ctx).sockets.filter((socket) =>
     socket.shapes.some(
-      (shape) => shape.type === "config" && shape.environment === FAKE_NODE_ENVIRONMENT_ID,
+      (shape) => shape.type === "config" && shape.environment === FAKE_MC_ENVIRONMENT_ID,
     ),
   );
 }
 
 async function connected(ctx: LaunchWorld, sockets = 1): Promise<void> {
-  await node(ctx).until(() => sessionSockets(ctx).length >= sockets, "the client's session");
+  await mc(ctx).until(() => sessionSockets(ctx).length >= sockets, "the client's session");
   expect(ctx.direct, ctx.client?.stderr).toBeDefined();
 }
 
@@ -226,35 +226,35 @@ function exited(ctx: LaunchWorld): ProcessRun {
   return run;
 }
 
-step("an Elixir node is running on this machine", (ctx: LaunchWorld) => {
-  const running = fakeNode(ctx);
-  writeNodeRecord(ctx, {
+step("an MC is running on this machine", (ctx: LaunchWorld) => {
+  const running = fakeMc(ctx);
+  writeMcRecord(ctx, {
     pid: process.pid,
     origin: running.origin,
     accessToken: running.accessToken,
   });
 });
 
-step("no Elixir node is running on this machine", () => {});
+step("no MC is running on this machine", () => {});
 
-step("the recorded Elixir node is no longer running", async (ctx: LaunchWorld) => {
-  writeNodeRecord(ctx, { pid: await deadPid(), origin: closedOrigin(), accessToken: "stale" });
+step("the recorded MC is no longer running", async (ctx: LaunchWorld) => {
+  writeMcRecord(ctx, { pid: await deadPid(), origin: closedOrigin(), accessToken: "stale" });
 });
 
-step("the recorded Elixir node does not answer", (ctx: LaunchWorld) => {
-  writeNodeRecord(ctx, { pid: process.pid, origin: closedOrigin(), accessToken: "silent" });
+step("the recorded MC does not answer", (ctx: LaunchWorld) => {
+  writeMcRecord(ctx, { pid: process.pid, origin: closedOrigin(), accessToken: "silent" });
 });
 
 step("the user starts the terminal client", async (ctx: LaunchWorld) => {
   await startDirect(ctx, ["--base-dir", baseDir(ctx)]);
 });
 
-step("the terminal client connects to that node", async (ctx: LaunchWorld) => {
+step("the terminal client connects to that MC", async (ctx: LaunchWorld) => {
   await connected(ctx);
 });
 
-step("it signs in with the node's access token", (ctx: LaunchWorld) => {
-  const running = node(ctx);
+step("it signs in with the MC's access token", (ctx: LaunchWorld) => {
+  const running = mc(ctx);
   expect(running.ticketBearers[0]).toBe(running.accessToken);
   // No pairing: the access token is not a session of its own.
   expect(running.tokenExchanges).toBe(0);
@@ -264,22 +264,19 @@ step("it exits saying {string}", (ctx: LaunchWorld, message: string) => {
   expect(exited(ctx).stderr).toContain(message);
 });
 
-step("it exits saying the recorded node is no longer running", (ctx: LaunchWorld) => {
-  expect(exited(ctx).stderr).toMatch(/The recorded HAL-C2 node \(pid \d+\) is no longer running\./);
+step("it exits saying the recorded MC is no longer running", (ctx: LaunchWorld) => {
+  expect(exited(ctx).stderr).toMatch(/The recorded HAL-C2 MC \(pid \d+\) is no longer running\./);
 });
 
-step(
-  "it exits saying the node at the recorded address could not be reached",
-  (ctx: LaunchWorld) => {
-    expect(exited(ctx).stderr).toMatch(
-      /The HAL-C2 node at http:\/\/127\.0\.0\.1:\d+ could not be reached/,
-    );
-  },
-);
+step("it exits saying the MC at the recorded address could not be reached", (ctx: LaunchWorld) => {
+  expect(exited(ctx).stderr).toMatch(
+    /The HAL-C2 MC at http:\/\/127\.0\.0\.1:\d+ could not be reached/,
+  );
+});
 
-step("the client buys a socket ticket from the node over HTTP", async (ctx: LaunchWorld) => {
+step("the client buys a socket ticket from the MC over HTTP", async (ctx: LaunchWorld) => {
   await connected(ctx);
-  expect(node(ctx).ticketBearers.length).toBeGreaterThanOrEqual(1);
+  expect(mc(ctx).ticketBearers.length).toBeGreaterThanOrEqual(1);
 });
 
 step("the socket URL carries only that ticket", (ctx: LaunchWorld) => {
@@ -290,9 +287,9 @@ step("the socket URL carries only that ticket", (ctx: LaunchWorld) => {
   expect(url.searchParams.get("wsTicket")).toBe(socket!.ticket);
 });
 
-step("the terminal client is connected to an Elixir node", async (ctx: LaunchWorld) => {
-  const running = fakeNode(ctx);
-  writeNodeRecord(ctx, {
+step("the terminal client is connected to an MC", async (ctx: LaunchWorld) => {
+  const running = fakeMc(ctx);
+  writeMcRecord(ctx, {
     pid: process.pid,
     origin: running.origin,
     accessToken: running.accessToken,
@@ -301,13 +298,13 @@ step("the terminal client is connected to an Elixir node", async (ctx: LaunchWor
   await connected(ctx);
 });
 
-step("the node drops the connection", (ctx: LaunchWorld) => {
-  ctx.ticketsBeforeDrop = node(ctx).ticketBearers.length;
-  node(ctx).dropConnections();
+step("the MC drops the connection", (ctx: LaunchWorld) => {
+  ctx.ticketsBeforeDrop = mc(ctx).ticketBearers.length;
+  mc(ctx).dropConnections();
 });
 
 step("the client buys a new socket ticket over HTTP", async (ctx: LaunchWorld) => {
-  const running = node(ctx);
+  const running = mc(ctx);
   await running.until(
     () => running.ticketBearers.length > (ctx.ticketsBeforeDrop ?? 0),
     "a new ticket",
@@ -315,8 +312,8 @@ step("the client buys a new socket ticket over HTTP", async (ctx: LaunchWorld) =
   expect(running.ticketBearers.at(-1)).toBe(running.accessToken);
 });
 
-/** `it reconnects without the user doing anything` against a node (routed in reconnect.steps.ts). */
-export async function expectNodeReconnected(ctx: LaunchWorld): Promise<void> {
+/** `it reconnects without the user doing anything` against an MC (routed in reconnect.steps.ts). */
+export async function expectMcReconnected(ctx: LaunchWorld): Promise<void> {
   await connected(ctx, 2);
   const [first, second] = sessionSockets(ctx);
   expect(second!.ticket).not.toBe(first!.ticket);
@@ -332,12 +329,12 @@ function pairingLink(ctx: LaunchWorld): string {
 }
 
 step("a pairing link from a remote HAL-C2 environment", (ctx: LaunchWorld) => {
-  const remote = fakeNode(ctx, { pairingToken: PAIRING_TOKEN });
+  const remote = fakeMc(ctx, { pairingToken: PAIRING_TOKEN });
   ctx.pairingLink = `${remote.origin}/?token=${PAIRING_TOKEN}`;
 });
 
 step("a pairing credential that has expired", (ctx: LaunchWorld) => {
-  const remote = fakeNode(ctx, { pairingToken: PAIRING_TOKEN });
+  const remote = fakeMc(ctx, { pairingToken: PAIRING_TOKEN });
   // Only the fresh token is accepted; this one was used or timed out.
   ctx.pairingLink = `${remote.origin}/?token=expired-token`;
 });
@@ -351,7 +348,7 @@ step("the user starts the terminal client with it", startWithLink);
 
 step("the client connects to the remote environment", async (ctx: LaunchWorld) => {
   await connected(ctx);
-  const remote = node(ctx);
+  const remote = mc(ctx);
   expect(remote.sessions).toHaveLength(1);
   expect(remote.ticketBearers[0]).toBe(remote.sessions[0]!.bearerToken);
 });
@@ -359,40 +356,40 @@ step("the client connects to the remote environment", async (ctx: LaunchWorld) =
 step("later launches reuse the paired credential", async (ctx: LaunchWorld) => {
   expect((await leaveDirect(ctx)).code).toBe(0);
   // The link's token is spent; the origin alone brings the saved session back.
-  await startDirect(ctx, ["--url", node(ctx).origin, "--base-dir", baseDir(ctx)]);
+  await startDirect(ctx, ["--url", mc(ctx).origin, "--base-dir", baseDir(ctx)]);
   await connected(ctx, 2);
-  const remote = node(ctx);
+  const remote = mc(ctx);
   expect(remote.tokenExchanges).toBe(1);
   expect(remote.ticketBearers.at(-1)).toBe(remote.sessions[0]!.bearerToken);
 });
 
 step("the client says the credential expired and does not connect", (ctx: LaunchWorld) => {
   expect(exited(ctx).stderr).toContain("was already used or has expired");
-  expect(node(ctx).sockets).toEqual([]);
+  expect(mc(ctx).sockets).toEqual([]);
   expect(savedSessions(ctx)).toEqual({});
 });
 
 step("the terminal client paired with a remote environment", async (ctx: LaunchWorld) => {
-  const remote = fakeNode(ctx, { pairingToken: PAIRING_TOKEN });
+  const remote = fakeMc(ctx, { pairingToken: PAIRING_TOKEN });
   ctx.pairingLink = `${remote.origin}/?token=${PAIRING_TOKEN}`;
   await startWithLink(ctx);
   await connected(ctx);
 });
 
 step("the environment still lists the {string} session", (ctx: LaunchWorld, label: string) => {
-  expect(node(ctx).sessions).toMatchObject([{ label, revoked: false }]);
-  expect(Object.keys(savedSessions(ctx))).toEqual([node(ctx).origin]);
+  expect(mc(ctx).sessions).toMatchObject([{ label, revoked: false }]);
+  expect(Object.keys(savedSessions(ctx))).toEqual([mc(ctx).origin]);
 });
 
 step("the environment revoked that session", (ctx: LaunchWorld) => {
-  const remote = node(ctx);
+  const remote = mc(ctx);
   for (const session of remote.sessions) session.revoked = true;
   remote.dropConnections();
 });
 
 step("the user starts the terminal client for that environment again", async (ctx: LaunchWorld) => {
   if (ctx.direct) await leaveDirect(ctx);
-  await startDirect(ctx, ["--url", node(ctx).origin, "--base-dir", baseDir(ctx)]);
+  await startDirect(ctx, ["--url", mc(ctx).origin, "--base-dir", baseDir(ctx)]);
 });
 
 step(

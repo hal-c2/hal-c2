@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Preview.Surfaces do
   @moduledoc """
-  Steps for `features/preview/surfaces.feature`: the node's browser tabs
+  Steps for `features/preview/surfaces.feature`: the MC's browser tabs
   (`preview.*` RPCs and the `preview` shape) and its local server suggestions
   (the `localServers` shape).
 
@@ -12,8 +12,8 @@ defmodule HalC2.Steps.Preview.Surfaces do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @thread "th-preview"
   @watch 71
@@ -176,7 +176,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
   step "the request succeeds without changing the tab", context do
     assert {:ok, nil} = context.reply
     assert listed(context, context.tab) == context.before
-    watcher = Node.refute_frame(World.client(context, "watcher"), &(&1["t"] == "preview"))
+    watcher = Mc.refute_frame(World.client(context, "watcher"), &(&1["t"] == "preview"))
     World.put_client(context, "watcher", watcher)
   end
 
@@ -247,7 +247,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
     context
   end
 
-  step "the list carries the node's run and change numbers", context do
+  step "the list carries the MC's run and change numbers", context do
     {last, context} = event(context, fn _ -> true end, :last)
     assert context.list["serverEpoch"] == last["serverEpoch"]
     assert context.list["revision"] == last["revision"]
@@ -286,7 +286,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
     Map.put(context, :epoch, list["serverEpoch"])
   end
 
-  step "the node reports a different run number so clients drop their old tabs", context do
+  step "the MC reports a different run number so clients drop their old tabs", context do
     {{:ok, list}, context} = rpc(context, "preview.list", %{})
     assert is_binary(list["serverEpoch"]) and list["serverEpoch"] != context.epoch
     context
@@ -308,7 +308,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
 
   # --- local servers -------------------------------------------------------------------
 
-  step "a dev server is serving HTML on port {int} of the node's machine",
+  step "a dev server is serving HTML on port {int} of the MC's machine",
        %{args: [port]} = context do
     serve(context, port, :html)
   end
@@ -358,9 +358,9 @@ defmodule HalC2.Steps.Preview.Surfaces do
     context
   end
 
-  step "the node's own port is not among the suggestions", context do
-    # The node's own port answers with its web app, so it would be a suggestion.
-    refute context.node.port in Enum.map(context.servers, & &1["port"])
+  step "the MC's own port is not among the suggestions", context do
+    # The MC's own port answers with its web app, so it would be a suggestion.
+    refute context.mc.port in Enum.map(context.servers, & &1["port"])
     context
   end
 
@@ -376,17 +376,17 @@ defmodule HalC2.Steps.Preview.Surfaces do
       &(&1["t"] == "localServers" and
           actual in Enum.map(&1["list"]["servers"], fn s -> s["port"] end))
 
-    {_, client} = Node.await(World.client(context), has?, 8_000)
+    {_, client} = Mc.await(World.client(context), has?, 8_000)
     World.put_client(context, client)
   end
 
   step "the last client stops watching for local servers", context do
     context = watch_servers(context)
-    client = World.client(context) |> Node.unsub(@servers) |> ping()
+    client = World.client(context) |> Mc.unsub(@servers) |> ping()
     World.put_client(context, client)
   end
 
-  step "the node no longer scans for listening ports", context do
+  step "the MC no longer scans for listening ports", context do
     pid = Process.whereis(HalC2.LocalServers)
     # The next scan tick, now rather than a few seconds from now.
     send(pid, :scan)
@@ -396,9 +396,9 @@ defmodule HalC2.Steps.Preview.Surfaces do
     context
   end
 
-  step "the node's machine cannot list listening ports", context do
+  step "the MC's machine cannot list listening ports", context do
     path = System.get_env("PATH")
-    System.put_env("PATH", Node.tmp_dir(context.node, "empty-path"))
+    System.put_env("PATH", Mc.tmp_dir(context.mc, "empty-path"))
     ExUnit.Callbacks.on_exit(fn -> System.put_env("PATH", path) end)
     context
   end
@@ -411,7 +411,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
   # --- helpers -------------------------------------------------------------------------
 
   defp services(context) do
-    Node.ensure(HalC2.Preview)
+    Mc.ensure(HalC2.Preview)
     context
   end
 
@@ -422,8 +422,8 @@ defmodule HalC2.Steps.Preview.Surfaces do
     case context.clients["watcher"] do
       nil ->
         client =
-          Node.connect(context.node)
-          |> Node.sub(@watch, %{"type" => "preview", "node" => Atom.to_string(node())})
+          Mc.connect(context.mc)
+          |> Mc.sub(@watch, %{"type" => "preview", "mc" => Atom.to_string(node())})
           |> ping()
 
         World.put_client(context, "watcher", client)
@@ -435,7 +435,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
 
   defp ping(client) do
     client = HalC2.Test.WsClient.send_json(client, %{"t" => "ping"})
-    {_, client} = Node.await(client, &(&1["t"] == "pong"))
+    {_, client} = Mc.await(client, &(&1["t"] == "pong"))
     client
   end
 
@@ -477,7 +477,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
 
     case mode do
       :first ->
-        {frame, watcher} = Node.await(watcher, &(&1["t"] == "preview" and fun.(&1["event"])))
+        {frame, watcher} = Mc.await(watcher, &(&1["t"] == "preview" and fun.(&1["event"])))
         {frame["event"], World.put_client(context, "watcher", watcher)}
 
       :last ->
@@ -539,16 +539,16 @@ defmodule HalC2.Steps.Preview.Surfaces do
   end
 
   defp watch_servers(context) do
-    Node.ensure(HalC2.LocalServers)
+    Mc.ensure(HalC2.LocalServers)
 
     client =
-      Node.sub(World.client(context), @servers, %{
+      Mc.sub(World.client(context), @servers, %{
         "type" => "localServers",
-        "node" => Atom.to_string(node())
+        "mc" => Atom.to_string(node())
       })
 
     {frame, client} =
-      Node.await(client, &(&1["t"] == "localServers" and &1["id"] == @servers), 10_000)
+      Mc.await(client, &(&1["t"] == "localServers" and &1["id"] == @servers), 10_000)
 
     context |> World.put_client(client) |> Map.put(:servers, frame["list"]["servers"])
   end

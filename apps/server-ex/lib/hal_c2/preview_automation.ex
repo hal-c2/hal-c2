@@ -26,7 +26,7 @@ defmodule HalC2.PreviewAutomation do
 
   @doc """
   Registers `pid` (a socket) as the host `host` (`PreviewAutomationHost`). It gets
-  `{:hal_c2_preview_automation, node, client_id, event | :end}`, the first event being
+  `{:hal_c2_preview_automation, mc, client_id, event | :end}`, the first event being
   `connected`.
   """
   def connect(host, pid), do: GenServer.call(__MODULE__, {:connect, host, pid})

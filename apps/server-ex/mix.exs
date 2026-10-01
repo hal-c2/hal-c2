@@ -4,7 +4,7 @@ defmodule HalC2.MixProject do
   def project do
     [
       app: :hal_c2,
-      # Nodes carry the HAL-C2 version, so clients compare them like any server.
+      # MCs carry the HAL-C2 version, so clients compare them like any server.
       version: hal_c2_version(),
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
@@ -74,10 +74,10 @@ defmodule HalC2.MixProject do
     release
   end
 
-  # `mix features [--backlog] [glob ...] [-- mix test args]` runs the repo's `@node`
+  # `mix features [--backlog] [glob ...] [-- mix test args]` runs the repo's `@mc`
   # Gherkin scenarios (`features/`) and nothing else. Globs are relative to `features/`
   # and default to every file; `--backlog` (or INCLUDE_BACKLOG=1) also runs the
-  # `@backlog` and `@backlog-node` ones. See test/support/features.ex.
+  # `@backlog` and `@backlog-mc` ones. See test/support/features.ex.
   defp features(args) do
     {ours, rest} = Enum.split_while(args, &(&1 != "--"))
     {flags, globs} = Enum.split_with(ours, &(&1 == "--backlog"))
@@ -91,9 +91,9 @@ defmodule HalC2.MixProject do
     Mix.Task.run("test", ["--only", "cucumber" | Enum.drop(rest, 1)])
   end
 
-  # `HAL_C2_NODE_VERSION` names a build apart from the package's release (nightlies, local builds).
+  # `HAL_C2_MC_VERSION` names a build apart from the package's release (nightlies, local builds).
   defp hal_c2_version do
-    System.get_env("HAL_C2_NODE_VERSION") || package_version()
+    System.get_env("HAL_C2_MC_VERSION") || package_version()
   end
 
   defp package_version do
@@ -103,7 +103,7 @@ defmodule HalC2.MixProject do
     |> Map.fetch!("version")
   end
 
-  # What a running node compares with a new release to decide whether it can load
+  # What a running MC compares with a new release to decide whether it can load
   # the new code in place (`HalC2.Upgrade`): the runtime, applications, native
   # libraries and configuration, each of which only a restart can change.
   defp write_upgrade_manifest(release) do

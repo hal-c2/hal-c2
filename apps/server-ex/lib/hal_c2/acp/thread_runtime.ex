@@ -465,7 +465,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   # it was running ends, with what was buffered, so the thread shows the session is gone.
   # The agent's subagents ran in its process and end with it.
   # Background work stops with the agent process either way (released when idle, or
-  # stopped with its thread); when the node itself stops, its next boot ends what is
+  # stopped with its thread); when the MC itself stops, its next boot ends what is
   # left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(reason, %{turn: turn} = state) when turn != nil do

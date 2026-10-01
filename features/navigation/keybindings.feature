@@ -5,7 +5,7 @@
 #   apps/desktop-qt/parity/web-parity.test.ts (all 35 keymap rows)
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop's keymap and its native commands)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
-#   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake node)
+#   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake MC)
 #   apps/desktop-qt/src/native/TerminalController.cpp (terminal.split, terminal.splitVertical on the focused terminal)
 #   apps/web/src/components/Sidebar.tsx (thread.previous, thread.next and thread.jump follow the sidebar's order)
 #   apps/desktop-qt/qml/HalC2/Bricks/ModelPicker.qml (modelPicker.previousProvider, nextProvider and jump.1-9 while the picker is open)
@@ -377,14 +377,14 @@ Feature: Keybindings
 
     Background:
       Given the time is "2026-09-23T10:00:00Z"
-      And the desktop's node "node-a" serves the environment "env-a"
-      And the node has these threads:
+      And the desktop's MC "mc-a" serves the environment "env-a"
+      And the MC has these threads:
         | id | project | title  | createdAt            |
         | t1 | p1      | First  | 2026-09-23T09:50:00Z |
         | t2 | p1      | Second | 2026-09-23T09:40:00Z |
         | t3 | p1      | Third  | 2026-09-23T09:30:00Z |
-      And the node has the project "p1" titled "proj-1"
-      And the desktop shell is connected to its node
+      And the MC has the project "p1" titled "proj-1"
+      And the desktop shell is connected to its MC
 
     @desktop
     Scenario: The next and previous thread follow the sidebar
@@ -407,8 +407,8 @@ Feature: Keybindings
       Then the window shows "env-a:t3"
 
     @desktop
-    Scenario: The next thread reaches a thread on an environment the node is linked to
-      Given the node is linked to "env-c"
+    Scenario: The next thread reaches a thread on an environment the MC is linked to
+      Given the MC is linked to "env-c"
       And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
       And the user opens "env-a:t3" from the sidebar
       When the user presses mod+shift+]

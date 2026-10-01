@@ -6,12 +6,12 @@ import {
 
 import { ConnectionBlockedError } from "./model.ts";
 
-/** Protocol 3 is the shape-sync protocol served by clustered (Elixir) nodes. */
+/** Protocol 3 is the shape-sync protocol served by clustered MCs. */
 export const SHAPE_PROTOCOL_VERSION = 3;
 
 /**
  * Whether a server with this descriptor serves `environmentId`: its own, or on a
- * protocol-3 node, any environment of its cluster, which it reaches for the client.
+ * protocol-3 MC, any environment of its cluster, which it reaches for the client.
  */
 export function descriptorServesEnvironment(
   descriptor: ExecutionEnvironmentDescriptor,

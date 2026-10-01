@@ -3,7 +3,7 @@ defmodule HalC2.Steps.Navigation.WelcomeWizard do
   Steps for `features/navigation/welcome-wizard.feature`: the project scan and the
   history import behind the wizard (`agentSessions.scan`, `agentSessions.import`).
 
-  The agents' history lives in a fixture home outside the node's home: Claude Code
+  The agents' history lives in a fixture home outside the MC's home: Claude Code
   transcripts under `.claude/projects`, Codex's under `.codex/sessions`. How the
   wizard groups, orders and preselects what a scan returns is the web client's
   (`apps/web/src/onboarding/projectImport.logic.ts`), reproduced in `listing/1`.
@@ -12,7 +12,7 @@ defmodule HalC2.Steps.Navigation.WelcomeWizard do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @day 86_400
   # WelcomeWizard.tsx
@@ -295,8 +295,8 @@ defmodule HalC2.Steps.Navigation.WelcomeWizard do
     project_id = World.project(context).id
 
     threads =
-      for {{node, _}, {"thread", %{"projectId" => ^project_id} = t}} <- HalC2.Shell.rows(),
-          node == node(),
+      for {{mc, _}, {"thread", %{"projectId" => ^project_id} = t}} <- HalC2.Shell.rows(),
+          mc == node(),
           do: t["id"]
 
     assert length(Enum.uniq(threads)) <= length(context.sessions)
@@ -305,7 +305,7 @@ defmodule HalC2.Steps.Navigation.WelcomeWizard do
 
   # --- helpers -----------------------------------------------------------------------
 
-  # The agents' home for this scenario, outside the node's home (which a scan skips).
+  # The agents' home for this scenario, outside the MC's home (which a scan skips).
   defp fixture(%{wizard_home: _} = context), do: context
 
   defp fixture(context) do

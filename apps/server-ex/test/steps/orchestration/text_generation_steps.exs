@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Orchestration.TextGeneration do
   @moduledoc """
-  Steps for `features/node/orchestration/text-generation.feature`. The engine's
+  Steps for `features/mc/orchestration/text-generation.feature`. The engine's
   writers (`HalC2.TextGeneration`) run against fakes: `fake_text_cli.py` as the
   `claude` and `codex` CLIs, `fake_acp.py --instance <id>` as the ACP agents, and
   `fake_gh.py` for linked GitHub items. Each fake logs its calls, which is how a
@@ -13,7 +13,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   alias HalC2.Test.FakeAcp
   alias HalC2.TextGeneration
   alias HalC2.TextGeneration.Style
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @fake_acp Path.expand("../../support/fake_acp.py", __DIR__)
   @fake_gh Path.expand("../../support/fake_gh.py", __DIR__)
@@ -684,7 +684,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
 
   defp github(context, rules) do
     context = install(context)
-    dir = HalC2.Test.Node.tmp_dir(context.node, "gh")
+    dir = HalC2.Test.Mc.tmp_dir(context.mc, "gh")
     log = Path.join(dir, "calls.jsonl")
     rules_path = Path.join(dir, "rules.json")
     File.write!(rules_path, JSON.encode!(rules))

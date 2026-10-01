@@ -1,16 +1,16 @@
-# Sourced, not run: sets hal_c2_data to the node's data directory for rel/env.sh.eex
-# and the single-file node (rel/hal-c2-node.sh, which inlines this file).
+# Sourced, not run: sets hal_c2_data to the MC's data directory for rel/env.sh.eex
+# and the single-file MC (rel/hal-c2-mc.sh, which inlines this file).
 #
-# The node finds its own directories (lib/hal_c2/paths.ex): HAL_C2_NODE_HOME, else
+# The MC finds its own directories (lib/hal_c2/paths.ex): HAL_C2_MC_HOME, else
 # HAL_C2_HOME, else the XDG directories. A root must be absolute and not an old home
-# (~/.t3, ~/.hal-c2, or for HAL_C2_NODE_HOME a directory inside one); the node
+# (~/.t3, ~/.hal-c2, or for HAL_C2_MC_HOME a directory inside one); the MC
 # migrates from an old home instead of using it.
-hal_c2_node_root="${HAL_C2_NODE_HOME:-}"
-hal_c2_node_root="${hal_c2_node_root%/}"
-case "$hal_c2_node_root" in
-  "$HOME/.t3" | "$HOME/.t3/"* | "$HOME/.hal-c2" | "$HOME/.hal-c2/"*) hal_c2_node_root="" ;;
+hal_c2_mc_root="${HAL_C2_MC_HOME:-}"
+hal_c2_mc_root="${hal_c2_mc_root%/}"
+case "$hal_c2_mc_root" in
+  "$HOME/.t3" | "$HOME/.t3/"* | "$HOME/.hal-c2" | "$HOME/.hal-c2/"*) hal_c2_mc_root="" ;;
   /*) ;;
-  *) hal_c2_node_root="" ;;
+  *) hal_c2_mc_root="" ;;
 esac
 hal_c2_root="${HAL_C2_HOME:-}"
 hal_c2_root="${hal_c2_root%/}"
@@ -19,8 +19,8 @@ case "$hal_c2_root" in
   /*) ;;
   *) hal_c2_root="" ;;
 esac
-if [ -n "$hal_c2_node_root" ]; then
-  hal_c2_data="$hal_c2_node_root/data"
+if [ -n "$hal_c2_mc_root" ]; then
+  hal_c2_data="$hal_c2_mc_root/data"
 elif [ -n "$hal_c2_root" ]; then
   hal_c2_data="$hal_c2_root/data/elixir"
 else

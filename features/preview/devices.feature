@@ -6,17 +6,17 @@
 #   apps/web/src/components/devices/DevicePanel.tsx, DevicePicker.tsx, DeviceStreamView.tsx
 #   apps/web/src/components/RightPanelTabs.tsx (device tabs replace the picker, dismissed tabs)
 #   apps/server-ex/lib/hal_c2/devices.ex (devices shape, hubBasePath)
-#   apps/server-ex/lib/hal_c2/devices/proxy.ex (/api/device-hub/nodes/<node>/vendor/*, 401 and 403)
+#   apps/server-ex/lib/hal_c2/devices/proxy.ex (/api/device-hub/mcs/<MC>/vendor/*, 401 and 403)
 #   apps/desktop-qt/src/native/ThreadDevices.cpp, DeviceStream.cpp, DeviceDecoder.cpp, FFmpeg.cpp
 #   apps/desktop-qt/qml/HalC2/Bricks/DevicePanel.qml
 #   apps/desktop-qt/tests/native/features/DeviceSteps.cpp
-#   Cross-domain: connections/device-hub.feature holds the node's hub and proxy,
+#   Cross-domain: connections/device-hub.feature holds the MC's hub and proxy,
 #   mobile/usage-diagnostics-devices.feature holds the phone's device viewer.
 
 Feature: Device panel
   A thread's Device tab lists the simulators and emulators of the thread's environment,
-  shows the one the user opens live through the node, and passes the user's touches,
-  keys and buttons to it. The screen always comes through the node's device proxy, never
+  shows the one the user opens live through the MC, and passes the user's touches,
+  keys and buttons to it. The screen always comes through the MC's device proxy, never
   straight from the device.
 
   Rule: Choosing a device
@@ -29,7 +29,7 @@ Feature: Device panel
       When the user opens "iPhone 17" from the Device tab
       Then the thread has "iPhone 17" open
       And the tab "iPhone 17" shows the device's screen
-      And the screen came through the node's device proxy
+      And the screen came through the MC's device proxy
 
     @desktop
     Scenario: A stopped device is offered to start
@@ -44,9 +44,9 @@ Feature: Device panel
       Then the tab says "No simulators or emulators were found on this environment."
 
     @desktop
-    Scenario: A device the node cannot open says why
+    Scenario: A device the MC cannot open says why
       Given the thread's environment has an iOS Simulator "iPhone 17" running
-      And the node cannot open devices because "Simulator failed to boot"
+      And the MC cannot open devices because "Simulator failed to boot"
       When the user adds a Device tab
       And the user opens "iPhone 17" from the Device tab
       Then the tab says "Simulator failed to boot"
@@ -134,11 +134,11 @@ Feature: Device panel
       And the tab "iPhone 17" shows the device's screen
 
     @desktop
-    Scenario: A stream the node refuses is an error
+    Scenario: A stream the MC refuses is an error
       Given the thread has the Android Emulator "Pixel 9" open
-      And the node refuses the device stream
+      And the MC refuses the device stream
       When the user shows the "Pixel 9" tab
-      Then the tab says "The node refused the device stream. Reconnect to try again."
+      Then the tab says "The MC refused the device stream. Reconnect to try again."
 
     @desktop
     Scenario: An Android emulator that rotates starts its video over
@@ -160,7 +160,7 @@ Feature: Device panel
   Rule: Driving a device
 
     @desktop
-    Scenario: Touches and keys reach a simulator through the node
+    Scenario: Touches and keys reach a simulator through the MC
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab
       When the user taps the middle of the screen
@@ -171,7 +171,7 @@ Feature: Device panel
       Then the device receives the "home" button
 
     @desktop
-    Scenario: Touches, keys and buttons reach an emulator through the node
+    Scenario: Touches, keys and buttons reach an emulator through the MC
       Given the thread has the Android Emulator "Pixel 9" open
       And the user is watching the "Pixel 9" tab
       When the user taps the middle of the screen
@@ -216,17 +216,17 @@ Feature: Device panel
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab
       When the user powers the device off
-      Then the node is asked to close "iPhone 17" and shut it down
+      Then the MC is asked to close "iPhone 17" and shut it down
       And the right panel has no "iPhone 17" tab
 
     @desktop
     Scenario: A device powered off from a thread the user left closes that thread's tab
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab
-      And the node is slow to close devices
+      And the MC is slow to close devices
       When the user powers the device off
-      And before the node answers, the user switches to another thread showing "iPhone 17"
-      And the node answers
+      And before the MC answers, the user switches to another thread showing "iPhone 17"
+      And the MC answers
       Then the right panel shows the "iPhone 17" tab
       When the user goes back to the first thread
       Then the right panel has no "iPhone 17" tab

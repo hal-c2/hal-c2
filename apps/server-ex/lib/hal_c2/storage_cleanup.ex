@@ -63,7 +63,7 @@ defmodule HalC2.StorageCleanup do
   end
 
   # A changed policy is applied at once; other settings changes are not a reason to sweep.
-  def handle_info({:hal_c2_settings, _node, settings}, state) do
+  def handle_info({:hal_c2_settings, _mc, settings}, state) do
     policy = policy(settings)
     if state.policy != nil and policy != state.policy, do: run()
     {:noreply, %{state | policy: policy}}
@@ -110,7 +110,7 @@ defmodule HalC2.StorageCleanup do
 
   defp worktrees(settings, now) do
     root = worktrees_root()
-    rows = for {{node, _id}, row} <- HalC2.Shell.rows(), node == node(), do: row
+    rows = for {{mc, _id}, row} <- HalC2.Shell.rows(), mc == node(), do: row
     projects = for {"project", project} <- rows, into: %{}, do: {project["id"], project}
     threads = for {"thread", thread} <- rows, is_binary(thread["worktreePath"]), do: thread
 
@@ -191,7 +191,7 @@ defmodule HalC2.StorageCleanup do
 
     session =
       Enum.any?(HalC2.Shell.rows(), fn
-        {{node, id}, {"thread", %{"worktreePath" => wt}}} when node == node() and is_binary(wt) ->
+        {{mc, id}, {"thread", %{"worktreePath" => wt}}} when mc == node() and is_binary(wt) ->
           within?(Path.expand(wt), path) and session?(id)
 
         _ ->
@@ -329,7 +329,7 @@ defmodule HalC2.StorageCleanup do
   # Git and host calls take time; everything is checked again against fresh rows
   # and settings so a new turn, session, thread or rule change cancels the removal.
   defp still?(thread, path, head, rules, deleted, projects) do
-    rows = for {{node, _id}, row} <- HalC2.Shell.rows(), node == node(), do: row
+    rows = for {{mc, _id}, row} <- HalC2.Shell.rows(), mc == node(), do: row
 
     sharing =
       for {"thread", t} <- rows,

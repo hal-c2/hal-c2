@@ -2,7 +2,7 @@ pragma Singleton
 import QtQuick
 
 // PaletteModel, the command palette (CommandPaletteController), without its
-// node: closed and empty unless a test appends rows ({title, description,
+// MC: closed and empty unless a test appends rows ({title, description,
 // group, shortcut, kind, enabled, current}). `ran` records the rows run,
 // `calls` what else the brick asked for.
 ListModel {

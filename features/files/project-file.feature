@@ -18,7 +18,7 @@ Feature: The hal-c2.json project file
   Background:
     Given a connected environment with the project "shop"
 
-  @node
+  @mc
   Scenario Outline: New worktrees fill submodules as deep as the project asks
     Given <source> asks for "<mode>" submodules
     When a new worktree is created for "shop"
@@ -30,20 +30,20 @@ Feature: The hal-c2.json project file
       | the checkout's hal-c2.json                | none      | not at all               |
       | the project's settings                | top-level | one level deep           |
 
-  @node
+  @mc
   Scenario: Project settings win over hal-c2.json for submodules
     Given the checkout's hal-c2.json asks for "none" submodules
     And the project's settings ask for "recursive" submodules
     When a new worktree is created for "shop"
     Then its submodules are filled at every level
 
-  @node
+  @mc
   Scenario: Without hal-c2.json or a setting every submodule level is filled
     Given "shop" has no hal-c2.json and no submodule setting
     When a new worktree is created for "shop"
     Then its submodules are filled at every level
 
-  @node
+  @mc
   Scenario: An unreadable hal-c2.json falls back to filling every submodule level
     Given the checkout's hal-c2.json is not valid JSON
     When a new worktree is created for "shop"
@@ -89,7 +89,7 @@ Feature: The hal-c2.json project file
     When the user looks at the actions of "shop"
     Then "Dev" is offered to import from hal-c2.json
 
-  @node
+  @mc
   Scenario: The icon named in hal-c2.json is used before the usual icon locations
     Given the checkout's hal-c2.json names "branding/mark.svg" as its icon
     And the checkout also has "public/favicon.ico"

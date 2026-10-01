@@ -1,6 +1,6 @@
 defmodule HalC2.ProviderUsageLimits do
   @moduledoc """
-  Subscription quota on this node's provider entries (`ServerProvider.usageLimits`),
+  Subscription quota on this MC's provider entries (`ServerProvider.usageLimits`),
   as the Node server reports it.
 
   A probe reads the whole picture: Codex's `account/rateLimits/read` from a
@@ -456,7 +456,7 @@ defmodule HalC2.ProviderUsageLimits do
   # An instance whose settings changed (enabled, binary, home, endpoint) is read again
   # at once, as the Node server re-probes a provider on its settings change; one that
   # was turned off loses its limits in `probe/2`.
-  def handle_info({:hal_c2_settings, _node, settings}, state) do
+  def handle_info({:hal_c2_settings, _mc, settings}, state) do
     now = provider_settings(settings)
     changed = changed_ids(state.providers, now)
     affected = for id <- all(), id in changed or HalC2.Acp.driver(id) in changed, do: id

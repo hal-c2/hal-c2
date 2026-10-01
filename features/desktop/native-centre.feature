@@ -1,7 +1,7 @@
 # Sources:
 #   apps/desktop-qt/src/native/ThreadDiff.cpp (requestRevert, canRevert)
 #   apps/desktop-qt/src/native/TimelineModel.cpp (checkpointOf, copy)
-#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
+#   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   Shared domain: timeline/*.feature owns what the thread shows (streaming.feature the retry)
 #   and checkpoints.feature the revert itself, including the Qt shell's two ways into it.
 #   centre-view.feature owns what the centre brick shows.

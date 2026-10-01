@@ -312,7 +312,7 @@ export function fakeClient({
   readonly currentThread: (threadId: string) => OrchestrationThread | null;
   /** Move the connection to a phase (the client starts "connecting"). */
   readonly emitConnection: (phase: TuiConnectionPhase) => void;
-  /** The node's cluster: its members, the invite it hands out, why it refuses a join. */
+  /** The MC's cluster: its members, the invite it hands out, why it refuses a join. */
   readonly cluster: FakeCluster;
 } {
   const cluster: FakeCluster = {
@@ -328,7 +328,7 @@ export function fakeClient({
     clustered: true,
     id: "env-local",
     label: "This machine",
-    node: "hal-c2-env-local",
+    mc: "hal-c2-env-local",
     addresses: ["192.168.1.20:47730"],
     members: cluster.members,
   });
@@ -611,7 +611,7 @@ export function fakeClient({
 export interface FakeCluster {
   members: ClusterMember[];
   invite: ClusterInvite;
-  /** The node's reason for refusing a join; null joins. */
+  /** The MC's reason for refusing a join; null joins. */
   joinRefusal: string | null;
 }
 

@@ -27,11 +27,11 @@ private slots:
   }
 
   // The window shows the last failure it hears of; the host's own reason
-  // (e.g. "Cannot reach the node at ...") must not be replaced by the exit
+  // (e.g. "Cannot reach the MC at ...") must not be replaced by the exit
   // that follows it.
   void aHostThatReportsWhyItFailedIsNotReplacedByItsExit() {
     BackendProcess backend(host(
-        "echo '{\"type\":\"error\",\"message\":\"Cannot reach the node at http://127.0.0.1:1\"}'\n"
+        "echo '{\"type\":\"error\",\"message\":\"Cannot reach the MC at http://127.0.0.1:1\"}'\n"
         "exit 1\n"));
     QSignalSpy failed(&backend, &BackendProcess::failed);
     backend.start();
@@ -40,12 +40,12 @@ private slots:
     QTest::qWait(500);
     QCOMPARE(failed.size(), 1);
     QCOMPARE(failed.first().first().toString(),
-             QStringLiteral("Cannot reach the node at http://127.0.0.1:1"));
+             QStringLiteral("Cannot reach the MC at http://127.0.0.1:1"));
   }
 
-  void theNodeTheHostStartedReachesTheShellsOwnClient() {
+  void theMcTheHostStartedReachesTheShellsOwnClient() {
     BackendProcess backend(host(
-        "echo '{\"type\":\"ready\",\"node\":{\"origin\":\"http://127.0.0.1:6\",\"token\":\"secret\"}}'\n"
+        "echo '{\"type\":\"ready\",\"mc\":{\"origin\":\"http://127.0.0.1:6\",\"token\":\"secret\"}}'\n"
         "sleep 5\n"));
     QSignalSpy ready(&backend, &BackendProcess::ready);
     backend.start();
@@ -55,7 +55,7 @@ private slots:
     backend.stop();
   }
 
-  void aReadyLineWithoutANodeFails() {
+  void aReadyLineWithoutAnMcFails() {
     BackendProcess backend(host(
         "echo '{\"type\":\"ready\"}'\n"
         "sleep 5\n"));
@@ -64,7 +64,7 @@ private slots:
     backend.start();
     QTRY_COMPARE(failed.size(), 1);
     QCOMPARE(failed.first().first().toString(),
-             QStringLiteral("Desktop host announced no node to connect to."));
+             QStringLiteral("Desktop host announced no MC to connect to."));
     QCOMPARE(ready.size(), 0);
     backend.stop();
     QCOMPARE(failed.size(), 1);

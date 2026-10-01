@@ -1,6 +1,6 @@
 defmodule HalC2.Steps.Providers.Pi do
   @moduledoc """
-  Steps for `features/providers/pi.feature`. The node runs Pi in its own RPC mode
+  Steps for `features/providers/pi.feature`. The MC runs Pi in its own RPC mode
   (`HalC2.Pi`, `HalC2.Pi.ThreadRuntime`); the scripted fake Pi (`fake_pi_rpc.py`, through
   `HalC2.Test.FakeAcp.install_pi/3`) is the user's `pi`, sessions and all.
   """
@@ -10,7 +10,7 @@ defmodule HalC2.Steps.Providers.Pi do
 
   alias HalC2.StreamState
   alias HalC2.Test.FakeAcp
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   defp install(context, config \\ %{}, opts \\ []),
     do: FakeAcp.install_pi(context, config, Keyword.put_new(opts, :enabled, true))
@@ -86,10 +86,10 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
-  step "the pi command is not installed on the node", context do
+  step "the pi command is not installed on the MC", context do
     FakeAcp.services()
     HalC2.Acp.forget("pi")
-    missing = Path.join(HalC2.Test.Node.tmp_dir(context.node, "no-pi"), "pi")
+    missing = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "no-pi"), "pi")
     FakeAcp.settings(&put_in(&1, ["providers"], %{"pi" => %{"binaryPath" => missing}}))
     Map.put(context, :provider, "pi")
   end
@@ -106,9 +106,9 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
-  # The path lives in the scenario's machine (`HalC2.Test.Node.Host`).
+  # The path lives in the scenario's machine (`HalC2.Test.Mc.Host`).
   step "Pi's binary path is set to {string}", %{args: [path]} = context do
-    install(context, %{}, path: HalC2.Test.Node.Host.path(context, path))
+    install(context, %{}, path: HalC2.Test.Mc.Host.path(context, path))
   end
 
   step "the user sends a message to Pi", context do
@@ -120,7 +120,7 @@ defmodule HalC2.Steps.Providers.Pi do
   end
 
   step "that Pi binary runs the turn", context do
-    assert_runs_on(context, HalC2.Test.Node.Host.path(context, "/opt/pi/bin/pi"))
+    assert_runs_on(context, HalC2.Test.Mc.Host.path(context, "/opt/pi/bin/pi"))
   end
 
   # That binary ran Pi's RPC mode in the project, with HAL-C2's extension, and got the
@@ -171,7 +171,7 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
-  # The thread runs on Pi's own default model; the node never picks one for it.
+  # The thread runs on Pi's own default model; the MC never picks one for it.
   step "the first thread lets Pi handle its startup prompt", context do
     context =
       context
@@ -322,7 +322,7 @@ defmodule HalC2.Steps.Providers.Pi do
     FakeAcp.respond(context, context.request["id"], %{"decision" => "acceptForSession"})
   end
 
-  # Pi asked twice; the node answered the second itself.
+  # Pi asked twice; the MC answered the second itself.
   step "the second request is allowed without asking", context do
     state = FakeAcp.await_run(context, "completed")
     assert [%{"status" => "resolved"}] = StreamState.list(state, "runtime-request")
@@ -430,7 +430,7 @@ defmodule HalC2.Steps.Providers.Pi do
 
   step "the user forks from the second turn into a new worktree", context do
     root = World.project(context).root
-    worktree = Path.join(HalC2.Test.Node.tmp_dir(context.node, "worktrees"), "pi-fork")
+    worktree = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "worktrees"), "pi-fork")
     World.git!(root, ["worktree", "add", "-q", "-b", "pi-fork", worktree])
     source = World.thread_id(context, context.thread)
     run = state(context) |> StreamState.list("run") |> Enum.find(&(&1["ordinal"] == 2))
@@ -625,7 +625,7 @@ defmodule HalC2.Steps.Providers.Pi do
   # --- delegation ---
 
   step "Pi delegates a task", context do
-    HalC2.Test.Node.ensure(HalC2.Mcp)
+    HalC2.Test.Mc.ensure(HalC2.Mcp)
 
     turns = [
       %{

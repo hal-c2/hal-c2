@@ -1,5 +1,5 @@
 # hal_c2_native: the shell's own half, built once for the app and the native
-# tests. Every file in src/native (the node client, the store, the
+# tests. Every file in src/native (the MC client, the store, the
 # controllers, their models) plus ShellBridge, which they publish through. A new file there is picked up on the next build, no list to
 # edit.
 #

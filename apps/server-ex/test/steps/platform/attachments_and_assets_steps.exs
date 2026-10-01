@@ -1,10 +1,10 @@
 defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
-  @moduledoc "Steps for features/node/platform/attachments-and-assets.feature."
+  @moduledoc "Steps for features/mc/platform/attachments-and-assets.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @mb 1024 * 1024
   @png_magic <<137, 80, 78, 71, 13, 10, 26, 10>>
@@ -42,7 +42,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   # Uploads `bytes` and returns the attachment a message names.
   defp upload!(context, type, name, mime, bytes) do
     {attachment, url} = upload_url(context, type, name, mime, byte_size(bytes))
-    assert {204, _, _} = Node.request(context.node, :post, url, body: bytes)
+    assert {204, _, _} = Mc.request(context.mc, :post, url, body: bytes)
     attachment
   end
 
@@ -84,7 +84,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     do: url |> String.replace_prefix("/api/assets/", "") |> String.split("/") |> hd()
 
   defp host_file(context, name, bytes) do
-    path = Path.join(Node.tmp_dir(context.node, "host"), name)
+    path = Path.join(Mc.tmp_dir(context.mc, "host"), name)
     File.write!(path, bytes)
     path
   end
@@ -144,17 +144,17 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
       {%{
          "_tag" => "media-file",
          "threadId" => thread(context),
-         "path" => Path.join(Node.tmp_dir(context.node, "host"), "gone.png")
+         "path" => Path.join(Mc.tmp_dir(context.mc, "host"), "gone.png")
        }, nil}
 
-  defp resource(_context, "a project the node does not know"),
+  defp resource(_context, "a project the MC does not know"),
     do: {%{"_tag" => "workspace-file", "threadId" => "th-unknown", "path" => "README.md"}, nil}
 
-  defp resource(_context, "an asset kind this node does not know"),
+  defp resource(_context, "an asset kind this MC does not know"),
     do: {%{"_tag" => "hologram", "cwd" => "/"}, nil}
 
   defp fake_gh(context, rules) do
-    home = context.node.home
+    home = context.mc.home
     World.put_app_env(:gh_command, @fake_gh)
     System.put_env("FAKE_GH_RULES", Path.join(home, "gh-rules.json"))
     System.put_env("FAKE_GH_LOG", Path.join(home, "gh.log"))
@@ -223,7 +223,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   end
 
   defp xdg_data(context) do
-    dir = Node.tmp_dir(context.node, "xdg")
+    dir = Mc.tmp_dir(context.mc, "xdg")
 
     for var <- ["XDG_DATA_HOME", "XDG_DATA_DIRS"] do
       previous = System.get_env(var)
@@ -238,11 +238,11 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   end
 
   defp read(context, url, headers \\ []),
-    do: Map.put(context, :response, Node.request(context.node, :get, url, headers: headers))
+    do: Map.put(context, :response, Mc.request(context.mc, :get, url, headers: headers))
 
   # --- background ------------------------------------------------------------------
 
-  step "a running node with a project and a thread", context do
+  step "a running MC with a project and a thread", context do
     context |> World.create_project("widgets") |> World.create_thread("main", "widgets")
   end
 
@@ -252,11 +252,11 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     Map.put(
       context,
       :response,
-      Node.request(context.node, :post, context.upload_url, body: png(2 * @mb))
+      Mc.request(context.mc, :post, context.upload_url, body: png(2 * @mb))
     )
   end
 
-  step "the node accepts the upload", context do
+  step "the MC accepts the upload", context do
     assert {204, _, _} = context.response
     path = HalC2.Attachments.path(context.attachment)
     assert File.stat!(path).size == 2 * @mb
@@ -273,11 +273,11 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     Map.put(
       context,
       :response,
-      Node.request(context.node, :post, context.upload_url, body: png(1024))
+      Mc.request(context.mc, :post, context.upload_url, body: png(1024))
     )
   end
 
-  step "the node refuses the link as invalid or expired", context do
+  step "the MC refuses the link as invalid or expired", context do
     assert {403, _, "The link is invalid or expired."} = context.response
     refute HalC2.Attachments.path(context.attachment)
     context
@@ -308,7 +308,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     end
   end
 
-  step ~r/^the node refuses saying attachments may be at most (?<limit>\d+ MB)$/,
+  step ~r/^the MC refuses saying attachments may be at most (?<limit>\d+ MB)$/,
        %{args: [limit]} = context do
     assert {:error, message, _} = context.reply
     assert message == "Attachments may be at most #{limit}."
@@ -320,10 +320,10 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
       upload_url(context, "file", "big.bin", "application/octet-stream", 50 * @mb)
 
     body = :binary.copy(<<0>>, 50 * @mb + 1)
-    Map.put(context, :response, Node.request(context.node, :post, url, body: body))
+    Map.put(context, :response, Mc.request(context.mc, :post, url, body: body))
   end
 
-  step "the node answers that the upload is too large", context do
+  step "the MC answers that the upload is too large", context do
     assert {413, _, "The upload is too large."} = context.response
     context
   end
@@ -337,11 +337,11 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     Map.put(
       context,
       :response,
-      Node.request(context.node, :post, context.upload_url, body: :binary.copy("a", @mb))
+      Mc.request(context.mc, :post, context.upload_url, body: :binary.copy("a", @mb))
     )
   end
 
-  step "the node answers that the body is the wrong size", context do
+  step "the MC answers that the body is the wrong size", context do
     assert {400, _, "The body is the wrong size."} = context.response
     refute HalC2.Attachments.path(context.attachment)
     context
@@ -354,10 +354,10 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
       create_url(context, %{"_tag" => "media-file", "threadId" => thread(context), "path" => path})
 
     upload = "/api/attachments/upload/" <> token(asset_url!(context))
-    Map.put(context, :response, Node.request(context.node, :post, upload, body: png(512)))
+    Map.put(context, :response, Mc.request(context.mc, :post, upload, body: png(512)))
   end
 
-  step "the node refuses it as not an upload URL", context do
+  step "the MC refuses it as not an upload URL", context do
     assert {403, _, "Not an upload URL."} = context.response
     context
   end
@@ -402,7 +402,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     context
   end
 
-  step "the node starts and the thread's history loads with both attachments", context do
+  step "the MC starts and the thread's history loads with both attachments", context do
     assert [image, text] = message(context)["attachments"]
     assert %{"type" => "image", "name" => "shot.png"} = image
     assert %{"type" => "file", "name" => "notes.txt"} = text
@@ -448,7 +448,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     Map.merge(context, %{attachment: attachment, old_path: path})
   end
 
-  step "the node has removed it", context do
+  step "the MC has removed it", context do
     # Asking for an upload URL is what runs the sweep.
     fresh = upload!(context, "image", "new.png", "image/png", png(256))
     refute File.exists?(context.old_path)
@@ -492,7 +492,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     Map.merge(context, %{reply: reply, pasted: bytes})
   end
 
-  step "the node stores them as thread attachments", context do
+  step "the MC stores them as thread attachments", context do
     assert {:ok, %{"attachments" => [first, second]}} = context.reply
 
     for {stored, name} <- [{first, "paste-1.png"}, {second, "paste-2.png"}] do
@@ -511,7 +511,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     context |> Map.merge(%{resource: resource, bytes: bytes}) |> create_url(resource)
   end
 
-  step "the node returns a URL that serves the file", context do
+  step "the MC returns a URL that serves the file", context do
     context = read(context, asset_url!(context))
     assert {200, _, body} = context.response
     assert body == context.bytes
@@ -527,7 +527,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     {:ok, %{"relativeUrl" => old}} =
       HalC2.Attachments.create_url(%{"resource" => context.resource}, issued)
 
-    assert {403, _, "The link is invalid or expired."} = Node.request(context.node, :get, old)
+    assert {403, _, "The link is invalid or expired."} = Mc.request(context.mc, :get, old)
     context
   end
 
@@ -553,7 +553,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     create_url(context, %{"_tag" => "media-file", "threadId" => thread(context), "path" => path})
   end
 
-  step "the node refuses saying only media files are served", context do
+  step "the MC refuses saying only media files are served", context do
     assert {:error, "Only media files are served.",
             %{"_tag" => "AssetPreviewTypeValidationError"}} =
              context.asset
@@ -561,7 +561,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     context
   end
 
-  step ~r/^the node fails with (?<tag>Asset\w+Error)$/, %{args: [tag]} = context do
+  step ~r/^the MC fails with (?<tag>Asset\w+Error)$/, %{args: [tag]} = context do
     assert {:error, _message, %{"_tag" => ^tag, "resource" => resource}} = context.asset
     assert resource == context.resource
     context
@@ -581,13 +581,13 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     read(context, asset_url!(context))
   end
 
-  step "the node answers that the file is gone", context do
+  step "the MC answers that the file is gone", context do
     assert {404, _, "The file is gone."} = context.response
     context
   end
 
   step "an asset URL issued by another member", context do
-    {node, peer} = Node.cluster(context.node)
+    {mc, peer} = Mc.cluster(context.mc)
     bytes = png(1500)
     path = Path.join(peer.home, "peer-chart.png")
     File.mkdir_p!(peer.home)
@@ -598,14 +598,14 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     {:ok, %{"relativeUrl" => url}} =
       :erpc.call(peer.name, HalC2.Attachments, :create_url, [%{"resource" => resource}])
 
-    Map.merge(context, %{node: node, peer: peer, peer_url: url, bytes: bytes})
+    Map.merge(context, %{mc: mc, peer: peer, peer_url: url, bytes: bytes})
   end
 
-  step "the client reads it through the node it is connected to", context do
+  step "the client reads it through the MC it is connected to", context do
     read(context, context.peer_url)
   end
 
-  step "the node forwards the request to the issuer", context do
+  step "the MC forwards the request to the issuer", context do
     assert {200, _, body} = context.response
     assert body == context.bytes
     assert {:ok, context.peer.name} == HalC2.Attachments.issuer(token(context.peer_url))
@@ -613,7 +613,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   end
 
   step "only the issuer checks the signature", context do
-    # This node's own key does not verify the peer's signature; the peer's does.
+    # This MC's own key does not verify the peer's signature; the peer's does.
     token = token(context.peer_url)
     assert {:error, 403, _} = HalC2.Attachments.serve(token)
 
@@ -623,9 +623,9 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     context
   end
 
-  step "the node fails saying files are not served by this node yet", context do
+  step "the MC fails saying files are not served by this MC yet", context do
     assert {:error, message, %{"_tag" => "AssetWorkspaceResolutionError"}} = context.asset
-    assert message == "#{context.resource["_tag"]} files are not served by this node yet."
+    assert message == "#{context.resource["_tag"]} files are not served by this MC yet."
     context
   end
 
@@ -647,7 +647,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     read(context, asset_url!(context))
   end
 
-  step "the node serves that icon", context do
+  step "the MC serves that icon", context do
     assert {200, headers, body} = context.response
     assert body == context.bytes
     assert {"content-type", "image/svg+xml"} in headers
@@ -687,7 +687,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     read(context, asset_url!(context))
   end
 
-  step "the node serves the icon", context do
+  step "the MC serves the icon", context do
     assert {200, headers, body} = context.response
     assert body == context.bytes
     assert {"content-type", "image/png"} in headers
@@ -711,7 +711,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     read(context, asset_url!(context))
   end
 
-  step "the node fetches it with the host's GitHub credentials and serves it", context do
+  step "the MC fetches it with the host's GitHub credentials and serves it", context do
     token = context.github.token
 
     assert_received {:github_request, "/user-attachments/assets/0f3c1d2e-screenshot",
@@ -755,7 +755,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   end
 
   step "the old URL no longer serves it", context do
-    assert {404, _, "The file is gone."} = Node.request(context.node, :get, asset_url!(context))
+    assert {404, _, "The file is gone."} = Mc.request(context.mc, :get, asset_url!(context))
     context
   end
 
@@ -771,7 +771,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     {:ok, file} = File.open(context.media_path, [:write, :read, :binary])
     :ok = :file.pwrite(file, 0, edited)
     :ok = File.close(file)
-    assert {200, _, body} = Node.request(context.node, :get, asset_url!(context))
+    assert {200, _, body} = Mc.request(context.mc, :get, asset_url!(context))
     assert body == edited
     context
   end
@@ -790,7 +790,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     read(context, asset_url!(context), [{"range", "bytes=150000-150999"}])
   end
 
-  step "the node serves the requested range", context do
+  step "the MC serves the requested range", context do
     assert {206, headers, body} = context.response
     assert body == binary_part(context.bytes, 150_000, 1000)
     assert {"content-range", "bytes 150000-150999/200000"} in headers

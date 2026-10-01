@@ -1,4 +1,4 @@
-// Threads on environments the node is linked to, in the shell: listed beside
+// Threads on environments the MC is linked to, in the shell: listed beside
 // the cluster's, changed row by row, offline while the link is down, and gone
 // with the link (the desktop scenarios of connections/links.feature, the
 // linked ones of navigation/header.feature and
@@ -31,7 +31,7 @@ QJsonObject threadRow(const QString& id, const QString& title, const QString& pr
 }
 
 void putProject(World& world, const QString& environment, const QString& project) {
-  world.node.sendLinkRow(environment, project,
+  world.mc.sendLinkRow(environment, project,
                          {{QStringLiteral("id"), project},
                           {QStringLiteral("title"), project},
                           {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + project},
@@ -57,13 +57,13 @@ QVariantMap sidebarRow(World& world, const QString& key) {
 }
 
 QString linkedKey(World& world) {
-  const LinkedThread& linked = world.node.part<LinkedThread>();
+  const LinkedThread& linked = world.mc.part<LinkedThread>();
   return linked.environment + QLatin1Char(':') + linked.id;
 }
 
 void expectShellWithLinks(World& world) {
   world.sync();
-  expect(world.node.shellLinks, QStringLiteral("the shell was not asked for with its links' rows"));
+  expect(world.mc.shellLinks, QStringLiteral("the shell was not asked for with its links' rows"));
 }
 
 // The linked thread's row, once it satisfies `holds`.
@@ -82,61 +82,61 @@ const Steps steps([] {
 
   // connections/links.feature.
   step(QStringLiteral("a thread that lives on %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    LinkedThread& linked = world.node.part<LinkedThread>();
+    LinkedThread& linked = world.mc.part<LinkedThread>();
     linked.environment = c[0];
     linked.id = kLinkedThread;
     putProject(world, c[0], QStringLiteral("ops"));
-    world.node.sendLinkRow(c[0], kLinkedThread, threadRow(kLinkedThread, QStringLiteral("Deploy"), QStringLiteral("ops")));
+    world.mc.sendLinkRow(c[0], kLinkedThread, threadRow(kLinkedThread, QStringLiteral("Deploy"), QStringLiteral("ops")));
     world.sync();
   });
-  step(QStringLiteral("a client of the node asks for the shell with its links' rows"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("a client of the MC asks for the shell with its links' rows"), [](World& world, const Captures&, const Table&) {
     expectShellWithLinks(world);
   });
-  step(QStringLiteral("a client of the node follows the shell with its links' rows"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("a client of the MC follows the shell with its links' rows"), [](World& world, const Captures&, const Table&) {
     expectShellWithLinks(world);
     waitForRow(world, [](const QVariantMap& row) { return !row.isEmpty(); }, QStringLiteral("the linked thread to be listed"));
-    world.node.part<LinkedThread>().shellSubscriptions = world.shellSubscriptions();
+    world.mc.part<LinkedThread>().shellSubscriptions = world.shellSubscriptions();
   });
   step(QStringLiteral("the thread is listed under the link to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForRow(world, [&](const QVariantMap& row) { return row.value(QStringLiteral("environmentId")) == c[0]; },
                QStringLiteral("the thread to be listed on %1").arg(c[0]));
   });
-  step(QStringLiteral("the node of %1 is listed online under its link").arg(q), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC of %1 is listed online under its link").arg(q), [](World& world, const Captures&, const Table&) {
     waitForRow(world, [](const QVariantMap& row) { return !row.isEmpty() && !row.value(QStringLiteral("offline")).toBool(); },
                QStringLiteral("the linked thread to be online"));
   });
-  // The linked node is named as the cluster's own node is; its rows stay its
+  // The linked MC is named as the cluster's own MC is; its rows stay its
   // environment's, and the cluster's own are untouched.
   step(QStringLiteral("none of the rows of %1 are among the cluster's own").arg(q), [](World& world, const Captures&, const Table&) {
-    const QString own = world.node.environmentId + QLatin1Char(':') + kLinkedThread;
+    const QString own = world.mc.environmentId + QLatin1Char(':') + kLinkedThread;
     expect(sidebarRow(world, own).isEmpty(), QStringLiteral("the sidebar lists %1: %2").arg(own, show(world.state(QStringLiteral("sidebar")))));
   });
   step(QStringLiteral("the thread on %1 is renamed to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<LinkedThread>().title = c[1];
-    world.node.sendLinkRow(c[0], kLinkedThread, threadRow(kLinkedThread, c[1], QStringLiteral("ops")));
+    world.mc.part<LinkedThread>().title = c[1];
+    world.mc.sendLinkRow(c[0], kLinkedThread, threadRow(kLinkedThread, c[1], QStringLiteral("ops")));
   });
   step(QStringLiteral("the client receives only that thread's new row under the link to %1").arg(q), [](World& world, const Captures&, const Table&) {
-    const QString title = world.node.part<LinkedThread>().title;
+    const QString title = world.mc.part<LinkedThread>().title;
     waitForRow(world, [&](const QVariantMap& row) { return row.value(QStringLiteral("title")) == title; },
                QStringLiteral("the linked thread to be renamed"));
-    expect(world.shellSubscriptions() == world.node.part<LinkedThread>().shellSubscriptions,
+    expect(world.shellSubscriptions() == world.mc.part<LinkedThread>().shellSubscriptions,
            QStringLiteral("the shell subscribed again for a rename"));
   });
   step(QStringLiteral("%1 becomes unreachable").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.setLinkProblem(c[0], QStringLiteral("unreachable"));
+    world.mc.setLinkProblem(c[0], QStringLiteral("unreachable"));
   });
   step(QStringLiteral("%1 is reachable again").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.setLinkProblem(c[0], QString());
+    world.mc.setLinkProblem(c[0], QString());
   });
-  step(QStringLiteral("the client is told the node of %1 is offline under its link").arg(q), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the client is told the MC of %1 is offline under its link").arg(q), [](World& world, const Captures&, const Table&) {
     waitForRow(world, [](const QVariantMap& row) { return row.value(QStringLiteral("offline")).toBool(); },
                QStringLiteral("the linked thread to be offline"));
   });
   // The desktop is that client: it reconnects and asks again.
-  step(QStringLiteral("a client of the node that asks for the shell with its links' rows sees the thread under the link to %1, offline").arg(q),
+  step(QStringLiteral("a client of the MC that asks for the shell with its links' rows sees the thread under the link to %1, offline").arg(q),
        [](World& world, const Captures& c, const Table&) {
          const int before = world.shellSubscriptions();
-         world.node.drop();
+         world.mc.drop();
          world.waitFor([&] { return world.shellSubscriptions() > before && world.native().client()->isReady(); },
                        QStringLiteral("the shell to subscribe again"));
          expectShellWithLinks(world);
@@ -148,14 +148,14 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("connections.unlink"), QVariantMap{{QStringLiteral("environmentId"), c[0]}});
   });
   step(QStringLiteral("the client's links no longer include %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return !world.node.linked.contains(c[0]); }, QStringLiteral("the node to unlink it"));
+    world.waitFor([&] { return !world.mc.linked.contains(c[0]); }, QStringLiteral("the MC to unlink it"));
     world.sync();
     const QVariantList links = at(world.state(QStringLiteral("connections")), QStringLiteral("links")).toList();
     for (const QVariant& link : links) {
       expect(link.toMap().value(QStringLiteral("environmentId")) != c[0], QStringLiteral("the links are %1").arg(show(links)));
     }
   });
-  step(QStringLiteral("the node no longer follows the shell of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC no longer follows the shell of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     for (const QVariant& row : sidebarRows(world)) {
       expect(row.toMap().value(QStringLiteral("environmentId")) != c[0],
@@ -165,13 +165,13 @@ const Steps steps([] {
 
   // navigation/header.feature and the linked git scenarios of source-control/.
   step(QStringLiteral("%1 has the thread %1 titled %1 in %1 on the branch %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    LinkedThread& linked = world.node.part<LinkedThread>();
+    LinkedThread& linked = world.mc.part<LinkedThread>();
     linked.environment = c[0];
     linked.id = c[1];
     putProject(world, c[0], c[3]);
     QJsonObject row = threadRow(c[1], c[2], c[3]);
     row.insert(QStringLiteral("branch"), c[4]);
-    world.node.sendLinkRow(c[0], c[1], row);
+    world.mc.sendLinkRow(c[0], c[1], row);
     world.sync();
   });
   step(QStringLiteral("the header says the thread is offline"), [](World& world, const Captures&, const Table&) {
@@ -183,15 +183,15 @@ const Steps steps([] {
                   [&] { return QStringLiteral("the header to say online; it shows %1").arg(show(workspace(world))); });
   });
 
-  // threads/sidebar-list.feature: an environment the node reaches through a
+  // threads/sidebar-list.feature: an environment the MC reaches through a
   // link that is down.
   step(QStringLiteral("the environment %1 is offline").arg(q), [](World& world, const Captures& c, const Table&) {
-    LinkedThread& linked = world.node.part<LinkedThread>();
+    LinkedThread& linked = world.mc.part<LinkedThread>();
     linked.environment = c[0];
     linked.id = kLinkedThread;
-    world.node.sendLinkRow(c[0], kLinkedThread, threadRow(kLinkedThread, QStringLiteral("Deploy"), QStringLiteral("shop")));
-    world.node.link(c[0]);
-    world.node.setLinkProblem(c[0], QStringLiteral("unreachable"));
+    world.mc.sendLinkRow(c[0], kLinkedThread, threadRow(kLinkedThread, QStringLiteral("Deploy"), QStringLiteral("shop")));
+    world.mc.link(c[0]);
+    world.mc.setLinkProblem(c[0], QStringLiteral("unreachable"));
   });
   step(QStringLiteral("the threads from %1 are listed as unavailable").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForRow(world, [&](const QVariantMap& row) {

@@ -4,7 +4,7 @@ import HalC2.Shell
 
 // The thread's terminal drawer: a tab per split group and the shown group's
 // terminals side by side or stacked (TerminalSplits), fed by the `Terminals`
-// controller's sessions on the node. Open flag, height, groups and the active
+// controller's sessions on the MC. Open flag, height, groups and the active
 // one are the controller's; dragging the top edge hands the height back with
 // terminal.resize. The right panel's terminal tabs are not the drawer's. Not
 // animated: every frame of it would relayout the thread above (see RightPanel).
@@ -56,8 +56,8 @@ Item {
     }
 
     function isInside(item) {
-        for (let node = item; node !== null; node = node.parent) {
-            if (node === drawer) return true;
+        for (let mc = item; mc !== null; mc = mc.parent) {
+            if (mc === drawer) return true;
         }
         return false;
     }

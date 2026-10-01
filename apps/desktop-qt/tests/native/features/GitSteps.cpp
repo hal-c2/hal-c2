@@ -1,12 +1,12 @@
-// The header's git actions (GitController) against the node's source control:
+// The header's git actions (GitController) against the MC's source control:
 // source-control/git-actions.feature, push-pull-and-default-branch.feature,
 // and commit-and-generated-messages.feature.
 //
-// FakeCheckout is one checkout at /work/<project> as the node reports it
+// FakeCheckout is one checkout at /work/<project> as the MC reports it
 // (`vcs` status) and changes it: `gitAction` runs commit, push and pull
 // request the way git_actions.ex does, with its stages, hook lines and
 // result toast; `vcs.pull`, `vcs.init`, `vcs.refreshStatus` and
-// `sourceControl.publishRepository` answer as the node does.
+// `sourceControl.publishRepository` answer as the MC does.
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -29,7 +29,7 @@ const QString kPrUrl = QStringLiteral("https://github.com/acme/shop/pull/42");
 struct FakeCheckout {
   QString cwd;
   QString remoteName = QStringLiteral("origin");
-  bool known = true;  // the node has sent its status
+  bool known = true;  // the MC has sent its status
   bool isRepo = true;
   std::optional<QString> branch = QStringLiteral("feature/tax");  // none on a detached HEAD
   QString defaultBranch = QStringLiteral("main");
@@ -64,7 +64,7 @@ struct FakeCheckout {
   QString refusePull;
   QString refuseInit;
   QString refusePublish;
-  // A change made outside HAL-C2, seen when the node next looks.
+  // A change made outside HAL-C2, seen when the MC next looks.
   bool outsideChange = false;
 };
 
@@ -104,25 +104,25 @@ QJsonObject remote(const FakeCheckout& git) {
 }
 
 // The checkout's status, to whoever follows it.
-void sendStatus(FakeNode& node) {
-  const FakeCheckout& git = node.part<FakeCheckout>();
-  for (const int id : node.subscribers(QStringLiteral("vcs"))) {
-    if (node.shapeOf(id).value(QLatin1String("cwd")) != git.cwd) continue;
-    node.send({{QStringLiteral("t"), QStringLiteral("vcs")},
+void sendStatus(FakeMc& mc) {
+  const FakeCheckout& git = mc.part<FakeCheckout>();
+  for (const int id : mc.subscribers(QStringLiteral("vcs"))) {
+    if (mc.shapeOf(id).value(QLatin1String("cwd")) != git.cwd) continue;
+    mc.send({{QStringLiteral("t"), QStringLiteral("vcs")},
                {QStringLiteral("id"), id},
                {QStringLiteral("event"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("localUpdated")}, {QStringLiteral("local"), local(git)}}}});
-    node.send({{QStringLiteral("t"), QStringLiteral("vcs")},
+    mc.send({{QStringLiteral("t"), QStringLiteral("vcs")},
                {QStringLiteral("id"), id},
                {QStringLiteral("event"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("remoteUpdated")}, {QStringLiteral("remote"), remote(git)}}}});
   }
 }
 
-void sendEvent(FakeNode& node, int id, const QJsonObject& event) {
-  node.send({{QStringLiteral("t"), QStringLiteral("gitAction")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
+void sendEvent(FakeMc& mc, int id, const QJsonObject& event) {
+  mc.send({{QStringLiteral("t"), QStringLiteral("gitAction")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
 }
 
-void phase(FakeNode& node, int id, const QString& phase, const QString& label) {
-  sendEvent(node, id, {{QStringLiteral("kind"), QStringLiteral("phase_started")}, {QStringLiteral("phase"), phase}, {QStringLiteral("label"), label}});
+void phase(FakeMc& mc, int id, const QString& phase, const QString& label) {
+  sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("phase_started")}, {QStringLiteral("phase"), phase}, {QStringLiteral("label"), label}});
 }
 
 QString slug(const QString& text) {
@@ -130,8 +130,8 @@ QString slug(const QString& text) {
 }
 
 // The rest of the action, after the pre-commit hook (git_actions.ex run/3 and toast/2).
-void finish(FakeNode& node, int id, const QJsonObject& input) {
-  FakeCheckout& git = node.part<FakeCheckout>();
+void finish(FakeMc& mc, int id, const QJsonObject& input) {
+  FakeCheckout& git = mc.part<FakeCheckout>();
   const QString action = input.value(QLatin1String("action")).toString();
   const bool commits = action.startsWith(QLatin1String("commit"));
   const bool pushes = action.contains(QLatin1String("push"));
@@ -162,7 +162,7 @@ void finish(FakeNode& node, int id, const QJsonObject& input) {
 
   QJsonObject push{{QStringLiteral("status"), QStringLiteral("skipped_not_requested")}};
   if (pushes || opensPr) {
-    phase(node, id, QStringLiteral("push"), QStringLiteral("Pushing..."));
+    phase(mc, id, QStringLiteral("push"), QStringLiteral("Pushing..."));
     const QString target = git.remoteName + QLatin1Char('/') + git.branch.value_or(QString());
     git.remote[target].append(git.ahead);
     git.ahead.clear();
@@ -172,7 +172,7 @@ void finish(FakeNode& node, int id, const QJsonObject& input) {
 
   QJsonObject pr{{QStringLiteral("status"), QStringLiteral("skipped_not_requested")}};
   if (opensPr) {
-    phase(node, id, QStringLiteral("pr"), QStringLiteral("Preparing PR..."));
+    phase(mc, id, QStringLiteral("pr"), QStringLiteral("Preparing PR..."));
     git.pr = true;
     pr = {{QStringLiteral("status"), QStringLiteral("created")}, {QStringLiteral("number"), 42}, {QStringLiteral("title"), message}, {QStringLiteral("url"), kPrUrl}};
   }
@@ -199,28 +199,28 @@ void finish(FakeNode& node, int id, const QJsonObject& input) {
   }
   toast.insert(QStringLiteral("cta"), cta);
 
-  sendStatus(node);
-  sendEvent(node, id, {{QStringLiteral("kind"), QStringLiteral("action_finished")},
+  sendStatus(mc);
+  sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("action_finished")},
                   {QStringLiteral("result"), QJsonObject{{QStringLiteral("action"), action}, {QStringLiteral("branch"), branch}, {QStringLiteral("commit"), commit},
                                                          {QStringLiteral("push"), push}, {QStringLiteral("pr"), pr}, {QStringLiteral("toast"), toast}}}});
 }
 
-void run(FakeNode& node, int id, const QJsonObject& input) {
-  FakeCheckout& git = node.part<FakeCheckout>();
+void run(FakeMc& mc, int id, const QJsonObject& input) {
+  FakeCheckout& git = mc.part<FakeCheckout>();
   git.inputs.append(input);
   const QString action = input.value(QLatin1String("action")).toString();
-  sendEvent(node, id, {{QStringLiteral("kind"), QStringLiteral("action_started")}, {QStringLiteral("phases"), QJsonArray{action}}});
+  sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("action_started")}, {QStringLiteral("phases"), QJsonArray{action}}});
   if (action.startsWith(QLatin1String("commit"))) {
-    if (!input.contains(QLatin1String("commitMessage"))) phase(node, id, QStringLiteral("commit"), QStringLiteral("Generating commit message..."));
-    phase(node, id, QStringLiteral("commit"), QStringLiteral("Committing..."));
+    if (!input.contains(QLatin1String("commitMessage"))) phase(mc, id, QStringLiteral("commit"), QStringLiteral("Generating commit message..."));
+    phase(mc, id, QStringLiteral("commit"), QStringLiteral("Committing..."));
     if (!git.hookLine.isEmpty()) {
-      sendEvent(node, id, {{QStringLiteral("kind"), QStringLiteral("hook_started")}, {QStringLiteral("hookName"), QStringLiteral("pre-commit")}});
-      sendEvent(node, id, {{QStringLiteral("kind"), QStringLiteral("hook_output")}, {QStringLiteral("hookName"), QStringLiteral("pre-commit")},
+      sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("hook_started")}, {QStringLiteral("hookName"), QStringLiteral("pre-commit")}});
+      sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("hook_output")}, {QStringLiteral("hookName"), QStringLiteral("pre-commit")},
                       {QStringLiteral("stream"), QStringLiteral("stdout")}, {QStringLiteral("text"), git.hookLine + QLatin1Char('\n')}});
     }
   }
   if (!git.failWith.isEmpty()) {
-    sendEvent(node, id, {{QStringLiteral("kind"), QStringLiteral("action_failed")}, {QStringLiteral("phase"), QStringLiteral("commit")}, {QStringLiteral("message"), git.failWith}});
+    sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("action_failed")}, {QStringLiteral("phase"), QStringLiteral("commit")}, {QStringLiteral("message"), git.failWith}});
     return;
   }
   if (git.waitAfterHook) {
@@ -228,55 +228,55 @@ void run(FakeNode& node, int id, const QJsonObject& input) {
     return;
   }
   if (!git.hookLine.isEmpty()) {
-    sendEvent(node, id, {{QStringLiteral("kind"), QStringLiteral("hook_finished")}, {QStringLiteral("hookName"), QStringLiteral("pre-commit")}, {QStringLiteral("exitCode"), 0}});
+    sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("hook_finished")}, {QStringLiteral("hookName"), QStringLiteral("pre-commit")}, {QStringLiteral("exitCode"), 0}});
   }
-  finish(node, id, input);
+  finish(mc, id, input);
 }
 
-const FakeNode::Extension extension([](FakeNode& node) {
-  node.onShape(QStringLiteral("gitAction"), [&node](int id, const QJsonObject& shape) { run(node, id, shape.value(QLatin1String("input")).toObject()); });
-  node.onRpc(QStringLiteral("vcs.refreshStatus"), [&node](const FakeNode::Rpc& rpc) {
-    FakeCheckout& git = node.part<FakeCheckout>();
+const FakeMc::Extension extension([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("gitAction"), [&mc](int id, const QJsonObject& shape) { run(mc, id, shape.value(QLatin1String("input")).toObject()); });
+  mc.onRpc(QStringLiteral("vcs.refreshStatus"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeCheckout& git = mc.part<FakeCheckout>();
     if (git.outsideChange) {
       git.outsideChange = false;
       git.changed.append(QStringLiteral("README.md"));
     }
-    sendStatus(node);
-    node.reply(rpc, QJsonValue::Null);
+    sendStatus(mc);
+    mc.reply(rpc, QJsonValue::Null);
   });
-  node.onRpc(QStringLiteral("vcs.pull"), [&node](const FakeNode::Rpc& rpc) {
-    FakeCheckout& git = node.part<FakeCheckout>();
+  mc.onRpc(QStringLiteral("vcs.pull"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeCheckout& git = mc.part<FakeCheckout>();
     if (!git.refusePull.isEmpty()) {
-      node.refuse(rpc, git.refusePull);
+      mc.refuse(rpc, git.refusePull);
       return;
     }
     const QString ref = git.branch.value_or(QString());
     const bool pulled = git.behind > 0;
     git.pulled += git.behind;
     git.behind = 0;
-    sendStatus(node);
-    node.reply(rpc, QJsonObject{{QStringLiteral("status"), pulled ? QStringLiteral("pulled") : QStringLiteral("skipped_up_to_date")},
+    sendStatus(mc);
+    mc.reply(rpc, QJsonObject{{QStringLiteral("status"), pulled ? QStringLiteral("pulled") : QStringLiteral("skipped_up_to_date")},
                                 {QStringLiteral("refName"), ref},
                                 {QStringLiteral("upstreamRef"), git.remoteName + QLatin1Char('/') + ref}});
   });
-  node.onRpc(QStringLiteral("vcs.init"), [&node](const FakeNode::Rpc& rpc) {
-    FakeCheckout& git = node.part<FakeCheckout>();
+  mc.onRpc(QStringLiteral("vcs.init"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeCheckout& git = mc.part<FakeCheckout>();
     if (!git.refuseInit.isEmpty()) {
-      node.refuse(rpc, git.refuseInit);
+      mc.refuse(rpc, git.refuseInit);
       return;
     }
     git.initialized = true;
     git.isRepo = true;
     git.hasRemote = false;
     git.upstream = false;
-    sendStatus(node);
-    node.reply(rpc, QJsonValue::Null);
+    sendStatus(mc);
+    mc.reply(rpc, QJsonValue::Null);
   });
-  node.onRpc(QStringLiteral("sourceControl.publishRepository"), [&node](const FakeNode::Rpc& rpc) {
-    FakeCheckout& git = node.part<FakeCheckout>();
+  mc.onRpc(QStringLiteral("sourceControl.publishRepository"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeCheckout& git = mc.part<FakeCheckout>();
     git.publishes.append(rpc.payload);
     if (!git.refusePublish.isEmpty()) {
-      node.refuse(rpc, git.refusePublish);
+      mc.refuse(rpc, git.refusePublish);
       return;
     }
     const QString repository = rpc.payload.value(QLatin1String("repository")).toString();
@@ -286,8 +286,8 @@ const FakeNode::Extension extension([](FakeNode& node) {
     git.remoteName = remoteName;
     git.remote[remoteName + QLatin1Char('/') + git.branch.value_or(QString())].append(git.ahead);
     git.ahead.clear();
-    sendStatus(node);
-    node.reply(rpc, QJsonObject{{QStringLiteral("repository"), QJsonObject{{QStringLiteral("nameWithOwner"), repository},
+    sendStatus(mc);
+    mc.reply(rpc, QJsonObject{{QStringLiteral("repository"), QJsonObject{{QStringLiteral("nameWithOwner"), repository},
                                                                            {QStringLiteral("url"), QStringLiteral("https://github.com/") + repository}}},
                                 {QStringLiteral("remoteName"), remoteName},
                                 {QStringLiteral("branch"), git.branch.value_or(QString())},
@@ -296,7 +296,7 @@ const FakeNode::Extension extension([](FakeNode& node) {
 });
 
 FakeCheckout& fake(World& world) {
-  return world.node.part<FakeCheckout>();
+  return world.mc.part<FakeCheckout>();
 }
 
 QVariantMap git(World& world) {
@@ -322,9 +322,9 @@ void dispatch(World& world, const QString& action, const QVariantMap& payload = 
   world.sync();
 }
 
-// The checkout as the node now has it, once the header shows it.
+// The checkout as the MC now has it, once the header shows it.
 void settle(World& world) {
-  sendStatus(world.node);
+  sendStatus(world.mc);
   world.sync();
 }
 
@@ -365,16 +365,16 @@ const Steps steps([] {
     FakeCheckout& checkout = fake(world);
     checkout.cwd = QStringLiteral("/work/") + project;
     if (!c.value(1).isEmpty()) checkout.remoteName = c.value(1);
-    world.node.checkouts.insert(checkout.cwd, [&node = world.node] {
-      const FakeCheckout& git = node.part<FakeCheckout>();
+    world.mc.checkouts.insert(checkout.cwd, [&mc = world.mc] {
+      const FakeCheckout& git = mc.part<FakeCheckout>();
       return QJsonObject{{QStringLiteral("local"), local(git)}, {QStringLiteral("remote"), remote(git)}};
     });
-    world.node.projects.insert(project, {{QStringLiteral("id"), project}, {QStringLiteral("title"), project}, {QStringLiteral("workspaceRoot"), checkout.cwd}, {QStringLiteral("scripts"), QJsonArray()}});
-    world.node.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), project},
+    world.mc.projects.insert(project, {{QStringLiteral("id"), project}, {QStringLiteral("title"), project}, {QStringLiteral("workspaceRoot"), checkout.cwd}, {QStringLiteral("scripts"), QJsonArray()}});
+    world.mc.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), project},
                                         {QStringLiteral("branch"), QStringLiteral("feature/tax")},
                                         {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
     world.connect();
-    const QString key = world.node.environmentId + QLatin1Char(':') + kThread;
+    const QString key = world.mc.environmentId + QLatin1Char(':') + kThread;
     world.native().controller<NavigationController>()->open(NavigationController::Route::thread(key));
     world.waitFor([&] { return git(world).value(QStringLiteral("available")).toBool(); },
                   [&] { return QStringLiteral("the git actions to show; they are %1").arg(show(git(world))); });
@@ -571,7 +571,7 @@ const Steps steps([] {
   step(QStringLiteral("the user is asked to confirm before anything reaches %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QVariantMap pending = git(world).value(QStringLiteral("pendingDefaultBranch")).toMap();
     expect(pending.value(QStringLiteral("description")).toString().contains(QLatin1Char('"') + c[0] + QLatin1Char('"')) && fake(world).inputs.isEmpty(),
-           QStringLiteral("the git actions are %1, and the node ran %2").arg(show(git(world))).arg(fake(world).inputs.size()));
+           QStringLiteral("the git actions are %1, and the MC ran %2").arg(show(git(world))).arg(fake(world).inputs.size()));
   });
   step(QStringLiteral("the user was asked to confirm pushing to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     onDefaultBranch(fake(world), c[0]);
@@ -599,7 +599,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("nothing is committed or pushed"), [](World& world, const Captures&, const Table&) {
     expect(fake(world).inputs.isEmpty() && git(world).value(QStringLiteral("pendingDefaultBranch")).isNull(),
-           QStringLiteral("the node ran %1 actions; the git actions are %2").arg(fake(world).inputs.size()).arg(show(git(world))));
+           QStringLiteral("the MC ran %1 actions; the git actions are %2").arg(fake(world).inputs.size()).arg(show(git(world))));
   });
   step(QStringLiteral("the work is committed on a new branch and pushed there instead of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const FakeCheckout& checkout = fake(world);
@@ -638,7 +638,7 @@ const Steps steps([] {
   step(QStringLiteral("a commit %1 holds both files").arg(q), [](World& world, const Captures& c, const Table&) {
     const auto& commits = fake(world).commits;
     expect(commits.size() == 1 && commits.first().subject == c[0] && commits.first().files.size() == 2,
-           QStringLiteral("the node made %1 commits: %2").arg(commits.size()).arg(commits.isEmpty() ? QString() : commits.first().subject));
+           QStringLiteral("the MC made %1 commits: %2").arg(commits.size()).arg(commits.isEmpty() ? QString() : commits.first().subject));
   });
   step(QStringLiteral("the user is told the commit was made with its short hash"), [](World& world, const Captures&, const Table&) {
     const QString title = QStringLiteral("Committed ") + fake(world).commits.last().sha.left(7);
@@ -647,10 +647,10 @@ const Steps steps([] {
   });
   step(QStringLiteral("the writer model writes the commit message from the staged diff"), [](World& world, const Captures&, const Table&) {
     expect(!fake(world).inputs.isEmpty() && !fake(world).inputs.last().contains(QLatin1String("commitMessage")),
-           QStringLiteral("the node was asked %1").arg(show(fake(world).inputs.value(0).toVariantMap())));
+           QStringLiteral("the MC was asked %1").arg(show(fake(world).inputs.value(0).toVariantMap())));
   });
   step(QStringLiteral("the commit is made with that message"), [](World& world, const Captures&, const Table&) {
-    expect(fake(world).commits.size() == 1 && fake(world).commits.first().subject == fake(world).generatedMessage, QStringLiteral("the node made %1 commits").arg(fake(world).commits.size()));
+    expect(fake(world).commits.size() == 1 && fake(world).commits.first().subject == fake(world).generatedMessage, QStringLiteral("the MC made %1 commits").arg(fake(world).commits.size()));
   });
   step(QStringLiteral("the commit holds only %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(fake(world).commits.size() == 1 && fake(world).commits.first().files == QStringList{c[0]},
@@ -665,8 +665,8 @@ const Steps steps([] {
   step(QStringLiteral("a branch named after the message under %1 is created and checked out").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString branch = fake(world).branch.value_or(QString());
     expect(branch.startsWith(c[0]) && branch.contains(QLatin1String("add-tax")), QStringLiteral("the checkout is on %1").arg(branch));
-    world.waitFor([&] { return world.node.threads.value(kThread).value(QLatin1String("branch")).toString() == branch; },
-                  [&] { return QStringLiteral("the thread to be on %1; it is on %2").arg(branch, world.node.threads.value(kThread).value(QLatin1String("branch")).toString()); });
+    world.waitFor([&] { return world.mc.threads.value(kThread).value(QLatin1String("branch")).toString() == branch; },
+                  [&] { return QStringLiteral("the thread to be on %1; it is on %2").arg(branch, world.mc.threads.value(kThread).value(QLatin1String("branch")).toString()); });
   });
   step(QStringLiteral("the commit is made on that branch"), [](World& world, const Captures&, const Table&) {
     expect(fake(world).commits.size() == 1 && fake(world).commits.first().branch == fake(world).branch.value_or(QString()),
@@ -685,13 +685,13 @@ const Steps steps([] {
     FakeCheckout& checkout = fake(world);
     expect(checkout.held.has_value(), QStringLiteral("no action is waiting"));
     checkout.waitAfterHook = false;
-    finish(world.node, *std::exchange(checkout.held, std::nullopt), checkout.inputs.last());
+    finish(world.mc, *std::exchange(checkout.held, std::nullopt), checkout.inputs.last());
     awaitIdle(world);
   });
-  step(QStringLiteral("the node fails the action with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).failWith = c[0]; });
-  step(QStringLiteral("the node refuses to pull with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).refusePull = c[0]; });
-  step(QStringLiteral("the node refuses to initialize Git with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).refuseInit = c[0]; });
-  step(QStringLiteral("the node refuses to publish with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).refusePublish = c[0]; });
+  step(QStringLiteral("the MC fails the action with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).failWith = c[0]; });
+  step(QStringLiteral("the MC refuses to pull with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).refusePull = c[0]; });
+  step(QStringLiteral("the MC refuses to initialize Git with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).refuseInit = c[0]; });
+  step(QStringLiteral("the MC refuses to publish with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).refusePublish = c[0]; });
   step(QStringLiteral("the user runs the recommended action"), [](World& world, const Captures&, const Table&) {
     dispatch(world, QStringLiteral("git.quick"));
     awaitIdle(world);
@@ -722,29 +722,29 @@ const Steps steps([] {
   step(QStringLiteral("the user cancels publishing"), [](World& world, const Captures&, const Table&) {
     dispatch(world, QStringLiteral("git.publish.cancel"));
   });
-  step(QStringLiteral("the node published %1 to %1 as (private|public) on (github|gitlab)").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(fake(world).publishes.size() == 1, QStringLiteral("the node was asked to publish %1 times").arg(fake(world).publishes.size()));
+  step(QStringLiteral("the MC published %1 to %1 as (private|public) on (github|gitlab)").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(fake(world).publishes.size() == 1, QStringLiteral("the MC was asked to publish %1 times").arg(fake(world).publishes.size()));
     const QJsonObject input = fake(world).publishes.first();
     expect(input.value(QLatin1String("repository")) == c[0] && input.value(QLatin1String("remoteName")) == c[1] &&
                input.value(QLatin1String("visibility")) == c[2] && input.value(QLatin1String("provider")) == c[3],
-           QStringLiteral("the node was asked %1").arg(show(input.toVariantMap())));
+           QStringLiteral("the MC was asked %1").arg(show(input.toVariantMap())));
   });
   step(QStringLiteral("nothing is published"), [](World& world, const Captures&, const Table&) {
-    expect(fake(world).publishes.isEmpty(), QStringLiteral("the node was asked to publish"));
+    expect(fake(world).publishes.isEmpty(), QStringLiteral("the MC was asked to publish"));
   });
   step(QStringLiteral("the publish dialog says %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return at(git(world), QStringLiteral("publishing.error")) == c[0] && !at(git(world), QStringLiteral("publishing.busy")).toBool(); },
                   [&] { return QStringLiteral("the git actions are %1").arg(show(git(world))); });
   });
-  step(QStringLiteral("the node is asked to push"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC is asked to push"), [](World& world, const Captures&, const Table&) {
     awaitIdle(world);
     expect(!fake(world).inputs.isEmpty() && fake(world).inputs.last().value(QLatin1String("action")) == QStringLiteral("push"),
-           QStringLiteral("the node was asked %1").arg(show(fake(world).inputs.value(fake(world).inputs.size() - 1).toVariantMap())));
+           QStringLiteral("the MC was asked %1").arg(show(fake(world).inputs.value(fake(world).inputs.size() - 1).toVariantMap())));
   });
-  // Threads the node reaches through a link.
+  // Threads the MC reaches through a link.
   step(QStringLiteral("the action ran on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QString environment;
-    for (const QJsonObject& sub : std::as_const(world.node.subscriptions)) {
+    for (const QJsonObject& sub : std::as_const(world.mc.subscriptions)) {
       const QJsonObject shape = sub.value(QLatin1String("shape")).toObject();
       if (shape.value(QLatin1String("type")) == QLatin1String("gitAction")) environment = shape.value(QLatin1String("environment")).toString();
     }

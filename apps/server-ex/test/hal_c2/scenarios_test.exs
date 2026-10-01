@@ -1,7 +1,7 @@
 defmodule HalC2.ScenariosTest do
   @moduledoc """
   End-to-end behavior a client sees over the protocol 3 socket, one scenario per
-  test. Everything runs on this node with its own store; no provider runs.
+  test. Everything runs on this MC with its own store; no provider runs.
   """
   use ExUnit.Case, async: false
 
@@ -18,7 +18,7 @@ defmodule HalC2.ScenariosTest do
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
     {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(HalC2.Web))
-    [{_node, %{"environmentId" => environment}}] = HalC2.Shell.environments()
+    [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
     %{port: port, environment: environment, store: Path.join(dir, "hal-c2.sqlite")}
   end
 
@@ -68,12 +68,12 @@ defmodule HalC2.ScenariosTest do
   defp reply?(id), do: &(&1["t"] in ["rpc.result", "rpc.error"] and &1["id"] == id)
 
   defp config(client, id) do
-    client = sub(client, id, %{"type" => "config", "node" => Atom.to_string(node())})
+    client = sub(client, id, %{"type" => "config", "mc" => Atom.to_string(node())})
     {_, client} = await(client, &(&1["t"] == "config.usageLimitSources" and &1["id"] == id))
     client
   end
 
-  test "Given two clients on one node, when one writes settings at the version it read, then the other sees them and a stale write is refused",
+  test "Given two clients on one MC, when one writes settings at the version it read, then the other sees them and a stale write is refused",
        %{port: port, environment: env} do
     start_supervised!(HalC2.Settings)
     writer = connect(port) |> config(1)
@@ -237,8 +237,8 @@ defmodule HalC2.ScenariosTest do
 
     client =
       connect(port)
-      |> sub(1, %{"type" => "stream", "node" => me, "stream" => "th-dropped"})
-      |> sub(2, %{"type" => "stream", "node" => me, "stream" => "th-kept"})
+      |> sub(1, %{"type" => "stream", "mc" => me, "stream" => "th-dropped"})
+      |> sub(2, %{"type" => "stream", "mc" => me, "stream" => "th-kept"})
 
     {[_, _], client} =
       await_all(client, [
@@ -261,7 +261,7 @@ defmodule HalC2.ScenariosTest do
     assert Enum.filter(skipped, &(&1["id"] == 1)) == []
   end
 
-  test "Given a client on the socket, when it calls what this node cannot serve, then each call fails on its own and the socket stays up",
+  test "Given a client on the socket, when it calls what this MC cannot serve, then each call fails on its own and the socket stays up",
        %{port: port, environment: env} do
     client =
       connect(port)
@@ -274,7 +274,7 @@ defmodule HalC2.ScenariosTest do
 
     assert %{
              "t" => "rpc.error",
-             "error" => "server.commitDesktopUpdate is not served by this node yet"
+             "error" => "server.commitDesktopUpdate is not served by this MC yet"
            } =
              unserved
 
@@ -282,7 +282,7 @@ defmodule HalC2.ScenariosTest do
 
     assert %{
              "t" => "rpc.error",
-             "error" => "prepared-run.release is not supported by this node yet"
+             "error" => "prepared-run.release is not supported by this MC yet"
            } =
              internal
 
@@ -294,7 +294,7 @@ defmodule HalC2.ScenariosTest do
        %{port: port, environment: env} do
     start_supervised!(HalC2.ScheduledTasks)
     me = Atom.to_string(node())
-    client = connect(port) |> sub(1, %{"type" => "scheduledTasks", "node" => me})
+    client = connect(port) |> sub(1, %{"type" => "scheduledTasks", "mc" => me})
     {%{"t" => "scheduledTasks", "tasks" => []}, client} = WsClient.recv(client, 1_000)
     pushed? = &(&1["t"] == "scheduledTasks" and &1["id"] == 1)
 

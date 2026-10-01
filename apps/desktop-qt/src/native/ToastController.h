@@ -10,7 +10,7 @@
 
 #include "NativeController.h"
 
-class NodeClient;
+class McClient;
 class ShellBridge;
 
 // The shell's toasts. Controllers call show() directly; the Notifications
@@ -29,7 +29,7 @@ public:
     bool keepsToast = false;
   };
 
-  ToastController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  ToastController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;

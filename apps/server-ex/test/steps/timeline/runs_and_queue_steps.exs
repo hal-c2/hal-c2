@@ -10,7 +10,7 @@ defmodule HalC2.Steps.Timeline.RunsAndQueue do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   step "the timeline marks the run as interrupted", context do
     run_id = context.interrupted_run
@@ -220,12 +220,12 @@ defmodule HalC2.Steps.Timeline.RunsAndQueue do
     context
   end
 
-  step "two messages were queued when the node restarted", context do
+  step "two messages were queued when the MC restarted", context do
     title = World.current(context)
     context = World.working_thread(context, title)
     {{:ok, _}, context} = World.send_message(context, title, "first follow-up")
     {{:ok, _}, context} = World.send_message(context, title, "second follow-up")
-    %{context | node: HalC2.Test.Node.restart(context.node), clients: %{}}
+    %{context | mc: HalC2.Test.Mc.restart(context.mc), clients: %{}}
   end
 
   step "the queue is held and the messages are kept", context do
@@ -257,7 +257,7 @@ defmodule HalC2.Steps.Timeline.RunsAndQueue do
     context
   end
 
-  step "the agent was working when the node stopped", context do
+  step "the agent was working when the MC stopped", context do
     World.working_thread(context, World.current(context))
   end
 
@@ -274,7 +274,7 @@ defmodule HalC2.Steps.Timeline.RunsAndQueue do
   end
 
   step "continuing threads after restarts is {word}", %{args: [setting]} = context do
-    HalC2.Test.Node.ensure(HalC2.Settings)
+    HalC2.Test.Mc.ensure(HalC2.Settings)
     {_, version} = HalC2.Settings.get()
 
     {:ok, _} =
@@ -293,7 +293,7 @@ defmodule HalC2.Steps.Timeline.RunsAndQueue do
     context
   end
 
-  # The node settles and continues threads before it takes requests, so nothing
+  # The MC settles and continues threads before it takes requests, so nothing
   # more happens once it is up.
   step "the thread waits for the user", context do
     assert [%{"status" => "interrupted"}] = World.runs(context, World.current(context))

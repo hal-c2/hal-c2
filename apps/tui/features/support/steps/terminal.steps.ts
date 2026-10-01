@@ -1,5 +1,5 @@
 // Terminal drawer steps (tui/terminal.feature, terminal/*.feature). The fake
-// client plays the node: attaching sends a snapshot of `ctx.history`, and
+// client plays the MC: attaching sends a snapshot of `ctx.history`, and
 // steps push stream events with `emit`. Assertions read the published
 // `terminal` key, the rendered frame and the fake's recorded calls, after
 // `settle` (the host's receipt for in-flight calls and emulator writes).
@@ -357,7 +357,7 @@ step("the user opens that terminal in the terminal client", async (ctx: World) =
   await settle(ctx);
 });
 step("a new shell starts in the thread's folder", (ctx: World) => {
-  // Attaching asks the node to restart a shell that is not running
+  // Attaching asks the MC to restart a shell that is not running
   // (`restartIfNotRunning` in the real client) in the thread's folder.
   expect(fakeTerminal(ctx, id(1)).attach).toMatchObject({
     threadId: THREAD_ID,
@@ -592,7 +592,7 @@ step(
 step(
   "the user runs {string} from the command palette",
   async (ctx: TerminalWorld, title: string) => {
-    // Hold the node's answer so the progress message can be seen.
+    // Hold the MC's answer so the progress message can be seen.
     const gate = deferred();
     (ctx.gates ??= []).push(gate);
     ctx.overrides = {
@@ -728,7 +728,7 @@ step("the terminal shows {string}", async (ctx: World, text: string) => {
   expect(screen(ctx)).toContain(text);
   expect(frame).toContain(text);
 });
-step("the node reports the terminal error {string}", (ctx: World, message: string) =>
+step("the MC reports the terminal error {string}", (ctx: World, message: string) =>
   emit(ctx, state(ctx).activeId!, { type: "error", message }),
 );
 
@@ -893,7 +893,7 @@ step(
 );
 
 step(
-  "the terminal client shows terminal 2, which the node no longer has",
+  "the terminal client shows terminal 2, which the MC no longer has",
   async (ctx: TerminalWorld) => {
     await haveTerminals(ctx, 2, 2);
     ctx.overrides = {

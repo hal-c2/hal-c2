@@ -1,6 +1,6 @@
 // Formatted messages (features/timeline/markdown.feature) and bare web
 // addresses (scrolling-and-links.feature) as the desktop draws them: the
-// fake node's thread goes through the ThreadStore's TimelineModel into the
+// fake MC's thread goes through the ThreadStore's TimelineModel into the
 // Timeline brick, whose messages are Markdown bricks. Steps click what the
 // user clicks and read back the segments the brick draws.
 
@@ -303,7 +303,7 @@ const Steps steps([] {
   step(QStringLiteral("the agent is writing a reply of several paragraphs"), [](World& world, const Captures&, const Table&) {
     startWriting(world, QStringLiteral("Discounts apply first.\n\nTax rounds to the cent."));
     QQuickItem* message = reply(world, 2);
-    Seen& seen = world.node.part<Seen>();
+    Seen& seen = world.mc.part<Seen>();
     seen.item = within(message, QStringLiteral("markdownProse")).first();
     seen.redraws = std::make_shared<QSignalSpy>(seen.item.data(), SIGNAL(textChanged()));
     seen.segments = message->property("segmentCount").toInt();
@@ -314,7 +314,7 @@ const Steps steps([] {
     write(world, QStringLiteral(" until the cart changes."));
   });
   step(QStringLiteral("the paragraphs already shown are not drawn again"), [](World& world, const Captures&, const Table&) {
-    const Seen& seen = world.node.part<Seen>();
+    const Seen& seen = world.mc.part<Seen>();
     QQuickItem* message = reply(world, seen.segments + 1);
     const QString last = plain(within(message, QStringLiteral("markdownProse")).last());
     expect(last.contains(QLatin1String("until the cart changes.")), QStringLiteral("the reply ends \"%1\"").arg(last));
@@ -332,7 +332,7 @@ const Steps steps([] {
            QStringLiteral("the reply is drawn as %1").arg(kindsOf(message).join(QStringLiteral(", "))));
     QQuickItem* code = one(message, QStringLiteral("codeText"));
     expect(plain(code) == QLatin1String("def refund(order):\n    return order.total"), QStringLiteral("the code reads \"%1\"").arg(plain(code)));
-    world.node.part<Seen>().item = code;
+    world.mc.part<Seen>().item = code;
   });
   step(QStringLiteral("the agent closes the code block"), [](World& world, const Captures&, const Table&) {
     write(world, QStringLiteral("\n```"));
@@ -341,7 +341,7 @@ const Steps steps([] {
     QQuickItem* message = reply(world, 2);
     QQuickItem* segment = within(message, QStringLiteral("markdownSegment")).last();
     world.waitFor([&] { return !segment->property("open").toBool(); }, QStringLiteral("the code block to close"));
-    expect(one(message, QStringLiteral("codeText")) == world.node.part<Seen>().item.data(), QStringLiteral("the code block was drawn anew"));
+    expect(one(message, QStringLiteral("codeText")) == world.mc.part<Seen>().item.data(), QStringLiteral("the code block was drawn anew"));
   });
 
   // Alerts.

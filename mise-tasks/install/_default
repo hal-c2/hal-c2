@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Install every dependency: the JS workspace (incl. apps/tui) and the node's Elixir deps"
+#MISE description="Install every dependency: the JS workspace (incl. apps/tui) and the MC's Elixir deps"
 #MISE alias="i"
-#MISE depends=["install:js", "install:node"]
+#MISE depends=["install:js", "install:mc"]
 # apps/tui is a pnpm workspace member, so install:js covers it, opentui-qml included.

@@ -15,13 +15,13 @@ import { enginePluginPort } from "./host/plugins.ts";
 import { readUserConfig } from "./host/userConfig.ts";
 import { resolveShellConfigDir } from "./shellConfigDir.ts";
 import {
-  connectRemoteNode,
+  connectRemoteMc,
   credentialsPath,
-  findLocalNode,
+  findLocalMc,
   LaunchError,
   parseLaunchArgs,
-  resolveNodeDirs,
-} from "./nodeDiscovery.ts";
+  resolveMcDirs,
+} from "./mcDiscovery.ts";
 import { makeHttpSocketTicketMinter, makeSocketTicketMinter } from "./socketTicket.ts";
 import {
   ensureColorCapabilityEnv,
@@ -36,8 +36,8 @@ const hostPlatform = process.platform;
 // The Bun entry point. Started by the Node `hal-c2 tui` launcher it gets the
 // server origin and a bearer via env and mints websocket URLs over the IPC
 // channel to the launcher, which answers each request for the whole session.
-// Started on its own (`mise run tui`) it finds the Elixir node itself, or pairs
-// with a remote one from `--url` (nodeDiscovery.ts), and buys its socket tickets
+// Started on its own (`mise run tui`) it finds the MC itself, or pairs
+// with a remote one from `--url` (mcDiscovery.ts), and buys its socket tickets
 // over HTTP.
 
 const processSend = process.send as ((message: unknown) => boolean) | undefined;
@@ -50,7 +50,7 @@ if (launcherTickets) {
   process.on("disconnect", launcherTickets.disconnect);
 }
 
-/** Where to connect and as whom: the launcher's env, the local node, or a paired remote. */
+/** Where to connect and as whom: the launcher's env, the local MC, or a paired remote. */
 async function resolveConnection(): Promise<
   Pick<TuiOptions, "origin" | "bearerToken" | "environmentId" | "orchestrationProtocolVersion">
 > {
@@ -74,15 +74,15 @@ async function resolveConnection(): Promise<
     homeDir: NodeOS.homedir(),
     platform: hostPlatform,
   };
-  const node =
+  const mc =
     args.url === undefined
-      ? await findLocalNode({ dirs: resolveNodeDirs(dirs) })
-      : await connectRemoteNode({ url: args.url, credentialsPath: credentialsPath(dirs) });
+      ? await findLocalMc({ dirs: resolveMcDirs(dirs) })
+      : await connectRemoteMc({ url: args.url, credentialsPath: credentialsPath(dirs) });
   return {
-    origin: node.origin,
-    bearerToken: node.bearerToken,
-    environmentId: node.environmentId,
-    orchestrationProtocolVersion: node.orchestrationProtocolVersion,
+    origin: mc.origin,
+    bearerToken: mc.bearerToken,
+    environmentId: mc.environmentId,
+    orchestrationProtocolVersion: mc.orchestrationProtocolVersion,
   };
 }
 

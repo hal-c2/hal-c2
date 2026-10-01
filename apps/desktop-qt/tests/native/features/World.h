@@ -13,7 +13,7 @@
 #include <memory>
 #include <optional>
 
-#include "FakeNode.h"
+#include "FakeMc.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellWindows.h"
@@ -30,13 +30,13 @@ struct BrickAction {
 };
 
 // The shell as main.cpp builds it, a recorder of what reaches the bricks, and
-// the node. One per scenario.
+// the MC. One per scenario.
 class World {
 public:
   World();
   ~World();
 
-  FakeNode node;
+  FakeMc mc;
   QList<BrickAction> brickActions;
   // The draft the last new thread opened.
   QString draftId;
@@ -80,19 +80,19 @@ public:
 
   // Dispatches `thread.new`; the draft it opens (if any) becomes draftId.
   void startNewThread(const QVariantMap& payload);
-  // Opens the draft of the node's project `projectId`, which becomes draftId.
+  // Opens the draft of the MC's project `projectId`, which becomes draftId.
   void openDraft(const QString& projectId);
   // The key of the sidebar's project named `name`; `name` itself when none is.
   QString projectKey(const QString& name) const;
 
-  void connect(const QString& token = QStringLiteral("node-token"));
+  void connect(const QString& token = QStringLiteral("mc-token"));
   int shellSubscriptions() const;
 
   // `what` is read on timeout, so it can describe the state the wait gave up on.
   void waitFor(const std::function<bool()>& condition, const std::function<QString()>& what);
   void waitFor(const std::function<bool()>& condition, const QString& what);
 
-  // A round trip through the node: everything the node sent before, and every
+  // A round trip through the MC: everything the MC sent before, and every
   // answer to a command sent before, has been handled once it returns.
   void sync();
 

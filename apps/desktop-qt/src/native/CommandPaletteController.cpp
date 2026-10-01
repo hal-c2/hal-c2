@@ -13,7 +13,7 @@
 #include "Keybindings.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "RightPanelController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -117,7 +117,7 @@ const QStringList CommandPaletteController::kRootCommands{
     QStringLiteral("projectSettings.open"),
 };
 
-CommandPaletteController::CommandPaletteController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
+CommandPaletteController::CommandPaletteController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                                    QObject* parent)
     : QAbstractListModel(parent), m_bridge(bridge), m_client(client), m_store(store) {
   m_debounce.setSingleShot(true);
@@ -685,7 +685,7 @@ void CommandPaletteController::setSettingsSections(const QVariantList& sections)
 void CommandPaletteController::rebuild() {
   if (!m_open) return;
   if (m_mode != Mode::Command) {
-    // Found entries come from the node (none yet when it just opened); the
+    // Found entries come from the MC (none yet when it just opened); the
     // rows follow them, and the empty text may change.
     refilter(true);
     return;
@@ -792,7 +792,7 @@ void CommandPaletteController::refilter(bool refreshed) {
   };
 
   if (m_mode != Mode::Command) {
-    // The node filtered them already.
+    // The MC filtered them already.
     for (int index = 0; index < m_entries.size(); ++index) add(m_entries.at(index).group, index);
     apply(std::move(next), refreshed);
     return;
@@ -922,7 +922,7 @@ void CommandPaletteController::apply(QList<Row> next, bool refreshed) {
   }
 }
 
-// --- Searching the node --------------------------------------------------------------
+// --- Searching the MC --------------------------------------------------------------
 
 CommandPaletteController::Target CommandPaletteController::target() const {
   const QString threadKey = NativeShell::of(this)->controller<NavigationController>()->threadKey();
@@ -1038,7 +1038,7 @@ void CommandPaletteController::searchContent(int generation) {
                    if (generation != m_generation || m_mode != Mode::Content) return;
                    m_pending = 0;
                    const QJsonObject answer = result.toObject();
-                   // Grouped by file, in the order the node found them.
+                   // Grouped by file, in the order the MC found them.
                    QList<QString> order;
                    QHash<QString, QList<Entry>> byFile;
                    for (const QJsonValue& value : answer.value(QLatin1String("matches")).toArray()) {
@@ -1073,7 +1073,7 @@ void CommandPaletteController::searchMessages(int generation) {
     }
     return;
   }
-  // Each node answers for its own threads.
+  // Each MC answers for its own threads.
   QStringList online;
   for (const QString& environmentId : m_store->environments()) {
     if (m_store->environmentOnline(environmentId)) online.append(environmentId);

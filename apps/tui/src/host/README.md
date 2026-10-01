@@ -85,7 +85,7 @@ link), `git.commit {message}`, `git.commit.cancel`. `settings`
 (`settingsState.ts`) is the settings page in place of the conversation:
 `settings.open`, `settings.close` (`mode: "settings"`).
 
-`cluster` (`clusterState.ts`) is this machine's cluster as the node reports
+`cluster` (`clusterState.ts`) is this machine's cluster as the MC reports
 it (`cluster.status`, read again when settings or the palette open), the last
 invite, and `joining` while the one-line join prompt has the keys (`mode:
 "join"`). Settings list it; the palette runs `cluster.invite {tailscale?}`

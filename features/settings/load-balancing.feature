@@ -12,10 +12,10 @@ Feature: Load balancing new threads across machines
   Balancing is offered on desktop and in the terminal client; phones keep choosing the machine
   by hand.
 
-  @node
-  Scenario: A node reports its free resources
-    When a client asks the node for its host resources
-    Then the node answers with its CPU count, CPU use and free memory
+  @mc
+  Scenario: An MC reports its free resources
+    When a client asks the MC for its host resources
+    Then the MC answers with its CPU count, CPU use and free memory
 
   @backlog @desktop @tui
   Scenario: Load balancing is off by default

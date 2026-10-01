@@ -1,7 +1,7 @@
 # Sources:
 #   /home/olafura/dev/opentui-qml src/runtime/plugins.ts (listPlugins, unregisterPlugin)
 #   apps/server-ex/lib/hal_c2/acp/catalog.ex (registry search, install, checksums, uninstall refused while referenced)
-#   apps/server-ex/lib/hal_c2/usage_limit_sources.ex (secrets sealed in the node, marker shown to clients)
+#   apps/server-ex/lib/hal_c2/usage_limit_sources.ex (secrets sealed in the MC, marker shown to clients)
 #   apps/server-ex/lib/hal_c2/plugins.ex (plugins.list per environment, permissions with their grant)
 #   apps/web/src/components/settings/AcpRegistrySearchStep.tsx (search, Add, Added)
 #   packages/contracts/src/rpc.ts (server.searchAcpRegistry, server.prepareAcpRegistryAgent, server.uninstallAcpRegistryManagedBinary)
@@ -17,62 +17,62 @@ Feature: Plugin catalog
     When the user lists the installed plugins
     Then "clock" and "metrics" are listed with their kind and source file
 
-  @node
+  @mc
   Scenario: The ACP registry can be searched for agents that run on this machine
     When the user searches the ACP registry for "code"
     Then at most 20 matching agents are listed, best match first
     And agents that cannot run on this platform are left out
 
-  @node
+  @mc
   Scenario: An agent binary from the registry is checked before it is used
     Given the registry lists a checksum for the agent "acme"
     When the user adds "acme" and the download does not match the checksum
     Then the install fails saying the checksum did not match
     And no instance of "acme" is created
 
-  @node
+  @mc
   Scenario: An agent download over plain HTTP from another host is refused
     Given the registry points the agent "acme" at a plain HTTP address on another machine
     When the user adds "acme"
     Then the install is refused
 
-  @node
+  @mc
   Scenario: A registry agent still in use cannot be uninstalled
     Given the instance "acme_work" uses the registry agent "acme"
     When the user tries to uninstall "acme"
     Then the agent's files are kept
     # Neither server explains why: both answer {removed: false} while an instance uses it.
-    And the node reports that nothing was removed
+    And the MC reports that nothing was removed
 
-  @node
+  @mc
   Scenario: The registry keeps working offline from its last copy
-    Given the node fetched the registry earlier
+    Given the MC fetched the registry earlier
     And the registry cannot be reached now
     When the user searches the registry
     Then results come from the last fetched copy
 
   @backlog @desktop @mobile @tui
   Scenario: Each surface lists its installed UI plugins with version and source
-    Given the plugins "quota" from a paired node and "clock" from a local file are installed
+    Given the plugins "quota" from a paired MC and "clock" from a local file are installed
     When the user opens the plugin list
     Then each plugin shows its version and where it came from
 
-  @node
-  Scenario: The node's plugins are listed per environment
-    Given two environments with different node plugins
+  @mc
+  Scenario: The MC's plugins are listed per environment
+    Given two environments with different MC plugins
     When the user opens the plugin list for the second environment
-    Then only that environment's node plugins are listed
+    Then only that environment's MC plugins are listed
 
   @backlog @desktop @mobile
-  Scenario: The plugin list has a section for each environment's node plugins
-    Given two environments with different node plugins
+  Scenario: The plugin list has a section for each environment's MC plugins
+    Given two environments with different MC plugins
     When the user opens the plugin list
-    Then each environment's node plugins are listed under that environment
+    Then each environment's MC plugins are listed under that environment
 
   @backlog @desktop @mobile @tui
   Scenario: An available update is shown next to the installed version
-    Given the plugin "quota" version 1.0 is installed from a paired node
-    And the paired node offers "quota" version 1.1
+    Given the plugin "quota" version 1.0 is installed from a paired MC
+    And the paired MC offers "quota" version 1.1
     When the user opens the plugin list
     Then "quota" shows that version 1.1 is available
 
@@ -104,7 +104,7 @@ Feature: Plugin catalog
     Examples:
       | source                                | trust                     |
       | a signed release from HAL-C2         | signed                    |
-      | a paired node                         | from that node            |
+      | a paired MC                         | from that MC            |
       | a local file                          | local                     |
       | a pasted URL                          | unverified                |
 
@@ -153,15 +153,15 @@ Feature: Plugin catalog
     When the user revokes that permission
     Then "team-status" can no longer reach the network
 
-  @node
-  Scenario: Node plugins report the permissions they were granted on that environment
-    Given the node plugin "gitea" was granted access to project remotes
+  @mc
+  Scenario: MC plugins report the permissions they were granted on that environment
+    Given the MC plugin "gitea" was granted access to project remotes
     When the user opens "gitea" in the plugin list
     Then the granted permissions are shown
 
   @backlog @desktop @mobile
-  Scenario: The plugin list shows a node plugin's granted permissions
-    Given the node plugin "gitea" was granted access to project remotes
+  Scenario: The plugin list shows an MC plugin's granted permissions
+    Given the MC plugin "gitea" was granted access to project remotes
     When the user opens "gitea" in the plugin list
     Then "Read project remotes" is shown as granted
 

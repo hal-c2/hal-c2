@@ -13,7 +13,7 @@ defmodule HalC2.ProviderUsageLimits.Acp do
 
   An account that cannot be read this way (an API key, a custom deployment, an
   external OpenCode server) is `unsupported`; a failed read is `probeFailed`.
-  Each instance reads with the node's environment plus the variables set on it.
+  Each instance reads with the MC's environment plus the variables set on it.
   """
 
   import HalC2.ProviderUsageLimits, only: [limits: 2, unavailable: 2, unavailable: 3, clamp: 1]
@@ -164,7 +164,7 @@ defmodule HalC2.ProviderUsageLimits.Acp do
       token = present(env["CURSOR_AUTH_TOKEN"]) ->
         cursor_read(instance, env, token, checked_at)
 
-      # An API key (the node's own Cursor sign-in) can name another account than the CLI login.
+      # An API key (the MC's own Cursor sign-in) can name another account than the CLI login.
       present(env["CURSOR_API_KEY"]) || cursor_api_key?(env) ->
         unavailable(checked_at, "unsupported")
 

@@ -1,7 +1,7 @@
 # Sources:
 #   packages/contracts/src/rpc.ts (WS_METHODS, every Rpc.make)
 #   packages/contracts/src/orchestrationV2.ts (ORCHESTRATION_V2_WS_METHODS)
-#   apps/server-ex/test/hal_c2/node_parity_test.exs (@methods: status and how each method is reached)
+#   apps/server-ex/test/hal_c2/mc_parity_test.exs (@methods: status and how each method is reached)
 #   apps/server-ex/lib/hal_c2/rpc.ex, apps/server-ex/lib/hal_c2/orchestration.ex, apps/server-ex/lib/hal_c2/pull_requests.ex
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (shapes)
 #   packages/client-runtime/src/v3/clusterSocket.ts (protocol 3 client adapter)
@@ -11,28 +11,28 @@
 #   Counts: 172 contract methods; 169 aligned, 3 dropped.
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
-#   "via" says how a protocol 3 client reaches the method: an rpc frame (under the node's
+#   "via" says how a protocol 3 client reaches the method: an rpc frame (under the MC's
 #   own name when it differs), a subscription shape, a socket frame, or the client adapter.
 
 Feature: RPC parity with the TypeScript server
-  Every method in the RPC contract is either answered by the node, waiting in the backlog,
+  Every method in the RPC contract is either answered by the MC, waiting in the backlog,
   or dropped with a reason. A protocol 3 client reaches each one without knowing which server
   it talks to.
 
   Background:
-    Given a node
+    Given an MC
     And a paired protocol 3 client
 
-  @node
-  Scenario Outline: The node answers <method>
+  @mc
+  Scenario Outline: The MC answers <method>
     When the client calls <method> through its <via>
-    Then the node answers with the contract's response shape for <method>
+    Then the MC answers with the contract's response shape for <method>
 
     Examples: 169 aligned methods
       | method                                   | domain            | via                                                                       |
       | server.upsertKeybinding                  | server            | rpc as hal-c2.upsertKeybinding                                                |
       | server.removeKeybinding                  | server            | rpc as hal-c2.removeKeybinding                                                |
-      | server.probe                             | server            | client adapter: answered by the client: a connected socket is a live node |
+      | server.probe                             | server            | client adapter: answered by the client: a connected socket is a live MC |
       | server.getConfig                         | server            | shape config                                                              |
       | server.refreshProviders                  | server            | rpc                                                                       |
       | server.updateProvider                    | server            | rpc                                                                       |
@@ -200,27 +200,27 @@ Feature: RPC parity with the TypeScript server
       | cluster.join                             | cluster           | rpc                                                                       |
       | cluster.remove                           | cluster           | rpc                                                                       |
 
-  # The node refuses these as unserved methods: desktop update handoff is replaced by hot
+  # The MC refuses these as unserved methods: desktop update handoff is replaced by hot
   # upgrades, the archived-shell subscription has no subscriber, and terminal events arrive
   # through the terminal shape.
-  @dropped @node
-  Scenario Outline: The node does not serve <method>
+  @dropped @mc
+  Scenario Outline: The MC does not serve <method>
     When the client calls <method>
-    Then the node answers that the method is not served
+    Then the MC answers that the method is not served
 
     Examples: 3 dropped methods
       | method                               | domain        | reason                                                                    |
-      | server.commitDesktopUpdate           | server        | desktop-app update handoff; nodes upgrade themselves in place             |
+      | server.commitDesktopUpdate           | server        | desktop-app update handoff; MCs upgrade themselves in place               |
       | orchestration.subscribeArchivedShell | orchestration | no client subscribes; archived threads come from getArchivedShellSnapshot |
       | subscribeTerminalEvents              | terminal      | protocol 3 clients attach with the terminal shape                         |
 
   # These names exist in WS_METHODS but have no Rpc.make definition, and neither the
-  # TypeScript server nor the node routes them. Projects are listed through the shell
+  # TypeScript server nor the MC routes them. Projects are listed through the shell
   # snapshot and changed through projects.mutate.
-  @dropped @node
+  @dropped @mc
   Scenario Outline: The contract name <method> is not a method
     When the client calls <method>
-    Then the node answers that the method is not served
+    Then the MC answers that the method is not served
 
     Examples: 3 method names with no RPC definition
       | method          | instead                                  |
@@ -228,12 +228,12 @@ Feature: RPC parity with the TypeScript server
       | projects.list   | the projects in the shell snapshot       |
       | projects.remove | projects.mutate with a project.delete    |
 
-  @node
-  Scenario Outline: The node serves its own <method>
+  @mc
+  Scenario Outline: The MC serves its own <method>
     When the client calls <method>
-    Then the node answers with <result>
+    Then the MC answers with <result>
 
-    Examples: node-only methods behind aligned contract methods
+    Examples: MC-only methods behind aligned contract methods
       | method                    | result                                                        |
       | hal-c2.readSettings       | the settings document with its version                        |
       | hal-c2.writeSettings      | the new version, or a stale-settings error for an old version |
@@ -243,7 +243,7 @@ Feature: RPC parity with the TypeScript server
 
     # The socket twins of the environment HTTP API's /api/auth/* routes (environmentHttp.ts),
     # which has no RPC contract; replies are the routes' bodies.
-    Examples: node-only twins of the access routes
+    Examples: MC-only twins of the access routes
       | method                    | result                                                  |
       | hal-c2.createPairingLink  | a pairing link and its credential                       |
       | hal-c2.pairingLinks       | the pairing links without their credentials             |
@@ -252,7 +252,7 @@ Feature: RPC parity with the TypeScript server
       | hal-c2.revokeClient       | whether the client was revoked                          |
       | hal-c2.revokeOtherClients | how many other clients it revoked                       |
 
-  @node
+  @mc
   Scenario: A method outside the contract is refused
     When the client calls "server.doesNotExist"
-    Then the node answers that the method is not served
+    Then the MC answers that the method is not served

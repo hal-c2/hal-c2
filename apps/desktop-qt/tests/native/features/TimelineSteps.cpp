@@ -1,4 +1,4 @@
-// A thread's timeline: the node's `stream` shape for the open thread (faked
+// A thread's timeline: the MC's `stream` shape for the open thread (faked
 // here as entity rows the steps change), and what the ThreadStore's
 // TimelineModel shows of it.
 
@@ -23,30 +23,30 @@ namespace {
 
 using namespace stream;
 
-void sendSnapshot(FakeNode& node, int id, const QString& thread) {
+void sendSnapshot(FakeMc& mc, int id, const QString& thread) {
   QJsonArray rows;
-  const QMap<QString, QJsonObject> entities = node.part<FakeStreams>().threads.value(thread);
+  const QMap<QString, QJsonObject> entities = mc.part<FakeStreams>().threads.value(thread);
   for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
     const QStringList key = it.key().split(QLatin1Char('\n'));
     rows.append(QJsonArray{key.at(0), key.at(1), *it});
   }
-  const int offset = node.part<FakeStreams>().seq;
-  node.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), offset},
+  const int offset = mc.part<FakeStreams>().seq;
+  mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), offset},
              {QStringLiteral("at"), iso(now())}, {QStringLiteral("part"), 0}, {QStringLiteral("rows"), rows},
              {QStringLiteral("done"), true}});
-  node.send({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), offset}});
+  mc.send({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), offset}});
 }
 
-const FakeNode::Extension streams([](FakeNode& node) {
-  node.onShape(QStringLiteral("stream"), [&node](int id, const QJsonObject& shape) {
-    FakeStreams& fake = node.part<FakeStreams>();
+const FakeMc::Extension streams([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("stream"), [&mc](int id, const QJsonObject& shape) {
+    FakeStreams& fake = mc.part<FakeStreams>();
     const QString target = shape.value(QLatin1String("environment")).toString();
     if (fake.offline.contains(target)) {
-      node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unknown environment")}});
-      node.forget(id);
+      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unknown environment")}});
+      mc.forget(id);
       return;
     }
-    sendSnapshot(node, id, shape.value(QLatin1String("stream")).toString());
+    sendSnapshot(mc, id, shape.value(QLatin1String("stream")).toString());
   });
 });
 
@@ -94,7 +94,7 @@ void expectAnswer(World& world, const QString& text) {
 
 void keepRows(World& world) {
   TimelineModel& model = timeline(world);
-  FakeStreams& fake = world.node.part<FakeStreams>();
+  FakeStreams& fake = world.mc.part<FakeStreams>();
   fake.kept.clear();
   for (int row = 0; row < model.rowCount(); ++row) fake.kept.append(QPersistentModelIndex(model.index(row)));
 }
@@ -104,7 +104,7 @@ const Steps steps([] {
 
   // Background.
   step(QStringLiteral("a connected environment with the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.projects.insert(c[0], {{QStringLiteral("id"), c[0]}, {QStringLiteral("title"), c[0]}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[0]}, {QStringLiteral("scripts"), QJsonArray()}});
+    world.mc.projects.insert(c[0], {{QStringLiteral("id"), c[0]}, {QStringLiteral("title"), c[0]}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[0]}, {QStringLiteral("scripts"), QJsonArray()}});
     world.connect();
     world.sync();
   });
@@ -225,7 +225,7 @@ const Steps steps([] {
     addItem(world, QStringLiteral("run_interrupt_result"), {{QStringLiteral("message"), QStringLiteral("Interrupted by the user")}});
   });
   step(QStringLiteral("the turn settles"), [](World& world, const Captures&, const Table&) {
-    FakeStreams& fake = world.node.part<FakeStreams>();
+    FakeStreams& fake = world.mc.part<FakeStreams>();
     settleRun(world, QStringLiteral("interrupted"), fake.runStarted.isValid() ? int(fake.runStarted.secsTo(now())) : 0);
   });
   step(QStringLiteral("its work folds behind %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -247,13 +247,13 @@ const Steps steps([] {
   step(QStringLiteral("the agent writes more than the shell has read"), [](World& world, const Captures&, const Table&) {
     change(world, QStringLiteral("turn-item"), QStringLiteral("reply"), {{QStringLiteral("a"), QJsonObject{{QStringLiteral("text"), QStringLiteral(" now shows tax.")}}}}, true);
   });
-  step(QStringLiteral("the node tells the shell to resync the thread"), [](World& world, const Captures&, const Table&) {
-    const FakeStreams& fake = world.node.part<FakeStreams>();
-    const qsizetype before = world.node.subscriptions.size();
+  step(QStringLiteral("the MC tells the shell to resync the thread"), [](World& world, const Captures&, const Table&) {
+    const FakeStreams& fake = world.mc.part<FakeStreams>();
+    const qsizetype before = world.mc.subscriptions.size();
     for (const int id : followers(world, fake.thread)) {
-      world.node.send({{QStringLiteral("t"), QStringLiteral("resync")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), 0}});
+      world.mc.send({{QStringLiteral("t"), QStringLiteral("resync")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), 0}});
     }
-    world.waitFor([&] { return world.node.subscriptions.size() > before; }, QStringLiteral("the shell to subscribe again"));
+    world.waitFor([&] { return world.mc.subscriptions.size() > before; }, QStringLiteral("the shell to subscribe again"));
     world.sync();
   });
   step(QStringLiteral("the whole reply is shown"), [](World& world, const Captures&, const Table&) {
@@ -264,7 +264,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the rows shown before are kept"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
-    const QList<QPersistentModelIndex> kept = world.node.part<FakeStreams>().kept;
+    const QList<QPersistentModelIndex> kept = world.mc.part<FakeStreams>().kept;
     expect(!kept.isEmpty(), QStringLiteral("no rows were shown before"));
     // Rows only go when the turn settles and folds its calls away; the reply's row stays.
     for (const QPersistentModelIndex& index : kept) {
@@ -275,18 +275,18 @@ const Steps steps([] {
            QStringLiteral("the reply's row was replaced; %1").arg(describe(model)));
   });
 
-  // A thread on another node.
-  step(QStringLiteral("the user is looking at a thread on another node of the cluster"), [](World& world, const Captures&, const Table&) {
-    world.node.join(kPeer, kPeerEnvironment);
-    world.node.send({{QStringLiteral("t"), QStringLiteral("shell.node")}, {QStringLiteral("id"), world.node.subscribers(QStringLiteral("shell")).value(0)},
-                     {QStringLiteral("node"), kPeer}, {QStringLiteral("online"), true}});
-    world.node.send({{QStringLiteral("t"), QStringLiteral("shell.rows")}, {QStringLiteral("id"), world.node.subscribers(QStringLiteral("shell")).value(0)},
-                     {QStringLiteral("node"), kPeer},
+  // A thread on another MC.
+  step(QStringLiteral("the user is looking at a thread on another MC of the cluster"), [](World& world, const Captures&, const Table&) {
+    world.mc.join(kPeer, kPeerEnvironment);
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.mc")}, {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
+                     {QStringLiteral("mc"), kPeer}, {QStringLiteral("online"), true}});
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.rows")}, {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
+                     {QStringLiteral("mc"), kPeer},
                      {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{kPeerThread, QStringLiteral("thread"),
                                                                     QJsonObject{{QStringLiteral("id"), kPeerThread}, {QStringLiteral("title"), QStringLiteral("Remote")}, {QStringLiteral("projectId"), kProject},
                                                                                 {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}}})}}});
     world.sync();
-    FakeStreams& fake = world.node.part<FakeStreams>();
+    FakeStreams& fake = world.mc.part<FakeStreams>();
     fake.thread = kPeerThread;
     fake.environment = kPeerEnvironment;
     look(world, kPeerEnvironment + QLatin1Char(':') + kPeerThread);
@@ -297,53 +297,53 @@ const Steps steps([] {
     settleRun(world, QStringLiteral("completed"), 30);
   });
   const auto setPeer = [](World& world, bool online) {
-    FakeStreams& fake = world.node.part<FakeStreams>();
+    FakeStreams& fake = world.mc.part<FakeStreams>();
     if (online) {
       fake.offline.remove(fake.environment);
     } else {
       fake.offline.insert(fake.environment);
       for (const int id : followers(world, fake.thread)) {
-        world.node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unknown node")}});
-        world.node.forget(id);
+        world.mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unknown MC")}});
+        world.mc.forget(id);
       }
     }
-    world.node.send({{QStringLiteral("t"), QStringLiteral("shell.node")}, {QStringLiteral("id"), world.node.subscribers(QStringLiteral("shell")).value(0)},
-                     {QStringLiteral("node"), kPeer}, {QStringLiteral("online"), online}});
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.mc")}, {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
+                     {QStringLiteral("mc"), kPeer}, {QStringLiteral("online"), online}});
     world.sync();
   };
-  step(QStringLiteral("that node leaves the cluster"), [setPeer](World& world, const Captures&, const Table&) { setPeer(world, false); });
-  step(QStringLiteral("that node rejoins the cluster"), [setPeer](World& world, const Captures&, const Table&) { setPeer(world, true); });
-  // A thread on an environment the node is linked to, reached through it.
-  step(QStringLiteral("the user is looking at a thread on an environment the node is linked to"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("that MC leaves the cluster"), [setPeer](World& world, const Captures&, const Table&) { setPeer(world, false); });
+  step(QStringLiteral("that MC rejoins the cluster"), [setPeer](World& world, const Captures&, const Table&) { setPeer(world, true); });
+  // A thread on an environment the MC is linked to, reached through it.
+  step(QStringLiteral("the user is looking at a thread on an environment the MC is linked to"), [](World& world, const Captures&, const Table&) {
     const QString environment = QStringLiteral("env-c");
     const QString thread = QStringLiteral("thread-linked");
-    world.node.sendLinkRow(environment, thread,
+    world.mc.sendLinkRow(environment, thread,
                            {{QStringLiteral("id"), thread}, {QStringLiteral("title"), QStringLiteral("Linked")}, {QStringLiteral("projectId"), kProject},
                             {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
-    world.node.link(environment);
+    world.mc.link(environment);
     world.sync();
-    FakeStreams& fake = world.node.part<FakeStreams>();
+    FakeStreams& fake = world.mc.part<FakeStreams>();
     fake.thread = thread;
     fake.environment = environment;
     look(world, environment + QLatin1Char(':') + thread);
   });
   const auto setLink = [](World& world, bool online) {
-    FakeStreams& fake = world.node.part<FakeStreams>();
+    FakeStreams& fake = world.mc.part<FakeStreams>();
     if (online) {
       fake.offline.remove(fake.environment);
     } else {
       fake.offline.insert(fake.environment);
       for (const int id : followers(world, fake.thread)) {
-        world.node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unreachable")}});
-        world.node.forget(id);
+        world.mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unreachable")}});
+        world.mc.forget(id);
       }
     }
-    world.node.setLinkProblem(fake.environment, online ? QString() : QStringLiteral("unreachable"));
+    world.mc.setLinkProblem(fake.environment, online ? QString() : QStringLiteral("unreachable"));
     world.sync();
   };
   step(QStringLiteral("that environment becomes unreachable"), [setLink](World& world, const Captures&, const Table&) { setLink(world, false); });
   step(QStringLiteral("that environment is reachable again"), [setLink](World& world, const Captures&, const Table&) { setLink(world, true); });
-  step(QStringLiteral("the thread says its node cannot be reached"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the thread says its MC cannot be reached"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
     world.waitFor([&] { return model.status() == QLatin1String("unreachable"); }, [&] { return describe(model); });
     expect(!model.problem().isEmpty(), QStringLiteral("the thread does not say why"));
@@ -351,7 +351,7 @@ const Steps steps([] {
   step(QStringLiteral("the answer %1 is still shown").arg(q), [](World& world, const Captures& c, const Table&) {
     expectAnswer(world, c[0]);
   });
-  step(QStringLiteral("the thread follows its node again"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the thread follows its MC again"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
     world.waitFor([&] { return model.status() == QLatin1String("live"); }, [&] { return describe(model); });
   });
@@ -429,12 +429,12 @@ const Steps steps([] {
     startRun(world);
     for (const QString& path : {c[0], c[1]}) addItem(world, QStringLiteral("file_change"), {{QStringLiteral("fileName"), path}});
     addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Both files are updated.")}});
-    world.node.part<FakeStreams>().changedFiles = {c[0], c[1]};
+    world.mc.part<FakeStreams>().changedFiles = {c[0], c[1]};
   });
   step(QStringLiteral("the turn completes"), [](World& world, const Captures&, const Table&) {
     QJsonArray files;
     int n = 0;
-    for (const QString& path : world.node.part<FakeStreams>().changedFiles) {
+    for (const QString& path : world.mc.part<FakeStreams>().changedFiles) {
       ++n;
       files.append(QJsonObject{{QStringLiteral("path"), path}, {QStringLiteral("kind"), QStringLiteral("modified")},
                                {QStringLiteral("additions"), 10 * n}, {QStringLiteral("deletions"), n}});
@@ -446,7 +446,7 @@ const Steps steps([] {
     TimelineModel& model = timeline(world);
     const int reply = lastRowOf(world, QStringLiteral("message"));
     const QVariantList files = role(model, reply, TimelineModel::FilesRole).toList();
-    const QStringList changed = world.node.part<FakeStreams>().changedFiles;
+    const QStringList changed = world.mc.part<FakeStreams>().changedFiles;
     expect(files.size() == changed.size(), QStringLiteral("the reply lists %1").arg(show(files)));
     for (qsizetype i = 0; i < files.size(); ++i) {
       const QVariantMap file = files.at(i).toMap();
@@ -469,7 +469,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the message is marked %1").arg(q), [](World& world, const Captures& c, const Table&) {
     TimelineModel& model = timeline(world);
-    const int row = rowShowing(world, QStringLiteral("message:") + world.node.part<FakeStreams>().run);
+    const int row = rowShowing(world, QStringLiteral("message:") + world.mc.part<FakeStreams>().run);
     const QString marker = role(model, row, TimelineModel::MarkerRole).toString();
     expect(marker == c[0], QStringLiteral("the message is marked \"%1\"").arg(marker));
   });
@@ -491,13 +491,13 @@ const Steps steps([] {
   });
   step(QStringLiteral("the message is stamped %1").arg(q), [](World& world, const Captures& c, const Table&) {
     TimelineModel& model = timeline(world);
-    const int row = rowShowing(world, QStringLiteral("message:") + world.node.part<FakeStreams>().run);
+    const int row = rowShowing(world, QStringLiteral("message:") + world.mc.part<FakeStreams>().run);
     // Newer CLDR data puts a narrow no-break space before AM and PM.
     const QString stamp = role(model, row, TimelineModel::TimeRole).toString().replace(QChar(0x202F), QLatin1Char(' '));
     expect(stamp == c[0], QStringLiteral("the message is stamped \"%1\"").arg(stamp));
   });
   step(QStringLiteral("its full time reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString run = world.node.part<FakeStreams>().run;
+    const QString run = world.mc.part<FakeStreams>().run;
     const QString title = timeline(world).timeTitle(QStringLiteral("message:") + run).replace(QChar(0x202F), QLatin1Char(' '));
     expect(title == c[0], QStringLiteral("its full time reads \"%1\"").arg(title));
   });

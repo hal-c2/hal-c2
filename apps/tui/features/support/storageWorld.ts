@@ -1,4 +1,4 @@
-// The real client entry for node/platform/storage-layout.feature: which directory
+// The real client entry for mc/platform/storage-layout.feature: which directory
 // `hal-c2 tui` reads the user's shell from.
 //
 // The scenario's paths ("~/…", "/xdg/config", "/srv/hal-c2") are mapped into a temp

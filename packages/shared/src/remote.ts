@@ -138,7 +138,7 @@ export interface ResolvedRemotePairingTarget {
   readonly wsBaseUrl: string;
   /**
    * The same host over plain HTTP, when it was typed without a scheme: HTTPS is
-   * tried first, and a node on the LAN or tailnet that serves no TLS answers here.
+   * tried first, and an MC on the LAN or tailnet that serves no TLS answers here.
    */
   readonly httpFallback?: { readonly httpBaseUrl: string; readonly wsBaseUrl: string };
 }

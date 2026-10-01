@@ -1,15 +1,15 @@
 defmodule HalC2.Cluster.Command do
   @moduledoc """
   `mix hal_c2.cluster` and `bin/hal-c2-service cluster`: this machine's cluster, asked of
-  its running node over HTTP with the node's own access token.
+  its running MC over HTTP with the MC's own access token.
 
       status                           this machine and the other members
       invite [BASE_URL] [--tailscale]  a link another machine joins with (5 minutes, once)
       join LINK                        join the cluster of the machine the link is from
       remove MEMBER                    stop admitting a member (its id or label) anywhere
 
-  The joining machine must reach the inviting node's address: its LAN or tailnet
-  address (`HAL_C2_NODE_HOST`), or with `--tailscale` its Tailscale Serve name.
+  The joining machine must reach the inviting MC's address: its LAN or tailnet
+  address (`HAL_C2_MC_HOST`), or with `--tailscale` its Tailscale Serve name.
   """
 
   @doc "Runs a subcommand and prints its outcome; exits 1 on failure."
@@ -39,7 +39,7 @@ defmodule HalC2.Cluster.Command do
       hint =
         if invite["localOnly"],
           do:
-            "\nThis node only listens on this machine; start it with HAL_C2_NODE_HOST set to its LAN or tailnet address, or use --tailscale.",
+            "\nThis MC only listens on this machine; start it with HAL_C2_MC_HOST set to its LAN or tailnet address, or use --tailscale.",
           else: ""
 
       {:ok,
@@ -95,7 +95,7 @@ defmodule HalC2.Cluster.Command do
     Enum.join([me | members], "\n")
   end
 
-  # --- the running node ----------------------------------------------------------
+  # --- the running MC ----------------------------------------------------------
 
   defp request(method, path, body \\ nil) do
     {:ok, _} = Application.ensure_all_started(:inets)
@@ -117,10 +117,10 @@ defmodule HalC2.Cluster.Command do
           {:error, JSON.decode!(answer)["message"]}
 
         {:ok, {{_, status, _}, _, answer}} ->
-          {:error, "The node answered #{status}: #{answer}"}
+          {:error, "The MC answered #{status}: #{answer}"}
 
         {:error, _} ->
-          {:error, "No node answers at #{origin()}; is it running?"}
+          {:error, "No MC answers at #{origin()}; is it running?"}
       end
     end
   end
@@ -128,11 +128,11 @@ defmodule HalC2.Cluster.Command do
   defp token do
     case File.read(HalC2.Web.token_path()) do
       {:ok, token} -> {:ok, String.trim(token)}
-      {:error, _} -> {:error, "No node has run from #{HalC2.Paths.data_dir()}"}
+      {:error, _} -> {:error, "No MC has run from #{HalC2.Paths.data_dir()}"}
     end
   end
 
-  # The running node's own record of where it listens, else where it would.
+  # The running MC's own record of where it listens, else where it would.
   defp origin do
     with {:ok, json} <- File.read(HalC2.RuntimeRecord.path()),
          {:ok, %{"origin" => origin}} <- JSON.decode(json) do

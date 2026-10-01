@@ -1,6 +1,6 @@
 defmodule HalC2.ProviderAuth do
   @moduledoc """
-  Signing a provider instance in on this node (`provider.auth.*`), for the agents
+  Signing a provider instance in on this MC (`provider.auth.*`), for the agents
   that keep their own credentials: ACP agents today (`HalC2.Acp.Auth`).
 
   One process per instance holds its `ProviderAuthState` and runs at most one
@@ -11,7 +11,7 @@ defmodule HalC2.ProviderAuth do
   agent can open a session again; client responses go to the responder as
   `{:auth_response, response}`.
 
-  Every client of the node sees the same flow: a node's clients are one user's
+  Every client of the MC sees the same flow: an MC's clients are one user's
   paired devices.
   """
 

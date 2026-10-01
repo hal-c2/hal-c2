@@ -4,7 +4,7 @@ defmodule HalC2.Steps.SourceControl.CommitAndGeneratedMessages do
   import ExUnit.Assertions
 
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @styles %{
     "Repository conventions" => %{"mode" => "repo_conventions"},

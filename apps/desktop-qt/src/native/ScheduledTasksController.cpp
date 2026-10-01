@@ -43,7 +43,7 @@
 #include "NativeController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "SettingsScopeController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -143,7 +143,7 @@ QString keyOf(const QJsonObject& selection) {
 
 class ScheduledTasksController : public QObject, public NativeController {
 public:
-  ScheduledTasksController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+  ScheduledTasksController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
       : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
     // Relative times move on while the section shows.
     m_tick.setInterval(60000);
@@ -244,10 +244,10 @@ private:
     for (const QString& environmentId : wanted) {
       if (m_listings.contains(environmentId)) continue;
       m_listings.insert(environmentId, Listing{});
-      const QString node = m_store->nodeServing(environmentId);
-      if (!node.isEmpty()) {
+      const QString mc = m_store->mcServing(environmentId);
+      if (!mc.isEmpty()) {
         m_listings[environmentId].subscription = m_client->subscribe(this, 
-            {{QStringLiteral("type"), QStringLiteral("scheduledTasks")}, {QStringLiteral("node"), node}},
+            {{QStringLiteral("type"), QStringLiteral("scheduledTasks")}, {QStringLiteral("mc"), mc}},
             [this, environmentId](const QJsonObject& frame) {
               auto found = m_listings.find(environmentId);
               if (found == m_listings.end()) return;
@@ -669,7 +669,7 @@ private:
   }
 
   ShellBridge* m_bridge;
-  NodeClient* m_client;
+  McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   bool m_open = false;

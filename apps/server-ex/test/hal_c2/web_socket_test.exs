@@ -46,8 +46,8 @@ defmodule HalC2.Web.SocketTest do
     assert %{
              "t" => "shell",
              "rows" => [[^me, "th-1", "thread", %{"title" => "First"}]],
-             "nodes" => [
-               %{"node" => ^me, "online" => true, "environment" => %{"environmentId" => _}}
+             "mcs" => [
+               %{"mc" => ^me, "online" => true, "environment" => %{"environmentId" => _}}
              ]
            } = shell
 
@@ -67,7 +67,7 @@ defmodule HalC2.Web.SocketTest do
       HalC2.Streams.commit("th-2", :thread, [{"turn-item", "i1", %{"s" => %{"text" => ""}}}])
 
     me = Atom.to_string(node())
-    shape = %{"type" => "stream", "node" => me, "stream" => "th-2"}
+    shape = %{"type" => "stream", "mc" => me, "stream" => "th-2"}
     client = connect(port) |> WsClient.send_json(%{"t" => "sub", "id" => 7, "shape" => shape})
 
     {%{"t" => "live", "offset" => offset}, [snapshot], client} =
@@ -114,7 +114,7 @@ defmodule HalC2.Web.SocketTest do
            ] = skipped
   end
 
-  test "a stream named by environment resumes on the node serving it; an unknown one fails",
+  test "a stream named by environment resumes on the MC serving it; an unknown one fails",
        %{port: port} do
     {:ok, first} =
       HalC2.Streams.commit("th-3", :thread, [{"turn-item", "i1", %{"s" => %{"text" => "a"}}}])
@@ -140,7 +140,7 @@ defmodule HalC2.Web.SocketTest do
              WsClient.recv(client, 1_000)
   end
 
-  test "command output and file diffs stay on the node", %{port: port} do
+  test "command output and file diffs stay on the MC", %{port: port} do
     command = %{"id" => "c1", "type" => "command_execution", "output" => "x", "exitCode" => nil}
     change = %{"id" => "f1", "type" => "file_change", "path" => "a.ex", "diffStr" => "@@"}
 
@@ -150,7 +150,7 @@ defmodule HalC2.Web.SocketTest do
         {"turn-item", "f1", %{"s" => change}}
       ])
 
-    shape = %{"type" => "stream", "node" => Atom.to_string(node()), "stream" => "th-3"}
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "th-3"}
     client = connect(port) |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
     {_live, [%{"rows" => rows}], client} = WsClient.recv_until(client, &(&1["t"] == "live"))
 
@@ -195,7 +195,7 @@ defmodule HalC2.Web.SocketTest do
     )
 
     start_supervised!(HalC2.Terminal.Hub)
-    [{_node, %{"environmentId" => environment}}] = HalC2.Shell.environments()
+    [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
     me = Atom.to_string(node())
     input = %{"threadId" => "th-t", "terminalId" => "term-1", "cwd" => dir}
 
@@ -204,12 +204,12 @@ defmodule HalC2.Web.SocketTest do
       |> WsClient.send_json(%{
         "t" => "sub",
         "id" => 1,
-        "shape" => %{"type" => "terminals", "node" => me}
+        "shape" => %{"type" => "terminals", "mc" => me}
       })
       |> WsClient.send_json(%{
         "t" => "sub",
         "id" => 2,
-        "shape" => %{"type" => "terminal", "node" => me, "input" => input}
+        "shape" => %{"type" => "terminal", "mc" => me, "input" => input}
       })
 
     {%{"t" => "terminals", "id" => 1, "event" => %{"type" => "snapshot", "terminals" => []}},
@@ -255,14 +255,14 @@ defmodule HalC2.Web.SocketTest do
            } = error
   end
 
-  test "a node without a feature fails that subscription, not the socket", %{port: port} do
-    # No terminal hub runs here, as on a node from before terminals.
+  test "an MC without a feature fails that subscription, not the socket", %{port: port} do
+    # No terminal hub runs here, as on an MC from before terminals.
     client =
       connect(port)
       |> WsClient.send_json(%{
         "t" => "sub",
         "id" => 1,
-        "shape" => %{"type" => "terminals", "node" => Atom.to_string(node())}
+        "shape" => %{"type" => "terminals", "mc" => Atom.to_string(node())}
       })
 
     {%{"t" => "error", "id" => 1}, client} = WsClient.recv(client, 1_000)
@@ -280,7 +280,7 @@ defmodule HalC2.Web.SocketTest do
       |> WsClient.send_json(%{
         "t" => "sub",
         "id" => 3,
-        "shape" => %{"type" => "config", "node" => Atom.to_string(node())}
+        "shape" => %{"type" => "config", "mc" => Atom.to_string(node())}
       })
 
     {%{"id" => 3, "sources" => []}, [%{"t" => "config"}, %{"t" => "config.themes"}], client} =

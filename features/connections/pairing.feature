@@ -26,34 +26,34 @@ Feature: Pairing a client with an environment
   the host, carry a set of scopes, work once and expire after five minutes.
 
   Background:
-    Given a running node
+    Given a running MC
 
-  @node
+  @mc
   Scenario: An operator prints a pairing link on the host
-    When an operator asks the node for a pairing link with its LAN address
+    When an operator asks the MC for a pairing link with its LAN address
     Then it prints the address with a one-time token
     And the token grants standard scopes for five minutes
 
-  @node
+  @mc
   Scenario: A pairing link names the address the operator gives it
     When an operator asks for a pairing link for "https://box.tailnet.ts.net"
     Then the printed link starts with that address
 
-  @node
+  @mc
   Scenario: An administrator creates a labelled pairing link
     Given an administrator's client
     When it creates a pairing link labelled "Living room iPad" with standard scopes
-    Then the node returns the link's credential once
+    Then the MC returns the link's credential once
     And the link is listed under that label until it is used
 
-  @node
+  @mc
   Scenario: A used pairing link leaves the list
     Given a listed pairing link
     When a device pairs with it
     Then the link is no longer listed
     And the device is listed as a client
 
-  @node
+  @mc
   Scenario: A revoked pairing link no longer pairs
     Given a listed pairing link
     When an administrator revokes it
@@ -78,8 +78,8 @@ Feature: Pairing a client with an environment
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
-  Scenario: A host typed without a scheme reaches a node that serves plain HTTP
-    Given a node on the LAN that serves plain HTTP
+  Scenario: A host typed without a scheme reaches an MC that serves plain HTTP
+    Given an MC on the LAN that serves plain HTTP
     When the user adds an environment with host "ai-beast:3780" and a pairing code
     Then the client tries HTTPS first and pairs over HTTP when that cannot connect
 
@@ -140,7 +140,7 @@ Feature: Pairing a client with an environment
     Then only the terminal client's own session remains
 
   # The hosted app.hal-c2.example pairing link. HAL-C2 has no hosted web app; QML clients pair
-  # with the node's own link.
+  # with the MC's own link.
   @dropped @desktop
   Scenario: The user copies a hosted app pairing link
     Given the environment is reachable over HTTPS

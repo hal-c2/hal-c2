@@ -71,8 +71,8 @@ defmodule HalC2.Search do
     pattern = "%" <> String.replace(query, ~r/[!%_]/, "!\\0") <> "%"
 
     active =
-      for {{node, id}, {"thread", row}} <- HalC2.Shell.rows(),
-          node == node() and row["archivedAt"] == nil and row["deletedAt"] == nil,
+      for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
+          mc == node() and row["archivedAt"] == nil and row["deletedAt"] == nil,
           into: %{},
           do: {id, row}
 

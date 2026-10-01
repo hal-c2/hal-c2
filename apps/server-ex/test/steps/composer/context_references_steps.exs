@@ -3,7 +3,7 @@ defmodule HalC2.Steps.Composer.ContextReferences do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   step "a message {string} references the file README.md", %{args: [text]} = context do
     record = %{

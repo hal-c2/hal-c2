@@ -1,7 +1,7 @@
 defmodule HalC2.Auth do
   @moduledoc """
   Client authentication, wire-compatible with the Node server so existing clients
-  pair with a node exactly as they pair with any environment.
+  pair with an MC exactly as they pair with any environment.
 
     * A pairing token (5 minutes, single use) is exchanged at `/oauth/token` for a
       bearer access token (30 days). Tokens made in Settings → Connections are
@@ -17,11 +17,11 @@ defmodule HalC2.Auth do
       (`authenticate/1`); a bound token is never accepted as a bearer. A HAL-C2 Connect
       device renews through the relay; open sockets are unaffected.
     * With a reusable development credential (`HAL_C2_DEV_AUTH_TOKEN`, dev builds
-      only), that credential is itself an administrative session in every node's
+      only), that credential is itself an administrative session in every MC's
       own store, so one browser signs in to every worktree on a host.
 
-  Pairing tokens and sessions are stored hashed in the node's SQLite file, so a
-  `mix hal_c2.pair` run next to a running node can mint a pairing token too. Tickets
+  Pairing tokens and sessions are stored hashed in the MC's SQLite file, so a
+  `mix hal_c2.pair` run next to a running MC can mint a pairing token too. Tickets
   live in ETS. Sockets register their session (`connected/1`) so Connections can
   show which clients are online; watchers of the access list get
   `{:hal_c2_auth_access, event}` (`AuthAccessStreamEvent`, with `current` left false
@@ -78,7 +78,7 @@ defmodule HalC2.Auth do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc """
-  Creates a pairing token in the store at `path`; usable from outside the node.
+  Creates a pairing token in the store at `path`; usable from outside the MC.
   `admin: true` pairs with the operator's scopes, for tools on the host itself.
   """
   @spec create_pairing_token(String.t(), keyword) :: String.t()
@@ -163,10 +163,10 @@ defmodule HalC2.Auth do
   end
 
   @doc """
-  The session the node's own access token stands for on HTTP: local tools (the TUI) that
+  The session the MC's own access token stands for on HTTP: local tools (the TUI) that
   can read `<data>/access-token` get the trust `?token=` has on the socket. It has no
   stored row (`id` nil), so it is not a paired client, cannot be revoked, and its
-  tickets open sockets with the node's own token's scopes.
+  tickets open sockets with the MC's own token's scopes.
   """
   def local_session,
     do: %{id: nil, scopes: @admin_scopes, expires_at: @dev_expires_at, proof_jkt: nil}
@@ -195,7 +195,7 @@ defmodule HalC2.Auth do
 
   @doc """
   The client sessions in the store at `path`, as `GET /api/auth/clients` lists them
-  (without `connected`, which only the running node knows); usable from outside the node.
+  (without `connected`, which only the running MC knows); usable from outside the MC.
   """
   def list_sessions(path) do
     with_db(path, fn db ->
@@ -205,8 +205,8 @@ defmodule HalC2.Auth do
   end
 
   @doc """
-  Revokes the session `id` in the store at `path`; usable from outside the node. Its
-  next ticket or request fails; a running node's open sockets drop on their next check.
+  Revokes the session `id` in the store at `path`; usable from outside the MC. Its
+  next ticket or request fails; a running MC's open sockets drop on their next check.
   """
   def revoke_session(path, id), do: revoke(path, "id = ?1", [id]) != []
 
@@ -232,7 +232,7 @@ defmodule HalC2.Auth do
       [{_, expires_at, _}] when expires_at <= now ->
         :error
 
-      # A ticket bought with the node's access token (`local_session/0`).
+      # A ticket bought with the MC's access token (`local_session/0`).
       [{_, _, nil}] ->
         {:ok, @admin_scopes}
 
@@ -466,7 +466,7 @@ defmodule HalC2.Auth do
   defp grant(db, token, client, state) do
     cond do
       state.dev != nil and :crypto.hash_equals(hash(token), state.dev.hash) ->
-        # Revoking the dev session on this node stops it here, not on other nodes.
+        # Revoking the dev session on this MC stops it here, not on other MCs.
         case query(db, "SELECT 1 FROM auth_sessions WHERE id = ?1", [state.dev.id]) do
           [_] -> {:ok, @admin_scopes, "reusable-dev-token-child", []}
           [] -> {:error, []}
@@ -535,7 +535,7 @@ defmodule HalC2.Auth do
     {{:ok, access, div(ttl, 1000), scopes}, upserted}
   end
 
-  # The reusable development credential, as a session of its own in this node's store
+  # The reusable development credential, as a session of its own in this MC's store
   # (created once; a revoked one comes back on the next start, as on the Node server).
   defp dev_credential(path) do
     case Application.get_env(:hal_c2, :dev_auth_token) do

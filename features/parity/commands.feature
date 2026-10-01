@@ -1,29 +1,29 @@
 # Sources:
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2Command tags, version 2 event types)
 #   packages/contracts/src/orchestration.ts (OrchestrationEventType: the version 1 log)
-#   apps/server-ex/test/hal_c2/node_parity_test.exs (@commands: status and dispatch path of every command)
+#   apps/server-ex/test/hal_c2/mc_parity_test.exs (@commands: status and dispatch path of every command)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch clauses, @thread_updates)
 #   apps/server-ex/lib/hal_c2/import/v2.ex (how each Node event becomes an entity patch)
 #   apps/server/src/orchestration/decider.ts, apps/server/src/orchestration/projector.ts
 #   Counts: 47 commands (37 aligned, 0 backlog, 10 dropped);
 #   41 version 2 events (all aligned); 32 version 1 events (all aligned).
-#   The node stores whole-entity changes as patches keyed by entity kind, so an event
-#   is aligned when the node records the same entity change and streams it to clients.
-#   Shared domain: node/orchestration/ holds what each command does to a thread.
+#   The MC stores whole-entity changes as patches keyed by entity kind, so an event
+#   is aligned when the MC records the same entity change and streams it to clients.
+#   Shared domain: mc/orchestration/ holds what each command does to a thread.
 
 Feature: Command and event parity with the TypeScript server
-  Every orchestration command a client can dispatch is handled by the node or is internal
+  Every orchestration command a client can dispatch is handled by the MC or is internal
   to the TypeScript server. Every event the TypeScript server logs has a matching entity
-  change on the node, so an imported log and a live node agree.
+  change on the MC, so an imported log and a live MC agree.
 
   Background:
-    Given a node
+    Given an MC
     And a paired protocol 3 client with a project and a thread
 
-  @node
-  Scenario Outline: The node handles the <command> command
+  @mc
+  Scenario Outline: The MC handles the <command> command
     When the client dispatches <command>
-    Then the node accepts it through its <kind> path
+    Then the MC accepts it through its <kind> path
     And clients following the thread see the resulting change
 
     Examples: 37 aligned commands
@@ -67,11 +67,11 @@ Feature: Command and event parity with the TypeScript server
       | provider.switch                 | thread update |
 
   # These commands are sent by the TypeScript server's own workers, never by a client. The
-  # node does the same work in-process or over MCP, so it answers that the command is not supported.
-  @dropped @node
-  Scenario Outline: The node refuses the internal <command> command
+  # MC does the same work in-process or over MCP, so it answers that the command is not supported.
+  @dropped @mc
+  Scenario Outline: The MC refuses the internal <command> command
     When the client dispatches <command>
-    Then the node answers "<command> is not supported by this node yet"
+    Then the MC answers "<command> is not supported by this MC yet"
 
     Examples: 10 dropped commands
       | command                                        | reason                                                                             |
@@ -86,10 +86,10 @@ Feature: Command and event parity with the TypeScript server
       | delegated_task.completion-delivery.dispose     | agents delegate over MCP (HalC2.Orchestration.Delegation)                             |
       | thread.created.record                          | Node's thread-creation receipt; thread.create records here                         |
 
-  @node
-  Scenario Outline: The node records the change a <event> event carries
+  @mc
+  Scenario Outline: The MC records the change a <event> event carries
     Given the TypeScript server logged <event> for an entity
-    When the node records the same change
+    When the MC records the same change
     Then it stores <recorded as>
     And streams it to clients following the <entity>
 
@@ -137,16 +137,16 @@ Feature: Command and event parity with the TypeScript server
       | thread.visited                  | thread           | a quiet patch on the thread                            |
       | turn-item.updated               | turn-item        | a patch on the turn-item entity                        |
 
-  @node
+  @mc
   Scenario: A re-emitted entity with no change is dropped
     Given the TypeScript server logged the same message twice with identical content
-    When the node imports the log
+    When the MC imports the log
     Then it stores one patch
 
-  @node
+  @mc
   Scenario Outline: Version 1 project events become project entities
     Given the TypeScript server logged <event> for a project
-    When the node imports the log
+    When the MC imports the log
     Then it stores the change on <recorded as>
 
     Examples: 3 version 1 project events
@@ -155,10 +155,10 @@ Feature: Command and event parity with the TypeScript server
       | project.meta-updated | project | the project entity |
       | project.deleted      | project | the project entity |
 
-  @node
+  @mc
   Scenario Outline: Version 1 thread events are imported
     Given the TypeScript server logged <event> as a version 1 thread event
-    When the node imports the log
+    When the MC imports the log
     Then the thread's history includes the change
 
     Examples: 25 version 1 thread events
@@ -190,10 +190,10 @@ Feature: Command and event parity with the TypeScript server
       | thread.activity-appended             | thread |
 
   # Neither server changes a thread for these: they feed only v1 turn rows the v2 migration drops, and their results are later events.
-  @node
+  @mc
   Scenario Outline: Version 1 request events are imported through their results
     Given the TypeScript server logged <event> as a version 1 thread event
-    When the node imports the log
+    When the MC imports the log
     Then the imported thread is the same as without it
 
     Examples: 4 version 1 request events

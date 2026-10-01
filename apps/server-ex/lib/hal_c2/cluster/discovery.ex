@@ -1,10 +1,10 @@
 defmodule HalC2.Cluster.Discovery do
   @moduledoc """
-  Keeps this node connected to every member of its cluster (`HalC2.Cluster`). Every ten
+  Keeps this MC connected to every member of its cluster (`HalC2.Cluster`). Every ten
   seconds, and at once on `poll/0`, it tries each member it is not connected to: at the
   address that last reached it, then the addresses the member reported, then every
   address a strategy lists. A wrong address costs one failed handshake, since each
-  node's certificate and name are its own.
+  MC's certificate and name are its own.
 
   A strategy is a module with `addresses/0`, listed in the `:cluster_strategies` config
   (`HalC2.Cluster.Tailscale` and `HalC2.Cluster.Static` unless set).
@@ -61,7 +61,7 @@ defmodule HalC2.Cluster.Discovery do
 
     missing =
       for {id, addresses} <- Cluster.peers(),
-          Cluster.node_name(id) not in connected,
+          Cluster.mc_name(id) not in connected,
           do: {id, addresses}
 
     if missing != [] do
@@ -84,7 +84,7 @@ defmodule HalC2.Cluster.Discovery do
     reached =
       Enum.any?(candidates, fn {ip, port} ->
         Epmd.put(host, ip, port)
-        Node.connect(Cluster.node_name(id)) == true
+        Node.connect(Cluster.mc_name(id)) == true
       end)
 
     # Keep the address that last worked rather than the last one tried.

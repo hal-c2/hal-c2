@@ -342,7 +342,7 @@ defmodule HalC2.PortableSessions do
     end
   end
 
-  # The instance's own variable in settings, else the node's.
+  # The instance's own variable in settings, else the MC's.
   defp setting(instance, variable) do
     [HalC2.Settings.instance_env(instance)[variable], System.get_env(variable)]
     |> Enum.find(&(is_binary(&1) and String.trim(&1) != ""))

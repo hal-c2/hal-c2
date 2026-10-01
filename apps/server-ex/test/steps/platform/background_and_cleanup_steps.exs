@@ -1,11 +1,11 @@
 defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
-  @moduledoc "Steps for features/node/platform/background-and-cleanup.feature."
+  @moduledoc "Steps for features/mc/platform/background-and-cleanup.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.BackgroundPolicy
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @presets %{
     "performance" => %{fetch: 15_000, health: 60_000},
@@ -18,8 +18,8 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
 
   # The policy, with the test process told of each change (`await_policy/2`).
   defp policy(context) do
-    Node.ensure(HalC2.Settings)
-    Node.ensure(BackgroundPolicy)
+    Mc.ensure(HalC2.Settings)
+    Mc.ensure(BackgroundPolicy)
 
     if context[:following_policy] do
       context
@@ -37,7 +37,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
 
   defp await_policy_change(fun, timeout, last) do
     receive do
-      {:hal_c2_background_policy, _node, snapshot} ->
+      {:hal_c2_background_policy, _mc, snapshot} ->
         if fun.(snapshot), do: snapshot, else: await_policy_change(fun, timeout, snapshot)
     after
       timeout -> flunk("the background policy did not change as expected: #{inspect(last)}")
@@ -116,20 +116,20 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
   defp unit_ms("hour"), do: 3_600_000
 
   # A checkout with an origin and a second clone that pushes to it, watched by the
-  # node (`HalC2.Vcs.Watch`) for the test process.
+  # MC (`HalC2.Vcs.Watch`) for the test process.
   defp watched_checkout(context) do
     for {name, spec} <- [
           {HalC2.Vcs.Registry, {Registry, keys: :unique, name: HalC2.Vcs.Registry}},
           {HalC2.Vcs.Supervisor,
            {DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one}}
         ],
-        do: Node.ensure(Supervisor.child_spec(spec, id: name))
+        do: Mc.ensure(Supervisor.child_spec(spec, id: name))
 
     seed = World.git_repo(context, "seed")
-    origin = Path.join(Node.tmp_dir(context.node, "origin"), "repo.git")
+    origin = Path.join(Mc.tmp_dir(context.mc, "origin"), "repo.git")
     World.git!(seed, ["clone", "-q", "--bare", seed, origin])
-    checkout = Path.join(Node.tmp_dir(context.node, "checkout"), "repo")
-    pusher = Path.join(Node.tmp_dir(context.node, "pusher"), "repo")
+    checkout = Path.join(Mc.tmp_dir(context.mc, "checkout"), "repo")
+    pusher = Path.join(Mc.tmp_dir(context.mc, "pusher"), "repo")
     World.git!(seed, ["clone", "-q", origin, checkout])
     World.git!(seed, ["clone", "-q", origin, pusher])
     World.git!(pusher, ~w(config user.email hal-c2@example.com))
@@ -140,7 +140,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     Map.put(context, :checkout, %{path: checkout, pusher: pusher, watch: watch})
   end
 
-  # Someone pushes to the checkout's origin; the node's next fetch would see it.
+  # Someone pushes to the checkout's origin; the MC's next fetch would see it.
   defp push_upstream(%{checkout: %{pusher: pusher}}) do
     File.write!(Path.join(pusher, "upstream.txt"), "new\n")
     World.git!(pusher, ~w(add upstream.txt))
@@ -158,7 +158,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
   end
 
   defp artifacts_dir(context) do
-    dir = Path.join(context.node.home, "browser-artifacts")
+    dir = Path.join(context.mc.home, "browser-artifacts")
     File.mkdir_p!(dir)
     dir
   end
@@ -281,7 +281,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     report(context, %{"scopes" => [scope(context.checkout.path)]})
   end
 
-  step "the node refreshes that checkout's git status periodically", context do
+  step "the MC refreshes that checkout's git status periodically", context do
     path = context.checkout.path
     assert {:fetch, timer} = :sys.get_state(context.checkout.watch).timer
     assert Process.read_timer(timer) > 0
@@ -299,7 +299,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     context
   end
 
-  step "the node does not poll that checkout's git status", context do
+  step "the MC does not poll that checkout's git status", context do
     path = context.checkout.path
     before = World.git!(path, ~w(rev-parse origin/main))
     push_upstream(context)
@@ -328,7 +328,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     context
   end
 
-  step "the node treats that client as gone for background work", context do
+  step "the MC treats that client as gone for background work", context do
     refute BackgroundPolicy.run_scope_work?(scope("/repo"))
     snapshot = BackgroundPolicy.snapshot()
     assert snapshot["leases"] == []
@@ -340,7 +340,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     report(context, %{"ttlMs" => 600_000})
   end
 
-  step "the node holds the lease for two minutes at most", context do
+  step "the MC holds the lease for two minutes at most", context do
     [lease] = BackgroundPolicy.snapshot()["leases"]
     {:ok, updated, _} = DateTime.from_iso8601(lease["updatedAt"])
     {:ok, expires, _} = DateTime.from_iso8601(lease["expiresAt"])
@@ -352,7 +352,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     Enum.reduce(1..20, context, &report(&2, %{"clientId" => "view-#{&1}"}))
   end
 
-  step "the node holds at most sixteen leases for it", context do
+  step "the MC holds at most sixteen leases for it", context do
     leases = BackgroundPolicy.snapshot()["leases"]
     assert length(leases) == 16
     assert leases |> Enum.map(& &1["rpcClientId"]) |> Enum.uniq() |> length() == 1
@@ -387,7 +387,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     })
   end
 
-  step "the node still refreshes that checkout", context do
+  step "the MC still refreshes that checkout", context do
     assert BackgroundPolicy.snapshot()["activeForegroundLeaseCount"] == 0
     assert BackgroundPolicy.run_scope_work?(scope("/repo"))
     context
@@ -403,7 +403,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     context
   end
 
-  step "the node pauses periodic git and provider refreshes", context do
+  step "the MC pauses periodic git and provider refreshes", context do
     refute BackgroundPolicy.run_scope_work?(scope("/repo"))
     refute HalC2.ProviderUsageLimits.wanted?()
     refute BackgroundPolicy.snapshot()["shouldRunOpportunisticWork"]
@@ -433,9 +433,9 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
 
   step "a client follows the background policy", context do
     context = policy(context)
-    shape = %{"type" => "backgroundPolicy", "node" => Atom.to_string(node())}
-    client = Node.sub(World.client(context), 31, shape)
-    {frame, client} = Node.await(client, &(&1["t"] == "backgroundPolicy" and &1["id"] == 31))
+    shape = %{"type" => "backgroundPolicy", "mc" => Atom.to_string(node())}
+    client = Mc.sub(World.client(context), 31, shape)
+    {frame, client} = Mc.await(client, &(&1["t"] == "backgroundPolicy" and &1["id"] == 31))
     assert frame["policy"]["hostPower"]["onBattery"] == "unknown"
     World.put_client(context, client)
   end
@@ -446,7 +446,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
 
   step "the client receives the new policy", context do
     {frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context),
         &(&1["t"] == "backgroundPolicy" and &1["policy"]["hostPower"]["onBattery"] == "true")
       )
@@ -457,8 +457,8 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
   end
 
   # A Linux host whose power supplies are fake: mains "AC" (online) and battery "BAT0".
-  step "a node started without the desktop app", context do
-    dir = Node.tmp_dir(context.node, "power_supply")
+  step "an MC started without the desktop app", context do
+    dir = Mc.tmp_dir(context.mc, "power_supply")
 
     for {name, type, online} <- [{"AC", "Mains", "1"}, {"BAT0", "Battery", nil}] do
       File.mkdir_p!(Path.join(dir, name))
@@ -474,14 +474,14 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     Map.put(context, :power_supply_dir, dir)
   end
 
-  # The node reads its power supplies every 30 seconds; the read is fired now.
+  # The MC reads its power supplies every 30 seconds; the read is fired now.
   step "the laptop it runs on switches to battery", context do
     File.write!(Path.join([context.power_supply_dir, "AC", "online"]), "0\n")
     send(BackgroundPolicy, :probe_power)
     context
   end
 
-  step "the node's background policy sees the host on battery", context do
+  step "the MC's background policy sees the host on battery", context do
     await_policy(&match?(%{"source" => "node-linux", "onBattery" => "true"}, &1["hostPower"]))
     # Under battery-saver that pauses background work.
     profile("battery-saver")
@@ -496,7 +496,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     World.provider_services()
     World.merge_settings(%{"storageCleanup" => %{"browserArtifactsAfterDays" => 3}})
     old = artifact(context, "old.png", 4)
-    Node.ensure(HalC2.StorageCleanup)
+    Mc.ensure(HalC2.StorageCleanup)
 
     left = cleanup_timer_ms()
     assert left > 55_000 and left <= 60_000
@@ -528,7 +528,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     Map.put(context, :artifacts, %{old: old, fresh: fresh})
   end
 
-  step "the node sweeps with the new settings", context do
+  step "the MC sweeps with the new settings", context do
     refute File.exists?(context.artifacts.old)
     assert File.exists?(context.artifacts.fresh)
     context
@@ -536,7 +536,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
 
   step ~r/^worktree cleanup removes worktrees (?<rule>after 7 idle days|once merged|once their thread is deleted|when unchanged from default)$/,
        %{args: [rule]} = context do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
     # The worktree steps shared with settings/storage.feature need a project ("api").
     context =
       if context[:projects] in [nil, %{}], do: World.create_project(context, "api"), else: context
@@ -618,7 +618,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
   end
 
   step "worktree cleanup is on for the environment", context do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
     World.merge_settings(%{"storageCleanup" => %{"worktreeAfterDays" => 7}})
     context
   end
@@ -650,7 +650,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
   # A `git` first on PATH pauses the sweep at its first look at the worktree's
   # ignored files until the test lets it go (over a local TCP port).
   step "a worktree qualified for removal when the sweep began", context do
-    Node.ensure(HalC2.Settings)
+    Mc.ensure(HalC2.Settings)
     World.merge_settings(%{"storageCleanup" => %{"worktreeAfterDays" => 7}})
     context = World.worktree_thread(context, "main")
     main = context.worktree
@@ -664,7 +664,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
 
     {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, packet: :line, reuseaddr: true])
     {:ok, port} = :inet.port(listen)
-    bin = Node.tmp_dir(context.node, "git-bin")
+    bin = Mc.tmp_dir(context.mc, "git-bin")
     git = System.find_executable("git")
     {real_path, 0} = System.cmd("realpath", [main.path])
 

@@ -13,8 +13,8 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
 
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @monday ~D[2026-09-21]
   @clock {__MODULE__, :clock}
@@ -99,7 +99,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
         "creationSource" => "web"
       })
 
-    File.write!(Path.join(context.node.home, "scheduled-tasks.json"), JSON.encode!([legacy]))
+    File.write!(Path.join(context.mc.home, "scheduled-tasks.json"), JSON.encode!([legacy]))
     context = start(context)
     Map.put(context, :task, legacy)
   end
@@ -118,11 +118,11 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
     pass_until(context, local(Date.add(@monday, 5), time), 1)
   end
 
-  # The node is down meanwhile: no timer fires until it starts again.
+  # The MC is down meanwhile: no timer fires until it starts again.
   step ~r/^the machine was off from (?<from>\d\d:\d\d) until (?<until>\d\d:\d\d)$/,
        %{args: [from, until]} = context do
     context = pass_until(context, local(@monday, from))
-    context = %{context | node: Node.stop(context.node), clients: %{}}
+    context = %{context | mc: Mc.stop(context.mc), clients: %{}}
     set_clock(local(@monday, until))
     context
   end
@@ -134,7 +134,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
 
   # --- outcomes of runs ------------------------------------------------------------------
 
-  step "the node sends the task's prompt to the project", context do
+  step "the MC sends the task's prompt to the project", context do
     assert_prompt_in(new_thread(context))
     context
   end
@@ -204,7 +204,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
 
   step ~r/^after restart the task's last run failed with "(?<message>[^"]+)"$/,
        %{args: [message]} = context do
-    context = %{context | node: Node.restart(context.node), clients: %{}}
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
 
     assert %{"lastRunStatus" => "failed", "lastRunError" => ^message, "runCount" => 1} =
              task(context)
@@ -298,7 +298,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
     context
   end
 
-  # Saving an edit needs a schedule the node accepts now, so the edit also raises
+  # Saving an edit needs a schedule the MC accepts now, so the edit also raises
   # the interval to the one-minute floor, as the settings form does.
   step "the user can list, pause, edit and delete it", context do
     id = context.task["id"]
@@ -320,11 +320,11 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
 
   step "two clients watch the scheduled tasks", context do
     context = start(context)
-    shape = %{"type" => "scheduledTasks", "node" => Atom.to_string(node())}
+    shape = %{"type" => "scheduledTasks", "mc" => Atom.to_string(node())}
 
     Enum.reduce(["first", "second"], context, fn name, context ->
-      client = context |> World.client(name) |> Node.sub(7, shape)
-      {%{"tasks" => []}, client} = Node.await(client, &(&1["t"] == "scheduledTasks"))
+      client = context |> World.client(name) |> Mc.sub(7, shape)
+      {%{"tasks" => []}, client} = Mc.await(client, &(&1["t"] == "scheduledTasks"))
       World.put_client(context, name, client)
     end)
   end
@@ -346,7 +346,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
     id = context.task["id"]
 
     {_frame, client} =
-      Node.await(
+      Mc.await(
         World.client(context, "second"),
         &(&1["t"] == "scheduledTasks" and Enum.any?(&1["tasks"], fn task -> task["id"] == id end))
       )
@@ -354,7 +354,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
     World.put_client(context, "second", client)
   end
 
-  step "an agent in a thread with the node's tools", context do
+  step "an agent in a thread with the MC's tools", context do
     context
     |> start()
     |> World.create_thread("Agent work", "api")
@@ -400,7 +400,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
       ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase(@clock) end)
     end
 
-    Node.ensure(HalC2.ScheduledTasks)
+    Mc.ensure(HalC2.ScheduledTasks)
     Map.put(context, :clock?, true)
   end
 
@@ -453,7 +453,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
     Map.put(context, :reply, reply)
   end
 
-  # The scenario's task as the node lists it now.
+  # The scenario's task as the MC lists it now.
   defp task(context) do
     context = start(context)
     {{:ok, %{"tasks" => tasks}}, _client} = World.call(context, "scheduledTasks.list")
@@ -513,7 +513,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
       send(me, {ref, :settled})
     else
       receive do
-        {:hal_c2_scheduled_tasks, _node, _tasks} -> idle(me, ref)
+        {:hal_c2_scheduled_tasks, _mc, _tasks} -> idle(me, ref)
       end
     end
   end
@@ -524,8 +524,8 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
     project = World.project(context, "api").id
 
     ids =
-      for {{node, id}, {"thread", row}} <- HalC2.Shell.rows(),
-          node == node(),
+      for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
+          mc == node(),
           row["projectId"] == project,
           row["title"] == title,
           do: id
@@ -559,7 +559,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
   defp set_clock(at), do: :persistent_term.put(@clock, ms(at))
   defp iso(at), do: at |> ms() |> DateTime.to_iso8601()
 
-  # Millisecond precision, as the node keeps its times.
+  # Millisecond precision, as the MC keeps its times.
   defp ms(%DateTime{microsecond: {us, _}} = at),
     do: %{at | microsecond: {div(us, 1000) * 1000, 3}}
 

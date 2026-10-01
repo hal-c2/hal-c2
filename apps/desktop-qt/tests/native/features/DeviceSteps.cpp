@@ -1,6 +1,6 @@
 // The right panel's Device tabs (ThreadDevices, DeviceStream, DeviceDecoder):
-// the node's DeviceServiceState on the `devices` shape and `device.list`,
-// `device.open` and `device.close`, and a fake device hub behind the node's
+// the MC's DeviceServiceState on the `devices` shape and `device.list`,
+// `device.open` and `device.close`, and a fake device hub behind the MC's
 // `/api/device-hub/` proxy speaking serve-sim (AVCC video, `[tag][json]`
 // input) and serve-emu (SEMU-framed Annex-B and JSON gestures on one socket).
 // The pictures are the committed fixture, a solid red 72x160 H.264 clip.
@@ -123,13 +123,13 @@ QList<QByteArray> androidVideo() {
   return frames;
 }
 
-// The environment's devices and the hub the node proxies to.
+// The environment's devices and the hub the MC proxies to.
 struct FakeHub {
   QJsonArray devices;
   QJsonArray sessions;
   QString hostStatus = QStringLiteral("ready");
   int revision = 0;
-  // Why the node fails `device.open`, when it does.
+  // Why the MC fails `device.open`, when it does.
   QString refuseOpen;
   QList<QJsonObject> closes;
   // The proxy's status for every hub request (401: a refused credential), when not 200.
@@ -148,15 +148,15 @@ struct FakeHub {
   QList<QJsonObject> text;
   bool used = false;
   bool looking = false;
-  // FFmpeg is made to look not installed, until this node goes.
+  // FFmpeg is made to look not installed, until this MC goes.
   bool noFFmpeg = false;
   ~FakeHub() {
     if (noFFmpeg) ffmpeg::pretendMissing(false);
   }
 };
 
-QJsonObject stateOf(FakeNode& node) {
-  FakeHub& hub = node.part<FakeHub>();
+QJsonObject stateOf(FakeMc& mc) {
+  FakeHub& hub = mc.part<FakeHub>();
   const QJsonArray platforms{QJsonObject{{QStringLiteral("platform"), QStringLiteral("ios")}, {QStringLiteral("available"), true}},
                              QJsonObject{{QStringLiteral("platform"), QStringLiteral("android")}, {QStringLiteral("available"), true}}};
   return {{QStringLiteral("hosts"), QJsonArray{QJsonObject{{QStringLiteral("id"), kHost},
@@ -171,15 +171,15 @@ QJsonObject stateOf(FakeNode& node) {
           {QStringLiteral("sessions"), hub.sessions},
           {QStringLiteral("onboardingCompleted"), hub.hostStatus != QLatin1String("disabled")},
           {QStringLiteral("agentAccessEnabled"), false},
-          {QStringLiteral("hubBasePath"), QStringLiteral("/api/device-hub/nodes/") + QString::fromLatin1(QUrl::toPercentEncoding(node.name))},
+          {QStringLiteral("hubBasePath"), QStringLiteral("/api/device-hub/mcs/") + QString::fromLatin1(QUrl::toPercentEncoding(mc.name))},
           {QStringLiteral("revision"), hub.revision}};
 }
 
-// The node tells every watcher, as devices.ex does on each change.
-void announce(FakeNode& node) {
-  ++node.part<FakeHub>().revision;
-  for (const int id : node.subscribers(QStringLiteral("devices")))
-    node.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(node)}});
+// The MC tells every watcher, as devices.ex does on each change.
+void announce(FakeMc& mc) {
+  ++mc.part<FakeHub>().revision;
+  for (const int id : mc.subscribers(QStringLiteral("devices")))
+    mc.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(mc)}});
 }
 
 int sessionOf(const FakeHub& hub, const QString& deviceId, const QString& thread = kThread) {
@@ -197,8 +197,8 @@ QJsonObject deviceNamed(const FakeHub& hub, const QString& name) {
   fail(QStringLiteral("the hub has no device \"%1\"").arg(name));
 }
 
-void openSession(FakeNode& node, const QJsonObject& device, const QString& thread = kThread) {
-  FakeHub& hub = node.part<FakeHub>();
+void openSession(FakeMc& mc, const QJsonObject& device, const QString& thread = kThread) {
+  FakeHub& hub = mc.part<FakeHub>();
   for (qsizetype n = 0; n < hub.devices.size(); ++n) {
     QJsonObject listed = hub.devices.at(n).toObject();
     if (listed.value(QLatin1String("id")) == device.value(QLatin1String("id"))) {
@@ -229,22 +229,22 @@ void respond(QTcpSocket* socket, int status) {
   socket->disconnectFromHost();
 }
 
-QWebSocketServer& hubSockets(FakeNode& node) {
-  FakeHub& hub = node.part<FakeHub>();
+QWebSocketServer& hubSockets(FakeMc& mc) {
+  FakeHub& hub = mc.part<FakeHub>();
   if (hub.sockets) return *hub.sockets;
   hub.sockets = std::make_unique<QWebSocketServer>(QStringLiteral("fake-hub"), QWebSocketServer::NonSecureMode);
   QWebSocketServer* server = hub.sockets.get();
-  QObject::connect(server, &QWebSocketServer::newConnection, server, [&node, server] {
+  QObject::connect(server, &QWebSocketServer::newConnection, server, [&mc, server] {
     while (QWebSocket* socket = server->nextPendingConnection()) {
       socket->setParent(server);
-      FakeHub& hub = node.part<FakeHub>();
+      FakeHub& hub = mc.part<FakeHub>();
       hub.inputs.append(socket);
       const bool android = socket->requestUrl().path().endsWith(QLatin1String("/serve-emu/ws"));
-      QObject::connect(socket, &QWebSocket::binaryMessageReceived, server, [&node](const QByteArray& message) {
-        node.part<FakeHub>().binary.append(message);
+      QObject::connect(socket, &QWebSocket::binaryMessageReceived, server, [&mc](const QByteArray& message) {
+        mc.part<FakeHub>().binary.append(message);
       });
-      QObject::connect(socket, &QWebSocket::textMessageReceived, server, [&node, socket](const QString& message) {
-        FakeHub& hub = node.part<FakeHub>();
+      QObject::connect(socket, &QWebSocket::textMessageReceived, server, [&mc, socket](const QString& message) {
+        FakeHub& hub = mc.part<FakeHub>();
         const QJsonObject parsed = QJsonDocument::fromJson(message.toUtf8()).object();
         hub.text.append(parsed);
         // serve-emu answers a keyframe request with a fresh keyframe.
@@ -260,52 +260,52 @@ QWebSocketServer& hubSockets(FakeNode& node) {
   return *server;
 }
 
-// The node's devices as this file fakes them. IntegrationsSettingsSteps fakes
+// The MC's devices as this file fakes them. IntegrationsSettingsSteps fakes
 // the same shape and calls for the settings page, so a scenario that uses the
 // hub takes them over on first use, before the shell connects.
 FakeHub& fakeHub(World& world) {
-  FakeNode& node = world.node;
-  FakeHub& hub = node.part<FakeHub>();
+  FakeMc& mc = world.mc;
+  FakeHub& hub = mc.part<FakeHub>();
   if (hub.used) return hub;
   hub.used = true;
-  // As a node is named (`name@host`), which its hubBasePath carries encoded.
-  node.name = QStringLiteral("hal-c2@studio");
-  node.onShape(QStringLiteral("devices"), [&node](int id, const QJsonObject&) {
-    node.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(node)}});
+  // As an MC is named (`name@host`), which its hubBasePath carries encoded.
+  mc.name = QStringLiteral("hal-c2@studio");
+  mc.onShape(QStringLiteral("devices"), [&mc](int id, const QJsonObject&) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(mc)}});
   });
-  node.onRpc(QStringLiteral("device.list"), [&node](const FakeNode::Rpc& rpc) { node.reply(rpc, stateOf(node)); });
-  node.onRpc(QStringLiteral("device.open"), [&node](const FakeNode::Rpc& rpc) {
-    FakeHub& hub = node.part<FakeHub>();
-    if (!hub.refuseOpen.isEmpty()) return node.refuse(rpc, hub.refuseOpen);
+  mc.onRpc(QStringLiteral("device.list"), [&mc](const FakeMc::Rpc& rpc) { mc.reply(rpc, stateOf(mc)); });
+  mc.onRpc(QStringLiteral("device.open"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeHub& hub = mc.part<FakeHub>();
+    if (!hub.refuseOpen.isEmpty()) return mc.refuse(rpc, hub.refuseOpen);
     QJsonObject device;
     for (const QJsonValue& listed : std::as_const(hub.devices)) {
       if (listed.toObject().value(QLatin1String("id")) == rpc.payload.value(QLatin1String("deviceId"))) device = listed.toObject();
     }
-    if (device.isEmpty()) return node.refuse(rpc, QStringLiteral("Device not found"));
+    if (device.isEmpty()) return mc.refuse(rpc, QStringLiteral("Device not found"));
     const QString thread = rpc.payload.value(QLatin1String("threadId")).toString();
-    openSession(node, device, thread);
-    announce(node);
-    node.reply(rpc, hub.sessions.at(sessionOf(hub, device.value(QLatin1String("id")).toString(), thread)));
+    openSession(mc, device, thread);
+    announce(mc);
+    mc.reply(rpc, hub.sessions.at(sessionOf(hub, device.value(QLatin1String("id")).toString(), thread)));
   });
-  node.onRpc(QStringLiteral("device.close"), [&node](const FakeNode::Rpc& rpc) {
-    const auto close = [&node, rpc] {
-      FakeHub& hub = node.part<FakeHub>();
+  mc.onRpc(QStringLiteral("device.close"), [&mc](const FakeMc::Rpc& rpc) {
+    const auto close = [&mc, rpc] {
+      FakeHub& hub = mc.part<FakeHub>();
       hub.closes.append(rpc.payload);
       const int at = sessionOf(hub, rpc.payload.value(QLatin1String("deviceId")).toString(), rpc.payload.value(QLatin1String("threadId")).toString());
       if (at >= 0) hub.sessions.removeAt(at);
-      announce(node);
-      node.reply(rpc, QJsonValue::Null);
+      announce(mc);
+      mc.reply(rpc, QJsonValue::Null);
     };
-    if (node.holding(QStringLiteral("device.close"))) return node.defer(close);
+    if (mc.holding(QStringLiteral("device.close"))) return mc.defer(close);
     close();
   });
   return hub;
 }
 
-const FakeNode::Extension proxy([](FakeNode& node) {
-  // The node's device proxy, and the hub behind it.
-  node.onRaw(QStringLiteral("/api/device-hub/"), [&node](QTcpSocket* socket, const QByteArray& head) {
-    FakeHub& hub = node.part<FakeHub>();
+const FakeMc::Extension proxy([](FakeMc& mc) {
+  // The MC's device proxy, and the hub behind it.
+  mc.onRaw(QStringLiteral("/api/device-hub/"), [&mc](QTcpSocket* socket, const QByteArray& head) {
+    FakeHub& hub = mc.part<FakeHub>();
     const QList<QByteArray> lines = head.split('\n');
     const QString target = QString::fromUtf8(lines.value(0).split(' ').value(1));
     QString authorization;
@@ -320,7 +320,7 @@ const FakeNode::Extension proxy([](FakeNode& node) {
       socket->read(head.size());
       return respond(socket, hub.refuse);
     }
-    if (upgrade) return hubSockets(node).handleConnection(socket);
+    if (upgrade) return hubSockets(mc).handleConnection(socket);
     socket->read(head.size());
     const QString path = target.section(QLatin1Char('?'), 0, 0);
     if (path.endsWith(QLatin1String("/stream.mjpeg"))) {
@@ -387,7 +387,7 @@ void look(World& world) {
   FakeHub& hub = fakeHub(world);
   if (hub.looking) return;
   hub.looking = true;
-  world.node.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject},
+  world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject},
                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + kProject}, {QStringLiteral("scripts"), QJsonArray()}});
   world.connect();
   world.sync();
@@ -571,12 +571,12 @@ const Steps steps([] {
   });
   step(QStringLiteral("the thread has the (iOS Simulator|Android Emulator) %1 open").arg(q), [](World& world, const Captures& c, const Table&) {
     addDevice(world, c[0] == QLatin1String("iOS Simulator") ? QStringLiteral("ios") : QStringLiteral("android"), c[1], true);
-    openSession(world.node, deviceNamed(fakeHub(world), c[1]));
+    openSession(world.mc, deviceNamed(fakeHub(world), c[1]));
   });
-  step(QStringLiteral("the node cannot open devices because %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC cannot open devices because %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fakeHub(world).refuseOpen = c[0];
   });
-  step(QStringLiteral("the node refuses the device stream"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC refuses the device stream"), [](World& world, const Captures&, const Table&) {
     fakeHub(world).refuse = 401;
   });
   step(QStringLiteral("the device sends no picture yet"), [](World& world, const Captures&, const Table&) {
@@ -623,7 +623,7 @@ const Steps steps([] {
     QTcpSocket* video = open();
     // Every envelope in three pieces: half its length, then the rest of its
     // header and half its payload, then the rest. A round trip through the
-    // node between pieces lets the desktop read each one on its own.
+    // MC between pieces lets the desktop read each one on its own.
     const QByteArray body = iosVideo();
     QList<qsizetype> cuts;
     for (qsizetype at = 0; at < body.size(); at += 4 + qsizetype(qFromBigEndian<quint32>(body.constData() + at))) {
@@ -688,11 +688,11 @@ const Steps steps([] {
   step(QStringLiteral("the tab streams the simulator's screen"), [](World& world, const Captures&, const Table&) {
     waitForScreen(world, QStringLiteral("iPhone 17"));
   });
-  step(QStringLiteral("the screen came through the node's device proxy"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the screen came through the MC's device proxy"), [](World& world, const Captures&, const Table&) {
     const QString id = deviceNamed(fakeHub(world), QStringLiteral("iPhone 17")).value(QLatin1String("id")).toString();
-    // The node's name is encoded once: `hal-c2%40studio`.
-    const QString wanted = QStringLiteral("/api/device-hub/nodes/%1/vendor/serve-sim/helper/%2/stream.avcc Bearer node-token")
-                               .arg(QString::fromLatin1(QUrl::toPercentEncoding(world.node.name)), id);
+    // The MC's name is encoded once: `hal-c2%40studio`.
+    const QString wanted = QStringLiteral("/api/device-hub/mcs/%1/vendor/serve-sim/helper/%2/stream.avcc Bearer mc-token")
+                               .arg(QString::fromLatin1(QUrl::toPercentEncoding(world.mc.name)), id);
     expect(fakeHub(world).requests.contains(wanted), describe(world));
   });
   step(QStringLiteral("the tab says it is connecting to the device"), [](World& world, const Captures&, const Table&) {
@@ -873,7 +873,7 @@ const Steps steps([] {
   step(QStringLiteral("the user powers the device off"), [](World& world, const Captures&, const Table&) {
     devicePanel(world).click(QStringLiteral("devicePowerOff"));
   });
-  step(QStringLiteral("the node is asked to close %1 and shut it down").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to close %1 and shut it down").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString id = deviceNamed(fakeHub(world), c[0]).value(QLatin1String("id")).toString();
     world.waitFor([&] {
       const QList<QJsonObject> closes = fakeHub(world).closes;
@@ -881,28 +881,28 @@ const Steps steps([] {
              closes[0].value(QLatin1String("shutdown")).toBool();
     }, [&] { return describe(world); });
   });
-  step(QStringLiteral("the node is slow to close devices"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the MC is slow to close devices"), [](World& world, const Captures&, const Table&) {
     fakeHub(world);
-    world.node.hold(QStringLiteral("device.close"));
+    world.mc.hold(QStringLiteral("device.close"));
   });
-  step(QStringLiteral("before the node answers, the user switches to another thread showing %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("before the MC answers, the user switches to another thread showing %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(world.node.holding(QStringLiteral("device.close")) && fakeHub(world).closes.isEmpty(), describe(world));
+    expect(world.mc.holding(QStringLiteral("device.close")) && fakeHub(world).closes.isEmpty(), describe(world));
     const QString other = QStringLiteral("thread-2");
-    world.node.threads.insert(other, {{QStringLiteral("id"), other}, {QStringLiteral("title"), QStringLiteral("Other")}, {QStringLiteral("projectId"), kProject},
+    world.mc.threads.insert(other, {{QStringLiteral("id"), other}, {QStringLiteral("title"), QStringLiteral("Other")}, {QStringLiteral("projectId"), kProject},
                                       {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
-    world.node.sendRow(other, world.node.threads.value(other));
+    world.mc.sendRow(other, world.mc.threads.value(other));
     world.sync();
-    stream::look(world, world.node.environmentId + QLatin1Char(':') + other);
+    stream::look(world, world.mc.environmentId + QLatin1Char(':') + other);
     world.sync();
     // An agent opened the same device there: that thread has its own tab for it.
-    openSession(world.node, deviceNamed(fakeHub(world), c[0]), other);
-    announce(world.node);
+    openSession(world.mc, deviceNamed(fakeHub(world), c[0]), other);
+    announce(world.mc);
     world.sync();
     world.waitFor([&] { return activeTab(world) == tabOf(world, c[0]); }, [&] { return describe(world); });
   });
   step(QStringLiteral("the user goes back to the first thread"), [](World& world, const Captures&, const Table&) {
-    stream::look(world, world.node.environmentId + QLatin1Char(':') + kThread);
+    stream::look(world, world.mc.environmentId + QLatin1Char(':') + kThread);
     world.sync();
   });
   step(QStringLiteral("the right panel has no %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -912,8 +912,8 @@ const Steps steps([] {
 
   // An agent's devices.
   step(QStringLiteral("an agent (?:opens|opened) %1 in the thread").arg(q), [](World& world, const Captures& c, const Table&) {
-    openSession(world.node, deviceNamed(fakeHub(world), c[0]));
-    announce(world.node);
+    openSession(world.mc, deviceNamed(fakeHub(world), c[0]));
+    announce(world.mc);
     world.sync();
     world.waitFor([&] { return activeTab(world) == tabOf(world, c[0]); }, [&] { return describe(world); });
   });
@@ -921,10 +921,10 @@ const Steps steps([] {
     FakeHub& hub = fakeHub(world);
     const QJsonObject device = deviceNamed(hub, c[0]);
     hub.sessions.removeAt(sessionOf(hub, device.value(QLatin1String("id")).toString()));
-    announce(world.node);
+    announce(world.mc);
     world.sync();
-    openSession(world.node, device);
-    announce(world.node);
+    openSession(world.mc, device);
+    announce(world.mc);
     world.sync();
   });
   step(QStringLiteral("the right panel shows the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {

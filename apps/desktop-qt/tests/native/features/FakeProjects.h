@@ -5,7 +5,7 @@
 #include <QList>
 #include <QString>
 
-// What the fake node's `projects.mutate` saw (ProjectSteps.cpp), and the
+// What the fake MC's `projects.mutate` saw (ProjectSteps.cpp), and the
 // error it answers with: `refusal` everywhere, `refusedOn` on one
 // environment. Linked environments' projects are their link rows.
 struct FakeProjects {

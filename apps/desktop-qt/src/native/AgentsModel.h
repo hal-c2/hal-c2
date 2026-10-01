@@ -33,7 +33,7 @@ public:
     KindRole,
     // A subagent's title (its prompt's first line without one), a command's text.
     TitleRole,
-    // The node's status (pending, running, idle, completed, ...).
+    // The MC's status (pending, running, idle, completed, ...).
     StatusRole,
     // Working, Idle · resumable, Completed, Failed or Stopped.
     StatusLabelRole,

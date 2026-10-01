@@ -2,15 +2,15 @@ defmodule HalC2.Steps.Parity.Rpc do
   @moduledoc """
   Steps for `features/parity/rpc.feature`: every aligned contract method is called
   the way a protocol 3 client reaches it, with the smallest fixture that lets the
-  node answer (`HalC2.Steps.Parity.Fixtures`).
+  MC answer (`HalC2.Steps.Parity.Fixtures`).
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.Steps.Parity.Fixtures
   alias HalC2.Steps.Parity.Shapes
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # A client paired through an admin pairing link, as the desktop pairs a phone.
   step "a paired protocol 3 client", context do
@@ -22,7 +22,7 @@ defmodule HalC2.Steps.Parity.Rpc do
 
     {:ok, access, _expires, _scopes} = HalC2.Auth.exchange(credential, %{"label" => "Phone"})
     {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
-    World.put_client(context, Node.connect(context.node, "wsTicket=#{ticket}"))
+    World.put_client(context, Mc.connect(context.mc, "wsTicket=#{ticket}"))
   end
 
   step ~r/^the client calls (?<method>[\w.-]+) through its (?<via>.+)$/,
@@ -46,9 +46,9 @@ defmodule HalC2.Steps.Parity.Rpc do
         Map.merge(context, %{method: method, answer: {:rpc, method, reply}})
 
       "client adapter: answered by the client" <> _ ->
-        # The adapter answers a probe from its open socket: a ping the node pongs.
+        # The adapter answers a probe from its open socket: a ping the MC pongs.
         client = HalC2.Test.WsClient.send_json(World.client(context), %{"t" => "ping"})
-        {frame, client} = Node.await(client, &(&1["t"] == "pong"))
+        {frame, client} = Mc.await(client, &(&1["t"] == "pong"))
 
         context
         |> World.put_client(client)
@@ -65,7 +65,7 @@ defmodule HalC2.Steps.Parity.Rpc do
     rpc(context, method, method)
   end
 
-  step ~r/^the node answers with the contract's response shape for (?<method>[\w.-]+)$/,
+  step ~r/^the MC answers with the contract's response shape for (?<method>[\w.-]+)$/,
        %{args: [method]} = context do
     assert context.method == method
 
@@ -80,9 +80,9 @@ defmodule HalC2.Steps.Parity.Rpc do
         Fixtures.assert_contract(method, name, result)
 
       {:rpc, name, {:error, error, detail}} ->
-        refute error =~ "is not served by this node yet", "#{name} is not served"
+        refute error =~ "is not served by this MC yet", "#{name} is not served"
         refute error =~ "** (", "#{name} crashed: #{error}"
-        refute error =~ "node unavailable", "#{name}: #{error}"
+        refute error =~ "MC unavailable", "#{name}: #{error}"
 
         assert Fixtures.domain_error?(method, error, detail),
                "#{name}: #{error} #{inspect(detail)}"
@@ -91,14 +91,14 @@ defmodule HalC2.Steps.Parity.Rpc do
     context
   end
 
-  step "the node answers with the settings document with its version", context do
+  step "the MC answers with the settings document with its version", context do
     {:rpc, _, {:ok, result}} = context.answer
     assert %{"settings" => %{}, "version" => version} = result
     assert is_integer(version)
     context
   end
 
-  step "the node answers with the new version, or a stale-settings error for an old version",
+  step "the MC answers with the new version, or a stale-settings error for an old version",
        context do
     {:rpc, _, {:ok, %{"version" => version}}} = context.answer
     assert version == context.fixtures.settings_version + 1
@@ -114,7 +114,7 @@ defmodule HalC2.Steps.Parity.Rpc do
     context
   end
 
-  step "the node answers with one thread's stream rows with their offset and time", context do
+  step "the MC answers with one thread's stream rows with their offset and time", context do
     {:rpc, _, {:ok, result}} = context.answer
     assert %{"rows" => rows, "offset" => offset, "at" => at} = result
     assert is_integer(offset) and offset > 0 and at != nil
@@ -123,42 +123,42 @@ defmodule HalC2.Steps.Parity.Rpc do
     context
   end
 
-  step "the node answers with the keybindings after the change", context do
+  step "the MC answers with the keybindings after the change", context do
     {:rpc, _, {:ok, %{"rules" => rules}}} = context.answer
     assert Enum.any?(rules, &(&1["command"] == "terminal.toggle" and &1["key"] == "mod+shift+j"))
     context
   end
 
-  step "the node answers with the keybindings after the removal", context do
+  step "the MC answers with the keybindings after the removal", context do
     {:rpc, _, {:ok, %{"rules" => rules}}} = context.answer
     refute Enum.any?(rules, &(&1["command"] == "terminal.toggle" and &1["key"] == "mod+shift+j"))
     context
   end
 
-  step "the node answers with a pairing link and its credential", context do
+  step "the MC answers with a pairing link and its credential", context do
     {:rpc, _, {:ok, link}} = context.answer
     assert %{"id" => _, "credential" => _, "label" => "Parity", "expiresAt" => _} = link
     context
   end
 
-  step "the node answers with the pairing links without their credentials", context do
+  step "the MC answers with the pairing links without their credentials", context do
     {:rpc, _, {:ok, links}} = context.answer
     assert is_list(links) and Enum.all?(links, &(not Map.has_key?(&1, "credential")))
     context
   end
 
-  step ~r/^the node answers with whether the (?:link|client) was revoked$/, context do
+  step ~r/^the MC answers with whether the (?:link|client) was revoked$/, context do
     {:rpc, _, {:ok, %{"revoked" => false}}} = context.answer
     context
   end
 
-  step "the node answers with the paired clients, the caller's own marked current", context do
+  step "the MC answers with the paired clients, the caller's own marked current", context do
     {:rpc, _, {:ok, clients}} = context.answer
     assert [%{"sessionId" => _, "connected" => true}] = Enum.filter(clients, & &1["current"])
     context
   end
 
-  step "the node answers with how many other clients it revoked", context do
+  step "the MC answers with how many other clients it revoked", context do
     {:rpc, _, {:ok, %{"revokedCount" => count}}} = context.answer
     assert is_integer(count)
     context
@@ -175,13 +175,13 @@ defmodule HalC2.Steps.Parity.Fixtures do
   @moduledoc """
   The smallest world each contract method can be called in: a project on a git
   repository with one thread, the services the method's domain runs on, and
-  fakes in place of anything that would reach outside the node (GitHub, provider
+  fakes in place of anything that would reach outside the MC (GitHub, provider
   CLIs, the ACP registry, the user's home).
   """
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   @fake_acp Path.expand("../../support/fake_acp.py", __DIR__)
 
@@ -189,8 +189,8 @@ defmodule HalC2.Steps.Parity.Fixtures do
   def setup(%{fixtures: _} = context), do: context
 
   def setup(context) do
-    home = context.node.home
-    Node.ensure(HalC2.Settings)
+    home = context.mc.home
+    Mc.ensure(HalC2.Settings)
 
     # Nothing reaches a source control host, the user's provider homes or the
     # internet.
@@ -259,7 +259,7 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "provider.install.start" ->
         {%{"instanceId" => "antigravity"}, managed_install(context)}
 
-      # No install is running, so the node refuses the stale operation.
+      # No install is running, so the MC refuses the stale operation.
       "provider.install.cancel" ->
         {%{"instanceId" => "antigravity", "operationId" => "hal-c2-none"},
          managed_install(context)}
@@ -364,7 +364,7 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "sourceControl.cloneRepository" ->
         {%{
            "remoteUrl" => f.root,
-           "destinationPath" => Path.join(Node.tmp_dir(context.node, "clones"), "shop")
+           "destinationPath" => Path.join(Mc.tmp_dir(context.mc, "clones"), "shop")
          }, context}
 
       "projectClone.start" ->
@@ -373,7 +373,7 @@ defmodule HalC2.Steps.Parity.Fixtures do
            "title" => "Clone",
            "createdAt" => World.iso_from_now(0),
            "remoteUrl" => f.root,
-           "destinationPath" => Path.join(Node.tmp_dir(context.node, "clones"), "clone")
+           "destinationPath" => Path.join(Mc.tmp_dir(context.mc, "clones"), "clone")
          }, context}
 
       "projectClone." <> _ ->
@@ -434,7 +434,7 @@ defmodule HalC2.Steps.Parity.Fixtures do
         {%{"threadId" => f.thread, "reason" => "parity"}, context}
 
       "vcs.init" ->
-        {%{"cwd" => Node.tmp_dir(context.node, "fresh")}, context}
+        {%{"cwd" => Mc.tmp_dir(context.mc, "fresh")}, context}
 
       "vcs.createRef" ->
         {%{"cwd" => f.root, "refName" => "feature"}, context}
@@ -526,7 +526,7 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "previewAutomation.focusHost" ->
         {%{
            "clientId" => "hal-c2-none",
-           "environmentId" => context.node.environment,
+           "environmentId" => context.mc.environment,
            "connectionId" => "hal-c2-none",
            "focused" => true
          }, context}
@@ -694,7 +694,7 @@ defmodule HalC2.Steps.Parity.Fixtures do
           []
       end
 
-    Enum.each(children, &Node.ensure/1)
+    Enum.each(children, &Mc.ensure/1)
   end
 
   @doc false
@@ -794,7 +794,7 @@ defmodule HalC2.Steps.Parity.Fixtures do
   # An empty ACP registry served on loopback in place of the public one.
   defp registry(context) do
     body = JSON.encode!(%{"version" => "1.0.0", "agents" => []})
-    server = Node.ensure({Bandit, plug: {__MODULE__.AcpIndex, body}, port: 0, ip: :loopback})
+    server = Mc.ensure({Bandit, plug: {__MODULE__.AcpIndex, body}, port: 0, ip: :loopback})
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
     World.put_app_env(:acp_registry_url, "http://127.0.0.1:#{port}/registry.json")
     :persistent_term.erase({HalC2.Acp.Catalog, :index})

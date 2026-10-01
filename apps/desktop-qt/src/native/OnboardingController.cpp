@@ -8,7 +8,7 @@
 #include "DraftController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
-#include "NodeClient.h"
+#include "McClient.h"
 #include "ProviderSettingsController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -24,7 +24,7 @@ const NativeControllerRegistrar<OnboardingController> registrar(QStringLiteral("
                                                                 "Onboarding");
 
 const QString kCompletedAt = QStringLiteral("onboardingCompletedAt");
-// Terminals are keyed by a free-form thread id; the node checks only the cwd.
+// Terminals are keyed by a free-form thread id; the MC checks only the cwd.
 const QString kSetupThread = QStringLiteral("onboarding-agent-setup");
 const QStringList kDrivers{QStringLiteral("claudeAgent"), QStringLiteral("codex")};
 constexpr int kDecisionTimeoutMs = 4000;
@@ -118,7 +118,7 @@ QString plural(int count, const QString& one, const QString& many) {
 
 }  // namespace
 
-OnboardingController::OnboardingController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
+OnboardingController::OnboardingController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
   m_timeout.setSingleShot(true);
   m_timeout.setInterval(kDecisionTimeoutMs);
@@ -265,10 +265,10 @@ bool OnboardingController::handle(const QString& action, const QVariant& payload
 
 // ---- Connect ----------------------------------------------------------------
 
-// The computers the node reaches, its own first; each is selected the first
+// The computers the MC reaches, its own first; each is selected the first
 // time it is offered.
 void OnboardingController::updateComputers() {
-  // The nodes the shell sees, and the saved links whose nodes have not shown yet.
+  // The MCs the shell sees, and the saved links whose MCs have not shown yet.
   QStringList computers = m_store->environments();
   for (const QJsonValue& link : m_store->links()) {
     const QString id = link.toObject().value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString();
@@ -299,7 +299,7 @@ QString OnboardingController::label(const QString& environmentId) const {
   return label.isEmpty() ? QStringLiteral("Computer") : label;
 }
 
-// Its node is online, or, before the node shows, its link is.
+// Its MC is online, or, before the MC shows, its link is.
 bool OnboardingController::connected(const QString& environmentId) const {
   if (m_store->environments().contains(environmentId)) return m_store->environmentOnline(environmentId);
   for (const QJsonValue& link : m_store->links()) {
@@ -418,7 +418,7 @@ QVariantMap OnboardingController::agents() const {
     const QJsonArray providers = config.value(QLatin1String("providers")).toArray();
     QVariantList cards;
     for (const QString& driver : kDrivers) {
-      // Checking until the node has said which providers it has.
+      // Checking until the MC has said which providers it has.
       const QJsonObject provider = config.contains(QLatin1String("providers")) ? providerFor(providers, driver) : QJsonObject();
       const auto summary = provider.isEmpty()
                                ? QPair<QString, QString>(QStringLiteral("Checking provider status"),
@@ -597,7 +597,7 @@ void OnboardingController::runImport() {
   importNext();
 }
 
-// One candidate at a time: its project (the node's match, the shell's, or a
+// One candidate at a time: its project (the MC's match, the shell's, or a
 // new one), then its history.
 void OnboardingController::importNext() {
   while (!m_queue.isEmpty() && m_imported.contains(m_queue.first().value(QLatin1String("key")).toString())) {

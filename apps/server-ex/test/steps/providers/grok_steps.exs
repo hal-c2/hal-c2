@@ -8,7 +8,7 @@ defmodule HalC2.Steps.Providers.Grok do
   import ExUnit.Assertions
 
   alias HalC2.Test.FakeAcp
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   @models [
     %{"value" => "grok-code-fast-1", "name" => "Grok Code Fast"},
@@ -35,17 +35,17 @@ defmodule HalC2.Steps.Providers.Grok do
   end
 
   step "no Grok process is started", context do
-    # What the node's boot runs, then a client reading the provider list.
+    # What the MC's boot runs, then a client reading the provider list.
     HalC2.Acp.load()
     assert %{"enabled" => false} = FakeAcp.entry("grok")
     assert FakeAcp.starts(context, "grok") == []
     context
   end
 
-  step "the grok command is not installed on the node", context do
+  step "the grok command is not installed on the MC", context do
     FakeAcp.services()
     HalC2.Acp.forget("grok")
-    missing = Path.join(HalC2.Test.Node.tmp_dir(context.node, "no-grok"), "grok")
+    missing = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "no-grok"), "grok")
     FakeAcp.settings(&put_in(&1, ["providers"], %{"grok" => %{"binaryPath" => missing}}))
     Map.put(context, :provider, "grok")
   end
@@ -159,8 +159,8 @@ defmodule HalC2.Steps.Providers.Grok do
 
   step "Grok has written transcripts on this machine", context do
     FakeAcp.services()
-    HalC2.Test.Node.ensure(HalC2.Usage)
-    root = HalC2.Test.Node.tmp_dir(context.node, "homes")
+    HalC2.Test.Mc.ensure(HalC2.Usage)
+    root = HalC2.Test.Mc.tmp_dir(context.mc, "homes")
     grok = Path.join(root, "grok")
     session = Path.join([grok, "sessions", "s-1"])
     File.mkdir_p!(session)
@@ -504,7 +504,7 @@ defmodule HalC2.Steps.Providers.Grok do
   # --- usage limits ---------------------------------------------------------------
 
   step "Grok is signed in with a Grok account", context do
-    home = HalC2.Test.Node.tmp_dir(context.node, "grok-home")
+    home = HalC2.Test.Mc.tmp_dir(context.mc, "grok-home")
 
     File.write!(
       Path.join(home, "auth.json"),
@@ -552,7 +552,7 @@ defmodule HalC2.Steps.Providers.Grok do
 
   step "the Grok instance uses an API key", context do
     # A signed-in account is on the machine too; the key is what Grok would use.
-    home = HalC2.Test.Node.tmp_dir(context.node, "grok-home")
+    home = HalC2.Test.Mc.tmp_dir(context.mc, "grok-home")
     key = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"
     File.write!(Path.join(home, "auth.json"), JSON.encode!(%{key => %{"key" => "grok-token"}}))
 
@@ -842,10 +842,10 @@ defmodule HalC2.Steps.Providers.Grok do
     context
   end
 
-  step "the node keeps Grok's session of {string} while they run", %{args: [thread]} = context do
+  step "the MC keeps Grok's session of {string} while they run", %{args: [thread]} = context do
     id = World.thread_id(context, thread)
     idle_now()
-    HalC2.Test.Node.ensure(HalC2.Orchestration.IdleSessions)
+    HalC2.Test.Mc.ensure(HalC2.Orchestration.IdleSessions)
     refute id in HalC2.Orchestration.IdleSessions.check()
     assert [_] = Registry.lookup(HalC2.Acp.Registry, id)
     context
@@ -875,11 +875,11 @@ defmodule HalC2.Steps.Providers.Grok do
     context
   end
 
-  step "the node can release Grok's session of {string}", %{args: [thread]} = context do
+  step "the MC can release Grok's session of {string}", %{args: [thread]} = context do
     id = World.thread_id(context, thread)
     World.await_row(id, &(&1["pendingBackgroundTasks"] == []))
     idle_now()
-    HalC2.Test.Node.ensure(HalC2.Orchestration.IdleSessions)
+    HalC2.Test.Mc.ensure(HalC2.Orchestration.IdleSessions)
     assert id in HalC2.Orchestration.IdleSessions.check()
     context
   end

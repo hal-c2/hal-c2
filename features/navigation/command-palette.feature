@@ -157,9 +157,9 @@ Feature: Command palette
       And the command palette is closed
 
       Examples:
-        | where                       |
-        | a linked environment        |
-        | another node of the cluster |
+        | where                     |
+        | a linked environment      |
+        | another MC of the cluster |
 
     @desktop
     Scenario: Message content search reports while it runs

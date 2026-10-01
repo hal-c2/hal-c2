@@ -4,7 +4,7 @@ defmodule HalC2.Steps.Plugins.PluginCatalog do
   import ExUnit.Assertions
 
   alias HalC2.Steps.Plugins.{AcpRegistry, Fixtures}
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc.World
 
   # --- searching the registry ------------------------------------------------------
 
@@ -121,14 +121,14 @@ defmodule HalC2.Steps.Plugins.PluginCatalog do
     context
   end
 
-  step "the node reports that nothing was removed", context do
+  step "the MC reports that nothing was removed", context do
     assert {:ok, %{"removed" => false}} = context.reply
     context
   end
 
   # --- offline ---------------------------------------------------------------------
 
-  step "the node fetched the registry earlier", context do
+  step "the MC fetched the registry earlier", context do
     context = AcpRegistry.ensure(context)
     context = AcpRegistry.publish(context, [AcpRegistry.agent(context, "acme")])
 
@@ -140,7 +140,7 @@ defmodule HalC2.Steps.Plugins.PluginCatalog do
 
   step "the registry cannot be reached now", context do
     File.rm!(Path.join(context.registry.served, "registry.json"))
-    # A fresh process has only what the node wrote to disk.
+    # A fresh process has only what the MC wrote to disk.
     :persistent_term.erase({HalC2.Acp.Catalog, :index})
     context
   end
@@ -165,9 +165,9 @@ defmodule HalC2.Steps.Plugins.PluginCatalog do
     Map.put(context, :reply, reply)
   end
 
-  # --- node plugins per environment ------------------------------------------------------
+  # --- MC plugins per environment ------------------------------------------------------
 
-  step "two environments with different node plugins", context do
+  step "two environments with different MC plugins", context do
     context |> Fixtures.install("gitea") |> Fixtures.install_on_peer("ntfy")
   end
 
@@ -176,7 +176,7 @@ defmodule HalC2.Steps.Plugins.PluginCatalog do
     Map.put(context, :plugin_list, plugins)
   end
 
-  step "only that environment's node plugins are listed", context do
+  step "only that environment's MC plugins are listed", context do
     assert context.plugin_list
            |> Enum.reject(&(&1["source"] == "bundled"))
            |> Enum.map(& &1["id"]) == ["ntfy"]
@@ -184,7 +184,7 @@ defmodule HalC2.Steps.Plugins.PluginCatalog do
     context
   end
 
-  step "the node plugin {string} was granted access to project remotes",
+  step "the MC plugin {string} was granted access to project remotes",
        %{args: [id]} = context do
     context = context |> Fixtures.install(id)
 

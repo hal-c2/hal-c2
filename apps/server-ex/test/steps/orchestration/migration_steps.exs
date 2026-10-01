@@ -1,17 +1,17 @@
 defmodule HalC2.Steps.Orchestration.Migration do
   @moduledoc """
-  Steps for `features/node/orchestration/migration.feature`. The snapshot is a
-  Node server database holding `orchestration_events` (`World.node_log/2`), built
+  Steps for `features/mc/orchestration/migration.feature`. The snapshot is a
+  Node server database holding `orchestration_events` (`World.mc_log/2`), built
   from `context.snapshot` (oldest first) when the operator imports it. The operator
-  runs `mix hal_c2.import` (`Mix.Tasks.HalC2.Import`) while the node is stopped, and the
-  node starts on the result.
+  runs `mix hal_c2.import` (`Mix.Tasks.HalC2.Import`) while the MC is stopped, and the
+  MC starts on the result.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias Exqlite.Sqlite3
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
 
   # 2026-09-01T00:00:00Z; each snapshot event is a second after the one before.
   @start 1_788_220_800_000
@@ -36,7 +36,7 @@ defmodule HalC2.Steps.Orchestration.Migration do
 
   # --- importing ---------------------------------------------------------------------
 
-  step "the operator imports the snapshot into a node", context do
+  step "the operator imports the snapshot into an MC", context do
     import_snapshot(context)
   end
 
@@ -50,15 +50,15 @@ defmodule HalC2.Steps.Orchestration.Migration do
     File.chmod!(dir, 0o555)
     ExUnit.Callbacks.on_exit(fn -> File.chmod(dir, 0o755) end)
 
-    node = Node.restart(context.node, fn -> send(self(), {:imported, import!(source)}) end)
+    mc = Mc.restart(context.mc, fn -> send(self(), {:imported, import!(source)}) end)
     File.chmod!(dir, 0o755)
     assert_received {:imported, output}
 
-    %{context | node: node, clients: %{}}
+    %{context | mc: mc, clients: %{}}
     |> Map.merge(%{output: output, source: source, before: before})
   end
 
-  step "every project and thread stream of the snapshot exists on the node", context do
+  step "every project and thread stream of the snapshot exists on the MC", context do
     expected = for {aggregate, id, _, _, _} <- context.snapshot, uniq: true, do: {aggregate, id}
 
     streams =
@@ -100,7 +100,7 @@ defmodule HalC2.Steps.Orchestration.Migration do
     |> Map.put(:copies, copies)
   end
 
-  step "the node keeps only what changed between the copies", context do
+  step "the MC keeps only what changed between the copies", context do
     [first | rest] = for event <- events("t1"), event.entity == "m1", do: event.patch
     assert length(rest) == context.copies - 1
     assert first["s"]["text"] == "word1"
@@ -230,7 +230,7 @@ defmodule HalC2.Steps.Orchestration.Migration do
     end)
   end
 
-  step "the node imports them in order of first activity, holding one thread in memory at a time",
+  step "the MC imports them in order of first activity, holding one thread in memory at a time",
        context do
     first_active = for {_, id, _, _, _} <- context.snapshot, uniq: true, do: id
 
@@ -250,19 +250,19 @@ defmodule HalC2.Steps.Orchestration.Migration do
 
   # --- when imports happen -----------------------------------------------------------
 
-  step "a node starts next to a Node server's database", context do
-    source = Path.join([context.node.home, "userdata", "state.sqlite"])
+  step "an MC starts next to a Node server's database", context do
+    source = Path.join([context.mc.home, "userdata", "state.sqlite"])
     File.mkdir_p!(Path.dirname(source))
-    World.node_log(source, context.snapshot)
-    %{context | node: Node.restart(context.node), clients: %{}} |> Map.put(:source, source)
+    World.mc_log(source, context.snapshot)
+    %{context | mc: Mc.restart(context.mc), clients: %{}} |> Map.put(:source, source)
   end
 
   step "nothing is imported until the operator runs the import", context do
     assert HalC2.Store.list_streams(HalC2.Store.path()) == []
 
-    node = Node.restart(context.node, fn -> import!(context.source) end)
+    mc = Mc.restart(context.mc, fn -> import!(context.source) end)
     assert Enum.map(HalC2.Store.list_streams(HalC2.Store.path()), & &1.id) == ["p1", "t1"]
-    %{context | node: node, clients: %{}}
+    %{context | mc: mc, clients: %{}}
   end
 
   # --- version 1 threads -------------------------------------------------------------
@@ -405,7 +405,7 @@ defmodule HalC2.Steps.Orchestration.Migration do
   # A version 1 thread "Legacy work" in a project of its own, with `messages`
   # (`{role, text, attachments}`), oldest first.
   defp v1_thread(context, messages) do
-    root = Node.tmp_dir(context.node, "legacy-work")
+    root = Mc.tmp_dir(context.mc, "legacy-work")
 
     context =
       context
@@ -492,8 +492,8 @@ defmodule HalC2.Steps.Orchestration.Migration do
   defp iso(ms), do: ms |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
 
   defp snapshot(context) do
-    path = Path.join(Node.tmp_dir(context.node, "node-server"), "state.sqlite")
-    World.node_log(path, context.snapshot)
+    path = Path.join(Mc.tmp_dir(context.mc, "mc-server"), "state.sqlite")
+    World.mc_log(path, context.snapshot)
     Enum.each(context[:v1_streams] || [], &version_1(path, &1))
     path
   end

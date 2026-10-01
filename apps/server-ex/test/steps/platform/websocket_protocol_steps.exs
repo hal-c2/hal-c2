@@ -1,34 +1,34 @@
 defmodule HalC2.Steps.Platform.WebsocketProtocol do
-  @moduledoc "Steps for `features/node/platform/websocket-protocol.feature`."
+  @moduledoc "Steps for `features/mc/platform/websocket-protocol.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Node
-  alias HalC2.Test.Node.World
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
   alias HalC2.Test.WsClient
 
   # --- greeting and credentials ---------------------------------------------------------
 
   step "the client opens a socket with a valid credential", context do
-    {:ok, client} = WsClient.connect(context.node.port, "/ws?token=#{HalC2.Web.token()}")
+    {:ok, client} = WsClient.connect(context.mc.port, "/ws?token=#{HalC2.Web.token()}")
     {hello, client} = WsClient.recv(client, 1_000)
     context |> Map.put(:hello, hello) |> World.put_client(client)
   end
 
-  step "the first frame names protocol 3, the node it reached and the environment it serves",
+  step "the first frame names protocol 3, the MC it reached and the environment it serves",
        context do
     assert context.hello == %{
              "t" => "hello",
              "protocol" => 3,
-             "node" => Atom.to_string(node()),
-             "environment" => context.node.environment
+             "mc" => Atom.to_string(node()),
+             "environment" => context.mc.environment
            }
 
     context
   end
 
   step "a client opens a socket without a ticket or token", context do
-    Map.put(context, :upgrade, WsClient.connect(context.node.port, "/ws"))
+    Map.put(context, :upgrade, WsClient.connect(context.mc.port, "/ws"))
   end
 
   step "the upgrade is refused as unauthorized", context do
@@ -43,8 +43,8 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   step "it opens a socket with that ticket twice", context do
     path = "/ws?wsTicket=#{context.ticket}"
-    first = WsClient.connect(context.node.port, path)
-    Map.put(context, :upgrades, [first, WsClient.connect(context.node.port, path)])
+    first = WsClient.connect(context.mc.port, path)
+    Map.put(context, :upgrades, [first, WsClient.connect(context.mc.port, path)])
   end
 
   step "the first socket opens", context do
@@ -88,7 +88,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   step "later changes arrive live as events", context do
     {:ok, seq} = HalC2.Streams.commit(context.stream, :thread, [note("later")])
-    {frame, client} = Node.await(World.client(context), &(&1["t"] == "events"))
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events"))
     assert [[^seq, "note", _, %{"s" => %{"text" => "later"}}, _]] = frame["events"]
     World.put_client(context, client)
   end
@@ -96,8 +96,8 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   step "the client saw a thread up to some offset and disconnected", context do
     stream = stream_id()
     {:ok, _} = HalC2.Streams.commit(stream, :thread, [note("first")])
-    client = Node.connect(context.node) |> sub(1, stream)
-    {%{"offset" => offset}, client} = Node.await(client, &(&1["t"] == "live"))
+    client = Mc.connect(context.mc) |> sub(1, stream)
+    {%{"offset" => offset}, client} = Mc.await(client, &(&1["t"] == "live"))
     Mint.HTTP.close(client.conn)
     Map.merge(context, %{stream: stream, offset: offset})
   end
@@ -117,7 +117,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "it subscribes again from that offset", context do
-    client = Node.connect(context.node) |> sub(2, context.stream, context.offset)
+    client = Mc.connect(context.mc) |> sub(2, context.stream, context.offset)
     World.put_client(context, client)
   end
 
@@ -131,7 +131,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "it receives a fresh snapshot of the thread", context do
-    {first, client} = Node.await(World.client(context), &(&1["id"] == 2))
+    {first, client} = Mc.await(World.client(context), &(&1["id"] == 2))
     assert %{"t" => "snapshot", "part" => 0, "offset" => offset} = first
     assert offset == context.seq
 
@@ -163,9 +163,9 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     Map.put(context, :missed, seqs)
   end
 
-  step "the node sends a resync for that subscription", context do
+  step "the MC sends a resync for that subscription", context do
     {frame, client} =
-      Node.await(World.client(context), &(&1["t"] == "resync" and &1["id"] == 1), 10_000)
+      Mc.await(World.client(context), &(&1["t"] == "resync" and &1["id"] == 1), 10_000)
 
     assert frame["offset"] == hd(context.missed) - 1
     context |> Map.put(:offset, frame["offset"]) |> World.put_client(client)
@@ -203,7 +203,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "the client receives the merged change once", context do
-    {frame, client} = Node.await(World.client(context), &(&1["t"] == "events"))
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events"))
     text = Enum.map_join(1..10, &"part#{&1} ")
     seq = context.seq
     assert [[^seq, "message", "m1", %{"a" => %{"text" => ^text}}, _]] = frame["events"]
@@ -215,11 +215,11 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "only the second subscription fails as already subscribed", context do
-    {frame, client} = Node.await(World.client(context), &(&1["t"] == "error"))
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "error"))
     assert frame == %{"t" => "error", "id" => 2, "reason" => "already subscribed"}
 
     {:ok, seq} = HalC2.Streams.commit(context.stream, :thread, [note("still here")])
-    {events, client} = Node.await(client, &(&1["t"] == "events"))
+    {events, client} = Mc.await(client, &(&1["t"] == "events"))
     assert %{"id" => 1, "events" => [[^seq | _]]} = events
     World.put_client(context, client)
   end
@@ -230,7 +230,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     client = World.client(context) |> sub(1, first) |> sub(2, second)
 
     {_, client} =
-      Node.await_all(client, [
+      Mc.await_all(client, [
         &(&1["t"] == "live" and &1["id"] == 1),
         &(&1["t"] == "live" and &1["id"] == 2)
       ])
@@ -239,7 +239,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "it drops the first subscription", context do
-    client = World.client(context) |> Node.unsub(1) |> WsClient.send_json(%{"t" => "ping"})
+    client = World.client(context) |> Mc.unsub(1) |> WsClient.send_json(%{"t" => "ping"})
     # A round trip, so the socket has handled the unsub before anything commits.
     {%{"t" => "pong"}, client} = WsClient.recv(client, 1_000)
     World.put_client(context, client)
@@ -272,12 +272,12 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   # --- config, keybindings, shell and scheduled tasks -----------------------------------
 
-  step "two clients follow the node's config", context do
-    Node.ensure(HalC2.Settings)
+  step "two clients follow the MC's config", context do
+    Mc.ensure(HalC2.Settings)
 
     context
-    |> World.put_client("first", Node.connect(context.node) |> Node.config())
-    |> World.put_client("second", Node.connect(context.node) |> Node.config())
+    |> World.put_client("first", Mc.connect(context.mc) |> Mc.config())
+    |> World.put_client("second", Mc.connect(context.mc) |> Mc.config())
   end
 
   step "the first client writes settings at the version it read", context do
@@ -298,7 +298,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   step "the second client sees the new settings", context do
     {frame, client} =
-      Node.await(World.client(context, "second"), &(&1["t"] == "config.settings"))
+      Mc.await(World.client(context, "second"), &(&1["t"] == "config.settings"))
 
     assert frame["settings"] == context.settings
     World.put_client(context, "second", client)
@@ -311,9 +311,9 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     context
   end
 
-  step "the client follows the node's config", context do
-    Node.ensure(HalC2.Settings)
-    World.put_client(context, Node.config(World.client(context)))
+  step "the client follows the MC's config", context do
+    Mc.ensure(HalC2.Settings)
+    World.put_client(context, Mc.config(World.client(context)))
   end
 
   step "it adds a keybinding and then removes it", context do
@@ -348,7 +348,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     Map.merge(context, %{change: change, expected: expected})
   end
 
-  step "the node answers with the complete list of rules", context do
+  step "the MC answers with the complete list of rules", context do
     {result, pushed} = context.change
     assert result["rules"] == context.expected
     assert pushed["rules"] == context.expected
@@ -356,8 +356,8 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "the client follows the shell", context do
-    client = World.client(context) |> Node.sub(1, %{"type" => "shell"})
-    {%{"t" => "shell"}, client} = Node.await(client, &(&1["t"] == "shell"))
+    client = World.client(context) |> Mc.sub(1, %{"type" => "shell"})
+    {%{"t" => "shell"}, client} = Mc.await(client, &(&1["t"] == "shell"))
     World.put_client(context, client)
   end
 
@@ -402,11 +402,11 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     context
   end
 
-  step "the client follows the node's scheduled tasks", context do
-    Node.ensure(HalC2.ScheduledTasks)
-    shape = %{"type" => "scheduledTasks", "node" => Atom.to_string(node())}
-    client = World.client(context) |> Node.sub(1, shape)
-    {%{"tasks" => []}, client} = Node.await(client, &(&1["t"] == "scheduledTasks"))
+  step "the client follows the MC's scheduled tasks", context do
+    Mc.ensure(HalC2.ScheduledTasks)
+    shape = %{"type" => "scheduledTasks", "mc" => Atom.to_string(node())}
+    client = World.client(context) |> Mc.sub(1, shape)
+    {%{"tasks" => []}, client} = Mc.await(client, &(&1["t"] == "scheduledTasks"))
     World.put_client(context, client)
   end
 
@@ -445,25 +445,25 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   # --- errors -----------------------------------------------------------------------------
 
-  step "the client calls several methods the node does not serve", context do
+  step "the client calls several methods the MC does not serve", context do
     methods = ~w(server.commitDesktopUpdate server.getTraceDiagnostics.unknown)
     client = World.client(context)
-    env = context.node.environment
+    env = context.mc.environment
 
     client =
       Enum.reduce(Enum.with_index(methods, 1), client, fn {method, id}, client ->
-        Node.rpc(client, env, id, method, %{})
+        Mc.rpc(client, env, id, method, %{})
       end)
 
-    {replies, client} = Node.await_all(client, [Node.reply?(1), Node.reply?(2)])
+    {replies, client} = Mc.await_all(client, [Mc.reply?(1), Mc.reply?(2)])
     context |> Map.merge(%{methods: methods, replies: replies}) |> World.put_client(client)
   end
 
-  step "each call fails saying the method is not served by this node yet", context do
+  step "each call fails saying the method is not served by this MC yet", context do
     for {method, reply} <- Enum.zip(context.methods, context.replies),
         do:
           assert(
-            %{"t" => "rpc.error", "error" => "#{method} is not served by this node yet"} ==
+            %{"t" => "rpc.error", "error" => "#{method} is not served by this MC yet"} ==
               Map.take(reply, ["t", "error"])
           )
 
@@ -477,37 +477,37 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   # "the client sends <frame>" is the common refusal step; it keeps the frame as `context.refusal`.
-  step "the node answers with the error {string}", %{args: [reason]} = context do
+  step "the MC answers with the error {string}", %{args: [reason]} = context do
     frame = context.refusal
     assert (frame["reason"] || frame["error"]) == reason
     context
   end
 
-  step "a client sends any node name it likes", context do
+  step "a client sends any MC name it likes", context do
     name = "hal_c2_made#{System.unique_integer([:positive])}@nowhere"
     assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
 
     client =
       World.client(context)
-      |> Node.sub(1, %{"type" => "stream", "node" => name, "stream" => "x"})
-      |> Node.sub(2, %{"type" => "config", "node" => name})
+      |> Mc.sub(1, %{"type" => "stream", "mc" => name, "stream" => "x"})
+      |> Mc.sub(2, %{"type" => "config", "mc" => name})
 
     # A frame that fails to decode is answered without its id.
     error? = &(&1["t"] == "error")
-    {replies, client} = Node.await_all(client, [error?, error?])
+    {replies, client} = Mc.await_all(client, [error?, error?])
 
     context |> Map.merge(%{name: name, replies: replies}) |> World.put_client(client)
   end
 
-  step "the node only accepts names of nodes already in its cluster", context do
-    assert Enum.all?(context.replies, &(&1["t"] == "error" and &1["reason"] == "unknown node"))
+  step "the MC only accepts names of MCs already in its cluster", context do
+    assert Enum.all?(context.replies, &(&1["t"] == "error" and &1["reason"] == "unknown MC"))
     assert_raise ArgumentError, fn -> String.to_existing_atom(context.name) end
 
     # Its own name is one it knows.
     stream = stream_id()
     {:ok, _} = HalC2.Streams.commit(stream, :thread, [note("hi")])
     client = World.client(context) |> sub(3, stream)
-    {_, client} = Node.await(client, &(&1["t"] == "live" and &1["id"] == 3))
+    {_, client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 3))
     World.put_client(context, client)
   end
 
@@ -524,12 +524,12 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   # Scheduled tasks answer from their server, which a suspended process holds up
   # (settings are read from a table and never wait).
   step "it calls an RPC that takes a long time", context do
-    tasks = Node.ensure(HalC2.ScheduledTasks)
+    tasks = Mc.ensure(HalC2.ScheduledTasks)
     :ok = :sys.suspend(tasks)
     ExUnit.Callbacks.on_exit(fn -> resume(tasks) end)
 
     client =
-      Node.rpc(World.client(context), context.node.environment, 99, "scheduledTasks.list", %{})
+      Mc.rpc(World.client(context), context.mc.environment, 99, "scheduledTasks.list", %{})
 
     context |> Map.put(:tasks_pid, tasks) |> World.put_client(client)
   end
@@ -544,28 +544,28 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     refute Enum.any?(skipped, &(&1["id"] == 99))
 
     :ok = :sys.resume(context.tasks_pid)
-    {reply, client} = Node.await(client, Node.reply?(99))
+    {reply, client} = Mc.await(client, Mc.reply?(99))
     assert %{"t" => "rpc.result", "result" => %{"tasks" => _}} = reply
     World.put_client(context, client)
   end
 
-  step "a client connected to the first node calls an RPC for an environment of the second",
+  step "a client connected to the first MC calls an RPC for an environment of the second",
        context do
     thread = "th-remote-#{System.unique_integer([:positive])}"
-    client = Node.connect(context.node)
+    client = Mc.connect(context.mc)
 
     {reply, client} =
-      Node.call(client, Node.peer_environment(context.peer), "orchestration.dispatchCommand", %{
+      Mc.call(client, Mc.peer_environment(context.peer), "orchestration.dispatchCommand", %{
         "type" => "thread.create",
         "commandId" => "cmd-#{thread}",
         "threadId" => thread,
-        "title" => "On the second node"
+        "title" => "On the second MC"
       })
 
     context |> Map.merge(%{thread: thread, reply: reply}) |> World.put_client(client)
   end
 
-  step "the second node runs it", context do
+  step "the second MC runs it", context do
     b = context.peer
     server = :erpc.call(b, HalC2.Streams, :ensure, [context.thread])
     assert node(server) == b
@@ -573,7 +573,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     thread =
       HalC2.StreamState.get(:erpc.call(b, HalC2.Streams.Server, :state, [server]), "thread")
 
-    assert %{"title" => "On the second node"} = thread[context.thread]
+    assert %{"title" => "On the second MC"} = thread[context.thread]
     # Nothing of it ran here.
     assert Registry.lookup(HalC2.Streams.Registry, context.thread) == []
     context
@@ -581,7 +581,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   step "the answer comes back over the client's one socket", context do
     assert {:ok, %{} = _result} = context.reply
-    # The same socket still serves this node.
+    # The same socket still serves this MC.
     {_, context} = World.call!(context, "hal-c2.readSettings")
     context
   end
@@ -591,18 +591,18 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     # Ten minutes is the default; the scenario shortens it rather than waiting.
     Application.put_env(:hal_c2, :rpc_timeout, 100)
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :rpc_timeout) end)
-    tasks = Node.ensure(HalC2.ScheduledTasks)
+    tasks = Mc.ensure(HalC2.ScheduledTasks)
     :ok = :sys.suspend(tasks)
     ExUnit.Callbacks.on_exit(fn -> resume(tasks) end)
 
     client =
-      Node.rpc(World.client(context), context.node.environment, 7, "scheduledTasks.list", %{})
+      Mc.rpc(World.client(context), context.mc.environment, 7, "scheduledTasks.list", %{})
 
     context |> Map.put(:tasks_pid, tasks) |> World.put_client(client)
   end
 
   step "it fails after ten minutes", context do
-    {reply, client} = Node.await(World.client(context), Node.reply?(7))
+    {reply, client} = Mc.await(World.client(context), Mc.reply?(7))
     assert %{"t" => "rpc.error", "error" => "scheduledTasks.list timed out"} = reply
     :ok = :sys.resume(context.tasks_pid)
     World.put_client(context, client)
@@ -625,7 +625,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     Map.merge(context, %{stream: stream, seq: seq, server: server, server_ref: ref})
   end
 
-  step "the node stops its stream process", context do
+  step "the MC stops its stream process", context do
     %{server: server, server_ref: ref} = context
     assert_receive {:DOWN, ^ref, :process, ^server, :normal}, 2_000
     context
@@ -633,7 +633,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   step "the next subscription starts it again from the store", context do
     client = World.client(context) |> sub(1, context.stream)
-    {snapshot, client} = Node.await(client, &(&1["t"] == "snapshot"))
+    {snapshot, client} = Mc.await(client, &(&1["t"] == "snapshot"))
     assert snapshot["offset"] == context.seq
     assert [["note", "kept", %{"text" => "stored"}]] = snapshot["rows"]
     [{server, _}] = Registry.lookup(HalC2.Streams.Registry, context.stream)
@@ -644,10 +644,10 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   step "the client follows the shell and a thread", context do
     context = World.create_thread(context, "Hot")
     stream = World.thread_id(context, "Hot")
-    client = World.client(context) |> Node.sub(1, %{"type" => "shell"}) |> sub(2, stream)
+    client = World.client(context) |> Mc.sub(1, %{"type" => "shell"}) |> sub(2, stream)
 
     {_, client} =
-      Node.await_all(client, [
+      Mc.await_all(client, [
         &(&1["t"] == "shell"),
         &(&1["t"] == "live" and &1["id"] == 2)
       ])
@@ -657,14 +657,14 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   # Shared with upgrades.feature: a real in-place update to a bundle whose only changes
   # are new versions of the socket and stream modules.
-  step "the node loads a new version in place", context do
-    if System.get_env("RELEASE_ROOT") == nil, do: Node.release(context.node)
-    Node.ensure(HalC2.Upgrade)
+  step "the MC loads a new version in place", context do
+    if System.get_env("RELEASE_ROOT") == nil, do: Mc.release(context.mc)
+    Mc.ensure(HalC2.Upgrade)
     target = "#{HalC2.Upgrade.version()}-hot#{System.unique_integer([:positive])}"
     # Only loaded modules are replaced in place.
     Code.ensure_loaded!(HalC2.Streams.Server)
-    modules = [Node.variant(HalC2.Web.Socket), Node.variant(HalC2.Streams.Server)]
-    archive = Node.bundle(context.node, target, %{}, modules)
+    modules = [Mc.variant(HalC2.Web.Socket), Mc.variant(HalC2.Streams.Server)]
+    archive = Mc.bundle(context.mc, target, %{}, modules)
     :ok = HalC2.Upgrade.Source.put(target, HalC2.Upgrade.platform(), archive)
 
     assert {:ok, %{"method" => "hot-upgrade", "targetVersion" => ^target}} =
@@ -679,7 +679,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   step "the socket stays connected", context do
     client = WsClient.send_json(World.client(context), %{"t" => "ping"})
-    {_, client} = Node.await(client, &(&1["t"] == "pong"))
+    {_, client} = Mc.await(client, &(&1["t"] == "pong"))
     World.put_client(context, client)
   end
 
@@ -688,7 +688,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     context = World.add_message(context, "Hot", "user", "after the upgrade")
 
     {[events, _rows], client} =
-      Node.await_all(World.client(context), [
+      Mc.await_all(World.client(context), [
         &(&1["t"] == "events" and &1["id"] == 2),
         &(&1["t"] == "shell.rows" and Enum.any?(&1["rows"], fn row -> hd(row) == thread end))
       ])
@@ -700,13 +700,13 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   step "the client followed the shell and two threads", context do
     context = context |> World.create_thread("One") |> World.create_thread("Two")
     streams = for t <- ["One", "Two"], do: World.thread_id(context, t)
-    client = Node.connect(context.node) |> Node.sub(1, %{"type" => "shell"})
+    client = Mc.connect(context.mc) |> Mc.sub(1, %{"type" => "shell"})
 
     client =
       streams |> Enum.with_index(2) |> Enum.reduce(client, fn {s, id}, c -> sub(c, id, s) end)
 
     {[_shell | lives], client} =
-      Node.await_all(client, [
+      Mc.await_all(client, [
         &(&1["t"] == "shell"),
         &(&1["t"] == "live" and &1["id"] == 2),
         &(&1["t"] == "live" and &1["id"] == 3)
@@ -729,7 +729,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
       end
 
     Map.put(context, :missed, missed)
-    |> World.put_client(Node.connect(context.node))
+    |> World.put_client(Mc.connect(context.mc))
   end
 
   step "it resubscribes each thread from its last offset", context do
@@ -757,16 +757,16 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "it takes the shell whole", context do
-    client = World.client(context) |> Node.sub(1, %{"type" => "shell"})
-    {shell, client} = Node.await(client, &(&1["t"] == "shell"))
-    ids = for [_node, stream | _] <- shell["rows"], do: stream
+    client = World.client(context) |> Mc.sub(1, %{"type" => "shell"})
+    {shell, client} = Mc.await(client, &(&1["t"] == "shell"))
+    ids = for [_mc, stream | _] <- shell["rows"], do: stream
     assert Enum.all?(context.streams, &(&1 in ids))
     World.put_client(context, client)
   end
 
   # --- protocol negotiation and revocation -------------------------------------------------
 
-  step "a client speaking a protocol newer than the node's", context do
+  step "a client speaking a protocol newer than the MC's", context do
     Map.put(context, :protocol, HalC2.Web.Protocol.version() + 1)
   end
 
@@ -774,18 +774,18 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     path = "/ws?protocol=#{context.protocol}&token=#{HalC2.Web.token()}"
 
     Map.merge(context, %{
-      upgrade: WsClient.connect(context.node.port, path),
-      response: Node.request(context.node, :get, path)
+      upgrade: WsClient.connect(context.mc.port, path),
+      response: Mc.request(context.mc, :get, path)
     })
   end
 
-  step "the node refuses with a message naming the node to update", context do
+  step "the MC refuses with a message naming the MC to update", context do
     assert context.upgrade == {:error, 426}
 
     assert {426, _headers, %{"code" => "protocol_incompatible", "message" => message}} =
              context.response
 
-    assert message =~ "Update this node"
+    assert message =~ "Update this MC"
     context
   end
 
@@ -799,15 +799,15 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     context
   end
 
-  step "the node closes the socket", context do
-    assert Node.await_close(World.client(context, "paired")) == {:close, 4401, "session revoked"}
+  step "the MC closes the socket", context do
+    assert Mc.await_close(World.client(context, "paired")) == {:close, 4401, "session revoked"}
     context
   end
 
   step "the client cannot reconnect with that session", context do
     assert HalC2.Auth.issue_ticket(context.access_token) == :error
 
-    assert {401, _, _} = Node.request(context.node, :get, "/ws?token=#{context.access_token}")
+    assert {401, _, _} = Mc.request(context.mc, :get, "/ws?token=#{context.access_token}")
 
     context
   end
@@ -820,13 +820,13 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     do: {"note", "n-#{System.unique_integer([:positive])}", %{"s" => %{"text" => text}}}
 
   defp sub(client, id, stream, offset \\ nil) do
-    shape = %{"type" => "stream", "node" => Atom.to_string(node()), "stream" => stream}
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => stream}
     frame = %{"t" => "sub", "id" => id, "shape" => shape}
     WsClient.send_json(client, if(offset, do: Map.put(frame, "offset", offset), else: frame))
   end
 
   defp snapshot_parts(client, id, parts) do
-    {frame, client} = Node.await(client, &(&1["t"] == "snapshot" and &1["id"] == id))
+    {frame, client} = Mc.await(client, &(&1["t"] == "snapshot" and &1["id"] == id))
     parts = [frame | parts]
     if frame["done"], do: {Enum.reverse(parts), client}, else: snapshot_parts(client, id, parts)
   end
@@ -851,16 +851,16 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
       ])
 
     client = World.client(context) |> sub(1, stream)
-    {_, client} = Node.await(client, &(&1["t"] == "live" and &1["id"] == 1))
+    {_, client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 1))
     [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure(stream)).subscribers)
     context |> Map.merge(%{stream: stream, socket: socket}) |> World.put_client(client)
   end
 
   defp keybinding(context, method, rule) do
-    client = Node.rpc(World.client(context), context.node.environment, 50, method, rule)
+    client = Mc.rpc(World.client(context), context.mc.environment, 50, method, rule)
 
     {[reply, pushed], client} =
-      Node.await_all(client, [Node.reply?(50), &(&1["t"] == "config.keybindings")])
+      Mc.await_all(client, [Mc.reply?(50), &(&1["t"] == "config.keybindings")])
 
     assert %{"t" => "rpc.result", "result" => result} = reply
     {{result, pushed}, World.put_client(context, client)}
@@ -870,22 +870,22 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     command = Map.put(command, "commandId", "cmd-#{System.unique_integer([:positive])}")
 
     client =
-      Node.rpc(
+      Mc.rpc(
         World.client(context),
-        context.node.environment,
+        context.mc.environment,
         60,
         "orchestration.dispatchCommand",
         command
       )
 
-    {[reply, _row], client} = Node.await_all(client, [Node.reply?(60), row?])
+    {[reply, _row], client} = Mc.await_all(client, [Mc.reply?(60), row?])
     assert reply["t"] == "rpc.result"
     World.put_client(context, client)
   end
 
   defp push(context, method, payload, pushed?) do
-    client = Node.rpc(World.client(context), context.node.environment, 70, method, payload)
-    {[reply, pushed], client} = Node.await_all(client, [Node.reply?(70), pushed?])
+    client = Mc.rpc(World.client(context), context.mc.environment, 70, method, payload)
+    {[reply, pushed], client} = Mc.await_all(client, [Mc.reply?(70), pushed?])
     assert reply["t"] == "rpc.result"
     {[reply, pushed], World.put_client(context, client)}
   end

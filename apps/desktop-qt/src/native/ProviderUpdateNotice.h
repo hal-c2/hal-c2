@@ -11,7 +11,7 @@
 #include "NativeController.h"
 
 class NativeWindow;
-class NodeClient;
+class McClient;
 class SettingsController;
 class ShellBridge;
 class ToastController;
@@ -20,7 +20,7 @@ class ToastController;
 // ProviderUpdatePrimaryNotification does: the enabled providers of this
 // machine's environment that are behind their latest release, one per driver,
 // in one "Update Available" toast. Update runs `server.updateProvider` for
-// each one the node can update itself and reports how it went; Settings opens
+// each one the MC can update itself and reports how it went; Settings opens
 // the Providers section. Closing the toast dismisses that set of versions for
 // good (this device's `dismissedProviderUpdateNotificationKeys`); a set is
 // offered once per run either way. One per process, as in the web app: the
@@ -29,7 +29,7 @@ class ProviderUpdateNotice : public QObject, public NativeController {
   Q_OBJECT
 
 public:
-  ProviderUpdateNotice(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
+  ProviderUpdateNotice(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
   void activate() override;
   bool handle(const QString&, const QVariant&) override { return false; }
@@ -45,7 +45,7 @@ private:
   ToastController* toasts() const;
   SettingsController* settings() const;
 
-  NodeClient* m_client;
+  McClient* m_client;
   bool m_active = false;
   // The version sets offered this run.
   QSet<QString> m_seen;

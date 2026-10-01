@@ -1,12 +1,12 @@
 defmodule HalC2.Plugins.Bundled do
   @moduledoc """
-  The provider adapters that ship with the node: Codex, Claude, and the ACP agents
+  The provider adapters that ship with the MC: Codex, Claude, and the ACP agents
   (the built-in ones and those added from the ACP registry). They are plugins like
   any other (`HalC2.Plugins`), except that they are on until the user turns them off,
   and a plugin file with the same id replaces one (how a bundled provider is
-  updated without a new node version).
+  updated without a new MC version).
 
-  The list is the `:bundled_plugins` application setting, so a node can start
+  The list is the `:bundled_plugins` application setting, so an MC can start
   with none.
   """
 

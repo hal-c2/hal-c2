@@ -97,7 +97,7 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
 /**
  * The descriptor of the environment being paired, and the target that reached it. A
  * host typed without a scheme that cannot be reached over HTTPS is tried over plain
- * HTTP, as a node on the LAN or tailnet serves; any other failure stands.
+ * HTTP, as an MC on the LAN or tailnet serves; any other failure stands.
  */
 const fetchPairingDescriptor = (target: ResolvedRemotePairingTarget) =>
   fetchRemoteEnvironmentDescriptor({ httpBaseUrl: target.httpBaseUrl }).pipe(
@@ -166,7 +166,7 @@ const registerPairingConnection = Effect.fn(
 
 /**
  * Registrations for the other environments of a protocol-3 cluster. They reach
- * their nodes through the node just paired, with the same URLs and credential,
+ * their MCs through the MC just paired, with the same URLs and credential,
  * so pairing once brings in every machine of the cluster.
  */
 export function clusterRegistrations(

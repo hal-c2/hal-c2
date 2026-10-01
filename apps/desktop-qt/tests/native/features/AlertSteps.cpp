@@ -1,5 +1,5 @@
 // Alerts when a thread needs the user (AlertController,
-// features/timeline/notifications.feature): threads whose rows the node
+// features/timeline/notifications.feature): threads whose rows the MC
 // changes, the window's focus, and a fake of the desktop's notification
 // service and sound in place of NativeNotifications.
 
@@ -22,8 +22,8 @@ using stream::iso;
 
 // A thread the steps drive, and where its rows come from.
 struct Tracked {
-  QString environment;  // empty: the node's own
-  QString peer;         // another node of the cluster that serves it
+  QString environment;  // empty: the MC's own
+  QString peer;         // another MC of the cluster that serves it
   QString id;
   QJsonObject row;
   int runs = 0;
@@ -47,7 +47,7 @@ struct FakeAlerts {
 };
 
 FakeAlerts& fake(World& world) {
-  return world.node.part<FakeAlerts>();
+  return world.mc.part<FakeAlerts>();
 }
 
 AlertController& alerts(World& world) {
@@ -80,18 +80,18 @@ AlertController& alerts(World& world) {
 QString keyOf(World& world, const Tracked& thread) {
   const QString environment = !thread.environment.isEmpty() ? thread.environment
                               : !thread.peer.isEmpty()      ? QStringLiteral("env-b")
-                                                            : world.node.environmentId;
+                                                            : world.mc.environmentId;
   return environment + QLatin1Char(':') + thread.id;
 }
 
 void send(World& world, const Tracked& thread) {
   if (!thread.environment.isEmpty()) {
-    world.node.sendLinkRow(thread.environment, thread.id, thread.row);
+    world.mc.sendLinkRow(thread.environment, thread.id, thread.row);
   } else if (!thread.peer.isEmpty()) {
-    world.node.sendRows(thread.peer, QJsonArray{QJsonValue(QJsonArray{thread.id, QStringLiteral("thread"), thread.row})});
+    world.mc.sendRows(thread.peer, QJsonArray{QJsonValue(QJsonArray{thread.id, QStringLiteral("thread"), thread.row})});
   } else {
-    world.node.threads.insert(thread.id, thread.row);
-    world.node.sendRow(thread.id, thread.row);
+    world.mc.threads.insert(thread.id, thread.row);
+    world.mc.sendRow(thread.id, thread.row);
   }
   world.sync();
   alerts(world);
@@ -116,7 +116,7 @@ Tracked& working(World& world, const QString& title, const QString& environment 
   const QString started = iso(world.now());
   thread.row = {{QStringLiteral("id"), thread.id},
                 {QStringLiteral("title"), title},
-                {QStringLiteral("projectId"), world.node.projects.firstKey()},
+                {QStringLiteral("projectId"), world.mc.projects.firstKey()},
                 {QStringLiteral("createdAt"), started},
                 {QStringLiteral("updatedAt"), started},
                 {QStringLiteral("latestRunId"), QStringLiteral("run-%1").arg(thread.runs)},
@@ -251,14 +251,14 @@ const Steps steps([] {
   step(QStringLiteral("the thread %1 is working in the background").arg(q), [](World& world, const Captures& c, const Table&) {
     working(world, c[0]);
   });
-  step(QStringLiteral("the thread %1 is working in the background on (a linked environment|another node of the cluster)").arg(q),
+  step(QStringLiteral("the thread %1 is working in the background on (a linked environment|another MC of the cluster)").arg(q),
        [](World& world, const Captures& c, const Table&) {
          if (c[1] == QLatin1String("a linked environment")) {
-           world.node.link(QStringLiteral("laptop"));
+           world.mc.link(QStringLiteral("laptop"));
            world.sync();
            working(world, c[0], QStringLiteral("laptop"));
          } else {
-           world.node.join(stream::kPeer, QStringLiteral("env-b"));
+           world.mc.join(stream::kPeer, QStringLiteral("env-b"));
            world.sync();
            working(world, c[0], {}, stream::kPeer);
          }
@@ -275,12 +275,12 @@ const Steps steps([] {
   step(QStringLiteral("%1 completed while the client was closed").arg(q), [](World& world, const Captures& c, const Table&) {
     working(world, c[0]);
     world.restart();
-    // Closed: the node's row changes with nobody to tell.
-    world.node.drop();
+    // Closed: the MC's row changes with nobody to tell.
+    world.mc.drop();
     Tracked& thread = tracked(world, c[0]);
     thread.row.insert(QStringLiteral("status"), QStringLiteral("completed"));
     thread.row.insert(QStringLiteral("latestRunCompletedAt"), iso(world.now().addSecs(60)));
-    world.node.threads.insert(thread.id, thread.row);
+    world.mc.threads.insert(thread.id, thread.row);
   });
   step(QStringLiteral("the user opens the client"), [](World& world, const Captures&, const Table&) {
     alerts(world);
@@ -358,7 +358,7 @@ const Steps steps([] {
     change(world, tracked(world, c[0]), QStringLiteral("completes"));
   });
   step(QStringLiteral("alerts for other threads in %1 still arrive").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(world.node.projects.first().value(QLatin1String("title")).toString() == c[0],
+    expect(world.mc.projects.first().value(QLatin1String("title")).toString() == c[0],
            QStringLiteral("the threads are not in \"%1\"").arg(c[0]));
     Tracked& other = working(world, QStringLiteral("Docs pass"));
     change(world, other, QStringLiteral("completes"));

@@ -28,102 +28,102 @@
 #   files/ owns project scripts with preview URLs; navigation/ owns preview key chords.
 
 Feature: In-app preview browser
-  A thread can keep browser tabs beside it for the app it is building. The node remembers each
+  A thread can keep browser tabs beside it for the app it is building. The MC remembers each
   tab's page and state so every window and every reconnect sees the same tabs; the desktop draws
   the page itself.
 
-  Rule: The node keeps each thread's browser tabs
+  Rule: The MC keeps each thread's browser tabs
 
-    @node
+    @mc
     Scenario: Opening a tab with an address starts it loading
       When a client opens a browser tab for the thread at "http://localhost:5173"
       Then the thread has a new tab loading "http://localhost:5173"
       And every watching client is told the tab opened
 
-    @node
+    @mc
     Scenario: Opening a tab without an address leaves it idle
       When a client opens a browser tab for the thread without an address
       Then the thread has a new idle tab
       And the tab fills the space it is given
 
-    @node
+    @mc
     Scenario: A tab opens under the requested browser profile
       When a client opens a browser tab under the profile "work"
       Then the tab remembers the profile "work"
 
-    @node
+    @mc
     Scenario: Navigating a tab records its page
       Given a browser tab showing "http://localhost:5173"
       When the desktop reports it navigated to "http://localhost:5173/login" titled "Sign in"
       Then the tab shows "http://localhost:5173/login" titled "Sign in"
       And every watching client is told the tab navigated
 
-    @node
+    @mc
     Scenario: A navigation without a title keeps the page's previous title
       Given a browser tab showing a page titled "Dashboard"
       When the desktop reports a navigation without a title
       Then the tab keeps the title "Dashboard"
 
-    @node
+    @mc
     Scenario: A page that fails to load is reported to every client
       Given a browser tab loading "http://localhost:9999"
       When the desktop reports the load failed with "ERR_CONNECTION_REFUSED"
       Then every watching client is told the tab failed with that error
 
-    @node
+    @mc
     Scenario: A tab remembers whether it can go back and forward
       Given a browser tab that has visited two pages
       When the desktop reports it can go back but not forward
       Then every client sees that the tab can go back but not forward
 
-    @node
+    @mc
     Scenario: Resizing a tab records its viewport
       Given a browser tab that fills its space
       When a client resizes the tab to the "iphone-se" preset
       Then the tab's viewport is the "iphone-se" preset
       And every watching client is told the tab resized
 
-    @node
+    @mc
     Scenario: Refreshing a tab leaves reloading to the desktop
       Given a browser tab showing a page
       When a client refreshes the tab
       Then the request succeeds without changing the tab
       And the desktop reports the reload as it happens
 
-    @node
+    @mc
     Scenario: Closing one tab leaves the thread's other tabs open
       Given a thread with two browser tabs
       When a client closes the first tab
       Then only the second tab remains
       And every watching client is told the first tab closed
 
-    @node
+    @mc
     Scenario: Closing without naming a tab closes every tab of the thread
       Given a thread with two browser tabs
       When a client closes the thread's browser tabs without naming one
       Then the thread has no browser tabs
 
-    @node
+    @mc
     Scenario: Listing a thread's tabs returns them oldest change first
       Given a thread with two browser tabs, the second changed most recently
       When a client lists the thread's browser tabs
       Then it receives both tabs with the second one last
-      And the list carries the node's run and change numbers
+      And the list carries the MC's run and change numbers
 
-    @node
+    @mc
     Scenario: Every change carries a higher change number
       Given a client is watching browser tab changes
       When a tab opens, navigates and closes
       Then each event carries a higher change number than the one before
 
-    @node
-    Scenario: Browser tabs do not survive a node restart
+    @mc
+    Scenario: Browser tabs do not survive an MC restart
       Given a thread with a browser tab
-      When the node restarts
+      When the MC restarts
       Then the thread has no browser tabs
-      And the node reports a different run number so clients drop their old tabs
+      And the MC reports a different run number so clients drop their old tabs
 
-    @node
+    @mc
     Scenario Outline: Acting on a tab the thread does not have is refused
       When a client asks to <action> a tab the thread does not have
       Then the request fails naming the thread and the unknown tab
@@ -135,15 +135,15 @@ Feature: In-app preview browser
         | resize           |
         | refresh          |
 
-  Rule: The node suggests local web servers to preview
+  Rule: The MC suggests local web servers to preview
 
-    @node
-    Scenario: Web servers listening on the node's machine are suggested
-      Given a dev server is serving HTML on port 5173 of the node's machine
+    @mc
+    Scenario: Web servers listening on the MC's machine are suggested
+      Given a dev server is serving HTML on port 5173 of the MC's machine
       When a client watches for local servers
       Then "http://localhost:5173" is suggested with the name of the process serving it
 
-    @node
+    @mc
     Scenario Outline: Only listeners that serve web pages are suggested
       Given a program listening on port <port> that answers with <answer>
       When a client watches for local servers
@@ -157,25 +157,25 @@ Feature: In-app preview browser
         | 8080 | JSON                       | is not suggested       |
         | 9000 | an empty 204 response      | is not suggested       |
 
-    @node
-    Scenario: The node's own port is never suggested
+    @mc
+    Scenario: The MC's own port is never suggested
       When a client watches for local servers
-      Then the node's own port is not among the suggestions
+      Then the MC's own port is not among the suggestions
 
-    @node
+    @mc
     Scenario: Suggestions follow servers starting and stopping
       Given a client is watching for local servers
       When a new dev server starts serving HTML on port 4321
       Then within a few seconds the client is told the list now includes port 4321
 
-    @node
-    Scenario: The node stops scanning when nobody is watching
+    @mc
+    Scenario: The MC stops scanning when nobody is watching
       Given the last client stops watching for local servers
-      Then the node no longer scans for listening ports
+      Then the MC no longer scans for listening ports
 
-    @node
+    @mc
     Scenario: A machine without a port listing tool suggests nothing
-      Given the node's machine cannot list listening ports
+      Given the MC's machine cannot list listening ports
       When a client watches for local servers
       Then the suggestion list is empty
 
@@ -249,7 +249,7 @@ Feature: In-app preview browser
     @desktop @backlog-desktop
     Scenario: A device size that times out is undone
       Given the user picks a device size for a tab
-      When the node does not confirm the resize in time
+      When the MC does not confirm the resize in time
       Then the tab returns to its previous size unless a newer size was chosen
 
     @desktop
@@ -259,7 +259,7 @@ Feature: In-app preview browser
 
     @desktop
     Scenario: A browser tab whose close fails comes back
-      Given the node refuses to close a browser tab
+      Given the MC refuses to close a browser tab
       When the user closes the tab
       Then the tab returns as it was
 
@@ -302,13 +302,13 @@ Feature: In-app preview browser
       Then the browser opens "http://localhost:5173"
 
     @desktop
-    Scenario: The desktop's list of browser tabs follows the node
+    Scenario: The desktop's list of browser tabs follows the MC
       Given the user is showing the thread's previews
       When the agent opens a browser tab at "http://localhost:5173"
       Then "http://localhost:5173" is listed
       When the page at "http://localhost:5173" fails to load
       Then the previews say "http://localhost:5173" failed to load
-      When the tab at "http://localhost:5173" is closed on the node
+      When the tab at "http://localhost:5173" is closed on the MC
       Then no browser tabs are listed
 
     @backlog @tui
@@ -321,4 +321,4 @@ Feature: In-app preview browser
     Scenario: The terminal client refreshes or closes existing preview tabs
       Given the thread has preview tabs
       When the user refreshes or closes one in the terminal client
-      Then the node's tab list updates and unreachable pages are reported
+      Then the MC's tab list updates and unreachable pages are reported

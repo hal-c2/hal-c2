@@ -2,7 +2,7 @@
 #   apps/server-ex/lib/hal_c2/scheduled_tasks.ex (store, timer, missed runs, run status)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (list_scheduled_tasks, schedule_task, update_scheduled_task, delete_scheduled_task, run_scheduled_task_now)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (scheduledTasks subscription)
-#   apps/server-ex/test/node_parity_test.exs (scheduledTasks.* aligned)
+#   apps/server-ex/test/mc_parity_test.exs (scheduledTasks.* aligned)
 #   packages/contracts/src/scheduledTask.ts (interval and fixed_time schedules, workspace strategies)
 #   packages/contracts/src/rpc.ts (scheduledTasks.list, scheduledTasks.upsert, scheduledTasks.delete, scheduledTasks.setEnabled, scheduledTasks.runNow, scheduledTasks.subscribe)
 #   apps/web/src/components/settings/ScheduledTasksSettings.tsx
@@ -14,43 +14,43 @@
 
 Feature: Scheduled tasks
   A scheduled task sends a saved prompt to a project on a timer, either at
-  fixed times of day or every few minutes. The node owns the schedule, so tasks
+  fixed times of day or every few minutes. The MC owns the schedule, so tasks
   keep running while no client is open.
 
   Background:
-    Given a node with a project "api"
+    Given an MC with a project "api"
 
-  Rule: The node runs tasks on their schedule
+  Rule: The MC runs tasks on their schedule
 
-    @node
+    @mc
     Scenario: A daily task runs at its time of day
       Given a task "Check Sentry" that runs at 09:00 on every day
       When the clock reaches 09:00
-      Then the node sends the task's prompt to the project
+      Then the MC sends the task's prompt to the project
       And the task records a successful run
 
-    @node
+    @mc
     Scenario: A task with an interval runs repeatedly
       Given a task that runs every 15 minutes
       When 30 minutes pass
       Then the task has run twice
 
-    @node
+    @mc
     Scenario: A fixed time task only runs on its chosen weekdays
       Given a task that runs at 09:00 on weekdays
       When Saturday 09:00 passes
       Then the task does not run
       And its next run is Monday at 09:00
 
-    @node
+    @mc
     Scenario: A run missed while the machine was off is skipped, not fired late
       Given a task that runs at 09:00
       And the machine was off from 08:00 until 10:30
-      When the node starts again
+      When the MC starts again
       Then the task does not run immediately
       And its next run moves to the next 09:00
 
-    @node
+    @mc
     Scenario Outline: A run goes to the task's thread or a new one
       Given a task <target>
       When the task runs
@@ -61,34 +61,34 @@ Feature: Scheduled tasks
         | that names an existing thread   | is sent into that thread        |
         | with no thread                  | starts a new thread for the run |
 
-    @node
-    Scenario: Tasks survive a node restart
+    @mc
+    Scenario: Tasks survive an MC restart
       Given a task that runs every hour
-      When the node restarts
+      When the MC restarts
       Then the task is still listed with its schedule and run history
 
-    @node
+    @mc
     Scenario: A run cut off by shutdown is marked failed
       Given a task is running
-      When the node stops
+      When the MC stops
       Then after restart the task's last run failed with "The server stopped during this run."
 
   Rule: The user manages tasks
 
-    @node
+    @mc
     Scenario: The user runs a task now
       Given a task that runs daily
       When the user runs the task now
       Then the prompt is sent immediately
       And the run count goes up by one
 
-    @node
+    @mc
     Scenario: A task that is already running cannot be started again
       Given a task is running
       When the user runs the task now
       Then the user is told "Schedule task is already running."
 
-    @node
+    @mc
     Scenario: Pausing a task stops its runs and resuming schedules it again
       Given a task that runs every hour
       When the user pauses the task
@@ -96,37 +96,37 @@ Feature: Scheduled tasks
       When the user resumes the task
       Then the task has a next run again
 
-    @node
+    @mc
     Scenario: Editing a task without changing its schedule keeps its next run
       Given a task whose next run is in 20 minutes
       When the user changes the task's prompt
       Then the next run is still in 20 minutes
 
-    @node
+    @mc
     Scenario: A schedule shorter than a minute is refused
       When the user saves a task that runs every 30 seconds
       Then the user is told "The schedule is not valid."
 
-    @node
+    @mc
     Scenario: Editing a task that no longer exists fails
       Given another client deleted the task "Check Sentry"
       When the user saves changes to "Check Sentry"
       Then the user is told "Schedule task not found."
 
-    @node
+    @mc
     Scenario: Old tasks with a sub-minute interval can still be cleaned up
       Given a task saved by an older version that runs every 10 seconds
       Then the user can list, pause, edit and delete it
 
-    @node
+    @mc
     Scenario: Watching clients see task changes live
       Given two clients watch the scheduled tasks
       When one client creates a task
       Then the other client sees the task without refreshing
 
-    @node
+    @mc
     Scenario: An agent schedules a task for the user
-      Given an agent in a thread with the node's tools
+      Given an agent in a thread with the MC's tools
       When the agent schedules a task to run every morning
       Then the task appears in the user's scheduled tasks
       And the task records that an agent created it
@@ -173,7 +173,7 @@ Feature: Scheduled tasks
       And each task shows its prompt
 
     # The web said "No environments available" with none paired. A QML client shows settings only
-    # once its node has synced, so its own environment is always there.
+    # once its MC has synced, so its own environment is always there.
     @dropped @shared
     Scenario: With no environment there are no tasks to manage
       When the user opens scheduled tasks with no environment

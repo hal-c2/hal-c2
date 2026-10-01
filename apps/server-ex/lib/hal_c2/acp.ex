@@ -1,11 +1,11 @@
 defmodule HalC2.Acp do
   @moduledoc """
-  The Agent Client Protocol agents a node can run (`HalC2.Acp.ThreadRuntime`), and
+  The Agent Client Protocol agents an MC can run (`HalC2.Acp.ThreadRuntime`), and
   their entries in `ServerConfig.providers`: the built-in OpenCode and Grok, more
   instances of them, and `acpRegistry` instances running an agent from the ACP
   Registry (`HalC2.Acp.Catalog`). Everything is keyed by provider instance id.
 
-  Built-in agents are off until enabled in the node's settings (`providers.<driver>`
+  Built-in agents are off until enabled in the MC's settings (`providers.<driver>`
   or a `providerInstances` entry), as on the Node server, so nothing is spawned for
   users who never opted in; a registry instance is on once added. An enabled agent's model list comes from the `model`
   config option of a throwaway session, which lists the models of the providers it
@@ -21,7 +21,7 @@ defmodule HalC2.Acp do
     "cursor" => %{binary: "node", label: "Cursor"},
     # Pi in its own RPC mode (`HalC2.Pi`), not ACP: listed here for its provider entry.
     "pi" => %{binary: "pi", label: "Pi"},
-    # Google's Antigravity agent, from the node's managed runtime (`HalC2.Acp.Antigravity`).
+    # Google's Antigravity agent, from the MC's managed runtime (`HalC2.Acp.Antigravity`).
     "antigravity" => %{binary: "agy_acp_server.par", label: "Antigravity"}
   }
 
@@ -151,7 +151,7 @@ defmodule HalC2.Acp do
   end
 
   # The desktop app names its own Electron binary, which runs as Node with
-  # ELECTRON_RUN_AS_NODE (set for the sidecar only, never the node's terminals).
+  # ELECTRON_RUN_AS_NODE (set for the sidecar only, never the MC's terminals).
   defp node_command do
     case System.get_env("HAL_C2_NODE_COMMAND") do
       command when command in [nil, ""] ->
@@ -211,7 +211,7 @@ defmodule HalC2.Acp do
     end
   end
 
-  @doc "Provider entries for the ACP instances on this node whose agent is available."
+  @doc "Provider entries for the ACP instances on this MC whose agent is available."
   def entries, do: for(id <- instances(), entry = entry(id), do: entry)
 
   def entry(id) do
@@ -330,7 +330,7 @@ defmodule HalC2.Acp do
       end)
 
   @doc false
-  # Each instance keeps its own Cursor sign-in, owner-only, in the node's data.
+  # Each instance keeps its own Cursor sign-in, owner-only, in the MC's data.
   def cursor_credentials(id),
     do: Path.join([HalC2.Paths.data_dir(), "provider-auth", id, "cursor.json"])
 
@@ -439,7 +439,7 @@ defmodule HalC2.Acp do
     end
   end
 
-  @doc "Whether the node's settings enable an instance (built-in agents are off by default)."
+  @doc "Whether the MC's settings enable an instance (built-in agents are off by default)."
   def enabled?(id) do
     case instance(id) do
       nil -> false

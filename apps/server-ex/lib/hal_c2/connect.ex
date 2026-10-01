@@ -1,14 +1,14 @@
 defmodule HalC2.Connect do
   @moduledoc """
-  HAL-C2 Connect, node side (`apps/server/src/cloud/http.ts`): linking this node to a
+  HAL-C2 Connect, MC side (`apps/server/src/cloud/http.ts`): linking this MC to a
   user's cloud account through the relay, and answering the relay afterwards.
 
-    * A client links the node by fetching a signed link proof (`link_proof/2`),
+    * A client links the MC by fetching a signed link proof (`link_proof/2`),
       handing it to the relay, and passing the relay's answer back
       (`apply_relay_config/1`), which starts the managed tunnel (`HalC2.Connect.Tunnel`).
     * An operator links from the command line instead: the stored desired link
-      and sign-in make the node link itself at startup (`HalC2.Connect.Link`).
-    * The relay then checks the node's health (`health/1`) and asks it to mint
+      and sign-in make the MC link itself at startup (`HalC2.Connect.Link`).
+    * The relay then checks the MC's health (`health/1`) and asks it to mint
       one-time credentials bound to a device's DPoP key (`mint_credential/1`); it
       never holds a session itself.
 
@@ -38,9 +38,9 @@ defmodule HalC2.Connect do
   # --- linking -------------------------------------------------------------------
 
   @doc """
-  `POST /api/connect/link-proof`: the node's signed identity for the relay's
-  `challenge`. `request` is the URL the node was asked on; the endpoint must be the
-  node's own loopback origin, never one named by forwarded headers.
+  `POST /api/connect/link-proof`: the MC's signed identity for the relay's
+  `challenge`. `request` is the URL the MC was asked on; the endpoint must be the
+  MC's own loopback origin, never one named by forwarded headers.
   """
   def link_proof(body, %{forwarded?: forwarded?, host: host, port: port}) do
     endpoint = body["endpoint"] || %{}
@@ -136,7 +136,7 @@ defmodule HalC2.Connect do
 
   @doc """
   `POST /api/connect/preferences`: turns agent activity publishing on or off.
-  Only a linked node can turn it on; it has nowhere to publish otherwise.
+  Only a linked MC can turn it on; it has nowhere to publish otherwise.
   """
   def preferences(%{"publishAgentActivity" => publish}) when is_boolean(publish) do
     cond do
@@ -253,7 +253,7 @@ defmodule HalC2.Connect do
 
   def mint_credential(_), do: {:error, 401, "Invalid cloud mint request."}
 
-  # A relay-signed request for this node, from the linked account, with `scope` only.
+  # A relay-signed request for this MC, from the linked account, with `scope` only.
   defp relay_request(proof, typ, scope) do
     id = HalC2.Environment.id()
     now = System.os_time(:second)
@@ -314,14 +314,14 @@ defmodule HalC2.Connect do
          else: (_ -> nil)
   end
 
-  @doc "The relay this node links through: the stored one, else the configured one."
+  @doc "The relay this MC links through: the stored one, else the configured one."
   def relay_url do
     Secrets.get(@relay_url) || Application.get_env(:hal_c2, :connect_relay_url) ||
       System.get_env("HAL_C2_RELAY_URL")
   end
 
   @doc """
-  Links the node as the operator asked (`hal-c2 connect link`), from its own loopback
+  Links the MC as the operator asked (`hal-c2 connect link`), from its own loopback
   origin: challenge, proof, link, then `apply_relay_config/1`. `{:ok, result}`, or
   `{:error, :permanent | :transient, message}`: 4xx other than 408 and 429 will
   not get better by retrying.
@@ -392,8 +392,8 @@ defmodule HalC2.Connect do
   end
 
   @doc """
-  Gives the managed tunnel back to the relay as the node stops normally: the
-  connector stops and the relay marks the node offline, keeping its link and
+  Gives the managed tunnel back to the relay as the MC stops normally: the
+  connector stops and the relay marks the MC offline, keeping its link and
   address for the next start. Only for a command-line managed link.
   """
   def release do

@@ -82,20 +82,20 @@ Feature: Pinning and arranging threads
     When the user pins "Gamma"
     Then the list stays scrolled to the same place
 
-  @node
+  @mc
   Scenario: Pinned threads can be reordered
     Given "Alpha" and "Beta" are pinned in that order
     When a client moves "Beta" above "Alpha"
     Then the pinned threads are listed as "Beta", "Alpha"
     And the order survives a refresh
 
-  @node
+  @mc
   Scenario: Active threads can be reordered
     When a client moves "Gamma" above "Alpha"
     Then the active threads are listed with "Gamma" before "Alpha"
     And every connected device sees the same order
 
-  @node
+  @mc
   Scenario: Moving one thread does not renumber the others
     Given "Alpha", "Beta" and "Gamma" are pinned in that order
     When a client moves "Gamma" between "Alpha" and "Beta"
