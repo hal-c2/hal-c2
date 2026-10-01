@@ -2945,6 +2945,45 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  step "parts of the conversation did not fit in the handoff", context do
+    texts = for n <- 1..3, do: "part #{n} " <> String.duplicate("cart ", 5_000)
+
+    context =
+      context
+      |> handoff_thread("Alpha")
+      |> World.finished_turns("Alpha", texts ++ ["the newest request"])
+      |> switch_and_ask("Alpha")
+
+    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
+    refute kept =~ "part 1 "
+    Map.put(context, :left_out, hd(texts))
+  end
+
+  # Claude, now the thread's agent, reads the thread's first message with the node's tool.
+  step "the agent needs one of the left-out parts", context do
+    read =
+      World.mcp_tool(
+        context,
+        "Alpha",
+        "hal_c2_thread_read",
+        %{
+          "threadId" => World.thread_id(context, "Alpha"),
+          "limit" => 1,
+          "maxCharsPerItem" => String.length(context.left_out)
+        },
+        "claudeAgent"
+      )
+
+    Map.put(context, :read, read)
+  end
+
+  step "the agent can read it through the thread-reading tool", context do
+    assert {:ok, %{"items" => [item], "hasMore" => true}} = context.read
+    assert %{"type" => "user_message", "truncated" => false} = item
+    assert item["text"] == context.left_out
+    context
+  end
+
   defp v2_thread(id, title),
     do: %{
       "id" => id,

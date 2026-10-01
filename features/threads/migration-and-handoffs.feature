@@ -89,7 +89,7 @@ Feature: Carrying threads and context across servers and agents
     Then Claude receives the original request, the recent turns and command outcomes
     And the new message is never shortened
 
-  @backlog @node
+  @node
   Scenario: Left-out history can be looked up
     Given parts of the conversation did not fit in the handoff
     When the agent needs one of the left-out parts
