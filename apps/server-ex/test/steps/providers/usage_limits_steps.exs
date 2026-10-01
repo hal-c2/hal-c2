@@ -857,6 +857,31 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     end
   end
 
+  # Off macOS a Cursor login that is not in a file is its "memory" store, as the Node
+  # server's own test has it. A file left by an earlier login must not be read.
+  step "Cursor is signed in through the system keychain", context do
+    dir = Path.join(context.node.home, "vendor-auth")
+    write_json(Path.join(dir, "config/cursor/auth.json"), %{"accessToken" => "vendor-token"})
+    store = if match?({:unix, :darwin}, :os.type()), do: "default", else: "memory"
+
+    context
+    |> vendor_instance("cursor", %{
+      "XDG_CONFIG_HOME" => Path.join(dir, "config"),
+      "AGENT_CLI_CREDENTIAL_STORE" => store
+    })
+    |> tap(&merge_vendor_config(&1, "cursor", %{"apiEndpoint" => &1.vendor}))
+  end
+
+  step "Cursor says usage needs a file-based login", context do
+    {limits, context} = usage_limits(context, "cursor")
+
+    assert %{"windows" => [], "unavailable" => %{"reason" => "unsupported", "message" => message}} =
+             limits
+
+    assert message == "Cursor usage requires a file-based login or CURSOR_AUTH_TOKEN."
+    context
+  end
+
   step "Grok is connected with an explicit API key", context do
     # A grok.com sign-in is stored too: the explicit key decides whose quota it is.
     home = Path.join(context.node.home, "vendor-auth/.grok")

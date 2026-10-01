@@ -122,7 +122,6 @@ Feature: Cursor
     When the user opens the limits view
     Then Cursor shows its monthly, Auto and API usage with the billing cycle end
 
-  @backlog
   Scenario: Cursor usage is unavailable with a keychain login
     Given Cursor is signed in through the system keychain
     When the user opens the limits view
