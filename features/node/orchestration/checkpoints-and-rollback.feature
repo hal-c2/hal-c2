@@ -187,7 +187,7 @@ Feature: Checkpoints, diffs and rewinding
     Then the provider receives the history through run 1
     And neither rolled-back run is replayed
 
-  @node @backlog
+  @node
   Scenario: A rewind whose restore fails ends with an error
     Given runs 1 and 2 of "t1" completed with checkpoints
     When the user rewinds "t1" to run 1 and restoring the files fails

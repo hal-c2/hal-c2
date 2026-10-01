@@ -296,6 +296,20 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
     context |> ensure_later_runs(thread, n) |> rewind(thread, n, %{"restoreFiles" => true})
   end
 
+  # Git cannot write the worktree's index while another git process holds its lock.
+  step "the user rewinds {string} to run {int} and restoring the files fails",
+       %{args: [thread, n]} = context do
+    cwd = cwd(context, thread)
+    lock = Path.join(String.trim(git(cwd, ["rev-parse", "--absolute-git-dir"])), "index.lock")
+    ref = checkpoint(context, thread, n)["ref"]
+    commit = git(cwd, ["rev-parse", ref])
+    before = tree(cwd)
+    File.write!(lock, "")
+    context = rewind(context, thread, n)
+    File.rm!(lock)
+    Map.merge(context, %{tree_before: before, checkpoint_commit: commit})
+  end
+
   step "the user rewinds {string} to run {int} without restoring files",
        %{args: [thread, n]} = context do
     rewind(context, thread, n, %{"restoreFiles" => false})
@@ -530,6 +544,30 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
     assert {:ok, _} = context.reply
     assert context.rewind_requests != []
     assert rewind_requests(context) == context.rewind_requests
+    context
+  end
+
+  step "the rewind ends with an error", context do
+    assert {:error, "Could not restore the checkpoint: " <> detail, _} = context.reply
+    assert detail =~ "index.lock"
+    assert tree(cwd(context, context.run_title)) == context.tree_before
+    context
+  end
+
+  # No run is active or rolled back, and the thread takes its next message.
+  step "{string} is not left waiting", %{args: [thread]} = context do
+    assert Enum.map(World.runs(context, thread), & &1["status"]) == ["completed", "completed"]
+    assert %{"status" => "completed", "ordinal" => 3} = World.finish_turn(context, thread, "Next")
+    context
+  end
+
+  step "the checkpoint of run {int} is still the last valid checkpoint", %{args: [n]} = context do
+    checkpoint = checkpoint(context, context.run_title, n)
+    assert checkpoint["status"] == "ready"
+
+    assert git(cwd(context, context.run_title), ["rev-parse", checkpoint["ref"]]) ==
+             context.checkpoint_commit
+
     context
   end
 
