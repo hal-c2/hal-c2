@@ -63,21 +63,21 @@ Feature: Plans and subagents
     Given the agent is proposing a plan in the running turn
     Then no plan is offered
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user implements the plan in a new thread
     Given the agent has proposed a plan
     When the user implements the plan in a new thread
     Then a new thread starts implementing the plan
     And the planning thread keeps the plan
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Starting the implementation thread fails
     Given the agent has proposed a plan
     And the environment cannot start a new thread
     When the user implements the plan in a new thread
     Then the user is told "Could not start implementation thread"
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: The user keeps a copy of the plan
     Given the agent has proposed a plan
     When the user <action>
@@ -89,7 +89,7 @@ Feature: Plans and subagents
       | downloads the plan                   | a markdown file of the plan is saved               |
       | saves the plan to "docs/tax-plan.md" | "docs/tax-plan.md" holds the plan in the workspace |
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Saving the plan fails when the workspace is unavailable
     Given the agent has proposed a plan
     And the thread's workspace is unavailable
