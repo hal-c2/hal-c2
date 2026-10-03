@@ -2,6 +2,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
+import { projectScriptRuntimeEnv } from "@hal-c2/shared/projectScripts";
 import { createComputed, createPropertyMap, createRoot, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
@@ -12,6 +13,7 @@ import {
   SIDEBAR_SETTLED_SECTION_ID,
 } from "../components/Sidebar.logic.ts";
 import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
+import { PROJECT_ACTION_RUN_PREFIX, projectActionKeymap } from "../projectActions.ts";
 import type { EditorCommand } from "../promptEditor.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
@@ -270,7 +272,11 @@ export function createHost(options: HostOptions): Host {
     size,
     theme: TUI_THEME_STATE,
     notifications: { items: [] },
-    keybindings: { layers: KEYMAP_LAYERS, groups: KEYBINDING_GROUPS, parity: KEYMAP_PARITY },
+    keybindings: {
+      layers: { ...KEYMAP_LAYERS, projectActions: {} },
+      groups: KEYBINDING_GROUPS,
+      parity: KEYMAP_PARITY,
+    },
     paneScroll,
     plugins: { items: [] } satisfies TuiPluginsState,
     problems: { items: [] },
@@ -553,7 +559,7 @@ export function createHost(options: HostOptions): Host {
   });
 
   /** The selected thread's terminal and file workspace: its worktree, else the project root. */
-  const selectedWorkspace = (): TerminalThread | null => {
+  const selectedWorkspace = (): (TerminalThread & { readonly projectId: string | null }) | null => {
     const current = store.getState();
     if (current.selection?.kind !== "thread") return null;
     const threadId = current.selection.id;
@@ -569,6 +575,8 @@ export function createHost(options: HostOptions): Host {
       title: detail?.title ?? shellThread?.title ?? "",
       cwd: worktreePath ?? workspaceRoot,
       worktreePath,
+      projectId: projectId ?? null,
+      env: projectScriptRuntimeEnv({ project: { cwd: workspaceRoot }, worktreePath }),
     };
   };
   // The MC does background work (git fetches) only for what a client is looking at.
@@ -678,6 +686,9 @@ export function createHost(options: HostOptions): Host {
   registerSettingsSections(sections, {
     appVersion: options.appVersion ?? null,
     serverUpdated: () => updateNotice.check(),
+    // An action runs in the open thread's workspace, so only for a thread of its project.
+    runProjectAction: (projectId, script) =>
+      selectedWorkspace()?.projectId === projectId && terminal.runAction(script),
   });
   /** The files, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
@@ -764,6 +775,15 @@ export function createHost(options: HostOptions): Host {
   const handleAlias = (action: string): boolean | null => {
     const jump = /^thread\.jump\.([1-9])$/.exec(action);
     if (jump) return handle("thread.jump", { index: Number(jump[1]) });
+    if (action.startsWith(PROJECT_ACTION_RUN_PREFIX)) {
+      // A shortcut runs its action only in a thread of a project that has it.
+      const workspace = selectedWorkspace();
+      const script = store
+        .getState()
+        .shell?.projects.find((project) => project.id === workspace?.projectId)
+        ?.scripts?.find((entry) => entry.id === action.slice(PROJECT_ACTION_RUN_PREFIX.length));
+      return script ? terminal.runAction(script) : false;
+    }
     switch (action) {
       case "timeline.pageUp":
         return handle("timeline.scroll", { by: -10 });
@@ -1112,6 +1132,12 @@ export function createHost(options: HostOptions): Host {
     (config) => {
       settlementSupported = config.environment?.capabilities?.threadSettlement === true;
       publishSidebar();
+      // The shortcuts the user gave project actions join the client's own chords.
+      state.set("keybindings", {
+        layers: { ...KEYMAP_LAYERS, projectActions: projectActionKeymap(config.keybindings ?? []) },
+        groups: KEYBINDING_GROUPS,
+        parity: KEYMAP_PARITY,
+      });
     },
     () => {
       // Defaults stay usable while disconnected or on an older server.

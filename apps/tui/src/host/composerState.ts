@@ -18,6 +18,7 @@ import { truncate } from "@hal-c2/shared/String";
 import type { PropertyMap } from "opentui-qml";
 
 import { derivePendingApprovals } from "../approvals.ts";
+import { readProjectFile } from "../projectActions.ts";
 import {
   extractPastedImagePath,
   findPromptImagePathLines,
@@ -260,6 +261,8 @@ interface NewDraft {
   readonly contextWorktreePath: string | null;
   readonly refs: ReadonlyArray<VcsRef>;
   readonly refsStatus: TuiNewThreadState["refsStatus"];
+  /** The user picked the workspace: the project file's default no longer applies. */
+  readonly workspaceChosen?: boolean;
 }
 
 interface SelectOption {
@@ -1076,7 +1079,7 @@ export function createComposer(options: ComposerOptions): Composer {
           );
       if (currentRef) branch = currentRef.name;
     }
-    newDraft = { ...newDraft, workspaceMode: mode, branch, worktreePath };
+    newDraft = { ...newDraft, workspaceMode: mode, branch, worktreePath, workspaceChosen: true };
     store.setStatus(
       mode === "new-worktree" ? "Workspace → New worktree" : "Workspace → Current checkout",
       "success",
@@ -1182,14 +1185,18 @@ export function createComposer(options: ComposerOptions): Composer {
           : (thread?.projectId ?? current.projectScopeId);
     const list = projects();
     const target = list.find((candidate) => candidate.id === selectedProjectId);
-    const context = resolveNewThreadContext({
-      projects: list,
-      selectedProjectId,
-      thread,
-      // Null means inherit: the project's own default, then the server's, then local.
-      defaultEnvironmentMode:
-        envMode(target?.defaultThreadEnvMode) ?? envMode(settings.defaultThreadEnvMode) ?? "local",
-    });
+    // Null means inherit: the project's own default, then the server's, then
+    // the checkout's hal-c2.json (read below), then local.
+    const savedMode =
+      envMode(target?.defaultThreadEnvMode) ?? envMode(settings.defaultThreadEnvMode);
+    const contextFor = (defaultEnvironmentMode: "local" | "worktree") =>
+      resolveNewThreadContext({
+        projects: list,
+        selectedProjectId,
+        thread,
+        defaultEnvironmentMode,
+      });
+    const context = contextFor(savedMode ?? "local");
     const project = list[context.projectIndex] ?? null;
     const modelSelection = project?.defaultModelSelection ?? thread?.modelSelection ?? null;
     draftCount += 1;
@@ -1213,6 +1220,24 @@ export function createComposer(options: ComposerOptions): Composer {
     publish();
     options.onDraftChange?.();
     if (project) void loadRefs(newDraft.draftId, project.workspaceRoot);
+    if (project && savedMode === null) {
+      const draftId = newDraft.draftId;
+      void track(
+        readProjectFile(client.readFile, project.workspaceRoot).then((file) => {
+          const mode = envMode(file?.defaultThreadEnvMode);
+          if (mode === null || newDraft?.draftId !== draftId || newDraft.workspaceChosen) return;
+          const next = contextFor(mode);
+          newDraft = {
+            ...newDraft,
+            workspaceMode: next.workspaceMode,
+            branch: newDraft.branch ?? next.branch,
+            worktreePath: next.worktreePath,
+            contextWorktreePath: next.worktreePath,
+          };
+          publish();
+        }),
+      );
+    }
   };
 
   const closeNewThread = () => {
@@ -1609,6 +1634,14 @@ export function createComposer(options: ComposerOptions): Composer {
     const current = store.getState();
     const key = selectionKey(current.selection);
     if (newDraft && newDraft.originKey !== key) closeNewThread();
+    // A draft's project was removed: the draft goes with it.
+    if (
+      newDraft?.projectId &&
+      current.shell &&
+      !current.shell.projects.some((project) => project.id === newDraft!.projectId)
+    ) {
+      closeNewThread();
+    }
     const detail = selectedDetail();
     if (detail && interactionOverrides.get(detail.id) === detail.interactionMode) {
       interactionOverrides.delete(detail.id);

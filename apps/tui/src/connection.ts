@@ -524,9 +524,21 @@ export interface TuiClient extends TuiSettingsClient {
       readonly worktreePath: string | null;
       readonly cols: number;
       readonly rows: number;
+      /** What a shell started by this attach finds in its environment. */
+      readonly env?: Readonly<Record<string, string>>;
     },
     onEvent: (event: TerminalAttachStreamEvent) => void,
   ) => () => void;
+  /** Start the terminal's shell (again, when it has ended) so a command can be written to it. */
+  readonly terminalOpen: (input: {
+    readonly threadId: ThreadId;
+    readonly terminalId: string;
+    readonly cwd: string;
+    readonly worktreePath: string | null;
+    readonly cols: number;
+    readonly rows: number;
+    readonly env?: Readonly<Record<string, string>>;
+  }) => Promise<void>;
   readonly sendReply: (
     thread: Pick<OrchestrationThread, "id" | "runtimeMode" | "interactionMode">,
     text: string,
@@ -887,6 +899,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         worktreePath: input.worktreePath,
         cols: input.cols,
         rows: input.rows,
+        ...(input.env ? { env: input.env } : {}),
         restartIfNotRunning: true,
       }).pipe(Stream.tap((event) => Effect.sync(() => onEvent(event))));
       return drainStreamUntilUnsubscribe(stream);
@@ -1154,6 +1167,19 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           cwd: TrimmedNonEmptyString.make(cwd),
           refName: TrimmedNonEmptyString.make(refName),
         }),
+      ),
+
+    terminalOpen: (input) =>
+      runtime.runPromise(
+        request(WS_METHODS.terminalOpen, {
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+          cwd: input.cwd,
+          worktreePath: input.worktreePath,
+          cols: input.cols,
+          rows: input.rows,
+          ...(input.env ? { env: input.env } : {}),
+        }).pipe(Effect.asVoid),
       ),
 
     terminalWrite: (threadId, terminalId, data) =>

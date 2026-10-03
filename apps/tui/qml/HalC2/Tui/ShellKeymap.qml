@@ -24,6 +24,8 @@ Item {
     }
 
     Keymap { priority: 1; enabled: keys.mode === "compose"; bindings: keys.layers.compose; onActivated: (action, event) => keys.run(action, event) }
+    // The shortcuts the user gave the open thread's project actions.
+    Keymap { enabled: keys.mode === "compose"; bindings: keys.layers.projectActions; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "newThread"; bindings: keys.layers.newThread; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "userInput"; bindings: keys.layers.userInput; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "revert"; bindings: keys.layers.revert; onActivated: (action, event) => keys.run(action, event) }

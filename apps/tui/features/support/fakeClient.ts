@@ -184,6 +184,7 @@ export function fakeClient({
     ({ cwd: destinationPath, remoteUrl, repository: null }) as never,
   createProject = async () => "p-new" as never,
   createThread = async () => "t-new" as never,
+  terminalOpen = async () => {},
   terminalClear = async () => {},
   terminalRestart = async () => {},
   terminalClose = async () => {},
@@ -254,6 +255,7 @@ export function fakeClient({
   readonly cloneRepository?: TuiClient["cloneRepository"];
   readonly createProject?: TuiClient["createProject"];
   readonly createThread?: TuiClient["createThread"];
+  readonly terminalOpen?: TuiClient["terminalOpen"];
   readonly terminalClear?: TuiClient["terminalClear"];
   readonly terminalRestart?: TuiClient["terminalRestart"];
   readonly terminalClose?: TuiClient["terminalClose"];
@@ -510,6 +512,7 @@ export function fakeClient({
       onTerminalWrite?.(terminal, data);
     },
     terminalResize: async () => {},
+    terminalOpen,
     terminalClear,
     terminalRestart,
     setInteractionMode:

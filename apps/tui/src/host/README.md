@@ -13,7 +13,8 @@ desktop shell's contract names, extended for the terminal), `mode`, `status`,
 `git`, `settings`, `paneScroll`, `terminal`, `files`, `addProject`,
 `settingsSection`, `updateNotice`,
 `keybindings` (`src/keymap.ts`: the chord layers per mode, the reference
-groups and the web parity table), `plugins`, `problems`, `connection` (see
+groups and the web parity table; `layers.projectActions` holds the server's
+`script.<id>.run` shortcuts, live in the prompt), `plugins`, `problems`, `connection` (see
 "Plugins, problems and connection"), `graphics`, and the open thread's keys
 from `threadView.ts` (below).
 
@@ -97,6 +98,13 @@ that cannot be undone. Modes `section`, `sectionInput` and `sectionConfirm`;
 actions `section.previous/next/activate {id?}/back/close`,
 `section.input.submit {text}/cancel` and `section.confirm.yes/no`. A section
 only describes its page (`page()`); it never touches the selection or the keys.
+
+The `projects` section (`sections/projects.ts`) is where a project is changed:
+where its new threads start, its actions (add, edit, delete, import from
+`hal-c2.json`) and removing it, all as `projects.mutate`. `project.action.run
+{projectId, actionId}` types an action's command into the open thread's
+terminal (`terminal.runAction`: the active terminal, or a new one while that
+runs something), with `HAL_C2_PROJECT_ROOT` / `HAL_C2_WORKTREE_PATH` set.
 
 Settings reach machines other than the one the terminal is connected to
 (linked environments and cluster members, `sections/shared.ts` `readMachines`),

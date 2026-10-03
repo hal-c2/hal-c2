@@ -1,6 +1,9 @@
 import type { SettingsSections } from "../settingsSections.ts";
 import { backgroundActivitySection } from "./backgroundActivity.ts";
+import type { ProjectScript } from "@hal-c2/contracts";
+
 import { diagnosticsSection } from "./diagnostics.ts";
+import { projectsSection } from "./projects.ts";
 import { resourceMonitorSection } from "./resourceMonitor.ts";
 import { scheduledTasksSection } from "./scheduledTasks.ts";
 import { sourceControlSection } from "./sourceControl.ts";
@@ -18,8 +21,13 @@ export function registerSettingsSections(
     readonly appVersion: string | null;
     /** A server was updated: whatever follows its version reads it again. */
     readonly serverUpdated: () => void;
+    /** Run a project action in the open thread's terminal; false when it cannot. */
+    readonly runProjectAction: (projectId: string, script: ProjectScript) => boolean;
   },
 ): void {
+  sections.register("projects", (host) =>
+    projectsSection(host, { runAction: options.runProjectAction }),
+  );
   sections.register("scheduledTasks", scheduledTasksSection);
   sections.register("storage", storageSection);
   sections.register("sourceControl", sourceControlSection);
