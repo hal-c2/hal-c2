@@ -55,8 +55,10 @@ public:
   // already is. A refusal is told under `failureTitle`: opening a folder
   // from this machine says "Could not open folder", the palette's Add project
   // "Failed to add project".
+  // `newThread` starts a thread in a project that is already there instead
+  // of opening its latest one (a folder the app was launched with).
   void addFolder(const QString& environmentId, const QString& path,
-                 const QString& failureTitle = QStringLiteral("Could not open folder"));
+                 const QString& failureTitle = QStringLiteral("Could not open folder"), bool newThread = false);
   // Where Add project browses on `environmentId` from, as a folder ("~/"
   // unless its settings name another, once they have arrived).
   QString browseStart(const QString& environmentId) const;
@@ -68,7 +70,7 @@ private:
     QString title;
   };
 
-  void openFolder(const QString& path);
+  void openFolder(const QString& path, bool newThread = false);
   // Opens the project's latest thread still in play, else its draft.
   void openProject(const QString& environmentId, const QString& projectId);
   void askToRemove(const QString& projectKey);

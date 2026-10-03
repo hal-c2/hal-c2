@@ -26,6 +26,7 @@
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "ShellWindows.h"
+#include "SingleInstance.h"
 #include "StoragePaths.h"
 #include "ThemeStore.h"
 
@@ -158,6 +159,14 @@ int main(int argc, char* argv[]) {
     qInfo().noquote() << "[shell] bricks from disk:" << qmlSourceDir;
   }
 
+  // A folder named while the app already runs on this home goes to that
+  // window, and this launch ends here: no second MC starts.
+  QStringList launchFolders;
+  for (const QString& argument : parser.positionalArguments()) {
+    if (QFileInfo(argument).isDir()) launchFolders.append(QFileInfo(argument).absoluteFilePath());
+  }
+  if (!launchFolders.isEmpty() && SingleInstance::forward(storage.state, launchFolders)) return 0;
+
   ShellBridge bridge;
   bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));
   qmlRegisterType<LocalTranscriber>("HalC2.Shell", 1, 0, "LocalTranscriber");
@@ -224,7 +233,10 @@ int main(int argc, char* argv[]) {
   // apps/desktop-qt/licenses/ in a dev build.
   LicensesController::setManifestPath(
       QFileInfo(backendOptions.hostEntry).dir().absoluteFilePath(QStringLiteral("../licenses/third-party-licenses.json")));
-  backendOptions.hostArguments = parser.positionalArguments();
+  // The folders are the shell's own; the rest is the host's.
+  for (const QString& argument : parser.positionalArguments()) {
+    if (!QFileInfo(argument).isDir()) backendOptions.hostArguments.append(argument);
+  }
   // Without a root the MC resolves the same XDG directories itself.
   if (!storage.root.isEmpty()) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
@@ -234,6 +246,18 @@ int main(int argc, char* argv[]) {
   if (parser.isSet(urlOption)) {
     backendOptions.hostArguments.prepend(
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));
+  }
+  // Later launches hand their folders to this window, which adds each as a
+  // project (or finds it) and starts a thread there.
+  SingleInstance instance(storage.state);
+  const auto launch = [&bridge](const QStringList& folders) {
+    for (const QString& folder : folders) bridge.dispatch(QStringLiteral("project.launch"), QVariantMap{{QStringLiteral("path"), folder}});
+    bridge.windowCommand(QStringLiteral("raise"));
+  };
+  if (!instance.listen(launch)) qWarning("[shell] later launches cannot reach this window");
+  // This launch's own folders, once the MC's first snapshot is in.
+  if (!launchFolders.isEmpty()) {
+    QObject::connect(&native, &NativeShell::ready, &native, [launch, launchFolders] { launch(launchFolders); }, Qt::SingleShotConnection);
   }
   BackendProcess backend(backendOptions);
   QObject::connect(&backend, &BackendProcess::ready, &native, &NativeShell::open);

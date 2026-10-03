@@ -286,6 +286,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/toasts.feature"),
     QStringLiteral("preview/devices.feature"),
     QStringLiteral("navigation/qt-shell-backlog.feature:A device tab streams a device screen"),
+    QStringLiteral("navigation/qt-shell-backlog.feature:Opening a folder*"),
     QStringLiteral("desktop/shell-host.feature:A screenshot taken without a display shows the app's window"),
     QStringLiteral("navigation/qt-shell-backlog.feature:The previous worktree shortcut works in the native composer"),
     QStringLiteral("navigation/qt-shell-backlog.feature:Thread number shortcuts work in the native desktop shell"),

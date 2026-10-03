@@ -112,14 +112,17 @@ QString ProjectController::browseStart(const QString& environmentId) const {
 bool ProjectController::handle(const QString& action, const QVariant& payload) {
   if (!m_active) return false;
   const QVariantMap map = payload.toMap();
-  if (action == QLatin1String("project.add") || action == QLatin1String("project.folder.open")) {
+  // `project.launch {path}`: a folder the app was started with (main.cpp),
+  // which always gets a new thread.
+  const bool launched = action == QLatin1String("project.launch");
+  if (launched || action == QLatin1String("project.add") || action == QLatin1String("project.folder.open")) {
     const QString path = map.value(QStringLiteral("path")).toString();
     // Without a folder, the palette's Add project.
     if (path.isEmpty()) return NativeShell::of(this)->controller<KeybindingController>()->commands()->run(kAdd);
     // Where this machine's folders are not the MC's (an MC elsewhere),
     // nothing opens.
     if (!m_bridge->localFolders()) return true;
-    openFolder(path);
+    openFolder(path, launched);
     return true;
   }
   if (action == QLatin1String("project.remove")) {
@@ -138,7 +141,7 @@ bool ProjectController::handle(const QString& action, const QVariant& payload) {
   return false;
 }
 
-void ProjectController::openFolder(const QString& path) {
+void ProjectController::openFolder(const QString& path, bool newThread) {
   auto* toasts = NativeShell::of(this)->controller<ToastController>();
   const QFileInfo folder(path);
   if (!folder.isDir()) {
@@ -150,10 +153,10 @@ void ProjectController::openFolder(const QString& path) {
     toasts->error(QStringLiteral("Could not open folder"), QStringLiteral("The environment is not connected."));
     return;
   }
-  addFolder(own, folder.canonicalFilePath());
+  addFolder(own, folder.canonicalFilePath(), QStringLiteral("Could not open folder"), newThread);
 }
 
-void ProjectController::addFolder(const QString& environmentId, const QString& root, const QString& failureTitle) {
+void ProjectController::addFolder(const QString& environmentId, const QString& root, const QString& failureTitle, bool newThread) {
   // The environment chosen went away while the folder was being picked.
   if (!m_store->environmentOnline(environmentId)) {
     const QString label = m_store->environment(environmentId).value(QLatin1String("label")).toString(environmentId);
@@ -164,7 +167,11 @@ void ProjectController::addFolder(const QString& environmentId, const QString& r
   const QString normalized = sidebar::normalizePath(root);
   for (const sidebar::Project& project : m_store->projects()) {
     if (project.environmentId == environmentId && sidebar::normalizePath(project.workspaceRoot) == normalized) {
-      openProject(environmentId, project.id);
+      if (newThread) {
+        NativeShell::of(this)->controller<DraftController>()->start(environmentId, project.id);
+      } else {
+        openProject(environmentId, project.id);
+      }
       return;
     }
   }
