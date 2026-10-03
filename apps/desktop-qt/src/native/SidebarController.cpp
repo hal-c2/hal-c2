@@ -126,7 +126,23 @@ void SidebarController::refresh() {
   const QTime time = now.time();
   m_minute.start(std::max(1000, 60000 - time.second() * 1000 - time.msec()));
   if (regrouped) emit grouped();
+  announceMigratedThreads();
   visitOpenThread();
+}
+
+void SidebarController::announceMigratedThreads() {
+  static const QString kAnnounced = QStringLiteral("migratedThreadsAnnounced");
+  if (!m_store->synchronized()) return;
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  if (!settings || settings->deviceSettings().value(kAnnounced).toBool()) return;
+  qsizetype migrated = 0;
+  for (const sidebar::Thread& thread : m_store->threads()) {
+    if (m_store->threadRow(thread.key()).value(QLatin1String("historyOrigin")) == QLatin1String("v1_import")) ++migrated;
+  }
+  if (migrated == 0 || !settings->writeDevice(kAnnounced, true)) return;
+  toasts()->show(QStringLiteral("info"), QStringLiteral("Your threads were brought over"),
+                 migrated == 1 ? QStringLiteral("1 thread from the previous version is in the list, with its conversation.")
+                               : QStringLiteral("%1 threads from the previous version are in the list, with their conversations.").arg(migrated));
 }
 
 void SidebarController::visitOpenThread() {

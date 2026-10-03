@@ -54,6 +54,34 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("a visit up to %1; the MC has %2").arg(updatedAt, world.describeCommands()); });
   });
 
+  // Threads from the first version.
+  step(QStringLiteral("threads were migrated from the first version"), [](World& world, const Captures&, const Table&) {
+    for (const QString& title : {QStringLiteral("Legacy work"), QStringLiteral("Older legacy work")}) {
+      const QString id = QStringLiteral("t-") + title.toLower().replace(QLatin1Char(' '), QLatin1Char('-'));
+      world.mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), title}, {QStringLiteral("projectId"), QStringLiteral("legacy")},
+                                   {QStringLiteral("historyOrigin"), QStringLiteral("v1_import")},
+                                   {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:00:00Z")}});
+    }
+    world.connect();
+  });
+  step(QStringLiteral("the user is told the threads were brought over"), [](World& world, const Captures&, const Table&) {
+    const auto told = [&] {
+      QVariantList matching;
+      for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+        if (item.toMap().value(QStringLiteral("title")) == QLatin1String("Your threads were brought over")) matching.append(item);
+      }
+      return matching;
+    };
+    world.waitFor([&] { return !told().isEmpty(); }, [&] { return QStringLiteral("the notice; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
+    expect(told().size() == 1 && told().first().toMap().value(QStringLiteral("description")).toString().startsWith(QLatin1String("2 threads")),
+           QStringLiteral("the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+    // Once: the next start says nothing.
+    world.restart();
+    world.connect();
+    world.sync();
+    expect(told().isEmpty(), QStringLiteral("the notice is shown again"));
+  });
+
   // The preview.
   step(QStringLiteral("the user rests the pointer on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString key = threadKeyOf(world, c[0]);

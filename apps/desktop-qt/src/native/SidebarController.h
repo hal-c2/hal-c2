@@ -141,6 +141,9 @@ private:
   // activity at most every few seconds; an MC that does not keep the
   // watermark (no `lastVisitedAt` on its rows) is not told.
   void visitOpenThread();
+  // Threads the MC brought over from the first version (`historyOrigin`
+  // "v1_import") are announced once per device, the first time they are listed.
+  void announceMigratedThreads();
   // The open thread, from the shell's route.
   QString activeThreadKey() const;
 
