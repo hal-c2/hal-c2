@@ -183,6 +183,18 @@ defmodule HalC2.Test.Machines do
     if File.dir?(dir), do: File.ls!(dir), else: []
   end
 
+  @doc "The sha256 of each file this MC holds for moves that have not finished arriving."
+  def incoming_move_files do
+    for path <- Path.wildcard(Path.join([HalC2.Paths.data_dir(), "incoming-moves", "*", "*"])),
+        do: :crypto.hash(:sha256, File.read!(path))
+  end
+
+  @doc "The bundles this MC holds that it made for a thread's archive."
+  def archive_bundles do
+    dir = Path.join(HalC2.Paths.cache_dir(), "thread-bundles")
+    if File.dir?(dir), do: File.ls!(dir), else: []
+  end
+
   @doc """
   A `:thread_move_hook` that holds a move at `stage`: it tells `test` with
   `{:move_held, pid, stage, thread_id}` and waits for `:release` sent to `pid`.

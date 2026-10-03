@@ -9,8 +9,10 @@ defmodule HalC2.ThreadMove do
   the agent, the project, the space), and returns what does not come along for the
   user to confirm. The thread is then marked `moving` and read-only, sent as a
   `HalC2.ThreadArchive`, and the destination stages it before importing it
-  (`accept/2`). Only once the destination has it does the source let go; a move that
-  breaks off clears `moving` and leaves the thread where it was.
+  (`accept/3`). The files it carries (the agent's session, the git bundles, the
+  attachments) go from disk to disk a chunk at a time (`read/3`), so neither machine
+  holds a large thread in memory. Only once the destination has it does the source let
+  go; a move that breaks off clears `moving` and leaves the thread where it was.
 
   This process settles moves a restart or a lost connection cut off: at boot, and
   when a destination comes back, a thread still marked `moving` becomes a forwarding
@@ -33,6 +35,8 @@ defmodule HalC2.ThreadMove do
   # Free space a move leaves on the destination, beyond the thread itself.
   @reserve 256 * 1024 * 1024
   @timeout 600_000
+  # How much of a carried file crosses the cluster connection at a time.
+  @chunk 512 * 1024
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -50,13 +54,18 @@ defmodule HalC2.ThreadMove do
          :ok <- movable(state(id), thread),
          :ok <- online(dest, thread),
          :ok <- save_terminals(id),
-         {:ok, archive} <- build(id),
-         {:ok, %{"project" => _} = fit} <-
-           ask(dest, :fit, [request(archive, opts[:project])], thread),
-         notes = fit["notes"] ++ source_notes(id, thread, archive, dest),
-         :ok <- confirmed(notes, opts[:confirmed] == true),
-         {:ok, archive} <- begin(id, dest, archive) do
-      transfer(id, dest, archive, fit, notes)
+         {:ok, archive} <- build(id) do
+      try do
+        with {:ok, %{"project" => _} = fit} <-
+               ask(dest, :fit, [request(archive, opts[:project])], thread),
+             notes = fit["notes"] ++ source_notes(id, thread, archive, dest),
+             :ok <- confirmed(notes, opts[:confirmed] == true),
+             {:ok, archive} <- begin(id, dest, archive) do
+          transfer(id, dest, archive, fit, notes)
+        end
+      after
+        ThreadArchive.discard(archive)
+      end
     end
   end
 
@@ -241,7 +250,9 @@ defmodule HalC2.ThreadMove do
     %{
       "thread" => meta(archive),
       "instanceId" => meta(archive)["instanceId"],
-      "size" => :erlang.external_size(archive),
+      "size" =>
+        :erlang.external_size(archive) +
+          Enum.sum(for file <- ThreadArchive.files(archive), do: file["size"] || 0),
       "checkpoints" => archive["checkpoints"] != nil,
       "project" => project
     }
@@ -325,15 +336,24 @@ defmodule HalC2.ThreadMove do
     end
   end
 
+  # `archive` may be one `begin/3` built again, so its files are discarded here too.
   defp transfer(id, dest, archive, fit, notes) do
-    data = JSON.encode!(archive)
+    data = ThreadArchive.encode(archive)
     hook(:sending, id)
 
     result =
       try do
-        :erpc.call(dest.mc, __MODULE__, :accept, [data, [project: fit["project"]]], @timeout)
+        :erpc.call(
+          dest.mc,
+          __MODULE__,
+          :accept,
+          [data, node(), [project: fit["project"]]],
+          @timeout
+        )
       catch
         kind, reason -> {:broken, {kind, reason}}
+      after
+        ThreadArchive.discard(archive)
       end
 
     case result do
@@ -509,22 +529,44 @@ defmodule HalC2.ThreadMove do
   end
 
   @doc """
-  Receives a thread (its archive's JSON): stages it under this MC's data, then
-  imports it into `opts[:project]`.
+  Receives a thread (its archive's JSON) from the member `from`: stages the files it
+  carries under this MC's data, then imports it into `opts[:project]`.
   """
-  def accept(data, opts) do
-    {:ok, %{"thread" => %{"id" => id}}} = JSON.decode(data)
+  def accept(data, from, opts) do
+    {:ok, %{"thread" => %{"id" => id}} = archive} = JSON.decode(data)
     staged = Path.join(incoming(), Base.url_encode64(id, padding: false))
-    File.mkdir_p!(incoming())
-    File.write!(staged, data)
+    File.rm_rf!(staged)
+    File.mkdir_p!(staged)
 
     try do
+      archive = ThreadArchive.map_files(archive, &pull(&1, from, staged))
       hook(:staged, id)
-      ThreadArchive.import_archive(data, project: opts[:project])
+      ThreadArchive.import_archive(archive, project: opts[:project])
     after
-      File.rm(staged)
+      File.rm_rf(staged)
     end
   end
+
+  # Copies a carried file from where it is on `from` into `dir`.
+  defp pull(%{"path" => path, "size" => size} = file, from, dir) do
+    staged = Path.join(dir, Integer.to_string(System.unique_integer([:positive])))
+
+    File.open!(staged, [:write, :raw, :binary], fn out ->
+      for offset <- Range.new(0, size - 1, @chunk) do
+        length = min(@chunk, size - offset)
+        {:ok, bytes} = :erpc.call(from, __MODULE__, :read, [path, offset, length], 60_000)
+        :ok = :file.write(out, bytes)
+      end
+    end)
+
+    file |> Map.delete("temporary") |> Map.put("path", staged)
+  end
+
+  defp pull(file, _from, _dir), do: file
+
+  @doc "A chunk of a file a thread leaving this MC carries; its destination asks for it."
+  def read(path, offset, bytes),
+    do: File.open!(path, [:read, :raw, :binary], &:file.pread(&1, offset, bytes))
 
   @doc "Whether this MC holds the thread `id` (not a forwarding record); `:deleted` if deleted here."
   def holds?(id) do
@@ -650,6 +692,7 @@ defmodule HalC2.ThreadMove do
   def init(_opts) do
     :ok = :net_kernel.monitor_nodes(true)
     File.rm_rf(incoming())
+    ThreadArchive.clear_scratch()
     send(self(), {:settle, :all})
     {:ok, %{after_turn: %{}}}
   end
