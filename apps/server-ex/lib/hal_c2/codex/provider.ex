@@ -67,7 +67,8 @@ defmodule HalC2.Codex.Provider do
 
   defp read_models do
     with [_ | _] = cmd <- command(),
-         {:ok, conn} <- Connection.start_link(cmd: cmd, handler: self()),
+         {:ok, args} <- launch_args("codex"),
+         {:ok, conn} <- Connection.start_link(cmd: cmd ++ args, handler: self()),
          {:ok, _} <-
            Connection.call(conn, "initialize", %{
              "clientInfo" => %{"name" => "hal_c2_elixir", "version" => "0.1.0"}
@@ -94,6 +95,40 @@ defmodule HalC2.Codex.Provider do
   catch
     _, _ -> :ok
   end
+
+  @doc """
+  The launch arguments set on a Codex instance (`launchArgs`), split as a shell
+  would. Every Codex process the MC starts for the instance takes them: its sessions
+  and this check after `app-server`, and `codex exec` those it has (`exec_args/1`).
+  """
+  @spec launch_args(String.t() | nil) :: {:ok, [String.t()]} | {:error, String.t()}
+  def launch_args(instance) do
+    {:ok, OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")}
+  rescue
+    RuntimeError -> {:error, "the launch arguments in settings have a quote that is never closed"}
+  end
+
+  @doc """
+  The launch arguments `codex exec` takes: config overrides and feature switches
+  (`--strict-config`, `-c`/`--config`, `--enable`, `--disable`). The rest belong to
+  `app-server` alone.
+  """
+  @spec exec_args([String.t()]) :: [String.t()]
+  def exec_args(["--strict-config" = arg | rest]), do: [arg | exec_args(rest)]
+
+  def exec_args([arg, value | rest]) when arg in ~w(--config -c --enable --disable) do
+    if String.starts_with?(value, "-"),
+      do: exec_args([value | rest]),
+      else: [arg, value | exec_args(rest)]
+  end
+
+  def exec_args([arg | rest]) do
+    if String.starts_with?(arg, ["--config=", "-c=", "--enable=", "--disable="]),
+      do: [arg | exec_args(rest)],
+      else: exec_args(rest)
+  end
+
+  def exec_args([]), do: []
 
   defp model_entry(model),
     do: %{

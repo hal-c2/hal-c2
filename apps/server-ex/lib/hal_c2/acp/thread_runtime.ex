@@ -1604,7 +1604,16 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp finish_tool(state, id, call) do
     %{kind: kind} = state.items[id]
-    status = if call["status"] == "failed", do: "failed", else: "completed"
+
+    status =
+      cond do
+        call["status"] == "failed" -> "failed"
+        # A command the user's stop cut off was stopped, though its agent reports it
+        # done like any other.
+        kind == :command and state.interrupted -> "interrupted"
+        true -> "completed"
+      end
+
     output = content_text(call["content"]) || raw_output(call["rawOutput"])
 
     finish_item(state, id, status, fn entity ->

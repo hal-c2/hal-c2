@@ -182,7 +182,6 @@ Feature: Claude
     When the user resumes the Claude thread
     Then the user can compact and continue, keep the full history, or never be asked again
 
-  @backlog
   Scenario: Claude subagents appear as child work in the timeline
     When Claude starts a subagent
     Then the subagent's work is grouped under the step that started it

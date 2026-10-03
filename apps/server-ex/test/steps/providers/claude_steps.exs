@@ -457,6 +457,38 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # The fake's "in the background" turn starts a subagent with the Agent tool (tool use
+  # agent-1, task task-agent-1); the task then says what it does and ends.
+  step "Claude starts a subagent", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    task = %{"type" => "system", "task_id" => "task-agent-1", "tool_use_id" => "agent-1"}
+
+    claude_says(
+      context,
+      Map.merge(task, %{"subtype" => "task_progress", "summary" => "Reading lib"})
+    )
+
+    claude_says(
+      context,
+      Map.merge(task, %{
+        "subtype" => "task_notification",
+        "status" => "completed",
+        "summary" => "lib has three modules"
+      })
+    )
+
+    Map.merge(context, %{
+      thread: @thread,
+      subagent_prompt: "List what is in the repo",
+      subagent_answer: "lib has three modules"
+    })
+  end
+
   step "the thread is in plan mode on Claude", context do
     context |> World.fake_providers() |> Map.put(:interaction_mode, "plan")
   end

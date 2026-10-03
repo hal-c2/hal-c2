@@ -428,6 +428,60 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Turn two is stopped while Pi works; the user's message is already in Pi's session.
+  step "a Pi thread with a stopped turn followed by a finished turn", context do
+    context = context |> install() |> FakeAcp.thread() |> turn("first")
+    context = FakeAcp.send_message(context, "a long task")
+    await_answers(context, 2)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    FakeAcp.await_run(context, "interrupted")
+    context = turn(context, "third")
+    Map.merge(context, %{current_thread: context.thread, pi_session: session_file(context)})
+  end
+
+  step "the user reverts to before the stopped turn", context do
+    World.rollback(context, context.thread, 1, %{"restoreFiles" => false})
+  end
+
+  # Pi forked its session before the stopped turn's user message.
+  step "Pi continues from the turn before it", context do
+    assert {:ok, _} = context.reply
+    assert [%{"entryId" => entry}] = FakeAcp.received_type(context, "fork")
+    assert entry == user_entry(context.pi_session, "a long task")
+    assert session_file(context) != context.pi_session
+    context
+  end
+
+  step "the stopped turn is not used as Pi's history", context do
+    context = turn(context, "where are we")
+    assert List.last(replies(context)) == "Reply to where are we after [first]"
+
+    history =
+      for %{"message" => %{"role" => "user", "content" => text}} <-
+            JSON.decode!(File.read!(session_file(context)))["entries"],
+          do: text
+
+    assert history == ["first", "where are we"]
+    context
+  end
+
+  # Pi has started its answer number `count` in the scenario's thread (its text may
+  # still be held back for streaming).
+  defp await_answers(context, count) do
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      length(
+        Enum.filter(StreamState.list(state, "turn-item"), &(&1["type"] == "assistant_message"))
+      ) == count
+    end)
+  end
+
   step "the user forks from the second turn into a new worktree", context do
     root = World.project(context).root
     worktree = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "worktrees"), "pi-fork")
