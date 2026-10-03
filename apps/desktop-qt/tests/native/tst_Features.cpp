@@ -422,6 +422,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/unread-and-status.feature:Marking a thread unread from its menu"),
     QStringLiteral("threads/limited-threads.feature:A limited thread says so*"),
     QStringLiteral("threads/moving-between-machines.feature"),
+    QStringLiteral("threads/creating.feature:A new thread uses the project default model*"),
     QStringLiteral("threads/search.feature:Searching spans every connected environment"),
     QStringLiteral("threads/search.feature:An offline environment is left out of the search"),
     QStringLiteral("threads/search.feature:Moving through search results with the keyboard"),
