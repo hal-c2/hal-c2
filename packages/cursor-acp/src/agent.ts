@@ -408,12 +408,31 @@ function toolFailed(toolCall: ToolCall): boolean {
   );
 }
 
+/** What a subagent (the `task` tool) said: its assistant messages, then its closing note. */
+function taskOutput(value: unknown): string {
+  const record = (input: unknown): Record<string, unknown> | undefined =>
+    typeof input === "object" && input !== null ? (input as Record<string, unknown>) : undefined;
+  const result = record(value);
+  const steps = Array.isArray(result?.conversationSteps) ? result.conversationSteps : [];
+  const texts = steps.map((step) => {
+    const entry = record(step);
+    const message = record(
+      entry?.type === "assistantMessage" ? entry.message : entry?.assistantMessage,
+    );
+    return typeof message?.text === "string" ? message.text : "";
+  });
+  const suffix = typeof result?.resultSuffix === "string" ? result.resultSuffix : "";
+  return [...texts, suffix].filter((part) => part.trim().length > 0).join("\n");
+}
+
 /** A finished tool's output as text: a command's output, an edit's diff, or its result. */
 function toolOutput(toolCall: ToolCall): string {
   const result = toolCall.result;
   if (result === undefined) return "";
   if (result.status !== "success")
     return typeof result.error === "string" ? result.error : JSON.stringify(result.error);
+  // The MC shows a subagent's result as text (`HalC2.Acp.ThreadRuntime`), not as JSON.
+  if (toolCall.type === "task") return taskOutput(result.value);
   if (toolCall.type === "shell" && toolCall.result?.status === "success") {
     const { stdout, stderr } = toolCall.result.value;
     return [stdout, stderr].filter((part) => part.length > 0).join("\n");

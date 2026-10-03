@@ -296,6 +296,22 @@ for line in sys.stdin:
             send({"id": "perm-text", "method": "session/request_permission", "params": {"sessionId": sid,
                   "toolCall": {"toolCallId": "call-1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
                   "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}]}})
+        elif "write the plan down" in text:
+            # Cursor's createPlan tool, as cursor-acp passes it on: named after the SDK's
+            # tool, with its input repeated when it ends.
+            call = {"toolCallId": "plan-1", "title": "createPlan", "kind": "other",
+                    "rawInput": {"plan": "# Plan\n\n1. Add the form"}}
+            update(sid, dict(call, sessionUpdate="tool_call", status="pending"))
+            update(sid, dict(call, sessionUpdate="tool_call_update", status="completed"))
+            finish_turn(mid, sid)
+        elif "hand it to a subagent" in text:
+            # The agent's task tool: a subagent it runs to the end inside the turn.
+            update(sid, {"sessionUpdate": "tool_call", "toolCallId": "task-1", "title": "task", "kind": "other",
+                         "status": "in_progress", "rawInput": {"description": "Survey the modules",
+                             "prompt": "List the modules in lib", "subagent_type": "general-purpose"}})
+            update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "task-1", "status": "completed",
+                         "content": [{"type": "content", "content": {"type": "text", "text": "lib has three modules"}}]})
+            finish_turn(mid, sid)
         elif "in the background" in text:
             # Grok's background work: a shell started as a task (task-sh), and a subagent
             # spawned in the background (spawn-1, session CHILD). With "wait" the turn
