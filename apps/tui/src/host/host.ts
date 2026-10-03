@@ -18,6 +18,8 @@ import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
 import type { EditorCommand } from "../promptEditor.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
+import { setNerdFont } from "../icons.ts";
+import { COLOUR_THEME_CHOICES, setColourTheme, type ColourThemeId } from "../theme.ts";
 import { revertableCheckpoints } from "../timeline.ts";
 import { createAddProjectController } from "./addProjectState.ts";
 import { createAsk } from "./askState.ts";
@@ -45,7 +47,7 @@ import {
   type TerminalThread,
 } from "./terminalState.ts";
 import { createThreadActions } from "./threadActions.ts";
-import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
+import { createTuiTheme, tuiThemeState, type TuiTheme } from "./theme.ts";
 import { createThreadView } from "./threadView.ts";
 import type { CellPixels } from "./timelineState.ts";
 import type { InlineImageTransport } from "../terminalGraphics.ts";
@@ -260,7 +262,7 @@ export function createHost(options: HostOptions): Host {
   const state = createPropertyMap({
     mode,
     size,
-    theme: TUI_THEME_STATE,
+    theme: tuiThemeState(),
     notifications: { items: [] },
     keybindings: { layers: KEYMAP_LAYERS, groups: KEYBINDING_GROUPS, parity: KEYMAP_PARITY },
     paneScroll,
@@ -728,6 +730,30 @@ export function createHost(options: HostOptions): Host {
     },
   });
 
+  const theme = createTuiTheme();
+  /**
+   * The palette changed under everything already drawn: the bricks follow
+   * `Theme.colors`, and every line the host styled is styled again.
+   */
+  const repaint = () => {
+    theme.refresh();
+    state.set("theme", tuiThemeState());
+    const next = store.getState();
+    publishLayout();
+    publishSidebar();
+    publishPage();
+    publishSettings();
+    threadView.sync(next, null);
+    sourceControl.publish(null, next);
+    composer!.sync();
+    palette.sync();
+    terminal.sync();
+    files.sync();
+    addProject.relayout();
+    features.sync();
+    state.set("status", { kind: next.statusKind, text: next.status } satisfies TuiStatusState);
+  };
+
   const unknownActions = new Set<string>();
   const dispatch = (action: string, payload?: unknown): boolean => {
     options.trace?.(action, payload);
@@ -1031,6 +1057,18 @@ export function createHost(options: HostOptions): Host {
         void pluginPort.load(file).then(refreshPlugins);
         return true;
       }
+      case "icons.nerdFont.set": {
+        setNerdFont(payloadField(payload, "on") === true);
+        repaint();
+        return true;
+      }
+      case "theme.set": {
+        const id = payloadField(payload, "id");
+        if (!COLOUR_THEME_CHOICES.some((choice) => choice.id === id)) return true;
+        setColourTheme(id as ColourThemeId);
+        repaint();
+        return true;
+      }
       case "quit":
       case "app.quit":
         options.onQuit?.();
@@ -1168,7 +1206,7 @@ export function createHost(options: HostOptions): Host {
       terminal.sync();
     },
     Shell: { state, dispatch },
-    Theme: createTuiTheme(),
+    Theme: theme,
     ready,
     settled: async () => {
       await addProject.settled();

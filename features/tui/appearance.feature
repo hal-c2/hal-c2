@@ -96,19 +96,19 @@ Feature: Colour, icons, mouse and images in the terminal
     Then "src/app.ts" is tinted for its file type
     And "notes.unknownext" is dimmed
 
-  @backlog @tui
+  @tui
   Scenario: A nerd font opts the client into richer icons
     Given the user has told the client their terminal uses a nerd font
     Then tool and file icons use nerd font glyphs
     And turning the option off returns to the single-column fallbacks
 
-  @backlog @tui
+  @tui
   Scenario: The user picks a colour theme for the client
     When the user chooses a colour theme in the terminal client
     Then the client redraws in that theme
     And choosing the terminal default again borrows the terminal's colours
 
-  @backlog @tui
+  @tui
   Scenario Outline: The client adapts to the terminal's colour depth
     Given the terminal supports <depth>
     Then status, diff and syntax colours stay distinguishable
@@ -118,7 +118,7 @@ Feature: Colour, icons, mouse and images in the terminal
       | truecolor       |
       | 256 colours     |
 
-  @backlog @tui
+  @tui
   Scenario: The client honours NO_COLOR
     Given the environment variable "NO_COLOR" is set
     When the terminal client opens

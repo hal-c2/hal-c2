@@ -8,7 +8,7 @@ import type { TuiClient } from "../connection.ts";
 import { filetypeForPath } from "../diffSplit.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree, type FlatTreeRow } from "../fileTree.ts";
 import { clip } from "../format.ts";
-import { fileTypeColor } from "../icons.ts";
+import { fileGlyph, fileTypeColor } from "../icons.ts";
 import { ansi, type Palette, THEME } from "../theme.ts";
 import { chunk, markdownLines, plainText, styled, type StyledText } from "./styledText.ts";
 
@@ -126,7 +126,7 @@ function rowLine(row: FlatTreeRow, active: boolean, nameRoom: number, palette: P
   }
   const typeColor = fileTypeColor(row.path);
   return styled(
-    chunk(`${marker}${indent}◦ `, {
+    chunk(`${marker}${indent}${fileGlyph(row.path)} `, {
       fg: typeColor ? ansi(typeColor) : active ? palette.bg : palette.faint,
       ...bg,
     }),

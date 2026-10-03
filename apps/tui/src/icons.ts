@@ -39,6 +39,79 @@ export const STATUS_ICONS = {
   neutral: { glyph: "−", webIcon: "minus" },
 } as const satisfies Record<string, IconGlyph>;
 
+// Nerd Fonts glyphs (private-use code points, one column each) for a terminal
+// whose font has them. Opt-in: without the font they draw as empty boxes.
+const NERD_TOOL_GLYPHS: Record<keyof typeof TOOL_ICONS, string> = {
+  terminal: "",
+  fileRead: "",
+  fileChange: "",
+  imageView: "",
+  webSearch: "",
+  mcp: "",
+  dynamic: "",
+  userInput: "",
+  thinking: "",
+  error: "",
+  default: "",
+};
+const NERD_FILE_GLYPHS: Record<string, string> = {
+  ts: "",
+  tsx: "",
+  js: "",
+  jsx: "",
+  json: "",
+  md: "",
+  py: "",
+  rs: "",
+  go: "",
+  css: "",
+  html: "",
+  sh: "",
+  yml: "",
+  yaml: "",
+  toml: "",
+  lock: "",
+};
+const NERD_FILE_DEFAULT = "";
+/** The file glyph every font has. */
+export const PLAIN_FILE_GLYPH = "◦";
+
+const PLAIN_TOOL_GLYPHS = Object.fromEntries(
+  Object.entries(TOOL_ICONS).map(([name, icon]) => [name, icon.glyph]),
+) as Record<keyof typeof TOOL_ICONS, string>;
+
+/** `HAL_C2_TUI_NERD_FONT=1`: the user says their terminal font has the Nerd Fonts glyphs. */
+export const nerdFontRequested = (env: Readonly<Record<string, string | undefined>>): boolean =>
+  env.HAL_C2_TUI_NERD_FONT === "1" || env.HAL_C2_TUI_NERD_FONT === "true";
+
+let nerdFont = false;
+
+export const usesNerdFont = (): boolean => nerdFont;
+
+/**
+ * Switch the tool icons between the single-column fallbacks and the Nerd
+ * Fonts glyphs. The registry is rewritten in place, so readers of
+ * `TOOL_ICONS.x.glyph` follow; the host repaints what it already drew.
+ */
+export function setNerdFont(on: boolean): void {
+  nerdFont = on;
+  const glyphs = on ? NERD_TOOL_GLYPHS : PLAIN_TOOL_GLYPHS;
+  for (const name of Object.keys(TOOL_ICONS) as Array<keyof typeof TOOL_ICONS>) {
+    (TOOL_ICONS[name] as { glyph: string }).glyph = glyphs[name];
+  }
+}
+
+/** The glyph in front of a file's name: its type's with a nerd font, else the plain one. */
+export function fileGlyph(path: string): string {
+  if (!nerdFont) return PLAIN_FILE_GLYPH;
+  const base = path.split("/").pop() ?? path;
+  const dot = base.lastIndexOf(".");
+  const extension = dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+  return NERD_FILE_GLYPHS[extension] ?? NERD_FILE_DEFAULT;
+}
+
+if (nerdFontRequested(process.env)) setNerdFont(true);
+
 /** Every glyph the registry ships, for the single-column width guard in tests. */
 export function allIconGlyphs(): ReadonlyArray<IconGlyph> {
   return [...Object.values(TOOL_ICONS), ...Object.values(STATUS_ICONS)];

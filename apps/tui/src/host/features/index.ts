@@ -1,5 +1,6 @@
 import type { PaletteCommand } from "../paletteState.ts";
 import type { TuiSettingsExtraGroup } from "../settingsState.ts";
+import { createAppearanceFeature } from "./appearance.ts";
 import { createArchiveFeature } from "./archive.ts";
 import { createConversationFeature } from "./conversation.ts";
 import { createEditorFeature, type EditorOptions } from "./editor.ts";
@@ -48,6 +49,7 @@ export function createFeatures(
     createServerFeature(kit),
     createWorkspaceFeature(kit),
     createRepositoryFeature(kit),
+    createAppearanceFeature(kit),
     createEditorFeature(kit, {
       env: options.env ?? {},
       runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),

@@ -5,7 +5,7 @@ import { CHAT_CONTENT_MAX_WIDTH } from "../components/ChatView.layout.ts";
 import { deriveContextWindow, formatContextWindow } from "../contextWindow.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
-import { fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
+import { fileGlyph, fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { ansi, type Palette, relativeTime, sessionStatusColor } from "../theme.ts";
 import {
@@ -318,7 +318,12 @@ function headerLine(
     contentWidth >= 64 ? 32 : contentWidth >= 40 ? status.length + 10 : status.length + 2;
   const plan = detail.interactionMode === "plan";
   return line(
-    styled(chunk(clip(detail.title, Math.max(1, contentWidth - reserved)), { bold: true })),
+    styled(
+      chunk(clip(detail.title, Math.max(1, contentWidth - reserved)), {
+        fg: palette.text,
+        bold: true,
+      }),
+    ),
     null,
     null,
     {
@@ -624,7 +629,7 @@ function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
     chunk(`${workLogIcon(entry)} `, {
       fg: entry.tone === "error" ? palette.error : palette.accent,
     }),
-    chunk(label),
+    chunk(label, { fg: palette.text }),
     glyph !== null &&
       chunk(` ${glyph}`, {
         fg:
@@ -682,7 +687,7 @@ function changedFilesLines(
         line(
           styled(
             chunk(`${indent}${row.collapsed ? "▸" : "▾"} `, { fg: palette.dim }),
-            chunk(clip(`${row.name}/`, nameRoom)),
+            chunk(clip(`${row.name}/`, nameRoom), { fg: palette.text }),
             ...stats(row.additions, row.deletions),
           ),
           "timeline.files.toggleDir",
@@ -695,8 +700,10 @@ function changedFilesLines(
     lines.push(
       line(
         styled(
-          chunk(`${indent}◦ `, { fg: typeColor ? ansi(typeColor) : palette.faint }),
-          chunk(clip(row.name, nameRoom)),
+          chunk(`${indent}${fileGlyph(row.path)} `, {
+            fg: typeColor ? ansi(typeColor) : palette.faint,
+          }),
+          chunk(clip(row.name, nameRoom), { fg: palette.text }),
           ...stats(row.additions, row.deletions),
         ),
         "diff.open",
