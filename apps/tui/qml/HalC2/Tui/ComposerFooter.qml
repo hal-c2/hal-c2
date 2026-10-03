@@ -70,6 +70,7 @@ Item {
             flexShrink: 0
             text: "^K options"
             color: Theme.colors.dim
+            onMouseDown: Shell.dispatch("composer.optionsPicker.toggle")
         }
     }
     Item {

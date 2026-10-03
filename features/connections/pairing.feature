@@ -114,8 +114,8 @@ Feature: Pairing a client with an environment
     Then it reconnects with a new session
     And keeps its local view of the environment
 
-  # The TUI reaches only the server that launched it: the host has no environment
-  # list, pairing or access management (`connection.environments` is that one server).
+  # Access to the machine the terminal is connected to is managed from its connection
+  # settings (the `authAccess` stream, `hal-c2.revokeClient`, `hal-c2.revokeOtherClients`).
   @tui
   Scenario: The terminal client lists live access changes
     Given the user administers the environment
@@ -123,16 +123,12 @@ Feature: Pairing a client with an environment
     Then it lists pairing links and paired clients
     And updates the list when another client pairs
 
-  # The TUI reaches only the server that launched it: the host has no environment
-  # list, pairing or access management (`connection.environments` is that one server).
   @tui
   Scenario: The terminal client revokes one client
     Given another paired client
     When the user revokes it from the terminal client
     Then that client can no longer connect
 
-  # The TUI reaches only the server that launched it: the host has no environment
-  # list, pairing or access management (`connection.environments` is that one server).
   @tui
   Scenario: The terminal client revokes every other client
     Given three other paired clients

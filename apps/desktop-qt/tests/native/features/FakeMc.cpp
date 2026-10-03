@@ -344,6 +344,7 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
   } else if (type == QLatin1String("rpc")) {
     const QString down = message.value(QLatin1String("environment")).toString();
     const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket, down};
+    calls.append(rpc);
     if (linkProblems.contains(down)) {
       const QJsonObject detail = unreachable(down);
       refuse(rpc, detail.value(QLatin1String("message")).toString(), detail);

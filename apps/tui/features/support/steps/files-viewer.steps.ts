@@ -39,12 +39,20 @@ const beforeBoot = (ctx: World, setup: () => void) => {
 
 /** The MC writes files, refusing the paths the scenario says it cannot. */
 const servesWrites = (ctx: ViewerWorld) => {
-  ctx.fake!.settings.on("projects.writeFile", (payload: { relativePath: string }) => {
-    const refusal = ctx.writeErrors?.[payload.relativePath];
+  ctx.fake!.override("writeFile", async (cwd, relativePath, contents) => {
+    const refusal = ctx.writeErrors?.[relativePath];
     if (refusal) throw new Error(refusal);
-    return { relativePath: payload.relativePath };
+    ctx.fake!.server.written.set(`${cwd}:${relativePath}`, contents);
   });
 };
+/** The writes the client asked for, as `{ cwd, relativePath, contents }`. */
+const writes = (ctx: World) =>
+  ctx
+    .fake!.calls.filter((call) => call.method === "writeFile")
+    .map((call) => {
+      const [cwd, relativePath, contents] = call.args as [string, string, string];
+      return { cwd, relativePath, contents };
+    });
 
 // --- Rendered and source -----------------------------------------------------------
 
@@ -52,7 +60,8 @@ async function expectShown(ctx: World, rendered: boolean) {
   const screen = await settle(ctx);
   const file = viewer(ctx);
   const preview = PREVIEW_FILES[file.path]!;
-  expect(file).toMatchObject({ status: "ready", renderable: true, rendered });
+  expect(file).toMatchObject({ status: "ready", renderable: true });
+  expect(file.rendered !== null).toBe(rendered);
   for (const text of rendered ? preview.rendered : preview.source) expect(screen).toContain(text);
   for (const text of rendered ? preview.source : preview.rendered.slice(0, 0)) {
     expect(screen).not.toContain(text);
@@ -105,7 +114,8 @@ step(
 
 // --- Editing ------------------------------------------------------------------------------
 
-async function edit(ctx: ViewerWorld, path: string) {
+/** Open the file and the editor in the viewer (`i`): the edit is typed here and saved as it goes. */
+export async function editInPlace(ctx: ViewerWorld, path: string) {
   await openFile(ctx, path);
   servesWrites(ctx);
   await pressKey(ctx, "i");
@@ -122,17 +132,17 @@ async function typeAndPause(ctx: ViewerWorld) {
   await settle(ctx);
   // Nothing is written while the typing goes on.
   expect(viewer(ctx).save).toBe("pending");
-  expect(mcCalls(ctx, "projects.writeFile")).toEqual([]);
+  expect(writes(ctx)).toEqual([]);
   await advance(ctx, 500);
   await settle(ctx);
 }
 
-step("the user is editing {string}", edit);
+// "the user is editing {string}" is slice-files.steps.ts': in place here, in $EDITOR for tui/files.feature.
 step("the user types a change and pauses", typeAndPause);
 
 step("the change is written to {string}", async (ctx: ViewerWorld, path: string) => {
   const screen = await settle(ctx);
-  const written = mcCalls(ctx, "projects.writeFile");
+  const written = writes(ctx);
   expect(written).toHaveLength(1);
   expect(written[0]).toMatchObject({ cwd: WORKSPACE, relativePath: path });
   const contents = String(written[0]!.contents);
@@ -149,13 +159,13 @@ step("writing {string} fails", (ctx: ViewerWorld, path: string) => {
 });
 
 step("the user edits {string}", async (ctx: ViewerWorld, path: string) => {
-  await edit(ctx, path);
+  await editInPlace(ctx, path);
   await typeAndPause(ctx);
 });
 
 step("the user is told the file could not be saved", async (ctx: ViewerWorld) => {
   const screen = await settle(ctx);
-  expect(mcCalls(ctx, "projects.writeFile")).toHaveLength(1);
+  expect(writes(ctx)).toHaveLength(1);
   expect(status(ctx)).toEqual({
     kind: "error",
     text: `Could not save ${viewer(ctx).path}: permission denied`,

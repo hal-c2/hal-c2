@@ -4,7 +4,7 @@
 import { expect } from "bun:test";
 import type { ProjectScript, ProjectScriptIcon } from "@hal-c2/contracts";
 
-import type { TuiNewThreadState } from "../../../src/host/composerState.ts";
+import type { TuiNewThreadState, TuiSelectState } from "../../../src/host/composerState.ts";
 import { step } from "../../steps.ts";
 import {
   addProject,
@@ -85,9 +85,22 @@ async function openProjectPage(ctx: World, project: string): Promise<void> {
   expect(sectionState(ctx)).toMatchObject({ id: "projects", title: `project · ${project}` });
 }
 
+const select = (ctx: World) => ctx.host!.state.get("select") as TuiSelectState;
+
+/** Run a project action by name: the palette's own entry for the one offered first, else the picker. */
 async function runAction(ctx: FilesWorld, name: string): Promise<void> {
   await inThread(ctx);
-  await chooseCommand(ctx, `Run action: ${name}`);
+  if (sectionState(ctx).open) ctx.host!.dispatch("section.close");
+  if (scriptsOf(ctx, "shop").length === 1) {
+    await chooseCommand(ctx, `Run ${name}`);
+  } else {
+    await chooseCommand(ctx, "Run a project script…");
+    const index = select(ctx).options.findIndex((option) => option.label === name);
+    expect(index, `no "${name}" among the scripts`).toBeGreaterThanOrEqual(0);
+    for (let at = select(ctx).index; at < index; at += 1) await pressKey(ctx, "Down");
+    for (let at = select(ctx).index; at > index; at -= 1) await pressKey(ctx, "Up");
+    await pressKey(ctx, "Enter");
+  }
   await settle(ctx);
 }
 
@@ -124,9 +137,15 @@ step("the user asks to remove {string}", async (ctx: World, project: string) => 
   await start(ctx);
   await chooseCommand(ctx, `Remove project ${project}…`);
   await settle(ctx);
-  expect(ctx.host!.state.get("mode")).toBe("sectionConfirm");
+  expect(select(ctx)).toMatchObject({
+    open: true,
+    title: `remove ${project}? its files on disk are kept`,
+  });
 });
 
+/** What removing would do, as the question's "Remove" choice says it. */
+const removal = (ctx: World) =>
+  select(ctx).options.find((option) => option.label.startsWith("Remove "))?.description ?? "";
 const question = (ctx: World) => (sectionState(ctx).confirm?.lines ?? []).join(" ");
 /** The screen's words, borders dropped and wrapped lines joined. */
 const screenWords = async (ctx: World) =>
@@ -135,18 +154,18 @@ const screenWords = async (ctx: World) =>
 step(
   "the user is told {int} threads and their conversation history will be cleared",
   async (ctx: World, count: number) => {
-    expect(question(ctx)).toContain(
-      `Its ${count} threads and their conversation history will be cleared permanently.`,
-    );
-    expect(await screenWords(ctx)).toContain(`Its ${count} threads and their conversation history`);
+    expect(removal(ctx)).toBe(`Clears its ${count} threads and their conversation history.`);
+    expect(await screenWords(ctx)).toContain(removal(ctx));
     // Nothing was removed by asking.
     expect(projectsMc(ctx).mutations).toEqual([]);
   },
 );
 
 step("the user is told the files on disk are kept", async (ctx: World) => {
-  expect(question(ctx)).toContain("The files on disk are kept.");
-  expect(await screenWords(ctx)).toContain("The files on disk are kept.");
+  expect(select(ctx).title).toContain("its files on disk are kept");
+  expect(await screenWords(ctx)).toContain("remove shop? its files on disk are kept");
+  // Keeping it is the first answer.
+  expect(select(ctx).options[select(ctx).index]?.label).toBe("Keep shop");
 });
 
 step("{string} has an unsent draft", async (ctx: World, project: string) => {
@@ -162,21 +181,33 @@ step("the user confirms removing {string}", async (ctx: World, project: string) 
   await start(ctx);
   await chooseCommand(ctx, `Remove project ${project}…`);
   await settle(ctx);
-  expect(question(ctx)).toContain(`Remove ${project} from HAL-C2?`);
-  await pressKey(ctx, "y");
+  expect(select(ctx).options.map((option) => option.label)).toEqual([
+    `Keep ${project}`,
+    `Remove ${project}`,
+  ]);
+  await pressKey(ctx, "Down");
+  await pressKey(ctx, "Enter");
   await settle(ctx);
 });
 
 step("{string} is no longer listed for {string}", async (ctx: World, project: string) => {
   const screen = await settle(ctx);
   expect(projectsMc(ctx).mutations).toEqual([
-    expect.objectContaining({ type: "project.delete", force: true }),
+    expect.objectContaining({ type: "project.delete", projectId: "p-shop" }),
   ]);
   expect(sidebar(ctx).projects.map((entry) => entry.displayName)).not.toContain(project);
-  // The projects page, still open, lists what is left.
-  expect(sectionState(ctx)).toMatchObject({ id: "projects", title: "projects" });
-  expect(pageText(ctx)).not.toContain(project);
-  expect(screen).toContain("No projects yet.");
+  expect(env(ctx).projects).toEqual([]);
+  // Nothing of it is left on screen, and the user is told its folder was not touched.
+  expect(
+    screen
+      .split("\n")
+      .filter((line) => !line.includes(`Removed ${project}`))
+      .join("\n"),
+  ).not.toContain(project);
+  expect(status(ctx)).toEqual({
+    kind: "success",
+    text: `Removed ${project}; /home/sam/shop is untouched.`,
+  });
 });
 
 step("the draft for {string} is gone", async (ctx: World, _project: string) => {
@@ -190,9 +221,8 @@ step("{string} is still listed for {string}", async (ctx: World, project: string
   await settle(ctx);
   expect(sidebar(ctx).projects.map((entry) => entry.displayName)).toContain(project);
   expect(env(ctx).projects.map((entry) => entry.title)).toContain(project);
-  expect(sectionState(ctx).confirm).toBeNull();
-  // The page it was asked on still shows the project.
-  expect(pageText(ctx)).toContain("Remove project…");
+  // The question is closed.
+  expect(select(ctx).open).toBe(false);
 });
 
 step("the environment refuses to change projects with {string}", (ctx: World, reason: string) => {
@@ -441,7 +471,7 @@ step("{string} no longer has the action {string}", async (ctx: World, project, n
   await pressKey(ctx, "Ctrl+P");
   await pressKey(ctx, "Ctrl+K");
   await flush(ctx);
-  expect(palette(ctx).commands.map((entry) => entry.title)).not.toContain(`Run action: ${name}`);
+  expect(palette(ctx).commands.map((entry) => entry.title)).not.toContain(`Run ${name}`);
 });
 
 // --- hal-c2.json ---------------------------------------------------------------------

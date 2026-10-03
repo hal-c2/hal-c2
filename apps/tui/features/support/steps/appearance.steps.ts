@@ -17,7 +17,7 @@ import type { QmlObject } from "opentui-qml";
 
 import { createAttachmentImageCache } from "../../../src/attachmentImages.ts";
 import { FALLBACK_CELL_PIXELS } from "../../../src/host/timelineState.ts";
-import { inlineImageTransport } from "../../../src/terminalGraphics.ts";
+import { inlineImageProtocol, inlineImageTransport } from "../../../src/terminalGraphics.ts";
 import { TUI_RENDERER_CONFIG } from "../../../src/terminalStartup.ts";
 import { addThread, flush, ui } from "../environment.ts";
 import { launchSetup, type LaunchWorld } from "../launchWorld.ts";
@@ -533,7 +533,11 @@ async function showImageMessage(
 ): Promise<void> {
   const fixture = images(ctx);
   const transport = inlineImageTransport(launchSetup(ctx).env, () => ctx.tmuxEnvironment ?? "");
-  ctx.hostOptions = { ...ctx.hostOptions, inlineImages: transport };
+  ctx.hostOptions = {
+    ...ctx.hostOptions,
+    inlineImages: transport,
+    imageProtocol: inlineImageProtocol(launchSetup(ctx).env, () => ctx.tmuxEnvironment ?? ""),
+  };
   const cache = createAttachmentImageCache({
     fetcher: async () => {
       fixture.fetches += 1;
@@ -613,7 +617,7 @@ function expectAttachmentLink(ctx: World): void {
 }
 
 async function expectInlineImage(ctx: ImageWorld, transport: "direct" | "tmux"): Promise<void> {
-  expect(hostState(ctx, "graphics")).toEqual({ inlineImages: transport });
+  expect(hostState(ctx, "graphics")).toEqual({ inlineImages: transport, protocol: "kitty" });
   await snapshot(ctx);
   const image = inlineImage(ctx);
   expect(image).not.toBeNull();
@@ -650,8 +654,29 @@ step("the image is drawn inline through tmux passthrough", (ctx: ImageWorld) =>
   expectInlineImage(ctx, "tmux"),
 );
 
+// foot draws sixel and knows nothing of the Kitty graphics protocol.
+step(
+  "the user's terminal supports sixel but not the Kitty graphics protocol",
+  (ctx: ImageWorld) => {
+    Object.assign(launchSetup(ctx).env, { TERM: "foot", TERM_PROGRAM: undefined });
+  },
+);
+
+step("the image is drawn inline with sixel", async (ctx: ImageWorld) => {
+  expect(hostState(ctx, "graphics")).toEqual({ inlineImages: "direct", protocol: "sixel" });
+  await snapshot(ctx);
+  const image = inlineImage(ctx);
+  expect(image).not.toBeNull();
+  expect(geometry(image!)).toMatchObject({ visible: true });
+  expect(geometry(image!).width).toBeGreaterThan(0);
+  // The same preview, decoded once, handed to the renderer's sixel encoder.
+  expect(image!.get("protocol")).toBe("sixel");
+  expect(image!.get("status")).toBe("ready");
+  expect(images(ctx).decodes).toBe(1);
+});
+
 step("no image is drawn", async (ctx: ImageWorld) => {
-  expect(hostState(ctx, "graphics")).toEqual({ inlineImages: null });
+  expect(hostState(ctx, "graphics")).toEqual({ inlineImages: null, protocol: "kitty" });
   await snapshot(ctx);
   expect(inlineImage(ctx)).toBeNull();
   expect(images(ctx).fetches).toBe(0);

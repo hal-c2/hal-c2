@@ -27,6 +27,8 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   RuntimeRequestId,
+  type GitActionProgressEvent,
+  type OrchestrationMessageContext,
   type GitRunStackedActionResult,
   type GitStackedAction,
   type FilesystemBrowseResult,
@@ -87,6 +89,7 @@ import { ShellSnapshotLoader } from "@hal-c2/client-runtime/state/shell";
 import type { RpcSession } from "@hal-c2/client-runtime/rpc";
 import { buildTemporaryWorktreeBranchName } from "@hal-c2/shared/git";
 
+import { makeFeatureClient, type TuiFeatureClient } from "./featureClient.ts";
 import { mergeVcsStatus } from "./gitActions.logic.ts";
 
 import { flattenModelOptions, type ModelOption } from "./models.ts";
@@ -196,6 +199,7 @@ export function buildThreadReplyTurn(input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<UploadChatImageAttachment>;
   readonly modelSelection?: ModelSelection;
+  readonly context?: OrchestrationMessageContext;
 }) {
   return {
     threadId: input.thread.id,
@@ -204,6 +208,7 @@ export function buildThreadReplyTurn(input: {
       role: "user" as const,
       text: input.text,
       attachments: [...input.attachments],
+      ...(input.context ? { context: input.context } : {}),
     },
     runtimeMode: input.thread.runtimeMode,
     interactionMode: input.thread.interactionMode,
@@ -483,7 +488,7 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
 /** Where the loopback connection is: first connect, live, or retrying after a drop. */
 export type TuiConnectionPhase = "connecting" | "connected" | "reconnecting";
 
-export interface TuiClient extends TuiSettingsClient {
+export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly hostPlatform: NodeJS.Platform;
   /** Live connection phase (emits the current one first). Returns an unsubscribe fn. */
   readonly subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => () => void;
@@ -544,6 +549,8 @@ export interface TuiClient extends TuiSettingsClient {
     text: string,
     attachments?: ReadonlyArray<UploadChatImageAttachment>,
     modelSelection?: ModelSelection,
+    /** The typed payloads behind the message's context references (terminal output, diff notes). */
+    context?: OrchestrationMessageContext,
   ) => Promise<void>;
   /** Register a local workspace as a project and return its generated id. */
   readonly createProject: (workspaceRoot: string) => Promise<ProjectId>;
@@ -587,12 +594,16 @@ export interface TuiClient extends TuiSettingsClient {
    * Run a stacked git action (commit/push/create_pr/…); resolves with the
    * server's result (null if the stream ended without one) when it finishes.
    */
-  readonly runGitStackedAction: (input: {
-    readonly cwd: string;
-    readonly action: GitStackedAction;
-    readonly commitMessage?: string;
-    readonly featureBranch?: boolean;
-  }) => Promise<GitRunStackedActionResult | null>;
+  readonly runGitStackedAction: (
+    input: {
+      readonly cwd: string;
+      readonly action: GitStackedAction;
+      readonly commitMessage?: string;
+      readonly featureBranch?: boolean;
+    },
+    /** Sees each phase, hook and line of hook output as the server reports it. */
+    onProgress?: (event: GitActionProgressEvent) => void,
+  ) => Promise<GitRunStackedActionResult | null>;
   /** Pull the worktree's branch from its upstream. */
   readonly runGitPull: (cwd: string) => Promise<void>;
   /** Fetch the unified diff for the turn that produced the given checkpoint. */
@@ -822,6 +833,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
   };
 
   return {
+    ...makeFeatureClient(runtime),
     ...makeTuiSettingsClient(runtime),
     hostPlatform,
     browseFilesystem: (partialPath, cwd) =>
@@ -905,7 +917,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       return drainStreamUntilUnsubscribe(stream);
     },
 
-    sendReply: (thread, text, attachments = [], modelSelection) =>
+    sendReply: (thread, text, attachments = [], modelSelection, context) =>
       runtime.runPromise(
         Effect.gen(function* () {
           const messageId = MessageIdSchema.make(yield* randomUuid);
@@ -922,6 +934,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
               text,
               attachments,
               ...(modelSelection ? { modelSelection } : {}),
+              ...(context ? { context } : {}),
             }),
           );
         }),
@@ -1102,7 +1115,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       return drainStreamUntilUnsubscribe(stream);
     },
 
-    runGitStackedAction: (input) => {
+    runGitStackedAction: (input, onProgress) => {
       let finished: GitRunStackedActionResult | null = null;
       return runtime.runPromise(
         runStream(WS_METHODS.gitRunStackedAction, {
@@ -1115,6 +1128,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           // The stream ends when the action completes; an action_failed event (or a
           // failed stream) surfaces as a rejected promise.
           Stream.runForEach((event) => {
+            onProgress?.(event);
             if (event.kind === "action_failed") return Effect.fail(new Error(event.message));
             if (event.kind === "action_finished") finished = event.result;
             return Effect.void;

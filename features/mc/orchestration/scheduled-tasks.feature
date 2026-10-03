@@ -126,7 +126,7 @@ Feature: Scheduled tasks
     Then the answer is task "a" after the run, with its outcome
 
   # Scheduled runs aim the next run afresh; a manual run leaves the schedule alone.
-  @mc @backlog
+  @mc
   Scenario: Running a task now leaves its schedule alone
     Given task "a" is due at 09:00 tomorrow
     When a client runs task "a" now

@@ -13,8 +13,7 @@ desktop shell's contract names, extended for the terminal), `mode`, `status`,
 `git`, `settings`, `paneScroll`, `terminal`, `files`, `addProject`,
 `settingsSection`, `updateNotice`,
 `keybindings` (`src/keymap.ts`: the chord layers per mode, the reference
-groups and the web parity table; `layers.projectActions` holds the server's
-`script.<id>.run` shortcuts, live in the prompt), `plugins`, `problems`, `connection` (see
+groups and the web parity table), `projectActionKeys` (the server's `script.<id>.run` shortcuts as chords, live in the prompt), `plugins`, `problems`, `connection` (see
 "Plugins, problems and connection"), `graphics`, and the open thread's keys
 from `threadView.ts` (below).
 
@@ -100,10 +99,12 @@ actions `section.previous/next/activate {id?}/back/close`,
 only describes its page (`page()`); it never touches the selection or the keys.
 
 The `projects` section (`sections/projects.ts`) is where a project is changed:
-where its new threads start, its actions (add, edit, delete, import from
-`hal-c2.json`) and removing it, all as `projects.mutate`. `project.action.run
-{projectId, actionId}` types an action's command into the open thread's
-terminal (`terminal.runAction`: the active terminal, or a new one while that
+where its new threads start and its actions (add, edit, delete, import from
+`hal-c2.json`), through `client.updateProject`. Removing it and the palette's
+run entries are the workspace feature's (`features/workspace.ts`); its
+"Add or edit a project script…" opens this page. `project.action.run
+{projectId, actionId}` is the one runner (palette, page, shortcut): it types an
+action's command into the open thread's terminal (`terminal.runAction`: the active terminal, or a new one while that
 runs something), with `HAL_C2_PROJECT_ROOT` / `HAL_C2_WORKTREE_PATH` set.
 
 Settings reach machines other than the one the terminal is connected to
@@ -187,10 +188,10 @@ window of tree rows around the selection, and `viewer` for an opened file (a
 slice of its lines from `top`). It opens focused (`mode: "files"`); another
 panel kind or another thread closes it. Actions are `files.*`
 (`filesState.ts`); stale listings and reads are dropped by generation.
-A Markdown, CSV / TSV or HTML file opens rendered (`viewer.lines`, laid out by
+A Markdown, CSV / TSV or HTML file opens rendered (`viewer.rendered`, laid out by
 the timeline's Markdown renderer; `src/filePreview.ts`) and `s` switches to
-its text. `i` opens the editor (`mode: "fileEdit"`, a `TextArea` filled when
-`viewer.editSeq` changes): the brick's timer asks for `files.edit.save` half a
+its text. `e` edits a copy in `$EDITOR` (`features/editor.ts`); `i` opens the editor in the viewer (`mode: "fileEdit"`, a `TextArea` filled when
+`viewer.editSeq` changes): the brick's timer asks for `files.editor.save` half a
 second after the last key, Esc saves and leaves, and a refused write keeps the
 editor open. `o` (or the palette, per editor) opens the file in an editor on
 the environment (`shell.openInEditor`). `files.view {path, line}` opens a file
@@ -202,6 +203,40 @@ local folder or a repository and its clone destination, with the folders
 under the typed path. `invite` is true while the environment has no
 projects. Actions are `project.add` and `project.add.*` (`mode: "project"`).
 An added project opens a new-thread draft for it (`thread.new {projectKey}`).
+
+## Feature areas
+
+Most of what the palette offers beyond the panes above lives in
+`features/`: one file per area (keys, archive, conversation, editor, plans,
+server, workspace, repository, appearance, context, reach), each a `Feature` with palette
+commands and a `dispatch`. They own no brick. A feature talks to the user
+through three things the host hands it (`features/kit.ts`):
+
+- `menu`: a list in the picker (`select`, kind `"menu"`), optionally with a
+  search field (`select.query.set`). Choosing closes it, then runs the choice.
+- `ask`: a one-line question in the prompt's place (`ask`, mode `"ask"`;
+  `ask.submit {text}`, `ask.cancel`).
+- `status`: the status line.
+
+Their requests are in `src/featureClient.ts`, next to the client's core in
+`connection.ts`. Actions a feature takes over from another controller
+(`link.open`) reach it first: `features.dispatch` runs ahead of the thread view.
+
+Keys they publish: `planStatus` (the agent's step list and the thread an
+implemented plan went to), `keybindings` (the live layers, which a rebind
+rewrites), and groups appended to `settings` (`settingsGroups`: provider
+instances, defaults, diagnostics; the host adds `Problems`).
+
+The palette is the theme too: `theme.set {id}` and `icons.nerdFont.set {on}`
+rewrite the one `THEME` object (and the icon registry) in place, and the host
+repaints every key it styled. A brick must read colours from `Theme.colors`,
+and host-styled text from the palette at build time, never from a captured
+constant, or it will not follow.
+
+A brick that handles the mouse needs a keyboard route as well: a chord, a
+palette entry, or (for rows whose action the host chose) an entry in
+`features/reach.ts`. The client runs with the mouse off (`HAL_C2_TUI_MOUSE=0`),
+and `slice-mouse.steps.ts` fails on a mouse handler that has no route.
 
 ## Keys and actions
 

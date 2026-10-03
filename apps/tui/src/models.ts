@@ -24,6 +24,8 @@ export interface ModelOption {
   readonly label: string;
   readonly providerLabel: string;
   readonly capabilities: ModelCapabilities | null;
+  /** The provider cannot change models once a conversation has started. */
+  readonly requiresNewThreadForModelChange?: boolean;
 }
 
 export function flattenModelOptions(providers: ReadonlyArray<ServerProvider>): ModelOption[] {
@@ -38,6 +40,9 @@ export function flattenModelOptions(providers: ReadonlyArray<ServerProvider>): M
         label: model.shortName ?? model.name ?? model.slug,
         providerLabel,
         capabilities: model.capabilities,
+        ...(provider.requiresNewThreadForModelChange === true
+          ? { requiresNewThreadForModelChange: true }
+          : {}),
       });
     }
   }

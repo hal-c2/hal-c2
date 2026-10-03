@@ -69,7 +69,9 @@ void DraftController::activate() {
                                  QStringLiteral("draft")});
   // The web's chat.newLocal: the contextual create, never a project chooser.
   const QString newLocal = QStringLiteral("chat.newLocal");
-  commands->add(newLocal, keybindings::commandLabel(newLocal), [this] { startNew({}); });
+  commands->add(newLocal, keybindings::commandLabel(newLocal), [this] {
+    if (const sidebar::ProjectGroup* group = defaultGroup()) startIn(*group);
+  });
   commands->setListed(newLocal, false);
   commands->addMenu(QStringLiteral("thread.newIn"), tr("New thread in..."), [this] {
     // The window's project first, then the sidebar's order.
@@ -176,6 +178,13 @@ bool DraftController::startNew(const QVariantMap& payload) {
     group = NativeShell::of(this)->sidebar()->group(requested.toString());
     if (!group) return true;
   } else {
+    // The web's chat.new: with several projects, none of them showing or in
+    // scope, it asks which one.
+    SidebarController* sidebar = NativeShell::of(this)->sidebar();
+    if (!shownProject() && !sidebar->scope() && sidebar->groups().size() > 1) {
+      NativeShell::of(this)->controller<KeybindingController>()->commands()->run(QStringLiteral("thread.newIn"));
+      return true;
+    }
     group = defaultGroup();
   }
   // No project yet: the sidebar offers to add one.

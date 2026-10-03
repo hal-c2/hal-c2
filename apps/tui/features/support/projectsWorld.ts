@@ -1,5 +1,5 @@
-// The MC's side of a project for features/files/: what `projects.mutate`
-// changes and the checkout's files (hal-c2.json, sources). It sits on the environment of environment.ts, so a change
+// The MC's side of a project for features/files/: what `project.update` and
+// `project.delete` change, and the checkout's files (hal-c2.json, sources). It sits on the environment of environment.ts, so a change
 // reaches the client as a fresh shell snapshot, as from the real MC.
 import type { ProjectScript } from "@hal-c2/contracts";
 
@@ -12,9 +12,9 @@ export type ScriptedProject = EnvProject & {
 };
 
 export interface ProjectsMc {
-  /** The MC's reason for refusing `projects.mutate`; null accepts. */
+  /** The MC's reason for refusing a project change; null accepts. */
   refusal: string | null;
-  /** Every `projects.mutate` the client sent, oldest first. */
+  /** Every project change the client sent, oldest first. */
   readonly mutations: Array<Record<string, any>>;
   /** Files by `<workspace root>/<relative path>`. */
   readonly files: Map<string, string>;
@@ -31,22 +31,26 @@ export const scriptsOf = (ctx: World, title: string): ProjectScript[] =>
 
 function install(ctx: ProjectsWorld, mc: ProjectsMc): void {
   const fake = ctx.fake!;
-  fake.settings.on("projects.mutate", (payload) => {
-    mc.mutations.push(payload);
-    if (mc.refusal !== null) throw new Error(mc.refusal);
-    const environment = env(ctx);
-    const project = environment.projects.find((entry) => entry.id === payload.projectId);
-    if (!project) throw new Error(`unknown project ${payload.projectId}`);
-    if (payload.type === "project.update") {
-      const { type: _type, projectId: _id, ...fields } = payload;
-      change(ctx, () => Object.assign(project, fields));
-    } else if (payload.type === "project.delete") {
-      change(ctx, (next) => {
-        next.projects.splice(next.projects.indexOf(project), 1);
-        next.threads = next.threads.filter((thread) => thread.projectId !== project.id);
-      });
-    } else throw new Error(`${payload.type} is not supported`);
+  const projectOf = (id: unknown) => {
+    const project = env(ctx).projects.find((entry) => entry.id === id);
+    if (!project) throw new Error(`unknown project ${String(id)}`);
     return project;
+  };
+  fake.override("updateProject", async (projectId, fields) => {
+    mc.mutations.push({ type: "project.update", projectId, ...fields });
+    if (mc.refusal !== null) throw new Error(mc.refusal);
+    const project = projectOf(projectId);
+    change(ctx, () => Object.assign(project, fields));
+  });
+  // The MC drops the project and its threads from the shell; nothing on disk changes.
+  fake.override("deleteProject", async (projectId) => {
+    mc.mutations.push({ type: "project.delete", projectId });
+    if (mc.refusal !== null) throw new Error(mc.refusal);
+    const project = projectOf(projectId);
+    change(ctx, (next) => {
+      next.projects.splice(next.projects.indexOf(project), 1);
+      next.threads = next.threads.filter((thread) => thread.projectId !== project.id);
+    });
   });
   fake.override("readFile", (async (cwd: string, relativePath: string) => {
     const path = `${cwd}/${relativePath}`;

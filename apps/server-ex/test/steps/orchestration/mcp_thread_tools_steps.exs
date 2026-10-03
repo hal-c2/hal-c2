@@ -586,6 +586,93 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
+  # The base branch is ahead of `main`, so a worktree based on it can be told from one
+  # based on the checkout's own branch.
+  step "the agent of {string} launches a thread in {string} in a new worktree based on {string} on branch {string}",
+       %{args: [caller, project, base, branch]} = context do
+    %{id: project_id, root: root} = World.project(context, project)
+    World.git!(root, ["checkout", "-q", "-b", base])
+    World.commit!(root, %{"base.txt" => "from the base\n"}, "base work")
+    World.git!(root, ~w(checkout -q main))
+    HalC2.Test.Mc.ensure(HalC2.Workspace)
+    context = World.worktree_setup(context)
+
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_launch", %{
+        "projectId" => project_id,
+        "title" => "Demo",
+        "message" => "list the files",
+        "workspaceStrategy" => %{
+          "type" => "worktree",
+          "baseRef" => base,
+          "branch" => branch,
+          "startFromOrigin" => false
+        }
+      })
+
+    # The launching steps know the thread as "new" (`a new thread exists in ...`).
+    assert {:ok, %{"threadId" => id, "projectId" => ^project_id}} = result
+
+    context
+    |> Map.merge(%{mcp_result: result, launch_base: base, launch_branch: branch})
+    |> put_in([:threads, "new"], id)
+    |> put_in([:threads, "launched"], id)
+  end
+
+  step "its worktree is based on {string}", %{args: [base]} = context do
+    root = World.project(context, "demo").root
+    branch = context.launch_branch
+
+    state =
+      World.await_state(context, "launched", fn state ->
+        thread = StreamState.get(state, "thread")[World.thread_id(context, "launched")]
+        is_binary(thread["worktreePath"]) and thread["branch"] == branch
+      end)
+
+    path = StreamState.get(state, "thread")[World.thread_id(context, "launched")]["worktreePath"]
+    assert World.git!(path, ~w(rev-parse --is-inside-work-tree)) == "true"
+    assert World.git!(path, ~w(rev-parse --abbrev-ref HEAD)) == branch
+    # The new branch starts at the base branch's commit, not at the checkout's.
+    assert World.git!(path, ~w(rev-parse HEAD)) == World.git!(root, ["rev-parse", base])
+    refute World.git!(path, ~w(rev-parse HEAD)) == World.git!(root, ~w(rev-parse main))
+    assert File.read!(Path.join(path, "base.txt")) == "from the base\n"
+    Map.put(context, :launch_path, path)
+  end
+
+  step "its first run waits until the worktree is ready", context do
+    # The launch answered while the workspace was still being prepared...
+    assert {:ok, %{"runId" => run_id, "status" => "preparing"}} = context.mcp_result
+    id = World.thread_id(context, "launched")
+
+    state =
+      World.await_state(
+        context,
+        "launched",
+        &(StreamState.get(&1, "run")[run_id]["status"] == "completed"),
+        15_000
+      )
+
+    # ...and the turn started only once it was: in the worktree, after the preparation
+    # item completed.
+    ready = StreamState.get(state, "turn-item")["turn-item:workspace-preparation:#{run_id}"]
+    assert %{"status" => "completed", "title" => "Workspace ready"} = ready
+    assert StreamState.get(state, "run")[run_id]["startedAt"] >= ready["completedAt"]
+
+    assert [%{"cwd" => cwd}] =
+             Enum.filter(World.codex_requests(context, "turn/start"), fn request ->
+               Enum.any?(request["input"], &(&1["text"] == "list the files"))
+             end)
+
+    assert cwd == context.launch_path
+
+    preparing =
+      Enum.find(World.events(context, "launched"), &(&1.kind == "run" and &1.entity == run_id))
+
+    assert %{"s" => %{"status" => "preparing"}} = preparing.patch
+    assert id == StreamState.get(state, "run")[run_id]["threadId"]
+    context
+  end
+
   step "the agent of {string} launches a thread with an attachment that already belongs to {string}",
        %{args: [caller, thread]} = context do
     attachment = %{

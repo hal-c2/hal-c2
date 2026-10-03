@@ -348,6 +348,88 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
     context
   end
 
+  step "runs 1, 2 and 3 of {string} completed and {string} was rewound to run 2 and then to run 1",
+       %{args: [thread, thread]} = context do
+    context = complete_through(context, thread, 3)
+
+    Enum.reduce([2, 1], context, fn n, context ->
+      context = rewind(context, thread, n)
+      assert {:ok, _} = context.reply, "rewinding to run #{n} failed: #{inspect(context.reply)}"
+      context
+    end)
+  end
+
+  # Codex cuts its history before the first turn it drops (the fake names the cut
+  # thread after that turn), so after both rewinds its conversation ends with turn 1.
+  step "the provider receives the history through run {int}", %{args: [1]} = context do
+    thread = context.run_title
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    run = World.await_latest_run(context, thread, "completed", 10_000)
+    assert run["ordinal"] == 4
+
+    # Each rewind cut the conversation before the first turn still in it: run 3's, then
+    # run 2's (run 3's was already gone and is not counted again).
+    assert rewind_requests(context) == ["thread/revert", "thread/revert"]
+
+    assert [%{"beforeTurnId" => "native-turn-3"}, %{"beforeTurnId" => "native-turn-2"}] =
+             World.codex_requests(context, "thread/revert")
+
+    start = List.last(World.codex_requests(context, "turn/start"))
+    assert hd(start["input"])["text"] == "Again"
+    assert start["threadId"] == "native-thread-1-before-native-turn-2"
+
+    state = World.state(context, thread)
+    [provider_thread] = StreamState.list(state, "provider-thread")
+    assert start["threadId"] == get_in(provider_thread, ["nativeThreadRef", "nativeId"])
+    assert provider_thread["lastRunOrdinal"] == 4
+    Map.put(context, :again, start)
+  end
+
+  step "neither rolled-back run is replayed", context do
+    thread = context.run_title
+    runs = runs_by_ordinal(World.state(context, thread))
+
+    assert %{1 => "completed", 2 => "rolled_back", 3 => "rolled_back", 4 => "completed"} =
+             Map.new(runs, fn {ordinal, run} -> {ordinal, run["status"]} end)
+
+    # The provider continued its own conversation: no transcript was handed over, and
+    # nothing of runs 2 and 3 was sent to it again.
+    prompt = Enum.map_join(context.again["input"], "\n", &(&1["text"] || ""))
+    refute prompt =~ "<conversation_history>"
+    refute prompt =~ "run-2.txt" or prompt =~ "run-3.txt"
+    assert World.entities(context, thread, "context-handoff") == []
+
+    assert Enum.count(World.provider_prompts(context, "codex"), &(&1 =~ "write run-2.txt")) == 1
+    assert Enum.count(World.provider_prompts(context, "codex"), &(&1 =~ "write run-3.txt")) == 1
+    context
+  end
+
+  step "the provider still holds the conversation through run {int}", %{args: [n]} = context do
+    thread = context.run_title
+    assert {:error, "Could not restore the checkpoint: " <> _, _} = context.reply
+    # It was never asked to drop a turn, and its conversation is the one run 2 ended in.
+    assert rewind_requests(context) == []
+    state = World.state(context, thread)
+    [provider_thread] = StreamState.list(state, "provider-thread")
+    assert provider_thread["lastRunOrdinal"] == n
+    assert get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == "native-thread-1"
+    assert Enum.map(World.runs(context, thread), & &1["status"]) == ["completed", "completed"]
+    context
+  end
+
+  step "the next message to {string} continues after run {int}", %{args: [thread, n]} = context do
+    assert %{"status" => "completed", "ordinal" => ordinal} =
+             World.finish_turn(context, thread, "Next")
+
+    assert ordinal == n + 1
+    start = List.last(World.codex_requests(context, "turn/start"))
+    assert start["threadId"] == "native-thread-1"
+    prompt = Enum.map_join(start["input"], "\n", &(&1["text"] || ""))
+    assert prompt == "Next"
+    assert rewind_requests(context) == []
+    context
+  end
+
   step "every run after run {int} of {string} is already rolled back",
        %{args: [n, thread]} = context do
     context =

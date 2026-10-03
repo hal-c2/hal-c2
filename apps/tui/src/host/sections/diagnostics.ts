@@ -9,8 +9,12 @@ interface WireProcess {
   readonly cpuPercent: number;
   readonly rssBytes: number;
   readonly command: string;
+  /** How long it has run, as `ps` prints it. */
+  readonly elapsed?: string;
 }
 interface WireProcesses {
+  /** The MC's own process: its `elapsed` is the server's uptime. */
+  readonly serverPid?: number;
   readonly processCount: number;
   readonly totalRssBytes: number;
   readonly totalCpuPercent: number;
@@ -42,6 +46,7 @@ export type ProcessSignal = "SIGINT" | "SIGKILL";
 export function diagnosticsSection(host: SectionHost): SettingsSection {
   let processes: WireProcesses | null = null;
   let traces: WireTraces | null = null;
+  let version: string | null = null;
   let error: string | null = null;
   /** The process whose signals are offered (its own page). */
   let picked: WireProcess | null = null;
@@ -54,9 +59,15 @@ export function diagnosticsSection(host: SectionHost): SettingsSection {
         host.client.mcCall<WireProcesses>("server.getProcessDiagnostics", {}),
         // An MC without traces still lists its processes.
         host.client.mcCall<WireTraces>("server.getTraceDiagnostics", {}).catch(() => null),
+        // The version the MC reports for itself.
+        host.client.getServerConfig().then(
+          (config) => config.environment?.serverVersion ?? null,
+          () => null,
+        ),
       ]).then(
-        ([nextProcesses, nextTraces]) => {
+        ([nextProcesses, nextTraces, nextVersion]) => {
           if (asked !== generation) return;
+          version = nextVersion;
           processes = nextProcesses;
           traces = nextTraces;
           error = optionValue<{ message: string }>(nextProcesses.error)?.message ?? null;
@@ -137,6 +148,13 @@ export function diagnosticsSection(host: SectionHost): SettingsSection {
       if (error === null) items.push({ kind: "note", text: "Reading diagnostics…" });
       return items;
     }
+    const server = processes.processes.find((process) => process.pid === processes!.serverPid);
+    items.push({ kind: "heading", text: "Server" });
+    items.push({
+      kind: "note",
+      text: `version ${version ?? "unknown"} · up ${server?.elapsed ?? "unknown"}`,
+    });
+    items.push({ kind: "blank" });
     items.push({ kind: "heading", text: "Processes" });
     items.push({
       kind: "note",

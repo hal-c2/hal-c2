@@ -70,28 +70,28 @@ Feature: Settings in the terminal client
     When the user presses "Esc"
     Then the source-control panel is shown again
 
-  @backlog @tui
+  @tui
   Scenario: The user edits thread, git and text generation defaults
     When the user changes the default new-thread workspace to a new worktree
     Then the next new-thread draft preselects a new worktree
 
-  @backlog @tui
+  @tui
   Scenario: The user manages provider instances and their secrets
     When the user adds a provider instance with an API key
     Then the provider is listed and the key is stored as a secret
 
-  @backlog @tui
+  @tui
   Scenario: The user refreshes providers
     When the user refreshes providers
     Then provider status and models are fetched again
 
-  @backlog @tui
+  @tui
   Scenario: The user updates a provider
     Given a provider has an update available
     When the user runs the provider update
     Then the update progress and result are shown
 
-  @backlog @tui
+  @tui
   Scenario: The user reads server diagnostics
     When the user opens diagnostics
     Then the server's version, uptime and recent errors are shown

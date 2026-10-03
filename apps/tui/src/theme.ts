@@ -236,6 +236,7 @@ function defaultBg(): RGBA {
 
 /** Resolve a named colour to an indexed RGBA the terminal themes itself. */
 export function ansi(name: string): RGBA {
+  if (colourTheme === "none") return defaultFg();
   const index = ANSI_INDEX[name.toLowerCase()];
   return index === undefined ? defaultFg() : indexedColor(index);
 }
@@ -252,7 +253,8 @@ export interface Palette {
   readonly selectedBg: RGBA;
 }
 
-export const THEME: Palette = {
+/** The terminal's own colours: its default foreground and background and its ANSI slots. */
+const terminalPalette = (): Palette => ({
   text: defaultFg(),
   bg: defaultBg(),
   dim: indexedColor(7),
@@ -262,7 +264,91 @@ export const THEME: Palette = {
   success: indexedColor(2),
   warning: indexedColor(3),
   selectedBg: indexedColor(8),
-};
+});
+
+/** NO_COLOR: nothing but the terminal's default foreground and background. */
+const plainPalette = (): Palette => ({
+  text: defaultFg(),
+  bg: defaultBg(),
+  dim: defaultFg(),
+  faint: defaultFg(),
+  accent: defaultFg(),
+  error: defaultFg(),
+  success: defaultFg(),
+  warning: defaultFg(),
+  selectedBg: defaultBg(),
+});
+
+const rgb = (hex: string) => RGBA.fromHex(hex);
+
+/**
+ * The client's own themes, for a terminal whose palette the user does not
+ * want to borrow. They paint true colours; "terminal" (the default) paints
+ * none of its own.
+ */
+const COLOUR_THEMES = {
+  terminal: { label: "Terminal default", palette: terminalPalette },
+  solarized: {
+    label: "Solarized dark",
+    palette: (): Palette => ({
+      text: rgb("#93a1a1"),
+      bg: rgb("#002b36"),
+      dim: rgb("#839496"),
+      faint: rgb("#586e75"),
+      accent: rgb("#268bd2"),
+      error: rgb("#dc322f"),
+      success: rgb("#859900"),
+      warning: rgb("#b58900"),
+      selectedBg: rgb("#073642"),
+    }),
+  },
+  gruvbox: {
+    label: "Gruvbox dark",
+    palette: (): Palette => ({
+      text: rgb("#ebdbb2"),
+      bg: rgb("#282828"),
+      dim: rgb("#bdae93"),
+      faint: rgb("#665c54"),
+      accent: rgb("#83a598"),
+      error: rgb("#fb4934"),
+      success: rgb("#b8bb26"),
+      warning: rgb("#fabd2f"),
+      selectedBg: rgb("#3c3836"),
+    }),
+  },
+  none: { label: "No colour", palette: plainPalette },
+} as const;
+
+export type ColourThemeId = keyof typeof COLOUR_THEMES;
+
+/** The themes the user can pick, in the picker's order (NO_COLOR is not one of them). */
+export const COLOUR_THEME_CHOICES: ReadonlyArray<{ id: ColourThemeId; label: string }> = (
+  ["terminal", "solarized", "gruvbox"] as const
+).map((id) => ({ id, label: COLOUR_THEMES[id].label }));
+
+/** `NO_COLOR` (https://no-color.org): set to anything but the empty string. */
+export const noColorRequested = (env: Readonly<Record<string, string | undefined>>): boolean =>
+  env.NO_COLOR !== undefined && env.NO_COLOR !== "";
+
+let colourTheme: ColourThemeId = noColorRequested(process.env) ? "none" : "terminal";
+
+export const currentColourTheme = (): ColourThemeId => colourTheme;
+
+/**
+ * The palette every brick and styled line reads. It is one object for the
+ * life of the process: `setColourTheme` rewrites its fields in place, so a
+ * caller holding `THEME` (or a palette defaulting to it) follows the theme.
+ */
+export const THEME: Palette = COLOUR_THEMES[colourTheme].palette();
+
+/** Switch the palette; the host repaints what it already drew (`theme.set`). */
+export function setColourTheme(id: ColourThemeId): void {
+  colourTheme = id;
+  Object.assign(
+    THEME as { -readonly [K in keyof Palette]: Palette[K] },
+    COLOUR_THEMES[id].palette(),
+  );
+}
 
 /**
  * OpenTUI's empty SyntaxStyle does not assign attributes to Markdown scopes,

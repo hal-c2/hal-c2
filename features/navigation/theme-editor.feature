@@ -25,13 +25,13 @@ Feature: Custom themes
       When the user creates a theme
       Then the theme editor opens with Nord's colors
 
-    @backlog @desktop
+    @desktop
     Scenario: Two colors are enough to make a theme
       Given the theme editor is open
       When the user sets the canvas and accent colors
       Then the rest of the palette is derived from them
 
-    @backlog @desktop
+    @desktop
     Scenario: The advanced view edits every color by family
       Given the theme editor is open
       When the user shows the advanced colors
@@ -44,13 +44,13 @@ Feature: Custom themes
       When the user saves the changes
       Then the app uses the edited theme
 
-    @backlog @desktop
+    @desktop
     Scenario: The theme editor survives navigation
       Given the theme editor is open with unsaved changes
       When the user opens a thread
       Then the theme editor is still open with the changes
 
-    @backlog @desktop
+    @desktop
     Scenario: The theme editor shortcut toggles it
       Given the theme editor is open
       When the user presses the theme editor shortcut
@@ -105,7 +105,7 @@ Feature: Custom themes
       Given "Dracula" is installed and a newer version exists
       Then "Dracula" offers an update
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Importing theme files
       When the user imports <files>
       Then <result>
@@ -113,25 +113,31 @@ Feature: Custom themes
       Examples:
         | files                        | result                          |
         | one HAL-C2 theme file       | the theme is added              |
-        | one VS Code theme file       | the theme is added              |
         | three theme files at once    | the user is told "3 themes added" |
 
-    @backlog @desktop
+      # The desktop reads HAL-C2's own theme files; converting a VS Code theme
+      # (apps/web vscodeThemeImport.ts) is not ported, and it says so.
+      @backlog
+      Examples: Not converted on the desktop yet
+        | files                        | result                          |
+        | one VS Code theme file       | the theme is added              |
+
+    @desktop
     Scenario: Pasting theme JSON
       When the user pastes a theme's JSON
       Then the theme is added
 
-    @backlog @desktop
+    @desktop
     Scenario: An oversized theme file is refused
       When the user imports a theme file larger than 256 KB
       Then the file is refused with the size limit explained
 
-    @backlog @desktop
+    @desktop
     Scenario: An unreadable theme file suggests pasting
       When the user imports a theme file that cannot be read
       Then the user is told "Could not read that file. Paste the JSON below instead."
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Importing a theme that is already installed
       Given "Nord" is installed
       When the user imports "Nord" again and chooses <choice>
@@ -145,12 +151,12 @@ Feature: Custom themes
 
   Rule: Sharing and removing
 
-    @backlog @desktop
+    @desktop
     Scenario: Exporting a theme
       When the user exports "My Theme"
       Then a JSON theme file is saved that can be imported elsewhere
 
-    @backlog @desktop
+    @desktop
     Scenario: Removing a theme asks first
       When the user removes "My Theme"
       Then the user is asked "Remove “My Theme”?"

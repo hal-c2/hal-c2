@@ -25,13 +25,17 @@ export function registerSettingsSections(
     readonly serverUpdated: () => void;
     /** Run a project action in the open thread's terminal; false when it cannot. */
     readonly runProjectAction: (projectId: string, script: ProjectScript) => boolean;
+    readonly removeProject: (projectId: string) => void;
     /** The workspace a content search covers, and opening one of its files at a line. */
     readonly searchWorkspace: () => { readonly cwd: string; readonly label: string } | null;
     readonly openFile: (cwd: string, path: string, line: number) => boolean;
   },
 ): void {
   sections.register("projects", (host) =>
-    projectsSection(host, { runAction: options.runProjectAction }),
+    projectsSection(host, {
+      runAction: options.runProjectAction,
+      removeProject: options.removeProject,
+    }),
   );
   sections.register("projectSearch", (host) =>
     projectSearchSection(host, {

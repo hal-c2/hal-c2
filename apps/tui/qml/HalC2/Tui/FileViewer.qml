@@ -36,15 +36,18 @@ Rectangle {
         color: viewer.file && viewer.file.status === "error" ? Theme.colors.error : Theme.colors.dim
     }
 
-    // The rendering of a Markdown, table or HTML file; `s` switches to its text.
-    Repeater {
-        model: viewer.file !== null && viewer.file.message === "" && viewer.file.rendered ? viewer.file.lines : []
-        delegate: Text {
-            flexShrink: 0
-            height: 1
-            wrapMode: "none"
-            truncate: true
-            text: modelData
+    // A Markdown, table or HTML file reads as rendered lines (the host draws them); `s` shows its text.
+    Item {
+        objectName: "fileViewerRendered"
+        visible: viewer.file !== null && viewer.file.message === "" && viewer.file.rendered !== null && !viewer.file.editing
+        flexDirection: "column"
+        flexGrow: 1
+        flexShrink: 1
+        flexBasis: 0
+        overflow: "hidden"
+        Repeater {
+            model: viewer.file !== null && viewer.file.rendered !== null ? viewer.file.rendered : []
+            delegate: Text { height: 1; flexShrink: 0; wrapMode: "none"; text: modelData }
         }
     }
 
@@ -69,7 +72,7 @@ Rectangle {
         focusedBackgroundColor: Theme.colors.bg
         cursorColor: Theme.colors.accent
         onTextEdited: {
-            Shell.dispatch("files.edit.set", { text: text })
+            Shell.dispatch("files.editor.set", { text: text })
             saveTimer.restart()
         }
     }
@@ -77,12 +80,12 @@ Rectangle {
     Timer {
         id: saveTimer
         interval: 500
-        onTriggered: Shell.dispatch("files.edit.save")
+        onTriggered: Shell.dispatch("files.editor.save")
     }
 
     Code {
         objectName: "fileViewerCode"
-        visible: viewer.file !== null && viewer.file.message === "" && !viewer.file.rendered && !viewer.file.editing
+        visible: viewer.file !== null && viewer.file.message === "" && viewer.file.rendered === null && !viewer.file.editing
         flexGrow: 1
         flexShrink: 1
         flexBasis: 0

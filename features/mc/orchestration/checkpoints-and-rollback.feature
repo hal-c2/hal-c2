@@ -180,7 +180,7 @@ Feature: Checkpoints, diffs and rewinding
     When the user rewinds "t1" to run 1
     Then the provider is not asked to drop any turns
 
-  @mc @backlog
+  @mc
   Scenario: Rewinding twice keeps the provider's history right
     Given runs 1, 2 and 3 of "t1" completed and "t1" was rewound to run 2 and then to run 1
     When the user sends "Again" to "t1"
@@ -195,9 +195,9 @@ Feature: Checkpoints, diffs and rewinding
     And "t1" is not left waiting
     And the checkpoint of run 1 is still the last valid checkpoint
 
-  # The provider is asked to drop the later turns before the files are restored, so a
-  # failed restore leaves it a turn behind what the thread still shows.
-  @mc @backlog
+  # The files are restored before the provider is asked to drop the later turns, so a
+  # failed restore leaves its conversation matching what the thread still shows.
+  @mc
   Scenario: A rewind whose restore fails leaves the provider's conversation whole
     Given runs 1 and 2 of "t1" completed with checkpoints
     When the user rewinds "t1" to run 1 and restoring the files fails

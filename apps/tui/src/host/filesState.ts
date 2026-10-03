@@ -11,7 +11,7 @@ import { filetypeForPath } from "../diffSplit.ts";
 import { renderedFileKind, renderedFileMarkdown } from "../filePreview.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree, type FlatTreeRow } from "../fileTree.ts";
 import { clip } from "../format.ts";
-import { fileTypeColor } from "../icons.ts";
+import { fileGlyph, fileTypeColor } from "../icons.ts";
 import { ansi, type Palette, THEME } from "../theme.ts";
 import type { StatusKind } from "../store.ts";
 import { chunk, markdownLines, plainText, styled, type StyledText } from "./styledText.ts";
@@ -42,10 +42,8 @@ export interface TuiFileViewerState {
   readonly lineCount: number;
   /** The file can be shown rendered (Markdown, delimited data, HTML) as well as its text. */
   readonly renderable: boolean;
-  /** Showing the rendering (`lines`) rather than the text. */
-  readonly rendered: boolean;
-  /** The visible lines of the rendering, from `top`. */
-  readonly lines: ReadonlyArray<StyledText>;
+  /** The rendering (the visible lines, from `top`); null shows `text`, the file's source. */
+  readonly rendered: ReadonlyArray<StyledText> | null;
   /** The editor is open on the file (mode "fileEdit"); it holds `editText` when `editSeq` changes. */
   readonly editing: boolean;
   readonly editText: string;
@@ -57,6 +55,8 @@ export interface TuiFileViewerState {
 /** Published under `files`. */
 export interface TuiFilesState {
   readonly open: boolean;
+  /** Opened to pick an image for the prompt: Enter on a file attaches it. */
+  readonly attach: boolean;
   /** The workspace the browser lists. */
   readonly cwd: string;
   /** The header: `files · <cwd>` (or `file · <path>`) in accent, then the keys, dimmed. */
@@ -72,7 +72,7 @@ export interface TuiFilesState {
 
 export interface FilesControllerOptions {
   readonly client: Pick<TuiClient, "listEntries" | "readFile"> &
-    Partial<Pick<TuiClient, "mcCall" | "getServerConfig">>;
+    Partial<Pick<TuiClient, "mcCall" | "getServerConfig" | "writeFile">>;
   /** The status row's message (saves, the editor that was opened). */
   readonly status?: (text: string, kind?: StatusKind) => void;
   /** The editor opened or closed: it has the keys while open. */
@@ -85,6 +85,10 @@ export interface FilesControllerOptions {
   readonly palette?: Palette;
   readonly setOpen: (open: boolean) => void;
   readonly publish: (state: TuiFilesState) => void;
+  /** Attach the picked workspace image to the prompt. */
+  readonly attach?: (path: string) => void;
+  /** The prompt can take another attachment (offers "Attach image"). */
+  readonly canAttach?: () => boolean;
 }
 
 export interface FilesController {
@@ -106,6 +110,7 @@ export interface FilesController {
 
 const CLOSED: TuiFilesState = {
   open: false,
+  attach: false,
   cwd: "",
   title: "",
   hint: "",
@@ -142,7 +147,7 @@ function rowLine(row: FlatTreeRow, active: boolean, nameRoom: number, palette: P
   }
   const typeColor = fileTypeColor(row.path);
   return styled(
-    chunk(`${marker}${indent}◦ `, {
+    chunk(`${marker}${indent}${fileGlyph(row.path)} `, {
       fg: typeColor ? ansi(typeColor) : active ? palette.bg : palette.faint,
       ...bg,
     }),
@@ -154,6 +159,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
   const { client } = options;
   const palette = options.palette ?? THEME;
   let open = false;
+  let attach = false;
   let cwd = "";
   let status: TuiFilesState["status"] = "loading";
   let tree: ReturnType<typeof buildFileTree> = [];
@@ -243,6 +249,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     const renderable = viewer !== null && renderedFileKind(viewer.path) !== null;
     options.publish({
       open,
+      attach,
       cwd,
       title: viewer ? `file · ${clip(viewer.path, 40)}` : `files · ${clip(cwd, 40)}`,
       hint: viewer?.edit
@@ -250,7 +257,9 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
         : viewer
           ? // `i` (edit) and `o` (the environment's editor) are in the palette and the key reference.
             `  ·  PgUp/PgDn scroll · ${renderable ? `s ${rendering ? "source" : "rendered"} · ` : ""}Esc back`
-          : "  ·  ↑/↓ select · Enter open/expand · Esc close",
+          : attach
+            ? "  ·  ↑/↓ select · Enter attach · Esc close"
+            : "  ·  ↑/↓ select · Enter open/expand · Esc close",
       status,
       message,
       rows,
@@ -270,8 +279,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
         top: viewer.top,
         lineCount: rendering ? rendering.length : viewer.lines.length,
         renderable,
-        rendered: rendering !== null,
-        lines: rendering ? rendering.slice(viewer.top, viewer.top + height) : [],
+        rendered: rendering ? rendering.slice(viewer.top, viewer.top + height) : null,
         editing: viewer.edit !== undefined,
         editText: viewer.edit?.text ?? "",
         editSeq: viewer.edit?.seq ?? 0,
@@ -280,11 +288,12 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     });
   };
 
-  const openBrowser = () => {
+  const openBrowser = (forAttach = false) => {
     const workspace = options.cwd();
     if (workspace === null) return;
     const token = ++generation;
     open = true;
+    attach = forAttach;
     cwd = workspace;
     status = "loading";
     tree = [];
@@ -319,6 +328,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     generation += 1;
     viewGeneration += 1;
     open = false;
+    attach = false;
     if (viewer?.edit) save();
     viewer = null;
     options.setOpen(false);
@@ -380,6 +390,9 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     if (row.kind === "dir") {
       toggleDir(row.path);
       publish();
+    } else if (attach) {
+      options.attach?.(row.path);
+      close();
     } else openFile(row.path);
   };
 
@@ -419,8 +432,8 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     if (!viewer || !edit || edit.save === "saved") return;
     const { path } = viewer;
     const text = edit.text;
-    const call = client.mcCall
-      ? client.mcCall("projects.writeFile", { cwd, relativePath: path, contents: text })
+    const call = client.writeFile
+      ? client.writeFile(cwd, path, text)
       : Promise.reject(new Error("This server cannot write files."));
     track(
       call.then(
@@ -522,7 +535,14 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     dispatch: (action, payload) => {
       switch (action) {
         case "files.open":
-          openBrowser();
+          openBrowser(field(payload, "attach") === true);
+          return true;
+        case "files.attach":
+          openBrowser(true);
+          return true;
+        case "files.refresh":
+          // List the workspace again (a file was added since the browser opened).
+          if (open && !viewer) openBrowser(attach);
           return true;
         case "files.close":
           close();
@@ -562,10 +582,10 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           viewer = { ...viewer, source: !viewer.source, top: 0 };
           publish();
           return true;
-        case "files.edit":
+        case "files.editor.open":
           if (open) startEdit();
           return true;
-        case "files.edit.set": {
+        case "files.editor.set": {
           const text = field(payload, "text");
           if (!viewer?.edit || typeof text !== "string" || text === viewer.edit.text) return true;
           viewer.edit.text = text;
@@ -573,10 +593,10 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           publish();
           return true;
         }
-        case "files.edit.save":
+        case "files.editor.save":
           save();
           return true;
-        case "files.edit.done":
+        case "files.editor.done":
           finishEdit();
           return true;
         case "files.openInEditor": {
@@ -610,6 +630,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
         ? []
         : [
             { title: "Browse files", action: "files.open" },
+            ...(options.canAttach?.() ? [{ title: "Attach image", action: "files.attach" }] : []),
             ...(viewer && !viewer.edit
               ? [
                   ...(renderedFileKind(viewer.path) === null
@@ -620,7 +641,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
                           action: "files.viewer.toggleSource",
                         },
                       ]),
-                  { title: "Edit file", action: "files.edit" },
+                  { title: "Edit file here", action: "files.editor.open" },
                   ...editors.map((editor) => ({
                     title: `Open file in ${editor.label}`,
                     action: "files.openInEditor",

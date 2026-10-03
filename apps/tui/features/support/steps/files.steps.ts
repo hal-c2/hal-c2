@@ -9,6 +9,7 @@ import { ansi, THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
 import { expectColour, rectOf, regionRows, textWithin, cellAt, type Rect } from "../design.ts";
 import type { TuiFilesState } from "../../../src/host/filesState.ts";
+import type { HostOptions } from "../../../src/host/host.ts";
 import { threadKey } from "../../../src/host/sidebarState.ts";
 import type { Environment } from "../environment.ts";
 import { project, shell } from "../fakeClient.ts";
@@ -17,7 +18,7 @@ import { chooseCommand } from "../threadUi.ts";
 import { openRevertPicker } from "./timeline.steps.ts";
 import { boot, findObject, pressKey, settle, useClient, type World } from "../world.ts";
 
-interface FilesWorld extends World {
+export interface FilesWorld extends World {
   /** Workspace files and their contents, by forward-slash path. */
   files?: Record<string, string>;
   /** Extra listing entries (ignored folders, backslash paths). */
@@ -26,6 +27,8 @@ interface FilesWorld extends World {
   listedPaths?: string[];
   listError?: string;
   readErrors?: Record<string, string>;
+  /** Stands in for the user's editor once a step sets it. */
+  runEditor?: NonNullable<HostOptions["runEditor"]>;
 }
 
 const LONG_FILE = Array.from(
@@ -44,12 +47,19 @@ const DEFAULT_FILES = (): Record<string, string> => ({
  * Background's project (T1's environment.ts) names it; the workspace path is
  * the scenario's.
  */
-async function openOnWorkspace(ctx: FilesWorld, workspaceRoot: string, name = "shop") {
+export async function openOnWorkspace(ctx: FilesWorld, workspaceRoot: string, name = "shop") {
   if (ctx.app) return;
   ctx.files ??= DEFAULT_FILES();
   const environment = (ctx as { env?: Environment }).env;
   const title = environment?.projects[0]?.title ?? name;
   const projects = [{ ...project, title, workspaceRoot }];
+  // `$EDITOR` is whatever a later step puts in `ctx.runEditor` (slice-files.steps.ts).
+  ctx.hostOptions = {
+    ...ctx.hostOptions,
+    env: { EDITOR: "nvim" },
+    runEditor: (command, file) =>
+      ctx.runEditor?.(command, file) ?? Promise.reject(new Error("no editor in this scenario")),
+  };
   useClient(ctx, {
     shellSnapshot: shell(undefined, projects as never),
     listEntries: async () => {
@@ -74,12 +84,12 @@ async function openOnWorkspace(ctx: FilesWorld, workspaceRoot: string, name = "s
   await settle(ctx);
 }
 
-const ensureOpen = (ctx: FilesWorld) => openOnWorkspace(ctx, "/home/sam/shop");
+export const ensureOpen = (ctx: FilesWorld) => openOnWorkspace(ctx, "/home/sam/shop");
 const files = (ctx: World) => ctx.host!.state.get("files") as TuiFilesState;
 const rowLabels = (ctx: World) => files(ctx).rows.map((row) => row.text.slice(2).trim());
 const selected = (ctx: World) => files(ctx).rows.find((row) => row.selected)?.path;
 
-async function browse(ctx: FilesWorld) {
+export async function browse(ctx: FilesWorld) {
   // keymap.feature opens the browser with nothing booted; there it starts on a file.
   const onItsOwn = !ctx.app;
   await ensureOpen(ctx);
@@ -89,7 +99,7 @@ async function browse(ctx: FilesWorld) {
 }
 
 /** Move the selection to `path` with the arrow keys. */
-async function selectRow(ctx: World, path: string) {
+export async function selectRow(ctx: World, path: string) {
   for (let guard = 0; guard < 200 && selected(ctx) !== path; guard += 1) {
     const rows = files(ctx).rows.map((row) => row.path);
     const target = rows.indexOf(path);
@@ -343,10 +353,7 @@ step("the user is told the file is empty", async (ctx: World) => {
 
 // --- Attach image ---------------------------------------------------------------------
 
-// The composer (and its attachments) is not on the host yet, and the TUI does
-// not offer "Attach image" at all until the attach flow lands (@backlog), so
-// this only holds the palette to not offering it.
-step("the prompt already has the most attachments a turn allows", ensureOpen);
+// "the prompt already has the most attachments a turn allows" is in slice-files.steps.ts.
 // "the user opens the command palette" (threads.steps.ts) opens it and
 // "{string} is not offered" (projects.steps.ts) checks its commands.
 

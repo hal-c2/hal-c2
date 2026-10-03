@@ -43,13 +43,16 @@ export const RUN_PROJECT_ACTION = "project.action.run";
  * Projects: each one's folder, where its new threads start, its actions (named
  * commands, run in the open thread's terminal) with what its hal-c2.json
  * offers to import, and removing it from HAL-C2. Changes go to the MC as
- * `projects.mutate`; the page follows the shell snapshot.
+ * `project.update`; the page follows the shell snapshot. Removing a project and
+ * the palette's run entries are the workspace feature's (`features/workspace.ts`).
  */
 export function projectsSection(
   host: SectionHost,
   options: {
     /** Run an action in the open thread's terminal; false when no thread of the project is open. */
     readonly runAction: (projectId: string, script: ProjectScript) => boolean;
+    /** Ask before removing the project, and remove it (the workspace feature's flow). */
+    readonly removeProject: (projectId: string) => void;
   },
 ): SettingsSection {
   const { client, store } = host;
@@ -92,41 +95,17 @@ export function projectsSection(
     );
   };
 
-  const mutate = (payload: Record<string, unknown>) =>
-    host.track(client.mcCall("projects.mutate", payload));
-
   const saveScripts = (
     target: ShellProject,
     scripts: ReadonlyArray<ProjectScript>,
     done: string,
   ) => {
-    void mutate({ type: "project.update", projectId: target.id, scripts }).then(
+    void host.track(client.updateProject(target.id as never, { scripts })).then(
       () => {
         host.status(done, "success");
         host.refresh();
       },
       (cause: unknown) => host.status(`Could not save the action: ${errorText(cause)}`, "error"),
-    );
-  };
-
-  const askRemoval = (target: ShellProject) => {
-    const count = threadCount(target.id);
-    host.confirm(
-      `Remove ${target.title} from HAL-C2? ${
-        count > 0
-          ? `Its ${plural(count, "thread")} and their conversation history will be cleared permanently.`
-          : "It has no threads."
-      } The files on disk are kept.`,
-      () => {
-        void mutate({ type: "project.delete", projectId: target.id, force: true }).then(
-          () => {
-            host.status(`Removed ${target.title}.`, "success");
-            view = { kind: "list" };
-            host.refresh();
-          },
-          (cause: unknown) => host.status(`Failed to remove project: ${errorText(cause)}`, "error"),
-        );
-      },
     );
   };
 
@@ -202,15 +181,13 @@ export function projectsSection(
             : "The environment's default",
       run: () => {
         const next = order[(order.indexOf(own) + 1) % order.length] ?? null;
-        void mutate({
-          type: "project.update",
-          projectId: target.id,
-          defaultThreadEnvMode: next,
-        }).then(
-          () => host.refresh(),
-          (cause: unknown) =>
-            host.status(`Could not save the setting: ${errorText(cause)}`, "error"),
-        );
+        void host
+          .track(client.updateProject(target.id as never, { defaultThreadEnvMode: next }))
+          .then(
+            () => host.refresh(),
+            (cause: unknown) =>
+              host.status(`Could not save the setting: ${errorText(cause)}`, "error"),
+          );
       },
     };
   };
@@ -288,7 +265,7 @@ export function projectsSection(
       id: "remove",
       label: "Remove project…",
       tone: "error",
-      run: () => askRemoval(target),
+      run: () => options.removeProject(target.id),
     });
     return { title: `project · ${target.title}`, items };
   };
@@ -464,22 +441,6 @@ export function projectsSection(
       action: "section.open",
       payload: { id: "projects", projectId: current.id },
     });
-    for (const script of scriptsOf(current)) {
-      list.push({
-        id: `project.action.${script.id}`,
-        title: `Run action: ${script.name}`,
-        keywords: `script ${script.command}`,
-        action: RUN_PROJECT_ACTION,
-        payload: { projectId: current.id, actionId: script.id },
-      });
-    }
-    list.push({
-      id: "section.projects.remove",
-      title: `Remove project ${current.title}…`,
-      keywords: "delete project",
-      action: "section.open",
-      payload: { id: "projects", projectId: current.id, remove: true },
-    });
     return list;
   };
 
@@ -487,17 +448,13 @@ export function projectsSection(
     id: "projects",
     commands,
     open: (payload) => {
-      const wanted = payload as { readonly projectId?: unknown; readonly remove?: unknown };
+      const wanted = payload as { readonly projectId?: unknown };
       const target = typeof wanted?.projectId === "string" ? project(wanted.projectId) : null;
       view = target ? { kind: "project", projectId: target.id } : { kind: "list" };
       unsubscribe ??= store.subscribe(() => host.refresh());
       if (target) {
         files.delete(target.id);
         readFile(target);
-        if (wanted.remove === true) {
-          askRemoval(target);
-          host.select("remove");
-        }
       }
     },
     close: () => {

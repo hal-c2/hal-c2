@@ -44,6 +44,37 @@ export function isKnownKittyGraphicsTerminal(
  */
 export type InlineImageTransport = "direct" | "tmux";
 
+/** The escape sequences an inline image is drawn with. */
+export type InlineImageProtocol = "kitty" | "sixel";
+
+// Terminals that draw sixel but not Kitty graphics. Named, never probed: a
+// sixel sent to a terminal without it prints as garbage.
+const SIXEL_TERMINAL_NAME =
+  /(?:^|[-_ ])(?:foot|mlterm|contour|mintty|iterm(?:\.app)?|yaft)(?:$|[-_ .])/i;
+const SIXEL_MARKERS = ["WT_SESSION", "ITERM_SESSION_ID"] as const;
+
+/** True for terminals known to draw sixel graphics. */
+export function isKnownSixelTerminal(environment: TerminalEnvironment): boolean {
+  return (
+    SIXEL_MARKERS.some((key) => Boolean(environment[key])) ||
+    TERMINAL_NAME_KEYS.some((key) => SIXEL_TERMINAL_NAME.test(environment[key]?.trim() ?? ""))
+  );
+}
+
+/**
+ * Which protocol the terminal's images use: Kitty graphics where known, sixel
+ * for a terminal that only has that (outside tmux, which may not pass it on).
+ */
+export function inlineImageProtocol(
+  environment: TerminalEnvironment,
+  readTmuxEnvironment: () => string = () => "",
+): InlineImageProtocol | null {
+  if (isKnownKittyGraphicsTerminal(environment, environment.TMUX ? readTmuxEnvironment() : "")) {
+    return "kitty";
+  }
+  return !environment.TMUX && isKnownSixelTerminal(environment) ? "sixel" : null;
+}
+
 /**
  * The inline-image decision for a terminal environment. Inside tmux the pane
  * names tmux, not the terminal, so `readTmuxEnvironment` supplies tmux's global
@@ -53,7 +84,11 @@ export function inlineImageTransport(
   environment: TerminalEnvironment,
   readTmuxEnvironment: () => string = () => "",
 ): InlineImageTransport | null {
-  if (!environment.TMUX) return isKnownKittyGraphicsTerminal(environment) ? "direct" : null;
+  if (!environment.TMUX) {
+    return isKnownKittyGraphicsTerminal(environment) || isKnownSixelTerminal(environment)
+      ? "direct"
+      : null;
+  }
   return isKnownKittyGraphicsTerminal(environment, readTmuxEnvironment()) ? "tmux" : null;
 }
 

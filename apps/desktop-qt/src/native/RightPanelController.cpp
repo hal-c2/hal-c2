@@ -16,6 +16,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "McClient.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "TerminalController.h"
@@ -107,6 +108,17 @@ void RightPanelController::activate() {
   auto* shell = NativeShell::of(this);
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, &RightPanelController::retarget);
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &RightPanelController::retarget);
+  // Diffs and file previews wrap long lines as Settings → Appearance says,
+  // until the user says otherwise in the panel.
+  if (auto* settings = shell->controller<SettingsController>()) {
+    const auto follow = [this, settings] {
+      const bool wrap = settings->setting(QStringLiteral("wordWrap")).toBool();
+      m_diff.setDefaultWrap(wrap);
+      m_files.setDefaultWrap(wrap);
+    };
+    connect(settings, &SettingsController::deviceChanged, this, follow);
+    follow();
+  }
   // Its panel groups come and go with their terminals.
   if (auto* terminals = shell->controller<TerminalController>()) {
     connect(terminals, &TerminalController::changed, this, &RightPanelController::update);
@@ -116,7 +128,14 @@ void RightPanelController::activate() {
       keys->commands()->add(command, keybindings::commandLabel(command), std::move(run));
     };
     add(QStringLiteral("rightPanel.toggle"), [this] { toggle(); });
-    add(QStringLiteral("rightPanel.close"), [this] { closeTab(); });
+    // The web's mod+w closes the innermost thing: the active tab, else the window.
+    add(QStringLiteral("rightPanel.close"), [this] {
+      if (m_onThread && panel().open && !panel().active.isEmpty()) {
+        closeTab();
+      } else {
+        m_bridge->windowCommand(QStringLiteral("close"));
+      }
+    });
     add(QStringLiteral("rightPanel.toggleMaximized"), [this] { toggleMaximized(); });
     add(QStringLiteral("threadPanel.toggle"), [this] { toggleDetails(); });
     add(QStringLiteral("diff.toggle"), [this] { toggleDiff(); });

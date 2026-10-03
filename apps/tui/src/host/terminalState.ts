@@ -111,6 +111,8 @@ export interface TerminalController {
   readonly clear: () => void;
   readonly restart: () => void;
   readonly copy: () => void;
+  /** The active terminal's screen as text (what `copy` copies), or null with none open. */
+  readonly viewportText: () => string | null;
   readonly input: (data: string) => void;
   readonly paste: (text: string) => void;
   /**
@@ -663,6 +665,10 @@ export function createTerminalController(options: TerminalControllerOptions): Te
           ),
       );
     },
+    viewportText: () => {
+      const pane = activePane();
+      return pane ? readTerminalViewport(pane.term, pane.offset) : null;
+    },
     copy: () => {
       const pane = activePane();
       if (!pane) return;
@@ -704,7 +710,7 @@ export function createTerminalController(options: TerminalControllerOptions): Te
       mergeDiscovered();
       update();
       const size = paneSize();
-      store.setStatus(`Running ${action.name}…`, "busy");
+      store.setStatus(`Starting ${action.name}…`, "busy");
       track(
         client
           // The shell is started first (again, when it has ended), so the command always runs.
@@ -721,7 +727,7 @@ export function createTerminalController(options: TerminalControllerOptions): Te
             client.terminalWrite(thread.threadId as ThreadId, terminalId, `${action.command}\r`),
           )
           .then(
-            () => store.setStatus(`Ran ${action.name} in the terminal.`, "success"),
+            () => store.setStatus(`Running ${action.name} in the terminal.`, "success"),
             (error) =>
               store.setStatus(
                 `Failed to run action "${action.name}": ${errorText(error)}`,
