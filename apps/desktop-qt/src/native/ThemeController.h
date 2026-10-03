@@ -18,7 +18,9 @@ class ShellBridge;
 
 // The shell's theme, resolved natively and published as `theme` (the
 // ShellThemeState shape: {id, appearance, colors, radius, fontUi, fontMono},
-// colours as #rrggbb[aa]); ThemeStore paints it with theme.json on top.
+// colours as #rrggbb[aa], plus the device's font preferences: fontPrompt,
+// fontTerminal and fontSizes {interface, prompt, code, terminal});
+// ThemeStore paints it with theme.json on top.
 //
 // The choice is this device's (SettingsController's device preferences):
 // `appearance` (system, light or dark), `theme` (an id; none is the standard
@@ -36,8 +38,9 @@ class ThemeController : public QObject, public NativeController {
   // What is drawn: the resolved appearance and theme id.
   Q_PROPERTY(QString appearance READ appearance NOTIFY changed)
   Q_PROPERTY(QString resolvedId READ resolvedId NOTIFY changed)
-  // [{id, label, appearance, appearances, source}], source one of builtIn,
-  // custom, environment: what a picker offers.
+  // [{id, label, appearance, appearances, source, collection}], source one of
+  // builtIn, custom, environment: what a picker offers. `collection` is the
+  // label of the family a saved theme was installed with, or empty.
   Q_PROPERTY(QVariantList available READ available NOTIFY changed)
   // The colour roles a theme sets, in the order an editor lists them.
   Q_PROPERTY(QStringList roles READ roles CONSTANT)
@@ -47,6 +50,11 @@ class ThemeController : public QObject, public NativeController {
   // The draft the editor holds, unsaved changes included, for as long as it
   // is open: it outlives the page that opened it.
   Q_PROPERTY(QVariantMap editing READ editing NOTIFY editingChanged)
+  // Picking a colour off the app: while `inspecting`, the window's
+  // ThemeInspector hands the colour under the pointer to pick(), and `picked`
+  // says which roles draw in it: {color, role (the first), roles, count}.
+  Q_PROPERTY(bool inspecting READ inspecting WRITE setInspecting NOTIFY inspectChanged)
+  Q_PROPERTY(QVariantMap picked READ picked NOTIFY inspectChanged)
   // The roles by family, as the editor's advanced view groups them:
   // [{title, roles}].
   Q_PROPERTY(QVariantList families READ families CONSTANT)
@@ -105,6 +113,10 @@ public:
   Q_INVOKABLE bool removeCustom(const QString& id);
   // Asks first ("Remove “<label>”?"), then removes it.
   Q_INVOKABLE void requestRemove(const QString& id);
+  // Several at once, as the variants picked from a collection: asked once,
+  // removed in one save.
+  Q_INVOKABLE void requestRemoveMany(const QStringList& ids);
+  bool removeCustomMany(const QStringList& ids);
 
   // The editor. edit() opens it on a draft; setEditing() keeps what the user
   // changed since. Closing it drops the draft.
@@ -112,6 +124,11 @@ public:
   Q_INVOKABLE void edit(const QVariantMap& draft);
   Q_INVOKABLE void setEditing(const QVariantMap& draft);
   QVariantList families() const;
+  bool inspecting() const { return m_inspecting; }
+  // Starting to inspect forgets the last pick; stopping (Escape) picks nothing.
+  void setInspecting(bool inspecting);
+  QVariantMap picked() const { return m_picked; }
+  Q_INVOKABLE void pick(const QString& color);
   // A whole palette grown from a canvas and an accent (the web's
   // createVividThemeColors, simplified): surfaces step away from the canvas,
   // text is solved for contrast against it, the status colours stay standard.
@@ -143,6 +160,7 @@ signals:
   void changed();
   void editorOpenChanged();
   void editingChanged();
+  void inspectChanged();
   void importChanged();
 
 private:
@@ -153,6 +171,7 @@ private:
     QJsonObject colors;
     QJsonObject variants;
     QString source;
+    QString collection;
   };
   QList<Definition> definitions() const;
   std::optional<Definition> find(const QString& id) const;
@@ -170,11 +189,15 @@ private:
   QString m_cycleToast;
   bool m_editorOpen = false;
   QVariantMap m_editing;
+  bool m_inspecting = false;
+  QVariantMap m_picked;
   QString m_importError;
   // Parsed themes whose id is already installed.
   QJsonArray m_importConflicts;
   // Parses a theme file; `error` says why it is not one.
   std::optional<QJsonObject> parseFile(const QByteArray& text, QString* error) const;
+  // A VS Code colour theme as one of our theme files.
+  std::optional<QJsonObject> fromVsCodeTheme(const QJsonObject& file, QString* error) const;
   bool installed(const QString& id) const;
   // Adds or replaces saved themes in one save.
   bool install(const QJsonArray& themes, const QString& activate = {});

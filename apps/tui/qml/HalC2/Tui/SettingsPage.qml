@@ -16,6 +16,16 @@ Rectangle {
     readonly property var paneScroll: Shell.state.paneScroll
     onPaneScrollChanged: if (paneScroll.pane === "settings") scroll(paneScroll.by)
 
+    // The cluster is read again while the page is up: a machine that joined shows without asking.
+    Timer {
+        interval: 30000
+        running: page.settings.active
+        onTriggered: {
+            Shell.dispatch("cluster.refresh")
+            restart()
+        }
+    }
+
     border.width: 1
     border.style: "rounded"
     border.color: Theme.colors.accent

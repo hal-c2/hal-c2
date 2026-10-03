@@ -88,7 +88,7 @@ Rectangle {
     component Note: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -107,7 +107,7 @@ Rectangle {
         Label {
             text: configField.field.label
             color: page.foreground
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             font.weight: Font.Medium
         }
 
@@ -216,7 +216,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Add provider instance")
                     color: page.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 
@@ -228,7 +228,7 @@ Rectangle {
                         required property int index
                         text: (index + 1) + ". " + modelData
                         color: index === wizardCard.wizard.step ? page.foreground : page.muted
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                         font.weight: index === wizardCard.wizard.step ? Font.DemiBold : Font.Normal
                     }
                 }
@@ -277,7 +277,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: qsTr("Or choose from ACP Registry")
                         color: page.foreground
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
 
@@ -326,7 +326,7 @@ Rectangle {
                     Label {
                         text: qsTr("No compatible agents found")
                         color: page.foreground
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
 
                     Note {
@@ -363,7 +363,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: agentRow.modelData.name
                                 color: page.foreground
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                 elide: Text.ElideRight
                             }
 
@@ -402,7 +402,7 @@ Rectangle {
                 Label {
                     text: qsTr("Label")
                     color: page.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 ShellTextField {
@@ -428,7 +428,7 @@ Rectangle {
                 Label {
                     text: qsTr("Instance ID")
                     color: page.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 ShellTextField {
@@ -558,7 +558,7 @@ Rectangle {
                 Label {
                     text: card.provider.name
                     color: page.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
@@ -567,7 +567,7 @@ Rectangle {
                     visible: card.provider.version.length > 0
                     text: card.provider.version
                     color: page.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                     font.family: "monospace"
                 }
 
@@ -597,7 +597,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: card.provider.headline
                 color: card.provider.status === "error" || card.provider.status === "warning" ? page.warning : page.foreground
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 elide: Text.ElideRight
             }
 
@@ -615,7 +615,7 @@ Rectangle {
                 flat: true
                 padding: 0
                 text: card.revealed ? card.provider.email : page.redacted(card.provider.email)
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.family: "monospace"
                 Accessible.name: qsTr("Toggle account email visibility")
                 ToolTip.visible: hovered
@@ -641,7 +641,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: card.advisory ? card.advisory.title : ""
                     color: card.advisory && card.advisory.strong ? page.warning : page.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 
@@ -667,7 +667,7 @@ Rectangle {
                         visible: !!(card.advisory && card.advisory.updateCommand)
                         text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
                         color: page.muted
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                         font.family: "monospace"
                         elide: Text.ElideMiddle
                     }
@@ -768,7 +768,7 @@ Rectangle {
                 Note {
                     text: card.provider.urlAuth ? card.provider.urlAuth.url : ""
                     font.family: "monospace"
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                     wrapMode: Text.WrapAnywhere
                 }
 
@@ -899,7 +899,7 @@ Rectangle {
                             Label {
                                 text: modelData.label || modelData.name
                                 color: page.foreground
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
 
                             ShellTextField {
@@ -975,7 +975,7 @@ Rectangle {
                 Label {
                     text: qsTr("Name")
                     color: page.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -1016,7 +1016,7 @@ Rectangle {
                         Label {
                             text: modelData.label
                             color: page.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                         }
 
@@ -1066,7 +1066,7 @@ Rectangle {
                 Label {
                     text: qsTr("Environment variables")
                     color: page.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -1185,7 +1185,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Providers")
                     color: page.foreground
-                    font.pixelSize: 18
+                    font.pixelSize: Math.round(18 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 
@@ -1202,7 +1202,7 @@ Rectangle {
                     visible: text.length > 0
                     text: page.checkedLabel
                     color: page.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 ShellButton {
@@ -1247,7 +1247,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: page.model ? page.model.title : ""
                     color: page.foreground
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 
@@ -1267,7 +1267,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Limited permissions")
                     color: page.foreground
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 
@@ -1316,7 +1316,7 @@ Rectangle {
                         Label {
                             text: qsTr("Provider health check interval")
                             color: page.foreground
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                             font.weight: Font.Medium
                         }
 
@@ -1354,7 +1354,7 @@ Rectangle {
                 Label {
                     text: qsTr("seconds")
                     color: page.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
             }
 
@@ -1376,7 +1376,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: qsTr("Usage providers")
                         color: page.foreground
-                        font.pixelSize: 14
+                        font.pixelSize: Math.round(14 * Theme.fontScale)
                         font.weight: Font.DemiBold
                     }
 
@@ -1411,7 +1411,7 @@ Rectangle {
                                 objectName: "label"
                                 text: modelData.label
                                 color: page.foreground
-                                font.pixelSize: 13
+                                font.pixelSize: Math.round(13 * Theme.fontScale)
                                 font.weight: Font.Medium
                             }
 
@@ -1458,7 +1458,7 @@ Rectangle {
             text: hubDialog.title
             padding: 20
             bottomPadding: 4
-            font.pixelSize: 17
+            font.pixelSize: Math.round(17 * Theme.fontScale)
             font.weight: Font.DemiBold
             color: page.foreground
             elide: Text.ElideRight

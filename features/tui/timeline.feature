@@ -285,18 +285,18 @@ Feature: Reading a thread in the terminal
     And the box's third row is in the dim colour
     And the box's last row reads "↑/↓ select · Enter revert · Esc cancel" in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: The user compares against a base ref and hides whitespace
     When the user reviews the thread's changes against "main" ignoring whitespace
     Then the diff shows only non-whitespace changes since "main"
 
-  @backlog @tui
+  @tui
   Scenario: The diff keeps the user's place in a large change
     Given the user scrolled halfway through a large diff
     When the diff refreshes
     Then the user is at the same file and line
 
-  @backlog @tui
+  @tui
   Scenario: The user annotates diff lines as context for the next prompt
     When the user adds a note on a diff line
     Then the note and the line are attached to the prompt as context

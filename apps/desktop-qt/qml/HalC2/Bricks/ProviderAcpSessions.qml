@@ -27,7 +27,7 @@ ColumnLayout {
     component Hint: Label {
         Layout.fillWidth: true
         color: section.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -42,7 +42,7 @@ ColumnLayout {
             Label {
                 text: qsTr("Native sessions")
                 color: section.foreground
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.weight: Font.Medium
             }
 
@@ -106,7 +106,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                     text: sessionRow.modelData.title
                     color: section.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     elide: Text.ElideRight
                 }
 
@@ -159,7 +159,7 @@ ColumnLayout {
             Label {
                 text: qsTr("Model providers")
                 color: section.foreground
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.weight: Font.Medium
             }
 
@@ -197,7 +197,7 @@ ColumnLayout {
                     text: providerRow.modelData.providerId + " · " + (providerRow.modelData.configured ? qsTr("Configured") : qsTr("Disabled"))
                           + (providerRow.modelData.required ? qsTr(" · Required") : "")
                     color: section.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     elide: Text.ElideRight
                 }
 

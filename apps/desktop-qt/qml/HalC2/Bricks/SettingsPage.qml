@@ -131,7 +131,7 @@ Rectangle {
                                 Label {
                                     text: entry.modelData.section
                                     color: page.foreground
-                                    font.pixelSize: 14
+                                    font.pixelSize: Math.round(14 * Theme.fontScale)
                                     font.weight: Font.DemiBold
                                 }
 
@@ -168,7 +168,7 @@ Rectangle {
                                 Label {
                                     text: entry.modelData.title
                                     color: page.foreground
-                                    font.pixelSize: 13
+                                    font.pixelSize: Math.round(13 * Theme.fontScale)
                                     font.weight: Font.Medium
                                 }
 
@@ -176,7 +176,7 @@ Rectangle {
                                     Layout.fillWidth: true
                                     text: entry.modelData.description ?? ""
                                     color: Theme.palette.color("textMuted", "#a1a1aa")
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                     wrapMode: Text.Wrap
                                 }
                             }

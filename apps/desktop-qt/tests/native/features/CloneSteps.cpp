@@ -16,6 +16,7 @@
 #include "DraftController.h"
 #include "FakeConfig.h"
 #include "FakeFiles.h"
+#include "FakeProjects.h"
 #include "FakeSourceControl.h"
 #include "Harness.h"
 #include "KeybindingController.h"
@@ -369,8 +370,12 @@ const Steps steps([] {
   });
 
   // Failures.
-  step(QStringLiteral("adding a project will fail at (the clone|the repository lookup)"), [](World& world, const Captures& c, const Table&) {
-    if (c[0] == u"the clone") {
+  step(QStringLiteral("adding a project will fail at (the clone|the repository lookup|registration)"), [](World& world, const Captures& c, const Table&) {
+    if (c[0] == u"registration") {
+      // The MC refuses the project itself.
+      world.mc.part<FakeProjects>().refusal = QStringLiteral("Disk is read-only");
+      fake(world).source = QStringLiteral("a local folder");
+    } else if (c[0] == u"the clone") {
       fake(world).refuseStart = QStringLiteral("destination already exists");
       fake(world).source = QStringLiteral("a Git URL");
     } else {

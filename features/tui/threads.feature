@@ -395,12 +395,12 @@ Feature: Thread list and thread actions in the terminal
     When the user filters threads by "zzzz"
     Then the list reads "No threads here. Press ^N." in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: The user browses archived threads with search and sort
     When the user opens archived threads
     Then archived threads are listed with search and sort by date
 
-  @backlog @tui
+  @tui
   Scenario: The user unarchives or deletes a thread from the archive
     Given the archive lists the thread "Old spike"
     When the user unarchives "Old spike"

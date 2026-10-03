@@ -250,6 +250,14 @@ step(
 // While adding a project: not among the rows; otherwise: not a palette command.
 step("{string} is not offered", async (ctx: World, name: string) => {
   const frame = await settle(ctx);
+  // An open thread menu (the machines to move to) is what is on offer.
+  const menu = ctx.host!.state.get("contextMenu") as {
+    rows: ReadonlyArray<{ label?: string }>;
+  } | null;
+  if (menu) {
+    expect(menu.rows.some((row) => row.label?.includes(name))).toBe(false);
+    return;
+  }
   if (!flow(ctx).open) {
     expect(await paletteTitles(ctx)).not.toContain(name);
     return;

@@ -71,7 +71,7 @@ Feature: Reconnecting and stale requests in the terminal client
     When the user answers it and the provider reports a failure that is not about a stale request
     Then the approval prompt stays open so the user can answer again
 
-  @backlog @tui
+  @tui
   Scenario: A server restart is reported and the workflow resumes
     When the server restarts
     Then the status line reports the restart

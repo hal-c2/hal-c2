@@ -84,6 +84,11 @@ Window {
     // editor", its shortcut, and Settings → Appearance open it.
     ThemeEditor {}
 
+    // Its colour picker: over the layout, under the menus and dialogs.
+    ThemeInspector {
+        anchors.fill: parent
+    }
+
     // The quit shortcut's hint (QuitController): hold, or press again.
     Rectangle {
         readonly property var hint: Shell.state.quitHint ?? null
@@ -103,7 +108,7 @@ Window {
             anchors.centerIn: parent
             text: parent.hint ? parent.hint.message : ""
             color: "white"
-            font.pixelSize: 24
+            font.pixelSize: Math.round(24 * Theme.fontScale)
             font.bold: true
         }
     }

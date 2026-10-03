@@ -117,7 +117,7 @@ Feature: Viewing and editing files
       When the user retries
       Then the audio plays
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-desktop
     Scenario Outline: Rendered files can be switched to their source and back
       When the user opens "<path>"
       Then the file is shown rendered
@@ -171,7 +171,7 @@ Feature: Viewing and editing files
       And the user closes the file
       Then no file is open and the tree is shown
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-desktop
     Scenario: A file opens in the user's editor on the environment
       Given the environment has the editor "VS Code"
       When the user opens "src/app.ts" in "VS Code"
@@ -203,7 +203,7 @@ Feature: Viewing and editing files
       When a client writes "src/new/deep.ts" in "shop"
       Then "src/new/deep.ts" exists with the written contents
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-desktop
     Scenario: Edits save themselves shortly after the user stops typing
       Given the user is editing "src/app.ts"
       When the user types a change and pauses
@@ -233,7 +233,7 @@ Feature: Viewing and editing files
       When the user unticks "Ship cart"
       Then "TODO.md" records "Ship cart" as open
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-desktop
     Scenario: A failed save is reported and the edit is kept
       Given writing "src/app.ts" fails
       When the user edits "src/app.ts"

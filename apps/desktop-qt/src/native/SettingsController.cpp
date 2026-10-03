@@ -80,6 +80,7 @@ const QList<Row>& rows() {
       {"diffColorScheme", true, QStringLiteral("red-green")},
       {"persistComposerContextStrip", true, false},
       {"panelAnimationDurationMs", true, 0},
+      {"reduceMotion", true, false},
       {"fontSizeInterface", true, 16},
       {"fontSizePrompt", true, 14},
       {"fontSizeCode", true, 13},

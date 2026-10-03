@@ -57,7 +57,7 @@ Rectangle {
             Label {
                 text: qsTr("Pull Requests")
                 color: page.foreground
-                font.pixelSize: 18
+                font.pixelSize: Math.round(18 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -146,7 +146,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: modelData
                 color: Theme.palette.color("warning", "#f59e0b")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
         }
@@ -156,7 +156,7 @@ Rectangle {
             visible: page.model !== null && page.model.notice !== null
             text: page.model && page.model.notice ? page.model.notice.text : ""
             color: page.model && page.model.notice && page.model.notice.kind === "error" ? Theme.palette.color("error", "#f87171") : page.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
 
@@ -173,7 +173,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignHCenter
                 text: parent.message ? parent.message.title : (page.model && page.model.loading ? qsTr("Loading pull requests…") : "")
                 color: page.foreground
-                font.pixelSize: 15
+                font.pixelSize: Math.round(15 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -183,7 +183,7 @@ Rectangle {
                 visible: text.length > 0
                 text: parent.message ? (parent.message.body ?? parent.message.message ?? "") : ""
                 color: page.muted
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 wrapMode: Text.Wrap
                 horizontalAlignment: Text.AlignHCenter
             }
@@ -223,7 +223,7 @@ Rectangle {
                     anchors.bottomMargin: 6
                     text: entry.modelData.header ? qsTr("%1  %2").arg(entry.modelData.label).arg(entry.modelData.count) : ""
                     color: page.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 
@@ -261,20 +261,20 @@ Rectangle {
                                     return row.isDraft ? qsTr("Draft") : qsTr("Open");
                                 }
                                 color: entry.modelData.state === "merged" ? Theme.palette.color("merged", "#a855f7") : entry.modelData.state === "closed" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#22c55e")
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
 
                             Label {
                                 text: entry.modelData.header ? "" : "#" + entry.modelData.number
                                 color: page.muted
-                                font.pixelSize: 13
+                                font.pixelSize: Math.round(13 * Theme.fontScale)
                             }
 
                             Label {
                                 Layout.fillWidth: true
                                 text: entry.modelData.title ?? ""
                                 color: page.foreground
-                                font.pixelSize: 13
+                                font.pixelSize: Math.round(13 * Theme.fontScale)
                                 elide: Text.ElideRight
                             }
 
@@ -282,14 +282,14 @@ Rectangle {
                                 visible: !entry.modelData.header && entry.modelData.conflicting && entry.modelData.state === "open"
                                 text: qsTr("Has conflicts")
                                 color: Theme.palette.color("warning", "#f59e0b")
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
 
                             Label {
                                 visible: !entry.modelData.header && (entry.modelData.additions > 0 || entry.modelData.deletions > 0)
                                 text: visible ? "+%1 −%2".arg(entry.modelData.additions).arg(entry.modelData.deletions) : ""
                                 color: page.muted
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
 
                             ShellButton {
@@ -315,7 +315,7 @@ Rectangle {
                                 return parts.concat(row.labels.slice(0, 3)).join(" · ");
                             }
                             color: page.muted
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             elide: Text.ElideRight
                         }
                     }

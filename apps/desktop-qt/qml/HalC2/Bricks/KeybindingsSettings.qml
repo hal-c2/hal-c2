@@ -66,7 +66,7 @@ Rectangle {
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             font.family: "monospace"
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             color: recorder.recording || recorder.key.length === 0 ? page.muted : page.foreground
             text: recorder.recording ? qsTr("Press shortcut") : recorder.key.length > 0 ? recorder.label : qsTr("Unassigned")
         }
@@ -120,7 +120,7 @@ Rectangle {
             Layout.fillWidth: true
             placeholderText: qsTr("Always")
             font.family: "monospace"
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             Accessible.name: qsTr("When expression")
             onAccepted: whenField.accepted()
         }
@@ -131,7 +131,7 @@ Rectangle {
             visible: whenField.problem.length > 0
             text: whenField.problem
             color: page.error
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
 
@@ -141,7 +141,7 @@ Rectangle {
             visible: whenField.unknown.length > 0
             text: qsTr("Unknown: %1").arg(whenField.unknown.join(", "))
             color: page.warning
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
     }
@@ -165,7 +165,7 @@ Rectangle {
                 objectName: "keybindingCount"
                 text: page.count === 1 ? qsTr("1 binding") : qsTr("%1 bindings").arg(page.count)
                 color: page.muted
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
             }
 
             ShellButton {
@@ -232,7 +232,7 @@ Rectangle {
                 Label {
                     text: qsTr("New keybinding")
                     color: page.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -245,7 +245,7 @@ Rectangle {
                         objectName: "command"
                         Layout.fillWidth: true
                         outline: true
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         model: page.adding ? Keybindings.commandOptions() : []
                         currentIndex: -1
                         displayText: currentIndex < 0 ? qsTr("Command") : Keybindings.commandLabel(currentValue)
@@ -279,7 +279,7 @@ Rectangle {
                     visible: labels.length > 0
                     text: page.conflictText(labels)
                     color: page.warning
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                     wrapMode: Text.Wrap
                 }
 
@@ -315,7 +315,7 @@ Rectangle {
             visible: page.rows.length === 0 && !page.adding
             text: qsTr("No keybindings match your search.")
             color: page.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         ListView {
@@ -374,7 +374,7 @@ Rectangle {
                                     objectName: "label"
                                     text: row.modelData.label
                                     color: page.foreground
-                                    font.pixelSize: 13
+                                    font.pixelSize: Math.round(13 * Theme.fontScale)
                                     elide: Text.ElideRight
                                 }
 
@@ -383,7 +383,7 @@ Rectangle {
                                     visible: row.modelData.source !== "Default"
                                     text: row.modelData.source
                                     color: page.muted
-                                    font.pixelSize: 10
+                                    font.pixelSize: Math.round(10 * Theme.fontScale)
                                     leftPadding: 5
                                     rightPadding: 5
                                     background: Rectangle {
@@ -399,7 +399,7 @@ Rectangle {
                                 text: row.modelData.command
                                 color: page.muted
                                 font.family: "monospace"
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                             }
@@ -450,7 +450,7 @@ Rectangle {
                         Label {
                             text: qsTr("When")
                             color: page.muted
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                         }
 
                         WhenField {
@@ -468,7 +468,7 @@ Rectangle {
                         visible: row.conflicts.length > 0
                         text: page.conflictText(row.conflicts)
                         color: page.warning
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                         wrapMode: Text.Wrap
                     }
                 }

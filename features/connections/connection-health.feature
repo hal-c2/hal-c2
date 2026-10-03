@@ -172,7 +172,7 @@ Feature: Connection health
   # A different app version does not block the connection; only a server behind the client
   # warns. settings/updates.feature holds updating the server from that warning and keeping
   # a dismissed notice dismissed for its version.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario Outline: A server on another HAL-C2 version warns only when it is behind
     Given this client runs HAL-C2 <client>
     And the environment's MC runs HAL-C2 <server>

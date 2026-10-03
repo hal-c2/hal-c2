@@ -270,9 +270,81 @@ const Steps steps([] {
            describeKeyPress(world));
   });
 
+  // Picking a colour off the app: the editor over a sidebar, with the window's inspector.
+  const auto inspected = [](World& world) -> Brick& {
+    if (!world.brick) {
+      world.brick = std::make_unique<Brick>(world,
+                                            "import QtQuick\nimport HalC2.Bricks\n"
+                                            "Item { property alias editor: editor\n"
+                                            "  Sidebar { width: 256; height: parent.height }\n"
+                                            "  ThemeEditor { id: editor; x: 300 }\n"
+                                            "  ThemeInspector { anchors.fill: parent } }\n",
+                                            QSize(900, 700));
+      world.brick->takesKeys = true;
+      expect(QTest::qWaitForWindowActive(&world.brick->window()), QStringLiteral("the window did not become active"));
+    }
+    return *world.brick;
+  };
+  step(QStringLiteral("the user inspects the app and picks the sidebar"), [inspected](World& world, const Captures&, const Table&) {
+    Brick& brick = inspected(world);
+    brick.click(QStringLiteral("pick"));
+    expect(themes(world)->inspecting(), QStringLiteral("the editor did not start inspecting"));
+    // An empty part of the thread list.
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, QPoint(120, 520));
+  });
+  step(QStringLiteral("the editor shows the color used there and how many places use it"), [inspected](World& world, const Captures&, const Table&) {
+    const QVariantMap picked = themes(world)->picked();
+    const QColor sidebar = world.theme().color(QStringLiteral("sidebar"), QColor());
+    expect(!themes(world)->inspecting() && QColor(picked.value(QStringLiteral("color")).toString()) == sidebar &&
+               picked.value(QStringLiteral("roles")).toStringList().contains(QStringLiteral("sidebar")) &&
+               picked.value(QStringLiteral("count")).toInt() == picked.value(QStringLiteral("roles")).toStringList().size(),
+           QStringLiteral("picked %1; the sidebar is %2").arg(show(picked), sidebar.name()));
+    const QString told = QStringLiteral("%1 · %2 · used in %3 places")
+                             .arg(picked.value(QStringLiteral("role")).toString(), picked.value(QStringLiteral("color")).toString())
+                             .arg(picked.value(QStringLiteral("count")).toInt());
+    expect(inspected(world).shows(told), QStringLiteral("the editor does not say \"%1\"").arg(told));
+  });
+  step(QStringLiteral("the user is inspecting the app for a color"), [inspected](World& world, const Captures&, const Table&) {
+    auto* commands = world.native().controller<KeybindingController>()->commands();
+    expect(commands->run(QStringLiteral("themeEditor.toggle")) && themes(world)->editorOpen(), QStringLiteral("the theme editor did not open"));
+    Brick& brick = inspected(world);
+    brick.click(QStringLiteral("pick"));
+    expect(themes(world)->inspecting(), QStringLiteral("the editor did not start inspecting"));
+    brick.grab();
+  });
+  step(QStringLiteral("nothing is picked"), [inspected](World& world, const Captures&, const Table&) {
+    expect(!themes(world)->inspecting() && themes(world)->picked().isEmpty() && themes(world)->editorOpen(),
+           QStringLiteral("inspecting: %1, picked %2").arg(themes(world)->inspecting()).arg(show(themes(world)->picked())));
+    // And the next click is the app's again.
+    expect(!inspected(world).item(QStringLiteral("themeInspector"))->isVisible(), QStringLiteral("the inspector still covers the window"));
+  });
+
   // Importing.
   step(QStringLiteral("the user imports one HAL-C2 theme file"), [](World& world, const Captures&, const Table&) {
     themes(world)->importFiles({writeFile(world, QStringLiteral("aurora.json"), themeFile(QStringLiteral("Aurora"), kImportedCanvas))});
+  });
+  step(QStringLiteral("the user imports one VS Code theme file"), [](World& world, const Captures&, const Table&) {
+    // As an extension ships it: workbench colours, some translucent, most left out.
+    const QJsonObject file{{QStringLiteral("name"), QStringLiteral("aurora-theme")},
+                           {QStringLiteral("displayName"), QStringLiteral("Aurora")},
+                           {QStringLiteral("type"), QStringLiteral("dark")},
+                           {QStringLiteral("colors"), QJsonObject{{QStringLiteral("editor.background"), kImportedCanvas},
+                                                                  {QStringLiteral("editor.foreground"), QStringLiteral("#d8dee9")},
+                                                                  {QStringLiteral("focusBorder"), QStringLiteral("#88c0d0")},
+                                                                  {QStringLiteral("sideBar.background"), QStringLiteral("#0c1622")},
+                                                                  {QStringLiteral("list.hoverBackground"), QStringLiteral("#ffffff1a")}}},
+                           {QStringLiteral("tokenColors"), QJsonArray()}};
+    themes(world)->importFiles({writeFile(world, QStringLiteral("aurora-color-theme.json"), QJsonDocument(file).toJson())});
+    // Its own colours where it names them, the rest grown from its background.
+    const auto theme = savedNamed(world, QStringLiteral("Aurora"));
+    expect(theme.has_value(), describe(world));
+    const QJsonObject colors = theme->value(QLatin1String("colors")).toObject();
+    const auto color = [&colors](const char* role) { return QColor(colors.value(QLatin1String(role)).toString()); };
+    expect(theme->value(QLatin1String("appearance")) == QLatin1String("dark") && color("text") == QColor(QStringLiteral("#d8dee9")) &&
+               color("accent") == QColor(QStringLiteral("#88c0d0")) && color("sidebar") == QColor(QStringLiteral("#0c1622")) &&
+               color("sidebarRowHover").alpha() == 255 && color("sidebarRowHover") != color("sidebar") && color("border").isValid() &&
+               contrast(color("sidebarForeground"), color("sidebar")) >= 4.5,
+           show(colors.toVariantMap()));
   });
   step(QStringLiteral("the user pastes a theme's JSON"), [](World& world, const Captures&, const Table&) {
     expect(themes(world)->importText(QString::fromUtf8(themeFile(QStringLiteral("Aurora"), kImportedCanvas))), describe(world));
@@ -370,6 +442,31 @@ const Steps steps([] {
     themes(world)->importFiles({library(world).exported});
     const auto back = savedNamed(world, QStringLiteral("My Theme"));
     expect(back && QColor(back->value(QLatin1String("colors")).toObject().value(QLatin1String("canvas")).toString()) == kNordCanvas, describe(world));
+  });
+  step(QStringLiteral("an installed collection with four variants"), [](World& world, const Captures&, const Table&) {
+    // As an extension's themes arrive: four files of one collection.
+    QStringList paths;
+    for (const QString& name : {QStringLiteral("Aurora Dawn"), QStringLiteral("Aurora Day"), QStringLiteral("Aurora Dusk"), QStringLiteral("Aurora Night")}) {
+      QJsonObject file = QJsonDocument::fromJson(themeFile(name, kImportedCanvas)).object();
+      file.insert(QStringLiteral("collection"), QJsonObject{{QStringLiteral("id"), QStringLiteral("acme.aurora")}, {QStringLiteral("label"), QStringLiteral("Aurora")}});
+      paths.append(writeFile(world, QString(name).toLower().replace(QLatin1Char(' '), QLatin1Char('-')) + QStringLiteral(".json"), QJsonDocument(file).toJson()));
+    }
+    themes(world)->importFiles(paths);
+    qsizetype inCollection = 0;
+    for (const QVariant& value : themes(world)->available()) inCollection += value.toMap().value(QStringLiteral("collection")) == QLatin1String("Aurora");
+    expect(saved(world).size() == 4 && inCollection == 4, describe(world));
+  });
+  step(QStringLiteral("the user removes two selected variants"), [](World& world, const Captures&, const Table&) {
+    themes(world)->requestRemoveMany({QStringLiteral("aurora-day"), QStringLiteral("aurora-dusk")});
+    // Asked once for both.
+    const QVariantMap question = world.state(QStringLiteral("confirmation")).toMap();
+    expect(question.value(QStringLiteral("title")) == QLatin1String("Remove 2 themes?") && saved(world).size() == 4, show(question));
+    answer(world, true);
+  });
+  step(QStringLiteral("only those two variants are gone"), [](World& world, const Captures&, const Table&) {
+    QStringList left;
+    for (const QJsonValue& value : saved(world)) left.append(value.toObject().value(QLatin1String("label")).toString());
+    expect(left == QStringList{QStringLiteral("Aurora Dawn"), QStringLiteral("Aurora Night")}, describe(world));
   });
   step(QStringLiteral("the user confirms"), [](World& world, const Captures&, const Table&) { answer(world, true); });
   step(QStringLiteral("%1 is gone").arg(q), [](World& world, const Captures& c, const Table&) {

@@ -42,7 +42,7 @@ Item {
         height: row.image ? row.image.rows : 0
         flexShrink: 0
         fit: "fill"
-        protocol: "kitty"
+        protocol: Shell.state.graphics.protocol
         source: row.image ? row.image.source : null
         onMouseDown: row.click(row.line)
     }

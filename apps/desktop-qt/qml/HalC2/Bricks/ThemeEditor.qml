@@ -103,7 +103,7 @@ Popup {
             Layout.fillWidth: true
             text: colorField.label
             color: editor.foreground
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             elide: Text.ElideRight
         }
 
@@ -122,7 +122,7 @@ Popup {
         Label {
             text: editor.draft.id ? qsTr("Edit theme") : qsTr("New theme")
             color: editor.foreground
-            font.pixelSize: 16
+            font.pixelSize: Math.round(16 * Theme.fontScale)
             font.weight: Font.DemiBold
         }
 
@@ -160,6 +160,32 @@ Popup {
             role: "accent"
             label: qsTr("Accent")
             visible: !editor.advanced
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            ShellButton {
+                objectName: "pick"
+                subtle: true
+                text: Themes.inspecting ? qsTr("Click the app…") : qsTr("Pick from the app")
+                onClicked: Themes.inspecting = !Themes.inspecting
+            }
+
+            Label {
+                objectName: "picked"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: {
+                    const picked = Themes.picked ?? ({});
+                    if (!picked.color) return "";
+                    return picked.count > 0 ? qsTr("%1 · %2 · used in %3 places").arg(picked.role).arg(picked.color).arg(picked.count) : qsTr("%1 is not one of the theme's colors").arg(picked.color);
+                }
+                color: editor.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                elide: Text.ElideRight
+            }
         }
 
         ShellButton {
@@ -201,7 +227,7 @@ Popup {
                     visible: roleRow.modelData.role === ""
                     text: roleRow.modelData.heading
                     color: editor.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 

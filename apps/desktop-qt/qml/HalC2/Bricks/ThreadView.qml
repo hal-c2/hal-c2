@@ -123,7 +123,7 @@ Item {
                 text: qsTr("This thread's MC cannot be reached: %1").arg(view.model ? view.model.problem : "")
                 color: Theme.palette.color("warning", "#f59e0b")
                 font.family: view.uiFamily
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
             ShellButton {
@@ -165,7 +165,7 @@ Item {
             visible: view.draft && text.length > 0
             color: view.mutedColor
             font.family: view.uiFamily
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             elide: Text.ElideMiddle
             text: {
                 if (!view.workspace)

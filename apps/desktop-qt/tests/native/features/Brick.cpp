@@ -1,6 +1,8 @@
 #include "Brick.h"
 
+#include <QCoreApplication>
 #include <QJSEngine>
+#include <QKeyEvent>
 #include <QQmlComponent>
 #include <QTest>
 
@@ -116,7 +118,7 @@ bool Brick::shows(const QString& text) const {
   return showsText(m_window.contentItem(), text);
 }
 
-void Brick::press(const QString& key) {
+bool Brick::press(const QString& key) {
   static const QHash<QString, Qt::Key> named{
       {QStringLiteral("escape"), Qt::Key_Escape}, {QStringLiteral("esc"), Qt::Key_Escape},
       {QStringLiteral("enter"), Qt::Key_Return},  {QStringLiteral("space"), Qt::Key_Space},
@@ -154,7 +156,21 @@ void Brick::press(const QString& key) {
   }
   // Shift+Tab arrives as Backtab.
   if (code == Qt::Key_Tab && modifiers.testFlag(Qt::ShiftModifier)) code = Qt::Key_Backtab;
-  QTest::keyClick(&m_window, static_cast<Qt::Key>(code), modifiers);
+  // As the platform sends it: whether an item accepted the press says who took it.
+  const QString text = modifiers == Qt::NoModifier && code < 0x80 ? QString(QChar(code)).toLower() : QString();
+  // A chord is the window shortcuts' unless the focused item claims it first.
+  if (modifiers & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
+    QKeyEvent claim(QEvent::ShortcutOverride, code, modifiers, text);
+    claim.ignore();
+    QCoreApplication::sendEvent(&m_window, &claim);
+    if (!claim.isAccepted()) return false;
+  }
+  QKeyEvent press(QEvent::KeyPress, code, modifiers, text);
+  QCoreApplication::sendEvent(&m_window, &press);
+  const bool taken = press.isAccepted();
+  QKeyEvent release(QEvent::KeyRelease, code, modifiers, text);
+  QCoreApplication::sendEvent(&m_window, &release);
+  return taken;
 }
 
 QImage Brick::grab() {

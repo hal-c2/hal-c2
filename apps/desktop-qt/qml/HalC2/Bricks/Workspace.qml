@@ -103,7 +103,7 @@ Rectangle {
                 visible: strip.ready && strip.model.projectTitle !== null
                 text: strip.ready ? (strip.model.projectTitle ?? "") : ""
                 color: projectHover.hovered ? strip.foreground : strip.projectColor
-                font.pixelSize: 14
+                font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.weight: Font.Medium
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 elide: Text.ElideRight
@@ -131,7 +131,7 @@ Rectangle {
                 visible: strip.ready && strip.model.projectTitle !== null
                 text: "/"
                 color: strip.iconMuted
-                font.pixelSize: 14
+                font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
             }
 
@@ -212,7 +212,7 @@ Rectangle {
                         Layout.maximumWidth: Math.ceil(implicitWidth)
                         text: strip.ready ? strip.model.threadTitle : qsTr("No thread")
                         color: strip.foreground
-                        font.pixelSize: 14
+                        font.pixelSize: Math.round(14 * Theme.fontScale)
                         font.weight: Font.Medium
                         font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                         elide: Text.ElideRight
@@ -238,7 +238,7 @@ Rectangle {
 
                     anchors.fill: parent
                     visible: titleSlot.editing
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.Medium
                     onAccepted: {
                         titleSlot.editing = false;
@@ -260,7 +260,7 @@ Rectangle {
                 visible: strip.ready && strip.model.offline === true
                 text: qsTr("Offline")
                 color: strip.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.weight: Font.Medium
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 Layout.alignment: Qt.AlignVCenter

@@ -51,6 +51,7 @@ qt_add_qml_module(hal_c2_bricks
     AppearanceSettings.qml
     ThemeEditor.qml
     ThemeImportDialog.qml
+    ThemeInspector.qml
     TurnRequests.qml
     ProjectRemovalDialog.qml
     ConfirmDialog.qml

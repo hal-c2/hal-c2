@@ -54,7 +54,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Third-party notices")
                     color: page.foreground
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 
@@ -64,7 +64,7 @@ Rectangle {
                     text: page.entries.length === page.total ? qsTr("%1 notices").arg(page.total)
                                                              : qsTr("%1 of %2").arg(page.entries.length).arg(page.total)
                     color: page.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 ShellTextField {
@@ -90,7 +90,7 @@ Rectangle {
                 visible: page.status === "loading"
                 text: qsTr("Loading open-source notices…")
                 color: page.muted
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
             }
 
             Label {
@@ -101,7 +101,7 @@ Rectangle {
                 horizontalAlignment: Text.AlignHCenter
                 text: qsTr("No licenses match that search.")
                 color: page.muted
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
             }
 
             ColumnLayout {
@@ -112,7 +112,7 @@ Rectangle {
                 Label {
                     text: qsTr("Open-source notices are unavailable")
                     color: page.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -120,7 +120,7 @@ Rectangle {
                     Layout.maximumWidth: 560
                     text: page.state?.message ?? ""
                     color: page.muted
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     wrapMode: Text.Wrap
                 }
 
@@ -163,7 +163,7 @@ Rectangle {
                     text: notice.modelData.license + " · " + notice.modelData.where
                     elide: Text.ElideRight
                     color: page.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 ShellButton {
@@ -192,7 +192,7 @@ Rectangle {
                 wrapMode: TextEdit.Wrap
                 color: page.foreground
                 font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
         }
     }

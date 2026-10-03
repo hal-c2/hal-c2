@@ -132,7 +132,7 @@ Pane {
                     Layout.fillWidth: true
                     text: explorer.rootPath.length > 0 ? explorer.rootPath : qsTr("Choose a folder to get started")
                     color: Theme.palette.color("textMuted", "#a1a1aa")
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
                     wrapMode: Text.WrapAnywhere
                 }
@@ -203,14 +203,14 @@ Pane {
             text: folders.error.length > 0 ? folders.error : explorer.statusText
             color: folders.error.length > 0 ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
             wrapMode: Text.Wrap
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
         Label {
             Layout.fillWidth: true
             text: explorer.selectedProject !== null ? qsTr("Registered project roots stay in place to protect thread paths. Remove from HAL-C2 deletes its conversation history, not its files.") : !explorer.directorySelected && explorer.selectedPath.length > 0 ? qsTr("Files are shown read-only. Right-click a folder to manage it.") : qsTr("Right-click a folder to rename, move or trash it. Disk changes affect every app using these files.")
             color: Theme.palette.color("textMuted", "#a1a1aa")
             wrapMode: Text.Wrap
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
         }
     }
 }

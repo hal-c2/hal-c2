@@ -18,7 +18,7 @@ RowLayout {
     Label {
         text: qsTr("Settings /")
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: 18
+        font.pixelSize: Math.round(18 * Theme.fontScale)
         Accessible.ignored: true
     }
 
@@ -26,7 +26,7 @@ RowLayout {
         Layout.fillWidth: true
         text: crumb.section
         color: Theme.palette.color("text", "#e4e4e7")
-        font.pixelSize: 18
+        font.pixelSize: Math.round(18 * Theme.fontScale)
         font.weight: Font.DemiBold
         elide: Text.ElideRight
         Accessible.ignored: true

@@ -13,6 +13,7 @@
 
 #include "KeybindingController.h"
 #include "Keybindings.h"
+#include "LayoutController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "McClient.h"
@@ -558,10 +559,19 @@ void RightPanelController::update() {
 
 void RightPanelController::publish() {
   if (!m_onThread) {
+    m_publishedThread.clear();
     m_bridge->publish(QStringLiteral("panel"), QVariant());
     return;
   }
   const Panel state = current();
+  // Opening or closing within a thread slides for as long as the user set
+  // (LayoutController); a thread's own layout, shown on arriving, snaps.
+  int transitionMs = 0;
+  if (m_thread == m_publishedThread && state.open != m_publishedOpen) {
+    if (auto* layout = NativeShell::of(this)->controller<LayoutController>()) transitionMs = layout->panelAnimationMs();
+  }
+  m_publishedThread = m_thread;
+  m_publishedOpen = state.open;
   QVariantList tabs;
   for (const QString& id : state.tabs) {
     tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id, m_devices)}});
@@ -573,6 +583,7 @@ void RightPanelController::publish() {
                     QVariantMap{
                         {QStringLiteral("threadKey"), m_thread},
                         {QStringLiteral("isOpen"), state.open},
+                        {QStringLiteral("transitionMs"), transitionMs},
                         {QStringLiteral("activeId"), state.active},
                         {QStringLiteral("tabs"), tabs},
                         {QStringLiteral("width"), m_width},

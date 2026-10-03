@@ -10,7 +10,7 @@ TextField {
     leftPadding: 10
     rightPadding: 10
     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
-    font.pixelSize: 13
+    font.pixelSize: Math.round(13 * Theme.fontScale)
     color: Theme.palette.color("text", "#e4e4e7")
     placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
     selectionColor: Theme.palette.color("accent", "#2563eb")

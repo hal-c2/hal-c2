@@ -109,7 +109,7 @@ Item {
                             Layout.fillWidth: true
                             text: card.modelData.title
                             color: Theme.palette.color("text", "#e4e4e7")
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                             font.bold: true
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                             wrapMode: Text.Wrap
@@ -126,7 +126,7 @@ Item {
                             rightPadding: 0
                             text: "✕"
                             tint: Theme.palette.color("textMuted", "#8b8b93")
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             objectName: "notificationDismiss-" + card.modelData.id
                             Accessible.name: qsTr("Dismiss")
                             onClicked: Shell.dispatch("notification.dismiss", {
@@ -140,7 +140,7 @@ Item {
                         visible: card.modelData.description !== null && card.modelData.description.length > 0
                         text: card.modelData.description ?? ""
                         color: Theme.palette.color("textMuted", "#8b8b93")
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                         lineHeight: 1.2
                         wrapMode: Text.Wrap

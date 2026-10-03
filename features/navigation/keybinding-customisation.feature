@@ -165,12 +165,12 @@ Feature: Customising keybindings
         | composerFocus && turnRunning      | the composer has focus and no turn is running | does not run |
         | editableFocus                     | a text field has focus                        | runs     |
         | !(terminalOpen && previewOpen)    | both the terminal and preview are open        | does not run |
+        | modelPickerOpen                   | the model picker is open                      | runs     |
+        | composerFocus && composerDraft    | the composer has focus and a draft            | runs     |
 
       @backlog
       Examples: Not yet honoured by the native client
         | condition                         | state                                         | outcome  |
         | previewFocus                      | the preview has focus                         | runs     |
-        | modelPickerOpen                   | the model picker is open                      | runs     |
-        | composerFocus && composerDraft    | the composer has focus and a draft            | runs     |
         | isWeb                             | the user is in a browser                      | runs     |
         | terminalFocus \|\| previewFocus   | the preview has focus                         | runs     |

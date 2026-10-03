@@ -65,7 +65,7 @@ ColumnLayout {
                 Label {
                     text: row.spec.title
                     color: row.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -89,7 +89,7 @@ ColumnLayout {
                 text: row.mixed && row.spec.mixedDescription ? row.spec.mixedDescription : Rows.describe(row.spec, row.value)
                 visible: text.length > 0
                 color: row.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -99,7 +99,7 @@ ColumnLayout {
                 text: row.blocked
                 visible: text.length > 0
                 color: Theme.palette.color("warning", "#fbbf24")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
         }
@@ -141,14 +141,14 @@ ColumnLayout {
             Label {
                 text: row.spec.daysTitle ?? ""
                 color: row.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
             }
 
             Label {
                 Layout.fillWidth: true
                 text: row.spec.daysDescription ?? ""
                 color: row.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
         }
