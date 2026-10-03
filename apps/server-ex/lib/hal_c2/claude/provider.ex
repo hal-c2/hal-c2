@@ -43,7 +43,8 @@ defmodule HalC2.Claude.Provider do
         "enabled" => HalC2.Settings.instance_enabled?(id, "claudeAgent"),
         "installed" => true,
         "version" => version(path),
-        "versionAdvisory" => HalC2.ProviderUpdates.advisory("claudeAgent", path, version(path)),
+        "versionAdvisory" =>
+          HalC2.ProviderUpdates.advisory("claudeAgent", path, version(path), id),
         "status" => "ready",
         "availability" => "available",
         "auth" => %{"status" => "authenticated"},

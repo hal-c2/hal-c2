@@ -16,15 +16,15 @@ defmodule HalC2.ProviderUsageLimits.Codex do
   @week 7 * 24 * 60
   @month 30 * 24 * 60
 
-  def command,
+  def command(instance \\ "codex"),
     do:
       HalC2.Settings.instance_command(
-        "codex",
+        instance,
         Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
       )
 
-  def installed? do
-    case command() do
+  def installed?(instance \\ "codex") do
+    case command(instance) do
       [executable | _] -> System.find_executable(executable) != nil
       _ -> false
     end
@@ -143,19 +143,19 @@ defmodule HalC2.ProviderUsageLimits.Codex do
   Reads the signed-in account's limits. An API key account has none (`unsupported`);
   a failed read is `probeFailed` with a short reason clients may show.
   """
-  def probe(checked_at) do
-    with_app_server(fn conn ->
+  def probe(checked_at, instance \\ "codex") do
+    with_app_server(instance, fn conn ->
       read = call(conn, "account/read", %{}, 10_000)
 
       with {:ok, %{"account" => %{} = account}} <- read,
-           do: Limits.remember_account("codex", account(account))
+           do: Limits.remember_account(instance, account(account))
 
       case read do
         {:ok, %{"account" => %{"type" => "apiKey"}}} ->
           Limits.unavailable(checked_at, "unsupported")
 
         {:ok, %{"account" => nil, "requiresOpenaiAuth" => true}} ->
-          Limits.remember_account("codex", %{
+          Limits.remember_account(instance, %{
             "status" => "unauthenticated",
             "message" => "Codex CLI is not authenticated. Run `codex login` and try again."
           })
@@ -193,7 +193,7 @@ defmodule HalC2.ProviderUsageLimits.Codex do
 
   @doc "Redeems one reset credit; `key` names the attempt, so a retry reuses it."
   def consume(key) do
-    with_app_server(fn conn ->
+    with_app_server("codex", fn conn ->
       case call(conn, "account/rateLimitResetCredit/consume", %{"idempotencyKey" => key}, 20_000) do
         {:ok, %{"outcome" => outcome}}
         when outcome in ["reset", "nothingToReset", "noCredit", "alreadyRedeemed"] ->
@@ -205,11 +205,13 @@ defmodule HalC2.ProviderUsageLimits.Codex do
     end) || {:error, :spawn}
   end
 
-  # Runs `fun` against a fresh, initialized app-server; nil when it cannot start.
-  defp with_app_server(fun) do
+  # Runs `fun` against a fresh, initialized app-server of `instance` (its executable
+  # and its variables, such as CODEX_HOME); nil when it cannot start.
+  defp with_app_server(instance, fun) do
     Process.flag(:trap_exit, true)
+    env = Enum.to_list(HalC2.Settings.instance_env(instance))
 
-    case Connection.start_link(cmd: command(), handler: self()) do
+    case Connection.start_link(cmd: command(instance), handler: self(), env: env) do
       {:ok, conn} ->
         try do
           with {:ok, _} <-
