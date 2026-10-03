@@ -57,6 +57,9 @@ QtObject {
         inspecting = false;
         picked = { color: color, role: "", roles: [], count: 0 };
     }
+    function requestRemoveMany(ids) {
+        return record("requestRemoveMany", [ids]);
+    }
     function requestRemove(id) {
         return record("requestRemove", [id]);
     }

@@ -38,8 +38,9 @@ class ThemeController : public QObject, public NativeController {
   // What is drawn: the resolved appearance and theme id.
   Q_PROPERTY(QString appearance READ appearance NOTIFY changed)
   Q_PROPERTY(QString resolvedId READ resolvedId NOTIFY changed)
-  // [{id, label, appearance, appearances, source}], source one of builtIn,
-  // custom, environment: what a picker offers.
+  // [{id, label, appearance, appearances, source, collection}], source one of
+  // builtIn, custom, environment: what a picker offers. `collection` is the
+  // label of the family a saved theme was installed with, or empty.
   Q_PROPERTY(QVariantList available READ available NOTIFY changed)
   // The colour roles a theme sets, in the order an editor lists them.
   Q_PROPERTY(QStringList roles READ roles CONSTANT)
@@ -112,6 +113,10 @@ public:
   Q_INVOKABLE bool removeCustom(const QString& id);
   // Asks first ("Remove “<label>”?"), then removes it.
   Q_INVOKABLE void requestRemove(const QString& id);
+  // Several at once, as the variants picked from a collection: asked once,
+  // removed in one save.
+  Q_INVOKABLE void requestRemoveMany(const QStringList& ids);
+  bool removeCustomMany(const QStringList& ids);
 
   // The editor. edit() opens it on a draft; setEditing() keeps what the user
   // changed since. Closing it drops the draft.
@@ -166,6 +171,7 @@ private:
     QJsonObject colors;
     QJsonObject variants;
     QString source;
+    QString collection;
   };
   QList<Definition> definitions() const;
   std::optional<Definition> find(const QString& id) const;

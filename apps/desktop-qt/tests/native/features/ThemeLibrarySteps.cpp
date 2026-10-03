@@ -442,6 +442,31 @@ const Steps steps([] {
     const auto back = savedNamed(world, QStringLiteral("My Theme"));
     expect(back && QColor(back->value(QLatin1String("colors")).toObject().value(QLatin1String("canvas")).toString()) == kNordCanvas, describe(world));
   });
+  step(QStringLiteral("an installed collection with four variants"), [](World& world, const Captures&, const Table&) {
+    // As an extension's themes arrive: four files of one collection.
+    QStringList paths;
+    for (const QString& name : {QStringLiteral("Aurora Dawn"), QStringLiteral("Aurora Day"), QStringLiteral("Aurora Dusk"), QStringLiteral("Aurora Night")}) {
+      QJsonObject file = QJsonDocument::fromJson(themeFile(name, kImportedCanvas)).object();
+      file.insert(QStringLiteral("collection"), QJsonObject{{QStringLiteral("id"), QStringLiteral("acme.aurora")}, {QStringLiteral("label"), QStringLiteral("Aurora")}});
+      paths.append(writeFile(world, QString(name).toLower().replace(QLatin1Char(' '), QLatin1Char('-')) + QStringLiteral(".json"), QJsonDocument(file).toJson()));
+    }
+    themes(world)->importFiles(paths);
+    qsizetype inCollection = 0;
+    for (const QVariant& value : themes(world)->available()) inCollection += value.toMap().value(QStringLiteral("collection")) == QLatin1String("Aurora");
+    expect(saved(world).size() == 4 && inCollection == 4, describe(world));
+  });
+  step(QStringLiteral("the user removes two selected variants"), [](World& world, const Captures&, const Table&) {
+    themes(world)->requestRemoveMany({QStringLiteral("aurora-day"), QStringLiteral("aurora-dusk")});
+    // Asked once for both.
+    const QVariantMap question = world.state(QStringLiteral("confirmation")).toMap();
+    expect(question.value(QStringLiteral("title")) == QLatin1String("Remove 2 themes?") && saved(world).size() == 4, show(question));
+    answer(world, true);
+  });
+  step(QStringLiteral("only those two variants are gone"), [](World& world, const Captures&, const Table&) {
+    QStringList left;
+    for (const QJsonValue& value : saved(world)) left.append(value.toObject().value(QLatin1String("label")).toString());
+    expect(left == QStringList{QStringLiteral("Aurora Dawn"), QStringLiteral("Aurora Night")}, describe(world));
+  });
   step(QStringLiteral("the user confirms"), [](World& world, const Captures&, const Table&) { answer(world, true); });
   step(QStringLiteral("%1 is gone").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(!savedNamed(world, c[0]), describe(world));

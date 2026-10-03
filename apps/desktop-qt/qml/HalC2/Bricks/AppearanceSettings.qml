@@ -16,6 +16,8 @@ SettingsPage {
     rows: Rows.appearance
 
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    // The collection variants picked to remove together.
+    property var selected: []
     readonly property var modes: [
         { mode: "system", label: qsTr("System") },
         { mode: "light", label: qsTr("Light") },
@@ -102,6 +104,15 @@ SettingsPage {
             Layout.fillWidth: true
             spacing: 6
 
+            // A collection's variants are picked to remove several at once.
+            CheckBox {
+                objectName: "select:" + themeRow.modelData.id
+                visible: themeRow.custom && themeRow.modelData.collection.length > 0
+                checked: page.selected.indexOf(themeRow.modelData.id) >= 0
+                Accessible.name: qsTr("Select %1").arg(themeRow.modelData.label)
+                onToggled: page.selected = checked ? page.selected.concat([themeRow.modelData.id]) : page.selected.filter(id => id !== themeRow.modelData.id)
+            }
+
             ShellButton {
                 Layout.fillWidth: true
                 subtle: !themeRow.active
@@ -113,6 +124,13 @@ SettingsPage {
 
             Label {
                 text: themeRow.modelData.source === "environment" ? qsTr("From this environment") : themeRow.modelData.appearances.length === 1 ? (themeRow.modelData.appearances[0] === "dark" ? qsTr("Dark only") : qsTr("Light only")) : ""
+                visible: text.length > 0
+                color: page.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+            }
+
+            Label {
+                text: themeRow.modelData.collection ?? ""
                 visible: text.length > 0
                 color: page.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -159,6 +177,17 @@ SettingsPage {
                 ToolTip.text: qsTr("Remove")
                 onClicked: Themes.requestRemove(themeRow.modelData.id)
             }
+        }
+    }
+
+    ShellButton {
+        objectName: "removeSelected"
+        visible: page.selected.length > 0
+        tint: Theme.palette.color("error", "#ef4444")
+        text: qsTr("Remove selected (%1)").arg(page.selected.length)
+        onClicked: {
+            Themes.requestRemoveMany(page.selected);
+            page.selected = [];
         }
     }
 

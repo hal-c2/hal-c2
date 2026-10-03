@@ -157,7 +157,7 @@ Feature: Custom themes
       When the user confirms
       Then "My Theme" is gone
 
-    @backlog @desktop
+    @desktop
     Scenario: Removing some variants of a theme collection
       Given an installed collection with four variants
       When the user removes two selected variants

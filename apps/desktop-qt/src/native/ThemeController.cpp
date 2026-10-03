@@ -236,7 +236,8 @@ QList<ThemeController::Definition> ThemeController::definitions() const {
     if (!seeded && overlay({}, colors, data.roles).isEmpty() && variants.isEmpty()) return std::nullopt;
     QString label = theme.value(QLatin1String("label")).toString();
     if (label.isEmpty()) label = theme.value(QLatin1String("name")).toString(id);
-    return Definition{id, label, appearance, overlay(base, colors, data.roles), variants, source};
+    return Definition{id, label, appearance, overlay(base, colors, data.roles), variants, source,
+                      theme.value(QLatin1String("collection")).toObject().value(QLatin1String("label")).toString()};
   };
   for (const QJsonValue& value : m_settings->deviceSettings().value(QLatin1String("customThemes")).toArray()) {
     if (auto definition = fromFile(value.toObject(), QStringLiteral("custom"))) result.append(*definition);
@@ -275,7 +276,8 @@ QVariantList ThemeController::available() const {
                               {QStringLiteral("label"), definition.label},
                               {QStringLiteral("appearance"), definition.appearance},
                               {QStringLiteral("appearances"), appearances},
-                              {QStringLiteral("source"), definition.source}});
+                              {QStringLiteral("source"), definition.source},
+                              {QStringLiteral("collection"), definition.collection}});
   }
   return result;
 }
@@ -520,20 +522,36 @@ QString ThemeController::duplicate(const QString& id) {
   return saveCustom(copy);
 }
 
+void ThemeController::requestRemoveMany(const QStringList& ids) {
+  QStringList own;
+  for (const QString& id : ids) {
+    if (const auto definition = find(id); definition && definition->source == QLatin1String("custom")) own.append(id);
+  }
+  if (own.isEmpty()) return;
+  if (own.size() == 1) return requestRemove(own.first());
+  NativeShell::of(this)->controller<MenuController>()->confirm(
+      tr("Remove %1 themes?").arg(own.size()), tr("This device will no longer offer them."), tr("Remove"), true,
+      [this, own] { removeCustomMany(own); });
+}
+
 bool ThemeController::removeCustom(const QString& id) {
+  return removeCustomMany({id});
+}
+
+bool ThemeController::removeCustomMany(const QStringList& ids) {
   QJsonObject device = m_settings->deviceSettings();
   QJsonArray saved = device.value(kCustomThemes).toArray();
   QJsonArray kept;
   for (const QJsonValue& value : saved) {
-    if (value.toObject().value(QLatin1String("id")).toString() != id) kept.append(value);
+    if (!ids.contains(value.toObject().value(QLatin1String("id")).toString())) kept.append(value);
   }
   if (kept.size() == saved.size()) return false;
   if (kept.isEmpty()) device.remove(kCustomThemes);
   else device.insert(kCustomThemes, kept);
-  if (device.value(QLatin1String("theme")).toString() == id) device.remove(QStringLiteral("theme"));
+  if (ids.contains(device.value(QLatin1String("theme")).toString())) device.remove(QStringLiteral("theme"));
   QJsonObject halves = device.value(QLatin1String("themeHalves")).toObject();
   for (const QString& appearance : {kLight, kDark}) {
-    if (halves.value(appearance).toString() == id) halves.remove(appearance);
+    if (ids.contains(halves.value(appearance).toString())) halves.remove(appearance);
   }
   if (halves.isEmpty()) device.remove(QStringLiteral("themeHalves"));
   else device.insert(QStringLiteral("themeHalves"), halves);
@@ -1032,6 +1050,16 @@ std::optional<QJsonObject> ThemeController::parseFile(const QByteArray& text, QS
     variants.insert(it.key(), overlay({}, it.value().toObject(), builtIns().roles));
   }
   if (!variants.isEmpty()) theme.insert(QStringLiteral("variants"), variants);
+  // The family it was installed with (an extension's themes).
+  if (file.contains(QLatin1String("collection"))) {
+    static const QRegularExpression collectionId(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9.:-]{0,127}$"));
+    const QJsonObject collection = file.value(QLatin1String("collection")).toObject();
+    const QString label = collection.value(QLatin1String("label")).toString().trimmed();
+    if (!collectionId.match(collection.value(QLatin1String("id")).toString()).hasMatch() || label.isEmpty() || label.size() > 48) {
+      return refuse(tr("Theme collections need a valid id and label."));
+    }
+    theme.insert(QStringLiteral("collection"), QJsonObject{{QStringLiteral("id"), collection.value(QLatin1String("id"))}, {QStringLiteral("label"), label}});
+  }
   return theme;
 }
 
@@ -1209,6 +1237,12 @@ bool ThemeController::exportTheme(const QString& id, const QString& path) {
                    {QStringLiteral("appearance"), definition->appearance},
                    {QStringLiteral("colors"), definition->colors}};
   if (!definition->variants.isEmpty()) file.insert(QStringLiteral("variants"), definition->variants);
+  for (const QJsonValue& value : m_settings->deviceSettings().value(kCustomThemes).toArray()) {
+    const QJsonObject saved = value.toObject();
+    if (saved.value(QLatin1String("id")).toString() == id && saved.contains(QLatin1String("collection"))) {
+      file.insert(QStringLiteral("collection"), saved.value(QLatin1String("collection")));
+    }
+  }
   QSaveFile out(path);
   if (!out.open(QIODevice::WriteOnly) || out.write(QJsonDocument(file).toJson()) < 0 || !out.commit()) {
     if (toasts) toasts->error(tr("Couldn’t export theme"), out.errorString());
