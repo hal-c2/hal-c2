@@ -14,7 +14,10 @@ class ShellBridge;
 // This machine's cluster, a settings page the shell owns (apps/server-ex
 // `HalC2.Cluster`): the MC does the work of status, invite, join and remove
 // over the shell's own connection (`cluster.*` RPCs). Publishes `cluster`:
-// {busy, status, error, invite, notice}. The page shows while the route is
+// {busy, status, error, invite, notice, candidates}. `candidates` [{environmentId,
+// label, online}] are the environments this MC is linked to and not clustered
+// with: `cluster.add {environmentId}` asks this MC for an invite and has that
+// environment join with it, through the link, so neither needs its command line. The page shows while the route is
 // the settings section "/settings/cluster" (NavigationController, which takes
 // cluster.open and cluster.close).
 class ClusterController : public QObject, public NativeController {
@@ -33,6 +36,8 @@ public:
 private:
   void refresh();
   void invite(bool tailscale);
+  void add(const QString& environmentId);
+  void updateCandidates();
   void change(const QString& method, const QJsonObject& payload, const QString& success, const QString& failure);
   void call(const QString& method, const QJsonObject& payload,
             std::function<void(const QJsonValue& result, const std::optional<QString>& error)> reply);

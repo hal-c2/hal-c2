@@ -6,7 +6,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHostAddress>
 #include <QNetworkAccessManager>
+#include <QNetworkInformation>
 #include <QNetworkReply>
 #include <QUrl>
 #include <QUrlQuery>
@@ -107,6 +109,18 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
   if (qGuiApp) {
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
       if (state == Qt::ApplicationActive) m_client->wake();
+    });
+  }
+  // A remote MC is not retried while this device has no network, and is
+  // tried at once when it returns. The MC on this machine needs none.
+  if (QNetworkInformation::loadDefaultBackend()) {
+    QNetworkInformation* network = QNetworkInformation::instance();
+    connect(network, &QNetworkInformation::reachabilityChanged, this, [this](QNetworkInformation::Reachability reachability) {
+      const QString host = m_client->origin().host();
+      const bool local = host == QLatin1String("localhost") || QHostAddress(host).isLoopback();
+      const bool online = local || reachability != QNetworkInformation::Reachability::Disconnected;
+      m_client->setOnline(online);
+      if (online) m_client->wake();
     });
   }
   update();

@@ -12,6 +12,7 @@
 #include <QSet>
 #include <QSignalSpy>
 #include <QTcpSocket>
+#include <QUrlQuery>
 #include <qpa/qwindowsysteminterface.h>
 
 #include "Brick.h"
@@ -637,6 +638,29 @@ const Steps steps([] {
     for (const int id : world.mc.subscribers(QStringLiteral("stream"))) followed.insert(world.mc.shapeOf(id).value(QLatin1String("environment")).toString());
     expect(followed == QSet<QString>{world.mc.environmentId, QStringLiteral("env-b"), QStringLiteral("env-c")} && world.mc.connections.size() == 1,
            QStringLiteral("streams of %1 over %2 connections").arg(QStringList(followed.values()).join(QStringLiteral(", "))).arg(world.mc.connections.size()));
+  });
+  step(QStringLiteral("a client paired with a cluster of two machines"), [](World& world, const Captures&, const Table&) {
+    ensureConnected(world);
+    joinMember(world, QStringLiteral("mc-b"), QStringLiteral("env-b"));
+  });
+  step(QStringLiteral("a third machine joins the cluster"), [](World& world, const Captures&, const Table&) {
+    joinMember(world, QStringLiteral("mc-c"), QStringLiteral("env-c"));
+  });
+  step(QStringLiteral("the client lists the third machine's environment within a minute"), [](World& world, const Captures&, const Table&) {
+    // As soon as the cluster announces it: nothing is polled for.
+    expect(world.native().store()->environments().contains(QStringLiteral("env-c")) &&
+               world.native().store()->thread(QStringLiteral("env-c:thread-env-c")).has_value(),
+           QStringLiteral("the client knows %1").arg(world.native().store()->environments().join(QStringLiteral(", "))));
+    QStringList projects;
+    for (const QVariant& project : world.state(QStringLiteral("sidebar")).toMap().value(QStringLiteral("projects")).toList()) {
+      projects.append(project.toMap().value(QStringLiteral("displayName")).toString());
+    }
+    expect(projects.contains(QStringLiteral("env-c")), QStringLiteral("the sidebar lists %1").arg(projects.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("reaches it with the same credential"), [](World& world, const Captures&, const Table&) {
+    followMember(world, QStringLiteral("env-c"));
+    expect(world.mc.connections.size() == 1 && QUrlQuery(world.mc.connections.first()).queryItemValue(QStringLiteral("token")) == QLatin1String("mc-token"),
+           QStringLiteral("it took %1 connections").arg(world.mc.connections.size()));
   });
   step(QStringLiteral("a client following threads on two cluster members"), [](World& world, const Captures&, const Table&) {
     ensureConnected(world);
