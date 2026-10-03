@@ -37,7 +37,7 @@ Feature: Keyboard focus and keyboard-only use
       When the user presses the model picker shortcut
       Then the model picker opens
 
-    @backlog @desktop
+    @desktop
     Scenario: Typing while a terminal starts stays in the composer
       Given the user is typing in the composer
       When a terminal starts on its own

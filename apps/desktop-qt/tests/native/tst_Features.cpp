@@ -516,6 +516,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/focus.feature:Nothing matches the settings search"),
     QStringLiteral("navigation/focus.feature:Escape clears the settings search"),
     QStringLiteral("navigation/focus.feature:The search follows a query set elsewhere"),
+    QStringLiteral("navigation/focus.feature:Typing while a terminal starts*"),
     QStringLiteral("source-control/checkpoint-diffs.feature"),
     QStringLiteral("timeline/checkpoints.feature"),
     QStringLiteral("files/file-explorer.feature"),
