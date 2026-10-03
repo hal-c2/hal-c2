@@ -39,6 +39,7 @@ import {
   type TerminalScrollAction,
   type TerminalThread,
 } from "./terminalState.ts";
+import { createMoveController } from "./moveState.ts";
 import { createThreadActions } from "./threadActions.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
 import { createThreadView } from "./threadView.ts";
@@ -998,6 +999,13 @@ export function createHost(options: HostOptions): Host {
     }
   };
 
+  // Moving a thread to another machine asks its questions in the composer's picker.
+  const move = createMoveController({
+    client,
+    store,
+    pick: (request) => composer!.pick(request),
+    width: () => popoverViewport().width,
+  });
   const threadActions = createThreadActions({
     client,
     store,
@@ -1008,6 +1016,8 @@ export function createHost(options: HostOptions): Host {
     restingMode,
     settlementSupported: () => settlementSupported,
     copyToClipboard: options.copyToClipboard,
+    canMove: move.available,
+    move: move.start,
   });
 
   // The composer loads the new-thread defaults itself; this is the settlement flag.
@@ -1055,6 +1065,7 @@ export function createHost(options: HostOptions): Host {
     publish();
     composer!.sync();
     palette.sync();
+    move.sync();
   });
   const unsubscribeConnection = client.subscribeConnection((phase) =>
     state.set("connection", connectionState(phase)),
@@ -1083,6 +1094,7 @@ export function createHost(options: HostOptions): Host {
       await terminal.settled();
       await threadView.settled();
       await cluster.settled();
+      await move.settled();
     },
     attachPlugins: (port) => {
       pluginPort = port;

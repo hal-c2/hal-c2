@@ -414,6 +414,11 @@ export function fakeClient({
       cluster.members = cluster.members.filter((member) => member.id !== id);
       return clusterStatus();
     },
+    // A machine on its own: the environment (environment.ts) plays a cluster's moves.
+    moveDestinations: async () => [],
+    moveThread: async () => {
+      throw new Error("This machine is not in a cluster.");
+    },
     lookupRepository,
     cloneRepository,
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {

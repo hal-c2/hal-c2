@@ -39,6 +39,9 @@ import {
   type TerminalRestartInput,
   type ThreadId,
   ThreadId as ThreadIdSchema,
+  ThreadMoveDestination,
+  type ThreadMoveInput,
+  ThreadMoveResult,
   TrimmedNonEmptyString,
   type UploadChatImageAttachment,
   type ServerConfig,
@@ -74,6 +77,7 @@ import {
 } from "@hal-c2/client-runtime/operations";
 import { inferProjectTitleFromPath } from "@hal-c2/client-runtime/state/projects";
 import {
+  mcRequest,
   remoteHttpClientLayer,
   request,
   layerWithOptions,
@@ -112,6 +116,7 @@ import * as Logger from "effect/Logger";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -495,6 +500,13 @@ export interface TuiClient {
   readonly clusterInvite: (input: ClusterInviteInput) => Promise<ClusterInvite>;
   readonly clusterJoin: (link: string) => Promise<ClusterStatus>;
   readonly clusterRemove: (id: string) => Promise<ClusterStatus>;
+  /** The other machines of the cluster a thread could move to, and their projects. */
+  readonly moveDestinations: (threadId: string) => Promise<ReadonlyArray<ThreadMoveDestination>>;
+  /**
+   * Move a thread to another machine. Besides `moved` the MC may answer `confirm`
+   * (ask again with `confirmed`) or `choose_project` (ask again with a `projectId`).
+   */
+  readonly moveThread: (input: ThreadMoveInput) => Promise<ThreadMoveResult>;
   readonly cloneRepository: (
     remoteUrl: string,
     destinationPath: string,
@@ -630,6 +642,11 @@ export interface TuiClient {
   ) => Promise<Pick<ProjectReadFileResult, "contents" | "byteLength" | "truncated"> | null>;
   readonly dispose: () => Promise<void>;
 }
+
+// `hal-c2.moveDestinations` and `hal-c2.moveThread` are outside the RPC contract,
+// so their answers are decoded here.
+const decodeMoveDestinations = Schema.decodeUnknownSync(Schema.Array(ThreadMoveDestination));
+const decodeMoveResult = Schema.decodeUnknownSync(ThreadMoveResult);
 
 const randomUuid = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -825,6 +842,12 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
     clusterInvite: (input) => runtime.runPromise(request(WS_METHODS.clusterInvite, input)),
     clusterJoin: (link) => runtime.runPromise(request(WS_METHODS.clusterJoin, { link })),
     clusterRemove: (id) => runtime.runPromise(request(WS_METHODS.clusterRemove, { id })),
+    moveDestinations: (threadId) =>
+      runtime
+        .runPromise(mcRequest("hal-c2.moveDestinations", { threadId }))
+        .then(decodeMoveDestinations),
+    moveThread: (input) =>
+      runtime.runPromise(mcRequest("hal-c2.moveThread", input)).then(decodeMoveResult),
     cloneRepository: (remoteUrl, destinationPath) =>
       runtime.runPromise(
         request(WS_METHODS.sourceControlCloneRepository, {

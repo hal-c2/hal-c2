@@ -16,7 +16,7 @@ import {
   type SidebarSection,
 } from "../components/Sidebar.logic.ts";
 import { padClip } from "../format.ts";
-import type { TuiThreadShell } from "../orchestrationV2Adapter.ts";
+import { projectLabel, type TuiThreadShell } from "../orchestrationV2Adapter.ts";
 import {
   ansi,
   relativeTime,
@@ -47,6 +47,8 @@ export function idFromKey(key: string): string {
 export interface TuiSidebarThread extends ShellSidebarThread {
   readonly section: SidebarSection;
   readonly projectName: string;
+  /** The machine it lives on, when the list spans a cluster. */
+  readonly machine: string | null;
   /** Relative age of the row's timestamp ("5m", "2d"). */
   readonly age: string;
   /** Single-cell status dot and its ANSI colour name (`Theme.ansi(name)`). */
@@ -222,6 +224,7 @@ function toSidebarThread(
     canSnooze: canSnooze(thread, { now }),
     section: row.section,
     projectName: row.projectTitle,
+    machine: thread.machine ?? null,
     age: relativeTime(row.timestamp, Date.parse(now)),
     glyph: status.glyph,
     glyphColor: status.color,
@@ -349,7 +352,7 @@ export function buildTuiSidebarState(input: TuiSidebarStateInput): TuiSidebarSta
     ? [{ draftId: draft.draftId, projectKey: projectKey(draft.projectId), label: "New thread" }]
     : [];
   const projectTitle = (id: string) =>
-    shell?.projects.find((project) => project.id === id)?.title ?? id;
+    projectLabel(shell?.projects.find((project) => project.id === id) ?? { title: id });
   const unplaced: UnplacedRow[] = [
     ...drafts.map((entry): UnplacedRow => {
       const projectName = projectTitle(draft!.projectId);

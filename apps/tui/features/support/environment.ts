@@ -12,9 +12,18 @@ export const DEFAULT_NOW_MS = Date.parse("2026-07-15T12:00:00.000Z");
 const CREATED_BASE_MS = Date.parse("2026-07-15T08:00:00.000Z");
 const MINUTE_MS = 60_000;
 
+/** A machine of the cluster, as the merged shell names it. */
+export interface EnvMachine {
+  id: string;
+  label: string;
+  online: boolean;
+}
+
 export interface EnvProject {
   id: string;
   title: string;
+  /** The machine it is on, in a cluster. */
+  machine?: string;
   workspaceRoot: string;
   defaultModelSelection: { instanceId: string; model: string };
   createdAt: string;
@@ -25,6 +34,10 @@ export interface EnvThread {
   id: string;
   projectId: string;
   title: string;
+  /** The machine it lives on, in a cluster. */
+  machine?: string;
+  /** Where it is moving to, until it arrives. */
+  moving?: { label: string; environmentId: string } | null;
   modelSelection: { instanceId: string; model: string };
   runtimeMode: "full-access";
   interactionMode: "default";
@@ -58,6 +71,10 @@ export interface Environment {
   defaultThreadEnvMode: ThreadEnvMode | null;
   /** What `listRefs` answers for every project. */
   refs: VcsRef[];
+  /** The cluster's machines, this one first; empty while this machine is alone. */
+  machines: EnvMachine[];
+  /** A move carries the agent's own session; otherwise the agent gets a summary. */
+  sessionCarried: boolean;
   connected: boolean;
   created: number;
 }
@@ -82,6 +99,8 @@ export function env(ctx: World): Environment {
       settleError: null,
       defaultThreadEnvMode: null,
       refs: [{ name: "main", current: true, isDefault: true, worktreePath: null } as VcsRef],
+      machines: [],
+      sessionCarried: true,
       connected: false,
       created: 0,
     };
@@ -92,12 +111,15 @@ export function env(ctx: World): Environment {
 
 const nowIso = (ctx: World) => new Date(ctx.nowMs ?? DEFAULT_NOW_MS).toISOString();
 
-export function addProject(ctx: World, title: string): EnvProject {
-  const existing = env(ctx).projects.find((project) => project.title === title);
+export function addProject(ctx: World, title: string, machine?: string): EnvProject {
+  const existing = env(ctx).projects.find(
+    (project) => project.title === title && project.machine === machine,
+  );
   if (existing) return existing;
   const project: EnvProject = {
-    id: `p-${slug(title)}`,
+    id: machine ? `p-${slug(title)}-${slug(machine)}` : `p-${slug(title)}`,
     title,
+    ...(machine ? { machine } : {}),
     workspaceRoot: `/work/${slug(title)}`,
     defaultModelSelection: { instanceId: "codex", model: "gpt-5" },
     createdAt: "2026-07-01T00:00:00.000Z",
@@ -168,6 +190,9 @@ function snapshotOf(environment: Environment): OrchestrationShellSnapshot {
     snapshotSequence: environment.created,
     projects: environment.projects.map((project) => ({ ...project })),
     threads: environment.threads.map((thread) => ({ ...thread })),
+    ...(environment.machines.length > 0
+      ? { machines: environment.machines.map((machine) => ({ ...machine })) }
+      : {}),
     updatedAt: new Date().toISOString(),
   } as unknown as OrchestrationShellSnapshot;
 }
@@ -177,6 +202,26 @@ export function change(ctx: World, mutate: (environment: Environment) => void): 
   const environment = env(ctx);
   mutate(environment);
   if (environment.connected) ctx.fake!.emitShell(snapshotOf(environment));
+}
+
+/** A thread starts moving: its row says where to until it arrives. */
+export function startMoving(ctx: World, title: string, machine: string): void {
+  const destination = env(ctx).machines.find((candidate) => candidate.label === machine);
+  if (!destination) throw new Error(`no machine "${machine}" in the cluster`);
+  change(ctx, () => {
+    threadNamed(ctx, title).moving = { label: machine, environmentId: destination.id };
+  });
+}
+
+/** A thread arrives: it lives in its project's checkout on `machine` from here on. */
+export function arrive(ctx: World, title: string, machine: string): void {
+  change(ctx, (environment) => {
+    const thread = threadNamed(ctx, title);
+    const from = environment.projects.find((project) => project.id === thread.projectId);
+    thread.projectId = addProject(ctx, from?.title ?? "shop", machine).id;
+    thread.machine = machine;
+    thread.moving = null;
+  });
 }
 
 const errorFor = (reason: string) => Promise.reject(new Error(reason));
@@ -189,7 +234,7 @@ function installClient(ctx: World): void {
     change(ctx, () => patch(thread));
     return Promise.resolve();
   };
-  useClient(ctx, {
+  const fake = useClient(ctx, {
     getServerConfig: async () =>
       ({
         settings: {
@@ -260,6 +305,57 @@ function installClient(ctx: World): void {
       change(ctx, () => {});
       return thread.id as never;
     },
+  });
+  fake.override("interrupt", (id) =>
+    update(id, (thread) => {
+      thread.session = { status: "ready" };
+    }),
+  );
+  // The MC that holds a thread moves it, under the rules of HalC2.ThreadMove.
+  fake.override("moveDestinations", async (id) => {
+    const thread = environment.threads.find((candidate) => candidate.id === id);
+    const title = environment.projects.find((project) => project.id === thread?.projectId)?.title;
+    return environment.machines
+      .filter((machine) => machine.label !== thread?.machine)
+      .map((machine) => ({
+        machine: machine.label,
+        environmentId: machine.id,
+        online: machine.online,
+        projects: environment.projects
+          .filter((project) => machine.online && project.machine === machine.label)
+          .map((project) => ({
+            id: project.id,
+            title: project.title,
+            workspaceRoot: project.workspaceRoot,
+            sameRepository: project.title === title,
+          })),
+      }));
+  });
+  fake.override("moveThread", async ({ threadId, machine }) => {
+    const thread = environment.threads.find((candidate) => candidate.id === threadId);
+    const destination = environment.machines.find((candidate) => candidate.label === machine);
+    if (!thread || !destination) throw new Error(`Thread ${threadId} not found`);
+    const { title } = thread;
+    if (thread.session?.status === "running") {
+      throw new Error(`${title} is running. Stop it or wait for it to finish before moving it.`);
+    }
+    if (!destination.online) throw new Error(`${machine} is offline. ${title} was not moved.`);
+    startMoving(ctx, title, machine);
+    arrive(ctx, title, machine);
+    return {
+      status: "moved",
+      threadId,
+      machine,
+      environmentId: destination.id,
+      projectId: thread.projectId,
+      sessionCarried: environment.sessionCarried,
+      message: `${title} moved to ${machine}. ${
+        environment.sessionCarried
+          ? "The agent continues its own session there."
+          : "The agent there will get a summary of the conversation."
+      }`,
+      notes: [],
+    };
   });
 }
 

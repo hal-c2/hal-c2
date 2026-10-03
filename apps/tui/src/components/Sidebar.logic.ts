@@ -1,4 +1,7 @@
-import type { TuiThreadShell as OrchestrationThreadShell } from "../orchestrationV2Adapter.ts";
+import {
+  projectLabel,
+  type TuiThreadShell as OrchestrationThreadShell,
+} from "../orchestrationV2Adapter.ts";
 import {
   effectiveSnoozed,
   QUEUED_TURN_START_GRACE_MS,
@@ -133,7 +136,7 @@ export function buildRows(
   if (!shell) return [];
 
   const projectTitleById = new Map(
-    shell.projects.map((project) => [project.id as string, project.title] as const),
+    shell.projects.map((project) => [project.id as string, projectLabel(project)] as const),
   );
   const needle = filter.trim().toLowerCase();
   const visibleThreads = shell.threads.filter((thread) => {
