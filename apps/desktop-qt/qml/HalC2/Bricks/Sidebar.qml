@@ -287,7 +287,17 @@ Rectangle {
                             delegate: ShellMenuItem {
                                 required property var modelData
 
-                                text: modelData.displayName
+                                // The most urgent state among the project's threads.
+                                readonly property string statusWord: ({
+                                        approval: qsTr("Approval"),
+                                        input: qsTr("Input"),
+                                        working: qsTr("Working"),
+                                        waiting: qsTr("Waiting"),
+                                        limited: qsTr("Limited"),
+                                        failed: qsTr("Failed")
+                                    })[modelData.status] ?? ""
+
+                                text: statusWord.length > 0 ? qsTr("%1 · %2").arg(modelData.displayName).arg(statusWord) : modelData.displayName
                                 iconName: "folder"
                                 current: sidebar.model !== null && sidebar.model.scopeProjectKey === modelData.key
                                 onTriggered: Shell.dispatch("sidebar.scope", {

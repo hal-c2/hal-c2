@@ -93,7 +93,7 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   SidebarController* sidebar = shell->sidebar();
   const sidebar::Capabilities supports = m_store->capabilities(thread->environmentId);
   const bool online = m_store->threadOnline(key);
-  const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+  const qint64 nowMs = sidebar->now().toMSecsSinceEpoch();
   const QJsonObject row = m_store->threadRow(key);
 
   QList<Item> items;

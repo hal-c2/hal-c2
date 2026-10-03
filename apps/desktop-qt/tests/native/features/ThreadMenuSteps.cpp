@@ -50,6 +50,17 @@ void projectCommand(FakeMc& mc, const QJsonObject& command) {
   } else if (type == QLatin1String("thread.settle")) {
     row.insert(QStringLiteral("settledOverride"), QStringLiteral("settled"));
     row.insert(QStringLiteral("settledAt"), now);
+    // Settling clears the thread's pinned and active places (orchestration.ex),
+    // and its snooze, as the Node server's projector does.
+    for (const char* key : {"pinnedAt", "pinOrderKey", "activeOrderKey", "snoozedUntil", "snoozedAt"}) row.remove(QLatin1String(key));
+  } else if (type == QLatin1String("thread.mark-unread")) {
+    // Just before the latest run completed, as the Node server's projector.
+    const QDateTime completed = QDateTime::fromString(row.value(QLatin1String("latestRunCompletedAt")).toString(), Qt::ISODateWithMs);
+    row.insert(QStringLiteral("lastVisitedAt"), completed.addMSecs(-1).toUTC().toString(Qt::ISODateWithMs));
+  } else if (type == QLatin1String("thread.active.reorder")) {
+    row.insert(QStringLiteral("activeOrderKey"), command.value(QLatin1String("orderKey")));
+  } else if (type == QLatin1String("thread.pin.reorder")) {
+    row.insert(QStringLiteral("pinOrderKey"), command.value(QLatin1String("orderKey")));
   } else if (type == QLatin1String("thread.unsettle")) {
     row.remove(QStringLiteral("settledOverride"));
     row.remove(QStringLiteral("settledAt"));

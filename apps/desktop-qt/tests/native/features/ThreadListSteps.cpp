@@ -242,8 +242,11 @@ const Steps steps([] {
   });
 
   // Snoozing.
-  step(QStringLiteral("the local time is Wednesday 10:00"), [](World& world, const Captures&, const Table&) {
-    world.setTime(QDateTime(QDate(2026, 9, 23), QTime(10, 0)));
+  // A day of the week the scenarios' clock starts in (Wednesday 23 September 2026).
+  step(QStringLiteral("the local time is (\\w+day) (\\d+):(\\d+)"), [](World& world, const Captures& c, const Table&) {
+    QDate date(2026, 9, 21);
+    while (QLocale::c().dayName(date.dayOfWeek()) != c[0]) date = date.addDays(1);
+    world.setTime(QDateTime(date, QTime(c[1].toInt(), c[2].toInt())));
   });
   step(QStringLiteral("%1 is snoozed until tomorrow").arg(q), [](World& world, const Captures& c, const Table&) {
     snoozeUntilTomorrow(world, c[0]);

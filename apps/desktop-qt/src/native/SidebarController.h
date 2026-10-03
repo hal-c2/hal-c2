@@ -51,6 +51,7 @@ public:
 
   // Tests pin the clock and locale; the app uses the system's.
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  QDateTime now() const { return m_now(); }
   void setLocale(const QLocale& locale) { m_locale = locale; }
 
   void refresh();

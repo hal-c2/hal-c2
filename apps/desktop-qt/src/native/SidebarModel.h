@@ -87,6 +87,12 @@ bool effectiveSnoozed(const Thread& thread, qint64 nowMs);
 Nullable wokeAt(const Thread& thread, qint64 nowMs);
 QString wakeLabel(const QString& snoozedUntil, qint64 nowMs);
 QString status(const Thread& thread);
+// The most urgent of `statuses` (approval, input, working, waiting, then the
+// rest), as the web app's resolveProjectStatusIndicator; "ready" when none is.
+QString mostUrgentStatus(const QStringList& statuses);
+// How long a working thread's run has been going ("3m", "1h 5m"); empty
+// under a minute and for a thread that is not working.
+QString workingLabel(const Thread& thread, qint64 nowMs);
 Nullable statusLabel(const Thread& thread);
 bool unread(const Thread& thread);
 Nullable visibleWokeAt(const Thread& thread, qint64 nowMs);
@@ -189,6 +195,9 @@ struct Input {
   QVariantList drafts;
   Nullable activeThreadKey;
   QVariant activeDraftId;
+  // A snoozed row's wake time in the user's clock format ("tomorrow 9:00");
+  // the row has none when unset.
+  std::function<QString(const QString& snoozedUntil)> describeWake;
 
   const ProjectGroup* group(const QString& key) const;
 };

@@ -303,6 +303,25 @@ QString status(const Thread& thread) {
   return QStringLiteral("ready");
 }
 
+QString mostUrgentStatus(const QStringList& statuses) {
+  static const QStringList order{QStringLiteral("approval"), QStringLiteral("input"), QStringLiteral("working"),
+                                 QStringLiteral("waiting"), QStringLiteral("limited"), QStringLiteral("failed")};
+  for (const QString& candidate : order) {
+    if (statuses.contains(candidate)) return candidate;
+  }
+  return QStringLiteral("ready");
+}
+
+QString workingLabel(const Thread& thread, qint64 nowMs) {
+  if (status(thread) != QLatin1String("working") || !thread.latestRun) return {};
+  const auto startedAt = parseIso(thread.latestRun->startedAt ? thread.latestRun->startedAt : thread.latestRun->requestedAt);
+  if (!startedAt) return {};
+  const qint64 minutes = std::max<qint64>(0, nowMs - *startedAt) / kMinuteMs;
+  if (minutes < 1) return {};
+  if (minutes < 60) return QStringLiteral("%1m").arg(minutes);
+  return QStringLiteral("%1h %2m").arg(minutes / 60).arg(minutes % 60);
+}
+
 bool unread(const Thread& thread) {
   if (!thread.latestRun) return false;
   const auto completedAt = parseIso(thread.latestRun->completedAt);
@@ -688,10 +707,13 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
     for (const QString& member : group.memberKeys) logicalKeyByPhysicalKey.insert(member, group.key);
   }
   QHash<QString, int> threadCounts;
+  QHash<QString, QStringList> threadStatuses;
   for (const Thread& thread : threads) {
     if (thread.archivedAt) continue;
     const auto logical = logicalKeyByPhysicalKey.constFind(thread.environmentId + QLatin1Char(':') + thread.projectId);
-    if (logical != logicalKeyByPhysicalKey.constEnd()) threadCounts[*logical] += 1;
+    if (logical == logicalKeyByPhysicalKey.constEnd()) continue;
+    threadCounts[*logical] += 1;
+    if (!thread.subagent) threadStatuses[*logical].append(status(thread));
   }
 
   const ProjectGroup* scoped = scopeProjectKey ? input.group(*scopeProjectKey) : nullptr;
@@ -727,6 +749,10 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
           {QStringLiteral("wakeLabel"),
            snoozed && thread.snoozedUntil ? QVariant(wakeLabel(*thread.snoozedUntil, nowMs))
                                           : QVariant::fromValue(nullptr)},
+          {QStringLiteral("wakeDescription"),
+           snoozed && thread.snoozedUntil && input.describeWake ? QVariant(input.describeWake(*thread.snoozedUntil))
+                                                                : QVariant::fromValue(nullptr)},
+          {QStringLiteral("workingLabel"), workingLabel(thread, nowMs)},
           {QStringLiteral("wokeAt"), nullable(visibleWokeAt(thread, nowMs))},
           {QStringLiteral("offline"), offline},
           {QStringLiteral("canSettle"), !offline && capabilities.settlement},
@@ -745,6 +771,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   for (const ProjectGroup& group : input.projects) {
     QVariantMap project = group.summary;
     project.insert(QStringLiteral("threadCount"), threadCounts.value(group.key));
+    project.insert(QStringLiteral("status"), mostUrgentStatus(threadStatuses.value(group.key)));
     projects.append(project);
   }
   QVariantList drafts;

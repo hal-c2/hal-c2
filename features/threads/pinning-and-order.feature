@@ -106,18 +106,18 @@ Feature: Pinning and arranging threads
     When the user moves "Beta" up
     Then "Beta" is listed above "Alpha"
 
-  @backlog @desktop
+  @desktop
   Scenario: New threads appear above arranged active threads
     Given the user arranged the active threads by hand
     When a new thread "Delta" is created
     Then "Delta" is listed above the arranged threads
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Activity does not reorder threads
     When the agent finishes work in "Gamma"
     Then the order of the active threads does not change
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Pinning and snoozing keep an active thread's position for later
     Given "Beta" is the second active thread
     When the user pins and then unpins "Beta"

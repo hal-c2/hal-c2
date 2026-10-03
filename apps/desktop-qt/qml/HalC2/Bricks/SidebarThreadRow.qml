@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import HalC2.Shell
 
@@ -56,7 +57,7 @@ Item {
         }
         switch (item.status) {
         case "working":
-            return qsTr("Working");
+            return item.workingLabel ? qsTr("Working %1").arg(item.workingLabel) : qsTr("Working");
         case "waiting":
             return qsTr("Waiting");
         case "approval":
@@ -260,6 +261,8 @@ Item {
             iconName: "alarm-clock-off"
             objectName: "wakeAction"
             Accessible.name: qsTr("Wake")
+            ToolTip.visible: hovered && !!row.item.wakeDescription
+            ToolTip.text: qsTr("Wakes %1").arg(row.item.wakeDescription ?? "")
             onClicked: row.unsnoozeRequested()
         }
 

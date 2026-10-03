@@ -107,6 +107,9 @@ void SidebarController::refresh() {
       });
     }
   }
+  input.describeWake = [this, now](const QString& snoozedUntil) {
+    return sidebar::wakeDescription(snoozedUntil, now, m_timestampFormat, m_locale);
+  };
   m_view = sidebar::build(threads, input, m_scope,
                           [this](const QString& environmentId) { return m_store->capabilities(environmentId); },
                           now.toMSecsSinceEpoch());
@@ -134,6 +137,20 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     refresh();
     return true;
   }
+  // Opening a thread that woke acknowledges the wake, as dismissing its pill does.
+  if (action == QLatin1String("thread.open")) {
+    const auto opened = m_store->thread(keyOf(map));
+    if (opened && m_store->capabilities(opened->environmentId).visitedTracking) {
+      if (const auto wokeAt = sidebar::visibleWokeAt(*opened, m_now().toMSecsSinceEpoch())) {
+        command(opened->environmentId,
+                {{QStringLiteral("type"), QStringLiteral("thread.visit")},
+                 {QStringLiteral("threadId"), opened->id},
+                 {QStringLiteral("visitedAt"), *wokeAt}},
+                QString());
+      }
+    }
+    return false;
+  }
   static const QStringList kRowActions{
       QStringLiteral("thread.settle"),     QStringLiteral("thread.unsettle"),
       QStringLiteral("thread.unsnooze"),   QStringLiteral("thread.snoozeMenu"),
@@ -160,22 +177,31 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     // Settling drops the pin; undoing puts it back where it was.
     const sidebar::Nullable pinOrderKey = thread->pinnedAt ? thread->pinOrderKey : sidebar::Nullable();
     const bool pinned = thread->pinnedAt.has_value();
+    // The MC ends the snooze too; undoing snoozes again until the same time.
+    const sidebar::Nullable snoozedUntil = thread->snoozedUntil;
     park(key, with({{QStringLiteral("type"), QStringLiteral("thread.settle")}}),
-         QStringLiteral("Failed to settle thread"), Leave::NextCard, [this, key, target, pinned, pinOrderKey] {
+         QStringLiteral("Failed to settle thread"), Leave::NextCard, [this, key, target, pinned, pinOrderKey, snoozedUntil] {
            toasts()->show(QStringLiteral("success"), QStringLiteral("Settled"), QString(),
-                          ToastController::Action{QStringLiteral("Undo"), [this, key, target, pinned, pinOrderKey] {
+                          ToastController::Action{QStringLiteral("Undo"), [this, key, target, pinned, pinOrderKey, snoozedUntil] {
                             const auto thread = m_store->thread(key);
                             if (!thread) return;
                             QJsonObject unsettle = target;
                             unsettle.insert(QStringLiteral("type"), QStringLiteral("thread.unsettle"));
                             unsettle.insert(QStringLiteral("reason"), QStringLiteral("user"));
                             command(thread->environmentId, unsettle, QStringLiteral("Failed to un-settle thread"),
-                                    [this, environmentId = thread->environmentId, target, pinned, pinOrderKey] {
-                                      if (!pinned) return;
-                                      QJsonObject pin = target;
-                                      pin.insert(QStringLiteral("type"), QStringLiteral("thread.pin"));
-                                      if (pinOrderKey) pin.insert(QStringLiteral("orderKey"), *pinOrderKey);
-                                      command(environmentId, pin, QStringLiteral("Failed to pin thread"));
+                                    [this, environmentId = thread->environmentId, target, pinned, pinOrderKey, snoozedUntil] {
+                                      if (pinned) {
+                                        QJsonObject pin = target;
+                                        pin.insert(QStringLiteral("type"), QStringLiteral("thread.pin"));
+                                        if (pinOrderKey) pin.insert(QStringLiteral("orderKey"), *pinOrderKey);
+                                        command(environmentId, pin, QStringLiteral("Failed to pin thread"));
+                                      } else if (sidebar::parseIso(snoozedUntil).value_or(0) > m_now().toMSecsSinceEpoch()) {
+                                        // Pinning spends a snooze, so only an unpinned thread is snoozed again.
+                                        QJsonObject snooze = target;
+                                        snooze.insert(QStringLiteral("type"), QStringLiteral("thread.snooze"));
+                                        snooze.insert(QStringLiteral("snoozedUntil"), *snoozedUntil);
+                                        command(environmentId, snooze, QStringLiteral("Failed to snooze thread"));
+                                      }
                                     });
                           }});
          });
