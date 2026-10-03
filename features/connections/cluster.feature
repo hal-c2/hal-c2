@@ -47,6 +47,26 @@ Feature: Clustering one person's machines
     And neither lists the other
 
   @mc
+  Scenario: An invite names the machine it is from
+    Given two MCs that are not clustered
+    When the first makes a cluster invite
+    Then the invite carries the fingerprint of the first's certificate
+
+  @mc
+  Scenario: A machine that answers an invite in another's place is not trusted
+    Given two MCs that are not clustered
+    When the user joins the second with an invite from the first that names another certificate
+    Then the join is refused because the machine that answered is not the one the invite is from
+    And the second lists no other member
+
+  @mc
+  Scenario: A joining machine takes the other members from the cluster, not from the answer to its invite
+    Given two MCs that are not clustered
+    When the second joins with an invite from the first whose answer was changed on the way to add a machine
+    Then the second connects to the first
+    And the second does not list the added machine
+
+  @mc
   Scenario: An MC started without cluster support refuses to join
     Given an MC started without the cluster boot flags
     When the user joins it to another machine
@@ -97,6 +117,27 @@ Feature: Clustering one person's machines
       | strategy     |
       | the tailnet  |
       | HAL_C2_PEERS |
+
+  @mc
+  Scenario: Members on different HAL-C2 versions do not connect
+    Given a cluster of two members
+    When the second restarts on another HAL-C2 version
+    Then the second cannot connect to the first
+    And the second lists the first as not connected, with the version the first runs
+
+  @mc
+  Scenario: Members connect again once they run the same version
+    Given a cluster of two members
+    And the second restarts on another HAL-C2 version
+    When the first moves to that version in place
+    Then the two are connected again
+
+  @mc
+  Scenario: A machine on another HAL-C2 version cannot join
+    Given two MCs that are not clustered, the second on another HAL-C2 version
+    When the user joins the second to the first with a pairing link from the first
+    Then the join is refused because the machines run different versions
+    And neither lists the other
 
   @mc
   Scenario: A member removed from the cluster can no longer connect
@@ -329,6 +370,65 @@ Feature: Clustering one person's machines
     When the user adds one to the other's cluster from settings
     Then the app asks the first for a pairing link that grants access and gives it to the second
     And the two machines join without the command line
+
+  # Not built. Members on different versions do not connect at all, so updating one member
+  # cuts it off from the rest until each of them is updated on the machine itself or by a
+  # client paired with it; a client that reaches a member only through the cluster cannot
+  # update it. That is acceptable while HAL-C2 has one user; it is not after that.
+  @backlog @mc
+  Scenario: Updating one member of a cluster updates the others
+    Given a cluster of two members
+    When the user updates the first to a new version
+    Then the second moves to that version too
+    And the two are connected on it
+
+  @backlog @mc
+  Scenario: A member that was away while the cluster moved to a new version is updated from another member
+    Given a cluster of two members
+    And the second was offline while the first moved to a new version
+    When the second comes back
+    Then the first gives it the new version over the cluster
+    And the second moves to it and connects without anyone pairing with it
+
+  @backlog @shared
+  Scenario: A member on another version says so where the cluster is listed
+    Given the cluster lists a member that last reported another HAL-C2 version
+    When the user looks at the cluster in settings
+    Then the member shows as not connected with the version it runs
+    And the user is told both machines must run the same version to connect
+
+  # The hardened join, not built. Today the invite's token and the joining machine's
+  # description cross the network the way the link's origin carries them. Over HTTPS or a
+  # tailnet nobody else reads or changes them. Over plain HTTP on a shared network, someone
+  # on the path can take the token before it is used, or put their own machine's
+  # certificate in the joining machine's place, and the inviter admits them. The invite's
+  # fingerprint only protects the joining machine (the three scenarios on invites above).
+  @backlog @mc
+  Scenario: A join proves it holds the invite without sending the invite's secret
+    Given a cluster invite from the first of two MCs that are not clustered
+    When the second joins with it over a network someone else can read
+    Then the invite's secret never crosses the network
+    And the first admits the second because its request was made with that secret
+
+  @backlog @mc
+  Scenario: Someone who changes a join on the way cannot put their own machine in its place
+    Given a cluster invite from the first of two MCs that are not clustered
+    When the second joins with it and someone on the network swaps in their own certificate
+    Then the first refuses the request because it no longer matches the invite's secret
+    And the first admits nobody
+
+  @backlog @mc
+  Scenario: The inviter proves who it is before the joining machine describes itself
+    Given a cluster invite from the first of two MCs that are not clustered
+    When the second joins with it
+    Then the second talks only to a machine holding the certificate the invite names
+    And a machine answering in the first's place learns nothing about the second
+
+  @backlog @mc
+  Scenario: Only a cluster invite joins a cluster
+    Given two MCs that are not clustered
+    When the user joins the second with an admin pairing link from the first that names no certificate
+    Then the join is refused because the link is not a cluster invite
 
   @backlog @mc
   Scenario: Members on one network find each other without being told where

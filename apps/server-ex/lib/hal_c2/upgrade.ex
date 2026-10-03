@@ -258,6 +258,7 @@ defmodule HalC2.Upgrade do
       :ok ->
         set_start_version(root, target)
         :persistent_term.put({__MODULE__, :version}, target)
+        HalC2.Cluster.version_changed()
         record(Map.put(outcome, "status", "committed"))
         announce()
         Logger.info("upgraded in place to #{target} (#{length(modules)} modules)")

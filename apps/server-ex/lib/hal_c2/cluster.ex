@@ -7,8 +7,13 @@ defmodule HalC2.Cluster do
   first start and never changed, for `<environment id>.hal-c2`; the MC is
   `hal_c2@<environment id>.hal-c2`. A handshake succeeds only when the peer's
   certificate is a member's (`verify_peer/3` checks its fingerprint against the pins
-  taken from `members.json`), so the cookie is a constant and no CA is needed, and a
-  change of membership applies from the next handshake.
+  taken from `members.json`), so no CA is needed and a change of membership applies
+  from the next handshake.
+
+  Members run one HAL-C2 version: what they send each other is not kept compatible
+  between versions. The cookie is no secret but names the version, so the handshake
+  with a member on another version fails and it lists as not connected, with the
+  version it last reported, until both run the same one.
 
   The VM boots with `-proto_dist inet_tls -ssl_dist_optfile PATH -setcookie hal_c2`
   (rel/env.sh.eex, `mise run mc`) but unnamed. This process writes the TLS options to
@@ -16,13 +21,15 @@ defmodule HalC2.Cluster do
   port (4370) or any free one when that is taken. `HalC2.Cluster.Epmd` stands in for
   EPMD and `HalC2.Cluster.Discovery` finds where members are.
 
-  A machine joins with a pairing link from any member (`join/1`): it trades the link
-  for an `access:write` session, presents its fingerprint, and the member admits it
-  (`admit/1`), answering with every member. Members exchange the list whenever they
-  connect, entry by entry by timestamp (`merge/3`), so a machine that joins one member
-  is admitted by all of them, and a removal (`remove/1`) reaches members that were
-  away. Timestamps come from `stamp/1`, so they order changes even when the members'
-  clocks disagree.
+  A machine joins with an invite from any member (`invite/1`, `join/1`): it trades the
+  link for an `access:write` session, presents its fingerprint, and the member admits
+  it (`admit/1`). The invite names the inviter's fingerprint, so the joining machine
+  trusts that certificate alone and nothing else the answer says. Members exchange
+  the list whenever they connect, entry by entry by timestamp (`merge/3`), so the new
+  machine learns the other members from the inviter over the cluster connection, a
+  machine that joins one member is admitted by all of them, and a removal
+  (`remove/1`) reaches members that were away. Timestamps come from `stamp/1`, so
+  they order changes even when the members' clocks disagree.
   """
 
   use GenServer
@@ -32,12 +39,12 @@ defmodule HalC2.Cluster do
 
   @table __MODULE__
   @dist_port 4370
-  @cookie :hal_c2
   @domain "hal-c2"
   # The certificate is pinned, not chained: it must outlive the machine.
   @valid_days 36_500
   @backdate_seconds 300
   @join_timeout 15_000
+  @fingerprint ~r/^[0-9a-f]{64}$/
   # Files of the CA-based cluster this replaced.
   @obsolete ~w(ca.pem ca.key vm.args address revoked ssl_dist.conf)
 
@@ -57,10 +64,17 @@ defmodule HalC2.Cluster do
 
   @doc """
   This machine and the other members: `%{"clustered" => true, "id", "mc", "addresses",
-  "members" => [%{"id", "label", "addresses", "connected"}]}`, or `%{"clustered" =>
-  false, "reason"}` when the MC was not started for clustering.
+  "version", "members" => [%{"id", "label", "addresses", "version", "connected"}]}`, or
+  `%{"clustered" => false, "reason"}` when the MC was not started for clustering. A
+  member's `version` is the one it last reported, nil before it reported any.
   """
   def status, do: GenServer.call(__MODULE__, :status)
+
+  @doc """
+  Takes up the version this MC moved to in place (`HalC2.Upgrade`): members are
+  dropped and found again, which only those on the same version are.
+  """
+  def version_changed, do: GenServer.cast(__MODULE__, :version_changed)
 
   @doc "The other members, `{id, addresses}`, for `HalC2.Cluster.Discovery`."
   def peers, do: GenServer.call(__MODULE__, :peers)
@@ -76,16 +90,18 @@ defmodule HalC2.Cluster do
   def remove(id), do: GenServer.call(__MODULE__, {:remove, id})
 
   @doc """
-  Joins the cluster of the machine a pairing link is from. The link must grant
-  `access:write` (an admin link from Settings → Connections, or `hal_c2.cluster invite`).
+  Joins the cluster of the machine a link is from: an invite (`invite/1`), or a
+  pairing link that grants `access:write` (an admin link from Settings → Connections),
+  which names no fingerprint, so the members are taken from the answer as it came.
   Waits up to 15 s to connect and returns `status/0`.
   """
   def join(link) do
     with {:ok, entry} <- GenServer.call(__MODULE__, :entry),
-         {:ok, base, token} <- parse_link(link),
+         {:ok, base, token, pin} <- parse_link(link),
          {:ok, access} <- exchange(base, token, entry["label"]),
          {:ok, %{"id" => inviter, "port" => port, "members" => members}}
-         when is_binary(inviter) and is_map(members) <- ask_admission(base, access, entry) do
+         when is_binary(inviter) and is_map(members) <- ask_admission(base, access, entry),
+         {:ok, members} <- trusted(members, inviter, pin) do
       :ok = :net_kernel.monitor_nodes(true)
       address = "#{URI.parse(base).host}:#{port}"
       :ok = GenServer.call(__MODULE__, {:joined, inviter, members, address})
@@ -101,7 +117,8 @@ defmodule HalC2.Cluster do
   end
 
   @doc """
-  A one-time pairing link that grants `access:write`, for another machine to `join/1`
+  A one-time pairing link that grants `access:write` and names this MC's fingerprint
+  (in the fragment, which is never sent anywhere), for another machine to `join/1`
   with within five minutes: `%{"link", "expiresAt", "localOnly"}`. It points at
   `"baseUrl"` when given, else with `"tailscale" => true` at this MC's Tailscale Serve
   name (published if need be), else at the address the MC listens on. `localOnly`
@@ -115,10 +132,12 @@ defmodule HalC2.Cluster do
              "label" => "Cluster invite"
            }) do
       host = URI.parse(base).host
+      fingerprint = GenServer.call(__MODULE__, :fingerprint)
 
       {:ok,
        %{
-         "link" => "#{String.trim_trailing(base, "/")}/?token=#{token}",
+         "link" =>
+           "#{String.trim_trailing(base, "/")}/?token=#{token}#fingerprint=#{fingerprint}",
          "expiresAt" => expires,
          "localOnly" => host in ["127.0.0.1", "localhost", "::1", "[::1]"]
        }}
@@ -160,6 +179,13 @@ defmodule HalC2.Cluster do
   def describe(:cannot_remove_self), do: "A machine cannot remove itself from its cluster."
   def describe(:not_a_member), do: "That machine is not a member of this cluster."
   def describe(:invalid_member), do: "The joining machine sent an invalid description."
+
+  def describe(:other_version),
+    do: "The two machines run different HAL-C2 versions; update both to the same one."
+
+  def describe(:wrong_machine),
+    do: "The machine that answered is not the one the invite is from."
+
   def describe({:refused, reason}), do: "The other machine refused: #{describe(reason)}"
 
   def describe({:unreachable, _}),
@@ -171,7 +197,8 @@ defmodule HalC2.Cluster do
 
   # Reasons that crossed the wire as strings.
   @reasons ~w(not_booted_for_clustering link_lacks_access link_invalid invalid_link
-    cannot_remove_self not_a_member invalid_member)a
+    cannot_remove_self not_a_member invalid_member wrong_machine
+    other_version)a
   defp describe_string(reason) do
     case Enum.find(@reasons, &(Atom.to_string(&1) == reason)) do
       nil -> reason
@@ -227,6 +254,7 @@ defmodule HalC2.Cluster do
         "fingerprint" => fp,
         "label" => if(is_binary(entry["label"]), do: entry["label"]),
         "addresses" => if(is_list(addresses), do: Enum.filter(addresses, &is_binary/1), else: []),
+        "version" => if(is_binary(entry["version"]), do: entry["version"]),
         "admittedAt" => admitted,
         "removedAt" => removed,
         "updatedAt" => updated
@@ -318,6 +346,7 @@ defmodule HalC2.Cluster do
           "id" => id,
           "label" => entry["label"] || id,
           "addresses" => entry["addresses"] || [],
+          "version" => entry["version"],
           "connected" => mc_name(id) in connected
         }
       end
@@ -329,6 +358,7 @@ defmodule HalC2.Cluster do
        "label" => state.members[state.id]["label"],
        "mc" => Atom.to_string(node()),
        "addresses" => state.members[state.id]["addresses"],
+       "version" => HalC2.Upgrade.version(),
        "members" => Enum.sort_by(members, &{&1["label"], &1["id"]})
      }, state}
   end
@@ -346,6 +376,8 @@ defmodule HalC2.Cluster do
      ), state}
   end
 
+  def handle_call(:fingerprint, _from, state), do: {:reply, state.fingerprint, state}
+
   def handle_call(_request, _from, %{off: reason} = state) when reason != nil,
     do: {:reply, {:error, reason}, state}
 
@@ -358,20 +390,23 @@ defmodule HalC2.Cluster do
         "id" => state.id,
         "fingerprint" => own["fingerprint"],
         "label" => own["label"],
-        "addresses" => own["addresses"]
+        "addresses" => own["addresses"],
+        "version" => own["version"]
       }}, state}
   end
 
   def handle_call({:admit, entry}, _from, state) do
     with %{"id" => id, "fingerprint" => fp} when is_binary(id) and is_binary(fp) <- entry,
          true <- id != state.id and Regex.match?(~r/^[0-9a-z][0-9a-z-]{0,62}$/, id),
-         true <- Regex.match?(~r/^[0-9a-f]{64}$/, fp) do
+         true <- Regex.match?(@fingerprint, fp),
+         {:version, true} <- {:version, entry["version"] == HalC2.Upgrade.version()} do
       now = stamp(state.members)
 
       admitted = %{
         "fingerprint" => fp,
         "label" => entry["label"],
         "addresses" => entry["addresses"],
+        "version" => entry["version"],
         "admittedAt" => now,
         "removedAt" => nil,
         "updatedAt" => now
@@ -383,6 +418,7 @@ defmodule HalC2.Cluster do
        {:ok, %{"id" => state.id, "port" => Epmd.listen_port(), "members" => state.members}},
        state}
     else
+      {:version, false} -> {:reply, {:error, :other_version}, state}
       _ -> {:reply, {:error, :invalid_member}, state}
     end
   end
@@ -421,6 +457,14 @@ defmodule HalC2.Cluster do
   @impl true
   def handle_cast({:merge, incoming}, %{off: nil} = state) when is_map(incoming),
     do: {:noreply, merge_in(state, incoming)}
+
+  def handle_cast(:version_changed, %{off: nil} = state) do
+    Node.set_cookie(cookie())
+    state = state |> refresh_own() |> commit()
+    for mc <- Node.list(), do: Node.disconnect(mc)
+    HalC2.Cluster.Discovery.poll()
+    {:noreply, state}
+  end
 
   def handle_cast(_request, state), do: {:noreply, state}
 
@@ -476,7 +520,8 @@ defmodule HalC2.Cluster do
     fresh = %{
       "fingerprint" => state.fingerprint,
       "label" => HalC2.Environment.label(),
-      "addresses" => own_addresses()
+      "addresses" => own_addresses(),
+      "version" => HalC2.Upgrade.version()
     }
 
     own =
@@ -599,7 +644,7 @@ defmodule HalC2.Cluster do
                do: Application.put_env(:kernel, :inet_dist_use_interface, ip)
 
           if listen(name, dist_port()) or listen(name, 0) do
-            Node.set_cookie(@cookie)
+            Node.set_cookie(cookie())
             :ok
           else
             {:off, :distribution_failed}
@@ -609,6 +654,8 @@ defmodule HalC2.Cluster do
         end
     end
   end
+
+  defp cookie, do: :"hal_c2_#{HalC2.Upgrade.version()}"
 
   # The boot flags arrive in ELIXIR_ERL_OPTIONS, which programs the MC starts (an
   # agent's `mix test`) would inherit and boot with.
@@ -667,12 +714,28 @@ defmodule HalC2.Cluster do
     uri = URI.parse(String.trim(link))
     params = Map.merge(URI.decode_query(uri.fragment || ""), URI.decode_query(uri.query || ""))
 
+    pin = params["fingerprint"]
+
     case params do
       %{"token" => token} when uri.scheme in ["http", "https"] and is_binary(uri.host) ->
-        {:ok, "#{uri.scheme}://#{uri.authority}", token}
+        if pin == nil or Regex.match?(@fingerprint, pin),
+          do: {:ok, "#{uri.scheme}://#{uri.authority}", token, pin},
+          else: {:error, :invalid_link}
 
       _ ->
         {:error, :invalid_link}
+    end
+  end
+
+  # What a joining machine takes from the inviter's answer. An invite names the
+  # inviter's fingerprint, so only the inviter is pinned, with that fingerprint, and
+  # the other members come from it over the cluster connection the pin authenticates.
+  defp trusted(members, _inviter, nil), do: {:ok, members}
+
+  defp trusted(members, inviter, pin) do
+    case members do
+      %{^inviter => %{"fingerprint" => ^pin} = entry} -> {:ok, %{inviter => entry}}
+      _ -> {:error, :wrong_machine}
     end
   end
 
