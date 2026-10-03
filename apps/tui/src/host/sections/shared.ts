@@ -40,7 +40,13 @@ export interface Machine {
   readonly capabilities: Readonly<Record<string, unknown>> | null;
   /** How the desktop app or a service hosts it, when the MC says. */
   readonly host: string | null;
+  /** What this MC's link to it may do there; null when nothing narrows it (this machine). */
+  readonly scopes: ReadonlyArray<string> | null;
 }
+
+/** False when the link to a machine was paired for reading only. */
+export const canChange = (machine: Machine): boolean =>
+  machine.scopes === null || machine.scopes.includes("orchestration:operate");
 
 interface WireDescriptor {
   readonly environmentId?: string;
@@ -55,6 +61,7 @@ const machineOf = (
   fallback: { readonly id: string; readonly label: string },
   local: boolean,
   online: boolean,
+  scopes: ReadonlyArray<string> | null = null,
 ): Machine => ({
   id: descriptor.environmentId ?? fallback.id,
   label: descriptor.label ?? fallback.label,
@@ -63,6 +70,7 @@ const machineOf = (
   version: descriptor.serverVersion ?? null,
   capabilities: descriptor.capabilities ?? null,
   host: descriptor.host ?? null,
+  scopes,
 });
 
 /**
@@ -81,7 +89,11 @@ export async function readMachines(client: TuiClient): Promise<Machine[]> {
   const add = (machine: Machine) => {
     if (!machines.some((known) => known.id === machine.id)) machines.push(machine);
   };
-  type WireLink = { readonly environment?: WireDescriptor; readonly online?: boolean };
+  type WireLink = {
+    readonly environment?: WireDescriptor;
+    readonly online?: boolean;
+    readonly scopes?: ReadonlyArray<string>;
+  };
   const links = await client
     .mcCall<ReadonlyArray<WireLink>>("hal-c2.environmentLinks", {})
     .catch((): ReadonlyArray<WireLink> => []);
@@ -94,6 +106,7 @@ export async function readMachines(client: TuiClient): Promise<Machine[]> {
         { id: descriptor.environmentId, label: descriptor.environmentId },
         false,
         link.online === true,
+        Array.isArray(link.scopes) ? link.scopes : null,
       ),
     );
   }

@@ -69,12 +69,12 @@ Feature: Usage limit sources
     When the user uses the reset credit and confirms
     Then the credit is spent through the hub
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user adds a hub
     When the user adds a hub with a URL and management key but no label
     Then the hub is listed under the hub's host name
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A hub cannot be added without a URL and key
     When the user fills in a URL but no management key
     Then the user cannot add the hub
@@ -87,7 +87,7 @@ Feature: Usage limit sources
     And its accounts leave limits
     And the hub itself is untouched
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A read-only connection cannot add hubs
     Given the user is connected with read-only access
     When the user opens usage providers

@@ -24,6 +24,8 @@ export interface FakeLink {
   serverVersion: string;
   capabilities: Record<string, unknown>;
   host?: string;
+  /** What the link's pairing grants on that machine (everything unless narrowed). */
+  scopes?: string[];
 }
 
 /** What the scenario's MC holds besides its settings calls: its projects and its links. */
@@ -101,6 +103,7 @@ export function fixture(ctx: SettingsWorld): SettingsFixture {
       },
       origin: `http://${link.id}.example:3773`,
       online: link.online,
+      scopes: link.scopes ?? ["orchestration:read", "orchestration:operate", "terminal:operate"],
       ...(link.online ? {} : { problem: "unreachable" }),
     })),
   );
