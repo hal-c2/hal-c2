@@ -860,6 +860,7 @@ function flowTop(block, ctx, flags) {
 var CITATION_LINK = /\[Assistant quote\]\(((?:hal-c2|t3)-citation:\/\/v1\/[^\s)]+)\)/g;
 var CITATION_CONTEXT = 32;
 var CITATION_MAX = 8000;
+var CITATION_ID = 512;
 var CITATION_FIELDS = ["text", "start", "end", "prefix", "suffix", "comment"];
 
 // The quote and comment a citation link carries, or null for a link that is
@@ -870,11 +871,16 @@ function citation(href) {
     if (query < 0 || href.indexOf("#") >= 0)
         return null;
     var path = href.slice(href.indexOf("://v1/") + 6, query).split("/");
-    if (path.length !== 3 || path.indexOf("") >= 0)
+    if (path.length !== 3)
         return null;
     var fields = {};
     var pairs = href.slice(query + 1).split("&");
     try {
+        for (var p = 0; p < path.length; ++p) {
+            var id = decodeURIComponent(path[p]).trim();
+            if (id.length === 0 || id.length > CITATION_ID)
+                return null;
+        }
         for (var i = 0; i < pairs.length; ++i) {
             var eq = pairs[i].indexOf("=");
             var key = eq < 0 ? pairs[i] : pairs[i].slice(0, eq);

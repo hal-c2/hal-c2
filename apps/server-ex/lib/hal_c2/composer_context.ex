@@ -119,10 +119,16 @@ defmodule HalC2.ComposerContext do
            fragment: nil
          }
          when is_binary(query) <- URI.parse(href),
-         [environment, thread, message] <- String.split(path, "/"),
+         false <- Regex.match?(~r/%(?![0-9A-Fa-f]{2})/, href),
+         [environment, thread, message] <-
+           path |> String.split("/") |> Enum.map(&String.trim(URI.decode(&1))),
+         true <-
+           Enum.all?([environment, thread, message], &(&1 != "" and String.length(&1) <= 512)),
          pairs = URI.query_decoder(query) |> Enum.to_list(),
          params = Map.new(pairs),
          true <- map_size(params) == length(pairs),
+         # An escape that is not text would not encode as JSON.
+         true <- Enum.all?([environment, thread, message | Map.values(params)], &String.valid?/1),
          [] <- Map.keys(params) -- ~w(text start end prefix suffix comment),
          %{"text" => quoted, "start" => from, "end" => to, "prefix" => prefix, "suffix" => suffix} <-
            params,
@@ -136,9 +142,9 @@ defmodule HalC2.ComposerContext do
              String.length(suffix) <= @citation_context_max do
       base = %{
         "version" => 1,
-        "environmentId" => URI.decode(environment),
-        "threadId" => URI.decode(thread),
-        "messageId" => URI.decode(message),
+        "environmentId" => environment,
+        "threadId" => thread,
+        "messageId" => message,
         "text" => quoted,
         "start" => from,
         "end" => to,

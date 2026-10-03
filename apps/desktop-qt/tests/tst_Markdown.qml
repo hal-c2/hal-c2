@@ -258,7 +258,7 @@ Item {
 
         // What the MC does not read as a quote is not shown as one.
         function test_malformedCitationLinkStaysALink() {
-            const links = ["hal-c2-citation://v1/env/thread?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=1&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=1&prefix=&suffix=&extra=1", "hal-c2-citation://v1/env/thread/msg?text=a"];
+            const links = ["hal-c2-citation://v1/env/thread?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=1&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=1&prefix=&suffix=&extra=1", "hal-c2-citation://v1/env/thread/msg?text=a", "hal-c2-citation://v1/%ZZ/thread/msg?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/%20?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=%FF&start=0&end=1&prefix=&suffix="];
             for (const link of links) {
                 const md = make("See [Assistant quote](" + link + ")");
                 compare(segmentsOf(md).map(s => s.kind), ["prose"], link);
