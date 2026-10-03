@@ -196,17 +196,53 @@ function itemStatus(item: OrchestrationV2TurnItem): string {
   }
 }
 
+/** The MC projects a read as a search for the one file it read (acp/thread_runtime.ex). */
+function isFileRead(item: Extract<OrchestrationV2TurnItem, { type: "file_search" }>): boolean {
+  return item.results?.length === 1 && item.results[0]?.fileName === item.pattern;
+}
+
+/** How a subagent stands, as the web's lifecycle row words it (V2LifecycleRow STATUS_VISUALS). */
+function subagentStatusLabel(status: OrchestrationV2TurnItem["status"]): string {
+  switch (status) {
+    case "idle":
+      return "Idle · resumable";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+    case "interrupted":
+      return "Stopped";
+    default:
+      return "Working";
+  }
+}
+
+/** Reasoning reads "Thinking" while it is written and "Thought" once it is done. */
+function reasoningLabel(item: Extract<OrchestrationV2TurnItem, { type: "reasoning" }>): string {
+  return item.streaming || item.status === "running" ? "Thinking" : "Thought";
+}
+
+/** How an answered approval ended, as its row's status (a pending one carries none). */
+function approvalOutcome(
+  request: OrchestrationV2ThreadProjection["runtimeRequests"][number] | undefined,
+): { status?: string } {
+  if (!request || request.status === "pending") return {};
+  if (request.decision === "decline") return { status: "declined" };
+  if (request.decision === "cancel" || request.status !== "resolved") return { status: "stopped" };
+  return { status: "completed" };
+}
+
 function itemSummary(item: OrchestrationV2TurnItem): string {
+  if (item.type === "reasoning") return reasoningLabel(item);
   if (item.title?.trim()) return item.title.trim();
   switch (item.type) {
-    case "reasoning":
-      return "Thinking";
     case "command_execution":
       return "Ran command";
     case "file_change":
       return `Changed ${item.fileName}`;
     case "file_search":
-      return "Searched files";
+      return isFileRead(item) ? "Read file" : "Searched files";
     case "web_search":
       return "Searched the web";
     case "approval_request":
@@ -220,15 +256,15 @@ function itemSummary(item: OrchestrationV2TurnItem): string {
     case "notification":
       return item.summary;
     case "subagent":
-      return item.progress ?? item.result ?? "Subagent work";
+      return "Subagent";
     case "dynamic_tool":
       return item.toolName ?? "Used tool";
     case "compaction":
-      return "Compacted context";
+      return "Context compacted";
     case "handoff":
-      return "Transferred context";
+      return "Context handoff";
     case "fork":
-      return "Forked thread";
+      return "Conversation fork";
     case "thread_created":
       return "Created thread";
     case "run_interrupt_request":
@@ -253,7 +289,7 @@ function itemPayload(
   const status = itemStatus(item);
   switch (item.type) {
     case "reasoning":
-      return { title: "Thinking", detail: item.text, status };
+      return { title: reasoningLabel(item), detail: item.text, status };
     case "command_execution":
       return {
         title: itemSummary(item),
@@ -271,17 +307,45 @@ function itemPayload(
         data: { item: { path: item.fileName } },
       };
     case "file_search":
+      return {
+        title: itemSummary(item),
+        detail: item.pattern,
+        icon: isFileRead(item) ? "fileRead" : "fileSearch",
+        status,
+      };
     case "web_search":
-      return { title: itemSummary(item), itemType: item.type, status, data: item };
+      return {
+        title: itemSummary(item),
+        itemType: item.type,
+        detail: item.patterns?.join(", "),
+        status,
+      };
     case "dynamic_tool":
       return {
         title: item.toolName ?? "Used tool",
         itemType: "dynamic_tool_call",
+        // The web's work entries show a tool the provider did not classify as a wrench.
+        icon: "mcp",
         status,
         data: { item: { input: item.input, result: item.output } },
       };
-    case "subagent":
-      return { title: itemSummary(item), detail: item.progress ?? item.result, status, data: item };
+    case "subagent": {
+      // The model is the subagent's own, never the parent thread's.
+      const model = projection.subagents.find((entry) => entry.id === item.subagentId)?.model;
+      const detail = [model, item.progress ?? item.result ?? item.prompt]
+        .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+        .join(" · ");
+      return {
+        title: itemSummary(item),
+        detail,
+        icon: "subagent",
+        // An idle subagent waits to be resumed: nothing is running.
+        status: item.status === "idle" ? "stopped" : status,
+        statusLabel: subagentStatusLabel(item.status),
+        childThreadId: item.childThreadId,
+        ...(model ? { model } : {}),
+      };
+    }
     case "approval_request": {
       const request = projection.runtimeRequests.find(
         (candidate) => candidate.id === item.requestId,
@@ -290,13 +354,20 @@ function itemPayload(
         requestId: item.requestId,
         requestKind: item.requestKind,
         detail: item.prompt,
-        status: request?.status ?? item.status,
+        ...approvalOutcome(request),
+        ...(item.options ? { options: item.options } : {}),
+        ...(item.appName ? { appName: item.appName } : {}),
+        // The provider process that asked is gone: nothing can take the answer.
+        ...(request?.responseCapability.type === "not_resumable" ? { notResumable: true } : {}),
       };
     }
     case "user_input_request":
       return {
         requestId: item.requestId,
-        questions: item.questions.map((question) => ({ ...question, multiSelect: false })),
+        questions: item.questions.map((question) => ({
+          ...question,
+          multiSelect: question.multiSelect === true,
+        })),
       };
     case "error":
       return { title: "Error", detail: item.failure.message, status: "failed", data: item };
@@ -457,6 +528,8 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
       streaming: message.streaming,
       createdAt: iso(message.createdAt),
       updatedAt: iso(message.updatedAt),
+      // Another agent's thread sent this message (a subagent reporting to its parent).
+      ...(message.senderThreadId ? { senderThreadId: message.senderThreadId } : {}),
     })),
     proposedPlans,
     activities: projection.visibleTurnItems.flatMap((item) => {

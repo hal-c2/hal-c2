@@ -28,7 +28,7 @@ Feature: Approvals and agent questions
     And the user is looking at a thread in "shop" whose agent is working
 
   # TUI: approve and decline are implemented in apps/tui/src/components/ChatView.tsx
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: The user answers an approval request
     Given the agent asks to run "rm -rf dist"
     When the user chooses to <decision>
@@ -67,7 +67,7 @@ Feature: Approvals and agent questions
     And the agent asks to run "npm test"
     Then the user is asked again
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A request says what kind of permission it wants
     When the agent requests <kind>
     Then the request is titled "<title>"
@@ -80,14 +80,14 @@ Feature: Approvals and agent questions
       | access for an app       | App access approval     |
       | a permission for an app | App permission approval |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A provider's warning is shown with the option it applies to
     Given the provider warns that an option may follow injected instructions
     When the user reviews the approval
     Then the warning is shown next to that option
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: Several pending approvals are answered one at a time
     Given the agent has three pending approvals
     Then the user sees "1/3"
@@ -96,14 +96,14 @@ Feature: Approvals and agent questions
     When the user moves back
     Then the user sees "1/3"
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A request whose agent is gone cannot be answered
     Given the provider process stopped while an approval was pending
     Then the approval cannot be answered
     And the user is told "Provider process is gone — interrupt or restart the run to respond."
 
   # TUI: implemented in apps/tui/src/approvals.ts
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: A failed answer is kept or closed depending on why it failed
     Given the user approved a pending request
     When sending the answer fails because <reason>
@@ -132,7 +132,7 @@ Feature: Approvals and agent questions
     And the approval is still open so the user can answer again
 
   # TUI: implemented in apps/tui/src/components/ComposerPendingUserInputPanel.tsx
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: The user answers the agent's question
     Given the agent asks "Which database?" with the options "Postgres", "SQLite" and "MySQL"
     And the question allows <choices>
@@ -144,7 +144,7 @@ Feature: Approvals and agent questions
       | one answer      | "SQLite"               | "SQLite"               |
       | several answers | "Postgres" and "MySQL" | "Postgres" and "MySQL" |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user writes their own answer
     Given the agent asks "Which database?" with three options
     When the user answers "DuckDB, in memory"
@@ -157,7 +157,7 @@ Feature: Approvals and agent questions
     Then the question is closed as dismissed
     And the agent is not given an answer
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A question stays answerable after its turn ends
     Given the agent asked a question that can be answered by message
     When the turn ends before the user answers

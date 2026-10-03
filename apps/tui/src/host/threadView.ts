@@ -1,7 +1,13 @@
-import type { OrchestrationThread } from "@hal-c2/contracts";
+import type { OrchestrationThread, ProviderApprovalDecision } from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
-import { derivePendingApprovals, type PendingApproval } from "../approvals.ts";
+import {
+  approvalKey,
+  approvalTitle,
+  derivePendingApprovals,
+  PROVIDER_GONE,
+  type PendingApproval,
+} from "../approvals.ts";
 import type { TuiClient } from "../connection.ts";
 import { splitUnifiedDiff } from "../diffSplit.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
@@ -17,6 +23,8 @@ import {
 import { createAttachmentPreviews } from "./attachmentPreviews.ts";
 import { buildImageViewerState, type TuiImageViewerState } from "./imageViewer.ts";
 import type { TuiMode, TuiSize } from "./layoutState.ts";
+import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
+import type { PaletteCommand } from "./paletteState.ts";
 import { chunk, styled } from "./styledText.ts";
 import {
   nextThreadAlerts,
@@ -41,6 +49,8 @@ import {
 
 /** Options a question panel shows at once, scrolled around the highlight. */
 export const USER_INPUT_OPTION_WINDOW = 8;
+/** How long a copied code block or table shows that it was copied. */
+const COPIED_MARK_MS = 2000;
 
 export interface ThreadViewOptions {
   readonly store: Store;
@@ -63,6 +73,10 @@ export interface ThreadViewOptions {
   readonly onQuestionChange?: () => void;
   /** The diff or image view opened or closed over the conversation pane. */
   readonly paneReplacedChanged?: () => void;
+  /** This device's muted threads (default: kept for this run only). */
+  readonly mutedThreads?: MutedThreadsStore | undefined;
+  /** Put text on the terminal's clipboard; false when the terminal refuses. */
+  readonly copyToClipboard?: ((text: string) => boolean) | undefined;
 }
 
 export interface ThreadView {
@@ -78,6 +92,12 @@ export interface ThreadView {
   readonly resize: () => void;
   /** The diff or image view has the conversation pane. */
   readonly paneReplaced: () => boolean;
+  /** The user stopped this turn from this client. */
+  readonly turnInterrupted: (turnId: string) => void;
+  /** Stop the timers the view started. */
+  readonly dispose: () => void;
+  /** The open thread's palette entries (copy the reply, …). */
+  readonly paletteCommands: () => PaletteCommand[];
   /** Resolves once attachment links and previews asked for so far have landed. */
   readonly settled: () => Promise<void>;
   /** The question the composer shows (open, not set aside): how many options it lists. */
@@ -154,16 +174,27 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   let approvals: PendingApproval[] = [];
   let approvalIndex = 0;
+  /** The unanswerable request the user was last told about. */
+  let toldGone: string | null = null;
   let questions: PendingUserInput[] = [];
   let question: QuestionState = NO_QUESTION;
   /** The request an answer is on its way for (blocks a second submit). */
   let answering: string | null = null;
   let revertIndex = 0;
+  let revertConfirming = false;
   let diff: DiffState = CLOSED_DIFF;
   let diffRequest = 0;
   let alerts: ReadonlyArray<ThreadAlert> = [];
   let alertSeq = 0;
   let viewedThreadId: string | null = null;
+  const mutedStore = options.mutedThreads ?? memoryMutedThreads();
+  /** Threads that raise no alert on this device. */
+  const muted = new Set(mutedStore.load());
+  /** Turns the user stopped in this session: their work stays open once they settle. */
+  const interruptedTurns = new Set<string>();
+  /** The code block or table just copied, and the timer that clears the mark. */
+  let copied: string | null = null;
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
   let imageViewer: TuiImageViewerState | null = null;
   const cellPixels = () => options.cellPixels?.() ?? null;
   const attachments = createAttachmentPreviews({
@@ -184,6 +215,19 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   // --- timeline -----------------------------------------------------------
 
+  const shellThread = (threadId: string) =>
+    store.getState().shell?.threads.find((thread) => thread.id === threadId) ?? null;
+  const threadTitle = (threadId: string) => shellThread(threadId)?.title ?? null;
+  /** The thread the open one is a subagent of, from the thread list's lineage. */
+  const parentThread = () => {
+    const lineage = detail ? shellThread(detail.id)?.lineage : null;
+    if (lineage?.relationshipToParent !== "subagent" || !lineage.parentThreadId) return null;
+    return {
+      threadId: lineage.parentThreadId,
+      title: threadTitle(lineage.parentThreadId) ?? "its parent thread",
+    };
+  };
+
   const publishTimeline = () => {
     timeline = buildTimelineState({
       detail,
@@ -191,6 +235,10 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       loadingOlderTurns: page?.loadingOlder ?? false,
       approvalCount: approvals.length,
       view,
+      openTurns: interruptedTurns,
+      copied,
+      threadTitle,
+      parent: parentThread(),
       paneWidth,
       nowMs: options.nowMs(),
       palette,
@@ -244,6 +292,62 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     viewImage(null);
     if (options.mode() === "imagePreview") options.setMode("compose");
   };
+
+  // --- clipboard -------------------------------------------------------------
+
+  const copy = (text: string, label: string) => {
+    const copied = options.copyToClipboard?.(text) ?? false;
+    store.setStatus(
+      copied ? `${label} copied.` : "Clipboard not supported by this terminal.",
+      copied ? "success" : "error",
+    );
+    return copied;
+  };
+
+  /** Mark a code block or table as just copied; the mark clears itself. */
+  const showCopied = (key: string) => {
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copied = key;
+    publishTimeline();
+    copiedTimer = setTimeout(() => {
+      copiedTimer = null;
+      copied = null;
+      publishTimeline();
+    }, COPIED_MARK_MS);
+    copiedTimer.unref?.();
+  };
+
+  /** The agent's latest finished reply, as it was written (its markdown). */
+  const latestReply = () =>
+    detail?.messages.findLast(
+      (message) =>
+        message.role === "assistant" && !message.streaming && message.text.trim().length > 0,
+    ) ?? null;
+
+  const paletteCommands = (): PaletteCommand[] => [
+    ...(viewedThreadId !== null
+      ? [
+          {
+            id: "mute-alerts",
+            title: muted.has(viewedThreadId)
+              ? "Unmute alerts for this thread"
+              : "Mute alerts for this thread",
+            keywords: "mute unmute alerts notifications",
+            action: "thread.alerts.toggleMute",
+          },
+        ]
+      : []),
+    ...(latestReply()
+      ? [
+          {
+            id: "copy-reply",
+            title: "Copy reply",
+            keywords: "clipboard markdown answer",
+            action: "timeline.reply.copy",
+          },
+        ]
+      : []),
+  ];
 
   const requestScroll = (to: "top" | "bottom" | null, by = 0) => {
     scrollSeq += 1;
@@ -308,17 +412,47 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const publishApprovals = () => {
     const count = approvals.length;
     const index = Math.min(approvalIndex, Math.max(0, count - 1));
+    const active = approvals[index] ?? null;
+    const options = (active?.options ?? []).map((option) => ({
+      decision: option.decision,
+      label: option.label,
+      key: approvalKey(option.decision),
+      warning: option.warning ?? "",
+    }));
+    const canRespond = active !== null && !active.notResumable;
     state.set("approvals", {
       count,
       index,
-      countText: count > 1 ? `(${index + 1} of ${count})` : "",
+      countText: count > 1 ? `${index + 1}/${count}` : "",
+      // What kind of permission the selected request wants.
+      title: active ? approvalTitle(active.requestKind) : "",
       items: approvals.map((approval, i) => ({
         requestId: approval.requestId,
         label: `${approval.requestKind}${approval.detail ? `: ${approval.detail}` : ""}`,
         active: i === index,
       })),
-      hint: count > 1 ? "↑/↓ select · ^A approve · ^R deny" : "^A approve   ^R deny",
+      options,
+      // A provider's caution sits on the line of the option it is about.
+      warnings: options
+        .filter((option) => option.warning !== "")
+        .map((option) => ({
+          decision: option.decision,
+          text: `⚠ ${option.key} ${option.label}: ${option.warning}`,
+        })),
+      canRespond,
+      problem: active?.notResumable ? PROVIDER_GONE : "",
+      hint: canRespond
+        ? [
+            ...(count > 1 ? ["↑/↓ select"] : []),
+            ...options.map((option) => `${option.key} ${option.label}`),
+          ].join(" · ")
+        : "",
     });
+    // Say once why a request cannot be answered.
+    if (active?.notResumable && toldGone !== active.requestId) {
+      toldGone = active.requestId;
+      store.setStatus(PROVIDER_GONE, "error");
+    }
   };
 
   const publishUserInput = () => {
@@ -424,13 +558,24 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     reconcileMode();
   };
 
-  const answerApproval = (decision: "accept" | "decline") => {
-    const approval = approvals[Math.min(approvalIndex, approvals.length - 1)];
+  const activeApproval = () => approvals[Math.min(approvalIndex, approvals.length - 1)] ?? null;
+
+  const APPROVAL_STATUS: Record<ProviderApprovalDecision, [string, string, string]> = {
+    accept: ["Approving…", "Approved.", "Approval failed"],
+    acceptForSession: ["Approving…", "Approved for this session.", "Approval failed"],
+    acceptAlways: ["Approving…", "Always approved.", "Approval failed"],
+    decline: ["Declining…", "Declined.", "Decline failed"],
+    cancel: ["Cancelling…", "Request cancelled.", "Cancel failed"],
+  };
+
+  const answerApproval = (decision: ProviderApprovalDecision) => {
+    const approval = activeApproval();
     if (!detail || !approval) return;
-    const [busy, done, failed] =
-      decision === "accept"
-        ? ["Approving…", "Approved.", "Approval failed"]
-        : ["Declining…", "Declined.", "Decline failed"];
+    if (approval.notResumable) {
+      store.setStatus(PROVIDER_GONE, "error");
+      return;
+    }
+    const [busy, done, failed] = APPROVAL_STATUS[decision];
     store.setStatus(busy, "busy");
     client.approve(detail.id as never, approval.requestId as never, decision).then(
       () => store.setStatus(done, "success"),
@@ -531,14 +676,24 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       Math.max(0, index - windowSize + 1),
       Math.max(0, list.length - windowSize),
     );
+    const confirming = open && revertConfirming ? (list[index] ?? null) : null;
     state.set("revert", {
       open,
       index,
-      title: styled(
-        chunk("revert ▸ ", { fg: palette.error }),
-        chunk("pick a checkpoint — discards changes made after it", { fg: palette.dim }),
-      ),
-      hint: "↑/↓ select · Enter revert · Esc cancel",
+      // Set once a checkpoint is picked: the rollback waits for a second Enter.
+      confirming: confirming?.checkpointTurnCount ?? null,
+      title: confirming
+        ? styled(
+            chunk("revert ▸ ", { fg: palette.error }),
+            chunk(`roll back to turn ${confirming.checkpointTurnCount}? This cannot be undone.`, {
+              fg: palette.text,
+            }),
+          )
+        : styled(
+            chunk("revert ▸ ", { fg: palette.error }),
+            chunk("pick a checkpoint — discards changes made after it", { fg: palette.dim }),
+          ),
+      hint: confirming ? "Enter roll back · Esc cancel" : "↑/↓ select · Enter revert · Esc cancel",
       emptyText: "No checkpoints to revert to yet.",
       rows: list.slice(windowStart, windowStart + windowSize).map((checkpoint, offset) => {
         const active = windowStart + offset === index;
@@ -561,17 +716,25 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const openRevert = () => {
     if (!detail) return;
     revertIndex = 0;
+    revertConfirming = false;
     options.setMode("revert");
     publishRevert();
   };
 
   const closeRevert = () => {
+    revertConfirming = false;
     options.setMode("compose");
     publishRevert();
   };
 
+  /** Enter picks a checkpoint, then asks: a rollback cannot be undone. A second Enter does it. */
   const confirmRevert = () => {
     const checkpoint = checkpoints()[revertIndex];
+    if (checkpoint && !revertConfirming) {
+      revertConfirming = true;
+      publishRevert();
+      return;
+    }
     closeRevert();
     if (!detail || !checkpoint) return;
     const turnCount = checkpoint.checkpointTurnCount;
@@ -704,7 +867,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     if (next.shell && prev?.shell !== next.shell) {
       alerts = nextThreadAlerts(
         alerts,
-        threadTransitions(prev?.shell?.threads ?? null, next.shell.threads),
+        threadTransitions(prev?.shell?.threads ?? null, next.shell.threads).filter(
+          (transition) => !muted.has(transition.thread.id),
+        ),
         selectedThreadId,
         () => `thread-alert:${++alertSeq}`,
       );
@@ -762,6 +927,16 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         if (approvals.length === 0) return false;
         answerApproval("decline");
         return true;
+      // Offered only when the provider (or the default set) has the choice.
+      case "approval.approveSession":
+      case "approval.cancel": {
+        const wanted: ReadonlyArray<string> =
+          action === "approval.cancel" ? ["cancel"] : ["acceptForSession", "acceptAlways"];
+        const option = activeApproval()?.options.find((entry) => wanted.includes(entry.decision));
+        if (!option) return false;
+        answerApproval(option.decision);
+        return true;
+      }
       case "approval.next":
       case "approval.previous": {
         if (approvals.length < 2) return false;
@@ -830,6 +1005,21 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "timeline.files.toggleAll":
         toggleAllDirs(Number(field(payload, "turnCount")));
         return true;
+      case "timeline.copy": {
+        const text = field(payload, "text");
+        const key = field(payload, "key");
+        if (typeof text !== "string" || typeof key !== "string") return true;
+        if (copy(text, String(field(payload, "label") ?? "Text"))) showCopied(key);
+        return true;
+      }
+      case "timeline.table.toggle":
+        setView({ collapsedTables: toggled(view.collapsedTables, String(field(payload, "key"))) });
+        return true;
+      case "timeline.reply.copy": {
+        const reply = latestReply();
+        if (reply) copy(reply.text, "Reply");
+        return true;
+      }
       case "image.open":
         openImage(field(payload, "id"));
         return true;
@@ -874,6 +1064,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         if (count > 0) {
           const delta = Number(field(payload, "delta") ?? 1) < 0 ? -1 : 1;
           revertIndex = (revertIndex + delta + count) % count;
+          // Moving on to another checkpoint takes the question back.
+          revertConfirming = false;
         }
         publishRevert();
         return true;
@@ -884,6 +1076,21 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "checkpoint.revert.cancel":
         closeRevert();
         return true;
+      case "thread.alerts.toggleMute": {
+        if (viewedThreadId === null) return true;
+        const title = detail?.id === viewedThreadId ? detail.title : "this thread";
+        if (muted.delete(viewedThreadId)) {
+          store.setStatus(`Alerts unmuted for ${title}.`, "success");
+        } else {
+          muted.add(viewedThreadId);
+          // An alert already up for it goes with the mute.
+          alerts = alerts.filter((alert) => alert.threadId !== viewedThreadId);
+          publishNotifications();
+          store.setStatus(`Alerts muted for ${title}.`, "success");
+        }
+        mutedStore.save([...muted]);
+        return true;
+      }
       case "notification.dismiss":
         dismissAlert(field(payload, "id"));
         return true;
@@ -923,6 +1130,13 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       if (imageViewer) viewImage(imageViewer.id);
     },
     paneReplaced: () => diff.open || imageViewer !== null,
+    turnInterrupted: (turnId) => {
+      interruptedTurns.add(turnId);
+    },
+    paletteCommands,
+    dispose: () => {
+      if (copiedTimer) clearTimeout(copiedTimer);
+    },
     settled: attachments.settled,
     question: () => {
       const current = activeQuestion()?.questions[question.questionIndex];

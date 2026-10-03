@@ -38,7 +38,7 @@ Feature: Streaming the agent's reply
     And tool calls and plans still appear as they happen
 
   # TUI: implemented in apps/tui/src/orchestrationV2Adapter.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: Reasoning shows while it is written and stays readable afterwards
     Given the agent is reasoning before it answers
     When the reasoning is <state>
@@ -57,7 +57,7 @@ Feature: Streaming the agent's reply
     And the elapsed time keeps counting
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A finished turn folds its work behind how long it took
     Given the agent ran four tool calls and then answered
     When the turn completes after 2 minutes
@@ -65,7 +65,7 @@ Feature: Streaming the agent's reply
     And the answer stays visible
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A folded turn can be opened and closed again
     Given a finished turn is folded behind "Worked for 2m"
     When the user opens the folded work
@@ -74,7 +74,7 @@ Feature: Streaming the agent's reply
     Then the tool calls fold away
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A stopped turn says who stopped it
     Given the user interrupted a turn <when>
     When the turn settles
@@ -85,14 +85,14 @@ Feature: Streaming the agent's reply
       | after 40 seconds       | You stopped after 40s     |
       | before it did any work | You stopped this response |
 
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A turn interrupted in this session stays open
     Given the user interrupted the running turn a moment ago
     When the turn settles
     Then its work stays expanded so the user can see where it stopped
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A long message can be expanded and collapsed
     Given a message longer than the preview length
     When the user shows the full message
@@ -100,7 +100,7 @@ Feature: Streaming the agent's reply
     When the user shows less
     Then the message returns to its preview
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user copies an assistant reply
     Given the agent has answered
     When the user copies the reply

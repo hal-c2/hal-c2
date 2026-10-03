@@ -22,13 +22,13 @@ Feature: Tool calls and file changes
     And the user is looking at a thread in "shop"
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Consecutive tool calls in a running turn show only the latest
     Given the agent has run five tool calls in a row in the running turn
     Then the latest tool call is shown
     And the other four are behind "+4 previous tool calls"
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The previous tool calls can be shown and hidden again
     Given the agent has run five tool calls in a row in the running turn
     When the user shows the previous tool calls
@@ -64,7 +64,7 @@ Feature: Tool calls and file changes
     Then the calls collapse back into the summary
 
   # TUI: implemented in apps/tui/src/worklog.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A tool call shows how it ended
     Given the agent's tool call <ended>
     Then the call is marked "<status>"
@@ -76,7 +76,7 @@ Feature: Tool calls and file changes
       | was declined by the user | Declined |
       | was interrupted          | Stopped  |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A tool call's icon says what kind of work it was
     Given the agent's most recent tool call <call>
     Then the call is shown with the "<icon>" icon
@@ -90,7 +90,7 @@ Feature: Tool calls and file changes
       | called an MCP tool | wrench         |
       | asked for approval | message-circle |
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario Outline: An ACP agent's read, search and fetch tools keep their meaning
     Given an ACP agent's tool call is of kind "<provider kind>"
     When the MC projects the call
@@ -117,21 +117,21 @@ Feature: Tool calls and file changes
       | search        | when it finishes | a file search |
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Files changed by a turn are listed under its reply
     Given the agent changed "src/cart.ts" and "src/checkout.ts" in one turn
     When the turn completes
     Then the reply lists both files with their added and removed lines
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: The user opens the diff of one turn
     Given a turn changed two files
     When the user opens that turn's changes
     Then the diff shows only what that turn changed, split per file
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: The user opens the diff of a single changed file
     Given a turn changed "src/cart.ts" and "src/checkout.ts"
     When the user opens "src/cart.ts" from the list of changed files

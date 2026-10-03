@@ -18,13 +18,13 @@ Feature: Formatted messages
     Given a connected environment with the project "shop"
     And the user is looking at a thread in "shop"
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A reply shows its formatting
     When the agent answers with a heading, a list, a quote, a code block and a table
     Then the heading and the list are shown as text
     And the quote, the code block and the table are each shown in their own form
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user copies a code block
     Given the agent's reply has a code block
     When the user copies the code block
@@ -39,7 +39,7 @@ Feature: Formatted messages
     When the user turns line wrap on for the code block
     Then the long line wraps
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: The user copies a table
     Given the agent's reply has a table
     When the user copies the table as <format>
@@ -50,7 +50,7 @@ Feature: Formatted messages
       | Markdown |
       | CSV      |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Table cells can be collapsed and expanded
     Given the agent's reply has a table with a long cell
     When the user collapses the table cells
@@ -58,13 +58,13 @@ Feature: Formatted messages
     When the user expands the table cells
     Then the long cell wraps
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Markup in a message is shown as it was written
     When the agent answers with HTML and an image
     Then the HTML is shown as written
     And the image is a link to its address and nothing is loaded from the web
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A link to a script is not a link
     When the agent answers with a link to "javascript:alert(1)"
     Then the link's text is shown and nothing can be opened
@@ -75,14 +75,14 @@ Feature: Formatted messages
     When the reply grows by another paragraph
     Then the paragraphs already shown are not drawn again
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A code block is shown as code while it is written
     Given the agent is writing a code block
     Then the code written so far is shown as a code block
     When the agent closes the code block
     Then the same code block is shown, finished
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A GitHub alert shows its kind
     When the agent answers with a "<marker>" alert
     Then the quote is titled "<title>"
@@ -95,7 +95,7 @@ Feature: Formatted messages
       | WARNING   | Warning   |
       | CAUTION   | Caution   |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A user message keeps its line breaks
     Given the user's message has two lines
     Then the message is shown on two lines

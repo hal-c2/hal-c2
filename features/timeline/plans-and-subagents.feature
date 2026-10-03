@@ -31,27 +31,27 @@ Feature: Plans and subagents
     And the user is looking at a thread in "shop"
 
   # TUI: implemented in apps/tui/src/proposedPlan.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A proposed plan appears as a card titled by its first heading
     When the agent proposes a plan whose first heading is "Add a tax line"
     Then the plan card is titled "Add a tax line"
     And a plan without a heading is titled "Proposed plan"
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A plan card does not repeat its title
     When the agent proposes a plan that opens with the heading "Add a tax line"
     Then the plan card is titled "Add a tax line"
     And the plan's text starts with "- Add the line"
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user implements the proposed plan
     Given the agent has proposed a plan
     When the user implements the plan with no feedback
     Then the agent starts implementing it in this thread
     And the plan card is no longer offered
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user refines the plan with feedback
     Given the agent has proposed a plan
     When the user sends "split the migration into its own step" as feedback
@@ -114,7 +114,7 @@ Feature: Plans and subagents
       | carry on    | with "12 tests added" | "12 tests added" once it is free       |
       | wait for it | without an answer     | "(no answer)" once its own run is over |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A subagent's status is shown in the parent
     Given the agent has a subagent that is <status>
     Then the subagent is shown as "<label>"
@@ -128,7 +128,7 @@ Feature: Plans and subagents
       | failed               | Failed           |
       | cancelled            | Stopped          |
 
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: The user moves between a subagent and its parent
     Given the agent has a subagent
     When the user opens the subagent's thread
@@ -136,14 +136,14 @@ Feature: Plans and subagents
     When the user opens the parent thread
     Then the parent thread is shown
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: A message from another agent says which thread it came from
     Given a subagent sent a message to its parent
     When the user reads the message in the parent thread
     Then it says which thread it came from
     And the user can open that thread
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: A subagent shows the model it runs on
     Given the agent delegated work to a subagent on the model "model-b"
     When the user looks at the parent's subagents
@@ -166,7 +166,7 @@ Feature: Plans and subagents
     Then the subagent continues with the answer
 
   # TUI: implemented in apps/tui/src/orchestrationV2Adapter.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: Changes to the thread's context are marked in the timeline
     When <event>
     Then the timeline marks "<marker>"

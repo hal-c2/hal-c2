@@ -82,7 +82,7 @@ Feature: Checkpoints and rewinding
     And the user cancels
     Then the conversation and the workspace are unchanged
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Rolling back to a checkpoint asks first because it cannot be undone
     When the user rolls back to a checkpoint
     Then the user is asked to confirm that the rollback cannot be undone
