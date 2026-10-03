@@ -78,6 +78,8 @@ export interface ThreadView {
   readonly resize: () => void;
   /** The diff or image view has the conversation pane. */
   readonly paneReplaced: () => boolean;
+  /** Open the diff viewer on a diff that is not a checkpoint's (a base ref compare). */
+  readonly showReview: (review: DiffReview) => void;
   /** Resolves once attachment links and previews asked for so far have landed. */
   readonly settled: () => Promise<void>;
   /** The question the composer shows (open, not set aside): how many options it lists. */
@@ -112,6 +114,15 @@ interface DiffState {
   readonly view: "unified" | "split";
   readonly status: DiffStatus;
   readonly text: string;
+  /** A diff another area asked for (a base ref compare) instead of a checkpoint's. */
+  readonly review?: DiffReview | null;
+}
+
+/** A diff shown in the viewer that is not one of the thread's checkpoints. */
+export interface DiffReview {
+  /** The scope as the title names it: "main…feature/tax · no whitespace". */
+  readonly label: string;
+  readonly load: () => Promise<string>;
 }
 
 const CLOSED_DIFF: DiffState = {
@@ -587,8 +598,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const publishDiff = () => {
     const list = checkpoints();
     const checkpoint = diff.index > 0 ? list[Math.min(diff.index - 1, list.length - 1)] : null;
-    const scopeLabel =
-      diff.index === 0 ? "all changes" : `turn ${checkpoint?.checkpointTurnCount ?? "?"}`;
+    const scopeLabel = diff.review
+      ? diff.review.label
+      : diff.index === 0
+        ? "all changes"
+        : `turn ${checkpoint?.checkpointTurnCount ?? "?"}`;
     const allFiles = diff.status === "ready" ? splitUnifiedDiff(diff.text) : [];
     const focused = diff.focusPath ? allFiles.filter((file) => file.path === diff.focusPath) : [];
     const files = focused.length > 0 ? focused : allFiles;
@@ -621,19 +635,26 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     });
   };
 
-  const loadDiff = () => {
+  /**
+   * Fetch the open scope's diff. `keep` leaves what is shown in place until
+   * the new text arrives (a refresh), so the viewer keeps its scroll position.
+   */
+  const loadDiff = (keep = false) => {
     if (!detail || !diff.open) return;
     const list = checkpoints();
     const latestTurnCount = list.reduce((max, c) => Math.max(max, c.checkpointTurnCount), 0);
     const checkpoint = diff.index > 0 ? list[Math.min(diff.index - 1, list.length - 1)] : null;
-    const request =
-      diff.index === 0
+    const request = diff.review
+      ? diff.review.load()
+      : diff.index === 0
         ? client.getFullThreadDiff(detail.id as never, latestTurnCount)
         : checkpoint
           ? client.getTurnDiff(detail.id as never, checkpoint.checkpointTurnCount)
           : null;
-    diff = { ...diff, status: request ? "loading" : "empty", text: "" };
-    publishDiff();
+    if (!(keep && request && diff.status === "ready")) {
+      diff = { ...diff, status: request ? "loading" : "empty", text: "" };
+      publishDiff();
+    }
     if (!request) return;
     const id = ++diffRequest;
     request.then(
@@ -657,7 +678,23 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         ? -1
         : checkpoints().findIndex((checkpoint) => checkpoint.checkpointTurnCount === turnCount);
     const wasOpen = diff.open;
-    diff = { ...diff, open: true, index: index >= 0 ? index + 1 : 0, focusPath: path };
+    diff = {
+      ...diff,
+      open: true,
+      index: index >= 0 ? index + 1 : 0,
+      focusPath: path,
+      review: null,
+    };
+    if (!wasOpen) options.paneReplacedChanged?.();
+    options.setMode("diff");
+    loadDiff();
+  };
+
+  /** Open the viewer on a diff from elsewhere (a compare against a base ref). */
+  const showReview = (review: DiffReview) => {
+    if (!detail) return;
+    const wasOpen = diff.open;
+    diff = { ...diff, open: true, index: 0, focusPath: null, review };
     if (!wasOpen) options.paneReplacedChanged?.();
     options.setMode("diff");
     loadDiff();
@@ -665,7 +702,12 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   const moveDiff = (delta: number) => {
     const count = checkpoints().length + 1;
-    diff = { ...diff, index: (diff.index + delta + count) % count, focusPath: null };
+    diff = {
+      ...diff,
+      index: (diff.index + delta + count) % count,
+      focusPath: null,
+      review: null,
+    };
     loadDiff();
   };
 
@@ -866,6 +908,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "diff.close":
         closeDiff();
         return true;
+      case "diff.refresh":
+        // The same scope again, kept on screen while it loads.
+        if (!diff.open) return false;
+        loadDiff(true);
+        return true;
       case "checkpoint.revert.open":
         openRevert();
         return true;
@@ -923,6 +970,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       if (imageViewer) viewImage(imageViewer.id);
     },
     paneReplaced: () => diff.open || imageViewer !== null,
+    showReview,
     settled: attachments.settled,
     question: () => {
       const current = activeQuestion()?.questions[question.questionIndex];

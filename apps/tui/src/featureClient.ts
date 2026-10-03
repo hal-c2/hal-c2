@@ -84,6 +84,11 @@ export interface TuiFeatureClient {
   readonly publishRepository: (
     input: SourceControlPublishRepositoryInput,
   ) => Promise<SourceControlPublishRepositoryResult>;
+  /**
+   * The checkout's changes since `baseRef` as one unified diff, whitespace-only
+   * changes left out on request (`review.getDiffPreview`, its branch-range source).
+   */
+  readonly reviewDiff: (cwd: string, baseRef: string, ignoreWhitespace: boolean) => Promise<string>;
 }
 
 const text = (value: string) => TrimmedNonEmptyString.make(value);
@@ -184,5 +189,19 @@ export function makeFeatureClient(runtime: TuiRuntime): TuiFeatureClient {
       ),
     publishRepository: (input) =>
       runtime.runPromise(request(WS_METHODS.sourceControlPublishRepository, input)),
+    reviewDiff: (cwd, baseRef, ignoreWhitespace) =>
+      runtime.runPromise(
+        request(WS_METHODS.reviewGetDiffPreview, {
+          cwd: text(cwd),
+          baseRef: text(baseRef),
+          ignoreWhitespace,
+        }).pipe(
+          Effect.map(
+            (result) =>
+              (result.sources.find((source) => source.kind === "branch-range") ?? result.sources[0])
+                ?.diff ?? "",
+          ),
+        ),
+      ),
   };
 }

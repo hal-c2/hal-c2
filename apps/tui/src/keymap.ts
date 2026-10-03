@@ -107,7 +107,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "^P", description: "Back to the prompt from any pane", chords: ["ctrl+p"] },
       { keys: "s", description: "Diff: toggle split / stacked", chords: ["s"] },
       { keys: "y / n", description: "Delete a thread: confirm / keep", chords: ["y", "n"] },
-      { keys: "r", description: "Settings: rebind a key · Files: list again", chords: ["r"] },
+      {
+        keys: "r",
+        description: "Settings: rebind a key · Files: list again · Diff: load again",
+        chords: ["r"],
+      },
       { keys: "e", description: "Files: edit in $EDITOR", chords: ["e"] },
       {
         keys: "Tab · ^Enter",
@@ -257,6 +261,7 @@ export const KEYMAP_LAYERS = {
     pageup: "diff.scrollUp",
     pagedown: "diff.scrollDown",
     s: "diff.toggleView",
+    r: "diff.refresh",
     "escape, ctrl+p": "diff.close",
   },
   files: {

@@ -1126,6 +1126,7 @@ export function createHost(options: HostOptions): Host {
         return { threadId: workspace.threadId, projectId, cwd: workspace.cwd };
       },
       nowMs: () => Date.parse(now()),
+      showDiff: (review) => threadView.showReview(review),
       dispatch: (action, payload) => dispatch(action, payload),
       commandsChanged: () => palette.sync(),
       settingsChanged: () => publishSettings(),

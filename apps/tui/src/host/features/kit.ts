@@ -7,6 +7,7 @@ import type { TuiMenuSpec } from "../composerState.ts";
 import type { TuiMode } from "../layoutState.ts";
 import type { PaletteCommand } from "../paletteState.ts";
 import type { TuiSettingsExtraGroup } from "../settingsState.ts";
+import type { DiffReview } from "../threadView.ts";
 
 /** The open thread's workspace: its worktree, else the project root. */
 export interface FeatureWorkspace {
@@ -33,6 +34,8 @@ export interface FeatureKit {
   /** Put text on the clipboard; false when the terminal cannot. */
   readonly copy: (text: string) => boolean;
   readonly workspace: () => FeatureWorkspace | null;
+  /** Open the diff viewer on a diff that is not one of the thread's checkpoints. */
+  readonly showDiff: (review: DiffReview) => void;
   /** The host's clock (tests pin it). */
   readonly nowMs: () => number;
   /** Run another host action (a palette command, a chord's action). */

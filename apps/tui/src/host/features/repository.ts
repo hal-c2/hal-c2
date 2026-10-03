@@ -83,6 +83,52 @@ export function createRepositoryFeature(kit: FeatureKit): Feature {
     );
   };
 
+  // --- review against a base -----------------------------------------------------
+
+  /** A base ref, then whether whitespace counts: the diff opens in the viewer. */
+  const review = () => {
+    const where = cwd();
+    if (!where) return;
+    void kit.track(
+      client.listRefs(where).then(
+        (listed) =>
+          kit.menu({
+            title: "compare against",
+            searchable: true,
+            options: listed.refs
+              .filter((ref) => !ref.current)
+              .map((ref) => ({
+                label: ref.name,
+                description: ref.isDefault ? "default branch" : "",
+                value: ref.name,
+              })),
+            index: Math.max(
+              0,
+              listed.refs.filter((ref) => !ref.current).findIndex((ref) => ref.isDefault),
+            ),
+            onChoose: (base) =>
+              kit.menu({
+                title: `changes since ${base}`,
+                options: [
+                  { label: "Every change", description: "Whitespace included.", value: "all" },
+                  {
+                    label: "Ignore whitespace",
+                    description: "Leave out lines that differ only in spacing.",
+                    value: "ignore",
+                  },
+                ],
+                onChoose: (mode) =>
+                  kit.showDiff({
+                    label: `${base}…${status()?.refName ?? "HEAD"}${mode === "ignore" ? " · no whitespace" : ""}`,
+                    load: () => client.reviewDiff(where, base, mode === "ignore"),
+                  }),
+              }),
+          }),
+        (error: unknown) => kit.status(`Could not list branches: ${errorText(error)}`, "error"),
+      ),
+    );
+  };
+
   // --- worktrees -------------------------------------------------------------
 
   const worktrees = () => {
@@ -312,6 +358,12 @@ export function createRepositoryFeature(kit: FeatureKit): Feature {
                 keywords: "pr review url",
                 action: "repo.pullRequest",
               },
+              {
+                id: "repo.review",
+                title: "Review changes against a base…",
+                keywords: "diff compare branch whitespace",
+                action: "repo.review",
+              },
             ]
           : [
               {
@@ -341,6 +393,9 @@ export function createRepositoryFeature(kit: FeatureKit): Feature {
     },
     dispatch: (action) => {
       switch (action) {
+        case "repo.review":
+          review();
+          return true;
         case "repo.switch":
           switchRef();
           return true;
