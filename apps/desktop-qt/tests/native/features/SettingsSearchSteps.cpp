@@ -157,8 +157,14 @@ const Steps steps([] {
     scroll->setProperty("contentY", scroll->property("contentY").toDouble() > end / 2 ? 0.0 : end);
     expect(!inView(world, target), QStringLiteral("%1 is still in view").arg(target));
   });
-  step(QStringLiteral("the user opens the search result %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the user opens the search result %1(?: again)?").arg(q), [](World& world, const Captures& c, const Table&) {
     openResult(world, c[0]);
+    world.mc.part<Opened>().target = at(world.state(QStringLiteral("route")), QStringLiteral("target")).toString();
+  });
+  step(QStringLiteral("the page brings the setting into view"), [](World& world, const Captures&, const Table&) {
+    const QString target = world.mc.part<Opened>().target;
+    expect(!target.isEmpty(), QStringLiteral("no result was opened; the route is %1").arg(show(world.state(QStringLiteral("route")))));
+    world.waitFor([&] { return inView(world, target); }, QStringLiteral("the page to bring %1 into view").arg(target));
   });
   step(QStringLiteral("the page brings the setting into view again"), [](World& world, const Captures&, const Table&) {
     const QString target = world.mc.part<Opened>().target;

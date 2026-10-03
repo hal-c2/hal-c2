@@ -17,20 +17,20 @@ Feature: Load balancing new threads across machines
     When a client asks the MC for its host resources
     Then the MC answers with its CPU count, CPU use and free memory
 
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario: Load balancing is off by default
     Given two connected machines share project "api"
     When the user starts a new thread in "api"
     Then the thread starts on the machine the user picked
 
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario: A new thread starts on the machine with the most room
     Given load balancing is on
     And "laptop" is busy and "server" is idle
     When the user starts a new thread in "api"
     Then the thread starts on "server"
 
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario Outline: A machine is skipped when it cannot take work
     Given load balancing is on
     And "server" <state>
@@ -45,21 +45,21 @@ Feature: Load balancing new threads across machines
       | has 5% of memory free                    |
       | does not have the chosen provider signed in |
 
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario: Preferring a machine sends it more new threads
     Given load balancing is on
     And the user prefers "server" and sets "laptop" to less often
     When both machines are equally idle
     Then new threads start on "server"
 
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario: A draft already tied to a machine is not moved
     Given load balancing is on
     And the user chose a branch for the new thread on "laptop"
     When the user sends the first message
     Then the thread starts on "laptop"
 
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario: Load balancing needs more than one machine
     Given only one machine is connected
     When the user opens connection settings

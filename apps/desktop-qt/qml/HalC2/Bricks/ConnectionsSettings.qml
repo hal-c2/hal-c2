@@ -98,7 +98,25 @@ Rectangle {
         }
     }
 
+    // A settings search result on this page (route.target): its fold opens and
+    // it is scrolled into view.
+    readonly property var route: Shell.state.route ?? null
+    readonly property int targetSeq: route !== null && route.targetSeq !== undefined ? route.targetSeq : 0
+
+    function reveal() {
+        if (route === null || route.target !== "loadBalancing" || !loadBalancing.visible) return;
+        loadBalancing.open = true;
+        const y = loadBalancing.mapToItem(column, 0, 0).y + column.y - 12;
+        flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
+    }
+
+    onTargetSeqChanged: Qt.callLater(reveal)
+    Component.onCompleted: Qt.callLater(reveal)
+
     Flickable {
+        id: flick
+        objectName: "scroll"
+
         anchors.fill: parent
         contentHeight: column.implicitHeight + 48
         clip: true
@@ -112,12 +130,9 @@ Rectangle {
             width: Math.min(640, parent.width - 48)
             spacing: 8
 
-            Label {
+            SettingsBreadcrumb {
                 Layout.fillWidth: true
-                text: qsTr("Connections")
-                color: page.foreground
-                font.pixelSize: Math.round(18 * Theme.fontScale)
-                font.weight: Font.DemiBold
+                section: qsTr("Connections")
             }
 
             Label {
@@ -190,6 +205,10 @@ Rectangle {
             Note {
                 visible: page.links.length === 0
                 text: qsTr("No other environments yet. Add one with a pairing link from it.")
+            }
+
+            LoadBalancingSettings {
+                id: loadBalancing
             }
 
             RowLayout {

@@ -782,10 +782,17 @@ void WorkspaceController::setEnvironment(const QString& key) {
   const QString environmentId = key.left(colon);
   const QString projectId = key.mid(colon + 1);
   if (m_store->projectRow(environmentId, projectId).isEmpty()) return;
-  if (environmentId == m_place->environmentId && projectId == m_place->projectId) return;
+  if (environmentId == m_place->environmentId && projectId == m_place->projectId) {
+    // Picking the machine it is on still ties it there.
+    if (m_checkouts.value(m_place->draftId).selection != QLatin1String("manual")) {
+      updateCheckout([](Checkout& checkout) { checkout.selection = QStringLiteral("manual"); });
+    }
+    return;
+  }
   updateCheckout([&](Checkout& checkout) {
     checkout.environmentId = environmentId;
     checkout.projectId = projectId;
+    checkout.selection = QStringLiteral("manual");
     checkout.branch.reset();
     checkout.worktreePath.reset();
   });

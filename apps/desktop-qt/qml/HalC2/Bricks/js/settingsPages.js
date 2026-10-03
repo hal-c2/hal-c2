@@ -9,7 +9,8 @@
 //   requires   shell state the section needs before it is listed
 //   keywords   what the native search matches, beside the label
 //   rows       the section's settingsRows.js rows, each found by its title and description
-//   settings   other settings on the page the search finds: {title, targetId, keywords}
+//   settings   other settings on the page the search finds: {title, targetId, keywords,
+//              requires (shell state the setting needs, as a section's)}
 var sections = [
     { to: "/settings/general", label: "General", brick: "GeneralSettings", rows: Rows.general,
       keywords: "project grouping auto-resume snooze limited threads auto-settle merged inactive notifications time format response streaming whitespace diff layout proactive panels skills slash rich text composer collapse send shortcut follow-up provider update checks continue restarts origin worktree add project unpin archive delete confirmation quit text generation model legacy plan context window sidebar" },
@@ -46,6 +47,8 @@ var sections = [
       keywords: "storage cleanup disk worktrees delete inactive merged unchanged browser artifacts captures rotated logs retention days" },
     { to: "/settings/connections", label: "Connections", brick: "ConnectionsSettings", action: "connections.open",
       requires: "connections", detail: "Environments, pairing links and clients",
+      settings: [{ title: "Load balancing", targetId: "loadBalancing", requires: "loadBalancing",
+                   keywords: "load balancing balance machines automatic new threads cpu memory prefer manual" }],
       keywords: "connections environments pairing link code clients revoke access remote" },
     { to: "/settings/archived", label: "Archive", brick: "ArchivedThreads", requires: "archivedThreads",
       detail: "Archived threads, unarchived or deleted", keywords: "archive archived threads unarchive restore delete" },
@@ -107,7 +110,7 @@ function paletteEntries(os) {
     sections.forEach(function (section) {
         entries.push({ to: section.to, label: section.label, keywords: section.keywords || "", requires: section.requires || "" });
         settingsOf(section, os).forEach(function (setting) {
-            entries.push({ to: section.to, label: setting.title, keywords: setting.keywords || "", requires: section.requires || "",
+            entries.push({ to: section.to, label: setting.title, keywords: setting.keywords || "", requires: setting.requires || section.requires || "",
                            targetId: setting.targetId, detail: section.label });
         });
     });
@@ -145,6 +148,7 @@ function searchRows(query, state, bindings) {
         add(section, section.label, section.keywords || "", false);
         // Rows this platform does not show are not found.
         settingsOf(section, Qt.platform.os).forEach(function (setting) {
+            if (setting.requires && (state[setting.requires] === undefined || state[setting.requires] === null)) return;
             add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title, setting.keywords, false);
         });
     });

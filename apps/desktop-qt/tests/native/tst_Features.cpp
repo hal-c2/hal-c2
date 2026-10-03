@@ -220,6 +220,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/search-and-navigation.feature:Leaving settings returns*"),
     QStringLiteral("settings/search-and-navigation.feature:Moving between sections is one step back"),
     QStringLiteral("settings/search-and-navigation.feature:Back with nowhere to return to*"),
+    QStringLiteral("settings/search-and-navigation.feature:A search result inside a folded section*"),
     QStringLiteral("settings/search-and-navigation.feature:The page names where the user is"),
     QStringLiteral("settings/search-and-navigation.feature:Device-only sections*"),
     QStringLiteral("settings/search-and-navigation.feature:Moving between sections keeps*"),
@@ -614,6 +615,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/diagnostics.feature"),
     QStringLiteral("settings/updates.feature:At launch*"),
     QStringLiteral("settings/notifications.feature"),
+    QStringLiteral("settings/load-balancing.feature"),
     QStringLiteral("settings/snap-shot.feature"),
     QStringLiteral("source-control/snap-shot.feature"),
 };

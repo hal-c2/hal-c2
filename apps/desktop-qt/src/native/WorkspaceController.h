@@ -52,6 +52,9 @@ public:
     // "Run on" another machine's checkout; empty keeps the draft's own.
     QString environmentId;
     QString projectId;
+    // Who chose the machine: "manual" (the user, with Run on), "auto" (load
+    // balancing), or empty while it is the draft's own.
+    QString selection;
   };
   // Where the route's thread is and what its terminals start in.
   struct Place {

@@ -100,6 +100,8 @@ class ComposerController : public QObject, public NativeController {
 public:
   ComposerController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
+  // The model the window's thread or draft will send with: {instanceId, model}, empty with none ready.
+  QJsonObject currentSelection() const { return selection(target()); }
   void activate() override;
   bool isActive() const { return m_active; }
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
