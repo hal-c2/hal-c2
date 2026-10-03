@@ -29,6 +29,11 @@ Item {
         signalName: "linkActivated"
     }
 
+    SignalSpy {
+        id: citeSpy
+        signalName: "cited"
+    }
+
     TestCase {
         name: "Markdown"
         when: windowShown
@@ -185,6 +190,59 @@ Item {
             verify(prose(segmentsOf(md)[0]).lineCount >= 2);
             const joined = make("one\ntwo");
             compare(prose(segmentsOf(joined)[0]).lineCount, 1);
+        }
+
+        // Dragging over words and pressing the copy key copies them.
+        function test_selectionCopiesWithTheCopyKey() {
+            const md = make("Refunds reuse the old rate.");
+            const edit = prose(segmentsOf(md)[0]);
+            const from = edit.positionToRectangle(0);
+            const to = edit.positionToRectangle(7);
+            mouseDrag(edit, from.x, from.y + from.height / 2, to.x - from.x, 0);
+            compare(edit.selectedText, "Refunds");
+            keySequence(StandardKey.Copy);
+            compare(clipboardText(), "Refunds");
+        }
+
+        function test_citeQuotesTheSelectionInItsReply() {
+            const md = make("# Rates\n\nRefunds reuse the old rate.\n\n```\ncode\n```\n\nAfter the code.", { citable: true });
+            citeSpy.target = md;
+            citeSpy.clear();
+            const button = findChild(md, "citeSelection");
+            verify(!button.visible, "nothing is selected yet");
+            const edit = prose(segmentsOf(md)[2]);
+            edit.forceActiveFocus();
+            edit.select(0, 5);
+            verify(button.visible, "a selection offers Cite");
+            verify(button.y >= 0 && button.y + button.height <= md.height, "inside the reply");
+            mouseClick(button);
+            compare(citeSpy.count, 1);
+            const selector = citeSpy.signalArguments[0][0];
+            compare(selector.text, "After");
+            compare(selector.suffix, " the code.");
+            verify(selector.prefix.endsWith("code "), "the text before it is the reply's: " + selector.prefix);
+            compare(selector.end - selector.start, 5);
+            compare(edit.selectedText, "", "the selection is let go");
+            verify(!button.visible);
+        }
+
+        function test_plainRepliesOfferNoCite() {
+            const md = make("Refunds reuse the old rate.");
+            const edit = prose(segmentsOf(md)[0]);
+            edit.forceActiveFocus();
+            edit.select(0, 7);
+            verify(!findChild(md, "citeSelection").visible);
+        }
+
+        // A sent quote reads as a quote with the user's comment under it.
+        function test_citationLinkReadsAsAQuote() {
+            const md = make("Why? [Assistant quote](hal-c2-citation://v1/env/thread/msg?text=cache+%5Bkeys%5D&start=0&end=12&prefix=&suffix=&comment=too+slow%3F) Thanks.", { lineBreaks: true });
+            const segments = segmentsOf(md);
+            compare(segments.map(s => s.kind), ["prose", "quote", "prose"]);
+            const quoted = findChild(segments[1], "markdownProse");
+            verify(plain(quoted).indexOf("Assistant quote:") >= 0);
+            verify(plain(quoted).indexOf("cache [keys]") >= 0, plain(quoted));
+            verify(plain(prose(segments[2])).indexOf("Comment: too slow?") >= 0, plain(prose(segments[2])));
         }
 
         function test_alertTitlesItsKind() {

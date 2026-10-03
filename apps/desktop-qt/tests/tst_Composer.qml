@@ -144,6 +144,35 @@ Item {
             compare(sent.payload.id, "tc-1");
         }
 
+        function test_quotedReplyChipTakesACommentAndRemoves() {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    citations: [{ id: "q-1", text: "Refunds reuse\nthe old rate.", comment: null }, { id: "q-2", text: "Cache keys", comment: "too slow?" }]
+                })
+            });
+            const composer = createTemporaryObject(composerComponent, root);
+            const chip = findChild(composer, "citation-q-1");
+            verify(!!chip);
+            compare(chip.text, "Refunds reuse the old rate.");
+            compare(findChild(composer, "citation-q-2").text, "too slow?");
+            mouseClick(chip);
+            const comment = findChild(chip, "citationComment");
+            tryCompare(comment, "activeFocus", true);
+            comment.text = "is this still true?";
+            keyClick(Qt.Key_Return);
+            let sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.citation.comment");
+            compare(sent.payload.id, "q-1");
+            compare(sent.payload.comment, "is this still true?");
+            mouseClick(chip);
+            const remove = findChild(chip, "citationRemove");
+            tryVerify(() => remove.visible);
+            mouseClick(remove);
+            sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.citation.remove");
+            compare(sent.payload.id, "q-1");
+        }
+
         function test_textDispatchIncludesTarget() {
             let composer = createTemporaryObject(composerComponent, root);
             verify(!!composer, "Component exists");

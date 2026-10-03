@@ -97,6 +97,10 @@ Item {
         showStatus: false
         onLinkActivated: link => view.openLink(link)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
+        citable: (Shell.state.composer?.target ?? null) !== null
+        onCited: (rowId, selector) => Shell.dispatch("composer.citation.add", Object.assign({
+            messageId: rowId
+        }, selector))
         onRevertRequested: rowId => view.askRevert(rowId)
     }
 

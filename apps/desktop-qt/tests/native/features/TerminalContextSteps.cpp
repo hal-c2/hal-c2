@@ -2,10 +2,13 @@
 // the chat (composer.terminalContext.add, as the terminal's menu dispatches
 // it), the chips the composer shows and removes, and the context records a
 // send carries (features/terminal/composer-context.feature,
-// composer/context-references.feature).
+// composer/context-references.feature). A quoted reply is held the same way
+// (composer.citation.add, as the timeline's Cite dispatches it).
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QVariantMap>
 
 #include "ComposerController.h"
@@ -18,6 +21,9 @@
 namespace {
 
 const QString kFailure = QStringLiteral("FAIL cart.test.ts\n  expected 3, got 2\n  at cart.test.ts:12");
+
+// The reply the quote scenarios cite from.
+const QString kParagraph = QStringLiteral("Cache keys include the tenant, so <one> tenant's entries never serve another.");
 
 // The selection the scenario's terminal shows, and the draft's text before
 // the last removal.
@@ -72,6 +78,32 @@ QJsonObject lastMessage(World& world) {
     if (command.value(QLatin1String("type")).toString() == QLatin1String("message.dispatch")) return command;
   }
   return {};
+}
+
+QVariantList quotes(World& world) {
+  return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("citations")).toList();
+}
+
+// Cites the paragraph, as selecting it in the reply and choosing Cite does.
+void cite(World& world) {
+  openTurnThread(world);
+  world.bridge().dispatch(QStringLiteral("composer.citation.add"),
+                          QVariantMap{{QStringLiteral("messageId"), QStringLiteral("msg-caching")},
+                                      {QStringLiteral("text"), kParagraph},
+                                      {QStringLiteral("start"), 12},
+                                      {QStringLiteral("end"), 12 + kParagraph.size()},
+                                      {QStringLiteral("prefix"), QStringLiteral("On caching: ")},
+                                      {QStringLiteral("suffix"), QString()}});
+  world.waitFor([&] { return quotes(world).size() == 1; },
+                [&] { return QStringLiteral("one quote; the composer shows %1").arg(show(quotes(world))); });
+}
+
+void comment(World& world, const QString& text) {
+  world.bridge().dispatch(QStringLiteral("composer.citation.comment"),
+                          QVariantMap{{QStringLiteral("id"), quotes(world).constFirst().toMap().value(QStringLiteral("id"))},
+                                      {QStringLiteral("comment"), text}});
+  world.waitFor([&] { return quotes(world).constFirst().toMap().value(QStringLiteral("comment")).toString() == text; },
+                [&] { return QStringLiteral("the comment %1; the composer shows %2").arg(show(text), show(quotes(world))); });
 }
 
 QJsonObject terminalRecord(const QJsonObject& message) {
@@ -163,6 +195,46 @@ const Steps steps([] {
     expect(terminalRecord(message).isEmpty() && !message.value(QLatin1String("text")).toString().contains(QLatin1String("hal-c2-context:")),
            QStringLiteral("the message carries %1").arg(show(message.toVariantMap())));
   });
+  // Quoted replies.
+  step(QStringLiteral("the assistant replied with a paragraph about caching"), [](World& world, const Captures&, const Table&) {
+    openTurnThread(world);
+  });
+  for (const auto& text : {QStringLiteral("the user cites that paragraph in the composer"),
+                           QStringLiteral("the user selects a sentence in the agent's reply and cites it")}) {
+    step(text, [](World& world, const Captures&, const Table&) { cite(world); });
+  }
+  for (const auto& text : {QStringLiteral("the draft carries the quoted paragraph"), QStringLiteral("the composer holds a citation of that sentence")}) {
+    step(text, [](World& world, const Captures&, const Table&) {
+      expect(quotes(world).constFirst().toMap().value(QStringLiteral("text")).toString() == kParagraph,
+             QStringLiteral("the composer shows %1").arg(show(quotes(world))));
+    });
+  }
+  for (const auto& text : {QStringLiteral("the user can add a comment to it"), QStringLiteral("the user can add a comment to the citation")}) {
+    step(text, [](World& world, const Captures&, const Table&) { comment(world, QStringLiteral("Too slow?")); });
+  }
+  step(QStringLiteral("the draft quotes the assistant's paragraph about caching with the comment %1").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         cite(world);
+         comment(world, c[0]);
+       });
+  step(QStringLiteral("the message cites the paragraph with the comment %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !lastMessage(world).isEmpty(); },
+                  [&] { return QStringLiteral("a message; the MC has %1").arg(world.describeCommands()); });
+    const QString text = lastMessage(world).value(QLatin1String("text")).toString();
+    const qsizetype at = text.indexOf(QLatin1String("[Assistant quote](hal-c2-citation://v1/"));
+    expect(at >= 0 && text.endsWith(u')'), QStringLiteral("the message reads %1").arg(show(text)));
+    const QUrl link(text.mid(at + 18).chopped(1));
+    const QUrlQuery query(link.query(QUrl::FullyEncoded).replace(u'+', QLatin1String("%20")));
+    expect(link.path().endsWith(QLatin1String("/msg-caching")) &&
+               query.queryItemValue(QStringLiteral("text"), QUrl::FullyDecoded) == kParagraph &&
+               query.queryItemValue(QStringLiteral("comment"), QUrl::FullyDecoded) == c[0],
+           QStringLiteral("the message cites %1").arg(show(link.toString())));
+  });
+  step(QStringLiteral("the draft no longer quotes it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return quotes(world).isEmpty(); },
+                  [&] { return QStringLiteral("no quote; the composer shows %1").arg(show(quotes(world))); });
+  });
+
   step(QStringLiteral("the message starts with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return !lastMessage(world).isEmpty(); },
                   [&] { return QStringLiteral("a message; the MC has %1").arg(world.describeCommands()); });

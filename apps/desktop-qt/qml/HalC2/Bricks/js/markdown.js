@@ -854,6 +854,82 @@ function flowTop(block, ctx, flags) {
     return entries;
 }
 
+// ---------------------------------------------------------------------------
+// Quotes of assistant replies (packages/shared/src/assistantCitations.ts)
+
+var CITATION_LINK = /\[Assistant quote\]\(((?:hal-c2|t3)-citation:\/\/v1\/[^\s)]+)\)/g;
+var CITATION_CONTEXT = 32;
+
+// The quote and comment a citation link carries, or null.
+function citation(href) {
+    var query = href.indexOf("?");
+    if (query < 0)
+        return null;
+    var fields = {};
+    var pairs = href.slice(query + 1).split("&");
+    try {
+        for (var i = 0; i < pairs.length; ++i) {
+            var eq = pairs[i].indexOf("=");
+            if (eq > 0)
+                fields[pairs[i].slice(0, eq)] = decodeURIComponent(pairs[i].slice(eq + 1).replace(/\+/g, " "));
+        }
+    } catch (e) {
+        return null;
+    }
+    return typeof fields.text === "string" && fields.text.trim().length > 0 ? fields : null;
+}
+
+function escapeMarkdown(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/[\\`*_[\]{}()#+.!|~-]/g, "\\$&");
+}
+
+// A message with its citation links written out: each quote in a block of
+// its own, and the user's comment under it (renderAssistantCitationsAsText).
+function withCitations(text) {
+    if (text.indexOf("-citation://v1/") < 0)
+        return text;
+    return text.replace(CITATION_LINK, function (source, href) {
+        var cited = citation(href);
+        if (cited === null)
+            return source;
+        var quote = escapeMarkdown(cited.text).split("\n").map(function (line) {
+            return "> " + line;
+        }).join("\n");
+        var comment = cited.comment !== undefined ? "Comment: " + escapeMarkdown(cited.comment) + "\n\n" : "";
+        return "\n\n> Assistant quote:\n" + quote + "\n\n" + comment;
+    });
+}
+
+// The selector an AssistantCitation saves for `text.slice(rawStart, rawEnd)`:
+// the quote as selected, and its UTF-16 place and surroundings in the text
+// with each whitespace run read as one space (createAssistantTextSelector).
+function selector(text, rawStart, rawEnd) {
+    var quote = text.slice(rawStart, rawEnd);
+    if (quote.trim().length === 0)
+        return null;
+    var normalize = function (value) {
+        return value.replace(/\s+/g, " ");
+    };
+    var splitsPair = function (value, offset) {
+        var before = value.charCodeAt(offset - 1);
+        var after = value.charCodeAt(offset);
+        return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+    };
+    var normalized = normalize(text);
+    var start = normalize(text.slice(0, rawStart)).length;
+    // A selection starting inside a whitespace run includes its one space.
+    if (rawStart > 0 && /\s/.test(text[rawStart - 1]) && /\s/.test(text[rawStart]))
+        start -= 1;
+    var end = normalize(text.slice(0, rawEnd)).length;
+    var prefixStart = Math.max(0, start - CITATION_CONTEXT);
+    var suffixEnd = Math.min(normalized.length, end + CITATION_CONTEXT);
+    if (splitsPair(normalized, prefixStart))
+        prefixStart += 1;
+    if (splitsPair(normalized, suffixEnd))
+        suffixEnd -= 1;
+    return { text: quote, start: start, end: end, prefix: normalized.slice(prefixStart, start), suffix: normalized.slice(end, suffixEnd) };
+}
+
 // The segments of a reply, each { kind, html, code, language, title, open,
 // indent, gap, payload, alert }: `gap` is the space above it (the larger of the
 // two margins that meet, zero for the first). While streaming, every top-level
@@ -870,7 +946,7 @@ function segments(text, options) {
         return hit;
     }
     var ctx = { refs: {}, lineBreaks: !!opts.lineBreaks, olDepth: 0, ulDepth: 0 };
-    var lines = text.replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
+    var lines = withCitations(text).replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
     var blocks = parseBlocks(lines, ctx);
     var result = [];
     var prose = [];
