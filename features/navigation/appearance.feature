@@ -125,7 +125,7 @@ Feature: Appearance
         | setting       | value | effect                                   |
         | contrast      | 20    | text and borders stand out more          |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The environment can be identified at a glance
       When the user sets environment identification to "<mode>"
       And the environment is a Nightly build
