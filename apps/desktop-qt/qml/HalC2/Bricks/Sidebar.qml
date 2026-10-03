@@ -403,6 +403,80 @@ Rectangle {
                 }
             }
 
+            // A row being dragged, and where it would land: before the row
+            // `dropBeforeKey` of `dropSection` (at its end without one).
+            property string dragKey: ""
+            property string dropSection: ""
+            property var dropBeforeKey: null
+            property real dropLineY: -1
+
+            function sectionKeys(section) {
+                return sidebar.model ? (sidebar.model[section] ?? []).map(item => item.key) : [];
+            }
+
+            function trackDrop(key, windowY) {
+                dragKey = key;
+                const y = mapFromItem(null, 0, windowY).y;
+                const index = indexAt(width / 2, y + contentY);
+                const row = index >= 0 ? sidebar.rows[index] : undefined;
+                const item = index >= 0 ? itemAtIndex(index) : null;
+                dropSection = "";
+                dropBeforeKey = null;
+                dropLineY = -1;
+                if (!row || !item) {
+                    return;
+                }
+                const top = item.y - contentY;
+                const upper = y < top + item.height / 2;
+                if (row.kind === "header") {
+                    dropSection = row.key;
+                    dropLineY = top + item.height;
+                } else if (row.kind === "divider") {
+                    dropSection = "active";
+                    dropBeforeKey = sectionKeys("active")[0] ?? null;
+                    dropLineY = top + item.height;
+                } else if (row.kind === "thread" || row.kind === "slim") {
+                    const keys = sectionKeys(row.section);
+                    const at = keys.indexOf(row.item.key);
+                    // With nothing pinned, the top edge of the list pins.
+                    if (row.section === "active" && at === 0 && sectionKeys("pinned").length === 0 && y < top + 12) {
+                        dropSection = "pinned";
+                        dropLineY = top;
+                        return;
+                    }
+                    dropSection = row.section;
+                    dropBeforeKey = upper ? row.item.key : (keys[at + 1] ?? null);
+                    dropLineY = upper ? top : top + item.height;
+                }
+            }
+
+            function finishDrop(dropped) {
+                if (dropped && dragKey.length > 0 && dropSection.length > 0 && dropBeforeKey !== dragKey) {
+                    Shell.dispatch("thread.drop", {
+                        key: dragKey,
+                        section: dropSection,
+                        beforeKey: dropBeforeKey
+                    });
+                }
+                dragKey = "";
+                dropSection = "";
+                dropBeforeKey = null;
+                dropLineY = -1;
+            }
+
+            // Where the dragged row would land.
+            Rectangle {
+                objectName: "dropLine"
+                parent: list
+                visible: list.dropLineY >= 0
+                x: 6
+                y: list.dropLineY - 1
+                width: list.width - 12
+                height: 2
+                radius: 1
+                color: Theme.palette.color("focus", "#3b82f6")
+            }
+
             function menuAtCursor() {
                 const row = sidebar.rows[cursorIndex];
                 const item = itemAtIndex(cursorIndex);
@@ -461,6 +535,12 @@ Rectangle {
                     break;
                 case Qt.Key_Menu:
                     menuAtCursor();
+                    break;
+                case Qt.Key_Escape:
+                    if (!sidebar.model || sidebar.model.selectedKeys.length === 0) {
+                        return;
+                    }
+                    Shell.dispatch("thread.select.clear", {});
                     break;
                 case Qt.Key_F10:
                     if (!(event.modifiers & Qt.ShiftModifier)) {
@@ -618,6 +698,14 @@ Rectangle {
                                 });
                             }
                         }
+                        onDragMoved: windowY => list.trackDrop(entry.modelData.item.key, windowY)
+                        onDragEnded: dropped => list.finishDrop(dropped)
+                        onSelectionToggled: Shell.dispatch("thread.select.toggle", {
+                            key: entry.modelData.item.key
+                        })
+                        onRangeSelected: Shell.dispatch("thread.select.range", {
+                            key: entry.modelData.item.key
+                        })
                         onMenuRequested: (windowX, windowY) => {
                             if (entry.kind === "draft") {
                                 Shell.dispatch("draft.menu", {

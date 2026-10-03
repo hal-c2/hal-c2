@@ -48,6 +48,14 @@ public:
   const sidebar::Nullable& scope() const { return m_scope; }
   // The rows' keys in the order they render.
   const QStringList& orderedKeys() const { return m_view.orderedKeys; }
+  // The threads selected for a bulk action, in the order they render:
+  // `thread.select.toggle {key}` adds or removes one, `thread.select.range
+  // {key}` selects from the anchor (the last one toggled or opened) to it,
+  // `thread.select.clear` drops them all, as does scoping the list or opening
+  // a thread. As the web app's threadSelectionStore.
+  QStringList selection() const;
+  void clearSelection();
+  void deselect(const QStringList& keys);
 
   // Tests pin the clock and locale; the app uses the system's.
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
@@ -75,6 +83,16 @@ public:
             std::function<void()> onSuccess = {});
   // Whether park() is waiting on the MC for the thread `key`.
   bool parking(const QString& key) const { return m_pending.contains(key); }
+  // Arranging: `thread.move {key, direction: "up"|"down"}` moves a pinned or
+  // active row one place; `thread.drop {key, section, beforeKey}` puts a
+  // dragged row before the row `beforeKey` of `section` (at its end without
+  // one). A drop within the pinned or the active rows reorders them; into
+  // another section it pins (at the drop position), unpins, settles,
+  // un-settles or wakes the thread, and into the snoozed shelf does nothing.
+  // The order is the environment's (sidebar::planReorder), which has to
+  // support it (threadPinReorder, threadActiveReorder).
+  // Whether the row can move one place `up` or down within its section.
+  bool canMove(const QString& key, bool up) const;
   // The snooze choices now, and snoozing the thread `key` until one's time,
   // with an Undo toast.
   QList<sidebar::SnoozePreset> snoozePresets() const;
@@ -90,6 +108,13 @@ private:
   void command(const QString& environmentId, QJsonObject command, const QString& failureTitle,
                std::function<void()> onSuccess = {});
   void openSnoozeMenu(const QString& key, double x, double y);
+  // The keys the section ("pinned" or "active") lists, in order.
+  QStringList sectionKeys(const QString& section) const;
+  QString sectionOf(const QString& key) const;
+  // Writes the order keys that put `key` where `ordered` has it; when
+  // `pinning`, the thread is pinned with its key instead of reordered.
+  void arrange(const QString& section, const QStringList& ordered, const QString& key, bool pinning = false);
+  void drop(const QString& key, const QString& section, const QString& beforeKey);
   ToastController* toasts() const;
   // The client settings grouping, ordering and time labels read, from this
   // device's preferences (SettingsController), else their defaults.
@@ -111,6 +136,8 @@ private:
   sidebar::Nullable m_scope;
   sidebar::View m_view;
   QSet<QString> m_pending;
+  QSet<QString> m_selected;
+  QString m_anchor;
   // The listed drafts' labels, and the open draft's row as it was when the
   // window opened it (nothing when it was empty).
   QHash<QString, QString> m_draftLabels;

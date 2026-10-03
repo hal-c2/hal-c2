@@ -131,7 +131,7 @@ Feature: Unread and status in the thread list
     When the user marks "Build search" unread
     Then the row for "Build search" reads "Done"
 
-  @backlog @desktop
+  @desktop
   Scenario: Marking several threads unread
     Given the user has selected three read threads
     When the user marks the selection unread

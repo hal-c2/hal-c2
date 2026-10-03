@@ -308,6 +308,7 @@ const Steps steps([] {
     waitForSection(world, c[0], QStringLiteral("settled"));
   });
   step(QStringLiteral("%1 is settled").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.checking) return waitForSection(world, c[0], QStringLiteral("settled"));
     // Another thread began since, so un-settling has to lift it above one.
     putThread(world, QStringLiteral("t-newer"), {{QStringLiteral("projectId"), world.mc.projects.firstKey()}, {QStringLiteral("title"), QStringLiteral("Newer")},
                                                  {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:30:00Z")}});

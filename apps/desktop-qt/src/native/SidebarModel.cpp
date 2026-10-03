@@ -181,6 +181,7 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   thread.pinOrderKey = stringField(row, "pinOrderKey");
   thread.activeOrderKey = stringField(row, "activeOrderKey");
   thread.lastVisitedAt = stringField(row, "lastVisitedAt");
+  thread.movingTo = stringField(row.value(QLatin1String("moving")).toObject(), "label");
   thread.latestRunId = stringField(row, "latestRunId");
   thread.activeRunId = stringField(row, "activeRunId");
   thread.activityRunStatus = stringField(row, "activityRunStatus");
@@ -753,6 +754,8 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
            snoozed && thread.snoozedUntil && input.describeWake ? QVariant(input.describeWake(*thread.snoozedUntil))
                                                                 : QVariant::fromValue(nullptr)},
           {QStringLiteral("workingLabel"), workingLabel(thread, nowMs)},
+          {QStringLiteral("movingTo"), nullable(thread.movingTo)},
+          {QStringLiteral("selected"), input.selectedKeys.contains(thread.key())},
           {QStringLiteral("wokeAt"), nullable(visibleWokeAt(thread, nowMs))},
           {QStringLiteral("offline"), offline},
           {QStringLiteral("canSettle"), !offline && capabilities.settlement},
@@ -809,7 +812,101 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       {QStringLiteral("activeThreadKey"), nullable(input.activeThreadKey)},
       {QStringLiteral("activeDraftId"), input.activeDraftId},
   };
+  // In the order the rows render.
+  QStringList selected;
+  for (const QString& key : std::as_const(view.orderedKeys)) {
+    if (input.selectedKeys.contains(key)) selected.append(key);
+  }
+  view.state.insert(QStringLiteral("selectedKeys"), selected);
   return view;
+}
+
+namespace {
+
+const QString kOrderDigits = QStringLiteral("abcdefghijklmnopqrstuvwxyz");
+
+bool validOrderKey(const QString& key) {
+  if (key.isEmpty()) return false;
+  for (const QChar c : key) {
+    if (!kOrderDigits.contains(c)) return false;
+  }
+  // A trailing lowest digit leaves no room for a key just before this one.
+  return key.back() != kOrderDigits.front();
+}
+
+// The midpoint of two digit strings read as fractions; "" is the open bound.
+QString orderMidpoint(const QString& a, const QString& b) {
+  if (!b.isEmpty()) {
+    qsizetype n = 0;
+    while (n < b.size() && (n < a.size() ? a.at(n) : kOrderDigits.front()) == b.at(n)) ++n;
+    if (n > 0) return b.left(n) + orderMidpoint(a.mid(n), b.mid(n));
+  }
+  const qsizetype digitA = a.isEmpty() ? 0 : kOrderDigits.indexOf(a.front());
+  const qsizetype digitB = b.isEmpty() ? kOrderDigits.size() : kOrderDigits.indexOf(b.front());
+  if (digitB - digitA > 1) return QString(kOrderDigits.at((digitA + digitB + 1) / 2));
+  if (b.size() > 1) return QString(b.front());
+  return QString(kOrderDigits.at(digitA)) + orderMidpoint(a.mid(1), QString());
+}
+
+}  // namespace
+
+Nullable orderKeyBetween(const Nullable& before, const Nullable& after) {
+  const QString a = before.value_or(QString());
+  const QString b = after.value_or(QString());
+  if (!a.isEmpty() && !validOrderKey(a)) return std::nullopt;
+  if (!b.isEmpty() && !validOrderKey(b)) return std::nullopt;
+  if (!b.isEmpty() && a >= b) return std::nullopt;
+  return orderMidpoint(a, b);
+}
+
+QStringList spreadOrderKeys(int count) {
+  const qsizetype base = kOrderDigits.size();
+  int width = 2;
+  double space = double(base) * base;
+  while (space <= (count + 1) * 2) {
+    ++width;
+    space *= base;
+  }
+  const double step = space / (count + 1);
+  QStringList keys;
+  for (int index = 0; index < count; ++index) {
+    qint64 value = std::llround(step * (index + 1));
+    if (value % base == 0) ++value;
+    QString key;
+    for (int digit = 0; digit < width; ++digit) {
+      key.prepend(kOrderDigits.at(value % base));
+      value /= base;
+    }
+    keys.append(key);
+  }
+  return keys;
+}
+
+QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
+                                   const QString& movedKey) {
+  const qsizetype moved = orderedKeys.indexOf(movedKey);
+  if (moved < 0) return {};
+  QSet<QString> reserved;
+  for (auto it = orderKeys.cbegin(); it != orderKeys.cend(); ++it) {
+    if (!orderedKeys.contains(it.key()) && it.value()) reserved.insert(*it.value());
+  }
+  const bool hasBefore = moved > 0;
+  const bool hasAfter = moved < orderedKeys.size() - 1;
+  const Nullable beforeKey = hasBefore ? orderKeys.value(orderedKeys.at(moved - 1)) : std::nullopt;
+  const Nullable afterKey = hasAfter ? orderKeys.value(orderedKeys.at(moved + 1)) : std::nullopt;
+  if ((!hasBefore || beforeKey) && (!hasAfter || afterKey)) {
+    Nullable key = orderKeyBetween(beforeKey, afterKey);
+    while (key && reserved.contains(*key)) key = orderKeyBetween(key, afterKey);
+    if (key) return {{movedKey, *key}};
+  }
+  // A neighbour without a key (or corrupt ones): the section gets fresh keys in the new order.
+  QStringList fresh = spreadOrderKeys(int(orderedKeys.size() + reserved.size()));
+  fresh.removeIf([&reserved](const QString& key) { return reserved.contains(key); });
+  QList<OrderAssignment> assignments;
+  for (qsizetype index = 0; index < orderedKeys.size(); ++index) {
+    if (orderKeys.value(orderedKeys.at(index)) != fresh.at(index)) assignments.append({orderedKeys.at(index), fresh.at(index)});
+  }
+  return assignments;
 }
 
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale) {

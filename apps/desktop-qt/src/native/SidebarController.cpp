@@ -107,6 +107,9 @@ void SidebarController::refresh() {
       });
     }
   }
+  // A thread that went away is not selected any more.
+  m_selected.removeIf([this](const QString& key) { return !m_store->thread(key); });
+  input.selectedKeys = m_selected;
   input.describeWake = [this, now](const QString& snoozedUntil) {
     return sidebar::wakeDescription(snoozedUntil, now, m_timestampFormat, m_locale);
   };
@@ -130,7 +133,35 @@ void SidebarController::draftEdited(const QString& id) {
 bool SidebarController::handle(const QString& action, const QVariant& payload) {
   if (!m_active) return false;
   const QVariantMap map = payload.toMap();
+  if (action == QLatin1String("thread.select.clear")) {
+    clearSelection();
+    return true;
+  }
+  if (action == QLatin1String("thread.select.toggle") || action == QLatin1String("thread.select.range")) {
+    const QString key = keyOf(map);
+    if (!m_store->thread(key)) return true;
+    const qsizetype anchor = m_view.orderedKeys.indexOf(m_anchor);
+    const qsizetype target = m_view.orderedKeys.indexOf(key);
+    if (action == QLatin1String("thread.select.toggle")) {
+      if (!m_selected.remove(key)) {
+        m_selected.insert(key);
+        m_anchor = key;
+      }
+    } else if (anchor < 0 || target < 0) {
+      // No anchor in the list: the row alone, which becomes the anchor.
+      m_selected.insert(key);
+      m_anchor = key;
+    } else {
+      for (qsizetype index = std::min(anchor, target); index <= std::max(anchor, target); ++index) {
+        m_selected.insert(m_view.orderedKeys.at(index));
+      }
+    }
+    refresh();
+    return true;
+  }
   if (action == QLatin1String("sidebar.scope")) {
+    m_selected.clear();
+    m_anchor.clear();
     const QVariant projectKey = map.value(QStringLiteral("projectKey"));
     m_scope = projectKey.typeId() == QMetaType::QString ? sidebar::Nullable(projectKey.toString())
                                                         : std::nullopt;
@@ -139,6 +170,9 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
   }
   // Opening a thread that woke acknowledges the wake, as dismissing its pill does.
   if (action == QLatin1String("thread.open")) {
+    // A plain open ends the selection and anchors the next range.
+    m_anchor = keyOf(map);
+    clearSelection();
     const auto opened = m_store->thread(keyOf(map));
     if (opened && m_store->capabilities(opened->environmentId).visitedTracking) {
       if (const auto wokeAt = sidebar::visibleWokeAt(*opened, m_now().toMSecsSinceEpoch())) {
@@ -150,6 +184,21 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
       }
     }
     return false;
+  }
+  if (action == QLatin1String("thread.move")) {
+    const QString key = keyOf(map);
+    const bool up = map.value(QStringLiteral("direction")).toString() == QLatin1String("up");
+    const QString section = sectionOf(key);
+    QStringList ordered = sectionKeys(section);
+    const qsizetype index = ordered.indexOf(key);
+    if (!canMove(key, up)) return true;
+    ordered.swapItemsAt(index, index + (up ? -1 : 1));
+    arrange(section, ordered, key);
+    return true;
+  }
+  if (action == QLatin1String("thread.drop")) {
+    drop(keyOf(map), map.value(QStringLiteral("section")).toString(), map.value(QStringLiteral("beforeKey")).toString());
+    return true;
   }
   static const QStringList kRowActions{
       QStringLiteral("thread.settle"),     QStringLiteral("thread.unsettle"),
@@ -338,6 +387,112 @@ void SidebarController::snooze(const QString& key, const QString& snoozedUntil) 
                                                                      QVariantMap{{QStringLiteral("key"), key}});
                                                 }});
        });
+}
+
+QStringList SidebarController::sectionKeys(const QString& section) const {
+  QStringList keys;
+  for (const QVariant& row : m_view.state.value(section).toList()) keys.append(row.toMap().value(QStringLiteral("key")).toString());
+  return keys;
+}
+
+QString SidebarController::sectionOf(const QString& key) const {
+  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
+    if (sectionKeys(section).contains(key)) return section;
+  }
+  return {};
+}
+
+bool SidebarController::canMove(const QString& key, bool up) const {
+  const QString section = sectionOf(key);
+  if (section != QLatin1String("pinned") && section != QLatin1String("active")) return false;
+  const QStringList ordered = sectionKeys(section);
+  const qsizetype index = ordered.indexOf(key);
+  return up ? index > 0 : index < ordered.size() - 1;
+}
+
+void SidebarController::arrange(const QString& section, const QStringList& ordered, const QString& key, bool pinning) {
+  const auto moved = m_store->thread(key);
+  if (!moved) return;
+  const bool pinned = section == QLatin1String("pinned");
+  const QString capability = pinned ? QStringLiteral("threadPinReorder") : QStringLiteral("threadActiveReorder");
+  if (!m_store->supports(moved->environmentId, capability)) {
+    toasts()->error(pinned ? QStringLiteral("Failed to reorder pinned threads") : QStringLiteral("Failed to reorder active threads"),
+                    pinned ? QStringLiteral("Update this environment's server to reorder pinned threads.")
+                           : QStringLiteral("Update this environment's server to reorder active threads."));
+    return;
+  }
+  // Every thread of the section keeps its key, the ones the scope hides too.
+  QHash<QString, sidebar::Nullable> orderKeys;
+  const qint64 nowMs = m_now().toMSecsSinceEpoch();
+  const sidebar::Partition all = sidebar::partition(
+      m_store->threads(), std::nullopt, [this](const QString& environmentId) { return m_store->capabilities(environmentId); }, nowMs);
+  for (const sidebar::Thread& thread : pinned ? all.pinned : all.active) {
+    orderKeys.insert(thread.key(), pinned ? thread.pinOrderKey : thread.activeOrderKey);
+  }
+  if (pinning) orderKeys.insert(key, std::nullopt);
+  const QString failure = pinned ? QStringLiteral("Failed to reorder pinned threads") : QStringLiteral("Failed to reorder active threads");
+  for (const sidebar::OrderAssignment& assignment : sidebar::planReorder(ordered, orderKeys, key)) {
+    const auto thread = m_store->thread(assignment.key);
+    if (!thread || !m_store->supports(thread->environmentId, capability)) continue;
+    const bool pin = pinning && assignment.key == key;
+    command(thread->environmentId,
+            {{QStringLiteral("type"), pin ? QStringLiteral("thread.pin") : pinned ? QStringLiteral("thread.pin.reorder") : QStringLiteral("thread.active.reorder")},
+             {QStringLiteral("threadId"), thread->id},
+             {QStringLiteral("orderKey"), assignment.orderKey}},
+            pin ? QStringLiteral("Failed to pin thread") : failure);
+  }
+}
+
+void SidebarController::drop(const QString& key, const QString& section, const QString& beforeKey) {
+  const auto thread = m_store->thread(key);
+  const QString from = sectionOf(key);
+  if (!thread || from.isEmpty() || section == QLatin1String("snoozed")) return;
+  const QVariantMap keyed{{QStringLiteral("key"), key}};
+  const auto placed = [&] {
+    QStringList ordered = sectionKeys(section);
+    ordered.removeAll(key);
+    const qsizetype before = beforeKey == key ? -1 : ordered.indexOf(beforeKey);
+    ordered.insert(before < 0 ? ordered.size() : before, key);
+    return ordered;
+  };
+  if (section == from) {
+    if (section == QLatin1String("pinned") || section == QLatin1String("active")) {
+      const QStringList ordered = placed();
+      if (ordered != sectionKeys(section)) arrange(section, ordered, key);
+    }
+  } else if (section == QLatin1String("pinned")) {
+    if (m_store->capabilities(thread->environmentId).pinning) arrange(section, placed(), key, true);
+  } else if (section == QLatin1String("settled")) {
+    handle(QStringLiteral("thread.settle"), keyed);
+  } else if (from == QLatin1String("pinned")) {
+    // Dragging out of the pinned rows says it: no question is asked.
+    command(thread->environmentId, {{QStringLiteral("type"), QStringLiteral("thread.unpin")}, {QStringLiteral("threadId"), thread->id}},
+            QStringLiteral("Failed to unpin thread"));
+  } else if (from == QLatin1String("settled")) {
+    handle(QStringLiteral("thread.unsettle"), keyed);
+  } else if (from == QLatin1String("snoozed")) {
+    handle(QStringLiteral("thread.unsnooze"), keyed);
+  }
+}
+
+QStringList SidebarController::selection() const {
+  QStringList keys;
+  for (const QString& key : m_view.orderedKeys) {
+    if (m_selected.contains(key)) keys.append(key);
+  }
+  return keys;
+}
+
+void SidebarController::clearSelection() {
+  if (m_selected.isEmpty()) return;
+  m_selected.clear();
+  refresh();
+}
+
+void SidebarController::deselect(const QStringList& keys) {
+  qsizetype removed = 0;
+  for (const QString& key : keys) removed += m_selected.remove(key);
+  if (removed > 0) refresh();
 }
 
 QString SidebarController::activeThreadKey() const {

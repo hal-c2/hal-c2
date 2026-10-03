@@ -164,13 +164,13 @@ Feature: Snoozing threads
     When the user opens "Refactor cart"
     Then "Refactor cart" is no longer marked as woke
 
-  @backlog @desktop
+  @desktop
   Scenario: Snoozing several threads at once
     Given the user has selected three threads
     When the user snoozes the selection until tomorrow
     Then all three threads are snoozed until Thursday at 09:00
 
-  @backlog @desktop
+  @desktop
   Scenario: Some threads in a bulk snooze fail
     Given the user has selected three threads and one cannot be snoozed
     When the user snoozes the selection until tomorrow

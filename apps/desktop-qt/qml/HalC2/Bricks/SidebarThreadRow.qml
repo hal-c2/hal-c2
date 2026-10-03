@@ -24,6 +24,13 @@ Item {
     property double ageNow: Date.now()
 
     signal activated
+    // Ctrl/Cmd+click adds the row to the selection, Shift+click selects the range to it.
+    signal selectionToggled
+    signal rangeSelected
+    // A drag arranges the row: where the pointer is in the window while it
+    // lasts, and whether it ended in a drop.
+    signal dragMoved(real windowY)
+    signal dragEnded(bool dropped)
     signal menuRequested(real windowX, real windowY)
     signal settleRequested
     signal unsettleRequested
@@ -40,6 +47,7 @@ Item {
     readonly property color indicatorColor: Theme.palette.color("sidebarActiveIndicator", "transparent")
     readonly property color focusColor: Theme.palette.color("focus", "#3b82f6")
     readonly property bool draft: section === "draft"
+    readonly property bool selected: item.selected === true
     readonly property bool woke: item.wokeAt !== null && item.wokeAt !== undefined
     readonly property bool parked: section === "snoozed" || section === "settled"
     // The thread's environment is unreachable: the row stays, says so, and
@@ -54,6 +62,9 @@ Item {
     readonly property string statusWord: {
         if (row.offline) {
             return qsTr("Offline");
+        }
+        if (item.movingTo) {
+            return qsTr("Moving");
         }
         switch (item.status) {
         case "working":
@@ -179,7 +190,7 @@ Item {
         radius: 8
         // Fade alpha without interpolating through black on light themes.
         readonly property color hoverColor: Theme.palette.color("sidebarRowHover", "#1c1c21")
-        color: row.active ? Theme.palette.color("sidebarRowActive", "#2a2a30") : Qt.alpha(hoverColor, hover.hovered ? hoverColor.a : 0)
+        color: row.active || row.selected ? Theme.palette.color("sidebarRowActive", "#2a2a30") : Qt.alpha(hoverColor, hover.hovered ? hoverColor.a : 0)
         border.width: row.focused ? 1 : 0
         border.color: row.focusColor
 
@@ -208,7 +219,38 @@ Item {
 
     TapHandler {
         acceptedButtons: Qt.LeftButton
-        onTapped: row.activated()
+        onTapped: {
+            if (!row.draft && (point.modifiers & (Qt.ControlModifier | Qt.MetaModifier))) {
+                row.selectionToggled();
+            } else if (!row.draft && (point.modifiers & Qt.ShiftModifier)) {
+                row.rangeSelected();
+            } else {
+                row.activated();
+            }
+        }
+    }
+
+    DragHandler {
+        id: drag
+
+        property bool cancelled: false
+
+        target: null
+        enabled: !row.draft && !row.offline
+        acceptedButtons: Qt.LeftButton
+        onActiveChanged: {
+            if (active) {
+                cancelled = false;
+            } else {
+                row.dragEnded(!cancelled);
+            }
+        }
+        onCanceled: cancelled = true
+        onCentroidChanged: {
+            if (active) {
+                row.dragMoved(centroid.scenePosition.y);
+            }
+        }
     }
 
     // The menu opens on press, anywhere on the row, like the web app's.

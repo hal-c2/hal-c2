@@ -32,6 +32,7 @@ struct FakeThreadMenu {
   // The section each thread was in before the scenario's change.
   QHash<QString, QString> sectionBefore;
   bool confirmAsked = false;  // the scenario turned the question on itself
+  std::function<void(const QJsonObject& input, QJsonObject& answer)> moved;
 };
 
 void projectCommand(FakeMc& mc, const QJsonObject& command) {
@@ -104,11 +105,13 @@ const FakeMc::Extension threadMenu([](FakeMc& mc) {
     const QString id = rpc.payload.value(QLatin1String("threadId")).toString();
     const QString machine = rpc.payload.value(QLatin1String("machine")).toString();
     const QString title = mc.threads.value(id).value(QLatin1String("title")).toString();
-    mc.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("moved")},
-                                {QStringLiteral("threadId"), id},
-                                {QStringLiteral("machine"), machine},
-                                {QStringLiteral("environmentId"), mc.peers.key(machine)},
-                                {QStringLiteral("message"), QStringLiteral("%1 moved to %2.").arg(title, machine)}});
+    QJsonObject answer{{QStringLiteral("status"), QStringLiteral("moved")},
+                       {QStringLiteral("threadId"), id},
+                       {QStringLiteral("machine"), machine},
+                       {QStringLiteral("environmentId"), mc.peers.key(machine)},
+                       {QStringLiteral("message"), QStringLiteral("%1 moved to %2.").arg(title, machine)}};
+    if (fake.moved) fake.moved(rpc.payload, answer);
+    mc.reply(rpc, answer);
   });
 });
 
@@ -281,14 +284,15 @@ const Steps steps([] {
     }
     expect(enabled.join(QStringLiteral(", ")) == c[0], QStringLiteral("the menu can choose \"%1\"").arg(enabled.join(QStringLiteral(", "))));
   });
-  // Fork and Move are the fork's additions, specified in the native feature.
+  // Fork and Move are the fork's additions, specified in the native feature;
+  // moving a thread up or down is threads/pinning-and-order.feature's.
   step(QStringLiteral("the actions read, in order: (.+)"), [](World& world, const Captures& c, const Table&) {
     QStringList expected;
     for (const QString& phrase : c[0].split(QStringLiteral(", "))) expected.append(itemId(phrase));
     QStringList actual;
     for (const QVariant& entry : items(world)) {
       const QString id = entry.toMap().value(QStringLiteral("id")).toString();
-      if (id != QLatin1String("fork") && id != QLatin1String("move")) actual.append(id);
+      if (id != QLatin1String("fork") && !id.startsWith(QLatin1String("move"))) actual.append(id);
     }
     expect(actual == expected, QStringLiteral("the menu reads %1").arg(actual.join(QStringLiteral(", "))));
     const auto branch = item(world, QStringLiteral("new-thread-on-branch"));
@@ -455,6 +459,11 @@ const Steps steps([] {
     world.waitFor([&] { return sectionOf(world, keyOf(world, c[0])) == QLatin1String("active"); }, QStringLiteral("the thread to be unpinned"));
   });
   step(QStringLiteral("%1 is pinned").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.checking) {
+      world.waitFor([&] { return sectionOf(world, keyOf(world, c[0])) == QLatin1String("pinned"); },
+                    [&] { return QStringLiteral("%1 pinned; it is in \"%2\"").arg(c[0], sectionOf(world, keyOf(world, c[0]))); });
+      return;
+    }
     updateRow(world, idOf(world, c[0]), [](QJsonObject& row) {
       row.insert(QStringLiteral("pinnedAt"), QStringLiteral("2026-09-23T09:30:00Z"));
       row.insert(QStringLiteral("pinOrderKey"), QStringLiteral("a0"));
@@ -640,4 +649,20 @@ void updateThreadRow(World& world, const QString& id, const std::function<void(Q
 
 void projectThreadCommands(World& world) {
   fake(world).project = true;
+}
+
+void offerMoveDestinations(World& world, const QJsonArray& destinations) {
+  fake(world).destinations = destinations;
+}
+
+void onThreadMoved(World& world, std::function<void(const QJsonObject& input, QJsonObject& answer)> moved) {
+  fake(world).moved = std::move(moved);
+}
+
+void refuseThreadMoves(World& world, const QString& refusal) {
+  fake(world).refusal = refusal;
+}
+
+QList<QJsonObject> threadMovesAsked(World& world) {
+  return fake(world).moves;
 }

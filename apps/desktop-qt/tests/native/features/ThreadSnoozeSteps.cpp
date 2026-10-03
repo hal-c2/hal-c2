@@ -229,6 +229,12 @@ const Steps steps([] {
     expect(row && !row->value(QStringLiteral("canSnooze")).toBool(), QStringLiteral("the row is %1").arg(show(row.value_or(QVariantMap()))));
   });
   step(QStringLiteral("%1 is snoozed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (!world.checking) {
+      updateThreadRow(world, idOf(threadKeyOf(world, c[0])), [&](QJsonObject& row) {
+        row.insert(QStringLiteral("snoozedUntil"), iso(world.now().addDays(1)));
+        row.insert(QStringLiteral("snoozedAt"), iso(world.now().addSecs(-60)));
+      });
+    }
     waitForSection(world, threadKeyOf(world, c[0]), QStringLiteral("snoozed"));
   });
 

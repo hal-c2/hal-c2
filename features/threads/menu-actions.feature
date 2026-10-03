@@ -35,6 +35,8 @@ Feature: Running a thread's actions from its menu
         | id                   | label                 |
         | new-thread-on-branch | New thread on feat/first |
         | pin                  | Pin thread            |
+        | move-up              | Move up               |
+        | move-down            | Move down             |
         | settle               | Settle thread         |
         | snooze               | Snooze                |
         | rename               | Rename thread         |

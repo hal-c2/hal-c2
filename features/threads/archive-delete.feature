@@ -175,7 +175,7 @@ Feature: Archiving and deleting threads
     When the user deletes "Old spike"
     Then a draft thread opens in "shop"
 
-  @backlog @desktop
+  @desktop
   Scenario: Deleting several threads at once
     Given the user has selected three threads
     When the user deletes the selection

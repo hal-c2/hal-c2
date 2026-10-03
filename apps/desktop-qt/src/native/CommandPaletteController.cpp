@@ -3,6 +3,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QQmlPropertyMap>
 
 #include <algorithm>
@@ -273,6 +274,24 @@ QString CommandPaletteController::emptyText() const {
 }
 
 QString CommandPaletteController::status() const {
+  // A thread search only reaches the environments that are online: the others are named.
+  if (m_mode == Mode::Command && m_views.isEmpty() && !m_query.startsWith(QLatin1Char('>')) && normalize(m_query).size() >= 2) {
+    QMap<QString, QString> skipped;
+    for (const QString& id : m_store->environments()) {
+      if (m_store->environmentOnline(id)) continue;
+      const QString label = m_store->environment(id).value(QLatin1String("label")).toString();
+      skipped.insert(id, label.isEmpty() ? id : label);
+    }
+    for (const QJsonValue& value : m_store->links()) {
+      const QJsonObject link = value.toObject();
+      if (link.value(QLatin1String("online")).toBool()) continue;
+      const QJsonObject environment = link.value(QLatin1String("environment")).toObject();
+      const QString id = environment.value(QLatin1String("environmentId")).toString();
+      const QString label = environment.value(QLatin1String("label")).toString();
+      skipped.insert(id, label.isEmpty() ? id : label);
+    }
+    return skipped.isEmpty() ? QString() : tr("Not searched (offline): %1").arg(QStringList(skipped.values()).join(QStringLiteral(", ")));
+  }
   if (m_mode != Mode::Content || m_query.trimmed().isEmpty()) return {};
   if (searching()) return tr("Searching…");
   if (!m_error.isEmpty()) return m_error;

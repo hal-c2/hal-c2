@@ -61,6 +61,8 @@ struct Thread {
   Nullable pinOrderKey;
   Nullable activeOrderKey;
   Nullable lastVisitedAt;
+  // The machine the thread is on its way to, while a move is under way.
+  Nullable movingTo;
   Nullable latestRunId;
   Nullable activeRunId;
   Nullable activityRunStatus;
@@ -195,6 +197,8 @@ struct Input {
   QVariantList drafts;
   Nullable activeThreadKey;
   QVariant activeDraftId;
+  // The rows selected for a bulk action.
+  QSet<QString> selectedKeys;
   // A snoozed row's wake time in the user's clock format ("tomorrow 9:00");
   // the row has none when unset.
   std::function<QString(const QString& snoozedUntil)> describeWake;
@@ -214,6 +218,28 @@ inline constexpr int kSettledLimit = 50;
 
 View build(const QList<Thread>& threads, const Input& input, const Nullable& scopeProjectKey,
            const CapabilitiesFor& capabilitiesFor, qint64 nowMs);
+
+// The order of the pinned and the active threads is kept as one key per
+// thread (pinOrderKey, activeOrderKey): base-26 strings that sort as text, so
+// moving a thread writes its own key only. A port of client-runtime's
+// state/threadSort.ts (pinOrderKeyBetween, generateSpreadPinOrderKeys,
+// planPinnedReorder).
+//
+// A key strictly between two neighbours; no bound is the section's edge.
+// Nothing when the bounds are corrupt or out of order.
+Nullable orderKeyBetween(const Nullable& before, const Nullable& after);
+// `count` evenly spaced keys, for a section whose threads have none yet.
+QStringList spreadOrderKeys(int count);
+struct OrderAssignment {
+  QString key;  // the thread's key
+  QString orderKey;
+};
+// The writes that put `movedKey` where `orderedKeys` (the section as it
+// should read) has it: one for the moved thread between keyed neighbours, or
+// fresh keys for the whole section when a neighbour has none. `orderKeys`
+// holds every thread of the section, the ones not shown too, whose keys stay.
+QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
+                                   const QString& movedKey);
 
 struct SnoozePreset {
   QString id;
