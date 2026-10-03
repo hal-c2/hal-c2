@@ -231,6 +231,7 @@ Item {
                             text: part.modelData.label
                             color: chart.muted
                             font.pixelSize: 12
+                            elide: Text.ElideRight
                         }
 
                         ChartLabel {

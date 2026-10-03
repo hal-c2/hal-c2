@@ -155,7 +155,8 @@ Rectangle {
             }
         }
 
-        RowLayout {
+        // Wraps where the centre is narrow, so the page never runs wider than it.
+        Flow {
             Layout.fillWidth: true
             spacing: 4
 
@@ -173,7 +174,8 @@ Rectangle {
             }
 
             Item {
-                Layout.preferredWidth: 12
+                width: 12
+                height: 1
             }
 
             Repeater {
@@ -438,6 +440,7 @@ Rectangle {
                                 text: qsTr("%1  %2").arg(modelData.label).arg(page.sessions(modelData.sessions))
                                 color: page.foreground
                                 font.pixelSize: 13
+                                elide: Text.ElideRight
                             }
 
                             Label {
