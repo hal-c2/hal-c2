@@ -195,14 +195,33 @@ defmodule HalC2.Store do
   def schema_version, do: @schema_version
 
   @doc """
-  The file a store writes. Read without a call to the store, so a reader opening its
-  own connection never waits behind queued writes.
+  The file a store on this node writes. Read without a call to the store, so a
+  reader opening its own connection never waits behind queued writes.
   """
-  @spec path(GenServer.server()) :: String.t()
+  @spec path(pid | atom) :: String.t()
   def path(store \\ __MODULE__) do
-    case GenServer.whereis(store) do
-      nil -> exit({:noproc, {__MODULE__, :path, [store]}})
-      pid -> :persistent_term.get({__MODULE__, pid})
+    with pid when is_pid(pid) <- GenServer.whereis(store),
+         {:ok, path} <- fetch_path(pid) do
+      path
+    else
+      _ -> exit({:noproc, {__MODULE__, :path, [store]}})
+    end
+  end
+
+  defp fetch_path(pid) do
+    case path_key(pid) do
+      nil -> :error
+      key -> {:ok, :persistent_term.get(key)}
+    end
+  end
+
+  # A named store keeps its path under its name, so a restart replaces the entry
+  # instead of leaving one behind for each process it has been.
+  defp path_key(pid) do
+    case Process.info(pid, :registered_name) do
+      {:registered_name, name} when is_atom(name) -> {__MODULE__, name}
+      {:registered_name, []} -> {__MODULE__, pid}
+      nil -> nil
     end
   end
 
@@ -318,7 +337,7 @@ defmodule HalC2.Store do
       )
 
     store = self()
-    :persistent_term.put({__MODULE__, store}, path)
+    :persistent_term.put(path_key(store), path)
     checkpointer = spawn_link(fn -> checkpointer(path, store) end)
 
     {:ok, stream_key} = Sqlite3.prepare(db, "SELECT key FROM streams WHERE id = ?1")
