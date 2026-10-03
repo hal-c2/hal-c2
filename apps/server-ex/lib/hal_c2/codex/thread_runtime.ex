@@ -362,7 +362,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   # stopping; the next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do
-    end_background(%{state | conn: nil}, "interrupted")
+    unless HalC2.Orchestration.Recovery.stopping?(),
+      do: end_background(%{state | conn: nil}, "interrupted")
+
     :ok
   catch
     _, _ -> :ok
@@ -1058,7 +1060,47 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp background_done(state, native, item) do
     {%{item: %{id: item_id, node: node_id}}, background} = Map.pop(state.background, native)
     end_command(state, item_id, node_id, command_status(item), &command_result(&1, item))
-    %{state | background: background}
+    state = %{state | background: background}
+    # Between turns Codex does not hear of it by itself: the thread tells it.
+    if state.turn == nil, do: wake(state.thread_id, item)
+    state
+  end
+
+  # A turn telling Codex that a command it left in the background ended, queued like
+  # any message. Off this process, since starting the run calls back into it. An
+  # archived or deleted thread is left alone.
+  defp wake(thread_id, item) do
+    Task.start(fn ->
+      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+      thread = HalC2.StreamState.get(stream, "thread")[thread_id] || %{}
+      latest =
+        stream |> HalC2.StreamState.list("run") |> Enum.max_by(&(&1["ordinal"]), fn -> %{} end)
+      message_id = Entities.new_id("message")
+
+      ended =
+        case item["exitCode"] do
+          code when is_integer(code) -> "exited with code #{code}"
+          _ -> "ended (#{command_status(item)})"
+        end
+
+      if thread["archivedAt"] == nil and thread["deletedAt"] == nil do
+        with {:error, reason} <-
+               Orchestration.dispatch(%{
+                 "type" => "message.dispatch",
+                 "commandId" => "command:codex-background:#{message_id}",
+                 "threadId" => thread_id,
+                 "messageId" => message_id,
+                 "text" => "The background command `#{item["command"]}` #{ended}.",
+                 "attachments" => [],
+                 "modelSelection" => latest["modelSelection"],
+                 "dispatchMode" => %{"type" => "queue_after_active"},
+                 "createdBy" => "agent",
+                 "creationSource" => "provider"
+               }) do
+          Logger.warning("codex background wake in #{thread_id} has no run: #{inspect(reason)}")
+        end
+      end
+    end)
   end
 
   # Stops every background command, and ends its item as `status`.
