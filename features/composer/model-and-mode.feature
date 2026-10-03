@@ -51,7 +51,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user chooses the model "gpt-5-codex"
     Then the composer shows "gpt-5-codex" marked as a Codex model
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: Searching the models matches provider and model names
     Given Claude is enabled
     When the user searches the models for "<query>"
@@ -64,7 +64,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | claude | sonnet      | gpt-5-codex |
       | codex  | gpt-5-codex | opus        |
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A model that cannot be used says why and cannot be chosen
     Given the model "gpt-5.5" cannot be used because "Start a new thread to use this model."
     When the user looks through the models
@@ -78,26 +78,26 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then Cursor is listed with the reason it is unavailable
     And Cursor's models cannot be chosen
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user chooses a model with the keyboard
     When the user opens the model picker
     And the user moves to the next model and confirms it
     Then the next turn runs on that model
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user moves between providers with the keyboard
     Given Claude is enabled
     When the user opens the model picker
     And the user moves to the next provider
     Then Claude's models are listed
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user jumps to a model by its number
     When the user opens the model picker
     And the user presses the shortcut for the second model
     Then the next turn runs on the second model listed
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The model picker shortcut opens and closes the model picker
     When the user presses the model picker shortcut
     Then the model picker is open

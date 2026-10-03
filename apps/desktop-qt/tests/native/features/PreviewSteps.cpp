@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "ComposerBrick.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
 #include "RightPanelController.h"
@@ -160,6 +161,7 @@ const Steps steps([] {
   step(QStringLiteral("the user is showing the thread's previews"), [](World& world, const Captures&, const Table&) { showPreviews(world); });
   step(QStringLiteral("%1 and %1 are listed").arg(q), [](World& world, const Captures& c, const Table&) { waitForUrls(world, {c[0], c[1]}); });
   step(QStringLiteral("%1 is listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (modelPickerLists(world, c[0], true)) return;
     // In an open command palette: an entry of that title.
     if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {
       world.sync();

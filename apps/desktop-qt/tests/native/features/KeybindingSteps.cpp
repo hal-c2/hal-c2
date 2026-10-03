@@ -21,6 +21,7 @@
 #include <algorithm>
 
 #include "CommandPaletteController.h"
+#include "ComposerBrick.h"
 #include "DraftController.h"
 #include "FakeConfig.h"
 #include "Harness.h"
@@ -273,6 +274,7 @@ void press(World& world, const QString& key) {
                                         {QStringLiteral("modifiers"), int(combination.keyboardModifiers().toInt())}});
     return;
   }
+  if (pressInComposer(world, key)) return;
   const auto shortcut = keybindings::parseShortcut(key.toLower());
   if (!shortcut) fail(QStringLiteral("%1 is not a key").arg(key));
   pressSequence(world, keybindings::sequence(*shortcut, keys(world).mac));

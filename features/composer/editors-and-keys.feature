@@ -21,14 +21,14 @@ Feature: Editing the draft
   Background:
     Given a project with an open thread
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Escape enters normal mode when Vim keys are on
     Given Vim keys are on
     And the user has typed "hello world"
     When the user presses Escape
     Then typed letters move the cursor instead of inserting text
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: Normal mode keys edit and move like Vim
     Given Vim keys are on and the editor is in normal mode
     And the draft reads "hello world" with the cursor at the start
@@ -42,31 +42,31 @@ Feature: Editing the draft
       | x    | the draft reads "ello world"             |
       | A    | the user inserts at the end of the line  |
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Enter in normal mode does not send
     Given Vim keys are on and the editor is in normal mode
     When the user presses Enter
     Then nothing has been sent
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Switching threads returns Vim keys to insert mode
     Given Vim keys are on and the editor is in normal mode
     When the user switches to another thread
     Then typed letters insert text
 
-  @backlog @desktop
+  @desktop
   Scenario: Vim keys can be turned on from settings
     When the user turns on Vim keys in settings
     Then the composer edits with Vim keys
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Inserted text replaces the selection without sending
     Given the draft reads "hello world" with "world" selected
     When text "there" is inserted into the composer
     Then the draft reads "hello there"
     And nothing has been sent
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Text meant for another thread is not inserted
     Given the user is writing in thread B
     When text meant for thread A arrives late

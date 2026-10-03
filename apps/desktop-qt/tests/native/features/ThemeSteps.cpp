@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QJsonDocument>
 
+#include "ComposerBrick.h"
 #include "FakeConfig.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
@@ -348,6 +349,7 @@ const Steps steps([] {
     ensureTheme(world, c[0], {QStringLiteral("dark")});
   });
   step(QStringLiteral("the user chooses %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (modelPickerChooses(world, c[0])) return;
     // The welcome wizard's Select all / Select none.
     if (onboardingChooses(world, c[0])) return;
     // From an open command palette (its Change theme submenu among them): its

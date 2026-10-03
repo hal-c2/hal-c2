@@ -59,6 +59,7 @@ const QList<Row>& rows() {
       {"showSkillsInSlashMenu", true, true},
       {"composerRichTextEnabled", true, true},
       {"composerCollapseOnScroll", true, true},
+      {"composerVimKeys", true, false},
       {"sendShortcut", true, QStringLiteral("enter")},
       {"followUpBehavior", true, QStringLiteral("steer")},
       {"enableProviderUpdateChecks", false, true},

@@ -64,7 +64,7 @@ const Steps steps([] {
   const QString q = kQuoted;
 
   step(QStringLiteral("the draft reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    if (stashState(world).acted) {
+    if (stashState(world).acted || world.checking) {
       expectDraft(world, c[0]);
     } else {
       type(world, c[0]);

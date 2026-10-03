@@ -34,6 +34,13 @@ Rectangle {
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
+    // Vim keys (Settings → General): Escape leaves insert mode.
+    readonly property bool vimKeys: {
+        Settings.device;
+        return Settings.setting("composerVimKeys") === true;
+    }
+    readonly property alias vim: vim
+
     // Opt-in input plugins share the same draft synchronization as typing.
     property alias editor: input
     property alias editorActions: editorActions.data
@@ -281,7 +288,18 @@ Rectangle {
         }
     }
 
+    // A draft already there when the composer is built keeps its caret.
+    Component.onCompleted: input.cursorPosition = Math.min(publishedCursor, input.length)
+
     onSuggestionsChanged: suggestionList.currentIndex = suggestions.length > 0 ? 0 : -1
+
+    ComposerVimKeys {
+        id: vim
+        objectName: "vimKeys"
+
+        composer: composer
+        vimEnabled: composer.vimKeys
+    }
 
     Timer {
         id: textDebounce
@@ -832,6 +850,16 @@ Rectangle {
 
                     Item {
                         Layout.fillWidth: true
+                    }
+
+                    Text {
+                        objectName: "vimMode"
+                        visible: composer.vimKeys
+                        text: vim.modeLabel
+                        color: composer.muted
+                        font.pixelSize: 11
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        Accessible.name: qsTr("Vim mode: %1").arg(text)
                     }
 
                     // The stash's count, which opens and closes its list.
