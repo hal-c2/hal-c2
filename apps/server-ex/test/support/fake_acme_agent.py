@@ -6,7 +6,7 @@
 # request is appended to DIR/NAME.log as JSON lines, written before the answer, so
 # a test reads it once the call it made has returned. A prompt's text picks what
 # the turn does (see `prompt` below).
-import json, os, re, signal, sys
+import base64, json, os, re, signal, sys
 
 argv = sys.argv[1:]
 def opt(flag, default=None):
@@ -77,8 +77,12 @@ models = CONTROL.get("models", DEFAULT_MODELS)
 model = models[0][0] if models else None
 
 # "modes": the agent's own session modes, the first being the one it starts in.
+# "keepMode": the mode stays with the session, so a restarted agent resumes in it.
 modes = CONTROL.get("modes", [])
 mode = modes[0] if modes else None
+MODE_FILE = os.path.join(DIR, NAME + ".mode")
+if CONTROL.get("keepMode") and os.path.exists(MODE_FILE):
+    mode = open(MODE_FILE).read()
 
 def config_options():
     options = []
@@ -144,11 +148,39 @@ def prompt(pid, sid, text):
               "url": "https://acme.test/" + m.group(1), "elicitationId": m.group(1), "message": "Sign in to Acme"}})
         return finish(pid, sid, "asked for " + m.group(1))
     if "read file" in text:
+        # A file outside the workspace, and a terminal.
         answers[pid] = {}
         asked["fs-%s" % pid] = ("fs", pid, sid)
         asked["term-%s" % pid] = ("terminal", pid, sid)
-        send({"id": "fs-%s" % pid, "method": "fs/read_text_file", "params": {"sessionId": sid, "path": "README.md"}})
+        send({"id": "fs-%s" % pid, "method": "fs/read_text_file", "params": {"sessionId": sid, "path": "/etc/hosts"}})
         send({"id": "term-%s" % pid, "method": "terminal/create", "params": {"sessionId": sid, "command": "ls"}})
+        return
+    m = re.search(r"change and read (\S+)", text)
+    if m:
+        # Asks to edit a file, and while that waits reads a workspace file.
+        asked["perm-%s" % pid] = ("permission", pid, sid)
+        asked["read-%s" % pid] = ("read", pid, sid)
+        call = {"toolCallId": "call-%s" % pid, "title": "edit a.txt", "kind": "edit", "rawInput": {"path": "a.txt"}}
+        update(sid, dict(call, sessionUpdate="tool_call", status="pending"))
+        send({"id": "perm-%s" % pid, "method": "session/request_permission", "params": {"sessionId": sid,
+              "toolCall": call,
+              "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                          {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}})
+        send({"id": "read-%s" % pid, "method": "fs/read_text_file",
+              "params": {"sessionId": sid, "path": os.path.join(os.getcwd(), m.group(1))}})
+        return
+    if "own terminal" in text:
+        # ACP v2: a command in a terminal the agent owns, its output in two chunks.
+        b64 = lambda s: base64.b64encode(s.encode()).decode()
+        update(sid, {"sessionUpdate": "terminal_update", "terminalId": "term-1", "command": "npm test",
+                     "cwd": os.getcwd()})
+        update(sid, {"sessionUpdate": "terminal_output_chunk", "terminalId": "term-1", "data": b64("running 2 tests\n")})
+        update(sid, {"sessionUpdate": "terminal_output_chunk", "terminalId": "term-1", "data": b64("1 failed\n")})
+        update(sid, {"sessionUpdate": "terminal_update", "terminalId": "term-1", "exitStatus": {"exitCode": 1}})
+        return finish(pid, sid, "ran it")
+    if "offer commands" in text:
+        update(sid, {"sessionUpdate": "available_commands_update", "availableCommands": CONTROL.get("commands", [])})
+        held = (pid, sid)
         return
     m = re.search(r"write (\S+)", text)
     if m:
@@ -201,6 +233,8 @@ for line in sys.stdin:
         elif kind == "permission":
             allowed = msg["result"]["outcome"].get("optionId") == "allow"
             finish(pid, sid, "allowed" if allowed else "denied")
+        elif kind == "read":
+            say(sid, "read: %s\n\n" % json.dumps(msg.get("result") or msg.get("error")), "read-%s" % pid)
         elif kind in ("fs", "terminal"):
             err = msg.get("error") or {}
             answers[pid][kind] = "%s %s" % (err.get("code"), err.get("message"))
@@ -233,6 +267,8 @@ for line in sys.stdin:
             model = params["value"]
         if params.get("configId") == "mode":
             mode = params["value"]
+            if CONTROL.get("keepMode"):
+                open(MODE_FILE, "w").write(mode)
         send({"id": mid, "result": {"configOptions": config_options()}})
     elif method == "session/prompt":
         prompt(mid, params["sessionId"], "\n".join(b.get("text", "") for b in params["prompt"]))
