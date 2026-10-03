@@ -50,6 +50,7 @@ bool flag(const QVariantMap& focus, const char* key) {
 // core ones and every one a default condition uses.
 QSet<QString> knownVariables() {
   QSet<QString> known{QStringLiteral("terminalFocus"), QStringLiteral("terminalOpen"), QStringLiteral("previewOpen"),
+                      QStringLiteral("composerDraft"),
                       QStringLiteral("isWeb"), QStringLiteral("isDesktop"), QStringLiteral("true"),
                       QStringLiteral("false")};
   std::function<void(const keybindings::WhenPtr&)> collect = [&](const keybindings::WhenPtr& when) {
@@ -100,13 +101,25 @@ void KeybindingController::activate() {
   m_terminalOpen = terminals->isOpen();
   // Conditions on the route and the running turn (draftThreadRoute, turnRunning).
   connect(m_bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
-    if (key == QLatin1String("turn") || key == QLatin1String("route") || key == QLatin1String("panel")) refreshShortcuts();
+    if (key == QLatin1String("turn") || key == QLatin1String("route") || key == QLatin1String("panel") ||
+        key == QLatin1String("composer")) {
+      refreshShortcuts();
+    }
   });
   registerCommands();
   followRules();
 }
 
-bool KeybindingController::handle(const QString& action, const QVariant&) {
+bool KeybindingController::handle(const QString& action, const QVariant& payload) {
+  if (action == QLatin1String("keybindings.context")) {
+    // What only a brick knows: whether its model picker is open.
+    const bool open = payload.toMap().value(QStringLiteral("modelPickerOpen"), m_modelPickerOpen).toBool();
+    if (open != m_modelPickerOpen) {
+      m_modelPickerOpen = open;
+      refreshShortcuts();
+    }
+    return true;
+  }
   if (action != QLatin1String("keybindings.openFile")) return false;
   openFile();
   return true;
@@ -281,6 +294,10 @@ keybindings::Context KeybindingController::context(const QVariantMap& focus) con
   }
   return {
       {QStringLiteral("previewOpen"), previewOpen},
+      {QStringLiteral("modelPickerOpen"), m_modelPickerOpen},
+      // The composer holds text the user has not sent.
+      {QStringLiteral("composerDraft"),
+       !m_bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("text")).toString().trimmed().isEmpty()},
       {QStringLiteral("terminalFocus"), flag(focus, "terminal")},
       {QStringLiteral("composerFocus"), flag(focus, "composer")},
       {QStringLiteral("editableFocus"), flag(focus, "editable")},

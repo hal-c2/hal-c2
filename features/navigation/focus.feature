@@ -24,7 +24,7 @@ Feature: Keyboard focus and keyboard-only use
       When a background update changes the thread list
       Then the command palette search still has keyboard focus
 
-    @backlog @desktop
+    @desktop
     Scenario: Number shortcuts pick entries in an open picker
       Given the model picker is open
       When the user presses mod+2

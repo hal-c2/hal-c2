@@ -41,10 +41,13 @@ QList<void (*)()>& stepFiles() {
 // ---- Gherkin ---------------------------------------------------------------
 
 QStringList tableCells(const QString& line) {
-  QStringList cells = line.trimmed().split(QLatin1Char('|'));
+  // A cell's own bar is written `\|`.
+  static const QString escaped = QStringLiteral("\\|");
+  static const QChar placeholder(0xE000);
+  QStringList cells = line.trimmed().replace(escaped, placeholder).split(QLatin1Char('|'));
   cells.removeFirst();
   cells.removeLast();
-  for (QString& cell : cells) cell = cell.trimmed();
+  for (QString& cell : cells) cell = cell.trimmed().replace(placeholder, QLatin1Char('|'));
   return cells;
 }
 
@@ -526,6 +529,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/focus.feature:Escape clears the settings search"),
     QStringLiteral("navigation/focus.feature:The search follows a query set elsewhere"),
     QStringLiteral("navigation/focus.feature:Typing while a terminal starts*"),
+    QStringLiteral("navigation/focus.feature:Number shortcuts pick entries*"),
     QStringLiteral("source-control/checkpoint-diffs.feature"),
     QStringLiteral("timeline/checkpoints.feature"),
     QStringLiteral("files/file-explorer.feature"),

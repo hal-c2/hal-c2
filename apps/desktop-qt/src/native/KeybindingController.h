@@ -64,7 +64,9 @@ public:
   // Registers the native commands and follows the MC's rules.
   void activate() override;
   // Keys reach it through press(), never as actions.
-  bool handle(const QString& action, const QVariant&) override;
+  // `keybindings.openFile`, and `keybindings.context {modelPickerOpen}` from
+  // the brick that shows the picker.
+  bool handle(const QString& action, const QVariant& payload) override;
 
   CommandRegistry* commands() { return &m_commands; }
   QVariantList shortcuts() const { return m_shortcuts; }
@@ -137,6 +139,7 @@ private:
   bool m_mac = false;
 #endif
   bool m_terminalOpen = false;
+  bool m_modelPickerOpen = false;
   QJsonArray m_rules;
   QList<keybindings::Binding> m_bindings = keybindings::defaultBindings();
   // Each binding's sequence, as m_bindings.

@@ -275,6 +275,8 @@ AbstractButton {
             } : {};
             control.view = Picker.initialView(control.instances, control.selectedInstanceId, control.locked);
         }
+        // The keymap's modelPickerOpen.
+        onVisibleChanged: Shell.dispatch("keybindings.context", { modelPickerOpen: visible })
         onOpened: {
             const selected = control.rows.findIndex(row => row.kind === "model" && row.instance.instanceId === control.selectedInstanceId && row.model.slug === control.selectedModel);
             control.highlightedIndex = selected >= 0 ? selected : control.firstSelectableRow(0, 1);
