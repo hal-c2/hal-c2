@@ -121,7 +121,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
   // Set while the open menu is a submenu: choosing an item runs this instead of a thread action.
   let menuChoose: ((id: string) => void) | null = null;
   // Where the thread's menu last opened: a submenu opens in its place.
-  let menuAt = { x: 0, y: 0 };
+  let menuAt: { x: number; y: number; threadId: string | null } = { x: 0, y: 0, threadId: null };
   let overlay: TuiOverlayState = null;
   let menuRequests = 0;
 
@@ -235,14 +235,17 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       canSnooze: canSnooze(thread, { now: ctx.now() }),
       extra: ctx.extraMenuItems?.(thread) ?? [],
     });
-    menuAt = { x, y };
+    menuAt = { x, y, threadId: thread.id };
     showMenu(thread, items, menuAt, null);
   };
 
   /** A second menu for `thread` (in the first one's place, or mid-screen from the palette). */
   const openSubmenu = (thread: TuiThreadShell, submenu: ThreadSubmenu) => {
     const { columns, rows } = ctx.size();
-    const at = menu ? menuAt : { x: Math.floor(columns / 3), y: Math.floor(rows / 3) };
+    const at =
+      menuAt.threadId === thread.id
+        ? menuAt
+        : { x: Math.floor(columns / 3), y: Math.floor(rows / 3) };
     showMenu(thread, submenu.items, at, submenu.choose);
   };
 

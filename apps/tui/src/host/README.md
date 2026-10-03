@@ -134,6 +134,13 @@ invite, and `joining` while the one-line join prompt has the keys (`mode:
 (copies the link), `cluster.join.open`, `cluster.join {link}`,
 `cluster.join.cancel` and `cluster.remove {id}`.
 
+`threadMove.ts` moves a thread to another machine of the cluster (`thread.move
+{key?}`, the thread menu's "Move to another machine…" and the palette, offered
+only while the cluster has other members): `hal-c2.moveDestinations` fills a
+menu of machines, a running thread is offered "stop it and move", and
+`hal-c2.moveThread`'s questions (what stays behind, which project) are asked in
+the same menu before the move is sent again. The MC's message is the status.
+
 `threadView.ts` publishes the open thread's keys and handles their actions
 (the timeline wraps at `layout.contentWidth`):
 

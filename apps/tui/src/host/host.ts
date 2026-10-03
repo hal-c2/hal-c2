@@ -51,6 +51,7 @@ import {
   type TerminalThread,
 } from "./terminalState.ts";
 import { createThreadActions } from "./threadActions.ts";
+import { createThreadMove } from "./threadMove.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
 import { createThreadView } from "./threadView.ts";
 import type { CellPixels } from "./timelineState.ts";
@@ -771,6 +772,7 @@ export function createHost(options: HostOptions): Host {
     // diff, source-control, settings, files, add-project, terminal and cluster entries.
     extraCommands: () => [
       ...threadActions.paletteCommands(),
+      ...threadMove.paletteCommands(selectedShellThread()),
       ...threadView.paletteCommands(),
       ...detailCommands({
         panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
@@ -787,6 +789,13 @@ export function createHost(options: HostOptions): Host {
     },
   });
 
+  const selectedShellThread = () => {
+    const current = store.getState();
+    const selection = current.selection;
+    return selection?.kind === "thread"
+      ? (current.shell?.threads.find((thread) => thread.id === selection.id) ?? null)
+      : null;
+  };
   const unknownActions = new Set<string>();
   const dispatch = (action: string, payload?: unknown): boolean => {
     options.trace?.(action, payload);
@@ -901,6 +910,15 @@ export function createHost(options: HostOptions): Host {
     if (action === "composer.paste") return composer!.dispatch(action, payload);
     if (composer!.dispatch(action, payload)) return true;
     if (threadActions.dispatch(action, payload)) return true;
+    if (action === "thread.move") {
+      const key = payloadField(payload, "key");
+      const thread =
+        typeof key === "string"
+          ? (store.getState().shell?.threads.find((entry) => entry.id === idFromKey(key)) ?? null)
+          : selectedShellThread();
+      if (thread) threadMove.choose(thread);
+      return true;
+    }
     // ↑/↓ walk the approvals only while the prompt is empty (then they edit it).
     if (
       (action === "approval.previous" || action === "approval.next") &&
@@ -1150,6 +1168,18 @@ export function createHost(options: HostOptions): Host {
     copyToClipboard: options.copyToClipboard,
     offline: () => offline(),
     now,
+    extraMenuItems: () => threadMove.menuItems(),
+    runExtraMenuItem: (thread, id) => threadMove.runMenuItem(thread, id),
+  });
+  // Moving a thread to another machine of the cluster: from its menu and the palette.
+  const threadMove = createThreadMove({
+    client,
+    store,
+    clustered: () => {
+      const status = cluster.state().status;
+      return status?.clustered === true && status.members.length > 0;
+    },
+    openSubmenu: (thread, submenu) => threadActions.openSubmenu(thread, submenu),
   });
 
   // The composer loads the new-thread defaults itself; this is the settlement flag.
@@ -1210,6 +1240,8 @@ export function createHost(options: HostOptions): Host {
     // A report belongs to the socket it was sent on: a new connection sends it again.
     if (phase === "connected") {
       clientActivity.renew();
+      // Whether threads can move depends on the cluster this connection reaches.
+      void cluster.refresh();
       // And the server may have come back on another version.
       updateNotice.check();
     }
@@ -1238,6 +1270,7 @@ export function createHost(options: HostOptions): Host {
       await terminal.settled();
       await threadView.settled();
       await cluster.settled();
+      await threadMove.settled();
       await sections!.settled();
       await updateNotice.settled();
     },
