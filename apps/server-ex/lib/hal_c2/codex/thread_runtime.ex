@@ -364,7 +364,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   # stopping; the next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do
-    end_background(%{state | conn: nil}, "interrupted")
+    unless HalC2.Orchestration.Recovery.stopping?(),
+      do: end_background(%{state | conn: nil}, "interrupted")
+
     :ok
   catch
     _, _ -> :ok
@@ -811,13 +813,64 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification("item/completed", %{"item" => item}, state),
     do: complete_item(flush(state), item)
 
+  # How full the conversation's context is, for the context meter. It belongs to the
+  # provider thread, so it outlives the run, and a model change, until Codex says more.
+  defp notification(
+         "thread/tokenUsage/updated",
+         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage},
+         state
+       )
+       when is_integer(used) do
+    counts =
+      for {key, field} <- [
+            {"inputTokens", "inputTokens"},
+            {"cachedInputTokens", "cachedInputTokens"},
+            {"outputTokens", "outputTokens"},
+            {"reasoningOutputTokens", "reasoningOutputTokens"}
+          ],
+          is_integer(last[field]),
+          into: %{"usedTokens" => max(used, 0)},
+          do: {key, max(last[field], 0)}
+
+    window = usage["modelContextWindow"]
+
+    snapshot =
+      if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(
+          stream,
+          "provider-thread",
+          state.turn.ids.provider_thread,
+          &Map.put(&1, "contextUsage", snapshot)
+        )
+      ]
+    end)
+
+    state
+  end
+
   defp notification("error", %{"error" => error} = params, state) do
     cond do
       params["willRetry"] == true ->
         retry_item(state, error)
 
+      # A structured `usage_limit` failure, as Claude's: the thread reads its error class
+      # and reset from it, and its queue waits (`TurnWriter.finish/3`).
       error_code(error["codexErrorInfo"]) in ["usageLimitExceeded", "rateLimitExceeded"] ->
-        %{state | failure: usage_limit_message(Map.get(state, :rate_limits), DateTime.utc_now())}
+        snapshot = Map.get(state, :rate_limits)
+        at = DateTime.utc_now()
+
+        failure = %{
+          "class" => "usage_limit",
+          "message" => usage_limit_message(snapshot, at),
+          "code" => error_code(error["codexErrorInfo"]),
+          "retryable" => nil,
+          "resetAt" => usage_limit_reset(snapshot, at)
+        }
+
+        %{state | failure: failure}
 
       true ->
         %{state | failure: error["message"] || "Codex reported an error"}
@@ -946,20 +999,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # that simply ran out): the used-up window resetting last, and what to do next.
   defp usage_limit_message(snapshot, at) do
     reset =
-      (snapshot || %{})
-      |> HalC2.ProviderUsageLimits.Codex.windows()
-      |> Enum.flat_map(fn window ->
-        with true <- window["usedPercent"] >= 100,
-             {:ok, resets, _} <- DateTime.from_iso8601(window["resetsAt"] || ""),
-             wait when wait > 0 <- DateTime.diff(resets, at, :millisecond),
-             do: [{wait, window["kind"]}],
-             else: (_ -> [])
-      end)
-      |> Enum.max_by(&elem(&1, 0), fn -> nil end)
-
-    reset =
-      case reset do
-        {wait, kind} -> " The #{kind} limit resets in #{wait_text(wait)}."
+      case used_up_window(snapshot, at) do
+        {wait, kind, _resets} -> " The #{kind} limit resets in #{wait_text(wait)}."
         nil -> ""
       end
 
@@ -983,6 +1024,28 @@ defmodule HalC2.Codex.ThreadRuntime do
       end
 
     "Codex usage limit reached." <> reset <> next
+  end
+
+  # When the used-up window resetting last resets (ISO), or nil when Codex did not say.
+  defp usage_limit_reset(snapshot, at) do
+    case used_up_window(snapshot, at) do
+      {_wait, _kind, resets} -> resets
+      nil -> nil
+    end
+  end
+
+  # The used-up window that resets last: `{ms to wait, kind, resetsAt}`.
+  defp used_up_window(snapshot, at) do
+    (snapshot || %{})
+    |> HalC2.ProviderUsageLimits.Codex.windows()
+    |> Enum.flat_map(fn window ->
+      with true <- window["usedPercent"] >= 100,
+           {:ok, resets, _} <- DateTime.from_iso8601(window["resetsAt"] || ""),
+           wait when wait > 0 <- DateTime.diff(resets, at, :millisecond),
+           do: [{wait, window["kind"], window["resetsAt"]}],
+           else: (_ -> [])
+    end)
+    |> Enum.max_by(&elem(&1, 0), fn -> nil end)
   end
 
   # Coarse remaining wait, as the usage rows read: `5d 5h`, `3h 20m`, `12m`.
@@ -1033,7 +1096,47 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp background_done(state, native, item) do
     {%{item: %{id: item_id, node: node_id}}, background} = Map.pop(state.background, native)
     end_command(state, item_id, node_id, command_status(item), &command_result(&1, item))
-    %{state | background: background}
+    state = %{state | background: background}
+    # Between turns Codex does not hear of it by itself: the thread tells it.
+    if state.turn == nil, do: wake(state.thread_id, item)
+    state
+  end
+
+  # A turn telling Codex that a command it left in the background ended, queued like
+  # any message. Off this process, since starting the run calls back into it. An
+  # archived or deleted thread is left alone.
+  defp wake(thread_id, item) do
+    Task.start(fn ->
+      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+      thread = HalC2.StreamState.get(stream, "thread")[thread_id] || %{}
+      latest =
+        stream |> HalC2.StreamState.list("run") |> Enum.max_by(&(&1["ordinal"]), fn -> %{} end)
+      message_id = Entities.new_id("message")
+
+      ended =
+        case item["exitCode"] do
+          code when is_integer(code) -> "exited with code #{code}"
+          _ -> "ended (#{command_status(item)})"
+        end
+
+      if thread["archivedAt"] == nil and thread["deletedAt"] == nil do
+        with {:error, reason} <-
+               Orchestration.dispatch(%{
+                 "type" => "message.dispatch",
+                 "commandId" => "command:codex-background:#{message_id}",
+                 "threadId" => thread_id,
+                 "messageId" => message_id,
+                 "text" => "The background command `#{item["command"]}` #{ended}.",
+                 "attachments" => [],
+                 "modelSelection" => latest["modelSelection"],
+                 "dispatchMode" => %{"type" => "queue_after_active"},
+                 "createdBy" => "agent",
+                 "creationSource" => "provider"
+               }) do
+          Logger.warning("codex background wake in #{thread_id} has no run: #{inspect(reason)}")
+        end
+      end
+    end)
   end
 
   # Stops every background command, and ends its item as `status`.

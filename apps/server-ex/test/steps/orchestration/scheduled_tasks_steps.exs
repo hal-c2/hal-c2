@@ -354,6 +354,45 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     context
   end
 
+  # A daily task saved an hour after its time of day, so its pending run is tomorrow's.
+  step "task {string} is due at {word} tomorrow", %{args: [name, time]} = context do
+    context =
+      context
+      |> pin(DateTime.add(at(context, time), @hour, :millisecond))
+      |> task(name, %{"schedule" => %{"type" => "fixed_time", "timeOfDay" => time}})
+
+    assert local(current(context, name)["nextRunAt"]) == tomorrow_at(context, time)
+    context
+  end
+
+  step "one run starts immediately", context do
+    [name] = Map.keys(context.tasks)
+    assert {:ok, %{"task" => task}} = context.reply
+    assert %{"lastRunStatus" => "succeeded", "runCount" => 1} = task
+    assert task["lastRunAt"] == iso(context.now)
+    # Its prompt went out now, as the first message of a new thread.
+    {context, thread} = launched(context, task)
+
+    World.await_state(context, thread["id"], fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "message"),
+        &(&1["scheduledTaskId"] == context.tasks[name] and &1["text"] == task["prompt"])
+      )
+    end)
+
+    context
+  end
+
+  step "task {string} is still due at {word} tomorrow", %{args: [name, time]} = context do
+    assert {:ok, %{"task" => answered}} = context.reply
+    task = current(context, name)
+    assert local(task["nextRunAt"]) == tomorrow_at(context, time)
+    assert answered["nextRunAt"] == task["nextRunAt"]
+    # The scheduler did not take the manual run for the scheduled one.
+    assert task["runCount"] == 1
+    context
+  end
+
   step("task {string} is running", %{args: [name]} = context, do: running(context, name))
 
   step "task {string} is running and becomes due again", %{args: [name]} = context do
@@ -706,6 +745,8 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
   end
 
   defp local_at(context, time), do: NaiveDateTime.new!(context.day, time(time))
+
+  defp tomorrow_at(context, time), do: NaiveDateTime.new!(Date.add(context.day, 1), time(time))
 
   defp time(time) do
     [hour, minute] = time |> String.split(":") |> Enum.map(&String.to_integer/1)
