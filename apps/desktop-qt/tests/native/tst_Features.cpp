@@ -608,6 +608,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/scopes-and-inheritance.feature:Resetting a project override*"),
     QStringLiteral("settings/scopes-and-inheritance.feature:A value that differs*"),
     QStringLiteral("settings/scopes-and-inheritance.feature:A model missing*"),
+    QStringLiteral("settings/scopes-and-inheritance.feature:The inheritance chain*"),
+    QStringLiteral("settings/scopes-and-inheritance.feature:The environment view lists*"),
     QStringLiteral("settings/scheduled-tasks.feature"),
     QStringLiteral("settings/source-control.feature"),
     QStringLiteral("settings/source-control-writing.feature"),

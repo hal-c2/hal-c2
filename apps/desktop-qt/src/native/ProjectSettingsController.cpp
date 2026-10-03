@@ -14,14 +14,19 @@
 // {title, description, button},
 // available (an environment is connected), and each default (model,
 // permissions, workspace, submodules): {value, label, mixed, resettable},
-// the model's also {automatic, none (no providers), models: [{key, label}]},
+// the model's also {automatic, none (no providers), models: [{key, label}],
+// inheritance (while inspected): {layers: [{key, label, value, effective}],
+// overridingProjects: [{projectId, environmentId, title, value}]}},
 // and the others' {options: [{value, label, description}]}}.
 //
 // Actions (`projectSettings.`): `rename {title}`, `icon {emoji}` (without an
 // emoji, back to automatic), `remove {key}` (one checkout, else every
 // checkout in the scope), `model {key}` ("" for automatic), `permissions
 // {value}`, `workspace {value}`, `submodules {value}`, `reset {key}` (model |
-// permissions | workspace | submodules).
+// permissions | workspace | submodules), `inspect {key}` ("model" shows where
+// the default model comes from, anything else hides it), `clearOverride
+// {environmentId, projectId}` (a project's model override, from the
+// environment's view).
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -188,6 +193,21 @@ public:
       set(choice.key, value);
     } else if (name == QLatin1String("reset")) {
       reset(input.value(QStringLiteral("key")).toString());
+    } else if (name == QLatin1String("inspect")) {
+      // Where a default comes from ("model"); anything else closes it.
+      m_inspecting = input.value(QStringLiteral("key")).toString() == QLatin1String("model") ? QStringLiteral("model") : QString();
+      publish();
+    } else if (name == QLatin1String("clearOverride")) {
+      // One project's override of the default model, from the environment's view.
+      const QString projectId = input.value(QStringLiteral("projectId")).toString();
+      const QString environmentId = input.value(QStringLiteral("environmentId")).toString();
+      if (projectId.isEmpty() || scope()->projectScope() || !scope()->targets().contains(environmentId)) return true;
+      const QJsonObject held = scope()->settings(environmentId).value_or(QJsonObject());
+      scope()->write([projectId, held](QJsonObject settings, const QString&) {
+        // Only the environment that holds it.
+        if (settings != held) return settings;
+        return SettingsScopeController::withOverride(settings, projectId, kModel, QJsonValue(QJsonValue::Undefined));
+      });
     }
     return true;
   }
@@ -388,13 +408,57 @@ private:
     }
     // A model no provider offers now still names itself.
     if (!key.isEmpty() && label == QLatin1String("Automatic")) label = key + QStringLiteral(" (Unavailable)");
-    return {{QStringLiteral("value"), key},
-            {QStringLiteral("label"), label},
-            {QStringLiteral("mixed"), reading.mixed},
-            {QStringLiteral("automatic"), !reading.mixed && key.isEmpty()},
-            {QStringLiteral("none"), !targets.isEmpty() && models.isEmpty()},
-            {QStringLiteral("resettable"), resettable(kModel, QJsonValue(QJsonValue::Null))},
-            {QStringLiteral("models"), models}};
+    QVariantMap row{{QStringLiteral("value"), key},
+                    {QStringLiteral("label"), label},
+                    {QStringLiteral("mixed"), reading.mixed},
+                    {QStringLiteral("automatic"), !reading.mixed && key.isEmpty()},
+                    {QStringLiteral("none"), !targets.isEmpty() && models.isEmpty()},
+                    {QStringLiteral("resettable"), resettable(kModel, QJsonValue(QJsonValue::Null))},
+                    {QStringLiteral("models"), models}};
+    if (m_inspecting == QLatin1String("model") && !targets.isEmpty()) row.insert(QStringLiteral("inheritance"), modelInheritance(targets.first(), models));
+    return row;
+  }
+
+  // Where the first selected environment's default model comes from (the
+  // web's SettingInheritance): the layers it resolves through, top down, the
+  // first one set being in effect; and from an environment's view, the
+  // projects that override it.
+  QVariantMap modelInheritance(const QString& environmentId, const QVariantList& models) const {
+    const QJsonObject settings = scope()->settings(environmentId).value_or(QJsonObject());
+    const auto named = [&models](const QJsonValue& value) {
+      const QString key = keyOf(value.toObject());
+      for (const QVariant& model : models) {
+        if (model.toMap().value(QStringLiteral("key")) == key) return model.toMap().value(QStringLiteral("label")).toString();
+      }
+      return key;
+    };
+    const QString projectId = scope()->projectOn(environmentId);
+    const QJsonValue own = projectId.isEmpty() ? QJsonValue(QJsonValue::Undefined) : SettingsScopeController::overrideOf(settings, projectId, kModel);
+    const bool projectSet = own.isObject();
+    const bool environmentSet = settings.value(kModel).isObject();
+    const QString inherits = QStringLiteral("Inherits");
+    const auto layer = [](const QString& key, const QString& label, const QString& value, bool effective) {
+      return QVariantMap{{QStringLiteral("key"), key}, {QStringLiteral("label"), label}, {QStringLiteral("value"), value}, {QStringLiteral("effective"), effective}};
+    };
+    QVariantList layers;
+    if (!projectId.isEmpty()) layers.append(layer(QStringLiteral("project"), QStringLiteral("Project"), projectSet ? named(own) : inherits, projectSet));
+    layers.append(layer(QStringLiteral("environment"), scope()->label(environmentId), environmentSet ? named(settings.value(kModel)) : inherits,
+                        !projectSet && environmentSet));
+    // The checkout's hal-c2.json names no model: the layer is there, and inherits.
+    if (!projectId.isEmpty()) layers.append(layer(QStringLiteral("hal-c2.json"), QStringLiteral("hal-c2.json"), inherits, false));
+    layers.append(layer(QStringLiteral("built-in"), QStringLiteral("Default"), QStringLiteral("Automatic"), !projectSet && !environmentSet));
+    QVariantList overriding;
+    if (projectId.isEmpty()) {
+      const QJsonObject overrides = settings.value(QLatin1String("projectSettingsOverrides")).toObject();
+      for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it) {
+        const QJsonValue value = it.value().toObject().value(kModel);
+        if (!value.isObject()) continue;
+        const QString title = at(m_store->projectRow(environmentId, it.key()), "title");
+        overriding.append(QVariantMap{{QStringLiteral("projectId"), it.key()}, {QStringLiteral("environmentId"), environmentId},
+                                      {QStringLiteral("title"), title.isEmpty() ? it.key() : title}, {QStringLiteral("value"), named(value)}});
+      }
+    }
+    return {{QStringLiteral("layers"), layers}, {QStringLiteral("overridingProjects"), overriding}};
   }
 
   // What shows in place of the project, "" when it shows.
@@ -482,6 +546,8 @@ private:
   ShellStore* m_store;
   bool m_active = false;
   bool m_open = false;
+  // The default whose inheritance is shown ("model"), or none.
+  QString m_inspecting;
 };
 
 namespace {

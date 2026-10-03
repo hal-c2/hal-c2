@@ -160,7 +160,7 @@ Feature: Settings scopes and inheritance
 
   Rule: The user can see and clear where a value comes from
 
-    @backlog @desktop
+    @desktop
     Scenario: The inheritance chain shows which layer wins
       Given the user is editing settings for the project "hal-c2"
       And "hal-c2" does not override the default model
@@ -176,7 +176,7 @@ Feature: Settings scopes and inheritance
       Then "hal-c2" no longer overrides the default model
       And the default model shows the environment's value
 
-    @backlog @desktop
+    @desktop
     Scenario: The environment view lists and clears project overrides
       Given "hal-c2" overrides the default model on "Laptop"
       And the user is editing settings for "Laptop"

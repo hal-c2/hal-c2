@@ -257,6 +257,63 @@ const Steps steps([] {
                     QStringLiteral("the environment's model without a reset"));
   });
 
+  // Where a value comes from.
+  step(QStringLiteral("%1 does not override the default model").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The environments set one; the project sets none.
+    for (const QString& environment : world.mc.linked) {
+      expect(overrideOn(world, c[0], environment).isUndefined(), describeDocuments(world));
+      saveOn(world.mc, environment, kModel, selection(QStringLiteral("opus")));
+    }
+  });
+  step(QStringLiteral("the user asks where the default model comes from"), [](World& world, const Captures&, const Table&) {
+    if (at(world.state(QStringLiteral("route")), QStringLiteral("section")) != QLatin1String("/settings/projects")) {
+      openSection(world, QStringLiteral("/settings/projects"));
+    }
+    waitForModelRow(world, [](const QVariantMap& row) { return !row.value(QStringLiteral("models")).toList().isEmpty(); }, QStringLiteral("the default model row"));
+    world.bridge().dispatch(QStringLiteral("projectSettings.inspect"), QVariantMap{{QStringLiteral("key"), QStringLiteral("model")}});
+  });
+  step(QStringLiteral("the project, environment, repository file and built-in default layers are listed in that order"), [](World& world, const Captures&, const Table&) {
+    QStringList keys;
+    for (const QVariant& layer : at(modelRow(world), QStringLiteral("inheritance.layers")).toList()) keys.append(at(layer, QStringLiteral("key")).toString());
+    expect(keys == QStringList{QStringLiteral("project"), QStringLiteral("environment"), QStringLiteral("hal-c2.json"), QStringLiteral("built-in")},
+           QStringLiteral("the layers are %1").arg(show(modelRow(world).value(QStringLiteral("inheritance")))));
+  });
+  step(QStringLiteral("the environment layer is marked as the one in effect"), [](World& world, const Captures&, const Table&) {
+    QStringList inEffect;
+    QString value;
+    for (const QVariant& layer : at(modelRow(world), QStringLiteral("inheritance.layers")).toList()) {
+      if (!at(layer, QStringLiteral("effective")).toBool()) continue;
+      inEffect.append(at(layer, QStringLiteral("key")).toString());
+      value = at(layer, QStringLiteral("value")).toString();
+    }
+    expect(inEffect == QStringList{QStringLiteral("environment")} && value == QStringLiteral("Claude · Opus"),
+           QStringLiteral("the layers are %1").arg(show(modelRow(world).value(QStringLiteral("inheritance")))));
+  });
+  step(QStringLiteral("%1 overrides the default model on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    offerEverywhere(world, {QStringLiteral("Sonnet"), QStringLiteral("Opus")});
+    settingsOf(world, c[1]).insert(kModel, selection(QStringLiteral("opus")));
+    setOverride(world, c[0], c[1], selection(QStringLiteral("sonnet")));
+    scoped(world).project = c[0];
+  });
+  step(QStringLiteral("%1 is listed as overriding it").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const QVariantList overriding = at(modelRow(world), QStringLiteral("inheritance.overridingProjects")).toList();
+      return overriding.size() == 1 && at(overriding.first(), QStringLiteral("title")) == c[0] && at(overriding.first(), QStringLiteral("value")) == QStringLiteral("Claude · Sonnet");
+    }, [&] { return QStringLiteral("the row is %1").arg(show(modelRow(world))); });
+  });
+  step(QStringLiteral("the user resets the override for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap overriding = at(modelRow(world), QStringLiteral("inheritance.overridingProjects")).toList().value(0).toMap();
+    expect(overriding.value(QStringLiteral("title")) == c[0], QStringLiteral("the row is %1").arg(show(modelRow(world))));
+    world.bridge().dispatch(QStringLiteral("projectSettings.clearOverride"),
+                            QVariantMap{{QStringLiteral("environmentId"), overriding.value(QStringLiteral("environmentId"))}, {QStringLiteral("projectId"), overriding.value(QStringLiteral("projectId"))}});
+  });
+  step(QStringLiteral("%1 uses the value from %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return overrideOn(world, c[0], c[1]).isUndefined() && at(modelRow(world), QStringLiteral("inheritance.overridingProjects")).toList().isEmpty(); },
+                  [&] { return describeDocuments(world); });
+    // The environment's own model is untouched, and is what the project now gets.
+    expect(settingsOf(world, c[1]).value(kModel) == QJsonValue(selection(QStringLiteral("opus"))), describeDocuments(world));
+  });
+
   // Environments that disagree.
   step(QStringLiteral("the default model differs between %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     offerEverywhere(world, {QStringLiteral("Sonnet"), QStringLiteral("Opus")});
