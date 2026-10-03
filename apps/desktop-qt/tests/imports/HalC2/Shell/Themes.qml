@@ -11,6 +11,11 @@ QtObject {
     property string resolvedId: "hal-c2"
     property var available: []
     property var roles: ["canvas", "accent"]
+    property var families: [{ title: "Foundation", roles: ["canvas"] }, { title: "Brand & content", roles: ["accent"] }]
+    // The editor's draft, and what an import waits on.
+    property var editing: ({})
+    property string importError: ""
+    property var importConflicts: []
     property var calls: []
     // restoreDefaults fails, as a device that cannot save does.
     property bool failSaves: false
@@ -34,6 +39,24 @@ QtObject {
     function draft(id) {
         record("draft", [id]);
         return { id: id || "active-custom", label: "HAL-C2", appearance: "dark", colors: { canvas: "#000000", accent: "#ffffff" } };
+    }
+    function edit(next) {
+        editing = next;
+        editorOpen = true;
+        return record("edit", [next]);
+    }
+    function setEditing(next) {
+        editing = next;
+    }
+    function derive(canvas, accent) {
+        return ({});
+    }
+    function requestRemove(id) {
+        return record("requestRemove", [id]);
+    }
+    function clearImport() {
+        importError = "";
+        importConflicts = [];
     }
     function saveCustom(theme) {
         record("saveCustom", [theme]);
@@ -61,6 +84,8 @@ QtObject {
         halves = {};
         resolvedId = "hal-c2";
         available = [];
+        editing = {};
+        editorOpen = false;
         calls = [];
     }
 }

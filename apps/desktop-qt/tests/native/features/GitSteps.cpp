@@ -18,6 +18,7 @@
 
 #include "CommandPaletteController.h"
 #include "Harness.h"
+#include "KeybindingController.h"
 #include "NavigationController.h"
 #include "World.h"
 
@@ -554,6 +555,12 @@ const Steps steps([] {
         }
       }
       fail(QStringLiteral("the command palette does not list \"%1\"").arg(c[0]));
+    }
+    // A keybinding command by its id ("terminal.new"), as a key or a rice runs it.
+    if (auto* keys = world.native().controller<KeybindingController>(); keys && keys->commands()->contains(c[0])) {
+      keys->commands()->run(c[0]);
+      world.sync();
+      return;
     }
     if (at(git(world), QStringLiteral("quickAction.label")) == c[0]) {
       dispatch(world, QStringLiteral("git.quick"));

@@ -503,7 +503,7 @@ void ThreadMenuController::archive(const QString& key) {
                                                        NavigationController::Route::thread(key));
                                                  }
                                                });
-                   }});
+                   }, false, QStringLiteral("Archived")});
   });
 }
 
@@ -534,7 +534,7 @@ void ThreadMenuController::unpin(const QString& key) {
                                                {QStringLiteral("threadId"), threadId}};
                                if (orderKey) pin.insert(QStringLiteral("orderKey"), *orderKey);
                                command(key, pin, QStringLiteral("Failed to undo unpin"));
-                             }});
+                             }, false, QStringLiteral("Unpinned")});
             });
   };
   if (setting(this, "confirmThreadUnpin")) {

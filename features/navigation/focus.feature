@@ -37,7 +37,7 @@ Feature: Keyboard focus and keyboard-only use
       When the user presses the model picker shortcut
       Then the model picker opens
 
-    @backlog @desktop
+    @desktop
     Scenario: Typing while a terminal starts stays in the composer
       Given the user is typing in the composer
       When a terminal starts on its own
@@ -107,30 +107,30 @@ Feature: Keyboard focus and keyboard-only use
       When the user presses Up and then Space
       Then the "General" section opens
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Searching settings lists matching settings with their section
       When the user searches settings for "theme"
       Then each result names its section
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A settings result opens from the keyboard
       Given the settings search lists "Theme"
       When the user presses Space on that result
       Then the section holding "Theme" opens with "Theme" highlighted
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Nothing matches the settings search
       When the user searches settings for "qqqq"
       Then the user is told "No matching settings"
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Escape clears the settings search
       Given the user searched settings for "theme"
       When the user presses Escape
       Then the settings search is empty
       And the section list is shown again
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The search follows a query set elsewhere
       Given the user cleared the settings search with Escape
       When the app sets the settings search to "font"
