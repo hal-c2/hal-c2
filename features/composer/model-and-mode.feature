@@ -193,7 +193,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user tries to send the first message
     Then the user is asked to select a base branch
 
-  @backlog @desktop
+  @desktop
   Scenario: A new thread can run on a machine that has other projects
     Given "laptop" has the project "shop" and the connected machine "server" has only "scratch"
     And the user has typed a prompt for a new thread in "shop"

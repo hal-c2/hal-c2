@@ -15,6 +15,7 @@
 #include "NavigationController.h"
 #include "Stream.h"
 #include "World.h"
+#include "WorkspaceController.h"
 
 using namespace stream;
 
@@ -134,6 +135,50 @@ const Steps steps([] {
     const QString threadId = call.value(QLatin1String("threadId")).toString();
     world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey().endsWith(QLatin1Char(':') + threadId); },
                   [&] { return QStringLiteral("the thread %1; the route is %2").arg(threadId, show(world.state(QStringLiteral("route")))); });
+  });
+
+  step(QStringLiteral("%1 has the project %1 and the connected machine %1 has only %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[1] == kProject, QStringLiteral("the open thread's project is %1").arg(kProject));
+    world.mc.label = c[0];
+    // The second machine joins the cluster under its own name.
+    world.mc.peers.insert(kPeerEnvironment, kPeer);
+    const int shell = world.mc.subscribers(QStringLiteral("shell")).value(0);
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.environment")}, {QStringLiteral("id"), shell}, {QStringLiteral("mc"), kPeer},
+                   {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), kPeerEnvironment}, {QStringLiteral("label"), c[2]}, {QStringLiteral("capabilities"), world.mc.capabilities}}}});
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.mc")}, {QStringLiteral("id"), shell}, {QStringLiteral("mc"), kPeer}, {QStringLiteral("online"), true}});
+    world.mc.sendRows(kPeer, {QJsonValue(QJsonArray{c[3], QStringLiteral("project"),
+                                                    QJsonObject{{QStringLiteral("id"), c[3]}, {QStringLiteral("title"), c[3]}, {QStringLiteral("workspaceRoot"), QStringLiteral("/srv/") + c[3]},
+                                                                {QStringLiteral("scripts"), QJsonArray()}}})});
+    world.sync();
+  });
+  step(QStringLiteral("the user has typed a prompt for a new thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == kProject, QStringLiteral("the open thread's project is %1").arg(kProject));
+    newThread(world);
+    typeInComposer(world, kPrompt);
+    settleComposer(world);
+  });
+  step(QStringLiteral("the user chooses %1 as the machine the thread runs on").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList environments = workspace(world).value(QStringLiteral("environments")).toList();
+    int choice = -1;
+    for (qsizetype i = 0; i < environments.size(); ++i) {
+      if (environments.at(i).toMap().value(QStringLiteral("label")) == c[0]) choice = int(i);
+    }
+    expect(choice >= 0, QStringLiteral("the composer offers %1").arg(show(environments)));
+    pick(world, QStringLiteral("hostPicker"), choice);
+  });
+  step(QStringLiteral("the new thread is in %1 on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return workspace(world).value(QStringLiteral("activeEnvironmentId")) == kPeerEnvironment && workspace(world).value(QStringLiteral("projectTitle")) == c[0]; },
+                  [&] { return QStringLiteral("the draft in %1 on %2; the header shows %3").arg(c[0], c[1], show(workspace(world))); });
+    const auto where = world.native().controller<WorkspaceController>()->launch(world.draftId);
+    expect(where.environmentId == kPeerEnvironment && where.projectId == c[0] && // The draft is the machine's own now: the picker names the machine, the header the project.
+               part(world, QStringLiteral("hostPicker"))->property("displayText") == c[1],
+           QStringLiteral("the thread would start in %1 on %2; the picker reads \"%3\"")
+               .arg(where.projectId, where.environmentId, part(world, QStringLiteral("hostPicker"))->property("displayText").toString()));
+  });
+  step(QStringLiteral("the prompt is still there"), [](World& world, const Captures&, const Table&) {
+    settleComposer(world);
+    expect(composerEditor(world)->property("text") == kPrompt && world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("target")) == world.draftId,
+           QStringLiteral("the composer reads \"%1\"").arg(composerEditor(world)->property("text").toString()));
   });
 
   // The checkout.
