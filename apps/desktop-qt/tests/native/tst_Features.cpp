@@ -304,6 +304,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/notifications.feature:The user mutes alerts for one thread"),
     QStringLiteral("timeline/notifications.feature:The user unmutes a thread"),
     QStringLiteral("timeline/notifications.feature:Coming back to the window*"),
+    QStringLiteral("timeline/qt-shell-backlog.feature"),
     QStringLiteral("settings/connections.feature"),
     QStringLiteral("connections/links.feature"),
     QStringLiteral("connections/pairing.feature"),

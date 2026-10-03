@@ -98,6 +98,10 @@ void AlertController::setFocused(bool focused) {
   m_focused = focused;
   // Back at the window, the system notifications have done their job.
   if (focused && m_presenter.clear) m_presenter.clear();
+  if (focused && m_unseen > 0) {
+    m_unseen = 0;
+    if (m_presenter.badge) m_presenter.badge(0);
+  }
 }
 
 bool AlertController::openThread(const QString& key) {
@@ -179,6 +183,10 @@ void AlertController::evaluate() {
                           : status == QLatin1String("failed")   ? tr("Thread failed")
                                                                 : tr("Input needed");
     if (hasSound(m_mode) && m_presenter.play) m_presenter.play(kind);
+    if (kind == QLatin1String("completion") && !m_focused) {
+      ++m_unseen;
+      if (m_presenter.badge) m_presenter.badge(m_unseen);
+    }
     if (m_inApp && m_focused && key != shown) {
       if (!toasts) continue;
       const QString type = kind == QLatin1String("completion") ? QStringLiteral("success")
