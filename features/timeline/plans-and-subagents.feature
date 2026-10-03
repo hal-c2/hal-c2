@@ -150,14 +150,14 @@ Feature: Plans and subagents
     Then the subagent is shown with "model-b"
     And the parent's model is not shown for it
 
-  @mc @shared @backlog
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A finished subagent with work still running is shown as pending
     Given a subagent returned its result while background work it started is still running
     When the user looks at the parent thread
     Then the subagent's result is shown
     And its background work is still shown as running
 
-  @mc @shared @backlog
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A subagent's approval request shows up in the parent thread
     Given a subagent asks for approval to run a command
     When the user looks at the parent thread

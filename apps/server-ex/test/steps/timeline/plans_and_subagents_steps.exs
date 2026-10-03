@@ -213,6 +213,159 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     context
   end
 
+  # --- subagents the provider runs itself ------------------------------------------------
+  # Claude's own subagents (its Agent tool) run inside the parent's Claude session, so
+  # what they start and ask reaches the MC on the parent thread. The fake Claude plays
+  # them on "subagent ..." messages (`test/support/fake_claude.py`).
+
+  step "a subagent returned its result while background work it started is still running",
+       context do
+    context = claude_thread(context, "subagent leaves work running")
+    title = World.current(context)
+
+    World.await_thread(context, title, fn state ->
+      Enum.any?(StreamState.list(state, "run"), &(&1["status"] == "completed")) and
+        Enum.any?(StreamState.list(state, "subagent"), &(&1["status"] == "completed"))
+    end)
+
+    # The turn is over; the command the subagent started is what is still pending.
+    World.await_row(World.thread_id(context, title), &(&1["pendingBackgroundTasks"] != []))
+    context
+  end
+
+  step "a subagent asks for approval to run a command", context do
+    context = claude_thread(context, "subagent approve run: npm test")
+    title = World.current(context)
+
+    state =
+      World.await_thread(context, title, fn state ->
+        Enum.any?(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+      end)
+
+    assert [%{"status" => "running", "childThreadId" => child}] =
+             StreamState.list(state, "subagent")
+
+    assert [request] = StreamState.list(state, "runtime-request")
+    # The thread's sidebar row trails its stream.
+    World.await_row(World.thread_id(context, title), &(&1["pendingRuntimeRequest"] != nil))
+    Map.merge(context, %{request_id: request["id"], child: child, command: "npm test"})
+  end
+
+  step "the user looks at the parent thread", context do
+    id = World.thread_id(context, World.current(context))
+
+    Map.merge(context, %{
+      parent_rows: read_thread(context, id),
+      parent_row: World.row(context, World.current(context))
+    })
+  end
+
+  step "the subagent's result is shown", context do
+    assert [%{"status" => "completed", "result" => "Dev server started", "id" => id}] =
+             for(["subagent", _, subagent] <- context.parent_rows, do: subagent)
+
+    assert [%{"status" => "completed", "result" => "Dev server started"}] =
+             for(
+               ["turn-item", _, %{"type" => "subagent", "subagentId" => ^id} = item] <-
+                 context.parent_rows,
+               do: item
+             )
+
+    context
+  end
+
+  step "its background work is still shown as running", context do
+    assert [%{"status" => "running", "id" => item_id}] =
+             for(
+               ["turn-item", _, %{"type" => "command_execution", "input" => "npm run dev"} = item] <-
+                 context.parent_rows,
+               do: item
+             )
+
+    # The thread's row lists it as pending, though the turn and the subagent are over.
+    assert context.parent_row["activeRunId"] == nil
+
+    assert [%{"taskType" => "command_execution", "description" => "npm run dev"}] =
+             context.parent_row["pendingBackgroundTasks"]
+
+    assert is_binary(item_id)
+    context
+  end
+
+  step "the approval is listed there", context do
+    request_id = context.request_id
+
+    assert [%{"status" => "pending", "kind" => "command"}] =
+             for(["runtime-request", ^request_id, request] <- context.parent_rows, do: request)
+
+    assert [%{"prompt" => "npm test", "status" => status}] =
+             for(
+               [
+                 "turn-item",
+                 _,
+                 %{"type" => "approval_request", "requestId" => ^request_id} = item
+               ] <-
+                 context.parent_rows,
+               do: item
+             )
+
+    assert status in ~w(waiting pending running)
+    assert context.parent_row["pendingRuntimeRequest"] != nil
+
+    # The subagent's own thread holds its task, and no request of its own.
+    assert [] =
+             for(
+               ["runtime-request", _, request] <- read_thread(context, context.child),
+               do: request
+             )
+
+    context
+  end
+
+  step "the user answers it", context do
+    assert {:ok, _} =
+             HalC2.Orchestration.dispatch(%{
+               "type" => "runtime-request.respond",
+               "threadId" => World.thread_id(context, World.current(context)),
+               "requestId" => context.request_id,
+               "decision" => "accept"
+             })
+
+    context
+  end
+
+  # The fake's subagent reports "ran CMD" only when its request was allowed.
+  step "the subagent continues with the answer", context do
+    state =
+      World.await_thread(context, World.current(context), fn state ->
+        Enum.any?(StreamState.list(state, "subagent"), &(&1["status"] == "completed")) and
+          Enum.all?(StreamState.list(state, "run"), &(&1["status"] == "completed"))
+      end)
+
+    assert [%{"result" => "ran npm test"}] = StreamState.list(state, "subagent")
+
+    assert %{"status" => "resolved"} =
+             StreamState.get(state, "runtime-request")[context.request_id]
+
+    context
+  end
+
+  # A thread on the fake Claude, sent `text`.
+  defp claude_thread(context, text) do
+    title = "Claude thread"
+
+    context =
+      context
+      |> World.agents()
+      |> World.create_thread(title, nil, %{
+        "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "claude-haiku-4-5"}
+      })
+      |> Map.put(:current, title)
+
+    {{:ok, _}, context} = World.send_message(context, title, text)
+    context
+  end
+
   # Calls the MC's MCP tool `delegate_task` as the current thread's provider. The
   # test process must have started `HalC2.Mcp` (`HalC2.Test.Mc.ensure/1`).
   defp delegate(context, arguments),
