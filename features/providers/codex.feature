@@ -240,7 +240,6 @@ Feature: Codex
       | reasoning    | none, minimal, low, medium, high, extra high, max     |
       | service tier | standard or fast                                      |
 
-  @backlog
   Scenario: Codex subagents appear as child threads
     When Codex starts a subagent
     Then the subagent's work is shown as a child of the turn

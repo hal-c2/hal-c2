@@ -583,6 +583,61 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  # --- subagents -------------------------------------------------------------------------
+
+  # The fake's spawnAgent tool call starts the thread native-child-1, which answers.
+  step "Codex starts a subagent", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "spawn a subagent")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the subagent's work is shown as a child of the turn", context do
+    state = World.stream(context, @thread)
+    [run] = StreamState.list(state, "run")
+
+    assert [
+             %{
+               "origin" => "provider_native",
+               "status" => "completed",
+               "prompt" => "List the modules in lib",
+               "result" => "lib has three modules"
+             } = subagent
+           ] = StreamState.list(state, "subagent")
+
+    assert subagent["runId"] == run["id"] and subagent["parentNodeId"] == run["rootNodeId"]
+
+    assert [%{"status" => "completed", "runId" => run_id, "subagentId" => id}] =
+             Enum.filter(StreamState.list(state, "turn-item"), &(&1["type"] == "subagent"))
+
+    assert run_id == run["id"] and id == subagent["id"]
+
+    # What the subagent said is its own thread's, not this turn's; the turn went on.
+    replies = World.replies(context, @thread)
+    refute "lib has three modules" in replies
+    assert "The subagent found three modules." in replies
+    Map.put(context, :subagent, subagent)
+  end
+
+  step "the user can open the subagent's own thread", context do
+    thread_id = World.thread_id(context, @thread)
+    child_id = context.subagent["childThreadId"]
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
+
+    assert %{"parentThreadId" => ^thread_id, "relationshipToParent" => "subagent"} =
+             StreamState.get(child, "thread")[child_id]["lineage"]
+
+    assert [{"user", "List the modules in lib"}, {"assistant", "lib has three modules"}] =
+             child
+             |> StreamState.list("message")
+             |> Enum.sort_by(& &1["createdAt"])
+             |> Enum.map(&{&1["role"], &1["text"]})
+
+    context
+  end
+
   step "the thread is in plan mode on Codex", context do
     World.fake_providers(context)
   end

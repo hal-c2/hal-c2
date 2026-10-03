@@ -150,6 +150,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   @impl true
   def handle_call({:start_turn, turn}, _from, state) do
     state = %{state | turn: turn, items: %{}, failure: nil, running: %{}}
+    # The threads this turn's subagents run in (`spawnAgent`): native thread id ->
+    # `%{sub: NativeSubagent handle, done: bool}`.
+    state = Map.put(state, :subagents, %{})
 
     case begin_turn(state, turn) do
       {:ok, state} ->
@@ -769,6 +772,39 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp notification(_method, _params, %{turn: nil} = state), do: state
 
+  # A subagent's own thread reports under its thread id: its answer goes to its child
+  # thread, and nothing it says (its `turn/completed` least of all) is this turn's.
+  defp notification(method, %{"threadId" => thread} = params, %{subagents: subagents} = state)
+       when is_map_key(subagents, thread) do
+    entry = subagents[thread]
+
+    sub =
+      case {method, params} do
+        {"item/agentMessage/delta", %{"delta" => delta}} when is_binary(delta) ->
+          HalC2.Orchestration.NativeSubagent.append(entry.sub, delta)
+
+        {"item/completed", %{"item" => %{"type" => "agentMessage", "text" => text}}}
+        when is_binary(text) and entry.sub.text == "" ->
+          HalC2.Orchestration.NativeSubagent.append(entry.sub, text)
+
+        _ ->
+          entry.sub
+      end
+
+    %{state | subagents: Map.put(subagents, thread, %{entry | sub: sub})}
+  end
+
+  # Codex's `spawnAgent` tool: each thread it starts is a subagent of this turn.
+  defp notification(
+         "item/" <> event,
+         %{"item" => %{"type" => "collabAgentToolCall"} = item},
+         state
+       )
+       when event in ["started", "completed"] do
+    state = spawned(flush(state), item)
+    if event == "completed", do: subagent_states(state, item), else: state
+  end
+
   # Another turn's item that is not running any more (a command stopped with its
   # turn, say) is not this turn's.
   defp notification(
@@ -1228,6 +1264,54 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp complete_item(state, _item), do: state
+
+  defp spawned(state, %{"tool" => "spawnAgent", "id" => id} = item) do
+    known = Map.get(state, :subagents, %{})
+
+    subagents =
+      for thread <- item["receiverThreadIds"] || [],
+          is_binary(thread) and not is_map_key(known, thread),
+          into: known do
+        sub =
+          HalC2.Orchestration.NativeSubagent.start(state.turn.ids, "#{id}:#{thread}", %{
+            "prompt" => item["prompt"] || "",
+            "title" => nil,
+            "model" => if(item["model"] in [nil, ""], do: nil, else: item["model"])
+          })
+
+        {thread, %{sub: sub, done: false}}
+      end
+
+    Map.put(state, :subagents, subagents)
+  end
+
+  defp spawned(state, _item), do: Map.put_new(state, :subagents, %{})
+
+  @agent_status %{
+    "interrupted" => "interrupted",
+    "completed" => "completed",
+    "errored" => "failed",
+    "shutdown" => "cancelled",
+    "notFound" => "failed"
+  }
+
+  # Where each agent of a collab tool call stands; one that ended ends its subagent
+  # with what it said last.
+  defp subagent_states(state, item) do
+    subagents =
+      for {thread, agent} <- item["agentsStates"] || %{}, reduce: state.subagents do
+        subagents ->
+          with %{done: false, sub: sub} = entry <- subagents[thread],
+               status when is_binary(status) <- @agent_status[agent["status"]] do
+            sub = HalC2.Orchestration.NativeSubagent.finish(sub, status, agent["message"])
+            Map.put(subagents, thread, %{entry | sub: sub, done: true})
+          else
+            _ -> subagents
+          end
+      end
+
+    %{state | subagents: subagents}
+  end
 
   # What a web search looked for, as the Node server lists it.
   defp web_patterns(item) do

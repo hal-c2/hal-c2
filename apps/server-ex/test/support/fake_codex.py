@@ -287,6 +287,23 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-look", "text": f"input {','.join(kinds)} saved {saved}"}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
+        # "spawn a subagent": the spawnAgent tool starts a thread of its own, which
+        # answers under its thread id and ends its turn before the tool call completes.
+        if "spawn a subagent" in text:
+            child = {"threadId": "native-child-1", "turnId": "native-child-turn-1"}
+            call = {"type": "collabAgentToolCall", "id": "collab-1", "tool": "spawnAgent", "prompt": "List the modules in lib",
+                    "senderThreadId": thread_id, "receiverThreadIds": [child["threadId"]]}
+            send({"method": "item/started", "params": {**ctx, "item": {**call, "status": "inProgress", "agentsStates": {}}}})
+            send({"method": "item/started", "params": {**child, "item": {"type": "agentMessage", "id": "child-msg", "text": ""}}})
+            send({"method": "item/agentMessage/delta", "params": {**child, "itemId": "child-msg", "delta": "lib has three modules"}})
+            send({"method": "item/completed", "params": {**child, "item": {"type": "agentMessage", "id": "child-msg", "text": "lib has three modules"}}})
+            send({"method": "turn/completed", "params": {**child, "turn": {"id": child["turnId"], "status": "completed"}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {**call, "status": "completed",
+                  "agentsStates": {child["threadId"]: {"status": "completed", "message": "lib has three modules"}}}}})
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-sub", "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-sub", "text": "The subagent found three modules."}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
         if "plan" in text:
             mode = (params.get("collaborationMode") or {}).get("mode")
             if mode == "plan":
