@@ -494,6 +494,9 @@ step(
 );
 
 async function closeActive(ctx: TerminalWorld) {
+  // "it" is whatever the scenario's Given opened (a preview, in slice-files.steps.ts).
+  const closeIt = (ctx as { closeIt?: () => Promise<void> }).closeIt;
+  if (closeIt) return closeIt();
   ctx.acted = true;
   await runCommand(ctx, "Close terminal");
 }

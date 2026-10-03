@@ -3,6 +3,7 @@
 // (or swap one method with `ctx.fake.override`).
 import {
   DEFAULT_SERVER_SETTINGS,
+  type PreviewSessionSnapshot,
   type ProviderInstanceMutation,
   type ServerProcessDiagnosticsResult,
   type ServerProvider,
@@ -10,6 +11,7 @@ import {
   type ServerTraceDiagnosticsResult,
 } from "@hal-c2/contracts";
 
+import type { OrchestrationShellSnapshot } from "../../src/connection.ts";
 import type { TuiFeatureClient } from "../../src/featureClient.ts";
 
 /** What the fake MC holds for the feature areas. */
@@ -27,9 +29,20 @@ export interface FakeServer {
   readonly instanceMutations: ProviderInstanceMutation[];
   processDiagnostics: ServerProcessDiagnosticsResult | null;
   traceDiagnostics: ServerTraceDiagnosticsResult | null;
+  /** The open previews of every thread. */
+  previews: PreviewSessionSnapshot[];
 }
 
-export function fakeFeatureClient(): { client: TuiFeatureClient; server: FakeServer } {
+/** The fake's shell, which project changes rewrite and push like the MC does. */
+export interface FakeShellPort {
+  readonly get: () => OrchestrationShellSnapshot;
+  readonly push: (snapshot: OrchestrationShellSnapshot) => void;
+}
+
+export function fakeFeatureClient(shell: FakeShellPort): {
+  client: TuiFeatureClient;
+  server: FakeServer;
+} {
   const server: FakeServer = {
     written: new Map(),
     providers: [],
@@ -39,7 +52,9 @@ export function fakeFeatureClient(): { client: TuiFeatureClient; server: FakeSer
     instanceMutations: [],
     processDiagnostics: null,
     traceDiagnostics: null,
+    previews: [],
   };
+  let previewCount = 0;
   const client: TuiFeatureClient = {
     writeFile: async (cwd, relativePath, contents) => {
       server.written.set(`${cwd}:${relativePath}`, contents);
@@ -75,6 +90,45 @@ export function fakeFeatureClient(): { client: TuiFeatureClient; server: FakeSer
     getTraceDiagnostics: async () => {
       if (!server.traceDiagnostics) throw new Error("no trace diagnostics");
       return server.traceDiagnostics;
+    },
+    updateProject: async (projectId, change) => {
+      const current = shell.get();
+      shell.push({
+        ...current,
+        projects: current.projects.map((project) =>
+          project.id === projectId ? { ...project, ...change } : project,
+        ),
+      } as OrchestrationShellSnapshot);
+    },
+    // The MC drops the project and its threads from the shell; nothing on disk changes.
+    deleteProject: async (projectId) => {
+      const current = shell.get();
+      shell.push({
+        ...current,
+        projects: current.projects.filter((project) => project.id !== projectId),
+        threads: current.threads.filter((thread) => thread.projectId !== projectId),
+      } as OrchestrationShellSnapshot);
+    },
+    listPreviews: async (threadId) =>
+      server.previews.filter((preview) => preview.threadId === threadId),
+    openPreview: async (threadId, url) => {
+      previewCount += 1;
+      const preview = {
+        threadId,
+        tabId: `tab-${previewCount}`,
+        navStatus: { _tag: "Success", url, title: url },
+        canGoBack: false,
+        canGoForward: false,
+        updatedAt: "2026-07-15T12:00:00.000Z",
+      } as unknown as PreviewSessionSnapshot;
+      server.previews = [...server.previews, preview];
+      return preview;
+    },
+    refreshPreview: async () => {},
+    closePreview: async (threadId, tabId) => {
+      server.previews = server.previews.filter(
+        (preview) => !(preview.threadId === threadId && preview.tabId === tabId),
+      );
     },
   };
   return { client, server };

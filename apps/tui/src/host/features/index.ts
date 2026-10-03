@@ -7,6 +7,7 @@ import { createKeysFeature } from "./keys.ts";
 import { createPlansFeature } from "./plans.ts";
 import { createServerFeature } from "./server.ts";
 import type { Feature, FeatureKit } from "./kit.ts";
+import { createWorkspaceFeature } from "./workspace.ts";
 
 export interface FeatureOptions extends Partial<EditorOptions> {
   readonly saveKeymap?: ((overrides: Record<string, string | null>) => void) | undefined;
@@ -44,6 +45,7 @@ export function createFeatures(
     createConversationFeature(kit),
     createPlansFeature(kit),
     createServerFeature(kit),
+    createWorkspaceFeature(kit),
     createEditorFeature(kit, {
       env: options.env ?? {},
       runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),

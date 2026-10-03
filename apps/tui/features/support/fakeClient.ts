@@ -390,7 +390,13 @@ export function fakeClient({
     if (outcome.kind === "fail") return Promise.reject(new Error(outcome.message));
     return Promise.resolve(value);
   };
-  const feature = fakeFeatureClient();
+  const feature = fakeFeatureClient({
+    get: () => latestShell,
+    push: (snapshot) => {
+      latestShell = snapshot;
+      shellSubscriber?.(snapshot);
+    },
+  });
   const client = {
     ...feature.client,
     hostPlatform,
