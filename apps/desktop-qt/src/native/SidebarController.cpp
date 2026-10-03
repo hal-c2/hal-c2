@@ -344,6 +344,21 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
                   {QStringLiteral("reason"), QStringLiteral("user")}}),
             QStringLiteral("Failed to un-settle thread"));
   } else if (action == QLatin1String("thread.unsnooze")) {
+    // A snooze the limit recovery made is ended there, so the MC does not
+    // snooze the thread again for the same reset (the web's handleUnsnooze).
+    const QJsonObject recovery = m_store->threadRow(key).value(QLatin1String("limitRecovery")).toObject();
+    const auto until = sidebar::parseIso(thread->snoozedUntil);
+    const auto reset = sidebar::parseIso(sidebar::Nullable(recovery.value(QLatin1String("resetAt")).toString()));
+    if (recovery.value(QLatin1String("snooze")).toBool() && thread->latestRun &&
+        recovery.value(QLatin1String("runId")).toString() == thread->latestRun->runId && until && reset && *until == *reset) {
+      command(thread->environmentId,
+              with({{QStringLiteral("type"), QStringLiteral("thread.metadata.update")},
+                    {QStringLiteral("limitRecovery"), QJsonObject{{QStringLiteral("runId"), recovery.value(QLatin1String("runId"))},
+                                                                  {QStringLiteral("resetAt"), recovery.value(QLatin1String("resetAt"))},
+                                                                  {QStringLiteral("snooze"), false}}}}),
+              QStringLiteral("Failed to wake thread"));
+      return true;
+    }
     command(thread->environmentId,
             with({{QStringLiteral("type"), QStringLiteral("thread.unsnooze")},
                   {QStringLiteral("reason"), QStringLiteral("user")}}),

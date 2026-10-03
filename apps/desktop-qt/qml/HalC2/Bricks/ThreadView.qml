@@ -91,7 +91,7 @@ Item {
         anchors.top: setupCard.visible ? setupCard.bottom : problemBar.visible ? problemBar.bottom : parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
         visible: !view.draft
         model: view.model
         showStatus: false
@@ -132,6 +132,17 @@ Item {
                 onClicked: Threads.reload(Threads.activeThread)
             }
         }
+    }
+
+    // The agent stopped on a usage limit: when it resets and what to do until then.
+    LimitRecoveryBanner {
+        id: limitBanner
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: implicitHeight
+        visible: recovery !== null && !view.draft
     }
 
     // How the thread's new worktree is being prepared.

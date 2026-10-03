@@ -47,6 +47,7 @@ ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
 CustomSnoozeDialog 1.0 CustomSnoozeDialog.qml
 WorktreeSetupCard 1.0 WorktreeSetupCard.qml
+LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
 CentreHost 1.0 CentreHost.qml
 ThreadView 1.0 ThreadView.qml
 DiffPanel 1.0 DiffPanel.qml

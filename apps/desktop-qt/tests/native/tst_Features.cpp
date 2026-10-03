@@ -435,7 +435,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/unread-and-status.feature:A project shows the most urgent state*"),
     QStringLiteral("threads/unread-and-status.feature:A working thread shows how long*"),
     QStringLiteral("threads/unread-and-status.feature:Marking a thread unread from its menu"),
-    QStringLiteral("threads/limited-threads.feature:A limited thread says so*"),
+    QStringLiteral("threads/limited-threads.feature"),
     QStringLiteral("threads/moving-between-machines.feature"),
     QStringLiteral("threads/creating.feature:A new thread uses the project default model*"),
     QStringLiteral("threads/search.feature:Searching spans every connected environment"),
