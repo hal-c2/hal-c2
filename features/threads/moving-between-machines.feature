@@ -35,6 +35,13 @@
 #     the source's disk to its own, a piece at a time, so neither machine holds one in memory.
 #     What a machine writes for a move it writes under its own directories, not the system's
 #     temporary one, which is often kept in memory.
+#   - A move within a cluster carries only the commits and files the destination's checkout of
+#     the repository does not already have: the destination names the commits its branches are
+#     at before the source bundles anything. A thread file is read by a machine the source
+#     knows nothing about, so it carries everything the thread's commits reach.
+#   - A thread file is read as it was written: the files in it go to disk a piece at a time.
+#   - How long a move waits on its destination grows with how much the thread carries. A
+#     destination that goes offline ends the wait at once.
 #   - Moving has no default shortcut. It is rare and deliberate; the menu, the palette and the
 #     agent tool are enough.
 #   - Export and import copy a thread between machines that are not in one cluster. Exporting
@@ -179,6 +186,15 @@ Feature: Moving a thread and its agent to another machine
     Scenario: Checkpoints are carried into the destination's repository
       Given "Alpha" has checkpoints for runs 1 to 3
       When "Alpha" moves to "desktop"
+      Then the checkpoints of runs 1 to 3 exist in the repository of "shop" on "desktop"
+      And the diff of each of those runs is the same as it was on "laptop"
+
+    @mc
+    Scenario: A move carries only what the destination's checkout does not have
+      Given "Alpha" has checkpoints for runs 1 to 3
+      When "Alpha" is being copied to "desktop"
+      Then what "desktop" was sent of the checkpoints leaves out the files its checkout already has
+      When the copy finishes
       Then the checkpoints of runs 1 to 3 exist in the repository of "shop" on "desktop"
       And the diff of each of those runs is the same as it was on "laptop"
 
@@ -474,6 +490,14 @@ Feature: Moving a thread and its agent to another machine
       And the file "alpha.hal-c2-thread" was exported from "laptop"
       When the user imports the file on "desktop" into the project "shop"
       Then "Alpha" is listed under "desktop" in "shop" with everything a move carries
+
+    @mc
+    Scenario: A thread file's files are read onto disk a piece at a time
+      Given "Alpha" has an attachment larger than the machines send at once
+      And the file "alpha.hal-c2-thread" was exported from "laptop"
+      When the user imports the file on "desktop" into the project "shop"
+      Then the attachment on "desktop" is the same as it was on "laptop"
+      And "desktop" keeps none of the copies it made to read the file
 
     @mc
     Scenario Outline: Importing without naming a project

@@ -189,6 +189,14 @@ defmodule HalC2.Test.Machines do
         do: :crypto.hash(:sha256, File.read!(path))
   end
 
+  @doc "The git bundles this MC holds for moves that have not finished arriving."
+  def incoming_move_bundles do
+    for path <- Path.wildcard(Path.join([HalC2.Paths.data_dir(), "incoming-moves", "*", "*"])),
+        data = File.read!(path),
+        String.starts_with?(data, "# v"),
+        do: data
+  end
+
   @doc "The bundles this MC holds that it made for a thread's archive."
   def archive_bundles do
     dir = Path.join(HalC2.Paths.cache_dir(), "thread-bundles")

@@ -37,6 +37,8 @@ defmodule HalC2.ThreadMove do
   @timeout 600_000
   # How much of a carried file crosses the cluster connection at a time.
   @chunk 512 * 1024
+  # Bytes a second: the slowest connection a move is still waited on over.
+  @slowest 128 * 1024
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -54,13 +56,14 @@ defmodule HalC2.ThreadMove do
          :ok <- movable(state(id), thread),
          :ok <- online(dest, thread),
          :ok <- save_terminals(id),
-         {:ok, archive} <- build(id) do
+         have = has(dest, thread, opts[:project]),
+         {:ok, archive} <- build(id, have: have) do
       try do
         with {:ok, %{"project" => _} = fit} <-
                ask(dest, :fit, [request(archive, opts[:project])], thread),
              notes = fit["notes"] ++ source_notes(id, thread, archive, dest),
              :ok <- confirmed(notes, opts[:confirmed] == true),
-             {:ok, archive} <- begin(id, dest, archive) do
+             {:ok, archive} <- begin(id, dest, archive, have) do
           transfer(id, dest, archive, fit, notes)
         end
       after
@@ -101,9 +104,8 @@ defmodule HalC2.ThreadMove do
   """
   def destinations(ref) do
     with {:ok, id} <- thread_id(ref),
-         {:ok, archive} <- build(id, session: false) do
+         {:ok, meta} <- describe(thread(id)) do
       online = Node.list()
-      meta = meta(archive)
 
       {:ok,
        for {mc, descriptor} <- Enum.sort_by(Shell.environments(), &elem(&1, 1)["label"]),
@@ -236,10 +238,28 @@ defmodule HalC2.ThreadMove do
       else: error(:mc_unavailable, "#{dest.label} is offline. #{thread["title"]} was not moved.")
   end
 
-  defp build(id, opts \\ []) do
+  defp build(id, opts) do
     case ThreadArchive.build(id, opts) do
       {:ok, archive} -> {:ok, archive}
       {:error, message} -> error(:thread_not_movable, message)
+    end
+  end
+
+  defp describe(thread) do
+    case ThreadArchive.describe(thread) do
+      {:ok, meta} -> {:ok, meta}
+      {:error, message} -> error(:thread_not_movable, message)
+    end
+  end
+
+  # The commits the destination's checkout for the thread has, which a move leaves out.
+  defp has(dest, thread, project) do
+    with {:ok, meta} <- ThreadArchive.describe(thread),
+         have when is_list(have) <-
+           remote(dest.mc, :have, [%{"thread" => meta, "project" => project}]) do
+      have
+    else
+      _ -> []
     end
   end
 
@@ -303,7 +323,7 @@ defmodule HalC2.ThreadMove do
 
   # Marks the thread moving, unless something changed it since it was checked; the
   # archive is rebuilt when the thread changed since it was built.
-  defp begin(id, dest, archive) do
+  defp begin(id, dest, archive, have) do
     at = Orchestration.Entities.now()
 
     marked =
@@ -332,11 +352,19 @@ defmodule HalC2.ThreadMove do
 
       if unchanged?,
         do: {:ok, archive},
-        else: with_release(id, fn -> build(id) end)
+        else: with_release(id, fn -> build(id, have: have) end)
     end
   end
 
-  # `archive` may be one `begin/3` built again, so its files are discarded here too.
+  # How long the destination gets to take a thread: the time its files take over a slow
+  # connection on top of what any move gets, so a large thread that is still arriving
+  # is not cut off. A destination that goes offline ends the wait at once.
+  defp patience(archive, data) do
+    files = for file <- ThreadArchive.files(archive), do: file["size"] || 0
+    @timeout + div((byte_size(data) + Enum.sum(files)) * 1000, @slowest)
+  end
+
+  # `archive` may be one `begin/4` built again, so its files are discarded here too.
   defp transfer(id, dest, archive, fit, notes) do
     data = ThreadArchive.encode(archive)
     hook(:sending, id)
@@ -348,7 +376,7 @@ defmodule HalC2.ThreadMove do
           __MODULE__,
           :accept,
           [data, node(), [project: fit["project"]]],
-          @timeout
+          patience(archive, data)
         )
       catch
         kind, reason -> {:broken, {kind, reason}}
@@ -509,6 +537,24 @@ defmodule HalC2.ThreadMove do
     else
       {:choose, result} -> result
       error -> error
+    end
+  end
+
+  @doc """
+  The commits at the branches of the checkout a thread would move into here. A move
+  carries the thread's commits without what these reach, which this MC has.
+  """
+  def have(%{"thread" => meta} = request) do
+    refs =
+      ~w[for-each-ref --sort=-committerdate --count=1000 --format=%(objectname)] ++
+        ~w[refs/heads refs/remotes]
+
+    with {:ok, project} <- pick_project(request, ThreadArchive.label(), meta["title"]),
+         [_] <- ThreadArchive.same_repository([project], %{"thread" => meta}),
+         {:ok, out} <- HalC2.Git.ok(project["workspaceRoot"], refs) do
+      out |> String.split("\n", trim: true) |> Enum.uniq()
+    else
+      _ -> []
     end
   end
 

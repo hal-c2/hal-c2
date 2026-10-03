@@ -909,6 +909,42 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  step "what {string} was sent of the checkpoints leaves out the files its checkout already has",
+       %{args: [machine]} = context do
+    staged = Machines.on(context, machine, Machines, :incoming_move_bundles, [])
+    assert [_ | _] = staged
+
+    # Read alone, each lacks the files of the repository both machines have.
+    for bundle <- staged do
+      empty = Mc.tmp_dir(context.mc, "empty")
+      World.git!(empty, ["init", "-q", "--bare"])
+      path = Path.join(empty, "sent.bundle")
+      File.write!(path, bundle)
+      assert {:error, _} = HalC2.Git.ok(empty, ["fetch", path, "refs/*:refs/*"])
+    end
+
+    context
+  end
+
+  step "the copy finishes", context do
+    send(context.held.pid, :release)
+    held_result(context)
+  end
+
+  step "the attachment on {string} is the same as it was on {string}",
+       %{args: [machine, _source]} = context do
+    assert {:ok, _} = context.imported
+    path = Machines.on(context, machine, HalC2.Attachments, :path, [%{"id" => context.recording}])
+    assert :crypto.hash(:sha256, File.read!(path)) == context.recording_sha256
+    context
+  end
+
+  step "{string} keeps none of the copies it made to read the file",
+       %{args: [machine]} = context do
+    assert Machines.on(context, machine, Machines, :archive_bundles, []) == []
+    context
+  end
+
   step "neither machine keeps the copies it made for the move", context do
     assert Machines.archive_bundles() == []
     assert Machines.on(context, context.move_to, Machines, :incoming_moves, []) == []

@@ -35,6 +35,7 @@ defmodule HalC2.ThreadArchive do
   @extension ".hal-c2-thread"
   # How much of a file is read at a time; whole base64 groups, so the pieces join.
   @piece 3 * 256 * 1024
+  @base64_key ~s("dataBase64":")
 
   @type archive :: map
 
@@ -52,40 +53,54 @@ defmodule HalC2.ThreadArchive do
     with {:ok, id} <- find_thread(ref),
          state = state(id),
          %{} = thread <- StreamState.get(state, "thread")[id] || {:error, "No thread #{ref}."},
-         :ok <- if(thread["movedTo"], do: {:error, moved_message(thread)}, else: :ok) do
-      project = project(thread["projectId"]) || %{}
-      root = project["workspaceRoot"]
+         {:ok, meta} <- describe(thread) do
+      root = meta["projectRoot"]
       cwd = thread["worktreePath"] || root
+      have = Keyword.get(opts, :have, [])
 
       {:ok,
        %{
          "format" => @format,
          "version" => @version,
          "exportedAt" => now(),
-         "thread" => %{
-           "id" => id,
-           "title" => thread["title"],
-           "projectId" => thread["projectId"],
-           "projectTitle" => project["title"],
-           "projectRoot" => root,
-           "repository" => repository(root),
-           "worktreePath" => thread["worktreePath"],
-           "branch" => thread["branch"],
-           "instanceId" =>
-             get_in(thread, ["modelSelection", "instanceId"]) || thread["providerInstanceId"],
-           "machine" => label()
-         },
+         "thread" => meta,
          "updatedAt" => state.updated_at,
          "entities" =>
            for({kind, eid, entity} <- StreamState.rows(state), do: [kind, eid, entity]),
          "attachments" => attachments(state),
          "terminalLogs" =>
            for({terminal, data} <- Terminal.saved_scrollback(id), do: file(terminal, data)),
-         "checkpoints" => checkpoints(state, root),
-         "worktree" => worktree(thread),
+         "checkpoints" => checkpoints(state, root, have),
+         "worktree" => worktree(thread, have),
          "session" => if(Keyword.get(opts, :session, true), do: session(state, thread, cwd))
        }}
     end
+  end
+
+  @doc """
+  What an archive says of a thread itself (its `"thread"`), from the thread's entity.
+  A thread that has moved away has none.
+  """
+  def describe(%{"movedTo" => %{}} = thread), do: {:error, moved_message(thread)}
+
+  def describe(%{"id" => id} = thread) do
+    project = project(thread["projectId"]) || %{}
+    root = project["workspaceRoot"]
+
+    {:ok,
+     %{
+       "id" => id,
+       "title" => thread["title"],
+       "projectId" => thread["projectId"],
+       "projectTitle" => project["title"],
+       "projectRoot" => root,
+       "repository" => repository(root),
+       "worktreePath" => thread["worktreePath"],
+       "branch" => thread["branch"],
+       "instanceId" =>
+         get_in(thread, ["modelSelection", "instanceId"]) || thread["providerInstanceId"],
+       "machine" => label()
+     }}
   end
 
   @doc "Writes a thread's archive to `path`, readable only by the user."
@@ -197,13 +212,110 @@ defmodule HalC2.ThreadArchive do
 
   # --- import --------------------------------------------------------------------
 
-  @doc "Imports the archive at `path`; see `import_archive/2`."
+  @doc """
+  Imports the archive at `path`; see `import_archive/2`. The files it carries are
+  written to this machine's disk a piece at a time as the file is read, so a large
+  thread file is not held in memory.
+  """
   @spec import_file(Path.t(), keyword) :: {:ok, map} | {:error, String.t()}
   def import_file(path, opts \\ []) do
-    case File.read(Path.expand(path)) do
-      {:ok, data} -> import_archive(data, opts)
-      {:error, reason} -> {:error, "Could not read #{path}: #{:file.format_error(reason)}."}
+    path = Path.expand(path)
+    dir = scratch()
+
+    try do
+      with {:ok, json, held} <- unpack(path, dir),
+           {:ok, %{} = archive} <- JSON.decode(json),
+           ^held <- Enum.sort(for %{"path" => path} <- files(archive), do: path) do
+        import_archive(archive, opts)
+      else
+        {:unreadable, reason} ->
+          {:error, "Could not read #{path}: #{:file.format_error(reason)}."}
+
+        # Not a thread file, or one that names a file on this machine or keeps base64
+        # somewhere other than a file it carries: read whole, it is told apart there.
+        _ ->
+          import_archive(File.read!(path), opts)
+      end
+    after
+      File.rm_rf(dir)
     end
+  end
+
+  # A thread file's JSON without the files it carries: the bytes of each are written
+  # into `dir`, and the JSON names that path where the file's base64 was. Returns the
+  # JSON and the paths, sorted.
+  defp unpack(path, dir) do
+    case File.open(path, [:read, :raw, :binary]) do
+      {:ok, io} ->
+        File.mkdir_p!(dir)
+
+        try do
+          unpack(io, dir, "", [], [])
+        after
+          File.close(io)
+        end
+
+      {:error, reason} ->
+        {:unreadable, reason}
+    end
+  end
+
+  defp unpack(io, dir, buffer, json, held) do
+    case :binary.match(buffer, @base64_key) do
+      {at, length} when at > 0 ->
+        {before, rest} = :erlang.split_binary(buffer, at)
+        rest = binary_part(rest, length, byte_size(rest) - length)
+
+        # Only as an object's key: quoted inside a longer string, a backslash precedes it.
+        if :binary.last(before) in ~c"{," do
+          to = Path.join(dir, Integer.to_string(length(held)))
+          rest = File.open!(to, [:write, :raw, :binary], &unpack_file(io, &1, to, rest, true))
+          unpack(io, dir, rest, [json, before, ~s("path":), JSON.encode!(to)], [to | held])
+        else
+          unpack(io, dir, rest, [json, before, @base64_key], held)
+        end
+
+      _ ->
+        # The end of what was read may be the start of a key.
+        keep = min(byte_size(buffer), byte_size(@base64_key))
+        {done, tail} = :erlang.split_binary(buffer, byte_size(buffer) - keep)
+
+        case :file.read(io, @piece) do
+          {:ok, more} -> unpack(io, dir, tail <> more, [json, done], held)
+          :eof -> {:ok, IO.iodata_to_binary([json, buffer]), Enum.sort(held)}
+          {:error, reason} -> {:unreadable, reason}
+        end
+    end
+  end
+
+  # Writes the bytes of the base64 string `buffer` is inside of to `out`, and returns
+  # what follows the string. Base64 that does not decode leaves no file, which fails
+  # the file's checksum.
+  defp unpack_file(io, out, to, buffer, ok) do
+    case :binary.match(buffer, "\"") do
+      {at, 1} ->
+        {last, <<?", rest::binary>>} = :erlang.split_binary(buffer, at)
+        unless ok and unpack_bytes(out, last), do: File.rm(to)
+        rest
+
+      :nomatch ->
+        {now, carry} =
+          :erlang.split_binary(buffer, byte_size(buffer) - rem(byte_size(buffer), 4))
+
+        # Padding only ends base64.
+        ok = ok and :binary.match(now, "=") == :nomatch and unpack_bytes(out, now)
+
+        case :file.read(io, @piece) do
+          {:ok, more} -> unpack_file(io, out, to, carry <> more, ok)
+          _ -> ""
+        end
+    end
+  end
+
+  defp unpack_bytes(out, base64) do
+    with {:ok, bytes} <- Base.decode64(base64),
+         do: :file.write(out, bytes) == :ok,
+         else: (_ -> false)
   end
 
   @doc """
@@ -664,9 +776,9 @@ defmodule HalC2.ThreadArchive do
 
   # The thread's checkpoint refs (and the workspace before its first run) as one
   # bundle, so diffs and rewinds work in another checkout of the repository.
-  defp checkpoints(_state, nil), do: nil
+  defp checkpoints(_state, nil, _have), do: nil
 
-  defp checkpoints(state, root) do
+  defp checkpoints(state, root, have) do
     scopes = StreamState.list(state, "checkpoint-scope")
 
     refs =
@@ -678,29 +790,69 @@ defmodule HalC2.ThreadArchive do
     cwd = scope_cwd(scopes, root)
 
     with [_ | _] <- refs,
-         bundle = scratch(),
-         {:ok, _} <- HalC2.Git.ok(cwd, ["bundle", "create", bundle | refs]) do
+         {:ok, bundle} <- bundle(cwd, refs, known(cwd, have)) do
       %{"refs" => refs, "bundle" => made("checkpoints.bundle", bundle)}
     else
       _ -> nil
     end
   end
 
-  # The branch of the thread's own worktree, with the commits it has that were never
-  # pushed.
-  defp worktree(%{"worktreePath" => path, "branch" => branch})
+  # The branch of the thread's own worktree. When the destination has the branch's
+  # commit already, the bundle is that one commit.
+  defp worktree(%{"worktreePath" => path, "branch" => branch}, have)
        when is_binary(path) and is_binary(branch) do
-    bundle = scratch()
+    ref = "refs/heads/#{branch}"
 
     with true <- File.dir?(path),
-         {:ok, _} <- HalC2.Git.ok(path, ["bundle", "create", bundle, "refs/heads/#{branch}"]) do
+         have = known(path, have),
+         {:ok, reached} <- HalC2.Git.ok(path, ["rev-list", "-n", "1", ref, "--not" | have]),
+         have = if(have != [] and reached == "", do: parents(path, ref), else: have),
+         {:ok, bundle} <- bundle(path, [ref], have) do
       %{"branch" => branch, "path" => path, "bundle" => made("worktree.bundle", bundle)}
     else
       _ -> nil
     end
   end
 
-  defp worktree(_thread), do: nil
+  defp worktree(_thread, _have), do: nil
+
+  # A bundle of `refs` without what the commits `have` reach, which the destination
+  # has. Git leaves a commit's files out only when told of its tree, which is what
+  # keeps a checkpoint (a commit with no parents) from carrying the whole checkout. A
+  # ref those commits reach whole is left out of such a bundle, so then the refs are
+  # bundled with everything they reach.
+  defp bundle(cwd, refs, have) do
+    path = scratch()
+    without = have ++ Enum.map(have, &(&1 <> "^{tree}"))
+
+    with [_ | _] <- have,
+         {:ok, _} <- HalC2.Git.ok(cwd, ["bundle", "create", path] ++ refs ++ ["--not" | without]),
+         {:ok, heads} <- HalC2.Git.ok(cwd, ["bundle", "list-heads", path]),
+         true <- length(String.split(heads, "\n", trim: true)) == length(refs) do
+      {:ok, path}
+    else
+      _ ->
+        File.rm(path)
+        with {:ok, _} <- HalC2.Git.ok(cwd, ["bundle", "create", path | refs]), do: {:ok, path}
+    end
+  end
+
+  # The commits of `have` this checkout has too.
+  defp known(_cwd, []), do: []
+
+  defp known(cwd, have) do
+    case HalC2.Git.ok(cwd, ["rev-list", "--no-walk=unsorted", "--ignore-missing" | have]) do
+      {:ok, out} -> String.split(out, "\n", trim: true)
+      _ -> []
+    end
+  end
+
+  defp parents(cwd, ref) do
+    case HalC2.Git.ok(cwd, ["rev-parse", ref <> "^@"]) do
+      {:ok, out} -> String.split(out, "\n", trim: true)
+      _ -> []
+    end
+  end
 
   defp scope_cwd(scopes, root) do
     Enum.find_value(scopes, root, fn scope ->
