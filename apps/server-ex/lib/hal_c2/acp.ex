@@ -994,6 +994,41 @@ defmodule HalC2.Acp do
   @doc "The agent capabilities an instance reported when it was last probed, or `nil`."
   def capabilities(id), do: :persistent_term.get({__MODULE__, id, :capabilities}, nil)
 
+  # A `$name` mention: a currency sign and a name, not an amount such as `$20` or `$5k`.
+  @skill_mention ~r/(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/u
+
+  @doc """
+  `text` with each `$name` that mentions one of Cursor's skills in `cwd` written as
+  Cursor takes it, `/name` (`rewriteCursorSkillMentions` in the Node server). Other
+  mentions, and amounts of money, are left as they are.
+  """
+  def cursor_skill_mentions(text, cwd) do
+    names = cursor_skills(cwd)
+
+    Regex.replace(@skill_mention, text, fn match, prefix, name ->
+      if MapSet.member?(names, name), do: prefix <> "/" <> name, else: match
+    end)
+  end
+
+  # The names of the skills Cursor loads in `cwd`: each folder with a SKILL.md under
+  # the project's and the user's `.cursor`, `.agents`, `.codex` and `.claude` skills,
+  # by its frontmatter `name`, else the folder's.
+  defp cursor_skills(cwd) do
+    for base <- [cwd, HalC2.Paths.user_home()],
+        is_binary(base),
+        root <- ~w(.cursor .agents .codex .claude),
+        dir = Path.join([base, root, "skills"]),
+        {:ok, entries} <- [File.ls(dir)],
+        entry <- entries,
+        {:ok, body} <- [File.read(Path.join([dir, entry, "SKILL.md"]))],
+        into: MapSet.new() do
+      case Regex.run(~r/\A---\s*\n.*?^name:\s*["']?([^"'\n]+?)["']?\s*$/ms, body) do
+        [_, name] -> String.trim(name)
+        _ -> entry
+      end
+    end
+  end
+
   @doc """
   Whether a registry agent is signed out: one that refused its last check for want of
   a sign-in is checked again now, since the user may have signed in outside HAL-C2.

@@ -125,7 +125,6 @@ Feature: Cursor
     When the user opens the limits view
     Then Cursor says usage needs a file-based login
 
-  @backlog
   Scenario: Cursor skills can be mentioned in the composer
     Given the project has the Cursor skill "deploy"
     When the user mentions "deploy" in a message
@@ -176,7 +175,6 @@ Feature: Cursor
     When a Cursor turn runs
     Then the project folder gains no files generated for Cursor
 
-  @backlog
   Scenario: Cursor receives the project's skills and rules
     Given the project has skills and rules for Cursor
     When a Cursor turn starts in the project

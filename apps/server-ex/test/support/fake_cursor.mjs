@@ -55,9 +55,23 @@ let agents = 0;
 const makeAgent = (options, resumed) => {
   if (refused(options.apiKey)) throw authError();
   const agentId = resumed ?? `cursor-agent-${process.pid}-${++agents}`;
+  // The SDK loads the project's rules and skills from the agent's working directory
+  // unless its setting sources leave the project out.
+  const sources = options.local?.settingSources;
+  const cwd = options.local?.cwd;
+  const loaded = [];
+  if (cwd && (sources === undefined || sources.includes("project") || sources.includes("all"))) {
+    for (const kind of ["rules", "skills"]) {
+      const folder = path.join(cwd, ".cursor", kind);
+      if (fs.existsSync(folder))
+        for (const name of fs.readdirSync(folder).sort()) loaded.push(`${kind}/${name}`);
+    }
+  }
   log({
     event: "agent",
     agentId,
+    cwd: cwd ?? null,
+    loaded,
     mode: options.mode,
     apiKey: options.apiKey,
     autoReview: options.local?.autoReview,

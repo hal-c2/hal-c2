@@ -423,6 +423,67 @@ defmodule HalC2.Steps.Providers.Cursor do
     context
   end
 
+  # --- skills and rules ------------------------------------------------------------------
+
+  defp cursor_skill(context, name) do
+    dir = Path.join([World.project(context).root, ".cursor", "skills", name])
+    File.mkdir_p!(dir)
+
+    File.write!(
+      Path.join(dir, "SKILL.md"),
+      "---\nname: #{name}\ndescription: Ship it\n---\nRun the deploy.\n"
+    )
+  end
+
+  step "the project has the Cursor skill {string}", %{args: [name]} = context do
+    cursor_skill(context, name)
+    context
+  end
+
+  # As the composer writes a skill mention: `$name`.
+  step "the user mentions {string} in a message", %{args: [name]} = context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", "use $#{name} and $other to ship it for $20")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    Map.merge(ctx, %{thread: "Cursor", mentioned: name})
+  end
+
+  step "Cursor receives the skill reference", context do
+    assert [%{"message" => message}] = Enum.filter(log(context), &(&1["event"] == "send"))
+    # The skill is named as Cursor invokes it; what is not a skill is left alone.
+    assert message == "use /#{context.mentioned} and $other to ship it for $20"
+    context
+  end
+
+  step "the project has skills and rules for Cursor", context do
+    cursor_skill(context, "deploy")
+    rules = Path.join([World.project(context).root, ".cursor", "rules"])
+    File.mkdir_p!(rules)
+    File.write!(Path.join(rules, "style.mdc"), "Use tabs.\n")
+    context
+  end
+
+  step "a Cursor turn starts in the project", context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", "hello")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  # The agent of the thread works in the project with Cursor's project settings on,
+  # which is where the SDK reads the rules and skills from.
+  step "Cursor receives the project's skills and rules", context do
+    root = World.project(context).root
+
+    assert [%{"cwd" => ^root, "settingSources" => nil, "loaded" => loaded}] =
+             Enum.filter(agents(context), &(&1["mode"] == "agent" and &1["cwd"] == root))
+
+    assert loaded == ["rules/style.mdc", "skills/deploy"]
+    context
+  end
+
   # --- plan mode ------------------------------------------------------------------------
 
   step "the thread is in plan mode on Cursor", context do

@@ -1893,10 +1893,18 @@ defmodule HalC2.Acp.ThreadRuntime do
     %{state | turn: nil, items: %{}}
   end
 
+  @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
+
   # The message, with where its files are; images inline when the agent takes them.
   defp acp_prompt(turn, capabilities, announce) do
     attachments = Map.get(turn, :attachments, [])
     message = HalC2.Attachments.prompt_text(turn.text, attachments)
+
+    # Cursor invokes a skill by its slash name; HAL-C2's composer mentions one as `$name`.
+    message =
+      if turn.ids.driver == "cursor" and message =~ @skill_mention,
+        do: HalC2.Acp.cursor_skill_mentions(message, turn.cwd),
+        else: message
 
     message =
       if announce,
