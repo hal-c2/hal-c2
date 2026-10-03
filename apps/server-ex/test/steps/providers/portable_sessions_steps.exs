@@ -25,7 +25,8 @@ defmodule HalC2.Steps.Providers.PortableSessions do
   @selections %{
     "claudeAgent" => %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"},
     "codex" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
-    "pi" => %{"instanceId" => "pi", "model" => "fake/one"}
+    "pi" => %{"instanceId" => "pi", "model" => "fake/one"},
+    "gemini" => %{"instanceId" => "gemini", "model" => "fake/one"}
   }
 
   # --- background ----------------------------------------------------------------------
@@ -116,7 +117,189 @@ defmodule HalC2.Steps.Providers.PortableSessions do
   end
 
   step ~r/^a copy of the session is placed in (?<where>.+)$/, %{args: [_where]} = context do
-    placed!(context, context.move_to)
+    case context.session.driver do
+      "gemini" -> gemini_placed!(context, context.move_to)
+      "opencode" -> opencode_placed!(context, context.move_to)
+      _ -> placed!(context, context.move_to)
+    end
+  end
+
+  # --- Gemini: an ACP agent that keeps each session in a file ---------------------------
+
+  step ~r/^"(?<title>[^"]+)" runs on Gemini with a native session on "(?<machine>[^"]+)"$/,
+       %{args: [title, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    run_on_gemini(context, title)
+  end
+
+  step "Gemini keeps that session in a chat file under its home, kept per project", context do
+    %{session: session} = context
+    source = root(context, local(context))
+    assert Path.dirname(session.path) == gemini_chats(context, local(context), source)
+
+    assert Path.basename(session.path) =~
+             ~r/^session-.+-#{String.slice(session.native, 0, 8)}\.json$/
+
+    assert %{"sessionId" => native, "projectHash" => hash} = JSON.decode!(session.original)
+    assert native == session.native
+    assert hash == project_hash(source)
+    context
+  end
+
+  step ~r/^on the next message the agent on "(?<machine>[^"]+)" loads the copy by the session's id$/,
+       %{args: [machine]} = context do
+    id = World.thread_id(context, context.moved_title)
+
+    run =
+      Machines.on(context, machine, Machines, :send_message, [
+        id,
+        "where are we",
+        @selections["gemini"]
+      ])
+
+    assert run["status"] == "completed"
+    [reply | _] = replies(context, machine, id)
+    # It remembers what was said on the other machine without being told again; the
+    # message says only where the project now lives.
+    assert String.starts_with?(reply, "said: write run-1.txt | <moved>")
+    assert String.ends_with?(reply, "</moved>\n\nwhere are we history False")
+
+    requests = gemini_requests(context, machine)
+    assert [%{"sessionId" => native, "cwd" => cwd}] = for({"session/load", p} <- requests, do: p)
+    assert native == context.session.native
+    assert cwd == root(context, machine)
+    # No new session was opened in the project (the MC's status check opens one elsewhere).
+    refute Enum.any?(requests, &match?({"session/new", %{"cwd" => ^cwd}}, &1))
+
+    [pt] = Machines.on(context, machine, Machines, :entities, [id, "provider-thread"])
+    assert pt["nativeThreadRef"]["nativeId"] == native
+    assert pt["carriedSession"] == nil
+    Map.put(context, :reply, reply)
+  end
+
+  # --- OpenCode: a session store of its own, with an export and an import -----------------
+
+  step ~r/^"(?<title>[^"]+)" runs on OpenCode with a native session on "(?<machine>[^"]+)"$/,
+       %{args: [title, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    HalC2.Test.FakeAcp.services()
+    World.put_app_env(:acp_commands, Application.get_env(:hal_c2, :acp_commands, %{}))
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Acp.forget("opencode") end)
+
+    for {label, _machine} <- context.machines do
+      Machines.on(context, label, Machines, :install_acp, [
+        acp_dir(context, label),
+        "opencode",
+        nil,
+        "fake_acp.py",
+        ["FAKE_ACP_SESSIONS=" <> opencode_store(context, label)]
+      ])
+    end
+
+    selection = %{"instanceId" => "opencode", "model" => "fake/one"}
+    context = World.patch_thread(context, title, %{"modelSelection" => selection})
+    assert %{"status" => "completed"} = World.finish_turn(context, title, "write run-1.txt")
+
+    [pt] = HalC2.StreamState.list(World.state(context, title), "provider-thread")
+    native = get_in(pt, ["nativeThreadRef", "nativeId"])
+    path = Path.join(opencode_store(context, machine), "#{native}.json")
+    original = File.read!(path)
+
+    Map.merge(context, %{
+      moved_title: title,
+      copies: %{machine => {path, original}},
+      session: %{
+        driver: "opencode",
+        native: native,
+        path: path,
+        selection: selection,
+        said: ["write run-1.txt"],
+        extra: [],
+        original: original
+      }
+    })
+  end
+
+  step "OpenCode keeps that session in its own session store, exported with its session export",
+       context do
+    %{session: session} = context
+    machine = local(context)
+    assert opencode_said(session.original) == session.said
+
+    # What `opencode export` hands over: the session, and the directory it belongs to.
+    assert {out, 0} =
+             System.cmd(
+               "env",
+               [
+                 "FAKE_ACP_SESSIONS=" <> opencode_store(context, machine),
+                 "python3",
+                 Path.expand("../../support/fake_acp.py", __DIR__),
+                 "export",
+                 session.native
+               ]
+             )
+
+    assert %{"info" => %{"id" => id, "directory" => directory}, "messages" => messages} =
+             JSON.decode!(out)
+
+    assert id == session.native
+    assert directory == root(context, machine)
+    assert messages == JSON.decode!(session.original)
+    context
+  end
+
+  step ~r/^on the next message the agent on "(?<machine>[^"]+)" resumes the imported session by its id$/,
+       %{args: [machine]} = context do
+    id = World.thread_id(context, context.moved_title)
+    %{native: native, selection: selection} = context.session
+
+    run = Machines.on(context, machine, Machines, :send_message, [id, "where are we", selection])
+    assert run["status"] == "completed"
+
+    requests = gemini_requests(context, machine)
+    opened = for {method, p} <- requests, method in ~w(session/resume session/load), do: p
+    assert [%{"sessionId" => ^native, "cwd" => cwd}] = opened
+    assert cwd == root(context, machine)
+    # No new session was opened in the project (the MC's status check opens one elsewhere).
+    refute Enum.any?(requests, &match?({"session/new", %{"cwd" => ^cwd}}, &1))
+
+    # The imported session goes on: what was said on the other machine, then this.
+    store = Path.join(opencode_store(context, machine), "#{native}.json")
+    said = opencode_said(Machines.on(context, machine, File, :read!, [store]))
+    assert ["write run-1.txt", last] = said
+    assert String.ends_with?(last, "where are we")
+
+    [pt] = Machines.on(context, machine, Machines, :entities, [id, "provider-thread"])
+    assert pt["nativeThreadRef"]["nativeId"] == native
+    Map.put(context, :reply, last)
+  end
+
+  step ~r/^"(?<title>[^"]+)" runs on Gemini and moved from "(?<from>[^"]+)" to "(?<to>[^"]+)" with its session$/,
+       %{args: [title, from, to]} = context do
+    assert Machines.machine(context, from) == :local
+    context = run_on_gemini(context, title)
+    context = move!(context, title, from, to)
+    # The chat "laptop" keeps is the one the move copied.
+    assert File.read!(context.session.path) == context.session.original
+    context
+  end
+
+  step ~r/^the copy of the session "(?<machine>[^"]+)" already had is left as it was$/,
+       %{args: [machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    assert %{"sessionCarried" => false} = move_result(context)
+    assert File.read!(context.session.path) == context.session.original
+
+    # The work done on the other machine is in its chat there, not in this one.
+    {copy, _} = context.copies[context.moved_from]
+    there = Machines.on(context, context.moved_from, File, :read!, [copy])
+    assert there =~ "work on #{context.moved_from}"
+    refute context.session.original =~ "work on #{context.moved_from}"
+
+    id = World.thread_id(context, context.moved_title)
+    [pt] = Machines.entities(id, "provider-thread")
+    assert pt["carriedSession"] == nil and pt["nativeThreadRef"] == nil
+    context
   end
 
   step ~r/^on the next message the agent on "(?<machine>[^"]+)" continues (?<how>.+)$/,
@@ -125,8 +308,13 @@ defmodule HalC2.Steps.Providers.PortableSessions do
   end
 
   step "it is not sent a transcript of the conversation", context do
+    # For OpenCode `context.reply` is the message its agent was sent; the other fakes
+    # say in their answer whether a transcript came with it.
     refute context.reply =~ @history
-    if context.session.driver != "pi", do: assert(context.reply =~ "history False")
+
+    if context.session.driver not in ["pi", "opencode"],
+      do: assert(context.reply =~ "history False")
+
     context
   end
 
@@ -331,8 +519,17 @@ defmodule HalC2.Steps.Providers.PortableSessions do
     context
   end
 
+  # Gemini cannot branch a session, so its move back may carry nothing; the step that
+  # follows says what became of the session.
   step "{string} moves back to {string}", %{args: [title, to]} = context do
-    move!(context, title, context.move_to, to)
+    if context.session.driver == "gemini" do
+      from = context.move_to
+      id = World.thread_id(context, title)
+      move = Machines.on(context, from, HalC2.ThreadMove, :move, [id, to, [confirmed: true]])
+      Map.merge(context, %{move: move, moved_from: from, move_to: to})
+    else
+      move!(context, title, context.move_to, to)
+    end
   end
 
   step "the agent on {string} continues the conversation including the work on {string}",
@@ -576,6 +773,140 @@ defmodule HalC2.Steps.Providers.PortableSessions do
   end
 
   # --- helpers ---------------------------------------------------------------------------
+
+  # The ACP registry's Gemini is the fake Gemini CLI on every machine (`fake_gemini.py`),
+  # keeping its chats under the machine's user home. Runs a turn on it and remembers
+  # the chat file the session is kept in.
+  defp run_on_gemini(context, title) do
+    HalC2.Test.FakeAcp.services()
+    World.put_app_env(:acp_commands, Application.get_env(:hal_c2, :acp_commands, %{}))
+
+    ExUnit.Callbacks.on_exit(fn ->
+      HalC2.Acp.forget("gemini")
+      :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    end)
+
+    for {label, _machine} <- context.machines do
+      home = Machines.user_home(context, label)
+
+      Machines.on(context, label, Machines, :install_acp, [
+        acp_dir(context, label),
+        "gemini",
+        "gemini",
+        "fake_gemini.py",
+        ["FAKE_GEMINI_HOME=" <> home]
+      ])
+    end
+
+    selection = @selections["gemini"]
+    context = World.patch_thread(context, title, %{"modelSelection" => selection})
+    assert %{"status" => "completed"} = World.finish_turn(context, title, "write run-1.txt")
+
+    [pt] = HalC2.StreamState.list(World.state(context, title), "provider-thread")
+    native = get_in(pt, ["nativeThreadRef", "nativeId"])
+    machine = local(context)
+    chats = gemini_chats(context, machine, root(context, machine))
+    assert [path] = Path.wildcard(Path.join(chats, "session-*.json"))
+    original = File.read!(path)
+
+    Map.merge(context, %{
+      moved_title: title,
+      copies: %{machine => {path, original}},
+      handoff: %{instance: "gemini", selection: selection},
+      session: %{
+        driver: "gemini",
+        native: native,
+        path: path,
+        home: Path.join(Machines.user_home(context, machine), ".gemini"),
+        said: ["write run-1.txt"],
+        extra: [],
+        original: original
+      }
+    })
+  end
+
+  # The fake OpenCode's session store on `machine` (`FAKE_ACP_SESSIONS`).
+  defp opencode_store(context, machine),
+    do: Path.join(acp_dir(context, machine), "opencode-store")
+
+  # What the user said in a stored OpenCode session, oldest first.
+  defp opencode_said(text) do
+    for %{"info" => %{"role" => "user"}, "parts" => parts} <- JSON.decode!(text),
+        do: Enum.map_join(parts, & &1["text"])
+  end
+
+  # OpenCode's own import put the session in the destination's store under its id,
+  # belonging to the destination's checkout, and the thread there carries it.
+  defp opencode_placed!(context, machine) do
+    %{session: session} = context
+    store = opencode_store(context, machine)
+    dest = root(context, machine)
+    copy = Path.join(store, "#{session.native}.json")
+    assert Machines.on(context, machine, File, :exists?, [copy]), "nothing imported at #{copy}"
+
+    assert JSON.decode!(Machines.on(context, machine, File, :read!, [copy])) ==
+             JSON.decode!(session.original)
+
+    assert Machines.on(context, machine, File, :read!, [Path.join(store, "#{session.native}.dir")]) ==
+             dest
+
+    # It was imported once, run in the destination project, already saying it belongs there.
+    imports = Machines.on(context, machine, File, :read!, [Path.join(store, "imports.jsonl")])
+
+    assert [%{"id" => id, "directory" => ^dest, "cwd" => cwd}] =
+             imports |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+
+    assert id == session.native
+    assert Path.basename(cwd) == Path.basename(dest)
+
+    thread = World.thread_id(context, context.moved_title)
+    [pt] = Machines.on(context, machine, Machines, :entities, [thread, "provider-thread"])
+    native = session.native
+    assert %{"carriedSession" => %{"nativeId" => ^native, "driver" => "opencode"}} = pt
+    Map.put(context, :copy, copy)
+  end
+
+  defp project_hash(root), do: :crypto.hash(:sha256, root) |> Base.encode16(case: :lower)
+
+  # Where Gemini CLI keeps the chats of the project at `root` on `machine`.
+  defp gemini_chats(context, machine, root),
+    do:
+      Path.join([
+        Machines.user_home(context, machine),
+        ".gemini/tmp",
+        project_hash(root),
+        "chats"
+      ])
+
+  # What the fake Gemini on `machine` was asked, as `{method, params}`, oldest first.
+  defp gemini_requests(context, machine) do
+    path = Path.join(acp_dir(context, machine), "acp-trace.jsonl")
+
+    for line <-
+          Machines.on(context, machine, File, :read!, [path]) |> String.split("\n", trim: true),
+        %{"in" => %{"method" => method} = message} <- [JSON.decode!(line)],
+        do: {method, message["params"] || %{}}
+  end
+
+  # The copy on `machine` is among the chats of its own checkout, under the name it
+  # had, saying it belongs to that project and otherwise as it was.
+  defp gemini_placed!(context, machine) do
+    %{session: session} = context
+    dest = root(context, machine)
+    copy = Path.join(gemini_chats(context, machine, dest), Path.basename(session.path))
+    assert Machines.on(context, machine, File, :exists?, [copy]), "no copy at #{copy}"
+
+    placed = JSON.decode!(Machines.on(context, machine, File, :read!, [copy]))
+    original = JSON.decode!(session.original)
+    assert placed == Map.put(original, "projectHash", project_hash(dest))
+    assert placed["projectHash"] != original["projectHash"]
+
+    id = World.thread_id(context, context.moved_title)
+    [pt] = Machines.on(context, machine, Machines, :entities, [id, "provider-thread"])
+    native = session.native
+    assert %{"carriedSession" => %{"path" => ^copy, "nativeId" => ^native}} = pt
+    Map.put(context, :copy, copy)
+  end
 
   # "~/..." on a machine: under its user home.
   defp at(context, machine, "~/" <> rest),

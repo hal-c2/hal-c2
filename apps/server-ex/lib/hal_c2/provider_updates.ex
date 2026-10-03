@@ -20,15 +20,21 @@ defmodule HalC2.ProviderUpdates do
   @names %{"codex" => "Codex", "claudeAgent" => "Claude"}
   @ttl :timer.hours(1)
 
-  @doc "The `versionAdvisory` for a provider whose executable is at `path`."
-  def advisory(driver, path, current) do
+  @doc """
+  The `versionAdvisory` for instance `instance` of `driver`, whose executable is at
+  `path`. Each instance has its own executable, so what it was offered and how its
+  update went are kept by instance.
+  """
+  def advisory(driver, path, current, instance \\ nil) do
+    instance = instance || driver
+
     latest =
       if HalC2.Settings.settings()["enableProviderUpdateChecks"] != false, do: latest(driver)
 
     update = update_command(driver, path)
     # What the user was shown; an update checks the installation still matches it.
-    if :persistent_term.get({__MODULE__, driver, :offered}, nil) != update,
-      do: :persistent_term.put({__MODULE__, driver, :offered}, update)
+    if :persistent_term.get({__MODULE__, instance, :offered}, nil) != update,
+      do: :persistent_term.put({__MODULE__, instance, :offered}, update)
 
     %{
       "status" =>
@@ -50,38 +56,47 @@ defmodule HalC2.ProviderUpdates do
   @doc """
   `server.updateProvider`: runs the provider's updater, then reports providers again.
   A `targetVersion` installs that exact release instead of the latest, which only
-  npm installs can do (`canInstallVersion`).
+  npm installs can do (`canInstallVersion`). An `instanceId` updates that instance's
+  executable instead of the driver's built-in one.
   """
   def update(%{"provider" => driver} = input) do
     target = input["targetVersion"]
+    instance = input["instanceId"] || driver
 
-    with {:path, path} when is_binary(path) <- {:path, executable(driver)},
-         {:command, [_ | _] = command} <- {:command, update_command(driver, path)},
-         {:target, true} <- {:target, target == nil or targeted(command, target) != nil} do
-      locked(lock_key(command), driver, fn -> run(driver, target) end)
-    else
-      {:path, _} -> error(driver, "#{@names[driver] || driver} is not installed on this machine.")
-      {:command, _} -> error(driver, "This installation cannot be updated from here.")
-      {:target, _} -> error(driver, "This installation cannot install v#{target}.")
+    try do
+      with {:path, path} when is_binary(path) <- {:path, executable(driver, instance)},
+           {:command, [_ | _] = command} <- {:command, update_command(driver, path)},
+           {:target, true} <- {:target, target == nil or targeted(command, target) != nil} do
+        locked(lock_key(command), instance, fn -> run(driver, instance, target) end)
+      else
+        {:path, _} ->
+          error(driver, "#{@names[driver] || driver} is not installed on this machine.")
+
+        {:command, _} ->
+          error(driver, "This installation cannot be updated from here.")
+
+        {:target, _} ->
+          error(driver, "This installation cannot install v#{target}.")
+      end
+    rescue
+      exception -> failed(driver, instance, nil, Exception.message(exception))
     end
-  rescue
-    exception -> failed(driver, nil, Exception.message(exception))
   end
 
   @doc "Adds the provider's `updateState` to its entry, once it has been updated."
   def put_state(%{"driver" => driver} = entry) do
-    case :persistent_term.get({__MODULE__, driver, :state}, nil) do
+    case :persistent_term.get({__MODULE__, entry["instanceId"] || driver, :state}, nil) do
       nil -> entry
       state -> Map.put(entry, "updateState", state)
     end
   end
 
   # One installer runs one update at a time; the others wait their turn, queued.
-  defp locked(key, driver, fun) do
+  defp locked(key, instance, fun) do
     lock = {{__MODULE__, key}, self()}
 
     unless :global.set_lock(lock, [node()], 0) do
-      put_state(driver, "queued", nil, "Waiting for another provider update to finish.")
+      put_state(instance, "queued", nil, "Waiting for another provider update to finish.")
       true = :global.set_lock(lock, [node()])
     end
 
@@ -96,35 +111,35 @@ defmodule HalC2.ProviderUpdates do
   defp lock_key([_npm, "install", "-g", "--prefix", prefix | _]), do: "npm-global:" <> prefix
   defp lock_key([path | _]), do: "self:" <> path
 
-  defp run(driver, target) do
+  defp run(driver, instance, target) do
     started = HalC2.Orchestration.Entities.now()
-    put_state(driver, "running", started, "Updating provider.")
-    offered = :persistent_term.get({__MODULE__, driver, :offered}, nil)
-    path = executable(driver)
+    put_state(instance, "running", started, "Updating provider.")
+    offered = :persistent_term.get({__MODULE__, instance, :offered}, nil)
+    path = executable(driver, instance)
     command = path && update_command(driver, path)
 
     cond do
       command == nil or (offered != nil and offered != command) ->
-        failed(driver, started, "Provider installation changed. Refresh and try again.")
+        failed(driver, instance, started, "Provider installation changed. Refresh and try again.")
 
       true ->
         [program | args] = if target, do: targeted(command, target), else: command
 
         case System.cmd(program, args, stderr_to_stdout: true) do
           {output, 0} ->
-            verify(driver, started, output, target)
+            verify(driver, instance, started, output, target)
 
           {output, _} ->
-            failed(driver, started, output |> String.trim() |> String.slice(-500, 500))
+            failed(driver, instance, started, output |> String.trim() |> String.slice(-500, 500))
         end
     end
   end
 
   # "Succeeded" needs the provider to be installed and no longer behind, or at the
   # version that was asked for.
-  defp verify(driver, started, output, target) do
-    forget_version(driver)
-    entry = Enum.find(HalC2.Environment.providers(), &(&1["driver"] == driver))
+  defp verify(driver, instance, started, output, target) do
+    forget_version(driver, executable(driver, instance))
+    entry = Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
 
     {status, message} =
       cond do
@@ -143,20 +158,21 @@ defmodule HalC2.ProviderUpdates do
           {"succeeded", "Provider updated."}
       end
 
-    put_state(driver, status, started, message, output)
+    put_state(instance, status, started, message, output)
     {:ok, %{"providers" => HalC2.Environment.providers()}}
   end
 
-  defp failed(driver, started, reason) do
-    put_state(driver, "failed", started, if(reason == "", do: "The update failed.", else: reason))
+  defp failed(driver, instance, started, reason) do
+    message = if reason == "", do: "The update failed.", else: reason
+    put_state(instance, "failed", started, message)
     error(driver, reason)
   end
 
-  defp put_state(driver, status, started, message, output \\ nil) do
+  defp put_state(instance, status, started, message, output \\ nil) do
     finished =
       if status in ["succeeded", "failed", "unchanged"], do: HalC2.Orchestration.Entities.now()
 
-    :persistent_term.put({__MODULE__, driver, :state}, %{
+    :persistent_term.put({__MODULE__, instance, :state}, %{
       "status" => status,
       "startedAt" => started,
       "finishedAt" => finished,
@@ -233,25 +249,30 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
-  defp executable(driver) when driver in ["codex", "claudeAgent"] do
+  defp executable(driver, instance) when driver in ["codex", "claudeAgent"] do
     key = if driver == "codex", do: :codex_command, else: :claude_command
     default = [if(driver == "codex", do: "codex", else: "claude")]
 
-    case HalC2.Settings.instance_command(driver, Application.get_env(:hal_c2, key, default)) do
+    case HalC2.Settings.instance_command(instance, Application.get_env(:hal_c2, key, default)) do
       [command | _] -> System.find_executable(command)
       _ -> nil
     end
   end
 
-  defp executable(_), do: nil
+  defp executable(_driver, _instance), do: nil
 
-  # Provider entries cache their version; an update makes it stale.
-  defp forget_version("codex"), do: :persistent_term.erase({HalC2.Codex.Provider, :version})
+  # Provider entries cache the version of each executable; an update makes the
+  # updated one's stale, and only that one is read again.
+  defp forget_version(driver, path) do
+    module = %{"codex" => HalC2.Codex.Provider, "claudeAgent" => HalC2.Claude.Provider}[driver]
 
-  defp forget_version("claudeAgent"),
-    do: :persistent_term.erase({HalC2.Claude.Provider, :version})
+    if module do
+      versions = :persistent_term.get({module, :version}, %{})
+      :persistent_term.put({module, :version}, Map.delete(versions, path))
+    end
 
-  defp forget_version(_), do: :ok
+    :ok
+  end
 
   # The latest release as last read, starting a read when it is missing or stale.
   defp latest(driver) do

@@ -344,4 +344,166 @@ defmodule HalC2.Steps.Providers.ProviderInstancesCustom do
     assert settings["providers"][context.instance]["binaryPath"] == context.binary_path
     context
   end
+
+  # --- a second instance's own executable ---------------------------------------------
+
+  @second %{
+    "Codex" => %{
+      driver: "codex",
+      key: :codex_command,
+      args: ["app-server"],
+      fake: "fake_codex.py",
+      version: "codex-cli %s",
+      package: "@openai/codex"
+    },
+    "Claude" => %{
+      driver: "claudeAgent",
+      key: :claude_command,
+      args: [],
+      fake: "fake_claude.py",
+      version: "%s (Claude Code)",
+      package: "@anthropic-ai/claude-code"
+    }
+  }
+
+  # A CLI that logs each start to `log`, answers `--version`, and is the fake otherwise.
+  defp logging_cli(path, log, fake, version_line) do
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(path, """
+    #!/bin/sh
+    printf '%s\\n' "$0 $*" >> #{log}
+    if [ "$1" = "--version" ]; then echo "#{version_line}"; exit 0; fi
+    exec python3 -u #{Path.expand("../../support/#{fake}", __DIR__)} "$@"
+    """)
+
+    File.chmod!(path, 0o755)
+  end
+
+  defp starts(log) do
+    case File.read(log) do
+      {:ok, text} -> String.split(text, "\n", trim: true)
+      {:error, :enoent} -> []
+    end
+  end
+
+  # The built-in instance runs one executable; the second instance names another, which
+  # npm installed under its own prefix (so npm is what updates it). Both log their starts.
+  step ~r/^a second (?<provider>Codex|Claude) instance "(?<id>[^"]+)" with the binary path "(?<path>[^"]+)"$/,
+       %{args: [provider, id, path]} = context do
+    context = Acp.ready(context)
+
+    %{driver: driver, key: key, args: args, fake: fake, version: version, package: package} =
+      @second[provider]
+
+    home = context.mc.home
+    logs = %{default: Path.join(home, "default-cli.log"), own: Path.join(home, "own-cli.log")}
+
+    default = Path.join(home, "default/bin/#{Path.basename(path)}")
+    logging_cli(default, logs.default, fake, String.replace(version, "%s", "1.1.1"))
+    Application.put_env(:hal_c2, key, [default | args])
+
+    binary = Path.join(home, path)
+    prefix = binary |> Path.dirname() |> Path.dirname()
+    real = Path.join([prefix, "lib/node_modules", package, "bin/cli.js"])
+    logging_cli(real, logs.own, fake, String.replace(version, "%s", "7.7.7"))
+    File.mkdir_p!(Path.dirname(binary))
+    File.ln_s!(real, binary)
+
+    npm = Path.join(prefix, "bin/npm")
+    File.write!(npm, "#!/bin/sh\necho \"$0 $*\" >> #{Path.join(home, "npm.log")}\n")
+    File.chmod!(npm, 0o755)
+
+    Acp.put_instance(id, %{
+      "driver" => driver,
+      "enabled" => true,
+      "config" => %{"binaryPath" => binary}
+    })
+
+    # A newer release is out, so there is an update to check for.
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, driver},
+      {"9.0.0", System.monotonic_time(:millisecond)}
+    )
+
+    Map.merge(context, %{
+      instance: id,
+      driver: driver,
+      binary: binary,
+      prefix: prefix,
+      package: package,
+      cli_logs: logs
+    })
+  end
+
+  step "the MC checks the version, update and usage of {string}", %{args: [id]} = context do
+    # The MC is up: it has listed its providers and read their usage once.
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh([])
+    assert %{"version" => "1.1.1"} = Acp.provider(context.driver)
+    usage_before = HalC2.ProviderUsageLimits.get(context.driver)
+
+    # Now the instance alone is checked again: nothing asked so far counts, and its
+    # version is read afresh.
+    for module <- [HalC2.Codex.Provider, HalC2.Claude.Provider] do
+      versions = :persistent_term.get({module, :version}, %{})
+      :persistent_term.put({module, :version}, Map.delete(versions, context.binary))
+    end
+
+    for {_, log} <- context.cli_logs, do: File.rm(log)
+    context = Map.put(context, :usage_before, usage_before)
+
+    entry = Acp.provider(id)
+    :ok = HalC2.ProviderUsageLimits.refresh([id])
+    :sys.get_state(HalC2.ProviderUsageLimits)
+
+    {reply, context} =
+      World.call(context, "server.updateProvider", %{
+        "provider" => context.driver,
+        "instanceId" => id
+      })
+
+    Map.merge(context, %{checked: entry, reply: reply})
+  end
+
+  step "each check runs {string}", %{args: [_path]} = context do
+    %{binary: binary, instance: id} = context
+    own = starts(context.cli_logs.own)
+
+    # The version: read from the instance's executable.
+    assert "#{binary} --version" in own
+    assert %{"version" => "7.7.7", "versionAdvisory" => advisory} = context.checked
+    assert %{"currentVersion" => "7.7.7", "status" => "behind_latest"} = advisory
+
+    # The update: offered and run through the npm that installed that executable.
+    command =
+      "#{context.prefix}/bin/npm install -g --prefix #{context.prefix} #{context.package}@latest"
+
+    assert advisory["updateCommand"] == command
+    assert {:ok, %{"providers" => providers}} = context.reply
+    assert starts(Path.join(context.mc.home, "npm.log")) == [command]
+
+    assert %{"updateState" => %{"status" => "unchanged"}} =
+             Enum.find(providers, &(&1["instanceId"] == id))
+
+    # The usage: read from a session of the instance's executable.
+    assert Enum.any?(
+             own,
+             &(&1 != "#{binary} --version" and String.starts_with?(&1, binary <> " "))
+           )
+
+    assert %{"checkedAt" => at} = HalC2.ProviderUsageLimits.get(id)
+    assert is_binary(at)
+    context
+  end
+
+  step "none runs the default instance's executable", context do
+    assert starts(context.cli_logs.default) == []
+
+    default = Acp.provider(context.driver)
+    assert default["version"] == "1.1.1"
+    refute Map.has_key?(default, "updateState")
+    assert HalC2.ProviderUsageLimits.get(context.driver) == context.usage_before
+    context
+  end
 end

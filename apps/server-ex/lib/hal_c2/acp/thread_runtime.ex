@@ -188,7 +188,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_call({:start_turn, turn}, _from, state) do
     driver = turn.ids.driver
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{driver}:#{turn.ids.run}")
-    turn = %{turn | ids: ids}
+    turn = carried(%{turn | ids: ids})
     # Subagents still working in the background carry over; the rest were this turn's.
     subagents = Map.filter(state.subagents, fn {_, e} -> background?(e) and not e.done end)
 
@@ -204,6 +204,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     with :ok <- Antigravity.check_turn(turn),
          :ok <- check_signed_in(state, driver),
          {:ok, state} <- ensure_session(state, turn),
+         {state, turn} = settle_carried(state, turn),
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn) do
@@ -630,6 +631,31 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp serve(state, plan),
     do: launch(state, plan.instance, state.mode || "approval-required", plan.cwd)
 
+  # A session carried from another machine (`HalC2.PortableSessions`) is the thread's
+  # session here: the agent loads the copy by its id, as it loads any session of its own.
+  defp carried(%{fork: %{carried: true, thread: id}} = turn) when is_binary(id),
+    do: %{turn | native_thread_id: id}
+
+  defp carried(turn), do: turn
+
+  # An agent that could not load the copy has started a new session instead, which
+  # gets the conversation as a transcript.
+  defp settle_carried(state, %{fork: %{carried: true, thread: id} = fork} = turn) do
+    if state.session_id == id do
+      record_session(state, id)
+      turn = %{turn | fork: nil}
+      {%{state | turn: turn}, turn}
+    else
+      text = HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
+      turn = %{turn | fork: nil, text: text}
+      {%{state | turn: turn}, turn}
+    end
+  end
+
+  defp settle_carried(state, turn), do: {state, turn}
+
+  defp fork_first(_state, %{fork: %{carried: true}} = turn), do: {:ok, turn}
+
   # A forked OpenCode thread's first turn opens a fork of the source's session, cut
   # before the source's turn after the fork point.
   defp fork_first(%{server: server} = state, %{fork: %{thread: source} = fork} = turn)
@@ -980,13 +1006,16 @@ defmodule HalC2.Acp.ThreadRuntime do
        do: subagent_call(state, id, call)
 
   defp update(%{"sessionUpdate" => "tool_call", "toolCallId" => id} = call, state) do
-    if subagent_call?(call, state),
-      do: subagent_call(state, id, call),
-      else: tool(state, id, call)
+    cond do
+      plan_call?(call, state) -> plan_call(state, id, call)
+      subagent_call?(call, state) -> subagent_call(state, id, call)
+      true -> tool(state, id, call)
+    end
   end
 
   defp update(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id} = call, state) do
     cond do
+      plan_call?(call, state) -> plan_call(state, id, call)
       Map.has_key?(state.items, id) -> tool_update(state, id, call)
       subagent_call?(call, state) -> subagent_call(state, id, call)
       true -> tool_update(state, id, call)
@@ -1213,7 +1242,39 @@ defmodule HalC2.Acp.ThreadRuntime do
       Enum.any?([input["subagent_type"], input["subagentType"]], &(is_binary(&1) and &1 != ""))
   end
 
-  defp subagent_call?(_call, _state), do: false
+  # Cursor's `createPlan` tool hands the user a plan (cursor-acp names the call after
+  # the SDK's tool and repeats its input when it ends). It is a proposed plan once
+  # the tool has finished, never a tool call in the timeline.
+  defp plan_call?(%{"title" => "createPlan"}, %{turn: %{ids: %{driver: driver}}}),
+    do: HalC2.Acp.driver(driver) == "cursor"
+
+  defp plan_call?(_call, _state), do: false
+
+  defp plan_call(state, id, %{"status" => "completed", "rawInput" => %{"plan" => plan}})
+       when is_binary(plan) do
+    native = "plan:#{id}"
+
+    markdown =
+      case String.trim(plan) do
+        "" -> @empty_plan
+        text -> text
+      end
+
+    state |> flush() |> ensure_item(native, :plan) |> finish_plan(native, markdown)
+  end
+
+  defp plan_call(state, _id, _call), do: state
+
+  # Cursor's and OpenCode's `task` tool runs a subagent to its end inside the tool
+  # call: cursor-acp names the call after the SDK's tool, and OpenCode's input names
+  # the subagent it picked.
+  defp subagent_call?(call, %{turn: %{ids: %{driver: driver}}}) do
+    input = call["rawInput"] || %{}
+
+    HalC2.Acp.driver(driver) in ["cursor", "opencode"] and
+      (String.downcase(call["title"] || "") == "task" or
+         (is_binary(input["subagent_type"]) and input["subagent_type"] != ""))
+  end
 
   # The subagent's own session streams under another session id: its answer goes to
   # its child thread. Updates for a session no subagent has named yet wait for it.
