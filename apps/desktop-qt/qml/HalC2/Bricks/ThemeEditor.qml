@@ -103,7 +103,7 @@ Popup {
             Layout.fillWidth: true
             text: colorField.label
             color: editor.foreground
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             elide: Text.ElideRight
         }
 
@@ -122,7 +122,7 @@ Popup {
         Label {
             text: editor.draft.id ? qsTr("Edit theme") : qsTr("New theme")
             color: editor.foreground
-            font.pixelSize: 16
+            font.pixelSize: Math.round(16 * Theme.fontScale)
             font.weight: Font.DemiBold
         }
 
@@ -201,7 +201,7 @@ Popup {
                     visible: roleRow.modelData.role === ""
                     text: roleRow.modelData.heading
                     color: editor.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 

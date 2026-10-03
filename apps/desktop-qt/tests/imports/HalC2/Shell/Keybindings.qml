@@ -5,6 +5,8 @@ import QtQuick
 // no shortcuts, and presses and edits are recorded. The native layout tests
 // register this file too (qmlRegisterSingletonType).
 QtObject {
+    property bool modelPickerOpen: false
+    property string filePath: ""
     property var shortcuts: []
     property var bindings: []
     property bool saving: false

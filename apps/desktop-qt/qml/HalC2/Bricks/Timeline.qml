@@ -117,7 +117,7 @@ Item {
     component RowText: Text {
         color: root.textColor
         font.family: root.uiFamily
-        font.pixelSize: 13
+        font.pixelSize: Math.round(13 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -127,7 +127,7 @@ Item {
         signal clicked
         color: actionHover.hovered ? root.textColor : root.mutedColor
         font.family: root.uiFamily
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         HoverHandler {
             id: actionHover
             cursorShape: Qt.PointingHandCursor
@@ -145,7 +145,7 @@ Item {
         visible: text.length > 0
         color: root.mutedColor
         font.family: root.uiFamily
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         font.features: {
             "tnum": 1
         }
@@ -225,7 +225,7 @@ Item {
             id: pillText
             anchors.centerIn: parent
             font.family: root.uiFamily
-            font.pixelSize: 10
+            font.pixelSize: Math.round(10 * Theme.fontScale)
         }
     }
 
@@ -262,7 +262,7 @@ Item {
             textFormat: Text.PlainText
             color: line.labelColor
             font.family: root.uiFamily
-            font.pixelSize: 14
+            font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: line.labelWeight
             elide: Text.ElideRight
             maximumLineCount: 1
@@ -415,7 +415,7 @@ Item {
                         anchors.rightMargin: 4
                         text: row.attribution ?? ""
                         color: Qt.alpha(root.mutedColor, 0.7)
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
                     // How it reached the agent (UserMessageIntentMarker).
                     Row {
@@ -433,7 +433,7 @@ Item {
                         RowText {
                             text: row.intent === "queued_turn" ? qsTr("Queued") : qsTr("Steer")
                             color: root.mutedColor
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                             HoverHandler {
                                 id: intentHover
@@ -533,7 +533,7 @@ Item {
                                         spacing: 12
                                         RowText {
                                             text: changedFiles.changed.length === 1 ? qsTr("1 changed file") : qsTr("%1 changed files").arg(changedFiles.changed.length)
-                                            font.pixelSize: 12
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
                                             font.weight: Font.Medium
                                             wrapMode: Text.NoWrap
                                         }
@@ -544,13 +544,13 @@ Item {
                                                 text: "+" + parent.totals[0]
                                                 color: root.successColor
                                                 font.family: root.monoFamily
-                                                font.pixelSize: 12
+                                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                             }
                                             RowText {
                                                 text: "-" + parent.totals[1]
                                                 color: root.errorColor
                                                 font.family: root.monoFamily
-                                                font.pixelSize: 12
+                                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                             }
                                         }
                                     }
@@ -582,7 +582,7 @@ Item {
                                                 visible: filesCard.width >= 384
                                                 text: qsTr("Open diff")
                                                 color: openDiffHover.hovered ? root.textColor : root.mutedColor
-                                                font.pixelSize: 12
+                                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                                 wrapMode: Text.NoWrap
                                             }
                                         }
@@ -627,7 +627,7 @@ Item {
                                                 text: changedFile.modelData.path
                                                 color: changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
                                                 font.family: root.monoFamily
-                                                font.pixelSize: 12
+                                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                                 wrapMode: Text.NoWrap
                                                 elide: Text.ElideMiddle
                                             }
@@ -641,13 +641,13 @@ Item {
                                                     text: "+" + changedFile.modelData.additions
                                                     color: root.successColor
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: 10
+                                                    font.pixelSize: Math.round(10 * Theme.fontScale)
                                                 }
                                                 RowText {
                                                     text: "-" + changedFile.modelData.deletions
                                                     color: root.errorColor
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: 10
+                                                    font.pixelSize: Math.round(10 * Theme.fontScale)
                                                 }
                                             }
                                             HoverHandler {
@@ -760,7 +760,7 @@ Item {
                                     visible: text.length > 0
                                     text: call.modelData.statusLabel ?? ""
                                     wrapMode: Text.NoWrap
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                     color: call.failed ? root.toolErrorColor : root.mutedColor
                                 }
                                 Stamp {
@@ -809,7 +809,7 @@ Item {
                                             textFormat: Text.PlainText
                                             wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                             font.family: root.monoFamily
-                                            font.pixelSize: 11
+                                            font.pixelSize: Math.round(11 * Theme.fontScale)
                                         }
                                         RowText {
                                             visible: text.length > 0
@@ -827,7 +827,7 @@ Item {
                                         RowText {
                                             visible: call.modelData.exitCode !== undefined
                                             text: qsTr("Exit code %1").arg(call.modelData.exitCode)
-                                            font.pixelSize: 11
+                                            font.pixelSize: Math.round(11 * Theme.fontScale)
                                             color: root.mutedColor
                                         }
                                     }
@@ -854,7 +854,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: row.title ?? ""
                             color: foldHover.hovered ? root.textColor : root.mutedColor
-                            font.pixelSize: 14
+                            font.pixelSize: Math.round(14 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                         }
                         ShellIcon {
@@ -926,7 +926,7 @@ Item {
                                     anchors.centerIn: parent
                                     text: qsTr("Plan")
                                     color: root.secondaryTextColor
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                     font.weight: Font.Medium
                                     wrapMode: Text.NoWrap
                                 }
@@ -935,7 +935,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: parent.width - planBadge.width - 8
                                 text: row.title ?? ""
-                                font.pixelSize: 14
+                                font.pixelSize: Math.round(14 * Theme.fontScale)
                                 font.weight: Font.Medium
                                 wrapMode: Text.NoWrap
                                 elide: Text.ElideRight
@@ -1013,7 +1013,7 @@ Item {
                                 id: subagentTitle
                                 width: Math.min(implicitWidth, parent.width - (subagentStatus.visible ? subagentStatus.width + 8 : 0))
                                 text: row.title ?? ""
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                 font.weight: Font.Medium
                                 wrapMode: Text.NoWrap
                                 elide: Text.ElideRight
@@ -1024,7 +1024,7 @@ Item {
                                 visible: subagentRow.hasDetail && row.status !== "completed" && text.length > 0
                                 text: row.statusLabel ?? ""
                                 color: subagentRow.failed ? root.errorColor : root.mutedColor
-                                font.pixelSize: 10
+                                font.pixelSize: Math.round(10 * Theme.fontScale)
                                 wrapMode: Text.NoWrap
                             }
                         }
@@ -1032,7 +1032,7 @@ Item {
                             width: parent.width
                             text: subagentRow.hasDetail ? row.text : (row.statusLabel ?? "")
                             color: subagentRow.failed ? root.errorColor : root.mutedColor
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
                         }
@@ -1069,7 +1069,7 @@ Item {
                         text: row.text ?? ""
                         textFormat: Text.PlainText
                         color: Qt.alpha(root.textColor, 0.8)
-                        font.pixelSize: 14
+                        font.pixelSize: Math.round(14 * Theme.fontScale)
                     }
                 }
             }
@@ -1102,7 +1102,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: row.title ?? ""
                             color: root.mutedColor
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             font.weight: Font.Medium
                             wrapMode: Text.NoWrap
                         }
@@ -1113,7 +1113,7 @@ Item {
                             text: "· " + (row.text ?? "")
                             color: root.mutedColor
                             opacity: 0.7
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
                         }
@@ -1172,7 +1172,7 @@ Item {
                 height: 24
                 verticalAlignment: Text.AlignVCenter
                 color: root.mutedColor
-                font.pixelSize: 14
+                font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.features: {
                     "tnum": 1
                 }
@@ -1218,7 +1218,7 @@ Item {
             RowText {
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Scroll to end")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.NoWrap
             }
         }

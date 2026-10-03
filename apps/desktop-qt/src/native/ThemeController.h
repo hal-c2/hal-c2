@@ -18,7 +18,9 @@ class ShellBridge;
 
 // The shell's theme, resolved natively and published as `theme` (the
 // ShellThemeState shape: {id, appearance, colors, radius, fontUi, fontMono},
-// colours as #rrggbb[aa]); ThemeStore paints it with theme.json on top.
+// colours as #rrggbb[aa], plus the device's font preferences: fontPrompt,
+// fontTerminal and fontSizes {interface, prompt, code, terminal});
+// ThemeStore paints it with theme.json on top.
 //
 // The choice is this device's (SettingsController's device preferences):
 // `appearance` (system, light or dark), `theme` (an id; none is the standard

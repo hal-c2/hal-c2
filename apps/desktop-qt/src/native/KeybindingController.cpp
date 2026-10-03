@@ -110,16 +110,14 @@ void KeybindingController::activate() {
   followRules();
 }
 
-bool KeybindingController::handle(const QString& action, const QVariant& payload) {
-  if (action == QLatin1String("keybindings.context")) {
-    // What only a brick knows: whether its model picker is open.
-    const bool open = payload.toMap().value(QStringLiteral("modelPickerOpen"), m_modelPickerOpen).toBool();
-    if (open != m_modelPickerOpen) {
-      m_modelPickerOpen = open;
-      refreshShortcuts();
-    }
-    return true;
-  }
+void KeybindingController::setModelPickerOpen(bool open) {
+  if (open == m_modelPickerOpen) return;
+  m_modelPickerOpen = open;
+  emit modelPickerOpenChanged();
+  refreshShortcuts();
+}
+
+bool KeybindingController::handle(const QString& action, const QVariant&) {
   if (action != QLatin1String("keybindings.openFile")) return false;
   openFile();
   return true;

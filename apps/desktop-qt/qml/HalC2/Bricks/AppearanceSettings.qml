@@ -48,7 +48,7 @@ SettingsPage {
 
             Layout.topMargin: 12
             color: page.foreground
-            font.pixelSize: 14
+            font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: Font.DemiBold
         }
 
@@ -115,7 +115,7 @@ SettingsPage {
                 text: themeRow.modelData.source === "environment" ? qsTr("From this environment") : themeRow.modelData.appearances.length === 1 ? (themeRow.modelData.appearances[0] === "dark" ? qsTr("Dark only") : qsTr("Light only")) : ""
                 visible: text.length > 0
                 color: page.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             ShellButton {
@@ -210,7 +210,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: halfRow.modelData.label
                 color: page.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
             }
 
             ShellComboBox {

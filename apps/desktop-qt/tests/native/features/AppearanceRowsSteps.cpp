@@ -2,6 +2,7 @@
 // (features/navigation/appearance.feature): the composer's context strip
 // after a thread starts, and word wrap in code, tables, diffs and file previews.
 
+#include <QFont>
 #include <QJsonArray>
 #include <QTest>
 
@@ -67,6 +68,73 @@ const Steps steps([] {
   });
   step(QStringLiteral("branch and worktree controls are hidden"), [](World& world, const Captures&, const Table&) {
     expect(!stripShown(world), show(composer(world)));
+  });
+
+  // Fonts: each part of the app has its family and size.
+  struct Font {
+    const char* family;
+    const char* size;
+  };
+  static const QHash<QString, Font> fonts{{QStringLiteral("interface"), {"fontFamilySans", "fontSizeInterface"}},
+                                          {QStringLiteral("prompt"), {"fontFamilyComposer", "fontSizePrompt"}},
+                                          {QStringLiteral("code"), {"fontFamilyCode", "fontSizeCode"}},
+                                          {QStringLiteral("terminal"), {"fontFamilyTerminal", "fontSizeTerminal"}}};
+  step(QStringLiteral("the user sets the (interface|prompt|code|terminal) font to %1 at (\\d+)").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const Font font = fonts.value(c[0]);
+    set(world, QLatin1String(font.family), c[1]);
+    set(world, QLatin1String(font.size), c[2].toInt());
+  });
+  const auto fontOf = [](Brick& brick, const QString& objectName) { return brick.item(objectName)->property("font").value<QFont>(); };
+  // The parts the row leaves alone keep the theme's fonts and their own sizes.
+  const auto untouched = [](World& world, const QStringList& parts) {
+    ThemeStore& theme = world.theme();
+    const QString ui = theme.fontUi(), mono = theme.fontMono();
+    for (const QString& part : parts) {
+      const bool same = part == QLatin1String("interface") ? theme.fontScale() == 1.0 && ui != QLatin1String("Inter")
+                        : part == QLatin1String("prompt")  ? theme.fontSizePrompt() == 14 && theme.fontPrompt() == ui
+                        : part == QLatin1String("code")    ? theme.fontSizeCode() == 13 && mono != QLatin1String("JetBrains Mono")
+                                                           : theme.fontSizeTerminal() == 12 && theme.fontTerminal() == mono;
+      expect(same, QStringLiteral("the %1 font changed too").arg(part));
+    }
+  };
+  step(QStringLiteral("everything outside code and the terminal uses %1 at (\\d+)").arg(kQuoted), [fontOf, untouched](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return world.theme().fontUi() == c[0]; }, QStringLiteral("the interface font"));
+    expect(world.theme().fontScale() == c[1].toInt() / 16.0, QStringLiteral("the interface is scaled by %1").arg(world.theme().fontScale()));
+    // A control and a message's prose, as the bricks draw them: their own size, scaled.
+    Brick brick(world, "import QtQuick\nimport HalC2.Bricks\nItem { ShellTextField { objectName: \"field\" }\n"
+                       "Markdown { objectName: \"message\"; y: 60; width: 400; text: \"Hello\" } }\n", QSize(400, 200));
+    const QFont field = fontOf(brick, QStringLiteral("field"));
+    expect(field.family() == c[0] && field.pixelSize() == qRound(13 * c[1].toInt() / 16.0),
+           QStringLiteral("a field writes in %1 at %2").arg(field.family()).arg(field.pixelSize()));
+    world.waitFor([&] { brick.grab(); return brick.item(QStringLiteral("message"))->property("segmentCount").toInt() >= 1; }, QStringLiteral("the message to be drawn"));
+    const QFont prose = fontOf(brick, QStringLiteral("markdownProse"));
+    expect(prose.family() == c[0] && prose.pixelSize() == qRound(14 * c[1].toInt() / 16.0),
+           QStringLiteral("prose is in %1 at %2").arg(prose.family()).arg(prose.pixelSize()));
+    untouched(world, {QStringLiteral("code"), QStringLiteral("terminal")});
+  });
+  step(QStringLiteral("the composer uses %1 at (\\d+)").arg(kQuoted), [fontOf, untouched](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return world.theme().fontPrompt() == c[0] && world.theme().fontSizePrompt() == c[1].toInt(); }, QStringLiteral("the prompt font"));
+    Brick brick(world, "import QtQuick\nimport HalC2.Bricks\nComposer { width: 700 }\n", QSize(700, 400));
+    const QFont input = fontOf(brick, QStringLiteral("input"));
+    expect(input.family() == c[0] && input.pixelSize() == c[1].toInt(), QStringLiteral("the prompt is in %1 at %2").arg(input.family()).arg(input.pixelSize()));
+    untouched(world, {QStringLiteral("interface"), QStringLiteral("code"), QStringLiteral("terminal")});
+  });
+  step(QStringLiteral("code blocks and diffs uses %1 at (\\d+)").arg(kQuoted), [fontOf, untouched](World& world, const Captures& c, const Table&) {
+    // Diffs and file previews draw in Theme.fontMono at Theme.fontSizeCode.
+    world.waitFor([&] { return world.theme().fontMono() == c[0] && world.theme().fontSizeCode() == c[1].toInt(); }, QStringLiteral("the code font"));
+    Brick brick(world, "import QtQuick\nimport HalC2.Bricks\nMarkdown { width: 560; text: \"```\\nconst total = 1;\\n```\\n\" }\n", QSize(560, 300));
+    world.waitFor([&] { brick.grab(); return brick.root()->property("segmentCount").toInt() >= 1; }, QStringLiteral("the code block to be drawn"));
+    const QFont code = fontOf(brick, QStringLiteral("codeText"));
+    expect(code.family() == c[0] && code.pixelSize() == c[1].toInt(), QStringLiteral("code is in %1 at %2").arg(code.family()).arg(code.pixelSize()));
+    untouched(world, {QStringLiteral("interface"), QStringLiteral("prompt")});
+    // The terminal follows the code font until it has its own.
+    expect(world.theme().fontTerminal() == c[0], QStringLiteral("the terminal is in %1").arg(world.theme().fontTerminal()));
+  });
+  step(QStringLiteral("the terminal uses %1 at (\\d+)").arg(kQuoted), [untouched](World& world, const Captures& c, const Table&) {
+    // The terminals (TerminalSplits and the sign-in ones) draw in Theme.fontTerminal at Theme.fontSizeTerminal.
+    world.waitFor([&] { return world.theme().fontTerminal() == c[0] && world.theme().fontSizeTerminal() == c[1].toInt(); },
+                  [&] { return QStringLiteral("the terminal font; it is %1 at %2").arg(world.theme().fontTerminal()).arg(world.theme().fontSizeTerminal()); });
+    untouched(world, {QStringLiteral("interface"), QStringLiteral("prompt"), QStringLiteral("code")});
   });
 
   step(QStringLiteral("the user turns on word wrap"), [](World& world, const Captures&, const Table&) {

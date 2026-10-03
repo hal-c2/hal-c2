@@ -216,7 +216,7 @@ Rectangle {
                     tint: sidebar.foreground
                     objectName: "search"
                     text: qsTr("Search")
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     onClicked: PaletteModel.show()
 
                     background: Rectangle {
@@ -263,7 +263,7 @@ Rectangle {
                     iconTint: Qt.alpha(sidebar.muted, 0.8)
                     tint: Qt.alpha(sidebar.muted, 0.8)
                     text: sidebar.scopeLabel
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     Accessible.name: qsTr("Project scope")
                     onClicked: scopeMenu.open()
 
@@ -602,7 +602,7 @@ Rectangle {
                         Text {
                             text: entry.kind === "header" ? entry.modelData.label : ""
                             color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : Qt.alpha(sidebar.muted, headerHover.hovered ? 0.8 : 0.5)
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                         }
@@ -624,7 +624,7 @@ Rectangle {
                             visible: entry.kind === "header" && !entry.modelData.open
                             text: entry.kind === "header" ? entry.modelData.count : ""
                             color: Qt.alpha(sidebar.muted, 0.5)
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                         }
 
@@ -661,7 +661,7 @@ Rectangle {
                     visible: entry.kind === "note"
                     text: entry.kind === "note" ? entry.modelData.label : ""
                     color: Qt.alpha(sidebar.muted, 0.6)
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 }
 
@@ -749,7 +749,7 @@ Rectangle {
                 visible: list.count === 0
                 text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
                 color: Qt.alpha(sidebar.muted, 0.6)
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
             }
         }

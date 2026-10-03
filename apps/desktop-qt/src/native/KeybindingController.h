@@ -52,6 +52,7 @@ class KeybindingController : public QObject, public NativeController {
   Q_PROPERTY(QVariantList bindings READ bindings NOTIFY bindingsChanged)
   // A save or removal is on its way to the MC.
   Q_PROPERTY(bool saving READ saving NOTIFY savingChanged)
+  Q_PROPERTY(bool modelPickerOpen READ modelPickerOpen WRITE setModelPickerOpen NOTIFY modelPickerOpenChanged)
   // Where the MC keeps keybindings.json, or empty before it says.
   Q_PROPERTY(QString filePath READ filePath NOTIFY filePathChanged)
 
@@ -64,9 +65,12 @@ public:
   // Registers the native commands and follows the MC's rules.
   void activate() override;
   // Keys reach it through press(), never as actions.
-  // `keybindings.openFile`, and `keybindings.context {modelPickerOpen}` from
-  // the brick that shows the picker.
+  // `keybindings.openFile`.
   bool handle(const QString& action, const QVariant& payload) override;
+  // What only a brick knows: the model picker it shows is open (the keymap's
+  // modelPickerOpen). ModelPicker sets it.
+  bool modelPickerOpen() const { return m_modelPickerOpen; }
+  void setModelPickerOpen(bool open);
 
   CommandRegistry* commands() { return &m_commands; }
   QVariantList shortcuts() const { return m_shortcuts; }
@@ -117,6 +121,7 @@ signals:
   void bindingsChanged();
   void savingChanged();
   void filePathChanged();
+  void modelPickerOpenChanged();
 
 private:
   void setRules(const QJsonArray& rules);

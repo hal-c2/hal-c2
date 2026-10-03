@@ -30,6 +30,16 @@ class ThemeStore : public QObject {
   Q_PROPERTY(qreal radius READ radius NOTIFY themeChanged)
   Q_PROPERTY(QString fontUi READ fontUi NOTIFY themeChanged)
   Q_PROPERTY(QString fontMono READ fontMono NOTIFY themeChanged)
+  // The composer's and the terminal's families (the interface's and the code
+  // font's unless the user named one), and the sizes: `fontScale` multiplies
+  // every interface size (the interface size over its default of 16), the
+  // others are pixel sizes.
+  Q_PROPERTY(QString fontPrompt READ fontPrompt NOTIFY themeChanged)
+  Q_PROPERTY(QString fontTerminal READ fontTerminal NOTIFY themeChanged)
+  Q_PROPERTY(qreal fontScale READ fontScale NOTIFY themeChanged)
+  Q_PROPERTY(int fontSizePrompt READ fontSizePrompt NOTIFY themeChanged)
+  Q_PROPERTY(int fontSizeCode READ fontSizeCode NOTIFY themeChanged)
+  Q_PROPERTY(int fontSizeTerminal READ fontSizeTerminal NOTIFY themeChanged)
   Q_PROPERTY(bool baseLoaded READ baseLoaded NOTIFY themeChanged)
   Q_PROPERTY(qreal windowOpacity READ windowOpacity NOTIFY themeChanged)
   Q_PROPERTY(bool windowTransparent READ windowTransparent NOTIFY themeChanged)
@@ -52,6 +62,12 @@ public:
   qreal radius() const;
   QString fontUi() const;
   QString fontMono() const;
+  QString fontPrompt() const;
+  QString fontTerminal() const;
+  qreal fontScale() const { return fontSize("interface", 16) / 16.0; }
+  int fontSizePrompt() const { return fontSize("prompt", 14); }
+  int fontSizeCode() const { return fontSize("code", 13); }
+  int fontSizeTerminal() const { return fontSize("terminal", 12); }
   bool baseLoaded() const { return !m_baseTheme.isEmpty(); }
   qreal windowOpacity() const { return m_windowOpacity; }
   bool windowTransparent() const { return m_windowTransparent; }
@@ -78,6 +94,7 @@ private:
   void scheduleReload();
   void applyDefaults();
   void resolveColors();
+  int fontSize(const char* part, int fallback) const;
 
   QString m_configDir;
   QString m_path;

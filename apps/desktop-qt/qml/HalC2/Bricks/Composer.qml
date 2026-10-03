@@ -368,7 +368,7 @@ Rectangle {
                         Text {
                             text: suggestion.modelData.label
                             color: composer.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                             elide: Text.ElideMiddle
@@ -379,7 +379,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: suggestion.modelData.description
                             color: composer.muted
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                             elide: Text.ElideMiddle
                         }
@@ -391,7 +391,7 @@ Rectangle {
                     visible: suggestionList.count === 0
                     text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
                     color: composer.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
             }
         }
@@ -432,14 +432,14 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Stash")
                     color: composer.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 }
 
                 Text {
                     text: composer.stashEntries.length
                     color: composer.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 ShellButton {
@@ -503,7 +503,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: stashRow.modelData.snippet
                             color: composer.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                             elide: Text.ElideRight
                             Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
@@ -531,7 +531,7 @@ Rectangle {
                         ? qsTr("Nothing stashed yet. Press %1 with a prompt in the composer to stash it.").arg(Shell.state.composerStash.shortcut)
                         : qsTr("Nothing stashed yet.")
                     color: composer.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
             }
         }
@@ -580,7 +580,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: qsTr("Editing a queued message")
                         color: composer.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                     }
 
@@ -611,7 +611,7 @@ Rectangle {
                             implicitHeight: 24
                             iconName: "image"
                             text: modelData.name
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             Accessible.name: qsTr("Remove %1").arg(modelData.name)
                             onClicked: Shell.dispatch("composer.attachment.remove", {
                                 id: modelData.id
@@ -629,7 +629,7 @@ Rectangle {
                             implicitHeight: 24
                             iconName: "terminal"
                             text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             Accessible.name: qsTr("Remove terminal selection %1").arg(text)
                             onClicked: Shell.dispatch("composer.terminalContext.remove", {
                                 id: modelData.id
@@ -662,8 +662,9 @@ Rectangle {
                         wrapMode: TextEdit.Wrap
                         selectByMouse: true
                         background: null
-                        font.pixelSize: 14
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        // The prompt has its own font and size (Settings → Appearance).
+                        font.pixelSize: Theme.fontSizePrompt
+                        font.family: Theme.fontPrompt.length > 0 ? Theme.fontPrompt : Qt.application.font.family
                         Accessible.name: qsTr("Message")
                         onTextChanged: {
                             if (text !== composer.lastSentText) {
@@ -828,7 +829,7 @@ Rectangle {
                         iconTint: checked ? composer.foreground : composer.secondary
                         tint: checked ? composer.foreground : composer.secondary
                         text: checked ? qsTr("Plan") : qsTr("Build")
-                        font.pixelSize: 14
+                        font.pixelSize: Math.round(14 * Theme.fontScale)
                         leftPadding: 10
                         rightPadding: 10
                         onClicked: Shell.dispatch("composer.interactionMode.set", {
@@ -849,7 +850,7 @@ Rectangle {
                         iconSize: 14
                         iconTint: composer.iconMuted
                         text: composer.stashEntries.length
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         Accessible.name: qsTr("Stashed prompts: %1. Open stash.").arg(composer.stashEntries.length)
                         onClicked: Shell.dispatch("composer.stash.menu")
                     }
@@ -979,7 +980,7 @@ Rectangle {
                     rightPadding: 7 + chevronSize + 4
                     iconSize: 12
                     chevronSize: 12
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     iconName: "monitor"
                     enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
                     model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
@@ -1003,7 +1004,7 @@ Rectangle {
                     rightPadding: 7 + chevronSize + 4
                     iconSize: 12
                     chevronSize: 12
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     iconName: contextStrip.envModeIcon
                     id: envModePicker
                     objectName: "envModePicker"
@@ -1037,7 +1038,7 @@ Rectangle {
                     Text {
                         text: contextStrip.wsReady ? contextStrip.ws.envModeLabel : ""
                         color: composer.secondary
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
                         font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                     }
@@ -1072,7 +1073,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: parent.pr ? "#" + parent.pr.number : ""
                         color: parent.prColor
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                         font.weight: Font.Medium
                         font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                     }
@@ -1094,7 +1095,7 @@ Rectangle {
                     tint: branchButton.hovered ? Qt.alpha(composer.foreground, 0.8) : composer.branchColor
                     chevron: contextStrip.wsReady && contextStrip.ws.branchChangeable
                     chevronSize: 12
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     text: contextStrip.wsReady ? (contextStrip.ws.branch ?? qsTr("Pick branch")) : ""
                     Accessible.name: qsTr("Switch branch")
                     onClicked: branchPicker.open()
@@ -1225,7 +1226,7 @@ Rectangle {
                                             Layout.fillWidth: true
                                             text: branchRow.modelData.name
                                             color: branchRow.modelData.isRemote ? composer.muted : composer.foreground
-                                            font.pixelSize: 13
+                                            font.pixelSize: Math.round(13 * Theme.fontScale)
                                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                                             elide: Text.ElideMiddle
                                         }
@@ -1234,7 +1235,7 @@ Rectangle {
                                             visible: branchRow.badge.length > 0
                                             text: branchRow.badge
                                             color: Qt.alpha(composer.muted, 0.45)
-                                            font.pixelSize: 10
+                                            font.pixelSize: Math.round(10 * Theme.fontScale)
                                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                                         }
                                     }
@@ -1245,7 +1246,7 @@ Rectangle {
                                     visible: branchList.count === 0
                                     text: contextStrip.wsReady && contextStrip.ws.branchesLoading ? qsTr("Loading refs…") : qsTr("No matching refs — Enter creates one")
                                     color: composer.muted
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                 }
                             }
 
@@ -1256,7 +1257,7 @@ Rectangle {
                                 visible: contextStrip.wsReady && contextStrip.ws.branchesTotal > contextStrip.ws.branches.length
                                 text: contextStrip.wsReady ? qsTr("Showing %1 of %2 refs — type to narrow").arg(contextStrip.ws.branches.length).arg(contextStrip.ws.branchesTotal) : ""
                                 color: composer.muted
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
                         }
                     }

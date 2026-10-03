@@ -42,7 +42,7 @@ Rectangle {
         id: glyph
 
         font.family: root.mono
-        font.pixelSize: 12
+        font.pixelSize: Theme.fontSizeCode
         text: "M"
     }
 
@@ -75,7 +75,7 @@ Rectangle {
                 visible: root.status === "ready"
                 text: qsTr("%n file(s)", "", root.model?.fileCount ?? 0)
                 color: root.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 elide: Text.ElideRight
             }
             Item {
@@ -86,14 +86,14 @@ Rectangle {
                 visible: root.status === "ready"
                 text: "+" + (root.model?.additions ?? 0)
                 color: root.added
-                font.pixelSize: 12
+                font.pixelSize: Theme.fontSizeCode
                 font.family: root.mono
             }
             Text {
                 visible: root.status === "ready"
                 text: "−" + (root.model?.deletions ?? 0)
                 color: root.removed
-                font.pixelSize: 12
+                font.pixelSize: Theme.fontSizeCode
                 font.family: root.mono
             }
 
@@ -182,7 +182,7 @@ Rectangle {
                     horizontalAlignment: Text.AlignHCenter
                     text: root.status === "idle" ? "" : root.source?.message ?? ""
                     color: root.status === "error" ? root.removed : root.muted
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     wrapMode: Text.Wrap
                 }
                 ShellButton {
@@ -284,7 +284,7 @@ Rectangle {
                     text: header.row.previousPath.length > 0 ? header.row.previousPath + " → " + header.row.path : header.row.path
                     color: header.row.change === "deleted" ? root.muted : root.foreground
                     font.family: root.mono
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSizeCode
                     font.strikeout: header.row.change === "deleted"
                     elide: Text.ElideMiddle
                 }
@@ -308,20 +308,20 @@ Rectangle {
                     visible: header.row.binary
                     text: qsTr("binary")
                     color: root.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {
                     text: "+" + header.row.additions
                     color: root.added
                     font.family: root.mono
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSizeCode
                 }
                 Text {
                     Layout.rightMargin: 10
                     text: "−" + header.row.deletions
                     color: root.removed
                     font.family: root.mono
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSizeCode
                 }
             }
         }
@@ -341,7 +341,7 @@ Rectangle {
                 text: parent.row.path
                 color: root.muted
                 font.family: root.mono
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSizeCode
             }
         }
     }
@@ -351,7 +351,7 @@ Rectangle {
         horizontalAlignment: Text.AlignRight
         color: root.muted
         font.family: root.mono
-        font.pixelSize: 11
+        font.pixelSize: Theme.fontSizeCode
         topPadding: 2
     }
 
@@ -359,7 +359,7 @@ Rectangle {
         property string sign: " "
         color: sign === "\\" ? root.muted : root.foreground
         font.family: root.mono
-        font.pixelSize: 12
+        font.pixelSize: Theme.fontSizeCode
         textFormat: Text.PlainText
         wrapMode: root.wrap ? Text.WrapAnywhere : Text.NoWrap
         topPadding: 1
@@ -390,7 +390,7 @@ Rectangle {
                 text: parent.row.sign === "\\" ? "" : parent.row.sign
                 color: parent.row.sign === "+" ? root.added : root.removed
                 font.family: root.mono
-                font.pixelSize: 12
+                font.pixelSize: Theme.fontSizeCode
                 topPadding: 1
             }
             LineText {

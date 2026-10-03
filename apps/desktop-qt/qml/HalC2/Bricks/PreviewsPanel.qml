@@ -33,7 +33,7 @@ Rectangle {
             text: qsTr("Browser tabs open in your browser")
             elide: Text.ElideRight
             color: root.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         ShellButton {
@@ -64,7 +64,7 @@ Rectangle {
         wrapMode: Text.Wrap
         text: root.source ? qsTr("Could not list browser tabs: %1").arg(root.source.message) : ""
         color: root.errorColor
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
     }
 
     Text {
@@ -76,7 +76,7 @@ Rectangle {
         wrapMode: Text.Wrap
         text: qsTr("No browser tabs in this thread. Tabs the agent opens show here.")
         color: root.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
     }
 
     ListView {
@@ -136,7 +136,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
             }
 
             Text {
@@ -148,7 +148,7 @@ Rectangle {
                 elide: Text.ElideMiddle
                 maximumLineCount: 1
                 color: row.problem.length > 0 ? root.errorColor : root.muted
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
             }
 
             ShellButton {

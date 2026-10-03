@@ -58,7 +58,7 @@ Item {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             text: wizard.recovery === "settings" ? qsTr("Could not read settings") : qsTr("Still connecting")
-            font.pixelSize: 18
+            font.pixelSize: Math.round(18 * Theme.fontScale)
             font.weight: Font.DemiBold
             color: wizard.foreground
         }
@@ -68,7 +68,7 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             text: wizard.recovery === "settings" ? qsTr("Your saved settings could not be loaded.") : qsTr("HAL-C2 could not confirm this workspace.")
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             color: wizard.muted
         }
         ShellButton {
@@ -112,7 +112,7 @@ Item {
                     Label {
                         objectName: "onboardingTitle"
                         text: qsTr("Set up HAL-C2")
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         color: wizard.muted
                     }
                     Item {
@@ -156,7 +156,7 @@ Item {
                                 }
                                 Label {
                                     text: modelData
-                                    font.pixelSize: 11
+                                    font.pixelSize: Math.round(11 * Theme.fontScale)
                                     color: index === (wizard.onboarding ? wizard.onboarding.stage : 0) ? wizard.foreground : wizard.muted
                                 }
                             }
@@ -179,7 +179,7 @@ Item {
     component Title: Label {
         Layout.fillWidth: true
         wrapMode: Text.Wrap
-        font.pixelSize: 22
+        font.pixelSize: Math.round(22 * Theme.fontScale)
         font.weight: Font.DemiBold
         color: wizard.foreground
     }
@@ -187,7 +187,7 @@ Item {
     component Detail: Label {
         Layout.fillWidth: true
         wrapMode: Text.Wrap
-        font.pixelSize: 13
+        font.pixelSize: Math.round(13 * Theme.fontScale)
         color: wizard.muted
     }
 
@@ -268,13 +268,13 @@ Item {
                                     Layout.fillWidth: true
                                     text: computer.modelData.label
                                     wrapMode: Text.Wrap
-                                    font.pixelSize: 13
+                                    font.pixelSize: Math.round(13 * Theme.fontScale)
                                     font.weight: Font.Medium
                                     color: wizard.foreground
                                 }
                                 Label {
                                     text: computer.modelData.connected ? qsTr("Connected") : qsTr("Connecting…")
-                                    font.pixelSize: 11
+                                    font.pixelSize: Math.round(11 * Theme.fontScale)
                                     color: wizard.muted
                                 }
                             }
@@ -283,7 +283,7 @@ Item {
                                 visible: computer.modelData.url.length > 0
                                 text: computer.modelData.url
                                 wrapMode: Text.WrapAnywhere
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                                 color: wizard.muted
                             }
                         }
@@ -323,7 +323,7 @@ Item {
 
                         Label {
                             text: qsTr("Pairing link")
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                             font.weight: Font.Medium
                             color: wizard.foreground
                         }
@@ -343,7 +343,7 @@ Item {
                             visible: text.length > 0
                             wrapMode: Text.Wrap
                             text: wizard.onboarding ? (wizard.onboarding.pairingDetail || wizard.onboarding.pairingError || "") : ""
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                             color: Theme.palette.color("error", "#ef4444")
                         }
                         RowLayout {
@@ -383,11 +383,11 @@ Item {
                                 selectByMouse: true
                                 text: "npx hal-c2 pair"
                                 font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                 color: wizard.foreground
                             }
                             Detail {
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                                 textFormat: Text.StyledText
                                 text: qsTr("Start HAL-C2 first, or run <tt>npx hal-c2 serve</tt>. Add <tt>--tailscale</tt> to use your tailnet.")
                             }
@@ -437,7 +437,7 @@ Item {
 
                     Label {
                         text: section.modelData.label
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         font.weight: Font.Medium
                         color: wizard.foreground
                     }
@@ -469,7 +469,7 @@ Item {
                                     spacing: 2
                                     Label {
                                         text: agent.modelData.name
-                                        font.pixelSize: 13
+                                        font.pixelSize: Math.round(13 * Theme.fontScale)
                                         font.weight: Font.Medium
                                         color: wizard.foreground
                                     }
@@ -477,7 +477,7 @@ Item {
                                         Layout.fillWidth: true
                                         wrapMode: Text.Wrap
                                         text: agent.modelData.headline + (agent.modelData.detail ? " · " + agent.modelData.detail : "")
-                                        font.pixelSize: 11
+                                        font.pixelSize: Math.round(11 * Theme.fontScale)
                                         color: wizard.muted
                                     }
                                 }
@@ -488,7 +488,7 @@ Item {
                                         : agent.modelData.state === "checking" ? qsTr("Checking...")
                                         : agent.modelData.state === "disabled" ? qsTr("Disabled")
                                         : agent.modelData.headline
-                                    font.pixelSize: 11
+                                    font.pixelSize: Math.round(11 * Theme.fontScale)
                                     font.weight: agent.modelData.state === "ready" ? Font.Medium : Font.Normal
                                     color: agent.modelData.state === "ready" ? Theme.palette.color("success", "#22c55e") : wizard.muted
                                 }
@@ -544,7 +544,7 @@ Item {
                                     text: status === "ready" ? qsTr("Review the command, then press Enter to run it.")
                                         : status === "openFailed" ? qsTr("Could not open the setup terminal.")
                                         : qsTr("Preparing command...")
-                                    font.pixelSize: 11
+                                    font.pixelSize: Math.round(11 * Theme.fontScale)
                                     font.weight: Font.Medium
                                     color: wizard.muted
                                 }
@@ -608,14 +608,14 @@ Item {
             Layout.preferredWidth: 28
             horizontalAlignment: Text.AlignRight
             text: parent.item.threadCount ?? 0
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             color: wizard.muted
         }
         Label {
             Layout.preferredWidth: 28
             horizontalAlignment: Text.AlignRight
             text: parent.item.age ?? ""
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             color: wizard.muted
         }
     }
@@ -660,7 +660,7 @@ Item {
             elide: Text.ElideMiddle
             text: candidateRow.secondary
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             color: wizard.muted
         }
         Meta {
@@ -724,7 +724,7 @@ Item {
                         objectName: "onboardingSelectedCount"
                         Layout.fillWidth: true
                         text: qsTr("%1 of %2 selected").arg(wizard.importState.selectedCount ?? 0).arg(wizard.importState.total ?? 0)
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                         color: wizard.muted
                     }
                     ShellButton {
@@ -760,7 +760,7 @@ Item {
                         Label {
                             visible: !!wizard.importState.multiple
                             text: scan.modelData.label
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                             font.weight: Font.Medium
                             color: wizard.foreground
                         }
@@ -796,7 +796,7 @@ Item {
                         Detail {
                             objectName: "onboardingScanLimit"
                             visible: scan.modelData.truncated
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             text: qsTr("Scan limit reached. Some projects or conversations may be missing.")
                         }
 
@@ -896,7 +896,7 @@ Item {
                                 }
                                 Label {
                                     text: scan.modelData.other.count === 1 ? qsTr("1 folder") : qsTr("%1 folders").arg(scan.modelData.other.count)
-                                    font.pixelSize: 11
+                                    font.pixelSize: Math.round(11 * Theme.fontScale)
                                     color: wizard.muted
                                 }
                             }
@@ -922,7 +922,7 @@ Item {
                     visible: text.length > 0
                     wrapMode: Text.Wrap
                     text: wizard.importState.error ?? ""
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     color: Theme.palette.color("error", "#ef4444")
                 }
 

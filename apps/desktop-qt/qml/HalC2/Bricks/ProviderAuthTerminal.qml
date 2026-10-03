@@ -46,8 +46,8 @@ Rectangle {
         anchors.margins: 1
         padding: 6
         focus: true
-        font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-        font.pixelSize: 12
+        font.family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace"
+        font.pixelSize: Theme.fontSizeTerminal
         backgroundColor: root.color
         foregroundColor: Theme.palette.color("text", "#e4e4e7")
         cursorColor: foregroundColor

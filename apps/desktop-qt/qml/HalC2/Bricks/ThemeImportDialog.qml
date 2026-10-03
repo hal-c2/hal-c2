@@ -42,7 +42,7 @@ Popup {
         Label {
             text: qsTr("Import theme")
             color: dialog.foreground
-            font.pixelSize: 16
+            font.pixelSize: Math.round(16 * Theme.fontScale)
             font.weight: Font.DemiBold
         }
 
@@ -64,7 +64,7 @@ Popup {
             wrapMode: TextEdit.Wrap
             Accessible.name: qsTr("Theme JSON")
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             background: Rectangle {
                 radius: Math.min(Theme.radius, 8)
                 color: Theme.palette.color("input", "#18181b")
@@ -79,7 +79,7 @@ Popup {
             text: Themes.importError
             color: Theme.palette.color("error", "#f87171")
             wrapMode: Text.Wrap
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Label {
@@ -89,7 +89,7 @@ Popup {
             text: qsTr("%1 is already installed.").arg(Themes.importConflicts.join(", "))
             color: dialog.foreground
             wrapMode: Text.Wrap
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         RowLayout {

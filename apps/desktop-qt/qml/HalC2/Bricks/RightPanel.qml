@@ -125,7 +125,7 @@ Rectangle {
                         Text {
                             text: tab.modelData.title
                             color: tab.active ? panel.foreground : panel.muted
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             anchors.verticalCenter: parent.verticalCenter
                         }
 

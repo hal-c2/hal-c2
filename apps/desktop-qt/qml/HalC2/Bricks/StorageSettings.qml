@@ -32,7 +32,7 @@ SettingsPage {
             Label {
                 text: rule.modelData.title
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.weight: Font.Medium
             }
 
@@ -41,14 +41,14 @@ SettingsPage {
                 visible: rule.modelData.mixed
                 text: qsTr("Mixed across selected machines")
                 color: Theme.palette.color("warning", "#fbbf24")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             Label {
                 Layout.fillWidth: true
                 text: rule.modelData.description
                 color: storage.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
         }
@@ -71,7 +71,7 @@ SettingsPage {
             visible: rule.modelData.days && rule.modelData.value === null && !rule.modelData.mixed
             text: qsTr("Off")
             color: storage.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Switch {
@@ -99,7 +99,7 @@ SettingsPage {
             Layout.fillWidth: true
             text: storage.state?.notice ?? ""
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
 
@@ -129,7 +129,7 @@ SettingsPage {
         Label {
             text: qsTr("Worktrees")
             color: storage.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             font.weight: Font.DemiBold
         }
 
@@ -146,7 +146,7 @@ SettingsPage {
                 Label {
                     text: qsTr("Automatic worktree cleanup")
                     color: Theme.palette.color("text", "#e4e4e7")
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -160,7 +160,7 @@ SettingsPage {
                         return qsTr("Use each machine's worktree cleanup settings.");
                     }
                     color: storage.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     wrapMode: Text.Wrap
                 }
             }
@@ -188,7 +188,7 @@ SettingsPage {
             visible: (storage.state?.artifacts ?? []).length > 0
             text: qsTr("Artifacts and logs")
             color: storage.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             font.weight: Font.DemiBold
         }
 

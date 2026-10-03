@@ -572,6 +572,16 @@ void ThemeController::resolve() {
                                                           QRegularExpression(QStringLiteral("^#(..)(......)$")), QStringLiteral("#\\2\\1")));
     }
   }
+  // The font rows of Settings → Appearance: a family the user named wins over
+  // the theme's, and each part of the app has its size.
+  const auto family = [this](const char* key, const QString& fallback) {
+    const QString chosen = m_settings->setting(QLatin1String(key)).toString().trimmed();
+    return chosen.isEmpty() ? fallback : chosen;
+  };
+  const auto size = [this](const char* key, int fallback) {
+    const int chosen = m_settings->setting(QLatin1String(key)).toInt();
+    return chosen > 0 ? chosen : fallback;
+  };
   m_appearance = appearance;
   m_resolvedId = id;
   m_bridge->publish(QStringLiteral("theme"), QVariantMap{
@@ -579,8 +589,16 @@ void ThemeController::resolve() {
                                                  {QStringLiteral("appearance"), appearance},
                                                  {QStringLiteral("colors"), colors.toVariantMap()},
                                                  {QStringLiteral("radius"), data.radius},
-                                                 {QStringLiteral("fontUi"), data.fontUi},
-                                                 {QStringLiteral("fontMono"), data.fontMono},
+                                                 {QStringLiteral("fontUi"), family("fontFamilySans", data.fontUi)},
+                                                 {QStringLiteral("fontMono"), family("fontFamilyCode", data.fontMono)},
+                                                 // Empty: the composer writes in the interface font, the terminal in the code font.
+                                                 {QStringLiteral("fontPrompt"), family("fontFamilyComposer", QString())},
+                                                 {QStringLiteral("fontTerminal"), family("fontFamilyTerminal", QString())},
+                                                 {QStringLiteral("fontSizes"),
+                                                  QVariantMap{{QStringLiteral("interface"), size("fontSizeInterface", 16)},
+                                                              {QStringLiteral("prompt"), size("fontSizePrompt", 14)},
+                                                              {QStringLiteral("code"), size("fontSizeCode", 13)},
+                                                              {QStringLiteral("terminal"), size("fontSizeTerminal", 12)}}},
                                              });
   // The choice and `available` move with the device and the MC as well.
   emit changed();

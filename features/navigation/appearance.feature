@@ -204,7 +204,7 @@ Feature: Appearance
 
   Rule: Fonts and text
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Font preferences change their part of the app
       When the user sets the <font> font to "<family>" at <size>
       Then <area> uses "<family>" at <size>

@@ -237,6 +237,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/appearance.feature:Font smoothing*"),
     QStringLiteral("navigation/appearance.feature:Composer context*"),
     QStringLiteral("navigation/appearance.feature:Word wrap*"),
+    QStringLiteral("navigation/appearance.feature:Font preferences*"),
     QStringLiteral("navigation/theme-editor.feature"),
     QStringLiteral("settings/general.feature"),
     QStringLiteral("settings/saving-settings.feature"),
