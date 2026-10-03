@@ -271,7 +271,6 @@ private:
 
   ShellBridge* m_bridge;
   McClient* m_client;
-  ShellStore* m_store;
   bool m_active = false;
   QString m_threadKey;
   std::optional<TerminalPlace> m_place;

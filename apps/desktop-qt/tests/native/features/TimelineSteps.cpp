@@ -102,10 +102,10 @@ QVariantMap lastEntry(World& world) {
 
 // The image of the current run's message, once the brick showing it has
 // asked for its address and the MC has signed the `count`th one.
-void expectImage(World& world, const QString& name, int count, const QUrl& origin = {}) {
+void expectImage(World& world, const QString& name, int count) {
   TimelineModel& model = timeline(world);
   const int row = rowShowing(world, QStringLiteral("message:") + world.mc.part<FakeStreams>().run);
-  const QUrl address = (origin.isEmpty() ? world.mc.origin() : origin).resolved(QUrl(QStringLiteral("/api/assets/token-%1/cart.png").arg(count)));
+  const QUrl address = world.mc.origin().resolved(QUrl(QStringLiteral("/api/assets/token-%1/cart.png").arg(count)));
   QVariantMap image;
   world.waitFor([&] {
     image = role(model, row, TimelineModel::AttachmentsRole).toList().value(0).toMap();
@@ -310,8 +310,6 @@ const Steps steps([] {
   // A thread on another MC.
   step(QStringLiteral("the user is looking at a thread on another MC of the cluster"), [](World& world, const Captures&, const Table&) {
     world.mc.join(kPeer, kPeerEnvironment);
-    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.mc")}, {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
-                     {QStringLiteral("mc"), kPeer}, {QStringLiteral("online"), true}});
     world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.rows")}, {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
                      {QStringLiteral("mc"), kPeer},
                      {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{kPeerThread, QStringLiteral("thread"),
@@ -345,36 +343,6 @@ const Steps steps([] {
   };
   step(QStringLiteral("that MC leaves the cluster"), [setPeer](World& world, const Captures&, const Table&) { setPeer(world, false); });
   step(QStringLiteral("that MC rejoins the cluster"), [setPeer](World& world, const Captures&, const Table&) { setPeer(world, true); });
-  // A thread on an environment the MC is linked to, reached through it.
-  step(QStringLiteral("the user is looking at a thread on an environment the MC is linked to"), [](World& world, const Captures&, const Table&) {
-    const QString environment = QStringLiteral("env-c");
-    const QString thread = QStringLiteral("thread-linked");
-    world.mc.sendLinkRow(environment, thread,
-                           {{QStringLiteral("id"), thread}, {QStringLiteral("title"), QStringLiteral("Linked")}, {QStringLiteral("projectId"), kProject},
-                            {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
-    world.mc.link(environment);
-    world.sync();
-    FakeStreams& fake = world.mc.part<FakeStreams>();
-    fake.thread = thread;
-    fake.environment = environment;
-    look(world, environment + QLatin1Char(':') + thread);
-  });
-  const auto setLink = [](World& world, bool online) {
-    FakeStreams& fake = world.mc.part<FakeStreams>();
-    if (online) {
-      fake.offline.remove(fake.environment);
-    } else {
-      fake.offline.insert(fake.environment);
-      for (const int id : followers(world, fake.thread)) {
-        world.mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unreachable")}});
-        world.mc.forget(id);
-      }
-    }
-    world.mc.setLinkProblem(fake.environment, online ? QString() : QStringLiteral("unreachable"));
-    world.sync();
-  };
-  step(QStringLiteral("that environment becomes unreachable"), [setLink](World& world, const Captures&, const Table&) { setLink(world, false); });
-  step(QStringLiteral("that environment is reachable again"), [setLink](World& world, const Captures&, const Table&) { setLink(world, true); });
   step(QStringLiteral("the thread says its MC cannot be reached"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
     world.waitFor([&] { return model.status() == QLatin1String("unreachable"); }, [&] { return describe(model); });
@@ -508,9 +476,6 @@ const Steps steps([] {
   });
   step(QStringLiteral("the message shows the image %1 from its MC").arg(q),
        [](World& world, const Captures& c, const Table&) { expectImage(world, c[0], 1); });
-  step(QStringLiteral("the message shows the image %1 from the linked environment").arg(q), [](World& world, const Captures& c, const Table&) {
-    expectImage(world, c[0], 1, QUrl(QStringLiteral("http://%1:3780").arg(world.mc.part<FakeStreams>().environment)));
-  });
   step(QStringLiteral("more than an hour passes"), [](World& world, const Captures&, const Table&) {
     world.mc.part<FakeAssets>().at = now().addSecs(3660);
     world.setTime(now().addSecs(3660));

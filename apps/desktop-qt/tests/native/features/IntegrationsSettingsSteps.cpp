@@ -29,8 +29,8 @@ QJsonObject settingsOf(FakeMc& mc, const QString& environment) {
   return environment == mc.environmentId ? fakeConfig(mc).settings : documentOf(mc, environment).settings;
 }
 
-// HalC2.Devices' state on `environment`: iOS here, Android missing; a
-// linked machine says which it is, so the one shown can be told apart.
+// HalC2.Devices' state on `environment`: iOS here, Android missing; another
+// machine says which it is, so the one shown can be told apart.
 QJsonObject deviceState(FakeMc& mc, const QString& environment) {
   const QJsonObject settings = settingsOf(mc, environment);
   const bool enabled = settings.value(QLatin1String("enableDeviceSupport")).toBool();
@@ -233,12 +233,11 @@ const Steps steps([] {
   });
 
   step(QStringLiteral("the user is editing settings across %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    // This machine is the first; the other is linked.
+    // This machine is the first; the other is another member of the cluster.
     world.mc.label = c[0];
     fakeConfig(world.mc).elsewhere.insert(c[1], QJsonObject{});
     documentOf(world.mc, c[1]).settings.insert(QStringLiteral("enableDeviceSupport"), true);
-    world.mc.linkLabels.insert(c[1], c[1]);
-    world.mc.link(c[1]);
+    world.mc.join(c[1]);
     saveElsewhere(world.mc, QStringLiteral("enableDeviceSupport"), true, true);
     ready(world);
     chooseAllEnvironments(world);

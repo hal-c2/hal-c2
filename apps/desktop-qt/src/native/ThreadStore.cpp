@@ -125,17 +125,14 @@ void ThreadStore::signAttachment(TimelineModel* model, const QString& threadKey,
   const QJsonObject resource{{QStringLiteral("_tag"), QStringLiteral("attachment")},
                              {QStringLiteral("attachmentId"), id},
                              {QStringLiteral("disposition"), QStringLiteral("inline")}};
-  const QString environment = threadKey.left(threadKey.indexOf(QLatin1Char(':')));
-  m_client->call(model, environment, QStringLiteral("assets.createUrl"),
+  m_client->call(model, threadKey.left(threadKey.indexOf(QLatin1Char(':'))), QStringLiteral("assets.createUrl"),
                  QJsonObject{{QStringLiteral("resource"), resource}},
-                 [this, model, id, environment](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, model, id](const QJsonValue& result, const std::optional<QString>& error) {
                    const QString relative = result.toObject().value(QLatin1String("relativeUrl")).toString();
                    if (error || relative.isEmpty()) return model->setAttachmentUrl(id, {}, {});
                    const qint64 expiresAt = qint64(result.toObject().value(QLatin1String("expiresAt")).toDouble());
-                   // The cluster hands the address to the member that signed it; a
-                   // linked environment's is only good on the link's own MC.
-                   const QUrl link = m_store->linkOrigin(environment);
-                   model->setAttachmentUrl(id, (link.isEmpty() ? m_client->origin() : link).resolved(QUrl(relative)),
+                   // The cluster hands the address to the member that signed it.
+                   model->setAttachmentUrl(id, m_client->origin().resolved(QUrl(relative)),
                                            QDateTime::fromMSecsSinceEpoch(expiresAt - 60'000, QTimeZone::UTC));
                  });
 }

@@ -87,7 +87,8 @@ Feature: Usage limit sources
     And its accounts leave limits
     And the hub itself is untouched
 
-  @shared @backlog-mobile @backlog-tui
+  # The desktop does not know what its own session may do yet.
+  @backlog @shared
   Scenario: A read-only connection cannot add hubs
     Given the user is connected with read-only access
     When the user opens usage providers

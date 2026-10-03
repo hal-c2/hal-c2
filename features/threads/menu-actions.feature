@@ -57,7 +57,7 @@ Feature: Running a thread's actions from its menu
     @desktop
     Scenario: A thread on an offline environment offers only what needs no environment
       Given the environment "env-b" is offline
-      When the user opens the thread menu for "env-b:t-linked" at 40, 120
+      When the user opens the thread menu for "env-b:t-member" at 40, 120
       Then only these of the menu's actions can be chosen: "copy"
 
     @desktop

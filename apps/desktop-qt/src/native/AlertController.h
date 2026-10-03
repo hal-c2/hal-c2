@@ -15,10 +15,10 @@ class ShellBridge;
 class ShellStore;
 
 // Tells the user when a thread finishes or waits on them (the web's
-// ThreadNotificationCoordinator). It follows the shell's rows, cluster and
-// linked environments alike: a thread that completes, asks for approval or
+// ThreadNotificationCoordinator). It follows the shell's rows, on every
+// machine of the cluster: a thread that completes, asks for approval or
 // input, fails or stops at its usage limit alerts once per change. Threads it
-// first sees (the snapshot after connecting, a newly linked environment) are
+// first sees (the snapshot after connecting, a machine that joins) are
 // only remembered, so what finished while the client was away stays quiet.
 //
 // This device's `notificationMode` (off, notifications, sound,

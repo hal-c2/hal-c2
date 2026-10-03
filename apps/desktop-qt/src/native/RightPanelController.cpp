@@ -498,7 +498,7 @@ void RightPanelController::publish() {
   for (const QString& id : state.tabs) {
     tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id, m_devices)}});
   }
-  // Terminals need the thread's place on an environment the MC reaches.
+  // Terminals need the thread's place.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
   const bool canTerminal = terminals && terminals->available() && terminals->threadKey() == m_thread;
   m_bridge->publish(QStringLiteral("panel"),

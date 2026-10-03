@@ -7,7 +7,7 @@
 #   apps/web/src/components/ThreadTerminals.tsx (the launch context and script runs this mirrors)
 #   packages/shared/src/terminalLabels.ts (terminal ids and tab labels)
 #   terminal/sessions.feature and terminal/tabs.feature own what a thread's terminals do;
-#   connections/links.feature owns how the MC reaches an environment outside its cluster.
+#   connections/cluster.feature owns how the MC reaches another machine.
 
 Feature: The desktop's terminal drawer
   The desktop draws a thread's terminals with qml-ghostty and talks to the MC for them: it
@@ -64,7 +64,8 @@ Feature: The desktop's terminal drawer
       When the user toggles the terminal drawer
       Then "env-b" attaches "term-1" of "t9" in "/work/p9"
 
-    @desktop
+    # MCs join only by clustering; the scenario above is the one way to another machine.
+    @dropped @desktop
     Scenario: A thread on an environment the MC is linked to has its terminal there
       Given the MC is linked to "env-c"
       And the user is viewing "env-c:t7" with its project at "/work/p7"

@@ -37,7 +37,7 @@ void sendConfig(FakeMc& mc, const QString& environment, const QJsonObject& frame
   }
 }
 
-// A linked environment keeps its own settings document.
+// Another machine of the cluster keeps its own settings document.
 bool ownsDocument(const FakeConfig& fake, const QString& environment) {
   return fake.documents.contains(environment) || fake.elsewhere.contains(environment);
 }

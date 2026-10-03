@@ -1,9 +1,8 @@
 // The command palette (CommandPaletteController,
 // features/navigation/command-palette.feature, and opening it from the
 // thread list in features/threads/search.feature): a project with more threads
-// than the palette's recent list holds, threads on linked environments and
-// other MCs of the cluster, and the palette driven as the CommandPalette
-// brick drives it. The brick's own keys (mod+1..9) are in KeybindingSteps.cpp.
+// than the palette's recent list holds, threads on other MCs of the cluster,
+// and the palette driven as the CommandPalette brick drives it. The brick's own keys (mod+1..9) are in KeybindingSteps.cpp.
 
 #include <QJSEngine>
 #include <QJsonArray>
@@ -178,10 +177,9 @@ void addProject(World& world, const QString& id) {
   world.mc.sendRow(id, row, QStringLiteral("project"));
 }
 
-// A thread newer than every one before it, on this MC unless `environment`
-// (a linked one) or `peer` (another MC of the cluster) serves it.
-QString addThread(World& world, const QString& title, QJsonObject row = {}, const QString& environment = {},
-                  const QString& peer = {}) {
+// A thread newer than every one before it, on this MC unless `peer` (another
+// MC of the cluster) serves it.
+QString addThread(World& world, const QString& title, QJsonObject row = {}, const QString& peer = {}) {
   PaletteState& fake = state(world);
   const QString at = iso(stream::now().addSecs(60 * ++fake.minute));
   const QString id = row.value(QLatin1String("id")).toString(QStringLiteral("thread-%1").arg(fake.minute));
@@ -191,10 +189,7 @@ QString addThread(World& world, const QString& title, QJsonObject row = {}, cons
   row.insert(QStringLiteral("createdAt"), at);
   row.insert(QStringLiteral("updatedAt"), at);
   QString key;
-  if (!environment.isEmpty()) {
-    world.mc.sendLinkRow(environment, id, row);
-    key = environment + QLatin1Char(':') + id;
-  } else if (!peer.isEmpty()) {
+  if (!peer.isEmpty()) {
     world.mc.sendRows(peer, QJsonArray{QJsonValue(QJsonArray{id, QStringLiteral("thread"), row})});
     key = stream::kPeerEnvironment + QLatin1Char(':') + id;
   } else {
@@ -290,18 +285,11 @@ const Steps steps([] {
   step(QStringLiteral("the thread %1 is on branch %1").arg(q), [](World& world, const Captures& c, const Table&) {
     addThread(world, c[0], {{QStringLiteral("branch"), c[1]}});
   });
-  step(QStringLiteral("the thread %1 is on (a linked environment|another MC of the cluster)").arg(q),
-       [](World& world, const Captures& c, const Table&) {
-         if (c[1] == QLatin1String("a linked environment")) {
-           world.mc.link(QStringLiteral("laptop"));
-           world.sync();
-           addThread(world, c[0], {}, QStringLiteral("laptop"));
-         } else {
-           world.mc.join(stream::kPeer, stream::kPeerEnvironment);
-           world.sync();
-           addThread(world, c[0], {}, {}, stream::kPeer);
-         }
-       });
+  step(QStringLiteral("the thread %1 is on another MC of the cluster").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.join(stream::kPeer, stream::kPeerEnvironment);
+    world.sync();
+    addThread(world, c[0], {}, stream::kPeer);
+  });
   step(QStringLiteral("a thread titled %1").arg(q), [](World& world, const Captures& c, const Table&) { addThread(world, c[0]); });
   step(QStringLiteral("threads titled %1, %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QString& title : c) addThread(world, title);

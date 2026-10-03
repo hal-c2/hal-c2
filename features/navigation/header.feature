@@ -15,7 +15,7 @@
 Feature: The thread's header on the desktop
   The header over a thread and the strip under its composer come from the MC: the thread and
   its project are the MC's rows, the branch its checkout's status, the editors its machine's.
-  A thread on a linked environment has its header too.
+  A thread on another machine of the cluster has its header too.
 
   Background:
     Given a connected environment with a thread in the git project "shop" on the branch "feature/tax"
@@ -56,23 +56,23 @@ Feature: The thread's header on the desktop
     Then the new thread will start on "env-a" in "/work/shop"
 
   @desktop
-  Scenario: A thread on an environment the MC is linked to has its header
-    Given the MC is linked to "env-c"
+  Scenario: A thread on another machine of the cluster has its header
+    Given the MC is clustered with "mc-c", which serves "env-c"
     And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
     When the user goes to "env-c:t7"
     Then the header shows the thread "Deploy" in "ops" on "main"
 
   @desktop
-  Scenario: A linked thread's header lists its environment's editors
-    Given the MC is linked to "env-c"
+  Scenario: The header of a thread on another machine lists that machine's editors
+    Given the MC is clustered with "mc-c", which serves "env-c"
     And "env-c" has the editors "VS Code" and "Zed"
     And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
     When the user goes to "env-c:t7"
     Then the header lists the editors "VS Code" and "Zed"
 
   @desktop
-  Scenario: A linked thread's header says so while its environment is unreachable
-    Given the MC is linked to "env-c"
+  Scenario: The header of a thread on another machine says so while that machine is offline
+    Given the MC is clustered with "mc-c", which serves "env-c"
     And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
     And the user goes to "env-c:t7"
     When "env-c" becomes unreachable

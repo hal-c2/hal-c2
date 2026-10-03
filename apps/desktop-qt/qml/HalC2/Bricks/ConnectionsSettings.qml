@@ -4,14 +4,12 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Connections settings page, native (ConnectionsController publishes
-// `connections`): the environments this machine's MC is linked to, adding
-// one from a pairing link or a host and code, and who may reach this machine
-// (pairing links and paired clients).
+// `connections`): who may reach this machine (pairing links and paired
+// clients). Other machines join on the Cluster page.
 Rectangle {
     id: page
 
     readonly property var model: Shell.state.connections ?? null
-    readonly property var links: model ? model.links : []
     readonly property var access: model ? model.access : null
     readonly property var created: model ? model.created : null
     readonly property var notice: model ? model.notice : null
@@ -132,120 +130,16 @@ Rectangle {
             }
 
             Heading {
-                text: qsTr("Other environments")
+                text: qsTr("Other machines")
             }
 
-            Note {
-                text: qsTr("Machines outside this cluster that this machine's MC is paired with. Their threads are reached through it.")
-            }
-
-            Repeater {
-                model: page.links
-
-                delegate: ColumnLayout {
-                    id: linkRow
-
-                    required property var modelData
-                    readonly property bool removing: page.model !== null && page.model.removing === modelData.environmentId
-
-                    Layout.fillWidth: true
-                    spacing: 4
-
-                    EntryRow {
-                        label: linkRow.modelData.label
-                        detail: linkRow.modelData.status
-                        action: qsTr("Remove")
-                        actionName: qsTr("Remove %1").arg(linkRow.modelData.label)
-                        onActivated: Shell.dispatch("connections.unlink.request", {
-                            environmentId: linkRow.modelData.environmentId
-                        })
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: linkRow.removing
-                        spacing: 8
-
-                        Note {
-                            text: qsTr("Remove %1? This machine forgets its pairing and no longer reaches its threads.").arg(linkRow.modelData.label)
-                        }
-
-                        ShellButton {
-                            text: qsTr("Remove")
-                            enabled: !page.busy
-                            onClicked: Shell.dispatch("connections.unlink", {
-                                environmentId: linkRow.modelData.environmentId
-                            })
-                        }
-
-                        ShellButton {
-                            subtle: true
-                            text: qsTr("Cancel")
-                            onClicked: Shell.dispatch("connections.unlink.cancel")
-                        }
-                    }
-                }
-            }
-
-            Note {
-                visible: page.links.length === 0
-                text: qsTr("No other environments yet. Add one with a pairing link from it.")
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
-                ShellTextField {
-                    id: pairingLink
-                    objectName: "connectionsPairingLink"
-                    Layout.fillWidth: true
-                    placeholderText: qsTr("Pairing link from the other machine…")
-                    onAccepted: addLink.clicked()
-                }
-
-                ShellButton {
-                    id: addLink
-                    enabled: !page.busy && pairingLink.text.trim().length > 0
-                    text: qsTr("Add")
-                    onClicked: {
-                        Shell.dispatch("connections.link", {
-                            pairingUrl: pairingLink.text
-                        });
-                        pairingLink.clear();
-                    }
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
-                ShellTextField {
-                    id: host
-                    Layout.fillWidth: true
-                    placeholderText: qsTr("Host, e.g. 192.168.1.20:3773")
-                }
-
-                ShellTextField {
-                    id: code
-                    Layout.preferredWidth: 180
-                    placeholderText: qsTr("Pairing code")
-                    onAccepted: addHost.clicked()
-                }
-
-                ShellButton {
-                    id: addHost
-                    enabled: !page.busy && host.text.trim().length > 0 && code.text.trim().length > 0
-                    text: qsTr("Add")
-                    onClicked: {
-                        Shell.dispatch("connections.link", {
-                            host: host.text,
-                            code: code.text
-                        });
-                        code.clear();
-                    }
-                }
+            EntryRow {
+                objectName: "connectionsCluster"
+                label: qsTr("Cluster")
+                detail: qsTr("Machines that share one sidebar")
+                action: qsTr("Open")
+                actionName: qsTr("Open the Cluster settings")
+                onActivated: Shell.dispatch("cluster.open")
             }
 
             Heading {
