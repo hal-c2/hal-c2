@@ -194,8 +194,17 @@ defmodule HalC2.Store do
   @doc "The store schema version this MC writes; stores with a newer one are refused."
   def schema_version, do: @schema_version
 
+  @doc """
+  The file a store writes. Read without a call to the store, so a reader opening its
+  own connection never waits behind queued writes.
+  """
   @spec path(GenServer.server()) :: String.t()
-  def path(store \\ __MODULE__), do: GenServer.call(store, :path)
+  def path(store \\ __MODULE__) do
+    case GenServer.whereis(store) do
+      nil -> exit({:noproc, {__MODULE__, :path, [store]}})
+      pid -> :persistent_term.get({__MODULE__, pid})
+    end
+  end
 
   @doc """
   Folds a stream's events after `after_seq` in order, reading from a private
@@ -309,6 +318,7 @@ defmodule HalC2.Store do
       )
 
     store = self()
+    :persistent_term.put({__MODULE__, store}, path)
     checkpointer = spawn_link(fn -> checkpointer(path, store) end)
 
     {:ok, stream_key} = Sqlite3.prepare(db, "SELECT key FROM streams WHERE id = ?1")
@@ -454,8 +464,6 @@ defmodule HalC2.Store do
 
     {:reply, :ok, state}
   end
-
-  def handle_call(:path, _from, state), do: {:reply, state.path, state}
 
   def handle_call(:checkpoint, from, state) do
     send(state.checkpointer, {:checkpoint, from})
