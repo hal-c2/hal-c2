@@ -54,6 +54,8 @@ public:
   // A brick the scenario keeps on screen (DeviceSteps' DevicePanel): it goes
   // before the shell it draws, on restart too.
   std::unique_ptr<Brick> brick;
+  // A question a brick asks in a dialog of its own: "the user confirms" and "the user cancels" answer it.
+  std::function<void(bool accepted)> answerQuestion;
 
   ShellBridge& bridge() { return *m_bridge; }
   NativeShell& native() { return *m_native; }

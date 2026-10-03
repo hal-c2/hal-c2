@@ -30,11 +30,16 @@ Rectangle {
         return null;
     }
 
+    // An opened result is kept in view while the page still lays out (rows
+    // that arrive with its state), until the user scrolls.
+    property bool following: false
+
     // Scrolls the route's target to the top of the page, when it is here.
     function reveal() {
         if (route === null || !route.target) return;
         const target = descendant(column, route.target);
         if (target === null) return;
+        following = true;
         const y = target.mapToItem(column, 0, 0).y + column.y - 12;
         flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
     }
@@ -52,9 +57,12 @@ Rectangle {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar {}
+        onMovementStarted: page.following = false
 
         ColumnLayout {
             id: column
+
+            onImplicitHeightChanged: if (page.following) Qt.callLater(page.reveal)
 
             x: 24
             y: 24

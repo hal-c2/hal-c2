@@ -136,13 +136,13 @@ Feature: Settings search and navigation
 
     # tst_SettingsPages.qml and tst_SettingsNav.qml check the next ones in QML, but no
     # feature runner drives the settings page yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The slash key starts a settings search
       Given the keyboard is not in a text field
       When the user presses "/"
       Then the settings search has keyboard focus
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: Results are ranked by how well the title matches
       When the user searches settings for "<query>"
       Then the first result is "<first>"
@@ -178,7 +178,7 @@ Feature: Settings search and navigation
       Then the "Load balancing" group is open
       And the page brings the setting into view
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Opening the same result again scrolls back to it
       Given the user opened the search result "Default model" and scrolled away
       When the user opens the search result "Default model" again
@@ -188,25 +188,25 @@ Feature: Settings search and navigation
 
     # SettingsNav.qml asks and resets (tst_SettingsNav.qml, tst_ThemeResolution.cpp), but no
     # feature runner drives the settings page yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Restoring defaults lists what will change and asks first
       Given the user has changed the theme and the time format
       When the user restores default settings
       Then the user is asked to confirm a reset of the theme and the time format
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Confirming the restore resets the listed settings
       Given the user is asked to confirm restoring default settings
       When the user confirms
       Then the theme and the time format are back to their defaults
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Cancelling the restore changes nothing
       Given the user is asked to confirm restoring default settings
       When the user cancels
       Then every setting keeps its value
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A theme that cannot be restored rolls back
       Given saving the theme on this device fails
       When the user confirms restoring default settings

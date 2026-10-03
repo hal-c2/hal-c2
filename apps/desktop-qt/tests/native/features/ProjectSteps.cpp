@@ -351,6 +351,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user cancels"), [](World& world, const Captures&, const Table&) {
+    if (world.answerQuestion) return std::exchange(world.answerQuestion, {})(false);
     world.bridge().dispatch(QStringLiteral("project.remove.cancel"), QVariantMap());
   });
   step(QStringLiteral("the folder explorer shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
