@@ -66,6 +66,10 @@ defmodule HalC2.Rpc do
 
   def handle("hal-c2.locateThread", %{"threadId" => id}), do: HalC2.ThreadMove.locate(id)
 
+  # Which machine of the cluster a new thread starts on (`HalC2.LoadBalancing`).
+  def handle("hal-c2.placeThread", %{"environmentId" => _, "projectId" => _} = input),
+    do: HalC2.LoadBalancing.place(input)
+
   # Settings → Connections over the socket: the twins of `/api/auth/pairing-token` and
   # `/api/auth/pairing-links*`, with the HTTP routes' bodies and replies.
   def handle("hal-c2.createPairingLink", input),
@@ -282,6 +286,7 @@ defmodule HalC2.Rpc do
     orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
     orchestration.searchThreads orchestration.getArchivedShellSnapshot
     orchestration.getThreadProjection server.getSettings hal-c2.readSettings hal-c2.threadRows
+    hal-c2.placeThread
     server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
     server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
     server.getResourceTelemetryHistory server.getUsageSummary server.refreshUsageRates

@@ -2,12 +2,24 @@
 #   packages/client-runtime/src/load-balancing.ts (chooseLoadBalancedEnvironment)
 #   apps/web/src/components/settings/LoadBalancingSettings.tsx
 #   apps/web/src/components/ChatView.tsx (balanced environment for new drafts)
+#   apps/server-ex/lib/hal_c2/load_balancing.ex (hal-c2.placeThread)
 #   apps/server-ex/lib/hal_c2/rpc.ex (server.getHostResources)
 #   packages/contracts/src/rpc.ts (server.getHostResources)
 #   docs/user/remote-access.md (Balance new threads across machines: web and desktop only)
+#
+# Decisions:
+#   - The MC chooses, not the client. The legacy web client collected every machine's
+#     resources and chose itself; here a client asks the MC it is connected to
+#     (hal-c2.placeThread) and starts the thread where it says, so no client carries the
+#     rules and all of them balance alike. The MC reads loadBalancingEnabled and
+#     loadBalancingWeights from its own settings document.
+#   - Each machine answers for itself when asked, so what is compared is how the machines
+#     are doing now. The legacy rule that skipped a machine whose resources were reported
+#     over 15s ago is therefore a machine that does not answer in time.
+#   - The machine the user picked wins a tie, and keeps the checkout they picked.
 
 Feature: Load balancing new threads across machines
-  With several machines connected, new threads in a shared project can start
+  With several machines in a cluster, new threads in a shared project can start
   on whichever machine has the most room, weighted by the user's preference.
   Balancing is offered on desktop and in the terminal client; phones keep choosing the machine
   by hand.
@@ -17,40 +29,61 @@ Feature: Load balancing new threads across machines
     When a client asks the MC for its host resources
     Then the MC answers with its CPU count, CPU use and free memory
 
-  @backlog @desktop @tui
+  @mc @desktop @tui @backlog-desktop @backlog-tui
   Scenario: Load balancing is off by default
-    Given two connected machines share project "api"
-    When the user starts a new thread in "api"
-    Then the thread starts on the machine the user picked
-
-  @backlog @desktop @tui
-  Scenario: A new thread starts on the machine with the most room
-    Given load balancing is on
+    Given a cluster of the machines "laptop" and "server"
+    And the project "api" on each machine is a checkout of the same repository
     And "laptop" is busy and "server" is idle
-    When the user starts a new thread in "api"
-    Then the thread starts on "server"
+    When the user starts a new thread in "api" on "laptop"
+    Then the thread starts on "laptop"
 
-  @backlog @desktop @tui
+  @mc @desktop @tui @backlog-desktop @backlog-tui
+  Scenario: A new thread starts on the machine with the most room
+    Given a cluster of the machines "laptop" and "server"
+    And the project "api" on each machine is a checkout of the same repository
+    And load balancing is on
+    And "laptop" is busy and "server" is idle
+    When the user starts a new thread in "api" on "laptop"
+    Then the thread starts on "server" in its checkout of "api"
+
+  @mc @desktop @tui @backlog-desktop @backlog-tui
+  Scenario: A thread stays on the machine the user picked when no other has more room
+    Given a cluster of the machines "laptop" and "server"
+    And the project "api" on each machine is a checkout of the same repository
+    And load balancing is on
+    And both machines are equally idle
+    When the user starts a new thread in "api" on "laptop"
+    Then the thread starts on "laptop"
+
+  @mc @desktop @tui @backlog-desktop @backlog-tui
   Scenario Outline: A machine is skipped when it cannot take work
-    Given load balancing is on
+    Given a cluster of the machines "laptop" and "server"
+    And the project "api" on each machine is a checkout of the same repository
+    And load balancing is on
+    And "laptop" is busy and "server" is idle
     And "server" <state>
-    When the user starts a new thread in "api"
-    Then the thread does not start on "server"
+    When the user starts a new thread in "api" on "laptop"
+    Then the thread starts on "laptop"
 
     Examples:
-      | state                                    |
-      | is set to manual only                    |
-      | reported its resources over 15s ago      |
-      | is at 95% CPU                            |
-      | has 5% of memory free                    |
+      | state                                       |
+      | is set to manual only                       |
+      | does not answer in time                     |
+      | is offline                                  |
+      | is at 95% CPU                               |
+      | has 5% of memory free                       |
       | does not have the chosen provider signed in |
+      | instead has no checkout of the repository   |
 
-  @backlog @desktop @tui
+  @mc @desktop @tui @backlog-desktop @backlog-tui
   Scenario: Preferring a machine sends it more new threads
-    Given load balancing is on
+    Given a cluster of the machines "laptop" and "server"
+    And the project "api" on each machine is a checkout of the same repository
+    And load balancing is on
     And the user prefers "server" and sets "laptop" to less often
-    When both machines are equally idle
-    Then new threads start on "server"
+    And "server" is somewhat busier than "laptop"
+    When the user starts a new thread in "api" on "laptop"
+    Then the thread starts on "server" in its checkout of "api"
 
   @backlog @desktop @tui
   Scenario: A draft already tied to a machine is not moved
