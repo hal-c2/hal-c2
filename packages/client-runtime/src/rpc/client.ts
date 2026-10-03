@@ -138,6 +138,29 @@ export const getInitialServerConfig = Effect.fn("EnvironmentRpc.getInitialServer
   },
 );
 
+/**
+ * Calls a method only an MC serves (`hal-c2.*`); the caller decodes the answer.
+ * Fails with the MC's message, or saying the environment is not an MC.
+ */
+export const mcRequest = Effect.fn("EnvironmentRpc.mcRequest")(function* (
+  method: string,
+  payload: unknown,
+) {
+  const supervisor = yield* EnvironmentSupervisor;
+  yield* Effect.annotateCurrentSpan({
+    "environment.id": supervisor.target.environmentId,
+    "rpc.method": method,
+  });
+  const session = yield* currentSession();
+  if (session.mcCall === undefined) {
+    return yield* new EnvironmentRpcUnavailableError({
+      environmentId: supervisor.target.environmentId,
+      message: `${supervisor.target.label} is not a HAL-C2 MC.`,
+    });
+  }
+  return yield* session.mcCall(method, payload);
+});
+
 export const request = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
 >(tag: TTag, input: EnvironmentRpcInput<TTag>) {

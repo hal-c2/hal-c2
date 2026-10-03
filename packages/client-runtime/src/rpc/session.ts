@@ -55,6 +55,11 @@ export interface RpcSession {
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
   readonly closed: Effect.Effect<never, ConnectionAttemptError>;
+  /**
+   * Calls a method only an MC serves (`hal-c2.*`, outside the RPC contract); it
+   * fails with the MC's message. Absent on a TypeScript server's session.
+   */
+  readonly mcCall?: (method: string, payload: unknown) => Effect.Effect<unknown, Error>;
 }
 
 export interface RpcSessionOptions {
