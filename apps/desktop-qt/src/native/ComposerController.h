@@ -163,6 +163,8 @@ private:
   // Why the files keep a send (or `what`) waiting, toasted; false when none do.
   bool filesBlock(const QList<Attachment>& attachments, const QString& what);
   static QJsonArray fileRecords(const QList<Attachment>& attachments);
+  static QJsonObject attachmentJson(const Attachment& attachment);
+  static std::optional<Attachment> attachmentOf(const QJsonObject& kept);
   static QVariantList shownAttachments(const QList<Attachment>& attachments);
   // A dropped folder becomes a path the prompt names, where the MC shares
   // this machine's folders.

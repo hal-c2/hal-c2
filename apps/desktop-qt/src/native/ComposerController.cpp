@@ -2206,6 +2206,49 @@ QVariantMap ComposerController::pickerState() const {
 
 // --- Keeping drafts ---------------------------------------------------------------
 
+// An attachment as the drafts' file keeps it: an image with its bytes
+// (`dataUrl`), a file with its path or pasted text and what the MC knows it as.
+QJsonObject ComposerController::attachmentJson(const Attachment& attachment) {
+  QJsonObject kept{{QStringLiteral("id"), attachment.id},
+                   {QStringLiteral("name"), attachment.name},
+                   {QStringLiteral("mimeType"), attachment.mimeType},
+                   {QStringLiteral("sizeBytes"), double(attachment.sizeBytes)},
+                   {QStringLiteral("dataUrl"), attachment.dataUrl}};
+  if (!attachment.source.isEmpty()) kept.insert(QStringLiteral("source"), attachment.source);
+  if (attachment.file) {
+    kept.insert(QStringLiteral("file"), true);
+    kept.insert(QStringLiteral("path"), attachment.path);
+    kept.insert(QStringLiteral("dataUrl"), QStringLiteral("data:;base64,") + QString::fromLatin1(attachment.content.toBase64()));
+    kept.insert(QStringLiteral("pastedText"), attachment.pastedText);
+    kept.insert(QStringLiteral("remoteId"), attachment.remoteId);
+    kept.insert(QStringLiteral("environmentId"), attachment.environmentId);
+    kept.insert(QStringLiteral("upload"), attachment.upload);
+  }
+  return kept;
+}
+
+std::optional<ComposerController::Attachment> ComposerController::attachmentOf(const QJsonObject& kept) {
+  const QString dataUrl = kept.value(QLatin1String("dataUrl")).toString();
+  const bool file = kept.value(QLatin1String("file")).toBool();
+  if (!file && !dataUrl.startsWith(QLatin1String("data:image/"))) return std::nullopt;
+  Attachment attachment{kept.value(QLatin1String("id")).toString(), kept.value(QLatin1String("name")).toString(),
+                        kept.value(QLatin1String("mimeType")).toString(), qint64(kept.value(QLatin1String("sizeBytes")).toDouble()),
+                        file ? QString() : dataUrl, kept.value(QLatin1String("source")).toObject()};
+  if (!file) return attachment;
+  attachment.file = true;
+  attachment.path = kept.value(QLatin1String("path")).toString();
+  attachment.content = QByteArray::fromBase64(dataUrl.section(u',', 1).toLatin1());
+  attachment.pastedText = kept.value(QLatin1String("pastedText")).toBool();
+  attachment.remoteId = kept.value(QLatin1String("remoteId")).toString();
+  attachment.environmentId = kept.value(QLatin1String("environmentId")).toString();
+  // An upload this shell did not see end has to go again.
+  if (attachment.remoteId.isEmpty()) {
+    attachment.upload = QStringLiteral("failed");
+    attachment.error = tr("The upload was interrupted.");
+  }
+  return attachment;
+}
+
 // Each target's text and choices, as {targets: {<target>: {text, modelSelection,
 // runtimeMode, interactionMode}}, stash: [{id, createdAt, text, attachments,
 // terminalContexts}]}, and the drafts' images beside them (imagesPath).
@@ -2223,10 +2266,7 @@ void ComposerController::setStorePath(const QString& path) {
                     {},
                     {}};
     for (const QJsonValue& image : entry.value(QLatin1String("attachments")).toArray()) {
-      const QJsonObject a = image.toObject();
-      kept.attachments.append({str(a, QLatin1String("id")), str(a, QLatin1String("name")), str(a, QLatin1String("mimeType")),
-                               qint64(a.value(QLatin1String("sizeBytes")).toDouble()), str(a, QLatin1String("dataUrl")),
-                               a.value(QLatin1String("source")).toObject()});
+      if (const auto attachment = attachmentOf(image.toObject())) kept.attachments.append(*attachment);
     }
     for (const QJsonValue& context : entry.value(QLatin1String("terminalContexts")).toArray()) {
       const QJsonObject t = context.toObject();
@@ -2258,28 +2298,7 @@ void ComposerController::setStorePath(const QString& path) {
     for (auto it = kept.begin(); it != kept.end(); ++it) {
       QList<Attachment>& attachments = m_drafts[it.key()].attachments;
       for (const QJsonValue& value : it.value().toArray()) {
-        const QJsonObject image = value.toObject();
-        const QString dataUrl = image.value(QLatin1String("dataUrl")).toString();
-        const bool file = image.value(QLatin1String("file")).toBool();
-        if (!file && !dataUrl.startsWith(QLatin1String("data:image/"))) continue;
-        Attachment attachment{image.value(QLatin1String("id")).toString(), image.value(QLatin1String("name")).toString(),
-                              image.value(QLatin1String("mimeType")).toString(),
-                              qint64(image.value(QLatin1String("sizeBytes")).toDouble()), file ? QString() : dataUrl,
-                              image.value(QLatin1String("source")).toObject()};
-        if (file) {
-          attachment.file = true;
-          attachment.path = image.value(QLatin1String("path")).toString();
-          attachment.content = QByteArray::fromBase64(dataUrl.section(u',', 1).toLatin1());
-          attachment.pastedText = image.value(QLatin1String("pastedText")).toBool();
-          attachment.remoteId = image.value(QLatin1String("remoteId")).toString();
-          attachment.environmentId = image.value(QLatin1String("environmentId")).toString();
-          // An upload this shell did not see end has to go again.
-          if (attachment.remoteId.isEmpty()) {
-            attachment.upload = QStringLiteral("failed");
-            attachment.error = tr("The upload was interrupted.");
-          }
-        }
-        attachments.append(attachment);
+        if (const auto attachment = attachmentOf(value.toObject())) attachments.append(*attachment);
       }
     }
     m_kept.images = imagesSignature(kept);
@@ -2319,13 +2338,7 @@ void ComposerController::save() const {
   QJsonArray stash;
   for (const StashEntry& entry : m_kept.stash) {
     QJsonArray images;
-    for (const Attachment& a : entry.attachments) {
-      QJsonObject image{{QStringLiteral("id"), a.id}, {QStringLiteral("name"), a.name},
-                        {QStringLiteral("mimeType"), a.mimeType}, {QStringLiteral("sizeBytes"), double(a.sizeBytes)},
-                        {QStringLiteral("dataUrl"), a.dataUrl}};
-      if (!a.source.isEmpty()) image.insert(QStringLiteral("source"), a.source);
-      images.append(image);
-    }
+    for (const Attachment& a : entry.attachments) images.append(attachmentJson(a));
     QJsonArray contexts;
     for (const TerminalContext& t : entry.terminalContexts) {
       contexts.append(QJsonObject{{QStringLiteral("id"), t.id}, {QStringLiteral("terminalId"), t.terminalId},
@@ -2354,24 +2367,7 @@ void ComposerController::save() const {
   QJsonObject images;
   for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
     QJsonArray list;
-    for (const Attachment& attachment : it.value().attachments) {
-      QJsonObject image{{QStringLiteral("id"), attachment.id},
-                        {QStringLiteral("name"), attachment.name},
-                        {QStringLiteral("mimeType"), attachment.mimeType},
-                        {QStringLiteral("sizeBytes"), attachment.sizeBytes},
-                        {QStringLiteral("dataUrl"), attachment.dataUrl}};
-      if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
-      if (attachment.file) {
-        image.insert(QStringLiteral("file"), true);
-        image.insert(QStringLiteral("path"), attachment.path);
-        image.insert(QStringLiteral("dataUrl"), QStringLiteral("data:;base64,") + QString::fromLatin1(attachment.content.toBase64()));
-        image.insert(QStringLiteral("pastedText"), attachment.pastedText);
-        image.insert(QStringLiteral("remoteId"), attachment.remoteId);
-        image.insert(QStringLiteral("environmentId"), attachment.environmentId);
-        image.insert(QStringLiteral("upload"), attachment.upload);
-      }
-      list.append(image);
-    }
+    for (const Attachment& attachment : it.value().attachments) list.append(attachmentJson(attachment));
     if (!list.isEmpty()) images.insert(it.key(), list);
   }
   const QString joined = imagesSignature(images);
