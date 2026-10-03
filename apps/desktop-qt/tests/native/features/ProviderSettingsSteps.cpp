@@ -1971,6 +1971,38 @@ const Steps customModelSteps([] {
   });
 });
 
+// A custom model's id, checked as it is added (ProviderCustomModels::refusal).
+const Steps customModelIdSteps([] {
+  const QString q = kQuoted;
+
+  step(QStringLiteral("Claude already has the custom model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject listing = provider(QStringLiteral("claudeAgent"), QStringLiteral("claudeAgent"), QStringLiteral("Claude"),
+                                         {{QStringLiteral("models"),
+                                           QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("claude-fable-5-1")}, {QStringLiteral("name"), QStringLiteral("Claude Fable 5.1")}}}}});
+    seedInstance(world, QStringLiteral("claudeAgent"),
+                 {{QStringLiteral("driver"), QStringLiteral("claudeAgent")}, {QStringLiteral("enabled"), true},
+                  {QStringLiteral("config"), QJsonObject{{QStringLiteral("customModels"), QJsonArray{c[0]}}}}},
+                 listing);
+    waitForEntry(world, QStringLiteral("Claude"), [&](const QVariantMap& found) {
+      const QVariantList models = found.value(QStringLiteral("customModels")).toList();
+      return models.size() == 1 && models.first().toMap().value(QStringLiteral("slug")) == c[0];
+    }, QStringLiteral("to list its custom model"));
+  });
+  step(QStringLiteral("the user adds the custom model %1 to Claude").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world).writesBefore = fakeConfig(world.mc).writes.size();
+    // What the page says beside the field.
+    world.toldInPlace = [&world] { return QStringList{entry(world, QStringLiteral("Claude")).value(QStringLiteral("modelError")).toString()}; };
+    act(world, QStringLiteral("addModel"), {{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("slug"), c[0]}});
+    world.sync();
+  });
+  step(QStringLiteral("nothing is saved"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QJsonArray saved = savedInstance(world, QStringLiteral("claudeAgent")).value(QLatin1String("config")).toObject().value(QLatin1String("customModels")).toArray();
+    expect(fakeConfig(world.mc).writes.size() == fake(world).writesBefore && saved == QJsonArray{QStringLiteral("my-model")},
+           QStringLiteral("Claude holds %1 after %2 writes").arg(show(saved.toVariantList())).arg(fakeConfig(world.mc).writes.size() - fake(world).writesBefore));
+  });
+});
+
 }  // namespace
 
 // "The user renames <instance> to <name>" in the Providers settings

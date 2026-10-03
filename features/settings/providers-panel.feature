@@ -540,7 +540,7 @@ Feature: Providers settings panel
         | a choice list with no choices | needs at least one choice  |
         | the same choice twice         | uses a choice twice        |
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: A custom model id is checked before it is saved
       Given Claude already has the custom model "my-model"
       When the user adds the custom model "<slug>" to Claude

@@ -328,6 +328,7 @@ const Steps steps([] {
       }
       // Or the welcome wizard's pairing, setup terminal or import error.
       if (onboardingTells(world, c[0])) return true;
+      if (world.toldInPlace && world.toldInPlace().contains(c[0])) return true;
       // Or what a brick on screen says.
       if (world.brick && world.brick->shows(c[0])) return true;
       return conditionProblem(world) == c[0];
