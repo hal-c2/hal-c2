@@ -55,12 +55,12 @@ Feature: Background activity and the background service
       When the client does not renew the report for its lifetime
       Then the MC stops checking provider health for it
 
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: Clients report what the user is looking at
       When the user opens a thread in the client
       Then the client tells the MC it is watching that thread's git status
 
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: The user sets custom background intervals
       When the user chooses advanced background activity for the environment
       And the user sets git fetch to every 2 minutes and turns off pausing when locked

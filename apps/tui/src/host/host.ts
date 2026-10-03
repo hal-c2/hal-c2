@@ -17,6 +17,7 @@ import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
 import { revertableCheckpoints } from "../timeline.ts";
 import { createAddProjectController } from "./addProjectState.ts";
+import { createClientActivity } from "./clientActivity.ts";
 import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer, type ImageDecoder } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
@@ -477,6 +478,7 @@ export function createHost(options: HostOptions): Host {
     }
     if (!prev || prev.selection !== next.selection || prev.detail !== next.detail) {
       terminal.sync();
+      clientActivity.sync();
     }
     if (prev && prev.selection !== next.selection) files.close();
     if (prev && prev.shell !== next.shell) addProject.sync();
@@ -555,6 +557,15 @@ export function createHost(options: HostOptions): Host {
       worktreePath,
     };
   };
+  // The MC does background work (git fetches) only for what a client is looking at.
+  const clientActivity = createClientActivity({
+    client,
+    watching: () => {
+      const workspace = selectedWorkspace();
+      return workspace ? { threadId: workspace.threadId, cwd: workspace.cwd } : null;
+    },
+    now,
+  });
   // The terminal fills the `layout.drawer` slot; the layout sizes it.
   const terminal = createTerminalController({
     client,
@@ -891,6 +902,9 @@ export function createHost(options: HostOptions): Host {
       case "clock.tick":
         publishSidebar();
         return true;
+      case "clientActivity.renew":
+        clientActivity.renew();
+        return true;
       case "rightPanel.toggle": {
         const kind = payloadField(payload, "kind");
         const next = typeof kind === "string" ? kind : SOURCE_CONTROL_PANEL;
@@ -1101,9 +1115,11 @@ export function createHost(options: HostOptions): Host {
     composer!.sync();
     palette.sync();
   });
-  const unsubscribeConnection = client.subscribeConnection((phase) =>
-    state.set("connection", connectionState(phase)),
-  );
+  const unsubscribeConnection = client.subscribeConnection((phase) => {
+    state.set("connection", connectionState(phase));
+    // A report belongs to the socket it was sent on: a new connection sends it again.
+    if (phase === "connected") clientActivity.renew();
+  });
   store.start();
 
   return {
@@ -1143,6 +1159,7 @@ export function createHost(options: HostOptions): Host {
     reportWarning: (message) => addProblem({ level: "warning", message, where: null }),
     destroy: () => {
       disposeStatusRow();
+      clientActivity.dispose();
       unsubscribeConnection();
       unsubscribe();
       terminal.dispose();

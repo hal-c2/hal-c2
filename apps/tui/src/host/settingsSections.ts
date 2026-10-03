@@ -171,6 +171,17 @@ interface Painted {
 
 function paint(items: ReadonlyArray<SectionItem>, width: number): Painted[] {
   const painted: Painted[] = [];
+  // Values line up after the page's longest label (within reason).
+  const column = Math.min(
+    Math.max(LABEL_COLUMN, Math.floor(width / 2)),
+    items.reduce(
+      (widest, item) =>
+        item.kind === "row" && (item.value ?? "") !== ""
+          ? Math.max(widest, Bun.stringWidth(item.label))
+          : widest,
+      LABEL_COLUMN,
+    ),
+  );
   items.forEach((item, index) => {
     if (item.kind === "blank") {
       painted.push({ id: `blank-${index}`, selectable: false, text: "", paint: () => styled() });
@@ -195,7 +206,7 @@ function paint(items: ReadonlyArray<SectionItem>, width: number): Painted[] {
       });
     } else {
       const value = item.value ?? "";
-      const label = value === "" ? item.label : item.label.padEnd(LABEL_COLUMN);
+      const label = value === "" ? item.label : item.label.padEnd(column);
       const labelText = clip(label, width - 2);
       const valueWidth = width - 3 - Bun.stringWidth(labelText);
       // A value too long for its column goes on under itself; a clipped one is cut.
