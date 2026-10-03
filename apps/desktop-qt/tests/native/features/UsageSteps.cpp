@@ -252,6 +252,69 @@ QVariantList codexAccounts(World& world) {
 const Steps steps([] {
   const QString q = kQuoted;
 
+  // providers/usage.feature: this machine's history is Codex's, and the other
+  // environment, "Studio", has Claude's.
+  step(QStringLiteral("a connected environment with Codex, Claude and Grok history"), [](World& world, const Captures&, const Table&) {
+    ensureConnected(world);
+  });
+  step(QStringLiteral("two connected environments(, one slow to scan)?"), [](World& world, const Captures& c, const Table&) {
+    const QDateTime now = world.now();
+    const QJsonObject limits{{QStringLiteral("checkedAt"), now.toUTC().toString(Qt::ISODateWithMs)},
+                             {QStringLiteral("windows"), QJsonArray{limitsWindow(QStringLiteral("5-hour"), 40, now.addSecs(3600))}}};
+    QJsonObject claude = codex(QStringLiteral("claudeAgent"), QStringLiteral("Claude"), QStringLiteral("sam@example.com"), limits);
+    claude.insert(QStringLiteral("driver"), QStringLiteral("claudeAgent"));
+    setProviders(world, {codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits)});
+    fakeConfig(world.mc).elsewhere.insert(QStringLiteral("Studio"), QJsonObject{{QStringLiteral("providers"), QJsonArray{claude}}});
+    link(world, QStringLiteral("Studio"), QStringLiteral("claude"));
+    if (!c.value(0).isEmpty()) fake(world).scanning.insert(QStringLiteral("Studio"));
+  });
+  step(QStringLiteral("the user selects only one environment in Usage"), [](World& world, const Captures&, const Table&) {
+    showUsage(world, QStringLiteral("cost"));
+    world.waitFor([&] { return !environmentRow(world, QStringLiteral("Studio")).isEmpty(); },
+                  [&] { return QStringLiteral("Studio to be offered; the page is %1").arg(show(usage(world))); });
+    world.bridge().dispatch(QStringLiteral("usage.environment"), QVariantMap{{QStringLiteral("id"), QStringLiteral("Studio")}});
+  });
+  step(QStringLiteral("costs, tokens and limits are shown for that environment only"), [](World& world, const Captures&, const Table&) {
+    // One environment's history is one provider's: 1.5 dollars and 1700 tokens.
+    const auto only = [&](const QString& metric) {
+      showUsage(world, metric);
+      world.waitFor([&] {
+        const QVariantList providers = at(usage(world), QStringLiteral("summary.providers")).toList();
+        return usage(world).value(QStringLiteral("environmentId")) == QLatin1String("Studio") && providers.size() == 1 &&
+               providers[0].toMap().value(QStringLiteral("id")) == QLatin1String("claude") &&
+               at(usage(world), QStringLiteral("summary.costUsd")).toDouble() == 1.5 &&
+               at(usage(world), QStringLiteral("summary.totalTokens")).toDouble() == 1700;
+      }, [&] { return QStringLiteral("only Studio's %1; the page is %2").arg(metric, show(usage(world))); });
+    };
+    only(QStringLiteral("cost"));
+    only(QStringLiteral("tokens"));
+    showUsage(world, QStringLiteral("limits"));
+    world.waitFor([&] {
+      const QVariantList pools = at(usage(world), QStringLiteral("limits.pools")).toList();
+      return pools.size() == 1 && pools[0].toMap().value(QStringLiteral("driver")) == QLatin1String("claudeAgent");
+    }, [&] { return QStringLiteral("only Studio's limits; the page is %1").arg(show(usage(world))); });
+  });
+  step(QStringLiteral("the user opens Usage"), [](World& world, const Captures&, const Table&) {
+    showUsage(world, QStringLiteral("cost"));
+  });
+  step(QStringLiteral("the fast environment's results appear first"), [](World& world, const Captures&, const Table&) {
+    expectShown(world, world.mc.environmentId);
+    expect(!counted(world, QStringLiteral("claude")), QStringLiteral("Studio's usage is counted already: %1").arg(show(usage(world))));
+  });
+  step(QStringLiteral("the slow environment is shown as still scanning until it responds"), [](World& world, const Captures&, const Table&) {
+    const QString slow = QStringLiteral("Studio");
+    world.waitFor([&] { return environmentRow(world, slow).value(QStringLiteral("status")) == QLatin1String("scanning") &&
+                               usage(world).value(QStringLiteral("scanning")).toBool(); },
+                  [&] { return QStringLiteral("Studio to be scanning; the page is %1").arg(show(usage(world))); });
+    const QList<FakeMc::Rpc> asked = summariesFor(world, slow);
+    expect(!asked.isEmpty(), QStringLiteral("Studio was not asked for its usage"));
+    fake(world).scanning.remove(slow);
+    world.mc.reply(asked.last(), summary(world.mc, slow, asked.last().payload));
+    expectShown(world, slow);
+    expect(!usage(world).value(QStringLiteral("scanning")).toBool() && counted(world, QStringLiteral("codex")),
+           QStringLiteral("both environments to be shown; the page is %1").arg(show(usage(world))));
+  });
+
   // Reading usage.
   step(QStringLiteral("the user views (cost|tokens) for the past (24 hours|7 days|30 days|90 days)"),
        [](World& world, const Captures& c, const Table&) {
@@ -429,7 +492,7 @@ const Steps steps([] {
     expect(accounts.value(0).toMap().value(QStringLiteral("name")) == QLatin1String("Codex Work"),
            QStringLiteral("Codex Work, which resets in an hour, to come first; the accounts are %1").arg(show(accounts)));
   });
-  step(QStringLiteral("limits were checked two minutes ago"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("(?:limits were checked|the user opened Limits) two minutes ago"), [](World& world, const Captures&, const Table&) {
     showUsage(world, QStringLiteral("limits"));
     world.waitFor([&] { return fake(world).limitChecks == 1; }, QStringLiteral("limits to be checked"));
     world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("home")));
@@ -438,7 +501,7 @@ const Steps steps([] {
   step(QStringLiteral("the user opens limits"), [](World& world, const Captures&, const Table&) {
     showUsage(world, QStringLiteral("limits"));
   });
-  step(QStringLiteral("the limits are not checked again"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the (?:limits are not checked again|environment is not checked again yet)"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(fake(world).limitChecks == 1,
            QStringLiteral("limits to be checked once; they were checked %1 times").arg(fake(world).limitChecks));
@@ -526,7 +589,7 @@ const Steps steps([] {
     account.insert(QStringLiteral("usageLimits"), read);
     setHub(world, QStringLiteral("Team hub"), {account});
   });
-  step(QStringLiteral("the user opens Limits"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user opens Limits(?: again)?"), [](World& world, const Captures&, const Table&) {
     showUsage(world, QStringLiteral("limits"));
   });
   step(QStringLiteral("that account is counted once in each window"), [](World& world, const Captures&, const Table&) {

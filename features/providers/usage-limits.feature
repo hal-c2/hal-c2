@@ -178,7 +178,7 @@ Feature: Subscription limits
     When the user opens Limits
     Then that account is counted once in each window
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Automatic checks wait at least five minutes per environment
     Given the user opened Limits two minutes ago
     When the user opens Limits again

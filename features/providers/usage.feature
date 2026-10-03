@@ -145,13 +145,13 @@ Feature: Usage
     When the user opens Usage
     Then the user is told "Transcripts could not be scanned."
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Usage can be filtered by environment
     Given two connected environments
     When the user selects only one environment in Usage
     Then costs, tokens and limits are shown for that environment only
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Environments still scanning are shown as they finish
     Given two connected environments, one slow to scan
     When the user opens Usage
