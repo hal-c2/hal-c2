@@ -34,6 +34,18 @@ Rectangle {
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
+    // Vim keys (Settings → General): Escape leaves insert mode.
+    readonly property bool vimKeys: {
+        Settings.device;
+        return Settings.setting("composerVimKeys") === true;
+    }
+    readonly property alias vim: vim
+    // Rich text (Settings → General): the draft's Markdown reads as formatted.
+    readonly property bool richText: {
+        Settings.device;
+        return Settings.setting("composerRichTextEnabled") !== false;
+    }
+
     // Opt-in input plugins share the same draft synchronization as typing.
     property alias editor: input
     property alias editorActions: editorActions.data
@@ -137,8 +149,8 @@ Rectangle {
     }
 
     // Up on the editor's first line recalls the thread's earlier prompts and
-    // Down on its last steps back. ComposerController keeps no prompt history
-    // yet and drops the step (features/composer/context-references.feature).
+    // Down on its last steps forward again; ComposerController decides whether
+    // the draft is one a recall may replace.
     function stepPromptHistory(direction) {
         const caret = input.positionToRectangle(input.cursorPosition).y;
         const edge = input.positionToRectangle(direction === "backward" ? 0 : input.length).y;
@@ -201,14 +213,33 @@ Rectangle {
         });
     }
 
+    // Files join the draft (or the answer the agent waits on); a folder is
+    // named by its path.
     function attach(urls) {
-        const files = Shell.readImageFiles(urls);
-        if (files.length === 0) {
+        const files = Shell.readAttachmentFiles(urls);
+        const folders = Shell.directoryPaths(urls);
+        if (files.length === 0 && folders.length === 0) {
             return;
         }
         Shell.dispatch("composer.attach", {
-            files: files
+            files: files,
+            folders: folders
         });
+    }
+
+    // A paste too large for the prompt becomes a text file; Paste as Text
+    // (mod+shift+V) keeps it in the editor.
+    function paste(asText) {
+        const text = Shell.clipboardText();
+        if (text.length === 0) return false;
+        const selected = input.selectionEnd - input.selectionStart;
+        if (!asText && Shell.pasteAttaches(text, input.length - selected)) {
+            Shell.dispatch("composer.attach", {
+                files: [{ name: "pasted-text.txt", text: text }]
+            });
+            return true;
+        }
+        return composer.insertText(text);
     }
 
     // What Enter with these modifiers sends, as the controller resolves it from the
@@ -284,7 +315,25 @@ Rectangle {
         }
     }
 
+    // A draft already there when the composer is built keeps its caret.
+    Component.onCompleted: input.cursorPosition = Math.min(publishedCursor, input.length)
+
     onSuggestionsChanged: suggestionList.currentIndex = suggestions.length > 0 ? 0 : -1
+
+    ComposerVimKeys {
+        id: vim
+        objectName: "vimKeys"
+
+        composer: composer
+        vimEnabled: composer.vimKeys
+    }
+
+    ComposerHighlighter {
+        document: input.textDocument
+        rich: composer.richText
+        markerColor: Qt.alpha(composer.muted, 0.6)
+        codeFont: Theme.fontMono
+    }
 
     Timer {
         id: textDebounce
@@ -297,6 +346,7 @@ Rectangle {
     // that hosts the composer can answer it.
     TurnRequests {
         id: turnRequests
+        objectName: "turnRequests"
 
         anchors.top: parent.top
         anchors.left: parent.left
@@ -605,15 +655,14 @@ Rectangle {
                     Repeater {
                         model: composer.attachments
 
-                        delegate: ShellButton {
+                        delegate: ComposerAttachment {
                             required property var modelData
 
-                            implicitHeight: 24
-                            iconName: "image"
-                            text: modelData.name
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                            Accessible.name: qsTr("Remove %1").arg(modelData.name)
-                            onClicked: Shell.dispatch("composer.attachment.remove", {
+                            attachment: modelData
+                            onRemoveRequested: Shell.dispatch("composer.attachment.remove", {
+                                id: modelData.id
+                            })
+                            onRetryRequested: Shell.dispatch("composer.attachment.retry", {
                                 id: modelData.id
                             })
                         }
@@ -681,6 +730,10 @@ Rectangle {
                             event.accepted = false;
                             composer.editorKeyPressed(event);
                             if (event.accepted) return;
+                            if (event.key === Qt.Key_V && (event.modifiers & ~Qt.ShiftModifier) === Qt.ControlModifier) {
+                                event.accepted = composer.paste((event.modifiers & Qt.ShiftModifier) !== 0);
+                                if (event.accepted) return;
+                            }
                             if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
                                 if (event.key === Qt.Key_Escape) {
                                     event.accepted = true;
@@ -752,15 +805,15 @@ Rectangle {
                         iconTint: composer.iconMuted
                         Layout.leftMargin: -10
                         enabled: composer.ready && !composer.model.editorDisabled
-                        Accessible.name: qsTr("Attach image")
+                        Accessible.name: qsTr("Attach files")
                         onClicked: imagePicker.open()
 
                         FileDialog {
                             id: imagePicker
 
-                            title: qsTr("Attach images")
+                            title: qsTr("Attach files")
                             fileMode: FileDialog.OpenFiles
-                            nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif)")]
+                            nameFilters: [qsTr("All files (*)"), qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif)")]
                             onAccepted: composer.attach(selectedFiles)
                         }
                     }
@@ -841,6 +894,16 @@ Rectangle {
                         Layout.fillWidth: true
                     }
 
+                    Text {
+                        objectName: "vimMode"
+                        visible: composer.vimKeys
+                        text: vim.modeLabel
+                        color: composer.muted
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        Accessible.name: qsTr("Vim mode: %1").arg(text)
+                    }
+
                     // The stash's count, which opens and closes its list.
                     ShellButton {
                         objectName: "stashBadge"
@@ -865,11 +928,11 @@ Rectangle {
                         readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0 && composer.attachments.length === 0
                         // A send during a turn joins it or waits behind it, per the
                         // follow-up setting; the button says which before the click.
-                        readonly property string followUp: composer.model.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
+                        readonly property string followUp: composer.model?.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
 
                         implicitWidth: 32
                         implicitHeight: 32
-                        enabled: composer.ready && (stopMode || composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
+                        enabled: composer.ready && (stopMode || composer.model?.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
                         hoverEnabled: true
                         opacity: enabled ? 1 : 0.3
                         scale: down ? 0.97 : hovered ? 1.05 : 1
@@ -984,7 +1047,8 @@ Rectangle {
                     iconName: "monitor"
                     enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
                     model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
-                    currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId) : -1
+                    // Auto balance leads the list while it picks the machine.
+                    currentIndex: !contextStrip.wsReady ? -1 : contextStrip.ws.environmentAutomatic ? contextStrip.ws.environments.findIndex(env => env.key === "auto") : contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId)
                     Accessible.name: qsTr("Environment")
                     onActivated: index => Shell.dispatch("workspace.environment.set", {
                             environmentId: contextStrip.ws.environments[index].environmentId,
@@ -1081,6 +1145,7 @@ Rectangle {
 
                 ShellButton {
                     id: branchButton
+                    objectName: "branchButton"
 
                     visible: contextStrip.wsReady && (contextStrip.ws.branch !== null || contextStrip.ws.branchChangeable)
                     enabled: contextStrip.wsReady && contextStrip.ws.branchChangeable && !contextStrip.ws.branchSwitchPending

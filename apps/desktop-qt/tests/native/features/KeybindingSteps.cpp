@@ -22,6 +22,7 @@
 
 #include "Brick.h"
 #include "CommandPaletteController.h"
+#include "ComposerBrick.h"
 #include "DraftController.h"
 #include "FakeConfig.h"
 #include "Harness.h"
@@ -295,6 +296,7 @@ void press(World& world, const QString& key) {
                                         {QStringLiteral("modifiers"), int(combination.keyboardModifiers().toInt())}});
     return;
   }
+  if (pressInComposer(world, key)) return;
   // A brick on screen that takes the scenario's keys gets them as its window does.
   // What it leaves is the window's, as any other key.
   if (world.brick && world.brick->takesKeys) {
@@ -909,6 +911,7 @@ const Steps fileSteps([] {
   });
 
   step(QStringLiteral("two environments are connected"), [](World& world, const Captures&, const Table&) {
+    if (connectSecondComposerEnvironment(world)) return;
     ensureShell(world);
     world.mc.link(QStringLiteral("env-b"));
     world.sync();

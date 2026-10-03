@@ -18,21 +18,21 @@ Feature: Drafting and sending a message
     Given a project with an open thread
     And the thread's provider is ready
 
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Enter sends the message
     Given the user has typed "Fix the failing test"
     When the user presses Enter
     Then the message "Fix the failing test" is sent to the agent
     And the composer is empty
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Shift+Enter starts a new line instead of sending
     Given the user has typed "first line"
     When the user presses Shift+Enter and types "second line"
     Then the draft holds two lines
     And nothing has been sent
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: The send shortcut setting decides what Enter does
     Given the send shortcut setting is "<setting>"
     And the user has typed <draft>
@@ -55,7 +55,7 @@ Feature: Drafting and sending a message
     When the user presses Enter
     Then a new line is added to the draft
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: mod+alt+Enter starts a new thread in the background
     Given the user is writing the first message of a new thread
     When the user presses mod+alt+Enter
@@ -69,7 +69,7 @@ Feature: Drafting and sending a message
     Then the draft still reads "keep me" until the thread confirms the send
     And the draft clears once the send is confirmed
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Switching threads before the draft syncs does not leak text into the new thread
     Given the user has just typed "for thread A" in thread A
     When the user switches to thread B before the draft is saved
@@ -89,7 +89,7 @@ Feature: Drafting and sending a message
     When the user types "second"
     Then the draft reads "second" after the send completes
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A message over the character limit is refused before sending
     Given the user has typed a prompt 10 characters over the 120,000-character limit
     When the user tries to send it
@@ -133,7 +133,7 @@ Feature: Drafting and sending a message
     Then the user is told the background prompt could not be sent
     And the user can restore "refactor utils" into the composer
 
-  @backlog @desktop
+  @desktop
   Scenario: One prompt starts a thread for each chosen model
     Given the project is a Git repository
     And the user is starting a new thread
