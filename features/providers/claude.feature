@@ -135,7 +135,6 @@ Feature: Claude
     When the user signs in to the CLI with that config directory
     Then each instance uses its own account and history
 
-  @backlog
   Scenario: Claude models come from the fetched model manifest
     When the model manifest lists a new Claude model
     Then the new model is offered after the next refresh

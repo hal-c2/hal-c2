@@ -696,6 +696,55 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- the fetched manifest --------------------------------------------------------------
+
+  @new_model "claude-nova-9"
+
+  # The manifest the MC fetches (a file here, where it would be a URL) gains a model,
+  # edited after this release was cut.
+  step "the model manifest lists a new Claude model", context do
+    context = World.fake_providers(context, claude_version: "999.0.0")
+    bundled = HalC2.ModelManifest.bundled()
+    catalog = bundled["providers"]["claudeAgent"]
+
+    nova =
+      hd(catalog["models"])
+      |> Map.take(["profile"])
+      |> Map.merge(%{"slug" => @new_model, "name" => "Claude Nova 9", "status" => "current"})
+
+    published =
+      bundled
+      |> Map.put("updatedAt", "2099-01-01T00:00:00Z")
+      |> put_in(["providers", "claudeAgent", "models"], catalog["models"] ++ [nova])
+      |> update_in(["currentModels", "claudeAgent"], &((&1 || []) ++ [@new_model]))
+
+    file = Path.join(context.mc.home, "published-models.json")
+    File.write!(file, JSON.encode!(published))
+    World.put_app_env(:model_manifest_url, file)
+    HalC2.ModelManifest.forget()
+    ExUnit.Callbacks.on_exit(&HalC2.ModelManifest.forget/0)
+
+    # Until the MC refreshes, Claude's models are the release's own.
+    {providers, context} = World.provider_list(context)
+    refute @new_model in Enum.map(claude(providers)["models"], & &1["slug"])
+    context
+  end
+
+  step "the new model is offered after the next refresh", context do
+    {_, context} = World.call!(context, "server.refreshProviders", %{})
+    {providers, context} = World.provider_list(context)
+    models = claude(providers)["models"]
+
+    assert %{"name" => "Claude Nova 9", "isCustom" => false} =
+             Enum.find(models, &(&1["slug"] == @new_model))
+
+    # It joins the release's models, which are all still offered.
+    assert length(models) ==
+             length(HalC2.ModelManifest.bundled()["providers"]["claudeAgent"]["models"]) + 1
+
+    context
+  end
+
   # --- compaction ------------------------------------------------------------------------
 
   defp compactions(context),
