@@ -56,6 +56,8 @@ public:
   std::unique_ptr<Brick> brick;
   // A question a brick asks in a dialog of its own: "the user confirms" and "the user cancels" answer it.
   std::function<void(bool accepted)> answerQuestion;
+  // What "<name> is still listed" checks when the scenario is not about the Connections page's environments.
+  std::function<void(const QString& name)> expectStillListed;
 
   ShellBridge& bridge() { return *m_bridge; }
   NativeShell& native() { return *m_native; }

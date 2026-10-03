@@ -510,6 +510,7 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("connections.unlink.cancel"), {});
   });
   step(QStringLiteral("%1 is still listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.expectStillListed) return world.expectStillListed(c[0]);
     const QVariantMap page = connections(world);
     expect(!linkRow(world, c[0]).isEmpty() && page.value(QStringLiteral("removing")).isNull() &&
                !called(world, QStringLiteral("hal-c2.unlinkEnvironment")),
