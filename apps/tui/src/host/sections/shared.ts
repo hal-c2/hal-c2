@@ -36,7 +36,8 @@ export interface Machine {
   readonly local: boolean;
   readonly online: boolean;
   readonly version: string | null;
-  readonly capabilities: Readonly<Record<string, unknown>>;
+  /** What its server can do; null when this MC does not know (a cluster member). */
+  readonly capabilities: Readonly<Record<string, unknown>> | null;
   /** How the desktop app or a service hosts it, when the MC says. */
   readonly host: string | null;
 }
@@ -60,7 +61,7 @@ const machineOf = (
   local,
   online,
   version: descriptor.serverVersion ?? null,
-  capabilities: descriptor.capabilities ?? {},
+  capabilities: descriptor.capabilities ?? null,
   host: descriptor.host ?? null,
 });
 
@@ -71,7 +72,7 @@ const machineOf = (
 export async function readMachines(client: TuiClient): Promise<Machine[]> {
   const config = await client.getServerConfig().catch(() => null);
   const local = machineOf(
-    (config?.environment ?? {}) as WireDescriptor,
+    { capabilities: {}, ...(config?.environment as WireDescriptor | undefined) },
     { id: "local", label: "This machine" },
     true,
     true,
@@ -103,4 +104,41 @@ export async function readMachines(client: TuiClient): Promise<Machine[]> {
     }
   }
   return machines;
+}
+
+/** A machine's settings document and the version a write must name (`hal-c2.readSettings`). */
+export interface SettingsDocument {
+  readonly settings: Readonly<Record<string, unknown>>;
+  readonly version: number;
+}
+
+/** The environment a call addresses: nothing for the MC the terminal is connected to. */
+export const environmentOf = (machine: Machine): string | undefined =>
+  machine.local ? undefined : machine.id;
+
+export const readSettings = (client: TuiClient, machine: Machine): Promise<SettingsDocument> =>
+  client.mcCall<SettingsDocument>("hal-c2.readSettings", {}, environmentOf(machine));
+
+/**
+ * Change a machine's settings: read them, apply `change`, and write them back
+ * naming the version read. Another client's write in between sends it round again.
+ */
+export async function changeSettings(
+  client: TuiClient,
+  machine: Machine,
+  change: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    const current = await readSettings(client, machine);
+    try {
+      await client.mcCall(
+        "hal-c2.writeSettings",
+        { settings: change(current.settings), version: current.version },
+        environmentOf(machine),
+      );
+      return;
+    } catch (error) {
+      if (attempt >= 3 || errorText(error) !== "settings changed") throw error;
+    }
+  }
 }

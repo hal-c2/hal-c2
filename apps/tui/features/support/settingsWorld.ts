@@ -2,6 +2,7 @@
 // behind them (`fakeSettingsMc.ts`), open a page as the palette does, and read
 // what it shows. The page's state is `Shell.state.settingsSection`.
 import { expect } from "bun:test";
+import { DEFAULT_SERVER_SETTINGS } from "@hal-c2/contracts";
 
 import type { TuiSettingsSectionState } from "../../src/host/settingsSections.ts";
 import type { FakeSettingsMc } from "./fakeSettingsMc.ts";
@@ -30,6 +31,31 @@ export interface SettingsFixture {
   /** Project ids are their titles ("api"); empty leaves the fake client's default shell. */
   readonly projects: string[];
   readonly links: FakeLink[];
+  /** This machine as its descriptor names it. */
+  readonly local: { serverVersion: string; capabilities: Record<string, unknown>; host?: string };
+  /** Each machine's settings document; "" is the MC the terminal is connected to. */
+  readonly documents: Map<string, FakeDocument>;
+}
+
+export interface FakeDocument {
+  settings: Record<string, any>;
+  version: number;
+  /** The MC's reason for refusing writes; null accepts them. */
+  refuseWrites: string | null;
+  /** Every settings document written, oldest first. */
+  readonly writes: Array<Record<string, any>>;
+}
+
+/** What an up-to-date MC can do, as far as the settings pages ask. */
+export const CAPABILITIES = { storageCleanup: true, projectWorktreeCleanup: true };
+
+/** A machine's settings document ("" or nothing: this machine's), created empty. */
+export function documentOf(ctx: SettingsWorld, environmentId = ""): FakeDocument {
+  const documents = fixture(ctx).documents;
+  if (!documents.has(environmentId)) {
+    documents.set(environmentId, { settings: {}, version: 1, refuseWrites: null, writes: [] });
+  }
+  return documents.get(environmentId)!;
 }
 
 export interface SettingsWorld extends World {
@@ -39,8 +65,26 @@ export interface SettingsWorld extends World {
 /** The scenario's projects and links; the links answer `hal-c2.environmentLinks`. */
 export function fixture(ctx: SettingsWorld): SettingsFixture {
   if (ctx.settingsFixture) return ctx.settingsFixture;
-  const created: SettingsFixture = { projects: [], links: [] };
+  const created: SettingsFixture = {
+    projects: [],
+    links: [],
+    local: { serverVersion: "1.4.0", capabilities: { ...CAPABILITIES } },
+    documents: new Map(),
+  };
   ctx.settingsFixture = created;
+  mc(ctx).on("hal-c2.readSettings", (_payload, environmentId) => {
+    const document = documentOf(ctx, environmentId ?? "");
+    return { settings: document.settings, version: document.version };
+  });
+  mc(ctx).on("hal-c2.writeSettings", (payload, environmentId) => {
+    const document = documentOf(ctx, environmentId ?? "");
+    if (document.refuseWrites !== null) throw new Error(document.refuseWrites);
+    if (payload.version !== document.version) throw new Error("settings changed");
+    document.settings = payload.settings;
+    document.version += 1;
+    document.writes.push(payload.settings);
+    return { version: document.version };
+  });
   mc(ctx).on("hal-c2.environmentLinks", () =>
     created.links.map((link) => ({
       environment: {
@@ -63,7 +107,13 @@ export function linkMachine(ctx: SettingsWorld, label: string, online = true): F
   const links = fixture(ctx).links;
   let link = links.find((known) => known.label === label);
   if (!link) {
-    link = { id: `env-${label}`, label, online, serverVersion: "1.4.0", capabilities: {} };
+    link = {
+      id: `env-${label}`,
+      label,
+      online,
+      serverVersion: "1.4.0",
+      capabilities: { ...CAPABILITIES },
+    };
     links.push(link);
   }
   link.online = online;
@@ -90,6 +140,19 @@ export async function connected(ctx: SettingsWorld): Promise<void> {
   if (ctx.app) return;
   const fake = ctx.fake ?? useClient(ctx);
   const projects = ctx.settingsFixture?.projects ?? [];
+  const local = ctx.settingsFixture?.local;
+  if (local) {
+    fake.override("getServerConfig", (async () => ({
+      settings: DEFAULT_SERVER_SETTINGS,
+      environment: {
+        environmentId: "env-local",
+        label: "This machine",
+        serverVersion: local.serverVersion,
+        capabilities: local.capabilities,
+        ...(local.host ? { host: local.host } : {}),
+      },
+    })) as never);
+  }
   if (projects.length === 0) {
     ctx.connectOnBoot = true;
     await boot(ctx);

@@ -211,7 +211,10 @@ step("it runs at 09:00 on weekdays with full access", async (ctx: TasksWorld) =>
 
 step("its model is the project's default model", (ctx: TasksWorld) => {
   // "api" defaults to Claude's model, which is not the first one listed.
-  expect(savedTask(ctx).modelSelection).toEqual({ instanceId: "claude", model: "claude-model" });
+  expect(savedTask(ctx).modelSelection as unknown).toEqual({
+    instanceId: "claude",
+    model: "claude-model",
+  });
 });
 
 const WORKSPACE_ROW = {

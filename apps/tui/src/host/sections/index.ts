@@ -5,8 +5,11 @@ import { scheduledTasksSection } from "./scheduledTasks.ts";
 import { sourceControlSection } from "./sourceControl.ts";
 
 /** The settings pages the terminal has, in the order the palette lists them. */
+import { storageSection } from "./storage.ts";
+
 export function registerSettingsSections(sections: SettingsSections): void {
   sections.register("scheduledTasks", scheduledTasksSection);
+  sections.register("storage", storageSection);
   sections.register("sourceControl", sourceControlSection);
   sections.register("diagnostics", diagnosticsSection);
   sections.register("resourceMonitor", resourceMonitorSection);

@@ -86,13 +86,13 @@ Feature: Storage cleanup
 
   Rule: Storage settings
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: Settings for several machines show mixed values
       Given "laptop" deletes inactive worktrees and "server" does not
       When the user views storage settings for both machines
       Then that rule shows as mixed
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A machine too old for storage cleanup asks to be updated
       Given the selected machine does not support storage cleanup
       When the user opens storage settings
