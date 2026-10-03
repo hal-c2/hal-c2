@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QTimeZone>
 #include <QVariantMap>
 
 #include <functional>
@@ -247,6 +248,20 @@ struct SnoozePreset {
   QString whenLabel;
   QString snoozedUntil;
 };
+
+// A wake time the user wrote: a date and a time of day in `zone`
+// ("2026-09-25", "08:30"), or an amount of minutes, hours or days from now.
+// Nothing for what cannot be read, is not in the future, or is a time of day
+// the zone skips (a daylight saving change). As client-runtime's
+// resolveCustomSnooze.
+struct CustomSnooze {
+  QString mode;  // "date" or "duration"
+  QString date;
+  QString time;
+  QString amount;
+  QString unit;  // "minutes", "hours" or "days"
+};
+Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, const QTimeZone& zone);
 
 // "12-hour", "24-hour" or "locale", as the web app's timestampFormat setting.
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale);

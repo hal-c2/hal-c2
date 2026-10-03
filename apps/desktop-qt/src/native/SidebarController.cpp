@@ -1,5 +1,7 @@
 #include "SidebarController.h"
 
+#include <utility>
+
 #include "ComposerController.h"
 #include "DraftController.h"
 #include "MenuController.h"
@@ -185,6 +187,30 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     }
     return false;
   }
+  if (action == QLatin1String("snooze.custom.cancel")) {
+    m_customSnoozeKeys.clear();
+    m_bridge->publish(QStringLiteral("customSnooze"), QVariant::fromValue(nullptr));
+    return true;
+  }
+  if (action == QLatin1String("snooze.custom.submit")) {
+    if (m_customSnoozeKeys.isEmpty()) return true;
+    const sidebar::CustomSnooze input{map.value(QStringLiteral("mode")).toString(), map.value(QStringLiteral("date")).toString(),
+                                      map.value(QStringLiteral("time")).toString(), map.value(QStringLiteral("amount")).toString(),
+                                      map.value(QStringLiteral("unit")).toString()};
+    const sidebar::Nullable until = sidebar::resolveCustomSnooze(input, m_now(), m_zone);
+    if (!until) {
+      QVariantMap asked = m_bridge->state()->value(QStringLiteral("customSnooze")).toMap();
+      asked.insert(QStringLiteral("error"), input.mode == QLatin1String("duration") ? QStringLiteral("Enter a positive duration.")
+                                                                                     : QStringLiteral("Choose a valid date and time in the future."));
+      m_bridge->publish(QStringLiteral("customSnooze"), asked);
+      return true;
+    }
+    const QStringList keys = std::exchange(m_customSnoozeKeys, {});
+    m_bridge->publish(QStringLiteral("customSnooze"), QVariant::fromValue(nullptr));
+    clearSelection();
+    for (const QString& key : keys) snooze(key, *until);
+    return true;
+  }
   if (action == QLatin1String("thread.move")) {
     const QString key = keyOf(map);
     const bool up = map.value(QStringLiteral("direction")).toString() == QLatin1String("up");
@@ -357,7 +383,11 @@ void SidebarController::openSnoozeMenu(const QString& key, double x, double y) {
   for (const sidebar::SnoozePreset& preset : presets) {
     items.append({QStringLiteral("snooze:") + preset.id, snoozeLabel(preset)});
   }
+  MenuController::Item custom{kCustomSnooze, QStringLiteral("Custom…")};
+  custom.separatorBefore = true;
+  items.append(custom);
   NativeShell::of(this)->controller<MenuController>()->open(x, y, items, [this, key, presets](const QString& id) {
+    if (id == kCustomSnooze) return askCustomSnooze({key});
     for (const sidebar::SnoozePreset& preset : presets) {
       if (QStringLiteral("snooze:") + preset.id == id) snooze(key, preset.snoozedUntil);
     }
@@ -387,6 +417,19 @@ void SidebarController::snooze(const QString& key, const QString& snoozedUntil) 
                                                                      QVariantMap{{QStringLiteral("key"), key}});
                                                 }});
        });
+}
+
+// Starts an hour from now, as the web app's dialog.
+void SidebarController::askCustomSnooze(const QStringList& keys) {
+  if (keys.isEmpty()) return;
+  m_customSnoozeKeys = keys;
+  const QDateTime initial = m_now().toTimeZone(m_zone).addSecs(3600);
+  m_bridge->publish(QStringLiteral("customSnooze"), QVariantMap{
+                                                        {QStringLiteral("keys"), keys},
+                                                        {QStringLiteral("date"), initial.date().toString(Qt::ISODate)},
+                                                        {QStringLiteral("time"), initial.time().toString(QStringLiteral("HH:mm"))},
+                                                        {QStringLiteral("error"), QString()},
+                                                    });
 }
 
 QStringList SidebarController::sectionKeys(const QString& section) const {

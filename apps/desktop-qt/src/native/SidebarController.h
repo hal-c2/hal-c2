@@ -6,6 +6,7 @@
 #include <QLocale>
 #include <QObject>
 #include <QSet>
+#include <QTimeZone>
 #include <QTimer>
 #include <QVariant>
 
@@ -61,6 +62,7 @@ public:
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
   QDateTime now() const { return m_now(); }
   void setLocale(const QLocale& locale) { m_locale = locale; }
+  void setTimeZone(const QTimeZone& zone) { m_zone = zone; }
 
   void refresh();
   // The draft `id` was edited in some window: refreshes when its row here
@@ -91,6 +93,13 @@ public:
   // un-settles or wakes the thread, and into the snoozed shelf does nothing.
   // The order is the environment's (sidebar::planReorder), which has to
   // support it (threadPinReorder, threadActiveReorder).
+  // A wake time of the user's own: every snooze menu ends in "Custom…"
+  // (kCustomSnooze), which asks through `customSnooze` ({keys, date, time,
+  // error}, the CustomSnoozeDialog brick). `snooze.custom.submit {mode, date,
+  // time, amount, unit}` snoozes the threads it was asked for, or says what is
+  // wrong with the time; `snooze.custom.cancel` closes it.
+  static inline const QString kCustomSnooze = QStringLiteral("snooze:custom");
+  void askCustomSnooze(const QStringList& keys);
   // Whether the row can move one place `up` or down within its section.
   bool canMove(const QString& key, bool up) const;
   // The snooze choices now, and snoozing the thread `key` until one's time,
@@ -136,6 +145,9 @@ private:
   sidebar::Nullable m_scope;
   sidebar::View m_view;
   QSet<QString> m_pending;
+  QTimeZone m_zone = QTimeZone::systemTimeZone();
+  // The threads the custom snooze question is about.
+  QStringList m_customSnoozeKeys;
   QSet<QString> m_selected;
   QString m_anchor;
   // The listed drafts' labels, and the open draft's row as it was when the

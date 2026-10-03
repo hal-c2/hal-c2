@@ -73,7 +73,7 @@ Feature: Snoozing threads
     When the user opens the snooze choices
     Then only one choice wakes the thread on Monday at 09:00
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: Snoozing until a custom time
     When the user snoozes "Refactor cart" for a custom <amount>
     Then "Refactor cart" wakes <when>
@@ -84,7 +84,7 @@ Feature: Snoozing threads
       | 2 days               | 48 hours after confirming  |
       | date of Friday 08:30 | Friday at 08:30 local time |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: A custom snooze time must be in the future and exist
     When the user tries to snooze "Refactor cart" until <time>
     Then the snooze is refused

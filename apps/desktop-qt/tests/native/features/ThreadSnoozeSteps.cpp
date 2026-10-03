@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLocale>
+#include <QTimeZone>
 
 #include "Harness.h"
 #include "NavigationController.h"
@@ -130,6 +131,29 @@ QJsonObject request(const QString& kind, const QDateTime& now) {
   return {{QStringLiteral("id"), QStringLiteral("q1")}, {QStringLiteral("kind"), kind}, {QStringLiteral("createdAt"), iso(now)}};
 }
 
+void waitSnoozedUntil(World& world, const QString& key, const QDateTime& wake) {
+  const qint64 expected = wake.toMSecsSinceEpoch();
+  const auto until = [&] {
+    const auto row = rowOf(world, key);
+    return row ? QDateTime::fromString(row->value(QStringLiteral("snoozedUntil")).toString(), Qt::ISODateWithMs).toMSecsSinceEpoch() : 0;
+  };
+  world.waitFor([&] { return sidebarSectionOf(world, key) == QLatin1String("snoozed") && until() == expected; },
+                [&] { return QStringLiteral("%1 snoozed until %2; its row is %3").arg(key, iso(wake), show(rowOf(world, key).value_or(QVariantMap()))); });
+}
+
+// "Custom…" in the thread's snooze menu, which asks for the time.
+void askCustom(World& world, const QString& key) {
+  openMenu(world, key);
+  const auto snooze = menuItem(world, QStringLiteral("snooze"));
+  expect(snooze && snooze->value(QStringLiteral("enabled")).toBool(), QStringLiteral("the menu is %1").arg(show(menuItems(world))));
+  pick(world, QStringLiteral("snooze:custom"));
+  expect(world.state(QStringLiteral("customSnooze")).typeId() == QMetaType::QVariantMap, QStringLiteral("the user is not asked for a time"));
+}
+
+void submitCustom(World& world, const QVariantMap& input) {
+  world.bridge().dispatch(QStringLiteral("snooze.custom.submit"), input);
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -151,14 +175,7 @@ const Steps steps([] {
          snoozeWith(world, key, c[1]);
        });
   step(QStringLiteral("%1 wakes (\\w+day) at (\\d+):(\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString key = threadKeyOf(world, c[0]);
-    const qint64 expected = nextOn(world, c[1], c[2].toInt(), c[3].toInt()).toMSecsSinceEpoch();
-    const auto until = [&] {
-      const auto row = rowOf(world, key);
-      return row ? QDateTime::fromString(row->value(QStringLiteral("snoozedUntil")).toString(), Qt::ISODateWithMs).toMSecsSinceEpoch() : 0;
-    };
-    world.waitFor([&] { return sidebarSectionOf(world, key) == QLatin1String("snoozed") && until() == expected; },
-                  [&] { return QStringLiteral("%1 snoozed until %2; its row is %3").arg(c[0], iso(QDateTime::fromMSecsSinceEpoch(expected)), show(rowOf(world, key).value_or(QVariantMap()))); });
+    waitSnoozedUntil(world, threadKeyOf(world, c[0]), nextOn(world, c[1], c[2].toInt(), c[3].toInt()));
   });
   step(QStringLiteral("the user opens the snooze choices"), [](World& world, const Captures&, const Table&) {
     world.sync();
@@ -171,7 +188,8 @@ const Steps steps([] {
     // Each choice names its wake time; the menu lists the presets in order.
     const auto presets = world.native().sidebar()->snoozePresets();
     const QVariantList items = menuItems(world);
-    expect(items.size() == presets.size(), QStringLiteral("the menu is %1").arg(show(items)));
+    // The presets, then "Custom…".
+    expect(items.size() == presets.size() + 1, QStringLiteral("the menu is %1").arg(show(items)));
     int waking = 0;
     for (qsizetype index = 0; index < presets.size(); ++index) {
       expect(items.at(index).toMap().value(QStringLiteral("id")) == QStringLiteral("snooze:") + presets.at(index).id,
@@ -236,6 +254,60 @@ const Steps steps([] {
       });
     }
     waitForSection(world, threadKeyOf(world, c[0]), QStringLiteral("snoozed"));
+  });
+
+  // A wake time of the user's own, through the Custom snooze dialog.
+  step(QStringLiteral("the user snoozes %1 for a custom (45 minutes|2 days|date of Friday 08:30)").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = threadKeyOf(world, c[0]);
+    scene(world).subject = key;
+    askCustom(world, key);
+    if (c[1].startsWith(QLatin1String("date of"))) {
+      submitCustom(world, {{QStringLiteral("mode"), QStringLiteral("date")},
+                           {QStringLiteral("date"), nextOn(world, QStringLiteral("Friday"), 8, 30).date().toString(Qt::ISODate)},
+                           {QStringLiteral("time"), QStringLiteral("08:30")}});
+    } else {
+      submitCustom(world, {{QStringLiteral("mode"), QStringLiteral("duration")}, {QStringLiteral("amount"), c[1].section(QLatin1Char(' '), 0, 0)},
+                           {QStringLiteral("unit"), c[1].section(QLatin1Char(' '), 1, 1)}});
+    }
+    expect(world.state(QStringLiteral("customSnooze")).typeId() != QMetaType::QVariantMap,
+           QStringLiteral("the dialog says %1").arg(show(world.state(QStringLiteral("customSnooze")))));
+  });
+  step(QStringLiteral("%1 wakes 48 hours after confirming").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitSnoozedUntil(world, threadKeyOf(world, c[0]), world.now().addSecs(48 * 3600));
+  });
+  step(QStringLiteral("%1 wakes (\\w+day) at (\\d+):(\\d+) local time").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitSnoozedUntil(world, threadKeyOf(world, c[0]), nextOn(world, c[1], c[2].toInt(), c[3].toInt()));
+  });
+  step(QStringLiteral("the user tries to snooze %1 until (Tuesday 09:00|an unreadable date|a time skipped by a daylight saving change)").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         const QString key = threadKeyOf(world, c[0]);
+         scene(world).subject = key;
+         QVariantMap input{{QStringLiteral("mode"), QStringLiteral("date")}};
+         if (c[1] == QLatin1String("Tuesday 09:00")) {
+           // The day before the scenario's Wednesday.
+           input.insert(QStringLiteral("date"), world.now().date().addDays(-1).toString(Qt::ISODate));
+           input.insert(QStringLiteral("time"), QStringLiteral("09:00"));
+         } else if (c[1] == QLatin1String("an unreadable date")) {
+           input.insert(QStringLiteral("date"), QStringLiteral("next friday"));
+           input.insert(QStringLiteral("time"), QStringLiteral("09:00"));
+         } else {
+           // New York's clocks go from 02:00 to 03:00 on 14 March 2027.
+           world.native().sidebar()->setTimeZone(QTimeZone("America/New_York"));
+           input.insert(QStringLiteral("date"), QStringLiteral("2027-03-14"));
+           input.insert(QStringLiteral("time"), QStringLiteral("02:30"));
+         }
+         askCustom(world, key);
+         submitCustom(world, input);
+       });
+  step(QStringLiteral("the snooze is refused"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariantMap asked = world.state(QStringLiteral("customSnooze")).toMap();
+    expect(asked.value(QStringLiteral("error")) == QLatin1String("Choose a valid date and time in the future."),
+           QStringLiteral("the dialog says %1").arg(show(asked)));
+    for (const QJsonObject& command : std::as_const(world.mc.commands)) {
+      expect(command.value(QLatin1String("type")) != QLatin1String("thread.snooze"), QStringLiteral("the MC has %1").arg(world.describeCommands()));
+    }
+    expect(sidebarSectionOf(world, scene(world).subject) == QLatin1String("active"), QStringLiteral("the thread is not active"));
   });
 
   // Waking early: what the MC's row says once the thread needs the user.

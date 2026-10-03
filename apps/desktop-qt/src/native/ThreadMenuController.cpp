@@ -141,6 +141,9 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
       for (const sidebar::SnoozePreset& preset : sidebar->snoozePresets()) {
         snooze.children.append({QStringLiteral("snooze:") + preset.id, SidebarController::snoozeLabel(preset)});
       }
+      Item custom{SidebarController::kCustomSnooze, QStringLiteral("Custom…")};
+      custom.separatorBefore = true;
+      snooze.children.append(custom);
       add(snooze);
     }
   }
@@ -227,6 +230,9 @@ void ThreadMenuController::openSelection(const QStringList& keys, double x, doub
     for (const sidebar::SnoozePreset& preset : sidebar->snoozePresets()) {
       snooze.children.append({QStringLiteral("snooze:") + preset.id, SidebarController::snoozeLabel(preset)});
     }
+    Item custom{SidebarController::kCustomSnooze, QStringLiteral("Custom…")};
+    custom.separatorBefore = true;
+    snooze.children.append(custom);
     add(snooze);
   }
   if (regenerable > 0) {
@@ -282,7 +288,9 @@ void ThreadMenuController::chooseForSelection(const QStringList& keys, const QSt
     };
   };
   const auto plural = [](qsizetype count) { return count == 1 ? QStringLiteral("thread") : QStringLiteral("threads"); };
-  if (id.startsWith(QLatin1String("snooze:"))) {
+  if (id == SidebarController::kCustomSnooze) {
+    sidebar->askCustomSnooze(keys);
+  } else if (id.startsWith(QLatin1String("snooze:"))) {
     QString until;
     for (const sidebar::SnoozePreset& preset : sidebar->snoozePresets()) {
       if (QStringLiteral("snooze:") + preset.id == id) until = preset.snoozedUntil;
@@ -376,7 +384,9 @@ void ThreadMenuController::choose(const QString& key, const QString& id, double 
   auto* shell = NativeShell::of(this);
   auto* navigation = shell->controller<NavigationController>();
   const QVariantMap keyed{{QStringLiteral("key"), key}};
-  if (id.startsWith(QLatin1String("snooze:"))) {
+  if (id == SidebarController::kCustomSnooze) {
+    shell->sidebar()->askCustomSnooze({key});
+  } else if (id.startsWith(QLatin1String("snooze:"))) {
     for (const sidebar::SnoozePreset& preset : shell->sidebar()->snoozePresets()) {
       if (QStringLiteral("snooze:") + preset.id == id) shell->sidebar()->snooze(key, preset.snoozedUntil);
     }

@@ -909,6 +909,29 @@ QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<Q
   return assignments;
 }
 
+Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, const QTimeZone& zone) {
+  QDateTime wake;
+  if (input.mode == QLatin1String("duration")) {
+    bool ok = false;
+    const double amount = input.amount.trimmed().toDouble(&ok);
+    if (!ok || !std::isfinite(amount) || amount <= 0) return std::nullopt;
+    const qint64 unitMs = input.unit == QLatin1String("minutes") ? kMinuteMs : input.unit == QLatin1String("days") ? kDayMs : kHourMs;
+    wake = now.addMSecs(std::llround(amount * double(unitMs)));
+  } else {
+    static const QRegularExpression datePattern(QStringLiteral("^\\d{4}-\\d{2}-\\d{2}$"));
+    static const QRegularExpression timePattern(QStringLiteral("^\\d{2}:\\d{2}$"));
+    if (!datePattern.match(input.date).hasMatch() || !timePattern.match(input.time).hasMatch()) return std::nullopt;
+    const QDate date = QDate::fromString(input.date, Qt::ISODate);
+    const QTime time = QTime::fromString(input.time, QStringLiteral("HH:mm"));
+    if (!date.isValid() || !time.isValid()) return std::nullopt;
+    wake = QDateTime(date, time, zone);
+    // A time of day the zone skips resolves to another one: that is not what was asked.
+    if (!wake.isValid() || wake.date() != date || wake.time() != time) return std::nullopt;
+  }
+  if (!wake.isValid() || wake <= now) return std::nullopt;
+  return formatIso(wake);
+}
+
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale) {
   if (timestampFormat == QLatin1String("12-hour")) return locale.toString(local.time(), QStringLiteral("h:mm AP"));
   if (timestampFormat == QLatin1String("24-hour")) return locale.toString(local.time(), QStringLiteral("HH:mm"));

@@ -52,6 +52,7 @@ qt_add_qml_module(hal_c2_bricks
     TurnRequests.qml
     ProjectRemovalDialog.qml
     ConfirmDialog.qml
+    CustomSnoozeDialog.qml
     DiffPanel.qml
     FilesPanel.qml
     AgentsPanel.qml
