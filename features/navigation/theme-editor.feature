@@ -56,13 +56,13 @@ Feature: Custom themes
       When the user presses the theme editor shortcut
       Then the theme editor is closed
 
-    @backlog @desktop
+    @desktop
     Scenario: Picking a color from the app
       Given the theme editor is open
       When the user inspects the app and picks the sidebar
       Then the editor shows the color used there and how many places use it
 
-    @backlog @desktop
+    @desktop
     Scenario: Escape cancels picking a color
       Given the user is inspecting the app for a color
       When the user presses Escape

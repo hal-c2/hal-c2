@@ -49,6 +49,11 @@ class ThemeController : public QObject, public NativeController {
   // The draft the editor holds, unsaved changes included, for as long as it
   // is open: it outlives the page that opened it.
   Q_PROPERTY(QVariantMap editing READ editing NOTIFY editingChanged)
+  // Picking a colour off the app: while `inspecting`, the window's
+  // ThemeInspector hands the colour under the pointer to pick(), and `picked`
+  // says which roles draw in it: {color, role (the first), roles, count}.
+  Q_PROPERTY(bool inspecting READ inspecting WRITE setInspecting NOTIFY inspectChanged)
+  Q_PROPERTY(QVariantMap picked READ picked NOTIFY inspectChanged)
   // The roles by family, as the editor's advanced view groups them:
   // [{title, roles}].
   Q_PROPERTY(QVariantList families READ families CONSTANT)
@@ -114,6 +119,11 @@ public:
   Q_INVOKABLE void edit(const QVariantMap& draft);
   Q_INVOKABLE void setEditing(const QVariantMap& draft);
   QVariantList families() const;
+  bool inspecting() const { return m_inspecting; }
+  // Starting to inspect forgets the last pick; stopping (Escape) picks nothing.
+  void setInspecting(bool inspecting);
+  QVariantMap picked() const { return m_picked; }
+  Q_INVOKABLE void pick(const QString& color);
   // A whole palette grown from a canvas and an accent (the web's
   // createVividThemeColors, simplified): surfaces step away from the canvas,
   // text is solved for contrast against it, the status colours stay standard.
@@ -145,6 +155,7 @@ signals:
   void changed();
   void editorOpenChanged();
   void editingChanged();
+  void inspectChanged();
   void importChanged();
 
 private:
@@ -172,6 +183,8 @@ private:
   QString m_cycleToast;
   bool m_editorOpen = false;
   QVariantMap m_editing;
+  bool m_inspecting = false;
+  QVariantMap m_picked;
   QString m_importError;
   // Parsed themes whose id is already installed.
   QJsonArray m_importConflicts;

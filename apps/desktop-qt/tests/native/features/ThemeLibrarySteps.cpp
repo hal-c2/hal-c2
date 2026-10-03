@@ -269,6 +269,55 @@ const Steps steps([] {
            describeKeyPress(world));
   });
 
+  // Picking a colour off the app: the editor over a sidebar, with the window's inspector.
+  const auto inspected = [](World& world) -> Brick& {
+    if (!world.brick) {
+      world.brick = std::make_unique<Brick>(world,
+                                            "import QtQuick\nimport HalC2.Bricks\n"
+                                            "Item { property alias editor: editor\n"
+                                            "  Sidebar { width: 256; height: parent.height }\n"
+                                            "  ThemeEditor { id: editor; x: 300 }\n"
+                                            "  ThemeInspector { anchors.fill: parent } }\n",
+                                            QSize(900, 700));
+      world.brick->takesKeys = true;
+      expect(QTest::qWaitForWindowActive(&world.brick->window()), QStringLiteral("the window did not become active"));
+    }
+    return *world.brick;
+  };
+  step(QStringLiteral("the user inspects the app and picks the sidebar"), [inspected](World& world, const Captures&, const Table&) {
+    Brick& brick = inspected(world);
+    brick.click(QStringLiteral("pick"));
+    expect(themes(world)->inspecting(), QStringLiteral("the editor did not start inspecting"));
+    // An empty part of the thread list.
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, QPoint(120, 520));
+  });
+  step(QStringLiteral("the editor shows the color used there and how many places use it"), [inspected](World& world, const Captures&, const Table&) {
+    const QVariantMap picked = themes(world)->picked();
+    const QColor sidebar = world.theme().color(QStringLiteral("sidebar"), QColor());
+    expect(!themes(world)->inspecting() && QColor(picked.value(QStringLiteral("color")).toString()) == sidebar &&
+               picked.value(QStringLiteral("roles")).toStringList().contains(QStringLiteral("sidebar")) &&
+               picked.value(QStringLiteral("count")).toInt() == picked.value(QStringLiteral("roles")).toStringList().size(),
+           QStringLiteral("picked %1; the sidebar is %2").arg(show(picked), sidebar.name()));
+    const QString told = QStringLiteral("%1 · %2 · used in %3 places")
+                             .arg(picked.value(QStringLiteral("role")).toString(), picked.value(QStringLiteral("color")).toString())
+                             .arg(picked.value(QStringLiteral("count")).toInt());
+    expect(inspected(world).shows(told), QStringLiteral("the editor does not say \"%1\"").arg(told));
+  });
+  step(QStringLiteral("the user is inspecting the app for a color"), [inspected](World& world, const Captures&, const Table&) {
+    auto* commands = world.native().controller<KeybindingController>()->commands();
+    expect(commands->run(QStringLiteral("themeEditor.toggle")) && themes(world)->editorOpen(), QStringLiteral("the theme editor did not open"));
+    Brick& brick = inspected(world);
+    brick.click(QStringLiteral("pick"));
+    expect(themes(world)->inspecting(), QStringLiteral("the editor did not start inspecting"));
+    brick.grab();
+  });
+  step(QStringLiteral("nothing is picked"), [inspected](World& world, const Captures&, const Table&) {
+    expect(!themes(world)->inspecting() && themes(world)->picked().isEmpty() && themes(world)->editorOpen(),
+           QStringLiteral("inspecting: %1, picked %2").arg(themes(world)->inspecting()).arg(show(themes(world)->picked())));
+    // And the next click is the app's again.
+    expect(!inspected(world).item(QStringLiteral("themeInspector"))->isVisible(), QStringLiteral("the inspector still covers the window"));
+  });
+
   // Importing.
   step(QStringLiteral("the user imports one HAL-C2 theme file"), [](World& world, const Captures&, const Table&) {
     themes(world)->importFiles({writeFile(world, QStringLiteral("aurora.json"), themeFile(QStringLiteral("Aurora"), kImportedCanvas))});

@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QQmlPropertyMap>
 #include <QRegularExpression>
 #include <QStyleHints>
 
@@ -357,9 +358,40 @@ void ThemeController::setEditorOpen(bool open) {
   // Opened by its toggle: on the theme drawn now. Closed: the draft goes.
   if (open && m_editing.isEmpty()) m_editing = draft();
   if (!open) m_editing.clear();
+  if (!open && (m_inspecting || !m_picked.isEmpty())) {
+    m_inspecting = false;
+    m_picked.clear();
+    emit inspectChanged();
+  }
   m_editorOpen = open;
   emit editingChanged();
   emit editorOpenChanged();
+}
+
+void ThemeController::setInspecting(bool inspecting) {
+  if (inspecting == m_inspecting) return;
+  m_inspecting = inspecting;
+  if (inspecting) m_picked.clear();
+  emit inspectChanged();
+}
+
+void ThemeController::pick(const QString& color) {
+  if (!m_inspecting) return;
+  const QColor wanted(canonicalColor(color));
+  QStringList roles;
+  if (wanted.isValid()) {
+    // The roles the window draws in that colour now.
+    const QVariantMap drawn = m_bridge->state()->value(QStringLiteral("theme")).toMap().value(QStringLiteral("colors")).toMap();
+    for (const QString& role : this->roles()) {
+      if (QColor(drawn.value(role).toString()).rgb() == wanted.rgb()) roles.append(role);
+    }
+  }
+  m_inspecting = false;
+  m_picked = {{QStringLiteral("color"), wanted.isValid() ? wanted.name(QColor::HexRgb) : QString()},
+              {QStringLiteral("role"), roles.value(0)},
+              {QStringLiteral("roles"), roles},
+              {QStringLiteral("count"), roles.size()}};
+  emit inspectChanged();
 }
 
 void ThemeController::edit(const QVariantMap& draft) {
