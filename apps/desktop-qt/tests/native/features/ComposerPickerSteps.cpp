@@ -304,12 +304,8 @@ const Steps steps([] {
     expect(pressInComposer(world, QStringLiteral("mod+shift+m")), QStringLiteral("the composer's window did not take the key"));
     if (!open) opened(world);
   });
-  step(QStringLiteral("the model picker is (open|closed)"), [](World& world, const Captures& c, const Table&) {
-    const bool open = c[0] == QLatin1String("open");
-    world.waitFor([&] { return open ? pickerOpen(world) : !popupOf(picker(world))->property("visible").toBool(); },
-                  [&] { return QStringLiteral("the model picker to be %1").arg(c[0]); });
-    // Open, it has the keyboard for the search.
-    if (open) expect(part(world, QStringLiteral("modelPickerSearch"))->hasActiveFocus(), QStringLiteral("the search does not have the keyboard"));
+  step(QStringLiteral("the model picker is closed"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !popupOf(picker(world))->property("visible").toBool(); }, QStringLiteral("the model picker to be closed"));
   });
 
   // Looking through the models.
@@ -503,5 +499,14 @@ bool modelPickerShows(World& world, const QString& name, const QString& reason) 
 bool modelPickerChooses(World& world, const QString& name) {
   if (!composerBrickShown(world) || !pickerOpen(world)) return false;
   click(world, rowOf(world, name));
+  return true;
+}
+
+bool modelPickerShownOpen(World& world) {
+  // As an outcome with the composer on screen; as a precondition it is ModelSteps'.
+  if (!world.checking || !composerBrickShown(world)) return false;
+  world.waitFor([&] { return pickerOpen(world); }, QStringLiteral("the model picker to be open"));
+  // Open, it has the keyboard for the search.
+  expect(part(world, QStringLiteral("modelPickerSearch"))->hasActiveFocus(), QStringLiteral("the search does not have the keyboard"));
   return true;
 }

@@ -43,3 +43,5 @@ bool composerMessageReceived(World& world, const QString& text);
 // "two environments are connected", for the composer's open thread: a second
 // machine with a checkout of its project. False when no such thread is open.
 bool connectSecondComposerEnvironment(World& world);
+// "the model picker is open" as an outcome: the picker of the composer on screen.
+bool modelPickerShownOpen(World& world);
