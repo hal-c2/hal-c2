@@ -119,6 +119,62 @@ private slots:
     QTRY_VERIFY(!settings->isVisible());
   }
 
+  // The usage route draws its chart inside the centre, and the day under the
+  // pointer is read out without leaving the plot.
+  void usageRouteDrawsTheChart(QQuickWindow* window) {
+    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    QVERIFY(centre);
+    QVariantList days;
+    for (int day = 0; day < 7; ++day) {
+      const QString label = QStringLiteral("Sep %1").arg(17 + day);
+      days.append(QVariantMap{{"key", label}, {"label", label}, {"heading", label},
+                              {"costUsd", QVariantList{12.5 * (day % 3), 1234.56 - 100 * day}},
+                              {"totalTokens", QVariantList{1e6 * (day % 3), 4e8}}});
+    }
+    auto usage = QJsonDocument::fromJson(R"({
+      "open": true, "metric": "cost", "windowDays": 7, "windowLabel": "Sep 17 to Sep 23", "environmentId": "",
+      "environments": [{"id": "local", "label": "Local", "status": "ready"}],
+      "scanning": false, "refreshing": false, "notices": [], "message": "", "limits": null,
+      "summary": {
+        "costUsd": 6579.42, "totalTokens": 2806000000, "sessions": 12, "unpricedShare": 0, "cacheSavingsUsd": 0,
+        "cachedInputTokens": 0, "uncachedInputTokens": 0, "cacheCreationTokens": 0, "outputTokens": 0,
+        "providers": [{"id": "codex", "label": "Codex", "costUsd": 75, "totalTokens": 6000000, "sessions": 4},
+                      {"id": "claude", "label": "Claude Code", "costUsd": 6504.42, "totalTokens": 2800000000, "sessions": 8}],
+        "models": [], "periods": []
+      }
+    })").toVariant().toMap();
+    QVariantMap summary = usage.value("summary").toMap();
+    summary.insert("chart", days);
+    usage.insert("summary", summary);
+    bridge.publish("usage", usage);
+    bridge.publish("route", QVariantMap{{"kind", "usage"}});
+    QTRY_VERIFY(findVisualItem(window->contentItem(), "usageChart"));
+    auto* chart = findVisualItem(window->contentItem(), "usageChart");
+    QTRY_VERIFY(chart->isVisible());
+    // Past the axis labels there is a plot to draw in.
+    QTRY_VERIFY(chart->width() > 164);
+    // The centre is still settling into a window that has just been resized.
+    const auto drawn = [&] { return chart->mapRectToItem(centre, QRectF(0, 0, chart->width(), chart->height())); };
+    QTRY_VERIFY(drawn().left() >= 0 && drawn().right() <= centre->width());
+    QCOMPARE(chart->property("lines").toList().size(), 2);
+    // A shell that lays a panel over the centre takes its pointer away.
+    if (chart->isEnabled()) {
+      auto* readout = findVisualItem(chart, "usageChartReadout");
+      QVERIFY(readout);
+      // The last day: the readout has no room to the right of the pointer.
+      QTest::mouseMove(window, chart->mapToScene(QPointF(chart->width() - 2, 100)).toPoint());
+      QTRY_COMPARE(chart->property("hoveredIndex").toInt(), 6);
+      QTRY_VERIFY(readout->isVisible());
+      const QRectF shown = readout->mapRectToItem(chart, QRectF(0, 0, readout->width(), readout->height()));
+      QVERIFY(shown.left() >= 64);
+      QVERIFY(shown.right() <= chart->width());
+      QVERIFY(shown.top() >= 0);
+      QVERIFY(shown.bottom() <= chart->height());
+    }
+    bridge.publish("route", QVariant());
+    bridge.publish("usage", QVariant());
+  }
+
   void layoutsFit_data() {
     QTest::addColumn<QString>("example");
     QTest::addColumn<int>("width");
@@ -158,6 +214,8 @@ private slots:
     QVERIFY(title);
     if (width == 1400) QTRY_VERIFY(!title->property("truncated").toBool());
     QTRY_VERIFY(title->mapToScene(QPointF(title->width(), 0)).x() <= window->width());
+    usageRouteDrawsTheChart(window);
+    if (QTest::currentTestFailed()) return;
     if (width == 1000) threadRoutesDrawTheCentre(window);
 
     if (example == "glass-macos") {

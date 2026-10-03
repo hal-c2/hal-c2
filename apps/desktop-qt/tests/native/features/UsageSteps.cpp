@@ -1,6 +1,8 @@
 // The usage page on the desktop (UsageController), and the MC's side of it:
 // the @shared scenarios of features/settings/usage.feature.
 
+#include <algorithm>
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -27,6 +29,7 @@ struct FakeUsage {
   qsizetype readsAtRefresh = 0;
   int limitChecks = 0;
   int followedBefore = 0;
+  QString hoveredDay;                 // the chart's day under the pointer
   // provider.consumeResetCredit: what the MC says, and what it was asked.
   QString creditOutcome = QStringLiteral("reset");
   QList<QJsonObject> redeemed;
@@ -75,7 +78,8 @@ QJsonObject summary(FakeMc& mc, const QString& environment, const QJsonObject& i
   };
   return {
       {QStringLiteral("contractVersion"), mc.part<FakeUsage>().versions.value(environment, 5)},
-      {QStringLiteral("readAt"), QStringLiteral("2026-09-23T10:00:00.000Z")},
+      // An hourly read is as new as the window it was asked over.
+      {QStringLiteral("readAt"), input.value(QLatin1String("untilTime")).toString(QStringLiteral("2026-09-23T10:00:00.000Z"))},
       {QStringLiteral("timeZone"), input.value(QLatin1String("timeZone"))},
       {QStringLiteral("sinceDay"), input.value(QLatin1String("sinceDay"))},
       {QStringLiteral("untilDay"), input.value(QLatin1String("untilDay"))},
@@ -279,7 +283,14 @@ const Steps steps([] {
       for (auto it = expected.begin(); it != expected.end(); ++it) {
         if (calls.last().payload.value(it.key()) != it.value()) return false;
       }
-      return !at(usage(world), QStringLiteral("summary.periods")).toList().isEmpty();
+      if (at(usage(world), QStringLiteral("summary.periods")).toList().isEmpty()) return false;
+      // The chart has every period of the window, and what was spent falls inside it.
+      const QVariantList chart = at(usage(world), QStringLiteral("summary.chart")).toList();
+      double charted = 0;
+      for (const QVariant& period : chart) {
+        for (const QVariant& cost : period.toMap().value(QStringLiteral("costUsd")).toList()) charted += cost.toDouble();
+      }
+      return chart.size() == (days == 1 ? 24 : days) && qFuzzyCompare(charted, at(usage(world), QStringLiteral("summary.costUsd")).toDouble());
     }, [&] {
       const QList<FakeMc::Rpc> calls = summariesFor(world, world.mc.environmentId);
       return QStringLiteral("usage to be read over %1; it was asked for %2 and shows %3")
@@ -287,6 +298,59 @@ const Steps steps([] {
                calls.isEmpty() ? QStringLiteral("nothing") : QString::fromUtf8(QJsonDocument(calls.last().payload).toJson(QJsonDocument::Compact)),
                show(usage(world)));
     });
+  });
+  // The chart. Drawing it and following the pointer are UsageChart.qml's
+  // (tst_UsagePage.qml); these read what the page is given to draw.
+  step(QStringLiteral("Codex and Claude both have usage in the past (?:7 days|24 hours)"), [](World& world, const Captures&, const Table&) {
+    // This environment's history is Codex's; another brings Claude's.
+    link(world, QStringLiteral("laptop"), QStringLiteral("claude"));
+  });
+  step(QStringLiteral("the chart draws Codex and Claude over all (\\d+) days"), [](World& world, const Captures& c, const Table&) {
+    const QString today = world.now().toLocalTime().date().toString(Qt::ISODate);
+    world.waitFor([&] {
+      const QVariantList chart = at(usage(world), QStringLiteral("summary.chart")).toList();
+      if (chart.size() != c[0].toInt() || chart.last().toMap().value(QStringLiteral("key")) != today) return false;
+      if (!counted(world, QStringLiteral("codex")) || !counted(world, QStringLiteral("claude"))) return false;
+      return std::all_of(chart.begin(), chart.end(), [](const QVariant& day) {
+        return day.toMap().value(QStringLiteral("costUsd")).toList().size() == 2;
+      });
+    }, [&] { return QStringLiteral("a chart of %1 days ending %2 for Codex and Claude; the page is %3").arg(c[0], today, show(usage(world))); });
+  });
+  step(QStringLiteral("(\\d+) minutes pass and %1 is slow to answer").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, world.mc.environmentId);
+    expectShown(world, c[1]);
+    world.setTime(world.now().addSecs(c[0].toInt() * 60));
+    fake(world).scanning.insert(c[1]);
+  });
+  step(QStringLiteral("the chart still draws Codex and Claude"), [](World& world, const Captures&, const Table&) {
+    // This environment's new read has landed: the chart starts where its window does.
+    QDateTime until = world.now().toUTC();
+    until.setTime(QTime(until.time().hour(), until.time().minute()));
+    const QString since = until.addSecs(-24 * 60 * 60).toString(Qt::ISODateWithMs);
+    const auto chart = [&] { return at(usage(world), QStringLiteral("summary.chart")).toList(); };
+    world.waitFor([&] { return !chart().isEmpty() && chart().first().toMap().value(QStringLiteral("key")) == since; },
+                  [&] { return QStringLiteral("a chart from %1; the page is %2").arg(since, show(usage(world))); });
+    double codex = 0, claude = 0;
+    for (const QVariant& hour : chart()) {
+      const QVariantList cost = hour.toMap().value(QStringLiteral("costUsd")).toList();
+      codex += cost.value(0).toDouble();
+      claude += cost.value(1).toDouble();
+    }
+    expect(codex > 0 && claude > 0, QStringLiteral("both providers on the chart; the page is %1").arg(show(usage(world))));
+  });
+  step(QStringLiteral("the user hovers a day"), [](World& world, const Captures&, const Table&) {
+    fake(world).hoveredDay = world.now().toLocalTime().date().toString(Qt::ISODate);
+  });
+  step(QStringLiteral("that day's cost for each provider is read out"), [](World& world, const Captures&, const Table&) {
+    for (const QVariant& value : at(usage(world), QStringLiteral("summary.chart")).toList()) {
+      const QVariantMap day = value.toMap();
+      if (day.value(QStringLiteral("key")) != fake(world).hoveredDay) continue;
+      // Codex first, as the page lists them; each history spent 1.5 that day.
+      expect(day.value(QStringLiteral("costUsd")).toList() == QVariantList{1.5, 1.5},
+             QStringLiteral("Codex and Claude to have spent 1.5 each on %1; the day is %2").arg(fake(world).hoveredDay, show(day)));
+      return;
+    }
+    expect(false, QStringLiteral("the chart to have %1; the page is %2").arg(fake(world).hoveredDay, show(usage(world))));
   });
   step(QStringLiteral("%1 is still scanning and %1 has finished").arg(q), [](World& world, const Captures& c, const Table&) {
     link(world, c[0], QStringLiteral("grok"));

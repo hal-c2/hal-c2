@@ -38,6 +38,18 @@ Rectangle {
         return page.metric === "tokens" ? page.tokens(row.totalTokens) : page.usd(row.costUsd);
     }
 
+    // The colour a provider's line is drawn in, as the web's usageProviders.ts:
+    // Codex in the text colour, Grok between it and the chart's muted chrome.
+    function providerColor(id) {
+        if (id === "claude")
+            return "#d97757";
+        return id === "grok" ? Qt.tint(page.color, Qt.alpha(page.foreground, 0.72)) : page.foreground;
+    }
+
+    function driverKind(id) {
+        return id === "claude" ? "claudeAgent" : id;
+    }
+
     function sessions(count) {
         return count === 1 ? qsTr("1 session") : qsTr("%1 sessions").arg(Math.round(count));
     }
@@ -143,7 +155,8 @@ Rectangle {
             }
         }
 
-        RowLayout {
+        // Wraps where the centre is narrow, so the page never runs wider than it.
+        Flow {
             Layout.fillWidth: true
             spacing: 4
 
@@ -161,7 +174,8 @@ Rectangle {
             }
 
             Item {
-                Layout.preferredWidth: 12
+                width: 12
+                height: 1
             }
 
             Repeater {
@@ -408,8 +422,17 @@ Rectangle {
                             Layout.fillWidth: true
                             spacing: 6
 
+                            // The provider's colour in the chart.
+                            Rectangle {
+                                implicitWidth: 8
+                                implicitHeight: 8
+                                radius: 4
+                                color: page.providerColor(modelData.id)
+                                Accessible.ignored: true
+                            }
+
                             ProviderIcon {
-                                driverKind: modelData.id === "claude" ? "claudeAgent" : modelData.id
+                                driverKind: page.driverKind(modelData.id)
                             }
 
                             Label {
@@ -417,6 +440,7 @@ Rectangle {
                                 text: qsTr("%1  %2").arg(modelData.label).arg(page.sessions(modelData.sessions))
                                 color: page.foreground
                                 font.pixelSize: 13
+                                elide: Text.ElideRight
                             }
 
                             Label {
@@ -425,6 +449,33 @@ Rectangle {
                                 font.pixelSize: 13
                             }
                         }
+                    }
+
+                    Section {
+                        visible: usageChart.visible
+                        text: usageChart.description
+                    }
+
+                    UsageChart {
+                        id: usageChart
+
+                        readonly property bool hourly: page.model !== null && page.model.windowDays === 1
+
+                        objectName: "usageChart"
+                        Layout.fillWidth: true
+                        visible: series.length > 0 && columns.length > 0
+                        description: page.metric === "tokens" ? (hourly ? qsTr("Hourly processed tokens") : qsTr("Daily processed tokens")) : (hourly ? qsTr("Hourly cost") : qsTr("Daily cost"))
+                        series: (page.summary?.providers ?? []).map(provider => ({
+                            label: provider.label,
+                            color: page.providerColor(provider.id),
+                            driverKind: page.driverKind(provider.id)
+                        }))
+                        columns: (page.summary?.chart ?? []).map(period => ({
+                            label: period.label,
+                            heading: period.heading,
+                            values: page.metric === "tokens" ? period.totalTokens : period.costUsd
+                        }))
+                        format: page.metric === "tokens" ? page.tokens : page.usd
                     }
 
                     Section {
