@@ -771,6 +771,10 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("workspace.branch.search"), query: Schema.String }),
   Schema.Struct({ type: Schema.Literal("workspace.branch.select"), name: Schema.String }),
   Schema.Struct({ type: Schema.Literal("workspace.branch.create"), name: Schema.String }),
+  /** The next page of the ref list, when it has one. */
+  Schema.Struct({ type: Schema.Literal("workspace.branch.more") }),
+  /** The route's branch name, to the clipboard. */
+  Schema.Struct({ type: Schema.Literal("workspace.branch.copy") }),
   Schema.Struct({ type: Schema.Literal("settings.navigate"), to: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("settings.openResult"),

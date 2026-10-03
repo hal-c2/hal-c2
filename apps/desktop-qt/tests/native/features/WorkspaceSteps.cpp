@@ -35,6 +35,7 @@ struct FakeGit {
   QHash<QString, Repo> repos;
   QString refuseSwitch;  // git's explanation, when a switch fails
   QList<QJsonObject> editorCalls;  // every shell.openInEditor payload
+  QList<int> refPages;  // the cursor of every vcs.listRefs
 };
 
 QJsonObject localStatus(const FakeGit::Repo& repo) {
@@ -106,12 +107,14 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     const FakeGit::Repo repo = mc.part<FakeGit>().repos.value(rpc.payload.value(QLatin1String("cwd")).toString());
     const QJsonArray all = orderedRefs(repo, rpc.payload.value(QLatin1String("query")).toString());
     const int limit = rpc.payload.value(QLatin1String("limit")).toInt(100);
+    const int cursor = rpc.payload.value(QLatin1String("cursor")).toInt(0);
+    mc.part<FakeGit>().refPages.append(cursor);
     QJsonArray page;
-    for (qsizetype index = 0; index < all.size() && index < limit; ++index) page.append(all.at(index));
+    for (qsizetype index = cursor; index < all.size() && index < cursor + limit; ++index) page.append(all.at(index));
     mc.reply(rpc, QJsonObject{{QStringLiteral("refs"), page},
                                 {QStringLiteral("isRepo"), true},
                                 {QStringLiteral("hasPrimaryRemote"), false},
-                                {QStringLiteral("nextCursor"), all.size() > limit ? QJsonValue(limit) : QJsonValue()},
+                                {QStringLiteral("nextCursor"), all.size() > cursor + limit ? QJsonValue(cursor + limit) : QJsonValue()},
                                 {QStringLiteral("totalCount"), all.size()}});
   });
   mc.onRpc(QStringLiteral("vcs.switchRef"), [&mc](const FakeMc::Rpc& rpc) {
@@ -340,6 +343,43 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user opens the branch list"), [](World& world, const Captures&, const Table&) {
     dispatch(world, QStringLiteral("workspace.branch.search"), {{QStringLiteral("query"), QString()}});
+  });
+  // The branch list's ListView asks for more at its end (Composer.qml).
+  step(QStringLiteral("the user scrolls to the end of the branch list"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("workspace.branch.search"), {{QStringLiteral("query"), QString()}});
+    expect(branchNames(world).size() == 100, QStringLiteral("the list opens with %1 branches").arg(branchNames(world).size()));
+    dispatch(world, QStringLiteral("workspace.branch.more"));
+  });
+  step(QStringLiteral("the next page of branches is loaded"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return branchNames(world).size() == 200; }, [&] { return QStringLiteral("200 branches; the list has %1").arg(branchNames(world).size()); });
+    const QStringList names = branchNames(world);
+    expect(world.mc.part<FakeGit>().refPages == QList<int>{0, 100} && names.at(100) == QLatin1String("feature/099") && QSet<QString>(names.cbegin(), names.cend()).size() == 200 &&
+               workspace(world).value(QStringLiteral("branchesTotal")).toInt() == 400,
+           QStringLiteral("the MC was asked for pages at %1; the 101st branch is %2").arg(world.mc.part<FakeGit>().refPages.size()).arg(names.value(100)));
+    // And the next, until the list is whole; then nothing more is asked.
+    dispatch(world, QStringLiteral("workspace.branch.more"));
+    dispatch(world, QStringLiteral("workspace.branch.more"));
+    dispatch(world, QStringLiteral("workspace.branch.more"));
+    expect(branchNames(world).size() == 400 && world.mc.part<FakeGit>().refPages.size() == 4, QStringLiteral("the list has %1 branches after %2 pages").arg(branchNames(world).size()).arg(world.mc.part<FakeGit>().refPages.size()));
+  });
+  step(QStringLiteral("the user copies the thread's branch name"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("workspace.branch.copy"));
+  });
+  step(QStringLiteral("%1 is on the clipboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.clipboard == c[0], QStringLiteral("the clipboard holds \"%1\"").arg(world.clipboard));
+  });
+  step(QStringLiteral("the agent checked out %1 in the thread's checkout").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The shell has seen the checkout on the thread's branch first.
+    world.waitFor([&] { return !world.mc.subscribers(QStringLiteral("vcs")).isEmpty(); }, QStringLiteral("the shell to follow the checkout"));
+    world.sync();
+    FakeGit::Repo& repo = world.mc.part<FakeGit>().repos[root(workspace(world).value(QStringLiteral("projectTitle")).toString())];
+    expect(world.mc.threads.value(kThread).value(QLatin1String("branch")).toString() == repo.current, QStringLiteral("the thread is not on the checkout's branch"));
+    repo.branches.prepend(c[0]);
+    repo.current = c[0];
+  });
+  step(QStringLiteral("the status updates"), [](World& world, const Captures&, const Table&) {
+    sendStatus(world.mc, root(workspace(world).value(QStringLiteral("projectTitle")).toString()));
+    world.sync();
   });
   const auto search = [](World& world, const Captures& c, const Table&) {
     dispatch(world, QStringLiteral("workspace.branch.search"), {{QStringLiteral("query"), c[0]}});

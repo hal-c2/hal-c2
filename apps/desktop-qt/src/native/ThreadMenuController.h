@@ -61,6 +61,8 @@ public:
 
   // Writes the clipboard, false when it could not; tests make it fail.
   void setClipboardWriter(std::function<bool(const QString& text)> write) { m_writeClipboard = std::move(write); }
+  // Puts `value` on the clipboard and says so, or why not.
+  void copy(const QString& value, const QString& successTitle, const QString& failureTitle);
 
 private:
   void choose(const QString& key, const QString& id, double x, double y);
@@ -76,7 +78,6 @@ private:
   void remove(const QString& key);
   void pin(const QString& key);
   void unpin(const QString& key);
-  void copy(const QString& value, const QString& successTitle, const QString& failureTitle);
   void fork(const QString& key);
   void chooseDestination(const QString& key, double x, double y);
   // Whether another machine of the thread's cluster could take it.

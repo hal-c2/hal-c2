@@ -1100,6 +1100,23 @@ Rectangle {
                     Accessible.name: qsTr("Switch branch")
                     onClicked: branchPicker.open()
 
+                    // The web's "Copy branch name", on the secondary button.
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        onTapped: branchMenu.popup()
+                    }
+                    ShellMenu {
+                        id: branchMenu
+
+                        ShellMenuItem {
+                            objectName: "copyBranchName"
+                            text: qsTr("Copy branch name")
+                            iconName: "copy"
+                            enabled: contextStrip.wsReady && (contextStrip.ws.branch ?? "").length > 0
+                            onTriggered: Shell.dispatch("workspace.branch.copy")
+                        }
+                    }
+
                     Popup {
                         id: branchPicker
                         objectName: "branchPicker"
@@ -1188,8 +1205,25 @@ Rectangle {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
+                                // Where the list was when it asked for more, so
+                                // the longer list opens at the same place.
+                                property real keptY: -1
+
                                 boundsBehavior: Flickable.StopAtBounds
                                 model: contextStrip.wsReady ? contextStrip.ws.branches : []
+                                // The end of a list with more to it loads the next page.
+                                onAtYEndChanged: {
+                                    if (atYEnd && count > 0 && contextStrip.wsReady && contextStrip.ws.branchesTotal > count) {
+                                        keptY = contentY;
+                                        Shell.dispatch("workspace.branch.more");
+                                    }
+                                }
+                                onCountChanged: {
+                                    if (keptY >= 0) {
+                                        contentY = keptY;
+                                        keptY = -1;
+                                    }
+                                }
 
                                 delegate: Rectangle {
                                     id: branchRow
