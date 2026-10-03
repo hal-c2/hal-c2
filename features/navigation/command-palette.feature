@@ -308,7 +308,7 @@ Feature: Command palette
       When the user opens the command palette
       Then "Link pull request to thread" is not listed
 
-    @backlog @desktop
+    @desktop
     Scenario: Open pull requests shows the pull requests page as the user left it
       Given the user last filtered the pull requests page to their own open pull requests
       When the user runs "Open pull requests" from the palette
@@ -327,7 +327,7 @@ Feature: Command palette
       Then "shop" is added as a project
       And the user can start a thread in it
 
-    @backlog @desktop
+    @desktop
     Scenario: Threads linked to a pull request include archived ones
       Given a pull request is linked to an archived thread
       When the user searches the palette for that pull request

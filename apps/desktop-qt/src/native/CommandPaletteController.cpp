@@ -747,23 +747,33 @@ void CommandPaletteController::rebuildCommand() {
   const QString current = shell->controller<NavigationController>()->threadKey();
   QList<Entry> threads;
   for (const sidebar::Thread& thread : m_store->threads()) {
-    if (thread.archivedAt || thread.subagent) continue;
+    if (thread.subagent) continue;
     const QString key = thread.key();
+    QStringList pullRequests = pullRequestTerms(m_store->threadRow(key));
+    for (QString& term : pullRequests) term = normalize(term);
+    // An archived thread is only found by a pull request linked to it.
+    if (thread.archivedAt && pullRequests.isEmpty()) continue;
     const auto project = m_store->project(thread.environmentId + QLatin1Char(':') + thread.projectId);
     QStringList description;
     if (project) description << project->title;
     if (thread.branch) description << QLatin1Char('#') + *thread.branch;
     if (key == current) description << tr("Current thread");
-    QStringList terms{thread.title};
-    terms << pullRequestTerms(m_store->threadRow(key));
-    // Last, so a pasted id never outranks a title.
-    terms << (project ? project->title : QString()) << thread.branch.value_or(QString()) << thread.id;
-    for (QString& term : terms) term = normalize(term);
+    QStringList terms;
+    if (thread.archivedAt) {
+      terms = pullRequests;
+    } else {
+      terms << normalize(thread.title);
+      terms << pullRequests;
+      // Last, so a pasted id never outranks a title.
+      terms << normalize(project ? project->title : QString()) << normalize(thread.branch.value_or(QString())) << normalize(thread.id);
+    }
     const auto active = sidebar::parseIso(thread.latestUserMessageAt ? thread.latestUserMessageAt
                                           : !thread.updatedAt.isEmpty() ? sidebar::Nullable(thread.updatedAt)
                                                                         : sidebar::Nullable(thread.createdAt));
     Entry entry{Kind::Thread, key, thread.title, description.join(QStringLiteral(" · ")), {}, terms};
     entry.recency = active.value_or(0);
+    entry.pullRequests = pullRequests.join(QLatin1Char(' ')).simplified();
+    entry.archived = thread.archivedAt.has_value();
     threads.append(entry);
   }
   std::stable_sort(threads.begin(), threads.end(),
@@ -863,7 +873,7 @@ void CommandPaletteController::refilter(bool refreshed) {
     }
     int recent = 0;
     for (int index = 0; !actionsOnly && index < m_entries.size() && recent < kRecentThreads; ++index) {
-      if (m_entries.at(index).kind != Kind::Thread) continue;
+      if (m_entries.at(index).kind != Kind::Thread || m_entries.at(index).archived) continue;
       add(tr("Recent Threads"), index);
       ++recent;
     }
@@ -900,6 +910,10 @@ void CommandPaletteController::refilter(bool refreshed) {
     if (hasAll(entry.haystack, tokens)) {
       const int tiebreak = entry.kind == Kind::Setting ? settingsRank(entry.terms, query, tokens) : 0;
       byGroup[group].append({index, rank(entry.terms, query, tokens), tiebreak});
+      // Found by its pull request: say how the thread belongs to it.
+      if (entry.kind == Kind::Thread && !entry.pullRequests.isEmpty() && hasAll(entry.pullRequests, tokens)) {
+        snippets.insert(index, entry.archived ? tr("Archived thread") : tr("Linked thread"));
+      }
     } else if (entry.kind == Kind::Thread && messagesCount && m_messageMatches.contains(entry.id)) {
       byGroup[group].append({index, 0, 0});
       snippets.insert(index, m_messageMatches.value(entry.id));

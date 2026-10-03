@@ -27,8 +27,10 @@ class ShellStore;
 //     Keybindings.commands (CommandRegistry), the sidebar's projects, the
 //     settings sections the brick hands over (js/settingsPages.js, those whose
 //     `requires` state is there) and the shell's threads, cluster and linked
-//     alike (by key `environmentId:threadId`, archived and subagent ones left
-//     out); from two characters on, threads whose messages match too
+//     alike (by key `environmentId:threadId`, subagent ones left out, and
+//     archived ones too unless the query finds their linked pull request,
+//     when each is marked "Linked thread" or "Archived thread"); from two
+//     characters on, threads whose messages match too
 //     (`orchestration.searchThreads` on every online environment). A query
 //     filters and ranks as the web does (CommandPalette.logic.ts); a leading
 //     ">" keeps to actions. A menu command (CommandRegistry::addMenu) opens its
@@ -217,6 +219,10 @@ private:
     QString group;
     // A keybinding command among the settings: listed after every setting.
     bool secondary = false;
+    // Threads: what its linked pull requests are found by, and whether it is
+    // archived (found by those alone, and said to be).
+    QString pullRequests;
+    bool archived = false;
   };
 
   struct Row {
