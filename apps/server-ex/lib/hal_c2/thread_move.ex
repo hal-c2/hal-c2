@@ -624,24 +624,37 @@ defmodule HalC2.ThreadMove do
     end
   end
 
-  defp has_agent(instance, here, title) do
-    entry =
-      Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
+  @doc "Whether this MC can run the agent `instance`: `:ok`, `:missing` or `:signed_out`."
+  def agent(instance) do
+    entry = Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
 
     cond do
       entry == nil or entry["installed"] == false or entry["availability"] == "unavailable" ->
+        :missing
+
+      get_in(entry, ["auth", "status"]) == "unauthenticated" ->
+        :signed_out
+
+      true ->
+        :ok
+    end
+  end
+
+  defp has_agent(instance, here, title) do
+    case agent(instance) do
+      :missing ->
         error(
           :thread_not_movable,
           "#{here} does not have #{provider_name(instance)}. #{title} was not moved."
         )
 
-      get_in(entry, ["auth", "status"]) == "unauthenticated" ->
+      :signed_out ->
         error(
           :thread_not_movable,
           "#{provider_name(instance)} is not signed in on #{here}. Sign in there, then move #{title} again."
         )
 
-      true ->
+      :ok ->
         :ok
     end
   end
