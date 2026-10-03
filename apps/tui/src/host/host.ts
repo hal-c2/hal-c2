@@ -1187,9 +1187,20 @@ export function createHost(options: HostOptions): Host {
   for (const message of options.startupWarnings ?? []) {
     addProblem({ level: "warning", message, where: null });
   }
-  const unsubscribeConnection = client.subscribeConnection((phase) =>
-    state.set("connection", connectionState(phase)),
-  );
+  // A server restart reads here as the connection dropping and coming back.
+  // What the user was doing (the thread, the draft, open panels) is the
+  // host's own state and stays; the status line says what happened.
+  let connectionPhase: TuiConnectionPhase = "connecting";
+  const unsubscribeConnection = client.subscribeConnection((phase) => {
+    const before = connectionPhase;
+    connectionPhase = phase;
+    state.set("connection", connectionState(phase));
+    if (before === "connected" && phase === "reconnecting") {
+      store.setStatus("The server went away; reconnecting…", "busy");
+    } else if (before === "reconnecting" && phase === "connected") {
+      store.setStatus("The server is back; carrying on where you were.", "success");
+    }
+  });
   store.start();
 
   return {
