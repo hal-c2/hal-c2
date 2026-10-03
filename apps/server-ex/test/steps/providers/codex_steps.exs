@@ -521,6 +521,68 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  # Codex closes its plan item (`item/completed`) when the plan is written: the step
+  # is done, the plan itself still open to implement.
+  step "Codex proposed a plan and marked it finished", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "codex", "make a plan", %{"interactionMode" => "plan"})
+
+    state = World.await_runs(context, @thread, ["completed"])
+    [plan] = for p <- StreamState.list(state, "plan"), p["kind"] == "proposed_plan", do: p
+
+    assert [%{"status" => "completed", "streaming" => false}] =
+             Enum.filter(StreamState.list(state, "turn-item"), &(&1["planId"] == plan["id"]))
+
+    Map.put(context, :plan, plan)
+  end
+
+  step "the plan is offered for implementation", context do
+    id = World.thread_id(context, @thread)
+
+    assert StreamState.get(World.stream(context, @thread), "plan")[context.plan["id"]]["status"] ==
+             "active"
+
+    World.await_row(id, &(&1["hasActionableProposedPlan"] == true))
+    context
+  end
+
+  # Implementing leaves plan mode, as the clients do, and names the plan.
+  step "the user implements the plan", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.interaction-mode.set",
+        "commandId" => "cmd-mode-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "interactionMode" => "default"
+      })
+
+    World.post_message(context, @thread, "Implement the plan.", %{
+      "sourcePlanRef" => %{
+        "threadId" => World.thread_id(context, @thread),
+        "planId" => context.plan["id"]
+      },
+      "dispatchMode" => nil
+    })
+  end
+
+  step "a new run starts from that plan", context do
+    state = World.await_runs(context, @thread, ["completed", "completed"])
+    assert StreamState.get(state, "plan")[context.plan["id"]]["status"] == "completed"
+    [_, run] = state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
+    assert StreamState.get(state, "message")[run["userMessageId"]]["text"] ==
+             "Implement the plan."
+
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["hasActionableProposedPlan"] == false)
+    )
+
+    context
+  end
+
   step "the thread is in plan mode on Codex", context do
     World.fake_providers(context)
   end
