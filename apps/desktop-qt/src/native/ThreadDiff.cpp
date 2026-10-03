@@ -42,6 +42,27 @@ void ThreadDiff::setThread(const QString& environmentId, const QString& threadId
   readCheckpoints();
 }
 
+void ThreadDiff::setCheckout(const QString& cwd) {
+  if (cwd == m_cwd) return;
+  m_cwd = cwd;
+  emit turnsChanged();
+  emit selectionChanged();
+  load();
+}
+
+int ThreadDiff::effectiveSelection() const {
+  if (m_selection == -1 && m_turns.isEmpty() && !m_cwd.isEmpty()) return WorkingTree;
+  return m_selection;
+}
+
+void ThreadDiff::setBaseRef(const QString& ref) {
+  const QString next = ref.trimmed();
+  if (next == m_baseRef) return;
+  m_baseRef = next;
+  emit reviewChanged();
+  load();
+}
+
 void ThreadDiff::setActive(bool active) {
   m_active = active;
   load();
@@ -61,6 +82,8 @@ void ThreadDiff::readCheckpoints() {
   if (turns != m_turns) {
     m_turns = turns;
     emit turnsChanged();
+    // A first turn takes the working tree's place as what opens.
+    emit selectionChanged();
     emit revertChanged();
     // A turn that went away (rewound) leaves the picker on the latest one.
     if (m_selection > 0 && !m_turns.contains(m_selection)) {
@@ -72,21 +95,25 @@ void ThreadDiff::readCheckpoints() {
 }
 
 QVariantList ThreadDiff::choices() const {
-  if (m_turns.isEmpty()) return {};
-  QVariantList choices{
-      QVariantMap{{QStringLiteral("value"), -1}, {QStringLiteral("label"), QStringLiteral("Latest turn")}},
-      QVariantMap{{QStringLiteral("value"), 0}, {QStringLiteral("label"), QStringLiteral("All changes")}},
-  };
-  for (auto it = m_turns.constEnd(); it != m_turns.constBegin();) {
-    --it;
-    choices.append(QVariantMap{{QStringLiteral("value"), it.key()}, {QStringLiteral("label"), QStringLiteral("Turn %1").arg(it.key())}});
+  QVariantList choices;
+  if (!m_turns.isEmpty()) {
+    choices.append(QVariantMap{{QStringLiteral("value"), -1}, {QStringLiteral("label"), QStringLiteral("Latest turn")}});
+    choices.append(QVariantMap{{QStringLiteral("value"), 0}, {QStringLiteral("label"), QStringLiteral("All changes")}});
+    for (auto it = m_turns.constEnd(); it != m_turns.constBegin();) {
+      --it;
+      choices.append(QVariantMap{{QStringLiteral("value"), it.key()}, {QStringLiteral("label"), QStringLiteral("Turn %1").arg(it.key())}});
+    }
+  }
+  if (!m_cwd.isEmpty()) {
+    choices.append(QVariantMap{{QStringLiteral("value"), int(WorkingTree)}, {QStringLiteral("label"), QStringLiteral("Working tree")}});
+    choices.append(QVariantMap{{QStringLiteral("value"), int(Branch)}, {QStringLiteral("label"), QStringLiteral("Branch changes")}});
   }
   return choices;
 }
 
 void ThreadDiff::select(int selection) {
   if (selection > 0 && !m_turns.contains(selection)) return;
-  if (selection < -1) selection = -1;
+  if (selection < Branch || (selection <= WorkingTree && m_cwd.isEmpty())) selection = -1;
   if (selection == m_selection) return;
   m_selection = selection;
   // Another selection is shown whole.
@@ -106,7 +133,7 @@ void ThreadDiff::selectRun(const QString& runId) {
 }
 
 int ThreadDiff::shownTurn() const {
-  if (m_selection == 0) return 0;
+  if (m_selection == 0 || reviewing()) return 0;
   return m_selection > 0 ? m_selection : latestTurn();
 }
 
@@ -138,6 +165,9 @@ void ThreadDiff::setStatus(const QString& status, const QString& message) {
 }
 
 QString ThreadDiff::loadKey() const {
+  if (reviewing()) {
+    return QStringLiteral("%1:%2 review %3 %4 %5 %6").arg(m_environment, m_threadId).arg(effectiveSelection()).arg(m_cwd, m_baseRef).arg(m_ignoreWhitespace);
+  }
   return QStringLiteral("%1:%2 %3 %4 %5")
       .arg(m_environment, m_threadId)
       .arg(m_selection == 0 ? QStringLiteral("all") : QStringLiteral("turn"))
@@ -154,6 +184,10 @@ void ThreadDiff::load() {
   if (!m_active || m_threadId.isEmpty()) return;
   if (!m_timeline) {
     setStatus(QStringLiteral("loading"), QStringLiteral("Loading checkpoint diff..."));
+    return;
+  }
+  if (reviewing()) {
+    loadReview(effectiveSelection());
     return;
   }
   if (m_turns.isEmpty()) {
@@ -196,6 +230,48 @@ void ThreadDiff::load() {
       setStatus(QStringLiteral("empty"), QStringLiteral("No net changes in this selection."));
     } else {
       setStatus(QStringLiteral("ready"));
+    }
+    if (!m_pendingReveal.isEmpty()) revealFile(std::exchange(m_pendingReveal, QString()));
+  });
+}
+
+// review.getDiffPreview answers with both sources; the one selected is shown.
+void ThreadDiff::loadReview(int selection) {
+  const QString key = loadKey();
+  if (key == m_loaded) return;
+  m_loaded = key;
+  const int request = ++m_request;
+  QJsonObject payload{{QStringLiteral("cwd"), m_cwd}, {QStringLiteral("ignoreWhitespace"), m_ignoreWhitespace}};
+  if (selection == Branch && !m_baseRef.isEmpty()) payload.insert(QStringLiteral("baseRef"), m_baseRef);
+  setStatus(QStringLiteral("loading"), QStringLiteral("Loading changes..."));
+  m_client->call(this, m_environment, QStringLiteral("review.getDiffPreview"), payload,
+                 [this, request, selection](const QJsonValue& result, const std::optional<QString>& error) {
+    if (request != m_request) return;
+    if (error) {
+      m_loaded.clear();
+      m_patch.clear();
+      m_model.clear();
+      setStatus(QStringLiteral("error"), error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error);
+      return;
+    }
+    const QString kind = selection == Branch ? QStringLiteral("branch-range") : QStringLiteral("working-tree");
+    QJsonObject source;
+    for (const QJsonValue& value : result.toObject().value(QLatin1String("sources")).toArray()) {
+      if (value.toObject().value(QLatin1String("kind")).toString() == kind) source = value.toObject();
+    }
+    m_comparedBase = source.value(QLatin1String("baseRef")).toString();
+    m_comparedHead = source.value(QLatin1String("headRef")).toString();
+    m_truncated = source.value(QLatin1String("truncated")).toBool();
+    emit reviewChanged();
+    m_patch = source.value(QLatin1String("diff")).toString();
+    present();
+    if (m_model.fileCount() > 0) {
+      setStatus(QStringLiteral("ready"));
+    } else if (selection == Branch) {
+      setStatus(QStringLiteral("empty"), m_comparedBase.isEmpty() ? QStringLiteral("This branch has no base to compare against.")
+                                                                 : QStringLiteral("No changes against %1.").arg(m_comparedBase));
+    } else {
+      setStatus(QStringLiteral("empty"), QStringLiteral("No uncommitted changes."));
     }
     if (!m_pendingReveal.isEmpty()) revealFile(std::exchange(m_pendingReveal, QString()));
   });

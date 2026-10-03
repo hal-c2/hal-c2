@@ -7,6 +7,9 @@ import HalC2.Shell
 // ThreadDiff (Panel.diff). A picker chooses the latest turn, all changes or
 // one turn; the patch is a DiffModel drawn one row per line, so a large diff
 // only makes the rows in view. Reverting to the turn shown asks first (RevertDialog).
+// The picker also offers the checkout itself: its working tree, or the branch
+// against a base the user can name. The changed files can be listed as a tree
+// that jumps to a file, and a file opens in the user's editor.
 //
 // A source without turns (`hasTurns: false`, a pull request's code) shows no
 // picker or whitespace option; one with setViewed(path, viewed) and
@@ -23,6 +26,17 @@ Rectangle {
     readonly property bool split: model?.split ?? false
     // One file of the selection is shown alone (ThreadDiff.focusPath).
     readonly property bool focused: (source?.focusPath ?? "").length > 0
+    // The branch is what is reviewed, against `source.comparedBase`.
+    readonly property bool comparing: (source?.reviewing ?? false) && source.selection === -3
+    // Whether the changed files are listed as a tree beside the diff.
+    property bool showTree: false
+    readonly property var tree: showTree && model !== null && status === "ready" && model.fileCount > 0 ? model.tree() : []
+
+    // Opens `file` and brings it to the top.
+    function jumpTo(file) {
+        root.model.setExpanded(file, true);
+        view.positionViewAtIndex(root.model.rowOfFile(file), ListView.Beginning);
+    }
     // Characters drawn of one line; the rest of a minified line is cut.
     readonly property int maxLineColumns: 2000
 
@@ -164,10 +178,42 @@ Rectangle {
                         onTriggered: root.model.allExpanded ? root.model.collapseAll() : root.model.expandAll()
                     }
                     ShellMenuItem {
+                        objectName: "diffTree"
+                        text: root.showTree ? qsTr("Hide file tree") : qsTr("Show file tree")
+                        onTriggered: root.showTree = !root.showTree
+                    }
+                    ShellMenuItem {
+                        objectName: "diffReload"
                         text: qsTr("Reload")
                         onTriggered: root.source.reload()
                     }
                 }
+            }
+        }
+
+        // What the branch is compared against, and a way to name another ref.
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            Layout.bottomMargin: 8
+            visible: root.comparing
+            spacing: 6
+
+            Text {
+                text: qsTr("%1 against").arg(root.source?.comparedHead || qsTr("HEAD"))
+                color: root.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                elide: Text.ElideMiddle
+            }
+            ShellTextField {
+                objectName: "diffBaseRef"
+                Layout.fillWidth: true
+                implicitHeight: 26
+                placeholderText: root.source?.comparedBase || qsTr("the base branch")
+                text: root.source?.baseRef ?? ""
+                Accessible.name: qsTr("Compare against")
+                onAccepted: root.source.baseRef = text
             }
         }
 
@@ -177,81 +223,138 @@ Rectangle {
             color: root.border
         }
 
-        Item {
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-
-            ColumnLayout {
-                objectName: "diffMessage"
-                anchors.centerIn: parent
-                width: parent.width - 32
-                visible: root.status !== "ready"
-                spacing: 10
-
-                Text {
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    text: root.status === "idle" ? "" : root.source?.message ?? ""
-                    color: root.status === "error" ? root.removed : root.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
-                    wrapMode: Text.Wrap
-                }
-                ShellButton {
-                    objectName: "diffRetry"
-                    Layout.alignment: Qt.AlignHCenter
-                    visible: root.status === "error"
-                    text: qsTr("Try again")
-                    onClicked: root.source.reload()
-                }
-            }
+            spacing: 0
 
             ListView {
-                id: view
+                id: treeView
 
-                objectName: "diffRows"
-                anchors.fill: parent
-                visible: root.status === "ready"
+                objectName: "diffTreeRows"
+                Layout.preferredWidth: Math.min(240, root.width * 0.35)
+                Layout.fillHeight: true
+                visible: root.tree.length > 0
                 clip: true
-                model: root.model
-                reuseItems: true
+                model: root.tree
                 boundsBehavior: Flickable.StopAtBounds
-                flickableDirection: root.wrap ? Flickable.VerticalFlick : Flickable.HorizontalAndVerticalFlick
-                // Unwrapped rows are as wide as the longest line, and scroll sideways together.
-                contentWidth: root.wrap ? width : Math.max(width, rowWidth)
-                readonly property real gutter: glyph.advanceWidth * 10 + 24
-                readonly property real rowWidth: gutter + glyph.advanceWidth * Math.min(root.model?.maxColumns ?? 0, root.maxLineColumns) * (root.split ? 2 : 1) + 24
-                ScrollBar.vertical: ScrollBar {}
-                ScrollBar.horizontal: ScrollBar {}
+                delegate: ItemDelegate {
+                    id: node
 
-                Connections {
-                    target: root.source
-                    function onRevealRow(row) {
-                        view.positionViewAtIndex(row, ListView.Beginning);
+                    required property var modelData
+
+                    objectName: "diffTreeNode"
+                    width: treeView.width
+                    height: 24
+                    padding: 0
+                    leftPadding: 8 + node.modelData.depth * 12
+                    enabled: node.modelData.kind === "file"
+                    Accessible.name: node.modelData.path
+                    onClicked: root.jumpTo(node.modelData.file)
+                    background: Rectangle {
+                        color: node.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                    }
+                    contentItem: RowLayout {
+                        spacing: 6
+
+                        ShellIcon {
+                            name: node.modelData.kind === "folder" ? "folder" : "file"
+                            size: 13
+                            color: root.muted
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: node.modelData.name
+                            color: node.modelData.kind === "folder" ? root.muted : root.foreground
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            elide: Text.ElideMiddle
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                Layout.preferredWidth: 1
+                Layout.fillHeight: true
+                visible: treeView.visible
+                color: root.border
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                ColumnLayout {
+                    objectName: "diffMessage"
+                    anchors.centerIn: parent
+                    width: parent.width - 32
+                    visible: root.status !== "ready"
+                    spacing: 10
+
+                    Text {
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        text: root.status === "idle" ? "" : root.source?.message ?? ""
+                        color: root.status === "error" ? root.removed : root.muted
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        wrapMode: Text.Wrap
+                    }
+                    ShellButton {
+                        objectName: "diffRetry"
+                        Layout.alignment: Qt.AlignHCenter
+                        visible: root.status === "error"
+                        text: qsTr("Try again")
+                        onClicked: root.source.reload()
                     }
                 }
 
-                delegate: Loader {
-                    id: row
+                ListView {
+                    id: view
 
-                    required property int index
-                    required property string kind
-                    required property int file
-                    required property string path
-                    required property string previousPath
-                    required property string change
-                    required property bool binary
-                    required property int additions
-                    required property int deletions
-                    required property bool expanded
-                    required property string text
-                    required property string sign
-                    required property var oldLine
-                    required property var newLine
-                    required property string rightText
-                    required property string rightSign
+                    objectName: "diffRows"
+                    anchors.fill: parent
+                    visible: root.status === "ready"
+                    clip: true
+                    model: root.model
+                    reuseItems: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    flickableDirection: root.wrap ? Flickable.VerticalFlick : Flickable.HorizontalAndVerticalFlick
+                    // Unwrapped rows are as wide as the longest line, and scroll sideways together.
+                    contentWidth: root.wrap ? width : Math.max(width, rowWidth)
+                    readonly property real gutter: glyph.advanceWidth * 10 + 24
+                    readonly property real rowWidth: gutter + glyph.advanceWidth * Math.min(root.model?.maxColumns ?? 0, root.maxLineColumns) * (root.split ? 2 : 1) + 24
+                    ScrollBar.vertical: ScrollBar {}
+                    ScrollBar.horizontal: ScrollBar {}
 
-                    width: view.contentWidth
-                    sourceComponent: kind === "file" ? fileHeader : kind === "hunk" ? hunkHeader : root.split ? splitLine : stackedLine
+                    Connections {
+                        target: root.source
+                        function onRevealRow(row) {
+                            view.positionViewAtIndex(row, ListView.Beginning);
+                        }
+                    }
+
+                    delegate: Loader {
+                        id: row
+
+                        required property int index
+                        required property string kind
+                        required property int file
+                        required property string path
+                        required property string previousPath
+                        required property string change
+                        required property bool binary
+                        required property int additions
+                        required property int deletions
+                        required property bool expanded
+                        required property string text
+                        required property string sign
+                        required property var oldLine
+                        required property var newLine
+                        required property string rightText
+                        required property string rightSign
+
+                        width: view.contentWidth
+                        sourceComponent: kind === "file" ? fileHeader : kind === "hunk" ? hunkHeader : root.split ? splitLine : stackedLine
+                    }
                 }
             }
         }
@@ -298,6 +401,23 @@ Rectangle {
                     font.pixelSize: Theme.fontSizeCode
                     font.strikeout: header.row.change === "deleted"
                     elide: Text.ElideMiddle
+                }
+                ShellButton {
+                    objectName: "diffOpenInEditor"
+                    // A thread's checkout has the file; a pull request's code may not.
+                    visible: root.source?.hasTurns ?? true
+                    subtle: true
+                    iconName: "square-arrow-out-up-right"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 24
+                    implicitHeight: 24
+                    Accessible.name: qsTr("Open %1 in the editor").arg(header.row.path)
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Open in editor")
+                    onClicked: Shell.dispatch("workspace.openFile", {
+                        path: header.row.path
+                    })
                 }
                 ShellButton {
                     readonly property bool viewed: (root.source?.viewedPaths ?? []).indexOf(header.row.path) >= 0
@@ -393,8 +513,12 @@ Rectangle {
             Row {
                 id: numbers
                 spacing: 6
-                LineNumber { text: numbers.parent.row.oldLine ?? "" }
-                LineNumber { text: numbers.parent.row.newLine ?? "" }
+                LineNumber {
+                    text: numbers.parent.row.oldLine ?? ""
+                }
+                LineNumber {
+                    text: numbers.parent.row.newLine ?? ""
+                }
             }
             Text {
                 x: view.gutter - glyph.advanceWidth * 2
@@ -429,7 +553,9 @@ Rectangle {
                 width: pair.width / 2
                 height: pair.height
                 color: pair.row.sign.length > 0 ? root.tint(pair.row.sign) : Qt.alpha(root.muted, 0.06)
-                LineNumber { text: pair.row.sign.length > 0 ? pair.row.oldLine ?? "" : "" }
+                LineNumber {
+                    text: pair.row.sign.length > 0 ? pair.row.oldLine ?? "" : ""
+                }
                 LineText {
                     id: left
                     x: glyph.advanceWidth * 6
@@ -444,7 +570,9 @@ Rectangle {
                 width: pair.width / 2
                 height: pair.height
                 color: pair.row.rightSign.length > 0 ? root.tint(pair.row.rightSign) : Qt.alpha(root.muted, 0.06)
-                LineNumber { text: pair.row.rightSign.length > 0 ? pair.row.newLine ?? "" : "" }
+                LineNumber {
+                    text: pair.row.rightSign.length > 0 ? pair.row.newLine ?? "" : ""
+                }
                 LineText {
                     id: right
                     x: glyph.advanceWidth * 6

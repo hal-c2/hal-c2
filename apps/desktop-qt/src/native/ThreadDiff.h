@@ -26,6 +26,12 @@ class TimelineModel;
 // 0 for all changes, or a turn number. Only a shown tab loads; a hidden one
 // notes that it is stale and loads when shown again.
 //
+// The checkout itself can be reviewed too (`review.getDiffPreview`):
+// WorkingTree is its uncommitted changes, Branch the whole branch against
+// its base, which is the MC's choice until `baseRef` names another. A thread
+// with no finished turn opens on the working tree. These do not follow the
+// checkout: reload() asks again.
+//
 // Opening one changed file from a reply shows that file alone (`focusPath`)
 // until the user asks for all of the selection's files again or picks
 // another selection.
@@ -50,6 +56,15 @@ class ThreadDiff : public QObject {
   // The one file shown of the selection's `fileTotal`, or empty for all of them.
   Q_PROPERTY(QString focusPath READ focusPath NOTIFY focusChanged)
   Q_PROPERTY(int fileTotal READ fileTotal NOTIFY focusChanged)
+  // The checkout is what is shown, not a turn (WorkingTree or Branch).
+  Q_PROPERTY(bool reviewing READ reviewing NOTIFY selectionChanged)
+  // The ref the branch is compared against: chosen ("" lets the MC pick), and
+  // the refs the MC compared ("feature/tax" against "main").
+  Q_PROPERTY(QString baseRef READ baseRef WRITE setBaseRef NOTIFY reviewChanged)
+  Q_PROPERTY(QString comparedBase READ comparedBase NOTIFY reviewChanged)
+  Q_PROPERTY(QString comparedHead READ comparedHead NOTIFY reviewChanged)
+  // The MC cut the patch short; the files' counts are still whole.
+  Q_PROPERTY(bool truncated READ truncated NOTIFY reviewChanged)
   Q_PROPERTY(bool ignoreWhitespace READ ignoreWhitespace WRITE setIgnoreWhitespace NOTIFY optionsChanged)
   Q_PROPERTY(bool wrap READ wrap WRITE setWrap NOTIFY optionsChanged)
   // A turn can be reverted to: the thread is not working and has a checkpoint.
@@ -60,12 +75,17 @@ class ThreadDiff : public QObject {
 
 public:
   using Notify = std::function<void(const QString& type, const QString& title, const QString& description)>;
+  // Selections that review the checkout.
+  enum Review { WorkingTree = -2, Branch = -3 };
+  Q_ENUM(Review)
 
   ThreadDiff(McClient* client, Notify notify, QObject* parent = nullptr);
 
   // The thread shown, and its timeline (for its checkpoints and whether it is
   // working; it may come later than the thread).
   void setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline);
+  // The thread's checkout, for reviewing it; empty when it has none.
+  void setCheckout(const QString& cwd);
   void setActive(bool active);
 
   DiffModel* model() { return &m_model; }
@@ -76,6 +96,12 @@ public:
   // Selects the turn the run (a turn id) finished; unknown runs change nothing.
   Q_INVOKABLE void selectRun(const QString& runId);
   int shownTurn() const;
+  bool reviewing() const { return effectiveSelection() <= WorkingTree; }
+  QString baseRef() const { return m_baseRef; }
+  void setBaseRef(const QString& ref);
+  QString comparedBase() const { return m_comparedBase; }
+  QString comparedHead() const { return m_comparedHead; }
+  bool truncated() const { return m_truncated; }
   QString status() const { return m_status; }
   QString message() const { return m_message; }
   bool ignoreWhitespace() const { return m_ignoreWhitespace; }
@@ -111,12 +137,17 @@ signals:
   void statusChanged();
   void optionsChanged();
   void focusChanged();
+  void reviewChanged();
   void revertChanged();
   // The view should show `row` of the model at its top.
   void revealRow(int row);
 
 private:
   void readCheckpoints();
+  // The selection shown: the working tree stands in for the latest turn of a
+  // thread that has none.
+  int effectiveSelection() const;
+  void loadReview(int selection);
   void load();
   void setStatus(const QString& status, const QString& message = {});
   // Puts the loaded patch, or its focused file, in the model.
@@ -134,6 +165,11 @@ private:
   // Turn number -> its ready checkpoint.
   QMap<int, QJsonObject> m_turns;
   int m_selection = -1;
+  QString m_cwd;
+  QString m_baseRef;
+  QString m_comparedBase;
+  QString m_comparedHead;
+  bool m_truncated = false;
   bool m_active = false;
   bool m_ignoreWhitespace = true;
   std::optional<bool> m_wrap;

@@ -4,6 +4,7 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 
 #include <vector>
 
@@ -72,6 +73,10 @@ public:
   bool allExpanded() const;
 
   QStringList paths() const;
+  // The changed files by folder, for a tree beside the diff: folders before
+  // files, each sorted by name; [{kind: "folder"|"file", name, path, depth,
+  // file (a file's index), additions, deletions}].
+  Q_INVOKABLE QVariantList tree() const;
   // The file's path, and whether it is expanded.
   QString path(int file) const { return file >= 0 && file < fileCount() ? m_files[file].path : QString(); }
   bool expanded(int file) const { return file >= 0 && file < fileCount() && m_files[file].expanded; }

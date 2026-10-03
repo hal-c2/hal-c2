@@ -100,28 +100,28 @@ Feature: Reviewing working tree and branch changes
     When the user switches to the stacked view
     Then the old and new lines are shown one above the other
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Switching between stacked and split views on the desktop and phone
     When the user switches the diff to the split view
     Then the old and new lines are shown side by side
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Choosing what to compare against
     When the user compares the branch against "origin/main" instead of "main"
     Then the diff shows the changes against "origin/main"
 
-  @backlog @desktop
+  @desktop
   Scenario: Browsing the changed files as a tree
     When the user shows the file tree of the diff
     Then the changed files are listed by folder
     And choosing a file jumps to it
 
-  @backlog @desktop
+  @desktop
   Scenario: Collapsing and expanding every file
     When the user collapses all files and then expands all files
     Then every file is shown open again
 
-  @backlog @desktop
+  @desktop
   Scenario: Wrapping long lines
     When the user turns on line wrapping in the diff
     Then long lines wrap instead of scrolling sideways
@@ -137,12 +137,12 @@ Feature: Reviewing working tree and branch changes
     When the user deletes that comment
     Then the composer no longer carries it
 
-  @backlog @desktop
+  @desktop
   Scenario: Opening a diff file in the editor
     When the user opens "src/cart.ts" from the diff
     Then the file opens in the user's editor
 
-  @backlog @desktop
+  @desktop
   Scenario: Refreshing the diff by hand
     When the user refreshes the diff
     Then the diff shows the checkout as it is now

@@ -138,6 +138,10 @@ private:
 
   void rename(const QString& title);
   void openInEditor(const QString& editorId);
+  // `path` of the route's checkout (or absolute) in the preferred editor: a
+  // changed file from the diff or the commit review. Says so when there is
+  // no editor to open it in.
+  void openFileInEditor(const QString& path);
   void runScript(const QString& scriptId);
   void setEnvMode(const QString& mode);
   void setEnvironment(const QString& key);

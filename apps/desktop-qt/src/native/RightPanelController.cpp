@@ -214,6 +214,7 @@ void RightPanelController::retarget() {
     }
     TimelineModel* timeline = shell->controller<ThreadStore>()->timeline(threadKey);
     m_diff.setThread(environmentId, threadId, timeline);
+    m_diff.setCheckout(root);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root);
     m_pullRequests.setThread(threadKey);

@@ -241,6 +241,22 @@ RowLayout {
                         elide: Text.ElideMiddle
                     }
 
+                    ShellButton {
+                        objectName: "fileOpen-" + modelData.path
+                        subtle: true
+                        iconName: "square-arrow-out-up-right"
+                        iconSize: 12
+                        iconTint: git.muted
+                        implicitWidth: 22
+                        implicitHeight: 22
+                        Accessible.name: qsTr("Open %1 in the editor").arg(modelData.path)
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Open in editor")
+                        onClicked: Shell.dispatch("workspace.openFile", {
+                            path: modelData.path
+                        })
+                    }
+
                     Text {
                         text: "+" + modelData.insertions
                         color: Theme.palette.color("update", "#22c55e")

@@ -364,7 +364,9 @@ const Steps steps([] {
   step(QStringLiteral("the user can switch to any earlier turn or to all changes"), [](World& world, const Captures&, const Table&) {
     QStringList labels;
     for (const QVariant& choice : diff(world).choices()) labels.append(choice.toMap().value(QStringLiteral("label")).toString());
-    const QStringList wanted{QStringLiteral("Latest turn"), QStringLiteral("All changes"), QStringLiteral("Turn 3"), QStringLiteral("Turn 2"), QStringLiteral("Turn 1")};
+    const QStringList wanted{QStringLiteral("Latest turn"), QStringLiteral("All changes"), QStringLiteral("Turn 3"), QStringLiteral("Turn 2"), QStringLiteral("Turn 1"),
+                             // The checkout itself, beside its turns.
+                             QStringLiteral("Working tree"), QStringLiteral("Branch changes")};
     expect(labels == wanted, QStringLiteral("the picker offers %1").arg(labels.join(QStringLiteral(", "))));
     for (int turn = 1; turn <= 2; ++turn) {
       diff(world).select(turn);

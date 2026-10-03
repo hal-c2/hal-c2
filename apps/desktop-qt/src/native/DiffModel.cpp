@@ -1,5 +1,8 @@
 #include "DiffModel.h"
 
+#include <QMap>
+#include <QVariantMap>
+
 #include <algorithm>
 
 namespace {
@@ -246,6 +249,37 @@ QStringList DiffModel::paths() const {
     out.append(file.path);
   }
   return out;
+}
+
+QVariantList DiffModel::tree() const {
+  struct Node {
+    QMap<QString, Node> folders;
+    QMap<QString, int> files;  // name -> file index
+  };
+  Node root;
+  for (int file = 0; file < fileCount(); ++file) {
+    const QStringList parts = m_files[file].path.split(QLatin1Char('/'));
+    Node* node = &root;
+    for (qsizetype i = 0; i + 1 < parts.size(); ++i) node = &node->folders[parts.at(i)];
+    node->files.insert(parts.last(), file);
+  }
+  QVariantList rows;
+  const auto walk = [&](auto&& self, const Node& node, const QString& prefix, int depth) -> void {
+    for (auto it = node.folders.cbegin(); it != node.folders.cend(); ++it) {
+      const QString path = prefix + it.key();
+      rows.append(QVariantMap{{QStringLiteral("kind"), QStringLiteral("folder")}, {QStringLiteral("name"), it.key()},
+                              {QStringLiteral("path"), path}, {QStringLiteral("depth"), depth}});
+      self(self, *it, path + QLatin1Char('/'), depth + 1);
+    }
+    for (auto it = node.files.cbegin(); it != node.files.cend(); ++it) {
+      const File& file = m_files[*it];
+      rows.append(QVariantMap{{QStringLiteral("kind"), QStringLiteral("file")}, {QStringLiteral("name"), it.key()},
+                              {QStringLiteral("path"), file.path}, {QStringLiteral("depth"), depth}, {QStringLiteral("file"), *it},
+                              {QStringLiteral("additions"), file.additions}, {QStringLiteral("deletions"), file.deletions}});
+    }
+  };
+  walk(walk, root, QString(), 0);
+  return rows;
 }
 
 int DiffModel::rowOfFile(int file) const {

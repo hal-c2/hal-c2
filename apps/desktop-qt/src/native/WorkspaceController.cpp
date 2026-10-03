@@ -672,6 +672,8 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
     rename(args.value(QStringLiteral("title")).toString());
   } else if (action == QLatin1String("workspace.openInEditor")) {
     openInEditor(args.value(QStringLiteral("editorId")).toString());
+  } else if (action == QLatin1String("workspace.openFile")) {
+    openFileInEditor(args.value(QStringLiteral("path")).toString());
   } else if (action == QLatin1String("workspace.runScript")) {
     runScript(args.value(QStringLiteral("scriptId")).toString());
   } else if (action == QLatin1String("workspace.branch.search")) {
@@ -745,6 +747,24 @@ void WorkspaceController::openInEditor(const QString& editorId) {
                    if (error) toasts->error(QStringLiteral("Failed to open in editor."), *error);
                  });
   publish();
+}
+
+// The web's openChangedFileInEditor (GitActionsControl.tsx).
+void WorkspaceController::openFileInEditor(const QString& path) {
+  if (!m_place || path.isEmpty()) return;
+  auto* toasts = NativeShell::of(this)->controller<ToastController>();
+  const QString cwd = m_place->cwd();
+  const QString editor = preferredEditor(editors());
+  if (cwd.isEmpty() || editor.isEmpty()) {
+    toasts->error(QStringLiteral("Editor opening is unavailable."));
+    return;
+  }
+  const QString target = path.startsWith(QLatin1Char('/')) ? path : cwd + QLatin1Char('/') + path;
+  m_client->call(this, m_place->environmentId, QStringLiteral("shell.openInEditor"),
+                 QJsonObject{{QStringLiteral("cwd"), target}, {QStringLiteral("editor"), editor}},
+                 [toasts](const QJsonValue&, const std::optional<QString>& error) {
+                   if (error) toasts->error(QStringLiteral("Unable to open file"), *error);
+                 });
 }
 
 // In the thread's terminal drawer; the one run last is offered first next time.
