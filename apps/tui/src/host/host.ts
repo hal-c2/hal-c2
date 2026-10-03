@@ -1105,6 +1105,7 @@ export function createHost(options: HostOptions): Host {
       unsubscribeConnection();
       unsubscribe();
       terminal.dispose();
+      threadView.dispose();
       store.stop();
     },
   };

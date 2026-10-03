@@ -48,6 +48,8 @@ import {
 
 /** Options a question panel shows at once, scrolled around the highlight. */
 export const USER_INPUT_OPTION_WINDOW = 8;
+/** How long a copied code block or table shows that it was copied. */
+const COPIED_MARK_MS = 2000;
 
 export interface ThreadViewOptions {
   readonly store: Store;
@@ -89,6 +91,8 @@ export interface ThreadView {
   readonly paneReplaced: () => boolean;
   /** The user stopped this turn from this client. */
   readonly turnInterrupted: (turnId: string) => void;
+  /** Stop the timers the view started. */
+  readonly dispose: () => void;
   /** The open thread's palette entries (copy the reply, …). */
   readonly paletteCommands: () => PaletteCommand[];
   /** Resolves once attachment links and previews asked for so far have landed. */
@@ -181,6 +185,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   let viewedThreadId: string | null = null;
   /** Turns the user stopped in this session: their work stays open once they settle. */
   const interruptedTurns = new Set<string>();
+  /** The code block or table just copied, and the timer that clears the mark. */
+  let copied: string | null = null;
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
   let imageViewer: TuiImageViewerState | null = null;
   const cellPixels = () => options.cellPixels?.() ?? null;
   const attachments = createAttachmentPreviews({
@@ -209,6 +216,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       approvalCount: approvals.length,
       view,
       openTurns: interruptedTurns,
+      copied,
       paneWidth,
       nowMs: options.nowMs(),
       palette,
@@ -272,6 +280,19 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       copied ? "success" : "error",
     );
     return copied;
+  };
+
+  /** Mark a code block or table as just copied; the mark clears itself. */
+  const showCopied = (key: string) => {
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copied = key;
+    publishTimeline();
+    copiedTimer = setTimeout(() => {
+      copiedTimer = null;
+      copied = null;
+      publishTimeline();
+    }, COPIED_MARK_MS);
+    copiedTimer.unref?.();
   };
 
   /** The agent's latest finished reply, as it was written (its markdown). */
@@ -930,6 +951,16 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "timeline.files.toggleAll":
         toggleAllDirs(Number(field(payload, "turnCount")));
         return true;
+      case "timeline.copy": {
+        const text = field(payload, "text");
+        const key = field(payload, "key");
+        if (typeof text !== "string" || typeof key !== "string") return true;
+        if (copy(text, String(field(payload, "label") ?? "Text"))) showCopied(key);
+        return true;
+      }
+      case "timeline.table.toggle":
+        setView({ collapsedTables: toggled(view.collapsedTables, String(field(payload, "key"))) });
+        return true;
       case "timeline.reply.copy": {
         const reply = latestReply();
         if (reply) copy(reply.text, "Reply");
@@ -1032,6 +1063,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       interruptedTurns.add(turnId);
     },
     paletteCommands,
+    dispose: () => {
+      if (copiedTimer) clearTimeout(copiedTimer);
+    },
     settled: attachments.settled,
     question: () => {
       const current = activeQuestion()?.questions[question.questionIndex];

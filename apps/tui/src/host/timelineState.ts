@@ -29,7 +29,8 @@ import {
   type WorkLogEntry,
 } from "../worklog.ts";
 import type { AttachmentPreview } from "./attachmentPreviews.ts";
-import { chunk, markdownLines, styled, type StyledText } from "./styledText.ts";
+import { tableToCsv, tableToMarkdown } from "../markdownTable.ts";
+import { chunk, markdownBlockLines, markdownLines, styled, type StyledText } from "./styledText.ts";
 
 // The conversation as published under `timeline` (port of MessagesTimeline):
 // every row pre-styled, with the action a click dispatches, so the Timeline
@@ -59,9 +60,12 @@ export interface TimelineView {
   readonly collapsedDirs: ReadonlyMap<number, ReadonlySet<string>>;
   /** End of the mounted window; null follows the latest row. */
   readonly windowEnd: number | null;
+  /** Tables whose cells are cut to one line, as `<message id>:table:<n>`. */
+  readonly collapsedTables: ReadonlySet<string>;
 }
 
 export const EMPTY_TIMELINE_VIEW: TimelineView = {
+  collapsedTables: new Set(),
   expandedGroups: new Set(),
   expandedFolds: new Set(),
   expandedMessages: new Set(),
@@ -82,6 +86,12 @@ export interface TimelineLine {
   } | null;
   /** An inline image drawn in place of the text (only when the terminal draws images). */
   readonly image: TimelineImage | null;
+  /** Further parts after the text, each with its own action (a table's copy and cell controls). */
+  readonly parts: ReadonlyArray<{
+    readonly text: StyledText;
+    readonly action: string;
+    readonly payload: unknown;
+  }> | null;
 }
 
 /** An image attachment's inline preview, `columns` × `rows` cells, aspect kept. */
@@ -148,6 +158,8 @@ export interface TimelineInput {
   readonly view: TimelineView;
   /** Turns whose fold starts open: the ones the user stopped in this session. */
   readonly openTurns?: ReadonlySet<string>;
+  /** The code block or table just copied (`<message id>:code:<n>`), which shows it. */
+  readonly copied?: string | null;
   /** Width of the conversation pane (border and padding included). */
   readonly paneWidth: number;
   readonly nowMs: number;
@@ -164,7 +176,7 @@ const line = (
   action: string | null = null,
   payload: unknown = null,
   right: TimelineLine["right"] = null,
-): TimelineLine => ({ text, action, payload, right, image: null });
+): TimelineLine => ({ text, action, payload, right, image: null, parts: null });
 
 const item = (
   key: string,
@@ -220,6 +232,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     width,
     view,
     openTurns: input.openTurns ?? new Set(),
+    copied: input.copied ?? null,
     checkpointByMessage,
     attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
     cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
@@ -349,6 +362,7 @@ interface RowContext {
   readonly width: number;
   readonly view: TimelineView;
   readonly openTurns: ReadonlySet<string>;
+  readonly copied: string | null;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
   readonly attachments: (attachmentId: string) => AttachmentPreview;
   readonly cellPixels: CellPixels;
@@ -557,7 +571,7 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
       "message",
       width,
       [
-        ...markdownLines(body, palette, width).map((text) => line(text)),
+        ...replyLines(message.id, body, ctx),
         ...(imageLines.length > 0 ? [line(styled(chunk(""))), ...imageLines] : []),
       ],
       { marginTop: 1, marginBottom: checkpoint ? 0 : 1 },
@@ -571,6 +585,64 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
       }),
     );
   }
+}
+
+/**
+ * A reply's Markdown as lines. A click on a code block copies its source; a
+ * table is followed by a row that copies it as Markdown or CSV and cuts its
+ * cells to one line or wraps them again. What was just copied shows it.
+ */
+function replyLines(messageId: string, body: string, ctx: RowContext): TimelineLine[] {
+  const { palette, width } = ctx;
+  const tableKey = (index: number) => `${messageId}:table:${index}`;
+  const blocks = markdownBlockLines(body, palette, width, (index) =>
+    ctx.view.collapsedTables.has(tableKey(index)),
+  );
+  const lines: TimelineLine[] = [];
+  blocks.forEach((block, position) => {
+    if (block.code) {
+      const key = `${messageId}:code:${block.code.index}`;
+      const text =
+        ctx.copied === key
+          ? { chunks: block.text.chunks.map((part) => ({ ...part, fg: palette.success })) }
+          : block.text;
+      lines.push(
+        line(text, "timeline.copy", { key, text: block.code.source, label: "Code block" }),
+      );
+      return;
+    }
+    lines.push(line(block.text));
+    const table = block.table;
+    if (!table || blocks[position + 1]?.table?.index === table.index) return;
+    const key = tableKey(table.index);
+    const collapsed = ctx.view.collapsedTables.has(key);
+    const part = (label: string, action: string, payload: unknown) => ({
+      text: styled(chunk(label, { fg: palette.dim })),
+      action,
+      payload,
+    });
+    const copyPart = (format: "Markdown" | "CSV", text: string) => {
+      const copyKey = `${key}:${format}`;
+      return ctx.copied === copyKey
+        ? {
+            text: styled(chunk(`✓ Copied ${format}`, { fg: palette.success })),
+            action: "timeline.copy",
+            payload: { key: copyKey, text, label: "Table" },
+          }
+        : part(`⧉ ${format}`, "timeline.copy", { key: copyKey, text, label: "Table" });
+    };
+    lines.push({
+      ...line(styled(chunk(""))),
+      parts: [
+        copyPart("Markdown", tableToMarkdown(table.table)),
+        part(" · ", "", null),
+        copyPart("CSV", tableToCsv(table.table)),
+        part(" · ", "", null),
+        part(collapsed ? "⇲ Expand cells" : "⇱ Collapse cells", "timeline.table.toggle", { key }),
+      ],
+    });
+  });
+  return lines;
 }
 
 /**

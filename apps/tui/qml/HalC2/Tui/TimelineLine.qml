@@ -3,7 +3,8 @@ import OpenTUI
 // One pre-styled timeline line (a `Shell.state.timeline` item line): its text,
 // an optional right-aligned part, and the action a click dispatches. A line
 // with an `image` draws that attachment preview inline (Kitty graphics, only
-// when the host's `graphics.inlineImages` let it load) instead of text.
+// when the host's `graphics.inlineImages` let it load) instead of text; a line
+// with `parts` is a row of them, each with its own action.
 //
 // Clicks act through `Qt.callLater`: one click that reaches the line more than
 // once (nested handlers, a repeated report) coalesces into a single dispatch
@@ -13,6 +14,7 @@ Item {
     property var line: null
     readonly property var right: line ? line.right : null
     readonly property var image: line ? line.image : null
+    readonly property var parts: line && line.parts ? line.parts : []
 
     flexDirection: "row"
     flexShrink: 0
@@ -26,7 +28,7 @@ Item {
     }
 
     Text {
-        visible: row.image === null
+        visible: row.image === null && row.parts.length === 0
         flexGrow: 1
         flexShrink: 1
         wrapMode: "word"
@@ -43,6 +45,13 @@ Item {
         protocol: "kitty"
         source: row.image ? row.image.source : null
         onMouseDown: row.click(row.line)
+    }
+    Repeater {
+        model: row.parts
+        delegate: Text {
+            text: modelData.text
+            onMouseDown: row.click(modelData)
+        }
     }
     Text {
         visible: row.right !== null && row.right.action !== ""
