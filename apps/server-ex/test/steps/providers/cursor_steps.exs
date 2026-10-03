@@ -368,6 +368,75 @@ defmodule HalC2.Steps.Providers.Cursor do
     Map.put(ctx, :thread, "Cursor")
   end
 
+  # --- usage ---------------------------------------------------------------------------
+
+  @usage_path "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
+
+  # The Cursor CLI's own login, kept in a file (where each platform keeps it), and
+  # Cursor's dashboard API played on loopback.
+  step "Cursor is signed in with a file-based login", context do
+    dir = Path.join(context.mc.home, "cursor-login")
+
+    for path <- [".cursor/auth.json", "config/cursor/auth.json"] do
+      File.mkdir_p!(Path.dirname(Path.join(dir, path)))
+      File.write!(Path.join(dir, path), JSON.encode!(%{"accessToken" => "file-token"}))
+    end
+
+    {url, log} =
+      HalC2.Test.FakeHttp.start(%{
+        @usage_path =>
+          {200,
+           %{
+             "billingCycleEnd" => "1790000000000",
+             "planUsage" => %{
+               "totalPercentUsed" => 50,
+               "autoPercentUsed" => 30,
+               "apiPercentUsed" => 20
+             }
+           }}
+      })
+
+    context = Acp.ready(context)
+
+    Acp.put_instance("cursor", %{
+      "driver" => "cursor",
+      "enabled" => true,
+      "config" => %{"apiEndpoint" => url},
+      "environment" =>
+        for(
+          {name, value} <- [
+            {"HOME", dir},
+            {"XDG_CONFIG_HOME", Path.join(dir, "config")},
+            {"AGENT_CLI_CREDENTIAL_STORE", "file"}
+          ],
+          do: %{"name" => name, "value" => value}
+        )
+    })
+
+    Map.put(context, :cursor_usage_log, log)
+  end
+
+  step "Cursor shows its monthly, Auto and API usage with the billing cycle end", context do
+    cursor = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+    limits = cursor["usageLimits"]
+    refute Map.has_key?(limits, "unavailable")
+
+    assert [
+             {"apiPercentUsed", "monthly", "Monthly · API", 20},
+             {"autoPercentUsed", "monthly", "Monthly · Auto", 30},
+             {"totalPercentUsed", "monthly", "Monthly", 50}
+           ] = for(w <- limits["windows"], do: {w["id"], w["kind"], w["label"], w["usedPercent"]})
+
+    # The billing cycle's end is when each window resets.
+    assert Enum.all?(limits["windows"], &(&1["resetsAt"] == "2026-09-21T14:13:20.000Z"))
+
+    # It was read with the login in the file.
+    assert [%{"path" => @usage_path, "authorization" => "Bearer file-token"} | _] =
+             HalC2.Test.FakeHttp.requests(context.cursor_usage_log)
+
+    context
+  end
+
   # --- commands ------------------------------------------------------------------------
 
   defp commands(ctx) do

@@ -116,7 +116,6 @@ Feature: Cursor
     When Cursor finishes planning
     Then the plan is shown as a proposed plan with its task list
 
-  @backlog
   Scenario: Cursor's monthly allowance is shown in the limits view
     Given Cursor is signed in with a file-based login
     When the user opens the limits view
