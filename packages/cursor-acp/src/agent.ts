@@ -1,7 +1,9 @@
 import type {
   AgentOptions,
   InteractionUpdate,
+  ModelParameterDefinition,
   ModelSelection,
+  ModelVariant,
   SdkCredentialStore,
   SendOptions,
   ToolCall,
@@ -23,9 +25,15 @@ export interface CursorSdk {
   readonly envApiKey: string | undefined;
   readonly createAgent: (options: AgentOptions) => Promise<CursorAgent>;
   readonly resumeAgent: (agentId: string, options: AgentOptions) => Promise<CursorAgent>;
-  readonly listModels: (
-    apiKey: string,
-  ) => Promise<ReadonlyArray<{ readonly id: string; readonly displayName: string }>>;
+  readonly listModels: (apiKey: string) => Promise<
+    ReadonlyArray<{
+      readonly id: string;
+      readonly displayName: string;
+      /** The model's own options (reasoning, context size, ...) and its default variant. */
+      readonly parameters?: ReadonlyArray<ModelParameterDefinition>;
+      readonly variants?: ReadonlyArray<ModelVariant>;
+    }>
+  >;
   readonly login: (options: {
     readonly store: SdkCredentialStore;
     readonly signal: AbortSignal;
@@ -84,6 +92,8 @@ const authRequired = () => new RpcError(-32000, "Sign in to Cursor to use this a
 interface Session {
   readonly agent: CursorAgent;
   model: ModelSelection;
+  /** Cursor's conversation mode for the next run: the client's plan toggle sets it. */
+  mode: "agent" | "plan";
   run: CursorRun | undefined;
 }
 
@@ -137,9 +147,32 @@ export function makeCursorAcp(input: {
         currentValue: current,
         options: [
           { value: "default", name: "Auto" },
-          ...models.map((model) => ({ value: model.id, name: model.displayName })),
+          // Each model's parameters ride along, for the client's model options.
+          ...models.map((model) => ({
+            value: model.id,
+            name: model.displayName,
+            ...(model.parameters === undefined || model.parameters.length === 0
+              ? {}
+              : { _meta: { parameters: model.parameters, variants: model.variants ?? [] } }),
+          })),
         ],
       },
+      // Cursor's own plan mode, which the client's plan toggle chooses.
+      ...(text
+        ? []
+        : [
+            {
+              id: "mode",
+              name: "Mode",
+              category: "mode",
+              type: "select",
+              currentValue: "agent",
+              options: [
+                { value: "agent", name: "Agent" },
+                { value: "plan", name: "Plan" },
+              ],
+            },
+          ]),
     ];
   };
 
@@ -153,7 +186,7 @@ export function makeCursorAcp(input: {
         : sdk.resumeAgent(agentId, agentOptions(cwd, key, model)),
     );
     sessions.get(agent.agentId)?.agent.close();
-    sessions.set(agent.agentId, { agent, model, run: undefined });
+    sessions.set(agent.agentId, { agent, model, mode: "agent", run: undefined });
     return {
       ...(agentId === undefined ? { sessionId: agent.agentId } : {}),
       configOptions: await modelOption(key, model.id),
@@ -197,6 +230,7 @@ export function makeCursorAcp(input: {
     const run = await guard(
       current.agent.send(text, {
         model: current.model,
+        mode: current.mode,
         onDelta: ({ update }) => updates(update),
       }),
     );
@@ -260,7 +294,23 @@ export function makeCursorAcp(input: {
     "session/set_config_option": async (params) => {
       const current = session(params);
       if (params.configId === "model" && typeof params.value === "string") {
-        current.model = { id: params.value };
+        // The options picked for the model come with it (`_meta.params`).
+        const meta = params._meta as { readonly params?: unknown } | undefined;
+        const picked = Array.isArray(meta?.params)
+          ? meta.params.flatMap((entry) =>
+              typeof entry === "object" &&
+              entry !== null &&
+              typeof entry.id === "string" &&
+              typeof entry.value === "string"
+                ? [{ id: entry.id, value: entry.value }]
+                : [],
+            )
+          : [];
+        current.model =
+          picked.length === 0 ? { id: params.value } : { id: params.value, params: picked };
+      }
+      if (params.configId === "mode") {
+        current.mode = params.value === "plan" ? "plan" : "agent";
       }
       return { configOptions: [] };
     },
@@ -308,6 +358,48 @@ export function makeUpdateTranslator(emit: (update: object) => void) {
   };
 
   return (update: InteractionUpdate) => {
+    // Cursor's plan and its task list are not tool calls of the transcript: the plan
+    // is a proposed plan (a HAL-C2 update, which ACP has none for) and the todos are
+    // ACP's plan entries.
+    if (update.type === "tool-call-started" || update.type === "tool-call-completed") {
+      const toolCall = update.toolCall;
+      if (toolCall.type === "createPlan") {
+        nextSegment("tool");
+        emit({
+          sessionUpdate: "proposed_plan",
+          planId: update.callId,
+          markdown: toolCall.args.plan,
+          status:
+            update.type !== "tool-call-completed"
+              ? "in_progress"
+              : toolFailed(toolCall)
+                ? "failed"
+                : "completed",
+        });
+        return;
+      }
+      if (toolCall.type === "updateTodos") {
+        nextSegment("tool");
+        const todos =
+          toolCall.result?.status === "success" ? toolCall.result.value.todos : toolCall.args.todos;
+        emit({
+          sessionUpdate: "plan",
+          entries: todos
+            .filter((todo) => todo.status !== "cancelled" && todo.content.trim().length > 0)
+            .map((todo) => ({
+              content: todo.content,
+              priority: "medium",
+              status:
+                todo.status === "inProgress"
+                  ? "in_progress"
+                  : todo.status === "completed"
+                    ? "completed"
+                    : "pending",
+            })),
+        });
+        return;
+      }
+    }
     switch (update.type) {
       case "text-delta":
         emit({

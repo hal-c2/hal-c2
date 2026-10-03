@@ -140,6 +140,37 @@ defmodule HalC2.Claude.Provider do
 
   def prompt(text, _effort), do: text
 
+  @doc """
+  Why the installed CLI cannot run `model`, when the manifest gates the model on a
+  newer Claude Code than this one: the message names the version to upgrade to. `nil`
+  for a model it can run, one the manifest does not know, or a CLI whose version
+  cannot be read (which is left to refuse the model itself).
+  """
+  @spec too_old(String.t() | nil) :: String.t() | nil
+  def too_old(model) do
+    with %{} = entry <- find(model),
+         min when is_binary(min) <- get_in(entry, ["adapter", "claudeCode", "minVersion"]),
+         {:ok, version} <- Version.parse(installed_version()),
+         :lt <- Version.compare(version, min) do
+      "Claude Code v#{version} is too old for #{entry["name"]}. Upgrade to v#{min} or newer to access it."
+    else
+      _ -> nil
+    end
+  end
+
+  defp installed_version do
+    with [executable | _] <-
+           HalC2.Settings.instance_command(
+             "claudeAgent",
+             Application.get_env(:hal_c2, :claude_command, ["claude"])
+           ),
+         path when is_binary(path) <- System.find_executable(executable) do
+      version(path)
+    else
+      _ -> "unknown"
+    end
+  end
+
   # The catalog model named by its slug or one of its aliases.
   defp find(model) when is_binary(model) do
     name = String.downcase(model)

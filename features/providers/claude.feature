@@ -129,18 +129,15 @@ Feature: Claude
     When Claude reports that a usage window is nearly used up during a turn
     Then the limits view shows the new usage for that window
 
-  @backlog
   Scenario: Several Claude accounts can run side by side
     Given the user adds a second Claude instance with its own config directory
     When the user signs in to the CLI with that config directory
     Then each instance uses its own account and history
 
-  @backlog
   Scenario: Claude models come from the fetched model manifest
     When the model manifest lists a new Claude model
     Then the new model is offered after the next refresh
 
-  @backlog
   Scenario: A Claude model that needs a newer CLI is explained
     Given the installed Claude is older than a model requires
     When the user picks that model
@@ -171,7 +168,6 @@ Feature: Claude
       | thinking       | off        | the setting "alwaysThinkingEnabled" off            |
       | context window | 1m         | a model id ending in "[1m]"                        |
 
-  @backlog
   Scenario: Claude compacts the conversation after the configured size
     Given the Claude instance compacts after 200000 tokens
     When the conversation grows past that size
@@ -186,20 +182,18 @@ Feature: Claude
     When Claude starts a subagent
     Then the subagent's work is grouped under the step that started it
 
-  @backlog
   Scenario: A resumed Claude subagent keeps its continuation in its own thread
     Given Claude resumed a subagent after the MC restarted
     When the user opens the subagent's thread
     Then the thread shows the message that resumed it
     And the parent thread does not
 
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Claude monitor shows as background work, not as a command
     Given Claude starts a monitor in the thread
     Then the thread lists the monitor as background work
     And the monitor is not shown as a command
 
-  @backlog
   Scenario: Claude continues from the compacted conversation after compaction
     Given Claude compacted the conversation of a thread
     When the user sends the next message
@@ -233,7 +227,6 @@ Feature: Claude
     When the user enables Claude
     Then Claude is offered again
 
-  @backlog
   Scenario: A Claude instance can route through OpenRouter or another router
     Given a Claude instance with its own config directory and a router's endpoint and token in its environment
     And the router's model id is added as a custom model
