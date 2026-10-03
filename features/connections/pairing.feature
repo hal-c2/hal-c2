@@ -116,7 +116,7 @@ Feature: Pairing a client with an environment
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).
-  @backlog @tui
+  @tui
   Scenario: The terminal client lists live access changes
     Given the user administers the environment
     When the user opens access management in the terminal client
@@ -125,7 +125,7 @@ Feature: Pairing a client with an environment
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).
-  @backlog @tui
+  @tui
   Scenario: The terminal client revokes one client
     Given another paired client
     When the user revokes it from the terminal client
@@ -133,7 +133,7 @@ Feature: Pairing a client with an environment
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).
-  @backlog @tui
+  @tui
   Scenario: The terminal client revokes every other client
     Given three other paired clients
     When the user revokes every other client

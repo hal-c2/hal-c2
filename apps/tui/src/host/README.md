@@ -120,8 +120,15 @@ user dismisses it for that version (`update.notice.dismiss`;
 MC what is on screen (`clientActivity.ts`, `server.reportClientActivity` for
 the open thread and its checkout), renewed every 30 seconds.
 
+The `connections` section (`sections/connections.ts`) lists the environments
+this MC is linked to (`hal-c2.environmentLinks`, add with a pairing link,
+remove) and who may reach this machine: its pairing links and paired clients,
+followed through `client.subscribeAuthAccess` and revoked with
+`hal-c2.revokeClient` / `hal-c2.revokeOtherClients` / `hal-c2.revokePairingLink`.
+
 `cluster` (`clusterState.ts`) is this machine's cluster as the MC reports
-it (`cluster.status`, read again when settings or the palette open), the last
+it (`cluster.status`, read again when settings or the palette open, and every
+30 seconds while the settings overview is up), the last
 invite, and `joining` while the one-line join prompt has the keys (`mode:
 "join"`). Settings list it; the palette runs `cluster.invite {tailscale?}`
 (copies the link), `cluster.join.open`, `cluster.join {link}`,

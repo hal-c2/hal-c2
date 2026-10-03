@@ -2,6 +2,7 @@ import type { SettingsSections } from "../settingsSections.ts";
 import { backgroundActivitySection } from "./backgroundActivity.ts";
 import type { ProjectScript } from "@hal-c2/contracts";
 
+import { connectionsSection } from "./connections.ts";
 import { diagnosticsSection } from "./diagnostics.ts";
 import { projectSearchSection } from "./projectSearch.ts";
 import { projectsSection } from "./projects.ts";
@@ -38,6 +39,7 @@ export function registerSettingsSections(
       openFile: options.openFile,
     }),
   );
+  sections.register("connections", connectionsSection);
   sections.register("scheduledTasks", scheduledTasksSection);
   sections.register("storage", storageSection);
   sections.register("sourceControl", sourceControlSection);

@@ -163,6 +163,7 @@ const UNRECORDED = new Set([
   "subscribeScheduledTasks",
   "subscribeResourceTelemetry",
   "subscribeUsageLimits",
+  "subscribeAuthAccess",
 ]);
 
 export function fakeClient({
