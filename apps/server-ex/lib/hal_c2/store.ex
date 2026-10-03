@@ -201,17 +201,11 @@ defmodule HalC2.Store do
   @spec path(pid | atom) :: String.t()
   def path(store \\ __MODULE__) do
     with pid when is_pid(pid) <- GenServer.whereis(store),
-         {:ok, path} <- fetch_path(pid) do
+         key when key != nil <- path_key(pid),
+         path when path != nil <- :persistent_term.get(key, nil) do
       path
     else
       _ -> exit({:noproc, {__MODULE__, :path, [store]}})
-    end
-  end
-
-  defp fetch_path(pid) do
-    case path_key(pid) do
-      nil -> :error
-      key -> {:ok, :persistent_term.get(key)}
     end
   end
 
@@ -299,6 +293,8 @@ defmodule HalC2.Store do
 
   @impl true
   def init(path) do
+    # First, so a reader that finds this store by name finds its path too.
+    :persistent_term.put(path_key(self()), path)
     File.mkdir_p!(Path.dirname(path))
     {:ok, db} = Sqlite3.open(path)
 
@@ -337,7 +333,6 @@ defmodule HalC2.Store do
       )
 
     store = self()
-    :persistent_term.put(path_key(store), path)
     checkpointer = spawn_link(fn -> checkpointer(path, store) end)
 
     {:ok, stream_key} = Sqlite3.prepare(db, "SELECT key FROM streams WHERE id = ?1")
