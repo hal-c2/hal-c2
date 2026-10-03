@@ -21,6 +21,7 @@ import { shownText } from "../threadWorld.ts";
 import {
   boot,
   findObject,
+  geometry,
   holdKey,
   pasteBytes,
   pasteText,
@@ -639,7 +640,11 @@ step("the user sends it and the MC rejects the message", async (ctx: World) => {
 
 step("the user sees why the send failed", async (ctx: World) => {
   await settle(ctx);
-  expect(String(findObject(ctx, "statusText").get("text"))).toContain("turn rejected by the MC");
+  expect(String(findObject(ctx, "statusText").get("text"))).toContain("send failed");
+  // The status line is short: the composer carries the whole reason.
+  expect(composer(ctx).notice).toBe("Not sent: turn rejected by the MC");
+  expect(geometry(findObject(ctx, "composerNotice")).visible).toBe(true);
+  expect(await snapshot(ctx)).toContain("⚠ Not sent: turn rejected by the MC");
 });
 
 step("the draft reads {string} again", async (ctx: World, text: string) => {
@@ -655,6 +660,7 @@ const TWO_THREADS = [
     title: "Thread A",
     updatedAt: "2026-07-13T00:00:02.000Z",
     session: { status: "idle" },
+    latestTurn: null,
   },
   {
     id: "t2",
@@ -662,6 +668,7 @@ const TWO_THREADS = [
     title: "Thread B",
     updatedAt: "2026-07-13T00:00:01.000Z",
     session: { status: "idle" },
+    latestTurn: null,
   },
 ];
 

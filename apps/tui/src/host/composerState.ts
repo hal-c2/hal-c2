@@ -17,6 +17,7 @@ import {
 } from "@hal-c2/contracts";
 import type { ImagePreview } from "@hal-c2/opentui-image";
 import { formatComposerContextReference } from "@hal-c2/shared/composerContextReferences";
+import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
 import { truncate } from "@hal-c2/shared/String";
 import type { PropertyMap } from "opentui-qml";
 
@@ -115,6 +116,8 @@ export interface ComposerOptions {
   readonly onRowsChange?: (rows: number) => void;
   /** The user stopped this turn from here (its work stays open in the timeline). */
   readonly onInterrupt?: (turnId: string) => void;
+  /** The connection to the environment is lost: nothing can be sent. */
+  readonly offline?: () => boolean;
   /** The popover's inner width and content rows; an open picker windows to them. */
   readonly popover?: () => { readonly width: number; readonly maxRows: number };
   /** The agent's open question (not set aside), which the composer answers. */
@@ -390,6 +393,8 @@ export interface Composer {
   };
 }
 
+const OFFLINE_REASON = "not connected to the environment";
+
 export function createComposer(options: ComposerOptions): Composer {
   const { client, store, state } = options;
   const palette = options.palette ?? THEME;
@@ -398,6 +403,13 @@ export function createComposer(options: ComposerOptions): Composer {
   const drafts = new Map<string, Draft>();
   const interactionOverrides = new Map<string, ProviderInteractionMode>();
   const modelOverrides = new Map<string, ModelSelection>();
+  /** The model last sent with, per provider instance, newest last (this session). */
+  const lastUsedModels = new Map<string, ModelSelection>();
+  const rememberModel = (selection: ModelSelection | null | undefined) => {
+    if (!selection) return;
+    lastUsedModels.delete(selection.instanceId);
+    lastUsedModels.set(selection.instanceId, selection);
+  };
   let modelOptions: ReadonlyArray<ModelOption> = [];
   let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
   // Every configured provider (signed out and disabled ones too), for the composer's notice.
@@ -416,6 +428,8 @@ export function createComposer(options: ComposerOptions): Composer {
   /** Set by Ctrl+Up / Ctrl+Down; null follows the text. */
   let rowsOverride: number | null = null;
   let replyPending = false;
+  /** Why the last send to a thread was refused, by draft key, until it is sent again. */
+  const sendFailures = new Map<string, string>();
   let createPending = false;
   let switchPending = false;
   let draftCount = 0;
@@ -583,7 +597,11 @@ export function createComposer(options: ComposerOptions): Composer {
       kind: record.kind as string,
       label: clip(record.label, 32),
     }));
-    const notice = providerNotice(model);
+    // Why the message is still in the prompt outranks the provider's standing notice.
+    const refused = key === null ? undefined : sendFailures.get(key);
+    // Being offline stops explaining itself once the connection is back.
+    const failure = refused === OFFLINE_REASON && !options.offline?.() ? undefined : refused;
+    const notice = failure !== undefined ? `Not sent: ${failure}` : providerNotice(model);
     // Wrapped to the box by word, so the way to fix it is never cut off.
     const noticeLines: string[] = [];
     if (notice) {
@@ -1433,14 +1451,23 @@ export function createComposer(options: ComposerOptions): Composer {
       });
     const context = contextFor(savedMode ?? "local");
     const project = list[context.projectIndex] ?? null;
-    const modelSelection = project?.defaultModelSelection ?? thread?.modelSelection ?? null;
+    // As in the web client: the project's default (its own, else the environment's),
+    // then what the open thread's composer shows, then the model last sent with.
+    const defaults = resolveProjectSettings(
+      settings,
+      (project?.id ?? null) as never,
+      project,
+    ).settings;
+    const carried = thread ? (modelOverrides.get(thread.id) ?? thread.modelSelection) : null;
+    const modelSelection =
+      defaults.defaultModelSelection ?? carried ?? [...lastUsedModels.values()].at(-1) ?? null;
     draftCount += 1;
     newDraft = {
       draftId: `draft-${draftCount}`,
       originKey: selectionKey(selection),
       projectId: project?.id ?? null,
       modelSelection: resolveModelSelection(modelOptions, modelSelection) ?? modelSelection,
-      runtimeMode: thread?.runtimeMode ?? "full-access",
+      runtimeMode: defaults.defaultRuntimeMode,
       interactionMode: "default",
       workspaceMode: context.workspaceMode,
       branch: context.branch,
@@ -1534,6 +1561,7 @@ export function createComposer(options: ComposerOptions): Composer {
         .then(
           (threadId) => {
             createPending = false;
+            rememberModel(modelSelection);
             closeNewThread();
             const scope = store.getState().projectScopeId;
             if (scope !== null && scope !== project.id) store.setProjectScope(project.id);
@@ -1564,12 +1592,20 @@ export function createComposer(options: ComposerOptions): Composer {
       store.setStatus("Select a thread (Alt+↑/↓ or click) to send a message.");
       return;
     }
+    // The draft stays as typed: it is sent when the user asks again, once connected.
+    if (options.offline?.()) {
+      sendFailures.set(key, OFFLINE_REASON);
+      store.setStatus("Not sent: not connected.", "error");
+      publish();
+      return;
+    }
     // Each context record is named in the text by its reference link, after what was typed;
     // the record itself (the terminal output, the diff lines and the note) rides on the message.
     const references = contexts.map((record) => formatComposerContextReference(record)).join(" ");
     const body = [typed, references].filter((part) => part.length > 0).join("\n\n");
     const text = body.length > 0 ? body : IMAGE_ONLY_PROMPT;
     const submitted = draft;
+    sendFailures.delete(key);
     replyPending = true;
     store.setStatus("Sending reply…", "busy");
     publish();
@@ -1587,6 +1623,7 @@ export function createComposer(options: ComposerOptions): Composer {
         .then(
           () => {
             replyPending = false;
+            rememberModel(threadModel(detail));
             // Clear only what was sent; text typed while sending stays.
             setDraft(key, (current) => ({
               text: current.text.startsWith(submitted.text)
@@ -1599,7 +1636,10 @@ export function createComposer(options: ComposerOptions): Composer {
           },
           (error) => {
             replyPending = false;
-            store.setStatus(`send failed: ${String(error)}`, "error");
+            const reason = error instanceof Error ? error.message : String(error);
+            // The status line has room for a few words; the composer says it in full.
+            sendFailures.set(key, reason);
+            store.setStatus(`send failed: ${reason}`, "error");
             publish();
           },
         ),

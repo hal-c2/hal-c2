@@ -805,6 +805,7 @@ export function createHost(options: HostOptions): Host {
       publishPage();
     },
     onInterrupt: (turnId) => threadView.turnInterrupted(turnId),
+    offline: () => offline(),
     onRowsChange: (rows) => {
       editorRows = rows;
       publishLayout();
