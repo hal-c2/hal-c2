@@ -1244,12 +1244,48 @@ defmodule HalC2.Claude.ThreadRuntime do
        when name in @agent_tools,
        do: state
 
+  # SendMessage to a subagent Claude started earlier resumes it: the message is the
+  # subagent's, shown in its own thread and not as a tool call of this one. The
+  # subagent is found in the thread's record, so this holds after the MC restarted.
   defp assistant_block(
-         %{"type" => "tool_use", "id" => tool_id, "name" => name} = block,
+         %{"type" => "tool_use", "id" => tool_id, "name" => "SendMessage"} = block,
          _id,
          _index,
          state
-       ) do
+       )
+       when not is_map_key(state.items, tool_id) do
+    input = block["input"] || %{}
+
+    cond do
+      is_map_key(state.work, tool_id) ->
+        state
+
+      entity = resumable(state, input["to"]) ->
+        state = flush(state)
+        sub = NativeSubagent.resume(work_ids(state), entity, input["message"])
+        put_in(state.work[tool_id], %{sub: sub, item: nil, background: true})
+
+      true ->
+        tool_block(block, state)
+    end
+  end
+
+  defp assistant_block(%{"type" => "tool_use"} = block, _id, _index, state),
+    do: tool_block(block, state)
+
+  defp assistant_block(_block, _id, _index, state), do: state
+
+  # The subagent of this thread that Claude knows as the agent `to` (its task id).
+  defp resumable(state, to) when is_binary(to) do
+    HalC2.Streams.ensure(state.thread_id)
+    |> HalC2.Streams.Server.state()
+    |> StreamState.list("subagent")
+    |> Enum.find(&(&1["origin"] == "provider_native" and &1["nativeTaskId"] == to))
+  end
+
+  defp resumable(_state, _to), do: nil
+
+  defp tool_block(%{"id" => tool_id, "name" => name} = block, state) do
     input = block["input"] || %{}
 
     # A background command's tool result only says it started; its task ends it. A
@@ -1277,8 +1313,6 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     ensure_item(state, tool_id, kind, fields)
   end
-
-  defp assistant_block(_block, _id, _index, state), do: state
 
   defp tool_result(state, tool_id, result) do
     case state.work[tool_id] do
@@ -1410,6 +1444,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
       work = state.work[tool] ->
         work = %{work | background: work.background or background?}
+        # Claude's name for the subagent, which a later SendMessage addresses.
+        if work.sub, do: name_subagent(state, work.sub, task_id)
 
         %{
           state
@@ -1434,6 +1470,17 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  defp name_subagent(state, sub, task_id) do
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "subagent", sub.id, fn
+          nil -> nil
+          entity -> Map.put(entity, "nativeTaskId", task_id)
+        end)
+      ]
+    end)
+  end
+
   # No run to join: nothing is recorded.
   defp subagent_task(%{turn: nil, last_ids: nil} = state, _tool, _task), do: state
 
@@ -1446,6 +1493,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         "title" => task["description"]
       })
 
+    name_subagent(state, sub, task_id)
     work = %{sub: sub, item: nil, background: task["is_backgrounded"] != false}
 
     %{

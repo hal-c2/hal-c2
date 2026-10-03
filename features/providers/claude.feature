@@ -184,7 +184,6 @@ Feature: Claude
     When Claude starts a subagent
     Then the subagent's work is grouped under the step that started it
 
-  @backlog
   Scenario: A resumed Claude subagent keeps its continuation in its own thread
     Given Claude resumed a subagent after the MC restarted
     When the user opens the subagent's thread

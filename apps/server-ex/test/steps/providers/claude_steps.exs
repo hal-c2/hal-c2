@@ -559,6 +559,143 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- a resumed subagent ----------------------------------------------------------------
+
+  # The subagent of the fake's "in the background" turn finished; then the runtime that
+  # knew it is gone, as after a restart of the MC, and in the next turn Claude sends
+  # the subagent (its task id) another message.
+  step "Claude resumed a subagent after the MC restarted", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    task = %{"type" => "system", "task_id" => "task-agent-1", "tool_use_id" => "agent-1"}
+
+    claude_says(
+      context,
+      Map.merge(task, %{
+        "subtype" => "task_notification",
+        "status" => "completed",
+        "summary" => "lib has three modules"
+      })
+    )
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "subagent"), &(&1["status"] == "completed"))
+    end)
+
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    ref = Process.monitor(runtime)
+    Process.exit(runtime, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+
+    context = World.post_message(context, @thread, "wait and resume it")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(get_in(&1, ["in", "message", "content"]) == "wait and resume it")
+    )
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-send",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "send-1",
+            "name" => "SendMessage",
+            "input" => %{"to" => "task-agent-1", "message" => "Also check the tests"}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "send-1",
+      "description" => "Survey the repo",
+      "task_type" => "local_agent",
+      "is_backgrounded" => true
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{"type" => "tool_result", "tool_use_id" => "send-1", "content" => "Message delivered"}
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "send-1",
+      "status" => "completed",
+      "summary" => "The tests pass"
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success"})
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "the user opens the subagent's thread", context do
+    state = World.stream(context, @thread)
+    # Still the one subagent, and its one thread.
+    assert [%{"status" => "completed", "result" => "The tests pass"} = subagent] =
+             StreamState.list(state, "subagent")
+
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+
+    messages =
+      child
+      |> StreamState.list("turn-item")
+      |> Enum.filter(&(&1["type"] in ["user_message", "assistant_message"]))
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.map(&{&1["type"], &1["text"]})
+
+    Map.put(context, :child_messages, messages)
+  end
+
+  step "the thread shows the message that resumed it", context do
+    assert [
+             {"user_message", "List what is in the repo"},
+             {"assistant_message", "lib has three modules"},
+             {"user_message", "Also check the tests"},
+             {"assistant_message", "The tests pass"}
+           ] = context.child_messages
+
+    context
+  end
+
+  step "the parent thread does not", context do
+    state = World.stream(context, @thread)
+
+    refute Enum.any?(
+             StreamState.list(state, "message"),
+             &((&1["text"] || "") =~ "Also check the tests")
+           )
+
+    refute Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(inspect(&1, limit: :infinity) =~ "Also check the tests")
+           )
+
+    # The message is not a tool call of the parent's either.
+    refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["toolName"] == "SendMessage"))
+    context
+  end
+
   # --- compaction ------------------------------------------------------------------------
 
   defp compactions(context),
