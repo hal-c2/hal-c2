@@ -52,7 +52,7 @@ Item {
     signal copied(string rowId)
     // The user cited a selection of a reply: an AssistantCitation's selector
     // {text, start, end, prefix, suffix}.
-    signal cited(string rowId, var selector)
+    signal cited(string messageId, var selector)
 
     // Whether a selection in a reply offers "Cite".
     property bool citable: false
@@ -357,6 +357,7 @@ Item {
             required property var intent
             required property var attribution
             required property var meta
+            required property var messageId
             // The tool calls whose details are open, by id.
             property var openCalls: ({})
             // Whether the row's time and actions show: only this row's
@@ -513,9 +514,11 @@ Item {
                         width: parent.width - 8
                         text: row.text ?? ""
                         streaming: row.streaming ?? false
-                        citable: root.citable && row.streaming !== true
+                        citable: root.citable && row.streaming !== true && !!row.messageId
                         onLinkActivated: link => root.linkActivated(link)
-                        onCited: selector => root.cited(row.rowId, selector)
+                        onCited: selector => root.cited(row.messageId, selector)
+                        // "Cite" under a short reply's last line reaches over the next row.
+                        onSelectionChanged: row.z = selection !== null ? 1 : 0
                     }
                     // The files the reply's turn changed (ChangedFilesCard).
                     Item {

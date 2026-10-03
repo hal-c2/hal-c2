@@ -859,24 +859,38 @@ function flowTop(block, ctx, flags) {
 
 var CITATION_LINK = /\[Assistant quote\]\(((?:hal-c2|t3)-citation:\/\/v1\/[^\s)]+)\)/g;
 var CITATION_CONTEXT = 32;
+var CITATION_MAX = 8000;
+var CITATION_FIELDS = ["text", "start", "end", "prefix", "suffix", "comment"];
 
-// The quote and comment a citation link carries, or null.
+// The quote and comment a citation link carries, or null for a link that is
+// not a whole AssistantCitation (parseAssistantCitationHref), which the MC
+// leaves as written too.
 function citation(href) {
     var query = href.indexOf("?");
-    if (query < 0)
+    if (query < 0 || href.indexOf("#") >= 0)
+        return null;
+    var path = href.slice(href.indexOf("://v1/") + 6, query).split("/");
+    if (path.length !== 3 || path.indexOf("") >= 0)
         return null;
     var fields = {};
     var pairs = href.slice(query + 1).split("&");
     try {
         for (var i = 0; i < pairs.length; ++i) {
             var eq = pairs[i].indexOf("=");
-            if (eq > 0)
-                fields[pairs[i].slice(0, eq)] = decodeURIComponent(pairs[i].slice(eq + 1).replace(/\+/g, " "));
+            var key = eq < 0 ? pairs[i] : pairs[i].slice(0, eq);
+            if (eq < 0 || CITATION_FIELDS.indexOf(key) < 0 || fields[key] !== undefined)
+                return null;
+            fields[key] = decodeURIComponent(pairs[i].slice(eq + 1).replace(/\+/g, " "));
         }
     } catch (e) {
         return null;
     }
-    return typeof fields.text === "string" && fields.text.trim().length > 0 ? fields : null;
+    var digits = /^\d{1,16}$/;
+    if (fields.text === undefined || fields.prefix === undefined || fields.suffix === undefined || !digits.test(fields.start ?? "") || !digits.test(fields.end ?? ""))
+        return null;
+    if (Number(fields.end) <= Number(fields.start) || fields.text.trim().length === 0 || fields.text.length > CITATION_MAX || (fields.comment ?? "").length > CITATION_MAX || fields.prefix.length > CITATION_CONTEXT || fields.suffix.length > CITATION_CONTEXT)
+        return null;
+    return fields;
 }
 
 function escapeMarkdown(text) {

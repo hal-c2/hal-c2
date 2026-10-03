@@ -226,6 +226,17 @@ Item {
             verify(!button.visible);
         }
 
+        // A one-line reply has no line above for Cite to sit on.
+        function test_citeSitsUnderAOneLineReply() {
+            const md = make("Refunds reuse the old rate.", { citable: true });
+            const edit = prose(segmentsOf(md)[0]);
+            edit.forceActiveFocus();
+            edit.select(0, 7);
+            const button = findChild(md, "citeSelection");
+            verify(button.visible);
+            verify(button.y >= edit.height, "under the line: " + button.y);
+        }
+
         function test_plainRepliesOfferNoCite() {
             const md = make("Refunds reuse the old rate.");
             const edit = prose(segmentsOf(md)[0]);
@@ -243,6 +254,15 @@ Item {
             verify(plain(quoted).indexOf("Assistant quote:") >= 0);
             verify(plain(quoted).indexOf("cache [keys]") >= 0, plain(quoted));
             verify(plain(prose(segments[2])).indexOf("Comment: too slow?") >= 0, plain(prose(segments[2])));
+        }
+
+        // What the MC does not read as a quote is not shown as one.
+        function test_malformedCitationLinkStaysALink() {
+            const links = ["hal-c2-citation://v1/env/thread?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=1&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=1&prefix=&suffix=&extra=1", "hal-c2-citation://v1/env/thread/msg?text=a"];
+            for (const link of links) {
+                const md = make("See [Assistant quote](" + link + ")");
+                compare(segmentsOf(md).map(s => s.kind), ["prose"], link);
+            }
         }
 
         function test_alertTitlesItsKind() {

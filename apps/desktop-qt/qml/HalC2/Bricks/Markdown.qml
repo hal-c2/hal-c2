@@ -255,7 +255,8 @@ Item {
     }
 
     // "Cite" under the selection's last line, or over it at the brick's foot
-    // (AssistantSelectionToolbar). It takes no focus: the selection stays.
+    // when there is a line above to sit on (AssistantSelectionToolbar). It
+    // takes no focus: the selection stays.
     ShellButton {
         id: citeButton
         objectName: "citeSelection"
@@ -275,7 +276,7 @@ Item {
         visible: root.citable && root.selection !== null
         z: 1
         x: Math.max(0, Math.min(end.x, root.width - width))
-        y: end.y + end.height + 4 + height <= root.height ? end.y + end.height + 4 : end.y - height - 4
+        y: end.y + end.height + 4 + height <= root.height || end.y - height - 4 < 0 ? end.y + end.height + 4 : end.y - height - 4
         implicitHeight: 24
         iconName: "quote"
         iconSize: 12

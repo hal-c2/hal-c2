@@ -199,16 +199,13 @@ const Steps steps([] {
   step(QStringLiteral("the assistant replied with a paragraph about caching"), [](World& world, const Captures&, const Table&) {
     openTurnThread(world);
   });
-  for (const auto& text : {QStringLiteral("the user cites that paragraph in the composer"),
-                           QStringLiteral("the user selects a sentence in the agent's reply and cites it")}) {
-    step(text, [](World& world, const Captures&, const Table&) { cite(world); });
-  }
-  for (const auto& text : {QStringLiteral("the draft carries the quoted paragraph"), QStringLiteral("the composer holds a citation of that sentence")}) {
-    step(text, [](World& world, const Captures&, const Table&) {
-      expect(quotes(world).constFirst().toMap().value(QStringLiteral("text")).toString() == kParagraph,
-             QStringLiteral("the composer shows %1").arg(show(quotes(world))));
-    });
-  }
+  step(QStringLiteral("the user cites that paragraph in the composer"), [](World& world, const Captures&, const Table&) {
+    cite(world);
+  });
+  step(QStringLiteral("the draft carries the quoted paragraph"), [](World& world, const Captures&, const Table&) {
+    expect(quotes(world).constFirst().toMap().value(QStringLiteral("text")).toString() == kParagraph,
+           QStringLiteral("the composer shows %1").arg(show(quotes(world))));
+  });
   for (const auto& text : {QStringLiteral("the user can add a comment to it"), QStringLiteral("the user can add a comment to the citation")}) {
     step(text, [](World& world, const Captures&, const Table&) { comment(world, QStringLiteral("Too slow?")); });
   }

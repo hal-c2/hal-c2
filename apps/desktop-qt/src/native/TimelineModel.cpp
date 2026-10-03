@@ -791,6 +791,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {EntriesRole, "entries"},  {HiddenCountRole, "hiddenCount"}, {ExpandedRole, "expanded"},
       {FilesRole, "files"},      {TimeRole, "time"},         {IconRole, "icon"},
       {IntentRole, "intent"},    {AttributionRole, "attribution"}, {MetaRole, "meta"},
+      {MessageIdRole, "messageId"},
   };
 }
 
@@ -919,6 +920,8 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       return QString();
     case MetaRole:
       return row.meta;
+    case MessageIdRole:
+      return type == QLatin1String("assistant_message") ? text(item, QLatin1String("messageId")) : QString();
     case IconRole:
       return row.kind == QLatin1String("message") || row.kind == QLatin1String("plan") ? QString() : iconOf(item);
     case TimeRole:
