@@ -21,6 +21,7 @@
 #include "ComposerController.h"
 #include "Harness.h"
 #include "NavigationController.h"
+#include "Stream.h"
 #include "World.h"
 
 namespace {
@@ -407,6 +408,96 @@ const Steps steps([] {
          const QString text = composerPart(world, QStringLiteral("attachmentAccessibilityText"))->property("text").toString();
          expect(text == seen.value(c[0]), QStringLiteral("the accessibility data reads \"%1\"").arg(text));
        });
+
+  // Answering the agent's question (question-answers.feature).
+  const auto answerField = [](World& world) {
+    QQuickItem* field = composerPart(world, QStringLiteral("questionAnswer-database"));
+    expect(field && field->isVisible(), QStringLiteral("the question takes no typed answer"));
+    return field;
+  };
+  const auto typeAnswer = [answerField](World& world, const QString& text) {
+    Brick& brick = composerBrick(world);
+    QQuickItem* field = answerField(world);
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(field));
+    expect(field->hasActiveFocus(), QStringLiteral("the answer field did not take the keyboard"));
+    typeInComposer(world, text);
+    expect(field->property("text") == text, QStringLiteral("the answer reads \"%1\"").arg(field->property("text").toString()));
+  };
+  const auto answerFiles = [](World& world) {
+    const QVariantMap request = world.state(QStringLiteral("turn")).toMap().value(QStringLiteral("questions")).toList().value(0).toMap();
+    return request.value(QStringLiteral("questions")).toList().value(0).toMap().value(QStringLiteral("attachments")).toList();
+  };
+  const auto submit = [](World& world) {
+    Brick& brick = composerBrick(world);
+    QQuickItem* button = composerPart(world, QStringLiteral("questionSubmit"));
+    expect(button && button->isVisible() && button->isEnabled(), QStringLiteral("the answer cannot be submitted"));
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(button));
+    world.sync();
+  };
+  step(QStringLiteral("the user has a separate draft %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), world.native().controller<NavigationController>()->threadKey()}, {QStringLiteral("text"), c[0]}, {QStringLiteral("cursor"), c[0].size()}});
+  });
+  step(QStringLiteral("the user types %1 and attaches %1").arg(q), [typeAnswer, answerFiles](World& world, const Captures& c, const Table&) {
+    typeAnswer(world, c[0]);
+    // What the answer's file picker hands the question.
+    QQuickItem* requests = composerPart(world, QStringLiteral("turnRequests"));
+    QMetaObject::invokeMethod(requests, "attachTo", Q_ARG(QVariant, QStringLiteral("database")), Q_ARG(QVariant, QVariant(QVariantList{plainFile(world, c[1])})));
+    world.waitFor([&] { return answerFiles(world).size() == 1 && answerFiles(world).first().toMap().value(QStringLiteral("status")).toString().isEmpty(); },
+                  [&] { return QStringLiteral("%1 to upload; the answer carries %2").arg(c[1], show(answerFiles(world))); });
+    QQuickItem* shown = composerPart(world, QStringLiteral("attachment:") + c[1]);
+    expect(shown && shown->isVisible(), QStringLiteral("the answer does not show %1").arg(c[1]));
+  });
+  step(QStringLiteral("submits the answer"), [submit](World& world, const Captures&, const Table&) { submit(world); });
+  step(QStringLiteral("the agent receives %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QList<QJsonObject> answers = commandsOf(world, QStringLiteral("runtime-request.respond"));
+    expect(answers.size() == 1, QStringLiteral("the MC has %1").arg(world.describeCommands()));
+    const QJsonArray files = answers.first().value(QLatin1String("attachmentsByQuestionId")).toObject().value(QLatin1String("database")).toArray();
+    const QJsonObject file = files.first().toObject();
+    expect(answers.first().value(QLatin1String("answers")).toObject().value(QLatin1String("database")) == c[0] && files.size() == 1 &&
+               file.value(QLatin1String("name")) == c[1] && file.value(QLatin1String("type")) == QLatin1String("file") &&
+               world.mc.part<FakeFileUploads>().stored.contains(file.value(QLatin1String("id")).toString()),
+           QStringLiteral("the agent received %1").arg(show(answers.first().toVariantMap())));
+  });
+  step(QStringLiteral("the normal draft still reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(draftText(world) == c[0] && carried(world).isEmpty() && commandsOf(world, QStringLiteral("message.dispatch")).isEmpty(),
+           QStringLiteral("the draft reads \"%1\" with %2").arg(draftText(world), carried(world).join(u", ")));
+  });
+  step(QStringLiteral("the question only allows its listed options"), [](World& world, const Captures&, const Table&) {
+    // The question as the agent asked it, again without a typed answer.
+    const QVariantMap request = world.state(QStringLiteral("turn")).toMap().value(QStringLiteral("questions")).toList().value(0).toMap();
+    QJsonObject asked = QJsonObject::fromVariantMap(request.value(QStringLiteral("questions")).toList().value(0).toMap());
+    asked.insert(QStringLiteral("allowCustomAnswer"), false);
+    asked.remove(QStringLiteral("attachments"));
+    stream::set(world, QStringLiteral("runtime-request"), request.value(QStringLiteral("requestId")).toString(), {{QStringLiteral("status"), QStringLiteral("resolved")}});
+    const QString id = QStringLiteral("request-fixed");
+    stream::set(world, QStringLiteral("runtime-request"), id,
+                {{QStringLiteral("id"), id}, {QStringLiteral("status"), QStringLiteral("pending")}, {QStringLiteral("responseCapability"), QJsonObject{{QStringLiteral("type"), QStringLiteral("live")}}}});
+    stream::addItem(world, QStringLiteral("user_input_request"), {{QStringLiteral("requestId"), id}, {QStringLiteral("status"), QStringLiteral("waiting")}, {QStringLiteral("questions"), QJsonArray{asked}}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("editorDisabled")).toBool(); }, QStringLiteral("the composer to see the question"));
+  });
+  step(QStringLiteral("the user tries to attach a file"), [](World& world, const Captures&, const Table&) {
+    composerBrick(world);
+    QMimeData data;
+    data.setUrls({plainFile(world, QStringLiteral("schema.sql"))});
+    drop(world, data);
+  });
+  step(QStringLiteral("the user is told this question cannot accept attachments"), [](World& world, const Captures&, const Table&) {
+    expect(told(world, QStringLiteral("This question cannot accept attachments.")), QStringLiteral("the toasts are %1").arg(show(toasts(world))));
+    expect(carried(world).isEmpty() && world.mc.part<FakeFileUploads>().asked.isEmpty(), QStringLiteral("the file was taken"));
+  });
+  step(QStringLiteral("the user typed %1").arg(q), [typeAnswer](World& world, const Captures& c, const Table&) { typeAnswer(world, c[0]); });
+  step(QStringLiteral("submitting the answer fails"), [submit](World& world, const Captures&, const Table&) {
+    world.mc.refusals.insert(QStringLiteral("runtime-request.respond"), QStringLiteral("connection closed"));
+    submit(world);
+  });
+  step(QStringLiteral("the answer still reads %1").arg(q), [answerField](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return told(world, QStringLiteral("Failed to submit answers.")); }, [&] { return QStringLiteral("the failure; the toasts are %1").arg(show(toasts(world))); });
+    expect(answerField(world)->property("text") == c[0], QStringLiteral("the answer reads \"%1\"").arg(answerField(world)->property("text").toString()));
+    // And can be sent again.
+    QQuickItem* button = composerPart(world, QStringLiteral("questionSubmit"));
+    world.waitFor([&] { return button->isEnabled(); }, QStringLiteral("the answer to be offered again"));
+  });
 
   step(QStringLiteral("the draft carries no attachments"), [](World& world, const Captures&, const Table&) {
     expect(carried(world).isEmpty(), QStringLiteral("the draft carries %1").arg(carried(world).join(u", ")));

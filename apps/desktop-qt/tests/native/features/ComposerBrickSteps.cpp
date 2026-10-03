@@ -401,10 +401,12 @@ Brick& composerBrick(World& world) {
   Brick& brick = *world.brick;
   expect(QTest::qWaitForWindowActive(&brick.window()), QStringLiteral("the composer's window did not come up"));
   QQuickItem* editor = composerEditor(world);
-  world.waitFor([&] { return editor->isEnabled() && editor->property("text") == shown(world).value(QStringLiteral("text")); },
+  // A request that takes no typed text (an approval, fixed choices) has the editor off.
+  const bool editable = !shown(world).value(QStringLiteral("editorDisabled")).toBool();
+  world.waitFor([&] { return editor->isEnabled() == editable && editor->property("text") == shown(world).value(QStringLiteral("text")); },
                 QStringLiteral("the composer to show the draft"));
   QMetaObject::invokeMethod(composerItem(world), "focusInput");
-  expect(editor->hasActiveFocus(), QStringLiteral("the composer's editor did not take the keyboard"));
+  expect(editor->hasActiveFocus() == editable, QStringLiteral("the composer's editor did not take the keyboard"));
   return brick;
 }
 
