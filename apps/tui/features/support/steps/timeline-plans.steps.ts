@@ -108,7 +108,7 @@ step("the user implements the plan with no feedback", async (ctx: PlanWorld) => 
 step("the agent starts implementing it in this thread", async (ctx: PlanWorld) => {
   await settleHost(ctx);
   const calls = recorded(ctx, "implementPlan") as Array<[{ id: string }, string]>;
-  expect(calls.map(([thread, planId]) => [thread.id, planId])).toEqual([["t1", ctx.planId]]);
+  expect(calls.map(([thread, planId]) => [thread.id, planId])).toEqual([["t1", ctx.planId!]]);
   expect(ctx.thread!.latestTurn).toMatchObject({
     turnId: currentRun(ctx),
     state: "running",
@@ -139,9 +139,11 @@ step("the user sends {string} as feedback", async (ctx: PlanWorld, feedback: str
 });
 
 step("the agent revises the plan", async (ctx: PlanWorld) => {
-  const [[thread, text]] = recorded(ctx, "sendReply") as Array<
+  const sent = recorded(ctx, "sendReply") as Array<
     [{ id: string; interactionMode: string }, string]
   >;
+  expect(sent).toHaveLength(1);
+  const [thread, text] = sent[0]!;
   expect({ id: thread.id, interactionMode: thread.interactionMode, text }).toEqual({
     id: "t1",
     interactionMode: "plan",

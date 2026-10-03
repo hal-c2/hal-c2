@@ -131,7 +131,7 @@ step(/^the agent's most recent tool call (.+)$/, async (ctx: TurnWorld, call: st
 
 step("the call is shown with the {string} icon", async (ctx: TurnWorld, icon: string) => {
   const glyphs = Object.values(TOOL_ICONS).filter((entry) => entry.webIcon === icon);
-  expect(glyphs.map((entry) => entry.webIcon)).toEqual([icon]);
+  expect(glyphs.map((entry): string => entry.webIcon)).toEqual([icon]);
   const row = lastCall(ctx);
   expect(row.text.chunks[0]!.text).toBe(`${glyphs[0]!.glyph} `);
   expect(await snapshot(ctx)).toContain(plain(row.text).slice(0, 12));

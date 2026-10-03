@@ -33,6 +33,8 @@ export interface WorkLogEntry {
   readonly icon?: keyof typeof TOOL_ICONS;
   /** How the row words its status when the call's own status does not say it (a subagent). */
   readonly statusLabel?: string;
+  /** The thread a subagent works in; its row opens it. */
+  readonly childThreadId?: string;
   // Internal lifecycle bookkeeping kept for collapsing consecutive updates.
   readonly activityKind: string;
   readonly collapseKey?: string;
@@ -271,6 +273,8 @@ function toEntry(activity: OrchestrationThreadActivity): MutableEntry {
   }
   const statusLabel = asTrimmedString(payload?.statusLabel);
   if (statusLabel) entry.statusLabel = statusLabel;
+  const childThreadId = asTrimmedString(payload?.childThreadId);
+  if (childThreadId) entry.childThreadId = childThreadId;
 
   let status = extractToolLifecycleStatus(payload);
   if (!status && activity.kind === "tool.completed") status = "completed";

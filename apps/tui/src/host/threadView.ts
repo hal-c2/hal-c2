@@ -215,6 +215,19 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   // --- timeline -----------------------------------------------------------
 
+  const shellThread = (threadId: string) =>
+    store.getState().shell?.threads.find((thread) => thread.id === threadId) ?? null;
+  const threadTitle = (threadId: string) => shellThread(threadId)?.title ?? null;
+  /** The thread the open one is a subagent of, from the thread list's lineage. */
+  const parentThread = () => {
+    const lineage = detail ? shellThread(detail.id)?.lineage : null;
+    if (lineage?.relationshipToParent !== "subagent" || !lineage.parentThreadId) return null;
+    return {
+      threadId: lineage.parentThreadId,
+      title: threadTitle(lineage.parentThreadId) ?? "its parent thread",
+    };
+  };
+
   const publishTimeline = () => {
     timeline = buildTimelineState({
       detail,
@@ -224,6 +237,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       view,
       openTurns: interruptedTurns,
       copied,
+      threadTitle,
+      parent: parentThread(),
       paneWidth,
       nowMs: options.nowMs(),
       palette,

@@ -128,7 +128,7 @@ Feature: Plans and subagents
       | failed               | Failed           |
       | cancelled            | Stopped          |
 
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: The user moves between a subagent and its parent
     Given the agent has a subagent
     When the user opens the subagent's thread
@@ -136,7 +136,7 @@ Feature: Plans and subagents
     When the user opens the parent thread
     Then the parent thread is shown
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: A message from another agent says which thread it came from
     Given a subagent sent a message to its parent
     When the user reads the message in the parent thread

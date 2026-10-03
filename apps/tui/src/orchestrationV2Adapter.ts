@@ -528,6 +528,8 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
       streaming: message.streaming,
       createdAt: iso(message.createdAt),
       updatedAt: iso(message.updatedAt),
+      // Another agent's thread sent this message (a subagent reporting to its parent).
+      ...(message.senderThreadId ? { senderThreadId: message.senderThreadId } : {}),
     })),
     proposedPlans,
     activities: projection.visibleTurnItems.flatMap((item) => {

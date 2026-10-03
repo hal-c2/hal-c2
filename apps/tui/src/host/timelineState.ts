@@ -30,6 +30,7 @@ import {
 } from "../worklog.ts";
 import type { AttachmentPreview } from "./attachmentPreviews.ts";
 import { tableToCsv, tableToMarkdown } from "../markdownTable.ts";
+import { threadKey } from "./sidebarState.ts";
 import { chunk, markdownBlockLines, markdownLines, styled, type StyledText } from "./styledText.ts";
 
 // The conversation as published under `timeline` (port of MessagesTimeline):
@@ -114,7 +115,7 @@ export const FALLBACK_CELL_PIXELS: CellPixels = { width: 18, height: 35 };
 
 export interface TimelineItem {
   readonly key: string;
-  readonly kind: "pager" | "message" | "work" | "fold" | "files";
+  readonly kind: "pager" | "lineage" | "message" | "work" | "fold" | "files";
   readonly align: "left" | "right";
   readonly boxed: boolean;
   /** Width of the item's box (the column width unless boxed). */
@@ -160,6 +161,10 @@ export interface TimelineInput {
   readonly openTurns?: ReadonlySet<string>;
   /** The code block or table just copied (`<message id>:code:<n>`), which shows it. */
   readonly copied?: string | null;
+  /** The title of another thread of this environment (a message's sender), when it is known. */
+  readonly threadTitle?: (threadId: string) => string | null;
+  /** The thread this one is a subagent of. */
+  readonly parent?: { readonly threadId: string; readonly title: string } | null;
   /** Width of the conversation pane (border and padding included). */
   readonly paneWidth: number;
   readonly nowMs: number;
@@ -233,12 +238,33 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     view,
     openTurns: input.openTurns ?? new Set(),
     copied: input.copied ?? null,
+    threadTitle: input.threadTitle ?? (() => null),
     checkpointByMessage,
     attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
     cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
   };
 
   const items: TimelineItem[] = [];
+  if (input.parent) {
+    items.push(
+      item(
+        "lineage",
+        "lineage",
+        width,
+        [
+          line(
+            styled(
+              chunk("↳ Subagent of ", { fg: palette.dim }),
+              chunk(input.parent.title, { fg: palette.accent }),
+            ),
+            "thread.open",
+            { key: threadKey(input.parent.threadId) },
+          ),
+        ],
+        { marginBottom: 1 },
+      ),
+    );
+  }
   if (window.start > 0 || input.hasOlderTurns) {
     const label =
       window.start > 0
@@ -363,6 +389,7 @@ interface RowContext {
   readonly view: TimelineView;
   readonly openTurns: ReadonlySet<string>;
   readonly copied: string | null;
+  readonly threadTitle: (threadId: string) => string | null;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
   readonly attachments: (attachmentId: string) => AttachmentPreview;
   readonly cellPixels: CellPixels;
@@ -514,13 +541,30 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
             ) + 4,
           )
         : 1;
-    const bubbleWidth = Math.max(attachmentMinWidth, Math.min(width, maxBubble, longest + 4));
+    // A message another agent sent says which thread it came from, and opens it.
+    const senderThreadId = (message as { senderThreadId?: string }).senderThreadId;
+    const sender = senderThreadId
+      ? `↩ from ${ctx.threadTitle(senderThreadId) ?? "another agent"}`
+      : null;
+    const bubbleWidth = Math.max(
+      attachmentMinWidth,
+      Math.min(width, maxBubble, Math.max(longest, sender ? Bun.stringWidth(sender) : 0) + 4),
+    );
     const innerWidth = Math.max(1, bubbleWidth - 4);
     const bodyLines = markdownLines(body, palette, innerWidth);
     const imageLines = images.flatMap((attachment) =>
       attachmentLines(attachment, Math.max(8, innerWidth), ctx),
     );
-    const head = imageLines.length > 0 ? [...imageLines, line(styled(chunk("")))] : [];
+    const head = [
+      ...(sender && senderThreadId
+        ? [
+            line(styled(chunk(sender, { fg: palette.dim })), "thread.open", {
+              key: threadKey(senderThreadId),
+            }),
+          ]
+        : []),
+      ...(imageLines.length > 0 ? [...imageLines, line(styled(chunk("")))] : []),
+    ];
     const canCollapse = shouldCollapseUserMessage(rawBody);
     const expanded = ctx.view.expandedMessages.has(message.id);
     const collapsed = canCollapse && !expanded;
@@ -671,7 +715,12 @@ function workGroupLines(
   const expanded = ctx.view.expandedGroups.has(id);
   const visible = hasOverflow && !expanded ? entries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : entries;
   const hidden = entries.length - visible.length;
-  const lines = visible.map((entry) => line(toolRow(entry, ctx)));
+  // A subagent's row opens the thread it works in.
+  const lines = visible.map((entry) =>
+    entry.childThreadId
+      ? line(toolRow(entry, ctx), "thread.open", { key: threadKey(entry.childThreadId) })
+      : line(toolRow(entry, ctx)),
+  );
   if (hasOverflow) {
     lines.push(
       line(
