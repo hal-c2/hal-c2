@@ -7,8 +7,6 @@ defmodule HalC2.Web.Protocol do
 
     * `{"type": "shell"}`: every MC's environment and every project and thread
       summary on it
-    * `{"type": "shell", "links": true}`: the same, with each link also carrying its
-      environment's MCs and rows (`HalC2.Links.Rows`), then their changes
     * `{"type": "stream", "mc": n, "stream": id}`: one project or thread
     * `{"type": "config", "mc": n}`: that MC's `ServerConfig` and name, then its settings and providers as they change;
       with `"usageLimitsCommand": true` (a client that answers `/usage-limits` itself),
@@ -17,12 +15,7 @@ defmodule HalC2.Web.Protocol do
       opened if needed; a snapshot, then its events
     * `{"type": "terminals", "mc": n}`: that MC's terminal summaries, then changes
     * the shapes in `routed/0` with `"environment": id` instead of `"mc"`: on this
-      MC or the cluster member serving that environment, else through this MC's
-      link to it or to its cluster (`HalC2.Links.route/1`), whose token's scopes apply
-      there (a linked stream resumes from `offset` and resyncs as a local one does).
-      While that link is down the subscription fails at once with an error whose
-      `detail` is `{"_tag": "EnvironmentUnreachableError", "environmentId", "reason"}`,
-      `reason` being `"unreachable"` or `"refused"` (pair it again)
+      MC or the cluster member serving that environment (`HalC2.Shell.mc_for/1`)
     * `{"type": "vcs", "mc": n, "cwd": dir}`: a checkout's git status, then changes
     * `{"type": "worktreeSetup", "mc": n, "threadId": id}`: a new thread's worktree
       setup (`WorktreeSetupStreamEvent`: null, or a snapshot), then changes
@@ -67,25 +60,16 @@ defmodule HalC2.Web.Protocol do
       {"t": "rpc", "id": 1, "environment": id, "method": m, "payload": ...}
         (a client RPC such as orchestration.dispatchCommand, run where that
         environment is served, as shapes are routed; answered by rpc.result or
-        rpc.error, with EnvironmentUnreachableError while its link is down)
+        rpc.error)
 
   Server to client:
 
       {"t": "hello", "protocol": 3, "mc": n, "environment": id}
         (the environment this MC serves, for RPCs about the MC itself)
-      {"t": "shell", "id", "mcs": [{"mc", "online", "environment"}], "rows": [[mc, id, kind, row]],
-        "links": [{"environment", "origin", "online", "problem"?}]}
-      {"t": "shell.links", "id", "links"}   (environments this MC links to; the whole list)
+      {"t": "shell", "id", "mcs": [{"mc", "online", "environment"}], "rows": [[mc, id, kind, row]]}
       {"t": "shell.environment", "id", "mc", "environment"}
       {"t": "shell.rows", "id", "mc", "rows": [[id, kind, row]]}
       {"t": "shell.mc", "id", "mc", "online"}
-      {"t": "shell.linkRows", "id", "link", "mc", "rows": [[id, kind, row]]}
-      {"t": "shell.linkEnvironment", "id", "link", "mc", "environment"}
-      {"t": "shell.linkMc", "id", "link", "mc", "online"}
-        (with "links": true: the shell.* changes of the environment `link` names, whose
-        MCs are its own; in the snapshot each link has "mcs" and "rows" as the shell
-        does; an MC that appears is offline until shell.linkMc; a link that leaves
-        shell.links takes its MCs and rows with it)
       {"t": "snapshot", "id", "offset", "at", "part", "rows": [[kind, id, entity]], "done"}
       {"t": "events", "id", "offset", "events": [[seq, kind, id, patch, at]]}
       {"t": "live", "id", "offset"}     (caught up; later events are live)
@@ -161,7 +145,7 @@ defmodule HalC2.Web.Protocol do
 
   @doc """
   An environment-named shape as `mc` serves it: its MC form, decoded. Where the
-  shape goes is `HalC2.Links.route/1`'s answer.
+  shape goes is `HalC2.Shell.mc_for/1`'s answer.
   """
   @spec at_mc(map, node) :: {:ok, term} | {:error, String.t()}
   def at_mc(shape, mc),
@@ -196,13 +180,12 @@ defmodule HalC2.Web.Protocol do
   end
 
   # By environment instead of MC: routed where that environment is served
-  # (`HalC2.Links.route/1`). The rest of the shape must be valid in its MC form.
+  # (`HalC2.Shell.mc_for/1`). The rest of the shape must be valid in its MC form.
   defp decode_shape(%{"type" => type, "environment" => env} = shape, _mcs)
        when type in @routed and is_binary(env) do
     with {:ok, _} <- at_mc(shape, node()), do: {:ok, {:environment, env, shape}}
   end
 
-  defp decode_shape(%{"type" => "shell", "links" => true}, _mcs), do: {:ok, {:shell, :links}}
   defp decode_shape(%{"type" => "shell"}, _mcs), do: {:ok, :shell}
 
   defp decode_shape(%{"type" => "stream", "mc" => mc, "stream" => id}, mcs)
