@@ -136,7 +136,6 @@ Feature: Codex
     When the user reverts to the end of the first turn
     Then Codex's own thread is rolled back to that point
 
-  @backlog
   Scenario: Reverting a Codex turn works after Codex restarts
     Given a Codex thread with three turns
     And Codex's app-server restarted after the first turn

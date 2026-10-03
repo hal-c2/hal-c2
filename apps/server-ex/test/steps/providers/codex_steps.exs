@@ -740,6 +740,42 @@ Red"} <- StreamState.get(state, "message")[message],
     |> World.run_turns(@thread, "codex", ["hello", "hello again", "one more"])
   end
 
+  # The app-server that ran the turns is gone; the next thing asked of Codex starts a
+  # new one, which has not loaded the thread.
+  step "Codex's app-server restarted after the first turn", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    ref = Process.monitor(runtime.conn)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    {_, runtime} = World.codex_runtime(context, @thread)
+    assert runtime.conn == nil
+    context
+  end
+
+  step "the revert is reported as complete", context do
+    assert {:ok, _} = context.reply
+    log = World.provider_log(context, "codex")
+    # A second app-server ran it: it resumed the thread, then rewound it.
+    assert [_, _ | _] = Enum.filter(log, &Map.has_key?(&1, "argv"))
+    methods = for %{"in" => %{"method" => method}} <- log, do: method
+
+    restarted =
+      methods |> Enum.reverse() |> Enum.take_while(&(&1 != "initialize")) |> Enum.reverse()
+
+    assert Enum.find_index(restarted, &(&1 == "thread/resume")) <
+             Enum.find_index(restarted, &(&1 == "thread/revert"))
+
+    assert [
+             %{"status" => "completed"},
+             %{"status" => "rolled_back"},
+             %{"status" => "rolled_back"} | _
+           ] =
+             World.runs(context, @thread)
+
+    context
+  end
+
   step "Codex's own thread is rolled back to that point", context do
     assert {:ok, _} = context.reply
     # Current Codex rewinds its paginated history before the first dropped turn.
