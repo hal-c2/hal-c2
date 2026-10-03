@@ -8,8 +8,10 @@
 #include <QVariantList>
 
 #include "AlertController.h"
+#include "Alerts.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
+#include "Move.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -276,6 +278,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user is looking at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (!fake(world).threads.contains(c[0]) && showMachineThread(world, c[0])) return;
     Tracked& thread = fake(world).threads.contains(c[0]) ? tracked(world, c[0]) : working(world, c[0]);
     world.native().controller<NavigationController>()->open(NavigationController::Route::thread(keyOf(world, thread)));
   });
@@ -439,3 +442,19 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void awaitSystemNotifications(World& world) {
+  auto* settings = world.native().controller<SettingsController>();
+  settings->set(QStringLiteral("inAppNotificationsEnabled"), true);
+  settings->set(QStringLiteral("notificationMode"), QStringLiteral("notifications-and-sound"));
+  fake(world).focused = false;
+  alerts(world);
+}
+
+QStringList systemNotifications(World& world) {
+  return fake(world).delivered;
+}
+
+bool clickSystemNotification(World& world, const QString& key) {
+  return alerts(world).openThread(key);
+}

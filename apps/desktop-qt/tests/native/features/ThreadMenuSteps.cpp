@@ -9,6 +9,7 @@
 
 #include "Harness.h"
 #include "MenuController.h"
+#include "Move.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
 #include "ThreadList.h"
@@ -78,10 +79,13 @@ void projectCommand(FakeMc& mc, const QJsonObject& command) {
 
 const FakeMc::Extension threadMenu([](FakeMc& mc) {
   mc.effects.append([&mc](const QJsonObject& command) { projectCommand(mc, command); });
+  // threads/moving-between-machines.feature's cluster answers for itself.
   mc.onRpc(QStringLiteral("hal-c2.moveDestinations"), [&mc](const FakeMc::Rpc& rpc) {
+    if (answerMachineMove(mc, rpc)) return;
     mc.reply(rpc, mc.part<FakeThreadMenu>().destinations);
   });
   mc.onRpc(QStringLiteral("hal-c2.moveThread"), [&mc](const FakeMc::Rpc& rpc) {
+    if (answerMachineMove(mc, rpc)) return;
     FakeThreadMenu& fake = mc.part<FakeThreadMenu>();
     fake.moves.append(rpc.payload);
     if (!fake.refusal.isEmpty()) return mc.refuse(rpc, fake.refusal);

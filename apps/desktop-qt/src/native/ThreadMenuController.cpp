@@ -42,6 +42,14 @@ bool running(const sidebar::Thread& thread) {
   return status == QLatin1String("queued") && thread.runtime->activeRunId.has_value();
 }
 
+// What the MC does not move: a thread with a turn under way or a question open.
+bool busy(const sidebar::Thread& thread) {
+  return running(thread) || thread.activeRunId.has_value() || thread.hasPendingApprovals || thread.hasPendingUserInput;
+}
+
+// The palette's menu of the projects a move may go into; it is never listed.
+const QString kMoveProject = QStringLiteral("thread.move.project");
+
 QString text(const QJsonObject& row, const char* key) {
   return row.value(QLatin1String(key)).toString();
 }
@@ -375,8 +383,33 @@ void ThreadMenuController::activate() {
   });
   commands->setTerms(kProjectSettingsCommand, {QStringLiteral("project"), QStringLiteral("settings"),
                                                QStringLiteral("scripts"), QStringLiteral("configuration")});
+  // The cluster's other machines, as the shell lists them.
+  commands->addMenu(kMove, tr("Move to another machine"), [this, navigation] {
+    QList<CommandRegistry::Choice> machines;
+    const QString key = navigation->threadKey();
+    const auto thread = m_store->thread(key);
+    if (!thread) return machines;
+    for (const QString& environmentId : m_store->environments()) {
+      if (environmentId == thread->environmentId) continue;
+      const QString machine = m_store->environment(environmentId).value(QLatin1String("label")).toString(environmentId);
+      CommandRegistry::Choice choice{environmentId, machine};
+      choice.enabled = m_store->environmentOnline(environmentId);
+      if (!choice.enabled) choice.description = tr("Offline");
+      choice.terms = {environmentId};
+      choice.run = [this, key, machine] { startMove(key, machine, {0, 0, true}); };
+      machines.append(choice);
+    }
+    std::sort(machines.begin(), machines.end(),
+              [](const CommandRegistry::Choice& left, const CommandRegistry::Choice& right) { return left.title < right.title; });
+    return machines;
+  });
+  commands->setTerms(kMove, {QStringLiteral("move"), QStringLiteral("machine"), QStringLiteral("cluster"),
+                             QStringLiteral("transfer"), QStringLiteral("migrate")});
+  commands->addMenu(kMoveProject, tr("Move into project"), [this] { return m_projectChoices; });
+  commands->setListed(kMoveProject, false);
   connect(navigation, &NavigationController::changed, this, &ThreadMenuController::present);
   connect(m_store, &ShellStore::changed, this, &ThreadMenuController::present);
+  connect(m_store, &ShellStore::changed, this, &ThreadMenuController::moveStopped);
   if (auto* workspace = shell->controller<WorkspaceController>()) {
     connect(workspace, &WorkspaceController::gitChanged, this, &ThreadMenuController::present);
   }
@@ -395,6 +428,11 @@ void ThreadMenuController::present() {
   const auto project = thread ? m_store->project(thread->environmentId + QLatin1Char(':') + thread->projectId) : std::nullopt;
   commands->setDescription(kProjectSettingsCommand, project ? project->title : QString());
   commands->setListed(kProjectSettingsCommand, project.has_value());
+  const QStringList environments = m_store->environments();
+  commands->setDescription(kMove, thread ? thread->title : QString());
+  commands->setListed(kMove, thread && std::any_of(environments.cbegin(), environments.cend(), [&](const QString& environment) {
+                               return environment != thread->environmentId;
+                             }));
 }
 
 QString ThreadMenuController::pullRequestUrl(const QString& key) const {
@@ -493,15 +531,54 @@ void ThreadMenuController::chooseDestination(const QString& key, double x, doubl
           return;
         }
         NativeShell::of(this)->controller<MenuController>()->open(x, y, items, [this, key, x, y](const QString& id) {
-          move(key, id.mid(QStringLiteral("machine:").size()), QString(), false, x, y);
+          startMove(key, id.mid(QStringLiteral("machine:").size()), {x, y});
         });
       });
+}
+
+void ThreadMenuController::startMove(const QString& key, const QString& machine, const Asking& asking) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  const sidebar::Nullable runId = thread->activeRunId ? thread->activeRunId : thread->latestRunId;
+  if (!busy(*thread) || !runId) {
+    move(key, machine, QString(), false, asking);
+    return;
+  }
+  NativeShell::of(this)->controller<MenuController>()->confirm(
+      QStringLiteral("Stop \"%1\" and move it to %2?").arg(thread->title, machine),
+      QStringLiteral("The agent is working in this thread. Its turn is stopped before the thread moves."),
+      QStringLiteral("Stop and move"), false, [this, key, machine, asking, runId = *runId] {
+        const auto thread = m_store->thread(key);
+        if (!thread) return;
+        const QString toast = toasts()->show(QStringLiteral("loading"), QStringLiteral("Stopping \"%1\"…").arg(thread->title),
+                                             QString(), {}, 0);
+        m_stopping.insert(key, {machine, asking, toast});
+        m_client->dispatchCommand(this, thread->environmentId,
+                                  {{QStringLiteral("type"), QStringLiteral("run.interrupt")},
+                                   {QStringLiteral("threadId"), thread->id},
+                                   {QStringLiteral("runId"), runId}},
+                                  [this, key](const QJsonValue&, const std::optional<QString>& error) {
+                                    if (!error || !m_stopping.contains(key)) return;
+                                    toasts()->dismiss(m_stopping.take(key).toast);
+                                    toasts()->error(QStringLiteral("Failed to move thread"), *error);
+                                  });
+      });
+}
+
+void ThreadMenuController::moveStopped() {
+  for (const QString& key : m_stopping.keys()) {
+    const auto thread = m_store->thread(key);
+    if (thread && busy(*thread)) continue;
+    const Stopping stopping = m_stopping.take(key);
+    toasts()->dismiss(stopping.toast);
+    if (thread) move(key, stopping.machine, QString(), false, stopping.asking);
+  }
 }
 
 // `hal-c2.moveThread` answers moved, or asks to confirm what stays behind, or
 // which project to move into; each question is asked and the move sent again.
 void ThreadMenuController::move(const QString& key, const QString& machine, const QString& projectId, bool confirmed,
-                                double x, double y) {
+                                const Asking& asking) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
   QJsonObject input{{QStringLiteral("threadId"), thread->id}, {QStringLiteral("machine"), machine}};
@@ -509,10 +586,9 @@ void ThreadMenuController::move(const QString& key, const QString& machine, cons
   if (confirmed) input.insert(QStringLiteral("confirmed"), true);
   const QString progress = toasts()->show(QStringLiteral("loading"),
                                           QStringLiteral("Moving \"%1\" to %2…").arg(thread->title, machine), QString(), {}, 0);
-  const bool viewing = NativeShell::of(this)->controller<NavigationController>()->threadKey() == key;
   m_client->call(this, 
       thread->environmentId, QStringLiteral("hal-c2.moveThread"), input,
-      [this, key, machine, projectId, confirmed, x, y, progress, viewing, title = thread->title](
+      [this, key, machine, projectId, confirmed, asking, progress, title = thread->title](
           const QJsonValue& result, const std::optional<QString>& error) {
         toasts()->dismiss(progress);
         if (error) {
@@ -530,23 +606,32 @@ void ThreadMenuController::move(const QString& key, const QString& machine, cons
           notes.removeAll(QString());
           menus->confirm(QStringLiteral("Move \"%1\" to %2?").arg(title, machine),
                          notes.isEmpty() ? text(answer, "message") : notes.join(QLatin1Char('\n')), QStringLiteral("Move"),
-                         false, [this, key, machine, projectId, x, y] { move(key, machine, projectId, true, x, y); });
+                         false, [this, key, machine, projectId, asking] { move(key, machine, projectId, true, asking); });
         } else if (status == QLatin1String("choose_project")) {
           QList<Item> items;
+          m_projectChoices.clear();
           for (const QJsonValue& value : answer.value(QLatin1String("projects")).toArray()) {
             const QJsonObject project = value.toObject();
-            items.append({QStringLiteral("project:") + text(project, "id"), text(project, "title"), QStringLiteral("folder")});
+            const QString id = text(project, "id");
+            items.append({QStringLiteral("project:") + id, text(project, "title"), QStringLiteral("folder")});
+            CommandRegistry::Choice choice{id, text(project, "title"), text(project, "workspaceRoot")};
+            choice.run = [this, key, machine, confirmed, asking, id] { move(key, machine, id, confirmed, asking); };
+            m_projectChoices.append(choice);
           }
-          menus->open(x, y, items, [this, key, machine, confirmed, x, y](const QString& id) {
-            move(key, machine, id.mid(QStringLiteral("project:").size()), confirmed, x, y);
+          if (asking.palette) {
+            NativeShell::of(this)->controller<KeybindingController>()->commands()->run(kMoveProject);
+            return;
+          }
+          menus->open(asking.x, asking.y, items, [this, key, machine, confirmed, asking](const QString& id) {
+            move(key, machine, id.mid(QStringLiteral("project:").size()), confirmed, asking);
           });
         } else if (status == QLatin1String("moved")) {
           toasts()->show(QStringLiteral("success"), text(answer, "message").isEmpty()
                                                         ? QStringLiteral("Moved to ") + machine
                                                         : text(answer, "message"));
-          // The reader follows the thread to where it lives now.
+          // The user who moved the thread is shown it where it lives now.
           const QString environmentId = text(answer, "environmentId");
-          if (viewing && !environmentId.isEmpty()) {
+          if (!environmentId.isEmpty()) {
             NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(
                 environmentId + QLatin1Char(':') + key.mid(key.indexOf(QLatin1Char(':')) + 1)));
           }

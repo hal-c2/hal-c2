@@ -15,7 +15,9 @@ class McClient;
 // The MC's `shell` shape folded into rows: every MC of the cluster, its
 // environment descriptor, and its live projects and threads. Each change
 // (shell.rows, shell.environment, shell.mc) is applied as it comes; a member
-// that leaves keeps its rows, with its MC offline.
+// that leaves keeps its rows, with its MC offline. A thread that moved to
+// another machine leaves a forwarding record (`movedTo`) on the one it left:
+// the thread is listed where it lives, and located() follows the record.
 class ShellStore : public QObject {
   Q_OBJECT
 
@@ -26,8 +28,13 @@ public:
   QList<sidebar::Project> projects() const;
   std::optional<sidebar::Project> project(const QString& key) const;
   std::optional<sidebar::Thread> thread(const QString& key) const;
-  // The raw rows, empty when the cluster has none by that key.
+  // The raw rows, empty when the cluster has none by that key. A thread's row
+  // may be the forwarding record of a move.
   QJsonObject threadRow(const QString& key) const;
+  // The key the thread at `key` lives under now: another machine's once it
+  // moved there, `key` itself otherwise. Keys kept from before a move (a saved
+  // route, a notification, a draft) resolve through this.
+  QString located(const QString& key) const;
   QJsonObject projectRow(const QString& environmentId, const QString& projectId) const;
   QList<QJsonObject> projectRows(const QString& environmentId) const;
   // The environments the cluster serves, and each one's descriptor.
@@ -59,6 +66,9 @@ private:
   void setEnvironment(const QString& mc, const QJsonObject& environment);
   void putRows(const QString& mc, const QJsonArray& rows);
   void putRow(const QString& mc, const QString& id, const QString& kind, const QJsonObject& fields);
+  // Whether `row` is the thread itself: not the forwarding record of a move,
+  // nor the copy its old machine still holds once the new one has it.
+  bool lives(const QJsonObject& row) const;
 
   struct Mc {
     QString environmentId;

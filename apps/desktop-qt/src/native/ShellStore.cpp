@@ -20,6 +20,10 @@ bool removed(const QJsonObject& row) {
   return row.isEmpty() || (!deletedAt.isUndefined() && !deletedAt.isNull());
 }
 
+QString threadKey(const QString& environmentId, const QString& threadId) {
+  return environmentId + QLatin1Char(':') + threadId;
+}
+
 }  // namespace
 
 ShellStore::ShellStore(McClient* client, QObject* parent) : QObject(parent) {
@@ -31,9 +35,39 @@ QList<sidebar::Thread> ShellStore::threads() const {
   for (const Mc& mc : m_mcs) {
     // An MC whose environment is not known yet has no key for its threads.
     if (mc.environmentId.isEmpty()) continue;
-    for (const QJsonObject& row : mc.threads) result.append(sidebar::threadFromRow(mc.environmentId, row));
+    for (const QJsonObject& row : mc.threads) {
+      if (lives(row)) result.append(sidebar::threadFromRow(mc.environmentId, row));
+    }
   }
   return result;
+}
+
+bool ShellStore::lives(const QJsonObject& row) const {
+  if (row.value(QLatin1String("movedTo")).isObject()) return false;
+  const QJsonObject moving = row.value(QLatin1String("moving")).toObject();
+  if (moving.isEmpty()) return true;
+  const QString destination = moving.value(QLatin1String("environmentId")).toString();
+  const QString id = row.value(QLatin1String("id")).toString();
+  for (const Mc& mc : m_mcs) {
+    if (mc.environmentId != destination) continue;
+    const auto arrived = mc.threads.constFind(id);
+    return arrived == mc.threads.constEnd() || arrived->value(QLatin1String("movedTo")).isObject();
+  }
+  return true;
+}
+
+QString ShellStore::located(const QString& key) const {
+  const QJsonObject row = threadRow(key);
+  if (row.isEmpty() || lives(row)) return key;
+  const QString id = key.mid(key.indexOf(QLatin1Char(':')) + 1);
+  for (const Mc& mc : m_mcs) {
+    if (mc.environmentId.isEmpty()) continue;
+    const auto found = mc.threads.constFind(id);
+    if (found != mc.threads.constEnd() && lives(*found)) return threadKey(mc.environmentId, id);
+  }
+  // Its new machine's rows have not arrived yet: where the record points.
+  const QString environmentId = row.value(QLatin1String("movedTo")).toObject().value(QLatin1String("environmentId")).toString();
+  return environmentId.isEmpty() ? key : threadKey(environmentId, id);
 }
 
 QList<sidebar::Project> ShellStore::projects() const {
@@ -95,7 +129,7 @@ std::optional<sidebar::Thread> ShellStore::thread(const QString& key) const {
   for (const Mc& mc : m_mcs) {
     if (mc.environmentId != environmentId) continue;
     const auto row = mc.threads.constFind(threadId);
-    if (row != mc.threads.constEnd()) return sidebar::threadFromRow(environmentId, *row);
+    if (row != mc.threads.constEnd() && lives(*row)) return sidebar::threadFromRow(environmentId, *row);
   }
   return std::nullopt;
 }

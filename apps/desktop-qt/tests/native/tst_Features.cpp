@@ -362,6 +362,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/providers-panel.feature:A custom model without options uses the provider's defaults"),
     QStringLiteral("providers/provider-setup.feature:Signing out asks*"),
     QStringLiteral("threads/menu-actions.feature"),
+    QStringLiteral("threads/moving-between-machines.feature"),
     QStringLiteral("threads/thread-list.feature"),
     QStringLiteral("terminal/drawer.feature"),
     QStringLiteral("terminal/tabs.feature"),

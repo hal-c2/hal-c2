@@ -299,6 +299,7 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
 
 void FakeMc::dispatchCommand(const Rpc& rpc) {
   commands.append(rpc.payload);
+  commandEnvironments.append(rpc.environment);
   const QString type = rpc.payload.value(QLatin1String("type")).toString();
   auto answer = [this, rpc, known = refusals.contains(type), refusal = refusals.value(type)] {
     if (known) {
