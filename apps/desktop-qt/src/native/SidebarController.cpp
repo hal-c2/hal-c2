@@ -28,6 +28,8 @@ SidebarController::SidebarController(ShellBridge* bridge, McClient* client, Shel
   // Snoozes wake and "2h" labels tick over on the minute, as the web app's nowMinute.
   connect(&m_minute, &QTimer::timeout, this, &SidebarController::refresh);
   connect(store, &ShellStore::changed, this, &SidebarController::refresh);
+  m_visitLater.setSingleShot(true);
+  connect(&m_visitLater, &QTimer::timeout, this, &SidebarController::visitOpenThread);
 }
 
 void SidebarController::activate() {
@@ -122,6 +124,37 @@ void SidebarController::refresh() {
   const QTime time = now.time();
   m_minute.start(std::max(1000, 60000 - time.second() * 1000 - time.msec()));
   if (regrouped) emit grouped();
+  visitOpenThread();
+}
+
+void SidebarController::visitOpenThread() {
+  constexpr qint64 kVisitEveryMs = 5000;
+  const QString key = activeThreadKey();
+  const auto thread = key.isEmpty() ? std::nullopt : m_store->thread(key);
+  if (!thread || !m_client->isReady() || !m_store->threadOnline(key)) return;
+  if (!m_store->capabilities(thread->environmentId).visitedTracking) return;
+  if (!m_store->threadRow(key).contains(QLatin1String("lastVisitedAt"))) return;
+  const auto updatedAt = sidebar::parseIso(thread->updatedAt);
+  if (!updatedAt) return;
+  const auto visitedAt = sidebar::parseIso(thread->lastVisitedAt);
+  if (visitedAt && *visitedAt >= *updatedAt) return;
+  // Once per change: the answer's row comes after this runs again, and a
+  // thread marked unread while open stays unread until something new happens.
+  const QString visit = key + QLatin1Char(':') + thread->updatedAt;
+  if (visit == m_visited) return;
+  const auto completedAt = thread->latestRun ? sidebar::parseIso(thread->latestRun->completedAt) : std::nullopt;
+  const bool unseenCompletion = completedAt && (!visitedAt || *completedAt > *visitedAt);
+  if (!unseenCompletion && m_sinceVisit.isValid() && m_sinceVisit.elapsed() < kVisitEveryMs) {
+    m_visitLater.start(int(kVisitEveryMs - m_sinceVisit.elapsed()));
+    return;
+  }
+  m_visited = visit;
+  m_sinceVisit.start();
+  command(thread->environmentId,
+          {{QStringLiteral("type"), QStringLiteral("thread.visit")},
+           {QStringLiteral("threadId"), thread->id},
+           {QStringLiteral("visitedAt"), thread->updatedAt}},
+          QString());
 }
 
 void SidebarController::draftEdited(const QString& id) {

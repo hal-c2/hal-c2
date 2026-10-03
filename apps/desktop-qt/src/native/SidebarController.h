@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonObject>
 #include <QLocale>
@@ -128,6 +129,13 @@ private:
   // The client settings grouping, ordering and time labels read, from this
   // device's preferences (SettingsController), else their defaults.
   void readSettings();
+  // Reading a thread is a visit: while the window shows one, the MC is told
+  // the thread was seen up to its newest change (`thread.visit`, visitedAt
+  // its updatedAt), which clears "Done" on every device. As the web app's
+  // ChatView: once per change, an unseen completion at once and other
+  // activity at most every few seconds; an MC that does not keep the
+  // watermark (no `lastVisitedAt` on its rows) is not told.
+  void visitOpenThread();
   // The open thread, from the shell's route.
   QString activeThreadKey() const;
 
@@ -148,6 +156,9 @@ private:
   QTimeZone m_zone = QTimeZone::systemTimeZone();
   // The threads the custom snooze question is about.
   QStringList m_customSnoozeKeys;
+  QString m_visited;  // "<thread key>:<updatedAt>" of the last visit sent
+  QElapsedTimer m_sinceVisit;
+  QTimer m_visitLater;
   QSet<QString> m_selected;
   QString m_anchor;
   // The listed drafts' labels, and the open draft's row as it was when the
