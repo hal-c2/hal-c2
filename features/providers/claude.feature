@@ -170,7 +170,6 @@ Feature: Claude
       | thinking       | off        | the setting "alwaysThinkingEnabled" off            |
       | context window | 1m         | a model id ending in "[1m]"                        |
 
-  @backlog
   Scenario: Claude compacts the conversation after the configured size
     Given the Claude instance compacts after 200000 tokens
     When the conversation grows past that size
@@ -198,7 +197,6 @@ Feature: Claude
     Then the thread lists the monitor as background work
     And the monitor is not shown as a command
 
-  @backlog
   Scenario: Claude continues from the compacted conversation after compaction
     Given Claude compacted the conversation of a thread
     When the user sends the next message

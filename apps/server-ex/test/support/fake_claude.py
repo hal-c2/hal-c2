@@ -178,6 +178,16 @@ for line in sys.stdin:
         continue
     if "wait" in text:
         continue
+    # "grow the conversation": with an autoCompactWindow in --settings the conversation
+    # outgrows it and Claude compacts (compact_boundary) before it answers.
+    if "grow the conversation" in text:
+        window = json.loads(sys.argv[sys.argv.index("--settings") + 1]).get("autoCompactWindow") if "--settings" in sys.argv else None
+        if window:
+            send({"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": f"compact-{turn}",
+                  "compact_metadata": {"trigger": "auto", "pre_tokens": window + 5000, "post_tokens": 42000}})
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}k", "role": "assistant", "content": [{"type": "text", "text": "It grew"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "It grew", "session_id": session})
+        continue
     # "start a monitor": the Monitor tool watches a command (task task-mon-N) and the
     # turn ends while it runs.
     if "start a monitor" in text:

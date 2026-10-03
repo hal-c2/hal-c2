@@ -226,6 +226,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     launch =
       turn.model
       |> Provider.launch(Map.get(turn, :options, %{}))
+      |> auto_compact(Entities.instance(ids))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
 
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
@@ -1016,6 +1017,48 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # The part of a steered turn that the new message cut short; the turn goes on.
+  # Claude compacted the conversation: the timeline says so, and the context meter
+  # takes the size Claude reports for what is left.
+  defp message(
+         %{"type" => "system", "subtype" => "compact_boundary"} = message,
+         %{turn: turn} = state
+       )
+       when turn != nil do
+    meta = message["compact_metadata"] || %{}
+    native = message["uuid"] || "compaction:#{turn.ids.provider_turn}"
+    count = fn key -> if is_number(meta[key]) and meta[key] > 0, do: round(meta[key]) end
+    before = count.("pre_tokens")
+    left = count.("post_tokens")
+
+    fields =
+      %{"driver" => "claudeAgent", "title" => "Context compacted"}
+      |> then(&if(before, do: Map.put(&1, "beforeTokenCount", before), else: &1))
+      |> then(&if(left, do: Map.put(&1, "afterTokenCount", left), else: &1))
+
+    state =
+      state
+      |> flush()
+      |> ensure_item(native, :compaction, fields)
+      |> finish_item(native, "completed", & &1)
+
+    if left do
+      usage = %{"usedTokens" => left, "updatedAt" => Entities.now()}
+
+      commit(state, fn stream ->
+        [
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            turn.ids.provider_turn,
+            &Map.put(&1, "tokenUsage", usage)
+          )
+        ]
+      end)
+    end
+
+    state
+  end
+
   defp message(%{"type" => "result", "terminal_reason" => reason}, %{steered: true} = state)
        when reason in ["aborted_streaming", "aborted_tools"] and not state.interrupted,
        do: %{state | steered: false}
@@ -1454,6 +1497,19 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # The ids work joins: the running turn's, or between turns the latest one's.
+  # The instance's `autoCompactWindow` (the tokens after which Claude compacts by
+  # itself) goes to the CLI with its other settings; unset leaves Claude's default.
+  defp auto_compact(launch, instance) do
+    with window when is_binary(window) <-
+           HalC2.Settings.instance_setting(instance, "autoCompactWindow"),
+         {tokens, ""} when tokens >= 100_000 and tokens <= 1_000_000 <-
+           Integer.parse(String.trim(window)) do
+      %{launch | settings: Map.put(launch.settings, "autoCompactWindow", tokens)}
+    else
+      _ -> launch
+    end
+  end
+
   defp work_ids(%{turn: %{ids: ids}}), do: ids
   defp work_ids(state), do: state.last_ids
 

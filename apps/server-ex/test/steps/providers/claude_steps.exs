@@ -559,6 +559,98 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- compaction ------------------------------------------------------------------------
+
+  defp compactions(context),
+    do: Enum.filter(World.entities(context, @thread, "turn-item"), &(&1["type"] == "compaction"))
+
+  # The newest usage any of the thread's provider turns reported: what the meter shows.
+  defp context_usage(context) do
+    World.entities(context, @thread, "provider-turn")
+    |> Enum.filter(& &1["tokenUsage"])
+    |> Enum.max_by(& &1["tokenUsage"]["updatedAt"], fn -> %{} end)
+    |> Map.get("tokenUsage")
+  end
+
+  step "the Claude instance compacts after 200000 tokens", context do
+    context
+    |> World.fake_providers()
+    |> World.put_settings(%{
+      "providers" => %{"claudeAgent" => %{"autoCompactWindow" => "200000"}}
+    })
+  end
+
+  step "the conversation grows past that size", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "grow the conversation")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude compacts the conversation and the timeline says so", context do
+    # Claude was told the size to compact at.
+    assert [%{"argv" => argv}] =
+             Enum.filter(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+
+    assert [settings] = for(["--settings", json] <- pairs(argv), do: JSON.decode!(json))
+    assert settings["autoCompactWindow"] == 200_000
+
+    assert [
+             %{
+               "title" => "Context compacted",
+               "status" => "completed",
+               "beforeTokenCount" => 205_000,
+               "afterTokenCount" => 42_000
+             }
+           ] = compactions(context)
+
+    context
+  end
+
+  step "Claude compacted the conversation of a thread", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.put_settings(%{
+        "providers" => %{"claudeAgent" => %{"autoCompactWindow" => "200000"}}
+      })
+      |> World.launch_on(@thread, "claudeAgent", "grow the conversation")
+
+    World.await_runs(context, @thread, ["completed"])
+    assert [_] = compactions(context)
+    assert %{"usedTokens" => 42_000} = context_usage(context)
+    context
+  end
+
+  step "the user sends the next message", context do
+    context = World.post_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  # The same Claude session takes the message: nothing is started again, or resumed
+  # from before the compaction.
+  step "Claude continues from the compacted conversation", context do
+    log = World.provider_log(context, "claude")
+    assert [%{"argv" => argv}] = Enum.filter(log, &Map.has_key?(&1, "argv"))
+    refute "--resume" in argv
+    refute Enum.any?(argv, &String.starts_with?(&1, "--resume-session-at"))
+
+    assert ["grow the conversation", "hello"] =
+             for(
+               %{"in" => %{"type" => "user", "message" => %{"content" => text}}} <- log,
+               do: text
+             )
+
+    assert "Hello from claude" in World.replies(context, @thread)
+    assert [_] = compactions(context)
+    context
+  end
+
+  step "the context meter keeps the usage Claude reported after compaction", context do
+    assert %{"usedTokens" => 42_000} = context_usage(context)
+    context
+  end
+
   # --- routers ---------------------------------------------------------------------------
 
   @router_model "anthropic/claude-sonnet-router"
