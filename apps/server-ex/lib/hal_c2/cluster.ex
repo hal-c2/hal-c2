@@ -232,6 +232,9 @@ defmodule HalC2.Cluster do
 
   defp merge_entry(ours, theirs) do
     # Same-millisecond updates fall back to comparing the entries, so both sides pick one.
+    # Ours is given the same fields first: an entry kept from before a field existed would
+    # otherwise compare by its size, and each side would pick the other's.
+    ours = sanitize(ours) || ours
     newer = if {theirs["updatedAt"], theirs} > {ours["updatedAt"], ours}, do: theirs, else: ours
 
     Map.merge(newer, %{
