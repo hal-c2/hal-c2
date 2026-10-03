@@ -19,6 +19,20 @@ export interface EnvMachine {
   online: boolean;
 }
 
+/**
+ * How a machine is doing when the MC asks what it has for a new thread
+ * (HalC2.LoadBalancing): the share of its processors in use and of its memory
+ * free, whether it answers at all, and whether its agents are signed in.
+ */
+export interface EnvLoad {
+  cpu: number;
+  free: number;
+  silent?: boolean;
+  signedOut?: boolean;
+}
+
+export const IDLE: EnvLoad = { cpu: 0.1, free: 0.9 };
+
 export interface EnvProject {
   id: string;
   title: string;
@@ -73,6 +87,11 @@ export interface Environment {
   refs: VcsRef[];
   /** The cluster's machines, this one first; empty while this machine is alone. */
   machines: EnvMachine[];
+  /** How each machine is doing, by label; one not named is idle. */
+  loads: Record<string, EnvLoad>;
+  /** The home MC's settings document and its version (`hal-c2.readSettings`). */
+  settings: Record<string, unknown>;
+  settingsVersion: number;
   /** A move carries the agent's own session; otherwise the agent gets a summary. */
   sessionCarried: boolean;
   connected: boolean;
@@ -100,6 +119,9 @@ export function env(ctx: World): Environment {
       defaultThreadEnvMode: null,
       refs: [{ name: "main", current: true, isDefault: true, worktreePath: null } as VcsRef],
       machines: [],
+      loads: {},
+      settings: {},
+      settingsVersion: 0,
       sessionCarried: true,
       connected: false,
       created: 0,
@@ -120,7 +142,8 @@ export function addProject(ctx: World, title: string, machine?: string): EnvProj
     id: machine ? `p-${slug(title)}-${slug(machine)}` : `p-${slug(title)}`,
     title,
     ...(machine ? { machine } : {}),
-    workspaceRoot: `/work/${slug(title)}`,
+    // Each machine has its own checkout.
+    workspaceRoot: machine ? `/work/${slug(machine)}/${slug(title)}` : `/work/${slug(title)}`,
     defaultModelSelection: { instanceId: "codex", model: "gpt-5" },
     createdAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-01T00:00:00.000Z",
@@ -297,7 +320,8 @@ function installClient(ctx: World): void {
     createThread: async (input) => {
       const project = environment.projects.find((candidate) => candidate.id === input.projectId);
       const thread = addThread(ctx, input.title, {
-        ...(project ? { project: project.title } : {}),
+        ...(project ? { projectId: project.id } : {}),
+        ...(project?.machine ? { machine: project.machine } : {}),
         branch: input.branch,
         worktreePath: input.worktreePath,
         session: { status: "starting" },
@@ -330,6 +354,43 @@ function installClient(ctx: World): void {
             sameRepository: project.title === title,
           })),
       }));
+  });
+  // The home MC chooses where a new thread starts, under the rules of
+  // HalC2.LoadBalancing: of the machines that answer with a checkout of the
+  // repository and the agent ready, the one with the most room by its weight.
+  fake.override("placeThread", async ({ environmentId, projectId, instanceId }) => {
+    const picked = environment.projects.find((project) => project.id === projectId);
+    let placement = { environmentId, projectId };
+    if (environment.settings.loadBalancingEnabled !== true || !picked) return placement;
+    const weights = (environment.settings.loadBalancingWeights ?? {}) as Record<string, number>;
+    let best = 0;
+    for (const machine of environment.machines) {
+      const load = environment.loads[machine.label] ?? IDLE;
+      const checkout = environment.projects.find(
+        (project) => project.machine === machine.label && project.title === picked.title,
+      );
+      const ready = instanceId === undefined || !load.signedOut;
+      if (!machine.online || load.silent || !checkout || !ready) continue;
+      if (load.cpu >= 0.95 || load.free <= 0.05) continue;
+      const score = (weights[machine.id] ?? 50) * (1 - load.cpu) * load.free;
+      // The user's own pick wins a tie, and keeps the checkout they picked.
+      const own = machine.id === environmentId;
+      if (score > best || (score === best && own)) {
+        best = score;
+        placement = { environmentId: machine.id, projectId: own ? projectId : checkout.id };
+      }
+    }
+    return placement;
+  });
+  fake.override("readSettings", async () => ({
+    settings: { ...environment.settings },
+    version: environment.settingsVersion,
+  }));
+  fake.override("writeSettings", async (settings, version) => {
+    if (version !== environment.settingsVersion) return false;
+    environment.settings = { ...settings };
+    environment.settingsVersion += 1;
+    return true;
   });
   fake.override("moveThread", async ({ threadId, machine }) => {
     const thread = environment.threads.find((candidate) => candidate.id === threadId);

@@ -42,6 +42,7 @@ import {
   RUNTIME_MODES,
   runtimeModeLabel,
 } from "../controls.ts";
+import { placeNewThread } from "../loadBalancing.ts";
 import {
   currentModelIndex,
   modelOptionStates,
@@ -266,6 +267,11 @@ interface NewDraft {
   readonly contextWorktreePath: string | null;
   readonly refs: ReadonlyArray<VcsRef>;
   readonly refsStatus: TuiNewThreadState["refsStatus"];
+  /**
+   * The user chose its workspace or branch among this machine's: the thread
+   * starts here, not on whichever machine has the most room.
+   */
+  readonly tied: boolean;
 }
 
 interface SelectOption {
@@ -1119,7 +1125,7 @@ export function createComposer(options: ComposerOptions): Composer {
           );
       if (currentRef) branch = currentRef.name;
     }
-    newDraft = { ...newDraft, workspaceMode: mode, branch, worktreePath };
+    newDraft = { ...newDraft, workspaceMode: mode, branch, worktreePath, tied: true };
     store.setStatus(
       mode === "new-worktree" ? "Workspace → New worktree" : "Workspace → Current checkout",
       "success",
@@ -1140,13 +1146,18 @@ export function createComposer(options: ComposerOptions): Composer {
       ref,
     });
     if (selection.kind === "select-base") {
-      newDraft = { ...draft, branch: selection.branch };
+      newDraft = { ...draft, branch: selection.branch, tied: true };
       store.setStatus(`Worktree base → ${selection.branch}`, "success");
       publish();
       return;
     }
     if (selection.kind === "reuse-worktree") {
-      newDraft = { ...draft, branch: selection.branch, worktreePath: selection.worktreePath };
+      newDraft = {
+        ...draft,
+        branch: selection.branch,
+        worktreePath: selection.worktreePath,
+        tied: true,
+      };
       store.setStatus(`Workspace → ${selection.branch}`, "success");
       publish();
       return;
@@ -1162,7 +1173,7 @@ export function createComposer(options: ComposerOptions): Composer {
           (result) => {
             if (switchToken !== token || !newDraft) return;
             const branch = result.refName ?? selection.branch;
-            newDraft = { ...newDraft, branch, worktreePath: selection.worktreePath };
+            newDraft = { ...newDraft, branch, worktreePath: selection.worktreePath, tied: true };
             store.setStatus(`Branch → ${branch}`, "success");
           },
           (error) => {
@@ -1249,6 +1260,7 @@ export function createComposer(options: ComposerOptions): Composer {
       contextWorktreePath: context.worktreePath,
       refs: [],
       refsStatus: project ? "loading" : "empty",
+      tied: false,
     };
     drafts.delete(NEW_TARGET);
     closePicker();
@@ -1298,30 +1310,54 @@ export function createComposer(options: ComposerOptions): Composer {
     store.setStatus("Creating thread and starting its first turn…", "busy");
     publish();
     const createWorktree = draft.workspaceMode === "new-worktree";
+    // A draft the user tied to this machine, or that inherited a worktree here, starts here.
+    const placing =
+      draft.tied || draft.worktreePath !== null
+        ? Promise.resolve(project)
+        : placeNewThread({
+            projects: projects(),
+            machines: store.getState().shell?.machines,
+            project,
+            instanceId: modelSelection.instanceId,
+            place: client.placeThread,
+          });
     void track(
-      client
-        .createThread({
-          projectId: project.id,
-          projectCwd: project.workspaceRoot,
-          title: typed.length > 0 ? truncate(typed) : "Image attachment",
-          modelSelection,
-          firstMessage: message,
-          attachments: images.map((image) => image.upload),
-          runtimeMode: draft.runtimeMode,
-          interactionMode: draft.interactionMode,
-          branch: draft.branch,
-          worktreePath: createWorktree ? null : draft.worktreePath,
-          createWorktree,
-          startFromOrigin: createWorktree && settings.newWorktreesStartFromOrigin,
+      placing
+        .then((placed) => {
+          const elsewhere = placed.id !== project.id;
+          return client
+            .createThread({
+              projectId: placed.id,
+              projectCwd: placed.workspaceRoot,
+              title: typed.length > 0 ? truncate(typed) : "Image attachment",
+              modelSelection,
+              firstMessage: message,
+              attachments: images.map((image) => image.upload),
+              runtimeMode: draft.runtimeMode,
+              interactionMode: draft.interactionMode,
+              // The branch this machine's checkout is on says nothing of another's;
+              // a new worktree's base branch is the repository's on either.
+              branch: elsewhere && !createWorktree ? null : draft.branch,
+              worktreePath: createWorktree ? null : draft.worktreePath,
+              createWorktree,
+              startFromOrigin: createWorktree && settings.newWorktreesStartFromOrigin,
+            })
+            .then((threadId) => ({ threadId, placed, elsewhere }));
         })
         .then(
-          (threadId) => {
+          ({ threadId, placed, elsewhere }) => {
             createPending = false;
             closeNewThread();
+            // The user follows the thread: a list scoped to another project would hide it.
             const scope = store.getState().projectScopeId;
-            if (scope !== null && scope !== project.id) store.setProjectScope(project.id);
+            if (scope !== null && scope !== placed.id) store.setProjectScope(placed.id);
             store.select({ kind: "thread", id: threadId });
-            store.setStatus("Thread created.", "success");
+            store.setStatus(
+              elsewhere && placed.machine
+                ? `Thread created on ${placed.machine}.`
+                : "Thread created.",
+              "success",
+            );
             publish();
           },
           (error) => {

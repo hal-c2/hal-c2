@@ -39,6 +39,7 @@ import {
   type TerminalScrollAction,
   type TerminalThread,
 } from "./terminalState.ts";
+import { createLoadBalancingController } from "./loadBalancingState.ts";
 import { createMoveController } from "./moveState.ts";
 import { createThreadActions } from "./threadActions.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
@@ -370,6 +371,7 @@ export function createHost(options: HostOptions): Host {
         detail: current.detail,
         vcsStatus: current.vcsStatus,
         cluster: cluster.state(),
+        loadBalancing: loadBalancing.state(),
         // Before the first layout the pane is the whole terminal.
         width: (layout as TuiLayoutState | undefined)?.chatWidth ?? size.columns,
       }),
@@ -609,6 +611,16 @@ export function createHost(options: HostOptions): Host {
       palette.sync();
     },
   });
+  // Load balancing: in settings, on / off and each machine's preference from the palette.
+  const loadBalancing = createLoadBalancingController({
+    client,
+    store,
+    pick: (request) => composer!.pick(request),
+    publish: () => {
+      if (settingsOpen) publishSettings();
+      palette.sync();
+    },
+  });
   /** The files, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
     [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
@@ -661,7 +673,8 @@ export function createHost(options: HostOptions): Host {
       };
     },
     // After the composer's own entries: thread lifecycle and scope, then the
-    // diff, source-control, settings, files, add-project, terminal and cluster entries.
+    // diff, source-control, settings, files, add-project, terminal, cluster and
+    // load-balancing entries.
     extraCommands: () => [
       ...threadActions.paletteCommands(),
       ...detailCommands({
@@ -671,6 +684,7 @@ export function createHost(options: HostOptions): Host {
       }),
       ...areaCommands(),
       ...cluster.commands(),
+      ...loadBalancing.commands(),
     ],
     run: (action, payload) => {
       dispatch(action, payload);
@@ -769,8 +783,9 @@ export function createHost(options: HostOptions): Host {
   const handle = (action: string, payload?: unknown): boolean => {
     if (action === "palette.open") {
       threadActions.closeMenu();
-      // Its remove entries follow the members.
+      // Its remove entries follow the members, its load-balancing entries the MC's settings.
       void cluster.refresh();
+      void loadBalancing.refresh();
     }
     if (palette.dispatch(action, payload)) return true;
     // A paste the composer does not take (plain text) is inserted by the prompt.
@@ -884,6 +899,7 @@ export function createHost(options: HostOptions): Host {
         settingsOpen = true;
         publishSettings();
         void cluster.refresh();
+        void loadBalancing.refresh();
         setMode("settings");
         return true;
       case "settings.close":
@@ -989,6 +1005,7 @@ export function createHost(options: HostOptions): Host {
         if (sourceControl.dispatch(action, payload)) return true;
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
         if (cluster.dispatch(action, payload)) return true;
+        if (loadBalancing.dispatch(action, payload)) return true;
         // Known actions that decline when they do not apply (the key falls through).
         if (DECLINABLE_ACTIONS.has(action)) return false;
         if (!unknownActions.has(action)) {
@@ -1094,6 +1111,7 @@ export function createHost(options: HostOptions): Host {
       await terminal.settled();
       await threadView.settled();
       await cluster.settled();
+      await loadBalancing.settled();
       await move.settled();
     },
     attachPlugins: (port) => {

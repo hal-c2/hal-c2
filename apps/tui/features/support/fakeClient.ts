@@ -9,6 +9,7 @@ import {
   type ServerProvider,
   type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
+  type ThreadPlacementInput,
   type VcsStatusResult,
 } from "@hal-c2/contracts";
 
@@ -157,6 +158,7 @@ const UNRECORDED = new Set([
   "listModels",
   "listTerminalIds",
   "clusterStatus",
+  "readSettings",
 ]);
 
 export function fakeClient({
@@ -419,6 +421,13 @@ export function fakeClient({
     moveThread: async () => {
       throw new Error("This machine is not in a cluster.");
     },
+    // Alone, a thread starts where the user picked; the environment plays the MC's choosing.
+    placeThread: async ({ environmentId, projectId }: ThreadPlacementInput) => ({
+      environmentId,
+      projectId,
+    }),
+    readSettings: async () => ({ settings: {}, version: 0 }),
+    writeSettings: async () => true,
     lookupRepository,
     cloneRepository,
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {

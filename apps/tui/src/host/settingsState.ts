@@ -4,8 +4,10 @@ import type { ShellSettingsState } from "@hal-c2/contracts/shell";
 import { composerControls, interactionModeLabel, runtimeModeLabel } from "../controls.ts";
 import { clip } from "../format.ts";
 import { KEYBINDING_GROUPS } from "../keymap.ts";
+import { loadPreferenceForWeight } from "../loadBalancing.ts";
 import { THEME } from "../theme.ts";
 import { LOCAL_ONLY_HINT, type TuiClusterState } from "./clusterState.ts";
+import type { TuiLoadBalancingState } from "./loadBalancingState.ts";
 import { chunk, styled, type StyledText } from "./styledText.ts";
 
 /** One labelled line of the overview; `keys` rows name a key chord. */
@@ -25,8 +27,9 @@ export interface TuiSettingsGroup {
 /**
  * Published under `settings`: the contract's navigation model plus the
  * terminal's overview (the selected thread's provider and git state, this
- * machine's cluster, then the keybinding reference by context). The cluster
- * changes through palette commands; other editing stays in the desktop app.
+ * machine's cluster and how it balances new threads, then the keybinding
+ * reference by context). The cluster and load balancing change through
+ * palette commands; other editing stays in the desktop app.
  */
 export interface TuiSettingsState extends ShellSettingsState {
   readonly groups: ReadonlyArray<TuiSettingsGroup>;
@@ -95,11 +98,26 @@ function clusterRows(cluster: TuiClusterState, width: number): TuiSettingsRow[] 
   return rows;
 }
 
+/** Whether new threads are balanced, then how often each machine gets them. */
+function loadBalancingRows(balancing: TuiLoadBalancingState, width: number): TuiSettingsRow[] {
+  const { settings } = balancing;
+  if (settings === null) return [row("balance load", balancing.error ?? "reading…", width)];
+  return [
+    row("balance load", settings.enabled ? "On" : "Off", width),
+    ...balancing.machines.map((machine) =>
+      row(machine.label, loadPreferenceForWeight(settings.weights[machine.id]).label, width),
+    ),
+    row("", "change these from the palette (^K)", width),
+  ];
+}
+
 export function buildTuiSettingsState(input: {
   readonly active: boolean;
   readonly detail: OrchestrationThread | null;
   readonly vcsStatus: VcsStatusResult | null;
   readonly cluster: TuiClusterState;
+  /** Null while this machine is alone: one machine has nothing to balance against. */
+  readonly loadBalancing: TuiLoadBalancingState | null;
   /** The pane's width (the conversation column); values clip to it. */
   readonly width: number;
 }): TuiSettingsState {
@@ -136,6 +154,9 @@ export function buildTuiSettingsState(input: {
         ],
       },
       { title: "Cluster", rows: clusterRows(input.cluster, width) },
+      ...(input.loadBalancing
+        ? [{ title: "Load balancing", rows: loadBalancingRows(input.loadBalancing, width) }]
+        : []),
       ...KEYBINDING_GROUPS.map((group) => ({
         title: group.title,
         rows: group.bindings.map((binding) => keyRow(binding.keys, binding.description, width)),
