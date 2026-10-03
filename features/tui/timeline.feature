@@ -296,7 +296,7 @@ Feature: Reading a thread in the terminal
     When the diff refreshes
     Then the user is at the same file and line
 
-  @backlog @tui
+  @tui
   Scenario: The user annotates diff lines as context for the next prompt
     When the user adds a note on a diff line
     Then the note and the line are attached to the prompt as context

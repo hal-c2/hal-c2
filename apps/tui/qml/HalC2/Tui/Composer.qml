@@ -174,7 +174,7 @@ Item {
         // Files referenced with "@": a click on a chip drops it and its mention.
         Item {
             objectName: "composerReferences"
-            visible: dock.model.references.length > 0
+            visible: dock.model.references.length + dock.model.contexts.length > 0
             flexDirection: "row"
             height: 1
             flexShrink: 0
@@ -187,6 +187,19 @@ Item {
                     flexShrink: 0
                     wrapMode: "none"
                     onMouseDown: Shell.dispatch("composer.reference.remove", { path: modelData.path })
+                    Span { text: "× "; color: Theme.colors.accent }
+                    Span { text: modelData.label; color: Theme.colors.text }
+                }
+            }
+            // Terminal output and diff notes picked as context: sent with the reply.
+            Repeater {
+                model: dock.model.contexts
+                delegate: Text {
+                    objectName: "composerContext-" + modelData.id
+                    marginRight: 1
+                    flexShrink: 0
+                    wrapMode: "none"
+                    onMouseDown: Shell.dispatch("composer.context.remove", { id: modelData.id })
                     Span { text: "× "; color: Theme.colors.accent }
                     Span { text: modelData.label; color: Theme.colors.text }
                 }

@@ -1,3 +1,4 @@
+import type { KnownComposerContextRecord } from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
 import type { TuiClient } from "../../connection.ts";
@@ -34,6 +35,10 @@ export interface FeatureKit {
   /** Put text on the clipboard; false when the terminal cannot. */
   readonly copy: (text: string) => boolean;
   readonly workspace: () => FeatureWorkspace | null;
+  /** The open terminal's screen as text, or null with none open. */
+  readonly terminalText: () => string | null;
+  /** Attach a context record (terminal output, a diff note) to the open thread's prompt. */
+  readonly addContext: (record: KnownComposerContextRecord) => boolean;
   /** Open the diff viewer on a diff that is not one of the thread's checkpoints. */
   readonly showDiff: (review: DiffReview) => void;
   /** The host's clock (tests pin it). */

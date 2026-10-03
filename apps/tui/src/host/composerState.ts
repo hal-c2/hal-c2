@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import {
   DEFAULT_SERVER_SETTINGS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type KnownComposerContextRecord,
   type ModelSelection,
   type OrchestrationThread,
   type ProviderInteractionMode,
@@ -15,6 +16,7 @@ import {
   type VcsRef,
 } from "@hal-c2/contracts";
 import type { ImagePreview } from "@hal-c2/opentui-image";
+import { formatComposerContextReference } from "@hal-c2/shared/composerContextReferences";
 import { truncate } from "@hal-c2/shared/String";
 import type { PropertyMap } from "opentui-qml";
 
@@ -197,6 +199,12 @@ export interface TuiComposerState {
   readonly caption: StyledText;
   /** Files referenced with "@", as chips (a click removes one, and its `@path` from the text). */
   readonly references: ReadonlyArray<{ readonly path: string; readonly label: string }>;
+  /** Context chips (terminal output, diff notes): a click removes one before sending. */
+  readonly contexts: ReadonlyArray<{
+    readonly id: string;
+    readonly kind: string;
+    readonly label: string;
+  }>;
   /** The chips that fit, and "+N more" for the rest (or ""). */
   readonly visibleAttachments: ReadonlyArray<TuiComposerAttachment>;
   readonly moreAttachments: string;
@@ -277,6 +285,8 @@ export interface TuiSelectState {
 interface Draft {
   /** Files picked with "@": each shows as a chip while its `@path` is still in the text. */
   readonly references?: ReadonlyArray<string>;
+  /** Context picked elsewhere (terminal output, a note on a diff line), sent with the reply. */
+  readonly contexts?: ReadonlyArray<KnownComposerContextRecord>;
   readonly text: string;
   readonly images: ReadonlyArray<ComposerImageAttachment>;
 }
@@ -340,6 +350,8 @@ export interface Composer {
   readonly openMenu: (spec: TuiMenuSpec) => void;
   /** Close the picker when a menu (with this title, if given) is open. */
   readonly closeMenu: (title?: string) => void;
+  /** Attach a context record to the open thread's prompt; false without a thread to reply to. */
+  readonly addContext: (record: KnownComposerContextRecord) => boolean;
   /** The open new-thread draft's id and project, for the sidebar row and the page. */
   readonly draft: () => { readonly draftId: string; readonly projectId: string | null } | null;
   /** Re-derive after a store change (selection, detail, shell). */
@@ -429,8 +441,9 @@ export function createComposer(options: ComposerOptions): Composer {
   const setDraft = (key: string | null, update: (draft: Draft) => Draft) => {
     if (!key) return;
     const next = update(draftFor(key));
-    if (next.text.length === 0 && next.images.length === 0) drafts.delete(key);
-    else drafts.set(key, next);
+    if (next.text.length === 0 && next.images.length === 0 && !next.contexts?.length) {
+      drafts.delete(key);
+    } else drafts.set(key, next);
     publish();
   };
   // Prompt recall: ↑ in an empty prompt walks back through the thread's sent
@@ -554,6 +567,11 @@ export function createComposer(options: ComposerOptions): Composer {
       path,
       label: clip(`@${path}`, 28),
     }));
+    const contexts = (draft.contexts ?? []).map((record) => ({
+      id: record.contextId as string,
+      kind: record.kind as string,
+      label: clip(record.label, 32),
+    }));
     const notice = providerNotice(model);
     // Wrapped to the box by word, so the way to fix it is never cut off.
     const noticeLines: string[] = [];
@@ -574,7 +592,7 @@ export function createComposer(options: ComposerOptions): Composer {
       compact: compact ? 1 : 0,
       context: context ? 1 : 0,
       notice: noticeLines.length,
-      references: references.length > 0 ? 1 : 0,
+      references: references.length + contexts.length > 0 ? 1 : 0,
     };
     const chromeRows =
       4 +
@@ -597,7 +615,9 @@ export function createComposer(options: ComposerOptions): Composer {
         (newDraft !== null || detail !== null) &&
         !replyPending &&
         !createPending &&
-        (draft.text.trim().length > 0 || draft.images.length > 0),
+        (draft.text.trim().length > 0 ||
+          draft.images.length > 0 ||
+          (draft.contexts?.length ?? 0) > 0),
       isRunning: working,
       isSendBusy: replyPending || createPending,
       pendingApprovalCount,
@@ -633,6 +653,7 @@ export function createComposer(options: ComposerOptions): Composer {
               : chunk(placeholder, { fg: palette.dim }),
           ),
       references,
+      contexts,
       visibleAttachments: attachments.slice(0, visibleCount),
       moreAttachments: hiddenCount > 0 ? `+${hiddenCount} more` : "",
       footer: {
@@ -1504,12 +1525,17 @@ export function createComposer(options: ComposerOptions): Composer {
     const key = target();
     const draft = draftFor(key);
     const typed = draft.text.trim();
-    if (typed.length === 0 && draft.images.length === 0) return;
+    const contexts = draft.contexts ?? [];
+    if (typed.length === 0 && draft.images.length === 0 && contexts.length === 0) return;
     if (!detail || !key) {
       store.setStatus("Select a thread (Alt+↑/↓ or click) to send a message.");
       return;
     }
-    const text = typed.length > 0 ? typed : IMAGE_ONLY_PROMPT;
+    // Each context record is named in the text by its reference link, after what was typed;
+    // the record itself (the terminal output, the diff lines and the note) rides on the message.
+    const references = contexts.map((record) => formatComposerContextReference(record)).join(" ");
+    const body = [typed, references].filter((part) => part.length > 0).join("\n\n");
+    const text = body.length > 0 ? body : IMAGE_ONLY_PROMPT;
     const submitted = draft;
     replyPending = true;
     store.setStatus("Sending reply…", "busy");
@@ -1522,6 +1548,7 @@ export function createComposer(options: ComposerOptions): Composer {
             text,
             submitted.images.map((image) => image.upload),
             threadModel(detail) ?? undefined,
+            ...(contexts.length > 0 ? [{ version: 1 as const, records: [...contexts] }] : []),
           ),
         )
         .then(
@@ -1942,6 +1969,17 @@ export function createComposer(options: ComposerOptions): Composer {
       case "composer.reference.remove":
         removeReference(field(payload, "path"));
         return true;
+      case "composer.context.remove": {
+        const id = field(payload, "id");
+        setDraft(target(), (draft) => ({
+          ...draft,
+          contexts:
+            typeof id === "string"
+              ? (draft.contexts ?? []).filter((record) => record.contextId !== id)
+              : (draft.contexts ?? []).slice(0, -1),
+        }));
+        return true;
+      }
       case "composer.history.previous":
         return recallPrompt("previous");
       case "composer.history.next":
@@ -2133,6 +2171,14 @@ export function createComposer(options: ComposerOptions): Composer {
   return {
     dispatch,
     openMenu,
+    addContext: (record) => {
+      if (newDraft || !selectedDetail()) return false;
+      setDraft(target(), (draft) => ({
+        ...draft,
+        contexts: [...(draft.contexts ?? []), record],
+      }));
+      return true;
+    },
     closeMenu: (title) => {
       if (picker?.kind === "menu" && (title === undefined || picker.title === title)) closePicker();
     },

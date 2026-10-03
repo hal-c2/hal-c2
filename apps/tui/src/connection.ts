@@ -28,6 +28,7 @@ import {
   type RuntimeMode,
   RuntimeRequestId,
   type GitActionProgressEvent,
+  type OrchestrationMessageContext,
   type GitRunStackedActionResult,
   type GitStackedAction,
   type FilesystemBrowseResult,
@@ -196,6 +197,7 @@ export function buildThreadReplyTurn(input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<UploadChatImageAttachment>;
   readonly modelSelection?: ModelSelection;
+  readonly context?: OrchestrationMessageContext;
 }) {
   return {
     threadId: input.thread.id,
@@ -204,6 +206,7 @@ export function buildThreadReplyTurn(input: {
       role: "user" as const,
       text: input.text,
       attachments: [...input.attachments],
+      ...(input.context ? { context: input.context } : {}),
     },
     runtimeMode: input.thread.runtimeMode,
     interactionMode: input.thread.interactionMode,
@@ -532,6 +535,8 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
     text: string,
     attachments?: ReadonlyArray<UploadChatImageAttachment>,
     modelSelection?: ModelSelection,
+    /** The typed payloads behind the message's context references (terminal output, diff notes). */
+    context?: OrchestrationMessageContext,
   ) => Promise<void>;
   /** Register a local workspace as a project and return its generated id. */
   readonly createProject: (workspaceRoot: string) => Promise<ProjectId>;
@@ -894,7 +899,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       return drainStreamUntilUnsubscribe(stream);
     },
 
-    sendReply: (thread, text, attachments = [], modelSelection) =>
+    sendReply: (thread, text, attachments = [], modelSelection, context) =>
       runtime.runPromise(
         Effect.gen(function* () {
           const messageId = MessageIdSchema.make(yield* randomUuid);
@@ -911,6 +916,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
               text,
               attachments,
               ...(modelSelection ? { modelSelection } : {}),
+              ...(context ? { context } : {}),
             }),
           );
         }),

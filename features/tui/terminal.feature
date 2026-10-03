@@ -247,7 +247,7 @@ Feature: Terminal drawer in the terminal client
     When the terminal client lists the thread's terminals again
     Then the closed terminal is gone
 
-  @backlog @tui
+  @tui
   Scenario: The user adds selected terminal output to the prompt
     Given the user selected lines of terminal output
     When the user adds the selection to the prompt

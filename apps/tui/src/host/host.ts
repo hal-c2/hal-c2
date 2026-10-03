@@ -1218,6 +1218,8 @@ export function createHost(options: HostOptions): Host {
       },
       nowMs: () => Date.parse(now()),
       showDiff: (review) => threadView.showReview(review),
+      addContext: (record) => composer!.addContext(record),
+      terminalText: () => terminal.viewportText(),
       dispatch: (action, payload) => dispatch(action, payload),
       commandsChanged: () => palette.sync(),
       settingsChanged: () => publishSettings(),
