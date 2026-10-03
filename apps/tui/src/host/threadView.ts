@@ -1,7 +1,13 @@
-import type { OrchestrationThread } from "@hal-c2/contracts";
+import type { OrchestrationThread, ProviderApprovalDecision } from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
-import { derivePendingApprovals, type PendingApproval } from "../approvals.ts";
+import {
+  approvalKey,
+  approvalTitle,
+  derivePendingApprovals,
+  PROVIDER_GONE,
+  type PendingApproval,
+} from "../approvals.ts";
 import type { TuiClient } from "../connection.ts";
 import { splitUnifiedDiff } from "../diffSplit.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
@@ -161,6 +167,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   let approvals: PendingApproval[] = [];
   let approvalIndex = 0;
+  /** The unanswerable request the user was last told about. */
+  let toldGone: string | null = null;
   let questions: PendingUserInput[] = [];
   let question: QuestionState = NO_QUESTION;
   /** The request an answer is on its way for (blocks a second submit). */
@@ -349,17 +357,47 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const publishApprovals = () => {
     const count = approvals.length;
     const index = Math.min(approvalIndex, Math.max(0, count - 1));
+    const active = approvals[index] ?? null;
+    const options = (active?.options ?? []).map((option) => ({
+      decision: option.decision,
+      label: option.label,
+      key: approvalKey(option.decision),
+      warning: option.warning ?? "",
+    }));
+    const canRespond = active !== null && !active.notResumable;
     state.set("approvals", {
       count,
       index,
-      countText: count > 1 ? `(${index + 1} of ${count})` : "",
+      countText: count > 1 ? `${index + 1}/${count}` : "",
+      // What kind of permission the selected request wants.
+      title: active ? approvalTitle(active.requestKind) : "",
       items: approvals.map((approval, i) => ({
         requestId: approval.requestId,
         label: `${approval.requestKind}${approval.detail ? `: ${approval.detail}` : ""}`,
         active: i === index,
       })),
-      hint: count > 1 ? "↑/↓ select · ^A approve · ^R deny" : "^A approve   ^R deny",
+      options,
+      // A provider's caution sits on the line of the option it is about.
+      warnings: options
+        .filter((option) => option.warning !== "")
+        .map((option) => ({
+          decision: option.decision,
+          text: `⚠ ${option.key} ${option.label}: ${option.warning}`,
+        })),
+      canRespond,
+      problem: active?.notResumable ? PROVIDER_GONE : "",
+      hint: canRespond
+        ? [
+            ...(count > 1 ? ["↑/↓ select"] : []),
+            ...options.map((option) => `${option.key} ${option.label}`),
+          ].join(" · ")
+        : "",
     });
+    // Say once why a request cannot be answered.
+    if (active?.notResumable && toldGone !== active.requestId) {
+      toldGone = active.requestId;
+      store.setStatus(PROVIDER_GONE, "error");
+    }
   };
 
   const publishUserInput = () => {
@@ -465,13 +503,24 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     reconcileMode();
   };
 
-  const answerApproval = (decision: "accept" | "decline") => {
-    const approval = approvals[Math.min(approvalIndex, approvals.length - 1)];
+  const activeApproval = () => approvals[Math.min(approvalIndex, approvals.length - 1)] ?? null;
+
+  const APPROVAL_STATUS: Record<ProviderApprovalDecision, [string, string, string]> = {
+    accept: ["Approving…", "Approved.", "Approval failed"],
+    acceptForSession: ["Approving…", "Approved for this session.", "Approval failed"],
+    acceptAlways: ["Approving…", "Always approved.", "Approval failed"],
+    decline: ["Declining…", "Declined.", "Decline failed"],
+    cancel: ["Cancelling…", "Request cancelled.", "Cancel failed"],
+  };
+
+  const answerApproval = (decision: ProviderApprovalDecision) => {
+    const approval = activeApproval();
     if (!detail || !approval) return;
-    const [busy, done, failed] =
-      decision === "accept"
-        ? ["Approving…", "Approved.", "Approval failed"]
-        : ["Declining…", "Declined.", "Decline failed"];
+    if (approval.notResumable) {
+      store.setStatus(PROVIDER_GONE, "error");
+      return;
+    }
+    const [busy, done, failed] = APPROVAL_STATUS[decision];
     store.setStatus(busy, "busy");
     client.approve(detail.id as never, approval.requestId as never, decision).then(
       () => store.setStatus(done, "success"),
@@ -803,6 +852,16 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         if (approvals.length === 0) return false;
         answerApproval("decline");
         return true;
+      // Offered only when the provider (or the default set) has the choice.
+      case "approval.approveSession":
+      case "approval.cancel": {
+        const wanted: ReadonlyArray<string> =
+          action === "approval.cancel" ? ["cancel"] : ["acceptForSession", "acceptAlways"];
+        const option = activeApproval()?.options.find((entry) => wanted.includes(entry.decision));
+        if (!option) return false;
+        answerApproval(option.decision);
+        return true;
+      }
       case "approval.next":
       case "approval.previous": {
         if (approvals.length < 2) return false;

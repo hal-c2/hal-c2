@@ -117,7 +117,7 @@ step("the request stays pending", async (ctx: ThreadWorld) => {
 step("the timeline shows that three approvals are pending", async (ctx: ThreadWorld) => {
   const screen = await snapshot(ctx);
   expect(screen).toContain("pending approval");
-  expect(screen).toContain("Approval required  (1 of 3)");
+  expect(screen).toContain("Approval required  1/3");
   for (const command of ["rm -rf build", "git push", "npm publish"]) {
     expect(screen).toContain(`command: ${command}`);
   }
@@ -234,8 +234,22 @@ step("a question with thirty options", (ctx: ThreadWorld) =>
   ]),
 );
 
+// The question already asked, now taking several of its options.
 step("the question allows several answers", async (ctx: ThreadWorld) => {
-  await updateThread(ctx, () => ({ activities: [questionRequest("req-1", [DATABASE(true)], 1)] }));
+  await updateThread(ctx, (detail) => ({
+    activities: detail.activities.map((entry) => {
+      const payload = entry.payload as { questions?: QuestionFixture[] };
+      return entry.kind === "user-input.requested" && payload.questions
+        ? ({
+            ...entry,
+            payload: {
+              ...payload,
+              questions: payload.questions.map((question) => ({ ...question, multiSelect: true })),
+            },
+          } as typeof entry)
+        : entry;
+    }),
+  }));
 });
 
 /** Move the highlight to `label` with the arrow keys. */

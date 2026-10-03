@@ -198,6 +198,8 @@ const DECLINABLE_ACTIONS = new Set([
   "composer.history.next",
   "approval.approve",
   "approval.decline",
+  "approval.approveSession",
+  "approval.cancel",
   "approval.previous",
   "approval.next",
   "plan.implement",
