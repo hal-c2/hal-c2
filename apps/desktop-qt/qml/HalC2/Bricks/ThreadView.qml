@@ -88,7 +88,7 @@ Item {
         id: timeline
         objectName: "threadTimeline"
 
-        anchors.top: problemBar.visible ? problemBar.bottom : parent.top
+        anchors.top: setupCard.visible ? setupCard.bottom : problemBar.visible ? problemBar.bottom : parent.top
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -132,6 +132,17 @@ Item {
                 onClicked: Threads.reload(Threads.activeThread)
             }
         }
+    }
+
+    // How the thread's new worktree is being prepared.
+    WorktreeSetupCard {
+        id: setupCard
+
+        anchors.top: problemBar.visible ? problemBar.bottom : parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: implicitHeight
+        visible: setup !== null && !view.draft
     }
 
     // Loading, an empty thread, or a draft's opening line. Static: nothing
