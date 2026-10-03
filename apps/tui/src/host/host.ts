@@ -807,6 +807,7 @@ export function createHost(options: HostOptions): Host {
     },
     onInterrupt: (turnId) => threadView.turnInterrupted(turnId),
     offline: () => offline(),
+    nowMs: () => Date.parse(now()),
     onRowsChange: (rows) => {
       editorRows = rows;
       publishLayout();

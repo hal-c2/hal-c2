@@ -12,12 +12,22 @@ import {
   type RuntimeMode,
   type ServerProvider,
   type ServerSettings,
+  type UsageLimitSourceSnapshots,
   type ThreadEnvMode,
   type VcsRef,
 } from "@hal-c2/contracts";
 import type { ImagePreview } from "@hal-c2/opentui-image";
 import { formatComposerContextReference } from "@hal-c2/shared/composerContextReferences";
 import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
+import {
+  collectLimitAccounts,
+  collectLimitNotices,
+  collectLimitPools,
+  formatResetsIn,
+  hasProviderUsageLimits,
+  isUsageLimitsCommand,
+  withUsageLimitsCommands,
+} from "@hal-c2/shared/usageLimits";
 import { truncate } from "@hal-c2/shared/String";
 import type { PropertyMap } from "opentui-qml";
 
@@ -116,6 +126,8 @@ export interface ComposerOptions {
   readonly onRowsChange?: (rows: number) => void;
   /** The user stopped this turn from here (its work stays open in the timeline). */
   readonly onInterrupt?: (turnId: string) => void;
+  /** The host's clock, for when a limit window resets. */
+  readonly nowMs?: () => number;
   /** The connection to the environment is lost: nothing can be sent. */
   readonly offline?: () => boolean;
   /** The popover's inner width and content rows; an open picker windows to them. */
@@ -227,6 +239,8 @@ export interface TuiComposerState {
   readonly notice: string | null;
   /** The notice wrapped to the composer, one entry per row. */
   readonly noticeLines: ReadonlyArray<string>;
+  /** What "/usage-limits" answered, until the next message is sent: one entry per row. */
+  readonly limitLines: ReadonlyArray<string>;
   /** Rows besides the editor: borders, footer, question, attachments, context row. */
   readonly chromeRows: number;
   /** Editor height in rows: grows with the text from 3 to 8, or as set by Ctrl+Up / Ctrl+Down. */
@@ -414,6 +428,50 @@ export function createComposer(options: ComposerOptions): Composer {
   let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
   // Every configured provider (signed out and disabled ones too), for the composer's notice.
   let providers: ReadonlyArray<ServerProvider> = [];
+  /** The accounts the MC's usage hubs report, as its config last said. */
+  let usageSources: UsageLimitSourceSnapshots = [];
+  /** "/usage-limits" was asked in this thread: the driver whose limits show above the prompt. */
+  let limitsShown: { readonly key: string; readonly driver: ServerProvider["driver"] } | null =
+    null;
+  let stopLimits: (() => void) | null = null;
+  const closeLimits = () => {
+    stopLimits?.();
+    stopLimits = null;
+    limitsShown = null;
+  };
+  /** The provider behind the model the next turn runs on. */
+  const activeProvider = () =>
+    providers.find((candidate) => candidate.instanceId === activeModel()?.instanceId);
+  /** The limits of one driver's accounts (this machine's and its hubs'), a row each. */
+  const limitRows = (driver: ServerProvider["driver"]): string[] => {
+    const now = options.nowMs?.() ?? Date.now();
+    const shown = new Map([
+      [
+        "local" as never,
+        {
+          entry: { target: { label: "This machine" } },
+          serverConfig: { providers, usageLimitSources: usageSources },
+        },
+      ],
+    ]);
+    const label = providers.find((provider) => provider.driver === driver)?.displayName ?? driver;
+    const pool = collectLimitPools(collectLimitAccounts(shown as never), now).find(
+      (candidate) => candidate.driver === driver,
+    );
+    const rows = [...collectLimitNotices(shown as never)];
+    if (!pool) return [...rows, `${label}: no limits reported.`];
+    for (const window of pool.windows) {
+      const resets = window.members
+        .map((member) => formatResetsIn(member.window, now))
+        .find(Boolean);
+      rows.push(
+        [`${label} ${window.label}: ${window.remainingPercent}% left`, resets]
+          .filter(Boolean)
+          .join(" · "),
+      );
+    }
+    return rows;
+  };
   let newDraft: NewDraft | null = null;
   let picker: Picker | null = null;
   /** The chrome rows by source, so a one-line prompt or a popover can drop some (ChatView). */
@@ -615,12 +673,14 @@ export function createComposer(options: ComposerOptions): Composer {
       }
       noticeLines.push(line);
     }
+    const limitLines =
+      limitsShown !== null && limitsShown.key === key ? limitRows(limitsShown.driver) : [];
     chromeParts = {
       question: question ? question.visibleOptions + 4 : 0,
       attachments: attachments.length === 0 ? 0 : options.inlineImages ? 4 : 1,
       compact: compact ? 1 : 0,
       context: context ? 1 : 0,
-      notice: noticeLines.length,
+      notice: noticeLines.length + limitLines.length,
       references: references.length + contexts.length > 0 ? 1 : 0,
     };
     const chromeRows =
@@ -715,6 +775,7 @@ export function createComposer(options: ComposerOptions): Composer {
       context,
       notice,
       noticeLines,
+      limitLines,
       chromeRows,
     };
   };
@@ -1604,6 +1665,29 @@ export function createComposer(options: ComposerOptions): Composer {
     const references = contexts.map((record) => formatComposerContextReference(record)).join(" ");
     const body = [typed, references].filter((part) => part.length > 0).join("\n\n");
     const text = body.length > 0 ? body : IMAGE_ONLY_PROMPT;
+    // "/usage-limits" is answered here, from what the MC knows: no turn runs for it.
+    const provider = activeProvider();
+    if (
+      contexts.length === 0 &&
+      draft.images.length === 0 &&
+      isUsageLimitsCommand(typed) &&
+      provider &&
+      hasProviderUsageLimits(provider.driver, providers, usageSources)
+    ) {
+      closeLimits();
+      limitsShown = { key, driver: provider.driver };
+      setDraft(key, (current) => ({ ...current, text: "" }));
+      store.setStatus(`${provider.displayName ?? provider.driver} limits.`, "info");
+      // Followed while they show, so a window that moves is not left stale.
+      stopLimits = client.subscribeUsageLimits((snapshot) => {
+        providers = snapshot.providers;
+        usageSources = snapshot.sources;
+        publish();
+      });
+      publish();
+      return;
+    }
+    closeLimits();
     const submitted = draft;
     sendFailures.delete(key);
     replyPending = true;
@@ -1868,11 +1952,14 @@ export function createComposer(options: ComposerOptions): Composer {
     }
     // A provider with no commands (or skills) opens nothing: the character is just text.
     if (trigger === "/") {
-      if ((provider?.slashCommands ?? []).length === 0) return;
+      // A provider whose limits the MC knows also answers "/usage-limits" (here, not in a turn).
+      const commands =
+        withUsageLimitsCommands(provider ? [provider] : [], usageSources)[0]?.slashCommands ?? [];
+      if (commands.length === 0) return;
       openMenu({
         title: "commands",
         searchable: true,
-        options: (provider?.slashCommands ?? []).map((command) => ({
+        options: commands.map((command) => ({
           label: `/${command.name}`,
           description: command.description ?? "",
           value: command.name,
@@ -2165,6 +2252,7 @@ export function createComposer(options: ComposerOptions): Composer {
             (config) => {
               settings = config.settings;
               providers = config.providers ?? [];
+              usageSources = config.usageLimitSources ?? [];
               publish();
             },
             () => {},
@@ -2243,6 +2331,7 @@ export function createComposer(options: ComposerOptions): Composer {
       (config) => {
         settings = config.settings;
         providers = config.providers ?? [];
+        usageSources = config.usageLimitSources ?? [];
         publish();
       },
       () => {},
