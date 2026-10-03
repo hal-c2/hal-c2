@@ -8,6 +8,7 @@ defmodule HalC2.Steps.Providers.PermissionModes do
   import ExUnit.Assertions
 
   alias HalC2.StreamState
+  alias HalC2.Test.FakeAcp
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
@@ -418,6 +419,212 @@ defmodule HalC2.Steps.Providers.PermissionModes do
              last_turn_start(context)
 
     context
+  end
+
+  # --- what an approval covers ------------------------------------------------------------------
+
+  step "Claude asks to run a command", context do
+    %{instance: instance, fields: fields} = context.pending_launch
+
+    context
+    |> Map.delete(:pending_launch)
+    |> World.launch_on(@thread, instance, "approve", fields)
+  end
+
+  # Claude Code in acceptEdits still asks about commands, and the MC passes the
+  # question on instead of answering it as full access would.
+  step "the command is not approved as if the thread had full access", context do
+    assert ["--permission-mode", "acceptEdits"] in Enum.chunk_every(
+             launch_argv(context, "claude"),
+             2,
+             1
+           )
+
+    refute Enum.any?(
+             World.provider_log(context, "claude"),
+             &(get_in(&1, ["in", "type"]) == "control_response")
+           )
+
+    assert [%{"status" => "pending"}] =
+             StreamState.list(World.stream(context, @thread), "runtime-request")
+
+    assert [%{"status" => status}] = World.runs(context, @thread)
+    assert status in ["running", "waiting"]
+    context
+  end
+
+  step "a supervised thread runs on an ACP agent such as OpenCode or Cursor", context do
+    context
+    |> World.fake_providers()
+    |> Map.put(:instance, "opencode")
+  end
+
+  step "the user allows a command once", context do
+    ask_and_answer(context, context.instance, "accept")
+  end
+
+  step "the command runs", context do
+    World.await_runs(context, @thread, ["completed"])
+    assert %{"outcome" => "selected", "optionId" => "allow"} = acp_permission_answer(context)
+    assert "Hello from acp" in World.replies(context, @thread)
+    context
+  end
+
+  step "the agent asks to run the same command again", context do
+    World.post_message(context, @thread, "approve")
+  end
+
+  # Shared with timeline/approvals-and-questions.feature, whose Claude scenario counts
+  # the Claude processes started (`:claude_starts`).
+  step "the user is asked again", context do
+    if Map.has_key?(context, :claude_starts),
+      do: HalC2.Steps.Timeline.ApprovalsAndQuestions.asked_again_by_new_claude_session(context),
+      else: asked_again_by_acp_agent(context)
+  end
+
+  defp asked_again_by_acp_agent(context) do
+    request = World.await_request(context, @thread)
+    assert request["kind"] == "command"
+    assert request["id"] != context.request["id"]
+    # The agent's second question is still open: nobody answered it for the user.
+    assert acp_answers(context, "perm-2") == []
+    context
+  end
+
+  # Grok is the scripted agent here (`HalC2.Test.FakeAcp`): "run a command" asks about
+  # `npm test`, "list the files" about `ls -la`.
+  @list_files %{
+    "match" => "list the files",
+    "steps" => [
+      %{
+        "permission" => %{
+          "toolCallId" => "cmd-9",
+          "title" => "ls -la",
+          "kind" => "execute",
+          "rawInput" => %{"command" => "ls -la"}
+        }
+      },
+      %{"text" => "Listed them."}
+    ]
+  }
+
+  step ~r/^the user chose "Always allow this session" for a Grok command$/, context do
+    context =
+      context
+      |> FakeAcp.install("grok", %{"turns" => [@list_files | FakeAcp.turns()]}, enabled: true)
+      |> FakeAcp.thread(@thread, "approval-required")
+      |> FakeAcp.send_message("run a command")
+
+    request = FakeAcp.await_request(context)
+    assert %{"kind" => "command"} = request
+    context = FakeAcp.respond(context, request["id"], %{"decision" => "acceptForSession"})
+    FakeAcp.await_runs(context, 1)
+
+    assert [%{"result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "always"}}}] =
+             FakeAcp.answers(context)
+
+    Map.put(context, :request, request)
+  end
+
+  step "Grok runs the same command again", context do
+    FakeAcp.send_message(context, "run a command")
+  end
+
+  step "a different command still asks", context do
+    # The second `npm test` raised no approval: the first is the thread's only one.
+    assert [context.request["id"]] ==
+             for(
+               r <- StreamState.list(World.stream(context, @thread), "runtime-request"),
+               do: r["id"]
+             )
+
+    context = FakeAcp.send_message(context, "list the files")
+    request = FakeAcp.await_request(context)
+    assert %{"kind" => "command", "status" => "pending"} = request
+    assert request["id"] != context.request["id"]
+    # Grok's question about it is still open.
+    assert length(FakeAcp.answers(context)) == 2
+    context
+  end
+
+  # The same command, asked about by Grok in a thread of another project.
+  step "a thread in another project asks Grok to run the same command", context do
+    context =
+      context
+      |> World.create_project("blog")
+      |> World.create_thread("Other", "blog", %{
+        "modelSelection" => %{"instanceId" => "grok", "model" => "fake/one"},
+        "runtimeMode" => "approval-required"
+      })
+
+    context
+    |> FakeAcp.send_message("run a command", "Other")
+    |> Map.put(:current_thread, "Other")
+  end
+
+  # --- Antigravity ------------------------------------------------------------------------------
+
+  # Antigravity is the scripted agent, which asks about a command when told "approve".
+  @antigravity_approve %{
+    "match" => "approve",
+    "steps" => [
+      %{
+        "permission" => %{
+          "toolCallId" => "cmd-1",
+          "title" => "ls",
+          "kind" => "execute",
+          "rawInput" => %{"command" => "ls"}
+        }
+      },
+      %{"text" => "Ran it."}
+    ]
+  }
+
+  step ~r/^an? Antigravity thread in (?<mode>auto|full access)$/, %{args: [mode]} = context do
+    context
+    |> HalC2.Steps.Providers.AntigravityFixture.install([@antigravity_approve | FakeAcp.turns()])
+    |> Map.put(:pending_launch, %{
+      instance: "antigravity",
+      fields: %{"runtimeMode" => @modes[mode], "model" => "fake/one"}
+    })
+  end
+
+  step "Antigravity sends its own approval request", context do
+    %{instance: instance, fields: fields} = context.pending_launch
+
+    context
+    |> Map.delete(:pending_launch)
+    |> World.launch_on(@thread, instance, "approve", fields)
+  end
+
+  # A supervised thread on `instance` whose agent asks about a command, answered with
+  # `decision`; the request stays in the context.
+  defp ask_and_answer(context, instance, decision) do
+    context =
+      World.launch_on(context, @thread, instance, "approve", %{
+        "runtimeMode" => "approval-required"
+      })
+
+    request = World.await_request(context, @thread)
+    assert request["kind"] == "command"
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => request["id"],
+        "decision" => decision
+      })
+
+    Map.put(context, :request, request)
+  end
+
+  # What the MC answered the fake agent's permission request `id` with.
+  defp acp_answers(context, id) do
+    for entry <- World.provider_log(context, "acp"),
+        get_in(entry, ["in", "id"]) == id,
+        outcome = get_in(entry, ["in", "result", "outcome"]),
+        do: outcome
   end
 
   # --- helpers ----------------------------------------------------------------------------------

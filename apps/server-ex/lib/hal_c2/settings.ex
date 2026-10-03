@@ -119,6 +119,83 @@ defmodule HalC2.Settings do
 
   def instance_command(_instance, default), do: default
 
+  @doc "The ids of the instances settings add for `driver`, besides its built-in one."
+  def instances_of(driver) do
+    for {id, %{"driver" => ^driver}} <- Enum.sort(settings()["providerInstances"] || %{}),
+        id != driver,
+        do: id
+  end
+
+  @doc """
+  Whether instance `instance` of `driver` is on: its own `enabled`, and for the
+  built-in instance the driver's in `providers.<driver>`.
+  """
+  def instance_enabled?(instance, driver) do
+    settings = settings()
+
+    if instance == driver,
+      do: get_in(settings, ["providers", driver, "enabled"]) != false,
+      else: get_in(settings, ["providerInstances", instance, "enabled"]) != false
+  end
+
+  @doc """
+  The provider entry of an instance whose `binaryPath` setting names nothing that
+  runs, or nil when it has no such setting: a provider that is simply not on this
+  machine is not listed, one the user pointed somewhere is, so the path can be fixed.
+  """
+  def not_installed_entry(instance, driver, name) do
+    if path = instance_setting(instance, "binaryPath") do
+      %{
+        "instanceId" => instance,
+        "driver" => driver,
+        "enabled" => instance_enabled?(instance, driver),
+        "installed" => false,
+        "version" => nil,
+        "status" => "error",
+        "availability" => "available",
+        "message" => "#{name} was not found at #{String.trim(path)}.",
+        "auth" => %{"status" => "unknown"},
+        "checkedAt" => HalC2.Orchestration.Entities.now(),
+        "models" => [],
+        "slashCommands" => [],
+        "skills" => []
+      }
+    end
+  end
+
+  @doc """
+  What makes `settings` unusable, as a `ServerSettingsError`, or `:ok`. The MC keeps
+  the document as clients write it, except for a provider variable no process could
+  be given: its name has to be one a shell accepts (`ProviderInstanceEnvironmentVariableName`).
+  """
+  def validate(settings) do
+    invalid =
+      for {id, %{"environment" => variables}} when is_list(variables) <-
+            Enum.sort(settings["providerInstances"] || %{}),
+          %{"name" => name} when is_binary(name) <- variables,
+          String.trim(name) != "",
+          not (name =~ ~r/^[a-zA-Z_][a-zA-Z0-9_]*$/) or String.length(name) > 128,
+          do: {id, name}
+
+    case invalid do
+      [] ->
+        :ok
+
+      [{id, name} | _] ->
+        {:error,
+         %{
+           "_tag" => "ServerSettingsError",
+           "settingsPath" => path(),
+           "operation" => "normalize",
+           "providerInstanceId" => id,
+           "environmentVariable" => name,
+           "message" =>
+             "\"#{name}\" is not a valid environment variable name: use letters, digits and " <>
+               "underscores, not starting with a digit."
+         }}
+    end
+  end
+
   @doc "`{settings, version}`."
   def get do
     :ets.lookup_element(__MODULE__, :settings, 2)
