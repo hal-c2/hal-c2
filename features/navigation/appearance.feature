@@ -147,13 +147,13 @@ Feature: Appearance
         | Red & green   | green and red   |
         | Blue & orange | blue and orange |
 
-    @backlog @desktop
+    @desktop
     Scenario: Composer context stays visible after the first message
       Given the user turned on composer context
       When the user sends the first message in a new thread
       Then branch and worktree controls stay visible below the composer
 
-    @backlog @desktop
+    @desktop
     Scenario: Composer context retreats by default
       Given composer context is off
       When the user sends the first message in a new thread
@@ -227,7 +227,7 @@ Feature: Appearance
       Given the user is on Linux
       Then font smoothing is not offered
 
-    @backlog @desktop
+    @desktop
     Scenario: Word wrap applies to code
       When the user turns on word wrap
       Then long lines in code blocks, tables, diffs and file previews wrap instead of scrolling

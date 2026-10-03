@@ -232,6 +232,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/appearance.feature:Interface sliders*"),
     QStringLiteral("navigation/appearance.feature:Diff colors*"),
     QStringLiteral("navigation/appearance.feature:Font smoothing*"),
+    QStringLiteral("navigation/appearance.feature:Composer context*"),
+    QStringLiteral("navigation/appearance.feature:Word wrap*"),
     QStringLiteral("navigation/theme-editor.feature"),
     QStringLiteral("settings/general.feature"),
     QStringLiteral("settings/saving-settings.feature"),

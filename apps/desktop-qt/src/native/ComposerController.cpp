@@ -1531,6 +1531,9 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   return QVariantMap{
       {QStringLiteral("target"), target},
       {QStringLiteral("routeKind"), isDraft ? QStringLiteral("draft") : QStringLiteral("server")},
+      // The branch and worktree controls under the composer: a new thread's,
+      // and kept once it has started only when the user asks (Composer context).
+      {QStringLiteral("showContextStrip"), isDraft || setting(QStringLiteral("persistComposerContextStrip")).toBool()},
       {QStringLiteral("edit"), kept.edit.isValid() ? kept.edit : QVariant::fromValue(nullptr)},
       {QStringLiteral("text"), text},
       {QStringLiteral("cursor"), cursor},

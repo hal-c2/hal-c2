@@ -950,7 +950,7 @@ Rectangle {
             Layout.rightMargin: 22
             Layout.topMargin: -16
             implicitHeight: 16 + 4 + 24 + 4
-            visible: wsReady
+            visible: wsReady && (composer.model?.showContextStrip ?? true)
 
             Rectangle {
                 anchors.fill: parent
