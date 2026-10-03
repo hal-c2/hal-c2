@@ -538,6 +538,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/checkpoint-diffs.feature"),
     QStringLiteral("timeline/checkpoints.feature"),
     QStringLiteral("files/folder-operations.feature"),
+    QStringLiteral("files/project-file.feature"),
     QStringLiteral("files/file-explorer.feature"),
     QStringLiteral("files/file-viewer-and-editing.feature"),
     QStringLiteral("navigation/layout.feature:Opening and closing the right panel"),

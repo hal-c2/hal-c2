@@ -86,6 +86,9 @@ public:
 
 signals:
   void changed();
+  // A new thread was asked for and `draftId` shows: a new draft, or the
+  // project's one again.
+  void started(const QString& draftId);
 
 private:
   bool startNew(const QVariantMap& payload);

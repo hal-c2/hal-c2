@@ -49,41 +49,41 @@ Feature: The hal-c2.json project file
     When a new worktree is created for "shop"
     Then its submodules are filled at every level
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario: hal-c2.json sets the default workspace for new threads
     Given the checkout's hal-c2.json sets the default workspace to "worktree"
     And the user never chose a default workspace for "shop"
     When the user starts a new thread in "shop"
     Then the draft starts in a new worktree
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario: A saved default workspace wins over hal-c2.json
     Given the checkout's hal-c2.json sets the default workspace to "worktree"
     And the user set the default workspace for "shop" to "local"
     When the user starts a new thread in "shop"
     Then the draft starts in the project folder
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario: Actions declared in hal-c2.json are offered for import
     Given the checkout's hal-c2.json declares the actions "Dev" and "Test"
     When the user looks at the actions of "shop"
     Then "Dev" and "Test" are offered to import from hal-c2.json
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario: Importing skips actions that already exist
     Given "shop" already has an action "dev" running "bun dev"
     And the checkout's hal-c2.json declares "Dev" running "bun dev" and "Lint" running "bun lint"
     When the user imports actions from hal-c2.json
     Then only "Lint" is added
 
-  @backlog @desktop
+  @desktop
   Scenario: An invalid hal-c2.json is reported and ignored
     Given the checkout's hal-c2.json does not match the project file format
     When the user looks at the actions of "shop"
     Then the user is warned that hal-c2.json is invalid
     And no actions are offered from it
 
-  @backlog @desktop
+  @desktop
   Scenario: hal-c2.json may contain comments
     Given the checkout's hal-c2.json has comments and declares the action "Dev"
     When the user looks at the actions of "shop"

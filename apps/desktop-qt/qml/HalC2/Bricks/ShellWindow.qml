@@ -78,6 +78,8 @@ Window {
 
     CustomSnoozeDialog {}
 
+    ProjectActionEditor {}
+
     CommandPalette {}
 
     // The theme editor (Themes.editorOpen): the palette's "Toggle theme
