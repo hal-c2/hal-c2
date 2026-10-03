@@ -109,8 +109,15 @@ void ThreadDiff::setIgnoreWhitespace(bool ignore) {
   load();
 }
 
+void ThreadDiff::setDefaultWrap(bool wrap) {
+  if (wrap == m_defaultWrap) return;
+  const bool before = this->wrap();
+  m_defaultWrap = wrap;
+  if (this->wrap() != before) emit optionsChanged();
+}
+
 void ThreadDiff::setWrap(bool wrap) {
-  if (wrap == m_wrap) return;
+  if (wrap == this->wrap()) return;
   m_wrap = wrap;
   emit optionsChanged();
 }

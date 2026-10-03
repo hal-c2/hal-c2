@@ -911,6 +911,9 @@ defmodule HalC2.Steps.Common do
       "hal-c2 service " <> command ->
         HalC2.Test.Storage.service(context, command)
 
+      "hal-c2 pair" ->
+        HalC2.Test.Storage.pair(context)
+
       _ ->
         action = @git_actions[label] || flunk("no git action is labelled #{inspect(label)}")
         extra = context[:git_action_input] || %{}

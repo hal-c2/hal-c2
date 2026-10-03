@@ -427,7 +427,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   # next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do
-    end_work(state, "interrupted")
+    unless HalC2.Orchestration.Recovery.stopping?(), do: end_work(state, "interrupted")
     :ok
   catch
     _, _ -> :ok

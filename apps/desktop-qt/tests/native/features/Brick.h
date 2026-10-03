@@ -36,6 +36,14 @@ public:
   void click(const QString& objectName);
   // The window as it is drawn now.
   QImage grab();
+  // Whether a visible item shows `text` (a Text or Label's `text`).
+  bool shows(const QString& text) const;
+  // The scenario's key presses ("the user presses Escape") go to this brick's
+  // window, to whatever has its keyboard focus.
+  bool takesKeys = false;
+  // Presses a key as keybindings.json spells it ("escape", "mod+enter",
+  // "shift+tab", "arrowup"): mod is the platform's primary modifier.
+  void press(const QString& key);
 
 private:
   QQmlEngine m_engine;
