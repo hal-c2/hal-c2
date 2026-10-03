@@ -8,6 +8,7 @@
 #include <QVariantList>
 
 #include "AlertController.h"
+#include "Alerts.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
 #include "NavigationController.h"
@@ -44,6 +45,7 @@ struct FakeAlerts {
   QString lastToast;               // the title of the last in-app alert
   QStringList raised;              // the ids of the windows brought to the front
   QString firstShown;              // what the first window showed before a click
+  int badge = 0;                   // the app's badge
 };
 
 FakeAlerts& fake(World& world) {
@@ -72,6 +74,8 @@ AlertController& alerts(World& world) {
           state.shown.clear();
         },
         [&state](const QString& kind) { state.sounds.append(kind); },
+        [&state] { return state.allowed; },
+        [&state](int count) { state.badge = count; },
   });
   controller->setFocused(state.focused);
   return *controller;
@@ -451,3 +455,28 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void setAlertFocus(World& world, bool focused) {
+  fake(world).focused = focused;
+  alerts(world);
+}
+
+void setAlertsAllowed(World& world, bool allowed) {
+  fake(world).allowed = allowed;
+  alerts(world);
+}
+
+AlertsSeen alertsSeen(World& world) {
+  alerts(world);
+  const FakeAlerts& state = fake(world);
+  return {state.shown, state.closed, state.sounds, state.badge};
+}
+
+bool clickNotification(World& world, const QString& key, QStringList* raised) {
+  for (const auto& window : world.native().windows()) {
+    QObject::connect(window->bridge(), &ShellBridge::windowCommandRequested, window.get(), [raised, id = window->id()](const QString& command) {
+      if (raised && command == QLatin1String("raise")) raised->append(id);
+    });
+  }
+  return alerts(world).openThread(key);
+}

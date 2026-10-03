@@ -15,7 +15,7 @@ Feature: Thread notifications
 
   Rule: Choosing how to be notified
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The notification mode decides what happens when a thread finishes in the background
       Given the notification mode is "<mode>"
       And HAL-C2 is in the background
@@ -29,7 +29,7 @@ Feature: Thread notifications
         | Sound only                | the completion sound plays                              |
         | Notifications with sound  | a system notification is shown and the sound plays      |
 
-    @backlog @desktop
+    @desktop
     Scenario: Notifications need the system's permission
       Given the system has not allowed notifications
       When the user chooses notifications only and the system refuses
@@ -44,7 +44,7 @@ Feature: Thread notifications
 
   Rule: What the user is told
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The title says what the thread needs
       Given the notification mode is "Notifications only"
       And HAL-C2 is in the background
@@ -59,13 +59,13 @@ Feature: Thread notifications
         | asks a question          | Input needed        |
         | hits its usage limit     | Usage limit reached |
 
-    @backlog @desktop
+    @desktop
     Scenario: Clicking a notification opens the thread
       Given a system notification for "Fix login" is shown
       When the user clicks it
       Then HAL-C2 comes to the front showing "Fix login"
 
-    @backlog @desktop
+    @desktop
     Scenario: A toast appears instead while HAL-C2 is in front
       Given in-app notifications are on
       And HAL-C2 is in front showing another thread
@@ -73,20 +73,20 @@ Feature: Thread notifications
       Then a toast says the thread completed and offers to open it
       And no system notification is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: The thread on screen does not notify
       Given in-app notifications are on
       And HAL-C2 is in front showing "Fix login"
       When "Fix login" finishes
       Then no toast or notification is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: Archived threads and subagents do not notify
       Given "Fix login" is archived
       When "Fix login" finishes
       Then no notification is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: The app badge counts unseen notifications and clears on focus
       Given two system notifications are waiting
       Then the app shows a badge of 2

@@ -203,6 +203,9 @@ int main(int argc, char* argv[]) {
         const QString event = kind == QLatin1String("completion") ? QStringLiteral("complete") : QStringLiteral("dialog-question");
         QProcess::startDetached(player, {QStringLiteral("-i"), event});
       },
+      // Without a notification service nothing could be shown.
+      [&notifications] { return notifications.supported(); },
+      [](int count) { QGuiApplication::setBadgeNumber(count); },
   });
   QObject::connect(&notifications, &NativeNotifications::activated, alerts, &AlertController::openThread);
 

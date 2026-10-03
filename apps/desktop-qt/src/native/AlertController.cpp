@@ -97,7 +97,15 @@ void AlertController::setFocused(bool focused) {
   if (m_focused == focused) return;
   m_focused = focused;
   // Back at the window, the system notifications have done their job.
-  if (focused && m_presenter.clear) m_presenter.clear();
+  if (!focused) return;
+  if (m_presenter.clear) m_presenter.clear();
+  setUnseen({});
+}
+
+void AlertController::setUnseen(QSet<QString> keys) {
+  if (keys == m_unseen) return;
+  m_unseen = std::move(keys);
+  if (m_presenter.badge) m_presenter.badge(int(m_unseen.size()));
 }
 
 bool AlertController::openThread(const QString& key) {
@@ -123,10 +131,29 @@ void AlertController::readSettings() {
     m_muted = std::move(next);
     present();
   }
-  if (mode == m_mode) return;
+  const bool chosen = std::exchange(m_settingsRead, true);
+  if (mode == m_mode) {
+    // In-app alerts just turned on follow the threads as they are now.
+    if (m_seen.isEmpty()) evaluate();
+    return;
+  }
+  // Chosen now (not what this device already held) while the system refuses:
+  // the choice is undone, and the user told how to allow it.
+  if (chosen && hasSystemNotifications(mode) && !hasSystemNotifications(m_mode) && m_presenter.permitted && !m_presenter.permitted()) {
+    auto* shell = NativeShell::of(this);
+    shell->controller<SettingsController>()->set(QStringLiteral("notificationMode"), m_mode);
+    if (auto* toasts = shell->controller<ToastController>()) {
+      toasts->show(QStringLiteral("warning"), tr("Notifications are not allowed"),
+                   tr("Allow notifications for HAL-C2 in your system settings, then choose this option again. Sound only is still available."));
+    }
+    return;
+  }
   m_mode = mode;
   if (m_presenter.clear) m_presenter.clear();
+  setUnseen({});
   if (m_presenter.setEnabled) m_presenter.setEnabled(hasSystemNotifications(m_mode));
+  // Alerts just turned on follow the threads as they are now.
+  if (m_seen.isEmpty()) evaluate();
 }
 
 void AlertController::evaluate() {
@@ -194,7 +221,11 @@ void AlertController::evaluate() {
     }
     if (!hasSystemNotifications(m_mode) || m_focused || !m_presenter.show) continue;
     // The sound, when there is one, is the mode's own, not the system's.
-    m_presenter.show(key, title, thread.title, true);
+    if (m_presenter.show(key, title, thread.title, true)) {
+      QSet<QString> unseen = m_unseen;
+      unseen.insert(key);
+      setUnseen(std::move(unseen));
+    }
   }
   m_seen = std::move(next);
 }

@@ -48,6 +48,12 @@ public:
     std::function<void(bool enabled)> setEnabled;
     // `kind` is "completion" or "input".
     std::function<void(const QString& kind)> play;
+    // Whether the system lets the app notify; unset where it never refuses.
+    // Choosing system notifications while it does not is undone, with a
+    // toast saying how to allow them.
+    std::function<bool()> permitted;
+    // The app's badge: how many system notifications wait unseen (0 clears it).
+    std::function<void(int count)> badge;
   };
 
   AlertController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
@@ -82,6 +88,8 @@ public:
 private:
   void readSettings();
   void evaluate();
+  // The notified threads the user has not come back to, as the app's badge.
+  void setUnseen(QSet<QString> keys);
   // Keeps kToggleMute's title to the route thread, in every window or one.
   void present();
   void present(NativeWindow* window);
@@ -100,4 +108,6 @@ private:
   bool m_focused = true;
   QHash<QString, Seen> m_seen;
   QSet<QString> m_muted;
+  QSet<QString> m_unseen;
+  bool m_settingsRead = false;
 };

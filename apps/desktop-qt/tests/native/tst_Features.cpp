@@ -604,6 +604,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/licenses.feature"),
     QStringLiteral("settings/diagnostics.feature"),
     QStringLiteral("settings/updates.feature:At launch*"),
+    QStringLiteral("settings/notifications.feature"),
     QStringLiteral("settings/snap-shot.feature"),
     QStringLiteral("source-control/snap-shot.feature"),
 };
