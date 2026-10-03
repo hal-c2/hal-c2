@@ -24,7 +24,7 @@ class ShellStore;
 // `thread.new {projectKey?}` opens the project's draft (the given logical
 // project, else the scoped one, else the one the window shows, else the first),
 // `draft.menu {draftId, x, y}` offers to delete it and `draft.delete {draftId}`
-// does.
+// does. `draft.project {x, y}` offers the projects the open draft can move to.
 //
 // The draft's text is `text`: ComposerController saves the composer's edits
 // on a draft route here, and reopens the draft with it.
@@ -95,6 +95,7 @@ private:
   const sidebar::ProjectGroup* defaultGroup() const;
   void present();
   void openMenu(const QString& id, double x, double y);
+  void openProjects(double x, double y);
   // Drops drafts whose thread now exists or whose project is gone.
   void reconcile();
   bool save() const;

@@ -6,6 +6,8 @@
 #   apps/desktop-qt/src/native/SidebarController.cpp (which drafts the sidebar lists)
 #   apps/desktop-qt/src/native/ComposerController.cpp (a draft's first send promotes it; draftPreview)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (draft rows and their menu)
+#   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (the draft's opening line picks its project)
+#   apps/web/src/components/chat/DraftHeroHeadline.tsx (the project picker in the headline)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   navigation/landing.feature owns the draft a window with no thread lands on, which is here
 #   from the start: the window opens on a draft in "proj-1".
@@ -102,6 +104,33 @@ Feature: Drafts on the desktop
       When the user types "Fix the build" into the new thread
       Then the new window's sidebar lists the draft reading "Fix the build"
       And the sidebar lists no drafts
+
+  Rule: A draft's opening line moves it to another project
+
+    @desktop
+    Scenario: The draft's opening line offers every project
+      Given the user starts a new thread in "proj-1"
+      When the user opens the draft's projects at 30, 60
+      Then the menu offers the projects "proj-1" and "proj-2" with "proj-1" ticked
+
+    @desktop
+    Scenario: Moving a draft to another project brings its text along
+      Given the user starts a new thread in "proj-1"
+      And the user types "Fix the build" into the new thread
+      When the user moves the draft to "proj-2"
+      Then the window shows a new draft in "proj-2"
+      And the new thread still reads "Fix the build"
+
+    @desktop
+    Scenario: A draft moved onto a project with its own draft opens that draft
+      Given the user starts a new thread in "proj-2"
+      And the user types "Ship it" into the new thread
+      And the user starts a new thread in "proj-1"
+      And the user types "Fix the build" into the new thread
+      When the user moves the draft to "proj-2"
+      Then the window shows a new draft in "proj-2"
+      And the new thread still reads "Ship it"
+      And the desktop keeps 2 drafts
 
   Rule: A draft ends when it is sent or deleted
 
