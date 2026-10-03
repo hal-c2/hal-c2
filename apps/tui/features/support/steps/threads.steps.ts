@@ -1119,7 +1119,8 @@ step("a draft thread opens in {string}", async (ctx: World, project: string) => 
   await flush(ctx);
   expect(ctx.host!.state.get("page")).toMatchObject({ kind: "draft", projectTitle: project });
   expect(draft(ctx)?.projectName).toBe(project);
-  expect(await snapshot(ctx)).toContain(`New thread · ${project}`);
+  // An empty draft has no row in the thread list; the prompt names its project.
+  expect(await snapshot(ctx)).toContain(`What should we build in ${project}?`);
 });
 
 step("the draft is listed at the top of the thread list", async (ctx: World) => {

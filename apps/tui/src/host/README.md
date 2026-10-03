@@ -21,7 +21,7 @@ from `threadView.ts` (below).
   card, as in the OpenTUI client), the list viewport (`lines`, `listRows`,
   `scrollTop`, counted in lines; `sidebar.scroll` moves it without following
   the selection), `scopeLabel`/`scopeLine` for the project row, and a `draft`
-  row while a new-thread draft is open. Section rows toggle their shelf; the
+  row while a new-thread draft holds text or an image (an empty one is not listed). Section rows toggle their shelf; the
   "more" row pages the settled shelf.
 - `layout` adds the extension slots a shell fills: `rightPanel`
   (`visible`, `focused`, `kind`, `asMain`, `width`;
@@ -59,15 +59,15 @@ from `threadView.ts` (below).
 
 Actions, by area (payloads use `key` / `projectKey` from `sidebarState.ts`):
 
-| Area        | Actions                                                                                                                                                                                                                                         |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Thread list | `thread.open`, `thread.next`, `thread.previous`, `thread.jump {index}`, `sidebar.toggle`, `sidebar.filter.focus/set/commit/cancel`, `sidebar.list.focus/blur`, `sidebar.section.toggle {section}`, `sidebar.more`, `sidebar.scope {projectKey}` |
-| Thread rows | `thread.menu {key, x, y}`, `thread.rename {key, title?}`, `thread.archive`, `thread.unarchive`, `thread.delete` (asks), `thread.delete.confirm`, `thread.settle`, `thread.unsettle`, `thread.copy {key, what}`, `thread.stop`                   |
-| Menus       | `contextMenu.move {delta}`, `contextMenu.select {index?}`, `overlay.cancel`, `palette.open/close/query.set/next/previous/run {index? id?}`                                                                                                      |
-| Composer    | `composer.text.set {text}`, `composer.submit`, `composer.escape`, `composer.paste`, `composer.history.previous/next`, `composer.grow/shrink`, `composer.*Picker.toggle`, `composer.editor.open`, `select.*`, `composer.focus`                   |
-| New thread  | `thread.new {projectKey?}`, `newThread.workspaceMode {mode}`, `newThread.branch {name}`, `newThread.submit {message?}`, `newThread.cancel`                                                                                                      |
-| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.*` (below), `layout.popover {rows}`, `clock.tick`, `app.quit` (or `quit`)                                                                                            |
-| Plugins     | `plugins.refresh`, `plugin.remove {id}`, `plugin.load {file}`                                                                                                                                                                                   |
+| Area        | Actions                                                                                                                                                                                                                                                                             |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Thread list | `thread.open`, `thread.next`, `thread.previous`, `thread.jump {index}`, `sidebar.toggle`, `sidebar.filter.focus/set/commit/cancel`, `sidebar.list.focus/blur`, `sidebar.section.toggle {section}`, `sidebar.more`, `sidebar.scope {projectKey}`                                     |
+| Thread rows | `thread.menu {key, x, y}`, `thread.rename {key, title?}`, `thread.archive`, `thread.unarchive`, `thread.delete` (asks), `thread.delete.confirm`, `thread.settle`, `thread.unsettle`, `thread.snooze` (asks until when), `thread.unsnooze`, `thread.copy {key, what}`, `thread.stop` |
+| Menus       | `contextMenu.move {delta}`, `contextMenu.select {index?}`, `overlay.cancel`, `palette.open/close/query.set/next/previous/run {index? id?}`                                                                                                                                          |
+| Composer    | `composer.text.set {text}`, `composer.submit`, `composer.escape`, `composer.paste`, `composer.history.previous/next`, `composer.grow/shrink`, `composer.*Picker.toggle`, `composer.editor.open`, `select.*`, `composer.focus`                                                       |
+| New thread  | `thread.new {projectKey?}`, `newThread.workspaceMode {mode}`, `newThread.branch {name}`, `newThread.submit {message?}`, `newThread.cancel`                                                                                                                                          |
+| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.*` (below), `layout.popover {rows}`, `clock.tick`, `app.quit` (or `quit`)                                                                                                                                |
+| Plugins     | `plugins.refresh`, `plugin.remove {id}`, `plugin.load {file}`                                                                                                                                                                                                                       |
 
 The palette (`paletteState.ts`) lists the composer's commands (new thread,
 plan mode, workspace, model, effort, access, editor, "Implement plan"), then

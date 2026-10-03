@@ -281,6 +281,10 @@ export function createHost(options: HostOptions): Host {
     updateNotice: null,
   });
 
+  // "reconnecting" is a connection that was up and is lost: the environment is offline.
+  let connectionPhase: TuiConnectionPhase = "connecting";
+  const offline = () => connectionPhase === "reconnecting";
+
   let pluginPort: PluginPort | null = null;
   const refreshPlugins = () => {
     if (pluginPort) state.set("plugins", { items: pluginPort.list() } satisfies TuiPluginsState);
@@ -510,10 +514,12 @@ export function createHost(options: HostOptions): Host {
   };
   // Where keys go when a menu, prompt or palette closes (setMode resolves it).
   const restingMode = (): TuiMode => "compose";
-  /** The draft's sidebar row: only a draft with a project is listed. */
+  /** The draft's sidebar row: only a draft with a project and content is listed. */
   const sidebarDraft = () => {
     const draft = composer?.draft();
-    return draft?.projectId ? { draftId: draft.draftId, projectId: draft.projectId } : null;
+    return draft?.projectId
+      ? { draftId: draft.draftId, projectId: draft.projectId, listed: draft.hasContent }
+      : null;
   };
 
   /** The mode a focused detail panel of `kind` takes. */
@@ -841,6 +847,11 @@ export function createHost(options: HostOptions): Host {
       void cluster.refresh();
     }
     if (palette.dispatch(action, payload)) return true;
+    // A draft would have nowhere to go: say so instead of opening one.
+    if (action === "thread.new" && offline()) {
+      store.setStatus("The environment is offline.", "error");
+      return true;
+    }
     // A paste the composer does not take (plain text) is inserted by the prompt.
     if (action === "composer.paste") return composer!.dispatch(action, payload);
     if (composer!.dispatch(action, payload)) return true;
@@ -1092,6 +1103,8 @@ export function createHost(options: HostOptions): Host {
     restingMode,
     settlementSupported: () => settlementSupported,
     copyToClipboard: options.copyToClipboard,
+    offline: () => offline(),
+    now,
   });
 
   // The composer loads the new-thread defaults itself; this is the settlement flag.
@@ -1141,6 +1154,7 @@ export function createHost(options: HostOptions): Host {
     palette.sync();
   });
   const unsubscribeConnection = client.subscribeConnection((phase) => {
+    connectionPhase = phase;
     state.set("connection", connectionState(phase));
     // A report belongs to the socket it was sent on: a new connection sends it again.
     if (phase === "connected") {

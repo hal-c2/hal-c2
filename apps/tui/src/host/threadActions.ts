@@ -1,3 +1,8 @@
+import {
+  canSnooze,
+  effectiveSnoozed,
+  resolveSnoozePresets,
+} from "@hal-c2/client-runtime/state/thread-settled";
 import type { ContextMenuItem } from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
@@ -82,6 +87,19 @@ export interface ThreadActionsContext {
   readonly restingMode: () => TuiMode;
   readonly settlementSupported: () => boolean;
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
+  /** The connection to the environment is lost: what it would have to do is refused here. */
+  readonly offline: () => boolean;
+  /** The clock (ISO), for what a thread may do now and the snooze choices. */
+  readonly now: () => string;
+  /** Menu entries other controllers add for a thread (moving it), and what choosing one does. */
+  readonly extraMenuItems?: (thread: TuiThreadShell) => ReadonlyArray<ContextMenuItem>;
+  readonly runExtraMenuItem?: (thread: TuiThreadShell, id: string) => boolean;
+}
+
+/** A second menu where the first was (snooze times, machines): its items and what choosing does. */
+export interface ThreadSubmenu {
+  readonly items: ReadonlyArray<ContextMenuItem>;
+  readonly choose: (id: string) => void;
 }
 
 const field = (payload: unknown, name: string): unknown =>
@@ -100,6 +118,10 @@ const errorText = (error: unknown): string =>
 export function createThreadActions(ctx: ThreadActionsContext) {
   const { client, store, state } = ctx;
   let menu: TuiContextMenuState | null = null;
+  // Set while the open menu is a submenu: choosing an item runs this instead of a thread action.
+  let menuChoose: ((id: string) => void) | null = null;
+  // Where the thread's menu last opened: a submenu opens in its place.
+  let menuAt = { x: 0, y: 0 };
   let overlay: TuiOverlayState = null;
   let menuRequests = 0;
 
@@ -171,7 +193,32 @@ export function createThreadActions(ctx: ThreadActionsContext) {
   const closeMenu = () => {
     if (!menu) return;
     menu = null;
+    menuChoose = null;
     publishMenu();
+  };
+
+  const showMenu = (
+    thread: TuiThreadShell,
+    items: ReadonlyArray<ContextMenuItem>,
+    at: { x: number; y: number },
+    choose: ((id: string) => void) | null,
+  ) => {
+    const { columns, rows } = ctx.size();
+    // The menu acts on its own thread; the open thread stays as it was.
+    const box = resolveContextMenuLayout(items, at, { width: columns, height: rows });
+    menuRequests += 1;
+    menu = {
+      requestId: `thread-menu-${menuRequests}`,
+      surfaceId: "sidebar",
+      threadKey: threadKey(thread.id),
+      ...box,
+      items,
+      selectedIndex: firstContextMenuIndex(items),
+      rows: [],
+    };
+    menuChoose = choose;
+    publishMenu();
+    ctx.setMode("contextMenu");
   };
 
   const openMenu = (thread: TuiThreadShell, x: number, y: number) => {
@@ -185,22 +232,41 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       row: row ?? { section: "active", thread },
       settlementSupported: ctx.settlementSupported(),
       hasWorkspacePath: workspacePath(thread) !== null,
+      canSnooze: canSnooze(thread, { now: ctx.now() }),
+      extra: ctx.extraMenuItems?.(thread) ?? [],
     });
+    menuAt = { x, y };
+    showMenu(thread, items, menuAt, null);
+  };
+
+  /** A second menu for `thread` (in the first one's place, or mid-screen from the palette). */
+  const openSubmenu = (thread: TuiThreadShell, submenu: ThreadSubmenu) => {
     const { columns, rows } = ctx.size();
-    // The menu acts on its own thread; the open thread stays as it was.
-    const box = resolveContextMenuLayout(items, { x, y }, { width: columns, height: rows });
-    menuRequests += 1;
-    menu = {
-      requestId: `thread-menu-${menuRequests}`,
-      surfaceId: "sidebar",
-      threadKey: threadKey(thread.id),
-      ...box,
-      items,
-      selectedIndex: firstContextMenuIndex(items),
-      rows: [],
+    const at = menu ? menuAt : { x: Math.floor(columns / 3), y: Math.floor(rows / 3) };
+    showMenu(thread, submenu.items, at, submenu.choose);
+  };
+
+  /** The times a thread can be snoozed until, as a submenu. */
+  const snoozeMenu = (thread: TuiThreadShell): ThreadSubmenu => {
+    const presets = resolveSnoozePresets(new Date(ctx.now()));
+    return {
+      items: [
+        { id: "header", label: `Snooze ${clip(thread.title, 24)} until`, header: true },
+        ...presets.map((preset) => ({
+          id: preset.id,
+          label: `${preset.label} · ${preset.whenLabel}`,
+        })),
+      ],
+      choose: (id) => {
+        const preset = presets.find((candidate) => candidate.id === id);
+        if (!preset) return;
+        report(
+          client.snoozeThread(thread.id as never, preset.snoozedUntil),
+          `Snoozed until ${preset.whenLabel}.`,
+          "Failed to snooze thread",
+        );
+      },
     };
-    publishMenu();
-    ctx.setMode("contextMenu");
   };
 
   const copy = (value: string, label: string) => {
@@ -244,9 +310,22 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         return;
       case "copy-thread-id":
         return copy(thread.id, "Thread ID");
+      case "snooze":
+        // The same rule the server enforces: a thread that waits on the user stays in view.
+        if (!canSnooze(thread, { now: ctx.now() })) {
+          store.setStatus("This thread is waiting on you and cannot be snoozed.", "error");
+          return;
+        }
+        return openSubmenu(thread, snoozeMenu(thread));
+      case "unsnooze":
+        return report(client.unsnoozeThread(thread.id as never), "Woken.", "Failed to wake thread");
       case "archive":
         return report(client.archiveThread(thread.id as never), "Archived.", "Archive failed");
       case "delete":
+        if (ctx.offline()) {
+          store.setStatus("Delete failed: the environment is offline.", "error");
+          return;
+        }
         return openOverlay({
           kind: "confirmDelete",
           threadKey: threadKey(thread.id),
@@ -298,6 +377,24 @@ export function createThreadActions(ctx: ThreadActionsContext) {
           payload,
         });
       }
+      const snoozed = effectiveSnoozed(thread, { now: ctx.now() });
+      list.push(
+        snoozed
+          ? {
+              id: "unsnooze",
+              title: "Wake thread",
+              keywords: "unsnooze snooze",
+              action: "thread.unsnooze",
+              payload,
+            }
+          : {
+              id: "snooze",
+              title: "Snooze thread…",
+              keywords: "later park hide wake",
+              action: "thread.snooze",
+              payload,
+            },
+      );
       list.push({ id: "delete", title: "Delete thread", action: "thread.delete", payload });
       list.push({ id: "stop", title: "Stop session", action: "thread.stop", payload });
     }
@@ -371,9 +468,14 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         const item = menu.items.find((candidate) => candidate.id === id);
         const thread = shellThread(idFromKey(menu.threadKey));
         if (id !== null && (!item || item.disabled || item.header)) return true;
+        const choose = menuChoose;
         closeMenu();
         ctx.setMode(ctx.restingMode());
-        if (item && thread) runMenuAction(thread, item.id as ThreadContextMenuAction);
+        if (!item || !thread) return true;
+        if (choose) choose(item.id);
+        else if (ctx.runExtraMenuItem?.(thread, item.id) !== true) {
+          runMenuAction(thread, item.id as ThreadContextMenuAction);
+        }
         return true;
       }
       case "thread.rename": {
@@ -396,7 +498,21 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         if (overlay?.kind !== "confirmDelete") return true;
         const id = idFromKey(overlay.threadKey);
         closeOverlay();
+        if (ctx.offline()) {
+          store.setStatus("Delete failed: the environment is offline.", "error");
+          return true;
+        }
         report(client.deleteThread(id as never), "Deleted.", "Delete failed");
+        return true;
+      }
+      case "thread.snooze": {
+        const thread = threadFromPayload(payload);
+        if (thread) runMenuAction(thread, "snooze");
+        return true;
+      }
+      case "thread.unsnooze": {
+        const thread = threadFromPayload(payload);
+        if (thread) runMenuAction(thread, "unsnooze");
         return true;
       }
       case "overlay.cancel":
@@ -449,5 +565,6 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     paletteCommands,
     /** The palette opening over an open menu closes the menu. */
     closeMenu,
+    openSubmenu,
   };
 }

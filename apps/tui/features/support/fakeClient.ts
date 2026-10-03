@@ -195,6 +195,8 @@ export function fakeClient({
   deleteThread = async () => {},
   settleThread = async () => {},
   unsettleThread = async () => {},
+  snoozeThread = async () => {},
+  unsnoozeThread = async () => {},
   stopSession = async () => {},
   vcsStatus,
   runGitPull,
@@ -263,6 +265,8 @@ export function fakeClient({
   readonly deleteThread?: TuiClient["deleteThread"];
   readonly settleThread?: TuiClient["settleThread"];
   readonly unsettleThread?: TuiClient["unsettleThread"];
+  readonly snoozeThread?: TuiClient["snoozeThread"];
+  readonly unsnoozeThread?: TuiClient["unsnoozeThread"];
   readonly stopSession?: TuiClient["stopSession"];
   readonly vcsStatus?: VcsStatusResult;
   /** Replaces the default pull (which ends as `setGitOutcome` says). */
@@ -518,6 +522,8 @@ export function fakeClient({
     deleteThread,
     settleThread,
     unsettleThread,
+    snoozeThread,
+    unsnoozeThread,
     stopSession,
     terminalClose,
     approve,

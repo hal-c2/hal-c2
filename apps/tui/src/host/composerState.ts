@@ -300,7 +300,12 @@ export interface Composer {
   /** Handle a `composer.*`, `select.*`, `thread.new` or `newThread.*` action. */
   readonly dispatch: (action: string, payload?: unknown) => boolean;
   /** The open new-thread draft's id and project, for the sidebar row and the page. */
-  readonly draft: () => { readonly draftId: string; readonly projectId: string | null } | null;
+  readonly draft: () => {
+    readonly draftId: string;
+    readonly projectId: string | null;
+    /** The draft holds text or an image (an empty one is not listed in the sidebar). */
+    readonly hasContent: boolean;
+  } | null;
   /** Re-derive after a store change (selection, detail, shell). */
   readonly sync: () => void;
   /** Re-derive after a layout change (compact footer). */
@@ -377,10 +382,13 @@ export function createComposer(options: ComposerOptions): Composer {
     key ? (drafts.get(key) ?? EMPTY_DRAFT) : EMPTY_DRAFT;
   const setDraft = (key: string | null, update: (draft: Draft) => Draft) => {
     if (!key) return;
+    const had = drafts.has(key);
     const next = update(draftFor(key));
     if (next.text.length === 0 && next.images.length === 0) drafts.delete(key);
     else drafts.set(key, next);
     publish();
+    // The new-thread draft's sidebar row follows whether it holds anything.
+    if (key === NEW_TARGET && had !== drafts.has(key)) options.onDraftChange?.();
   };
   // Prompt recall: ↑ in an empty prompt walks back through the thread's sent
   // prompts, ↓ walks forward and past the newest clears the prompt. Recall
@@ -1781,7 +1789,14 @@ export function createComposer(options: ComposerOptions): Composer {
 
   return {
     dispatch,
-    draft: () => (newDraft ? { draftId: newDraft.draftId, projectId: newDraft.projectId } : null),
+    draft: () =>
+      newDraft
+        ? {
+            draftId: newDraft.draftId,
+            projectId: newDraft.projectId,
+            hasContent: drafts.has(NEW_TARGET),
+          }
+        : null,
     sync,
     relayout: publish,
     chromeRows: (overlay) =>
