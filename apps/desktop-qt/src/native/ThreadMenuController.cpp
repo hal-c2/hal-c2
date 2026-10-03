@@ -6,6 +6,8 @@
 #include <QJsonArray>
 #include <QUuid>
 
+#include <memory>
+
 #include "../ShellBridge.h"
 #include "DraftController.h"
 #include "KeybindingController.h"
@@ -91,9 +93,14 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   if (!thread) return false;
   auto* shell = NativeShell::of(this);
   SidebarController* sidebar = shell->sidebar();
+  const QStringList selection = sidebar->selection();
+  if (!header && selection.size() > 1 && selection.contains(key)) {
+    openSelection(selection, x, y);
+    return true;
+  }
   const sidebar::Capabilities supports = m_store->capabilities(thread->environmentId);
   const bool online = m_store->threadOnline(key);
-  const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+  const qint64 nowMs = sidebar->now().toMSecsSinceEpoch();
   const QJsonObject row = m_store->threadRow(key);
 
   QList<Item> items;
@@ -111,6 +118,15 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
     add(thread->pinnedAt ? Item{QStringLiteral("unpin"), QStringLiteral("Unpin thread"), QStringLiteral("pin-off")}
                          : Item{QStringLiteral("pin"), QStringLiteral("Pin thread"), QStringLiteral("pin")});
   }
+  // Arranging, where the thread has a place to move to.
+  if (sidebar->canMove(key, true) || sidebar->canMove(key, false)) {
+    Item up{QStringLiteral("move-up"), QStringLiteral("Move up"), QStringLiteral("arrow-up")};
+    up.enabled = sidebar->canMove(key, true);
+    add(up);
+    Item down{QStringLiteral("move-down"), QStringLiteral("Move down"), QStringLiteral("arrow-down")};
+    down.enabled = sidebar->canMove(key, false);
+    add(down);
+  }
   if (supports.settlement) {
     const bool settled = thread->settledOverride == QLatin1String("settled");
     add({settled ? QStringLiteral("unsettle") : QStringLiteral("settle"),
@@ -125,6 +141,9 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
       for (const sidebar::SnoozePreset& preset : sidebar->snoozePresets()) {
         snooze.children.append({QStringLiteral("snooze:") + preset.id, SidebarController::snoozeLabel(preset)});
       }
+      Item custom{SidebarController::kCustomSnooze, QStringLiteral("Custom…")};
+      custom.separatorBefore = true;
+      snooze.children.append(custom);
       add(snooze);
     }
   }
@@ -160,14 +179,7 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   add(copy, false);
   if (projectKey) add({QStringLiteral("project-settings"), QStringLiteral("Project settings"), QStringLiteral("settings")}, false);
   add({QStringLiteral("fork"), QStringLiteral("Fork thread"), QStringLiteral("git-fork")});
-  // Another machine of the cluster can take a thread the cluster serves.
-  bool elsewhere = false;
-  if (m_store->servesEnvironment(thread->environmentId)) {
-    for (const QString& environment : m_store->environments()) {
-      if (environment != thread->environmentId && m_store->servesEnvironment(environment)) elsewhere = true;
-    }
-  }
-  if (elsewhere) add({QStringLiteral("move"), QStringLiteral("Move to another machine…"), QStringLiteral("arrow-right-left")});
+  if (movable(key)) add({QStringLiteral("move"), QStringLiteral("Move to another machine…"), QStringLiteral("arrow-right-left")});
   Item archive{QStringLiteral("archive"), QStringLiteral("Archive thread"), QStringLiteral("archive")};
   archive.separatorBefore = true;
   archive.enabled = !running(*thread);
@@ -180,18 +192,210 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   return true;
 }
 
+void ThreadMenuController::openSelection(const QStringList& keys, double x, double y) {
+  auto* shell = NativeShell::of(this);
+  SidebarController* sidebar = shell->sidebar();
+  const qint64 nowMs = sidebar->now().toMSecsSinceEpoch();
+  const qsizetype count = keys.size();
+  qsizetype pinned = 0, regenerable = 0, regenerating = 0;
+  bool snoozable = true, settleable = true, anyRunning = false, online = true;
+  for (const QString& key : keys) {
+    const auto thread = m_store->thread(key);
+    if (!thread) continue;
+    const sidebar::Capabilities supports = m_store->capabilities(thread->environmentId);
+    if (supports.pinning && thread->pinnedAt) ++pinned;
+    if (supports.titleRegeneration) {
+      if (m_store->threadRow(key).value(QLatin1String("titleRegeneration")).isObject()) {
+        ++regenerating;
+      } else {
+        ++regenerable;
+      }
+    }
+    snoozable = snoozable && supports.snooze && sidebar::canSnooze(*thread, nowMs);
+    settleable = settleable && supports.settlement;
+    anyRunning = anyRunning || running(*thread);
+    online = online && m_store->threadOnline(key);
+  }
+  const auto counted = [](const QString& label, qsizetype of) { return QStringLiteral("%1 (%2)").arg(label).arg(of); };
+  QList<Item> items;
+  const auto add = [&items, online](Item item) {
+    if (!online) item.enabled = false;
+    items.append(std::move(item));
+  };
+  // Each count is what the action touches.
+  if (pinned > 0) add({QStringLiteral("unpin"), counted(QStringLiteral("Unpin"), pinned), QStringLiteral("pin-off")});
+  if (settleable) add({QStringLiteral("settle"), counted(QStringLiteral("Settle"), count), QStringLiteral("circle-check")});
+  if (snoozable) {
+    Item snooze{QStringLiteral("snooze"), counted(QStringLiteral("Snooze"), count), QStringLiteral("clock")};
+    for (const sidebar::SnoozePreset& preset : sidebar->snoozePresets()) {
+      snooze.children.append({QStringLiteral("snooze:") + preset.id, SidebarController::snoozeLabel(preset)});
+    }
+    Item custom{SidebarController::kCustomSnooze, QStringLiteral("Custom…")};
+    custom.separatorBefore = true;
+    snooze.children.append(custom);
+    add(snooze);
+  }
+  if (regenerable > 0) {
+    add({QStringLiteral("regenerate-title"), counted(QStringLiteral("Regenerate titles"), regenerable), QStringLiteral("refresh-cw")});
+  } else if (regenerating > 0) {
+    Item busy{QStringLiteral("regenerate-title"), counted(QStringLiteral("Regenerating…"), regenerating), QStringLiteral("refresh-cw")};
+    busy.enabled = false;
+    add(busy);
+  }
+  add({QStringLiteral("mark-unread"), counted(QStringLiteral("Mark unread"), count), QStringLiteral("mail-open")});
+  Item archive{QStringLiteral("archive"), counted(QStringLiteral("Archive"), count), QStringLiteral("archive")};
+  archive.separatorBefore = true;
+  archive.enabled = !anyRunning;
+  add(archive);
+  Item remove{QStringLiteral("delete"), counted(QStringLiteral("Delete"), count), QStringLiteral("trash")};
+  remove.destructive = true;
+  add(remove);
+  shell->controller<MenuController>()->open(x, y, items, [this, keys](const QString& id) { chooseForSelection(keys, id); });
+}
+
+void ThreadMenuController::commandEach(const QStringList& keys, const std::function<QJsonObject(const QString& threadId)>& make,
+                                       std::function<void(const QStringList& failed, const QString& reason)> done) {
+  struct Batch {
+    qsizetype pending = 0;
+    QStringList failed;
+    QString reason;
+  };
+  auto batch = std::make_shared<Batch>();
+  QList<std::pair<QString, sidebar::Thread>> targets;
+  for (const QString& key : keys) {
+    if (const auto thread = m_store->thread(key)) targets.append({key, *thread});
+  }
+  batch->pending = targets.size();
+  if (targets.isEmpty()) return done({}, {});
+  for (const auto& [key, thread] : std::as_const(targets)) {
+    m_client->dispatchCommand(this, thread.environmentId, make(thread.id),
+                              [batch, key, done](const QJsonValue&, const std::optional<QString>& error) {
+                                if (error) {
+                                  if (batch->failed.isEmpty()) batch->reason = *error;
+                                  batch->failed.append(key);
+                                }
+                                if (--batch->pending == 0) done(batch->failed, batch->reason);
+                              });
+  }
+}
+
+void ThreadMenuController::chooseForSelection(const QStringList& keys, const QString& id) {
+  auto* shell = NativeShell::of(this);
+  SidebarController* sidebar = shell->sidebar();
+  const auto typed = [](const char* type) {
+    return [type](const QString& threadId) {
+      return QJsonObject{{QStringLiteral("type"), QLatin1String(type)}, {QStringLiteral("threadId"), threadId}};
+    };
+  };
+  const auto plural = [](qsizetype count) { return count == 1 ? QStringLiteral("thread") : QStringLiteral("threads"); };
+  if (id == SidebarController::kCustomSnooze) {
+    sidebar->askCustomSnooze(keys);
+  } else if (id.startsWith(QLatin1String("snooze:"))) {
+    QString until;
+    for (const sidebar::SnoozePreset& preset : sidebar->snoozePresets()) {
+      if (QStringLiteral("snooze:") + preset.id == id) until = preset.snoozedUntil;
+    }
+    if (until.isEmpty()) return;
+    sidebar->clearSelection();
+    commandEach(keys, [until](const QString& threadId) {
+      return QJsonObject{{QStringLiteral("type"), QStringLiteral("thread.snooze")}, {QStringLiteral("threadId"), threadId},
+                         {QStringLiteral("snoozedUntil"), until}};
+    }, [this, plural, total = keys.size()](const QStringList& failed, const QString& reason) {
+      if (failed.isEmpty()) return;
+      toasts()->error(failed.size() < total ? QStringLiteral("Failed to snooze %1 %2").arg(failed.size()).arg(plural(failed.size()))
+                                             : QStringLiteral("Failed to snooze threads"),
+                      reason);
+    });
+  } else if (id == QLatin1String("unpin")) {
+    QStringList pinned;
+    for (const QString& key : keys) {
+      const auto thread = m_store->thread(key);
+      if (thread && thread->pinnedAt) pinned.append(key);
+    }
+    sidebar->clearSelection();
+    commandEach(pinned, typed("thread.unpin"), [this](const QStringList& failed, const QString& reason) {
+      if (!failed.isEmpty()) toasts()->error(QStringLiteral("Failed to unpin threads"), reason);
+    });
+  } else if (id == QLatin1String("settle")) {
+    sidebar->clearSelection();
+    for (const QString& key : keys) {
+      const auto thread = m_store->thread(key);
+      if (thread && thread->settledOverride != QLatin1String("settled")) {
+        m_bridge->dispatch(QStringLiteral("thread.settle"), QVariantMap{{QStringLiteral("key"), key}});
+      }
+    }
+  } else if (id == QLatin1String("regenerate-title")) {
+    QStringList eligible;
+    for (const QString& key : keys) {
+      const auto thread = m_store->thread(key);
+      if (thread && m_store->capabilities(thread->environmentId).titleRegeneration &&
+          !m_store->threadRow(key).value(QLatin1String("titleRegeneration")).isObject()) {
+        eligible.append(key);
+      }
+    }
+    sidebar->clearSelection();
+    commandEach(eligible, [](const QString& threadId) {
+      return QJsonObject{{QStringLiteral("type"), QStringLiteral("thread.metadata.update")}, {QStringLiteral("threadId"), threadId},
+                         {QStringLiteral("regenerateTitle"), true}};
+    }, [this](const QStringList& failed, const QString& reason) {
+      if (!failed.isEmpty()) toasts()->error(QStringLiteral("Failed to regenerate thread titles"), reason);
+    });
+  } else if (id == QLatin1String("mark-unread")) {
+    sidebar->clearSelection();
+    for (const QString& key : keys) m_bridge->dispatch(QStringLiteral("thread.markUnread"), QVariantMap{{QStringLiteral("key"), key}});
+  } else if (id == QLatin1String("archive")) {
+    sidebar->clearSelection();
+    for (const QString& key : keys) archive(key);
+  } else if (id == QLatin1String("delete")) {
+    const auto run = [this, keys, typed] {
+      commandEach(keys, typed("thread.delete"), [this, keys](const QStringList& failed, const QString& reason) {
+        if (!failed.isEmpty()) toasts()->error(QStringLiteral("Failed to delete threads"), reason);
+        // The threads that could not be deleted stay selected.
+        QStringList deleted;
+        for (const QString& key : keys) {
+          if (!failed.contains(key)) deleted.append(key);
+        }
+        NativeShell::of(this)->sidebar()->deselect(deleted);
+      });
+    };
+    if (setting(this, "confirmThreadDelete")) {
+      shell->controller<MenuController>()->confirm(
+          QStringLiteral("Delete %1 %2?").arg(keys.size()).arg(plural(keys.size())),
+          QStringLiteral("This permanently clears conversation history for these threads."), QStringLiteral("Delete"), true, run);
+    } else {
+      run();
+    }
+  }
+}
+
+// Another machine of the cluster can take a thread the cluster serves.
+bool ThreadMenuController::movable(const QString& key) const {
+  const auto thread = m_store->thread(key);
+  if (!thread || !m_store->servesEnvironment(thread->environmentId)) return false;
+  for (const QString& environment : m_store->environments()) {
+    if (environment != thread->environmentId && m_store->servesEnvironment(environment)) return true;
+  }
+  return false;
+}
+
 void ThreadMenuController::choose(const QString& key, const QString& id, double x, double y) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
   auto* shell = NativeShell::of(this);
   auto* navigation = shell->controller<NavigationController>();
   const QVariantMap keyed{{QStringLiteral("key"), key}};
-  if (id.startsWith(QLatin1String("snooze:"))) {
+  if (id == SidebarController::kCustomSnooze) {
+    shell->sidebar()->askCustomSnooze({key});
+  } else if (id.startsWith(QLatin1String("snooze:"))) {
     for (const sidebar::SnoozePreset& preset : shell->sidebar()->snoozePresets()) {
       if (QStringLiteral("snooze:") + preset.id == id) shell->sidebar()->snooze(key, preset.snoozedUntil);
     }
   } else if (id == QLatin1String("new-thread-on-branch")) {
     newThreadOnBranch(key);
+  } else if (id == QLatin1String("move-up") || id == QLatin1String("move-down")) {
+    m_bridge->dispatch(QStringLiteral("thread.move"),
+                       QVariantMap{{QStringLiteral("key"), key},
+                                   {QStringLiteral("direction"), id == QLatin1String("move-up") ? QStringLiteral("up") : QStringLiteral("down")}});
   } else if (id == QLatin1String("pin")) {
     pin(key);
   } else if (id == QLatin1String("unpin")) {
@@ -374,6 +578,12 @@ void ThreadMenuController::activate() {
   commands->add(kProjectSettingsCommand, tr("Project settings"), [this, navigation] {
     if (!navigation->threadKey().isEmpty()) openProjectSettings(navigation->threadKey());
   });
+  commands->add(kMoveCommand, tr("Move thread to another machine…"), [this, navigation] {
+    // The palette has no pointer: the machines are offered at the window's top left.
+    if (!navigation->threadKey().isEmpty()) chooseDestination(navigation->threadKey(), 120, 80);
+  });
+  commands->setTerms(kMoveCommand, {QStringLiteral("move"), QStringLiteral("machine"), QStringLiteral("cluster"),
+                                    QStringLiteral("transfer")});
   commands->setTerms(kProjectSettingsCommand, {QStringLiteral("project"), QStringLiteral("settings"),
                                                QStringLiteral("scripts"), QStringLiteral("configuration")});
   connect(navigation, &NavigationController::changed, this, &ThreadMenuController::present);
@@ -396,6 +606,7 @@ void ThreadMenuController::present() {
   const auto project = thread ? m_store->project(thread->environmentId + QLatin1Char(':') + thread->projectId) : std::nullopt;
   commands->setDescription(kProjectSettingsCommand, project ? project->title : QString());
   commands->setListed(kProjectSettingsCommand, project.has_value());
+  commands->setListed(kMoveCommand, thread.has_value() && movable(key));
 }
 
 QString ThreadMenuController::pullRequestUrl(const QString& key) const {
@@ -494,9 +705,41 @@ void ThreadMenuController::chooseDestination(const QString& key, double x, doubl
           return;
         }
         NativeShell::of(this)->controller<MenuController>()->open(x, y, items, [this, key, x, y](const QString& id) {
-          move(key, id.mid(QStringLiteral("machine:").size()), QString(), false, x, y);
+          const QString machine = id.mid(QStringLiteral("machine:").size());
+          const auto thread = m_store->thread(key);
+          // The MC does not move a thread whose turn is running: stopping it first is offered here.
+          if (thread && running(*thread)) {
+            NativeShell::of(this)->controller<MenuController>()->confirm(
+                QStringLiteral("\"%1\" is running").arg(thread->title),
+                QStringLiteral("Stop its turn and move it to %1?").arg(machine), QStringLiteral("Stop and move"), false,
+                [this, key, machine, x, y] { stopAndMove(key, machine, x, y); });
+            return;
+          }
+          move(key, machine, QString(), false, x, y);
         });
       });
+}
+
+void ThreadMenuController::stopAndMove(const QString& key, const QString& machine, double x, double y) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  if (!running(*thread)) return move(key, machine, QString(), false, x, y);
+  // The move goes once the MC's row says the turn is over.
+  auto waiting = std::make_shared<QMetaObject::Connection>();
+  *waiting = connect(m_store, &ShellStore::changed, this, [this, key, machine, x, y, waiting] {
+    const auto now = m_store->thread(key);
+    if (now && running(*now)) return;
+    disconnect(*waiting);
+    if (now) move(key, machine, QString(), false, x, y);
+  });
+  QJsonObject interrupt{{QStringLiteral("type"), QStringLiteral("run.interrupt")}, {QStringLiteral("threadId"), thread->id}};
+  if (thread->activeRunId) interrupt.insert(QStringLiteral("runId"), *thread->activeRunId);
+  m_client->dispatchCommand(this, thread->environmentId, interrupt,
+                            [this, waiting](const QJsonValue&, const std::optional<QString>& error) {
+                              if (!error) return;
+                              disconnect(*waiting);
+                              toasts()->error(QStringLiteral("Failed to stop the turn"), *error);
+                            });
 }
 
 // `hal-c2.moveThread` answers moved, or asks to confirm what stays behind, or
@@ -510,10 +753,9 @@ void ThreadMenuController::move(const QString& key, const QString& machine, cons
   if (confirmed) input.insert(QStringLiteral("confirmed"), true);
   const QString progress = toasts()->show(QStringLiteral("loading"),
                                           QStringLiteral("Moving \"%1\" to %2…").arg(thread->title, machine), QString(), {}, 0);
-  const bool viewing = NativeShell::of(this)->controller<NavigationController>()->threadKey() == key;
   m_client->call(this, 
       thread->environmentId, QStringLiteral("hal-c2.moveThread"), input,
-      [this, key, machine, projectId, confirmed, x, y, progress, viewing, title = thread->title](
+      [this, key, machine, projectId, confirmed, x, y, progress, title = thread->title](
           const QJsonValue& result, const std::optional<QString>& error) {
         toasts()->dismiss(progress);
         if (error) {
@@ -545,9 +787,9 @@ void ThreadMenuController::move(const QString& key, const QString& machine, cons
           toasts()->show(QStringLiteral("success"), text(answer, "message").isEmpty()
                                                         ? QStringLiteral("Moved to ") + machine
                                                         : text(answer, "message"));
-          // The reader follows the thread to where it lives now.
+          // The thread opens where it lives now.
           const QString environmentId = text(answer, "environmentId");
-          if (viewing && !environmentId.isEmpty()) {
+          if (!environmentId.isEmpty()) {
             NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(
                 environmentId + QLatin1Char(':') + key.mid(key.indexOf(QLatin1Char(':')) + 1)));
           }

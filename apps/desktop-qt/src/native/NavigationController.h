@@ -81,7 +81,7 @@ signals:
   void changed();
 
 private:
-  void go(const Route& route, bool replace);
+  void go(Route route, bool replace);
   void publish();
   // Brings a setting of the settings page showing into view (route.target).
   void reveal(const QString& target);

@@ -132,6 +132,11 @@ void NavigationController::activate() {
 
 void NavigationController::leaveVanishedThread() {
   if (!m_active || m_route.kind != QLatin1String("thread")) return;
+  // The open thread moved to another machine: the window follows it there.
+  if (m_store->movedTo(m_route.threadKey)) {
+    replace(Route::thread(m_route.threadKey));
+    return;
+  }
   if (m_store->thread(m_route.threadKey)) {
     m_threadSeen = true;
     return;
@@ -198,7 +203,14 @@ void NavigationController::forward() {
   m_forwardStack = rest;
 }
 
-void NavigationController::go(const Route& route, bool replace) {
+void NavigationController::go(Route route, bool replace) {
+  // A thread that moved to another machine opens where it lives now, so links
+  // and alerts from before the move still find it.
+  for (int hops = 0; hops < 8 && route.kind == QLatin1String("thread"); ++hops) {
+    const auto moved = m_store->movedTo(route.threadKey);
+    if (!moved) break;
+    route.threadKey = *moved;
+  }
   if (route != m_route) {
     m_target.clear();
     const bool settingsToSettings =

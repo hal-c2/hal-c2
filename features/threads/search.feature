@@ -87,20 +87,20 @@ Feature: Searching threads
     When the user types "da"
     Then threads whose messages contain "da" are added below the title matches
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Searching spans every connected environment
     Given the environment "work" has the thread "Dark mode for admin"
     When the user searches threads for "dark"
     Then "Add dark mode" and "Dark mode for admin" are both found
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: An offline environment is left out of the search
     Given the environment "work" is offline
     When the user searches threads for "dark"
     Then results from the reachable environments are shown
     And the user can tell "work" was not searched
 
-  @backlog @desktop
+  @desktop
   Scenario: Moving through search results with the keyboard
     Given the thread search shows three results
     When the user moves down past the last result
@@ -108,7 +108,7 @@ Feature: Searching threads
     When the user chooses the highlighted result
     Then that thread opens and the search is cleared
 
-  @backlog @desktop
+  @desktop
   Scenario: Leaving a search
     Given the user is searching threads
     When the user dismisses the search

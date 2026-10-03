@@ -112,7 +112,7 @@ Feature: Thread menu and selecting several threads
     When the user opens the project settings from "Tidy logs"
     Then the settings for "shop" open
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Selecting several threads
     Given the threads "A", "B", "C" and "D" are listed in that order
     When the user <gesture>
@@ -123,26 +123,26 @@ Feature: Thread menu and selecting several threads
       | adds "A" and then "C" to the selection        | "A" and "C"      |
       | selects "A" and then extends the range to "C" | "A", "B" and "C" |
 
-  @backlog @desktop
+  @desktop
   Scenario: Clearing a selection
     Given "A" and "C" are selected
     When the user clears the selection
     Then no thread is selected
 
-  @backlog @desktop
+  @desktop
   Scenario: Changing the project filter clears the selection
     Given "A" and "C" are selected
     When the user scopes the list to another project
     Then no thread is selected
 
-  @backlog @desktop
+  @desktop
   Scenario: The selection menu counts what each action affects
     Given "A" and "C" are selected and only "A" is pinned
     When the user opens the menu for the selection
     Then unpinning is offered for 1 thread
     And settling, snoozing, marking unread and deleting are offered for 2 threads
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A menu action applies to every selected thread
     Given "A" and "C" are selected
     When the user chooses to <action> from the menu of "A"
@@ -154,13 +154,13 @@ Feature: Thread menu and selecting several threads
       | snooze | snoozed |
       | delete | deleted |
 
-  @backlog @desktop
+  @desktop
   Scenario: The selection cannot be archived while one of its threads is running
     Given "A" and "C" are selected and the agent is working in "C"
     When the user opens the menu for the selection
     Then archiving the selection is unavailable
 
-  @backlog @desktop
+  @desktop
   Scenario: A partly failed delete keeps the failed threads selected
     Given "A" and "C" are selected
     And deleting "C" fails

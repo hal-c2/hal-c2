@@ -190,6 +190,7 @@ Feature: The desktop's thread list against its MC
         | snooze:evening    | This evening (18:00)       |
         | snooze:tomorrow   | Tomorrow (09:00)           |
         | snooze:next-week  | Next week (Mon 09:00)      |
+        | snooze:custom     | Custom…                    |
 
     @desktop
     Scenario: Picking a preset snoozes the thread and offers Undo

@@ -66,6 +66,8 @@ Window {
 
     ConfirmDialog {}
 
+    CustomSnoozeDialog {}
+
     CommandPalette {}
 
     // The palette's "Toggle theme editor": the active theme's colours.

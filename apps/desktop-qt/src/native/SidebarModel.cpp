@@ -181,6 +181,7 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   thread.pinOrderKey = stringField(row, "pinOrderKey");
   thread.activeOrderKey = stringField(row, "activeOrderKey");
   thread.lastVisitedAt = stringField(row, "lastVisitedAt");
+  thread.movingTo = stringField(row.value(QLatin1String("moving")).toObject(), "label");
   thread.latestRunId = stringField(row, "latestRunId");
   thread.activeRunId = stringField(row, "activeRunId");
   thread.activityRunStatus = stringField(row, "activityRunStatus");
@@ -301,6 +302,25 @@ QString status(const Thread& thread) {
                                                                            : QStringLiteral("failed");
   }
   return QStringLiteral("ready");
+}
+
+QString mostUrgentStatus(const QStringList& statuses) {
+  static const QStringList order{QStringLiteral("approval"), QStringLiteral("input"), QStringLiteral("working"),
+                                 QStringLiteral("waiting"), QStringLiteral("limited"), QStringLiteral("failed")};
+  for (const QString& candidate : order) {
+    if (statuses.contains(candidate)) return candidate;
+  }
+  return QStringLiteral("ready");
+}
+
+QString workingLabel(const Thread& thread, qint64 nowMs) {
+  if (status(thread) != QLatin1String("working") || !thread.latestRun) return {};
+  const auto startedAt = parseIso(thread.latestRun->startedAt ? thread.latestRun->startedAt : thread.latestRun->requestedAt);
+  if (!startedAt) return {};
+  const qint64 minutes = std::max<qint64>(0, nowMs - *startedAt) / kMinuteMs;
+  if (minutes < 1) return {};
+  if (minutes < 60) return QStringLiteral("%1m").arg(minutes);
+  return QStringLiteral("%1h %2m").arg(minutes / 60).arg(minutes % 60);
 }
 
 bool unread(const Thread& thread) {
@@ -688,10 +708,13 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
     for (const QString& member : group.memberKeys) logicalKeyByPhysicalKey.insert(member, group.key);
   }
   QHash<QString, int> threadCounts;
+  QHash<QString, QStringList> threadStatuses;
   for (const Thread& thread : threads) {
     if (thread.archivedAt) continue;
     const auto logical = logicalKeyByPhysicalKey.constFind(thread.environmentId + QLatin1Char(':') + thread.projectId);
-    if (logical != logicalKeyByPhysicalKey.constEnd()) threadCounts[*logical] += 1;
+    if (logical == logicalKeyByPhysicalKey.constEnd()) continue;
+    threadCounts[*logical] += 1;
+    if (!thread.subagent) threadStatuses[*logical].append(status(thread));
   }
 
   const ProjectGroup* scoped = scopeProjectKey ? input.group(*scopeProjectKey) : nullptr;
@@ -727,6 +750,12 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
           {QStringLiteral("wakeLabel"),
            snoozed && thread.snoozedUntil ? QVariant(wakeLabel(*thread.snoozedUntil, nowMs))
                                           : QVariant::fromValue(nullptr)},
+          {QStringLiteral("wakeDescription"),
+           snoozed && thread.snoozedUntil && input.describeWake ? QVariant(input.describeWake(*thread.snoozedUntil))
+                                                                : QVariant::fromValue(nullptr)},
+          {QStringLiteral("workingLabel"), workingLabel(thread, nowMs)},
+          {QStringLiteral("movingTo"), nullable(thread.movingTo)},
+          {QStringLiteral("selected"), input.selectedKeys.contains(thread.key())},
           {QStringLiteral("wokeAt"), nullable(visibleWokeAt(thread, nowMs))},
           {QStringLiteral("offline"), offline},
           {QStringLiteral("canSettle"), !offline && capabilities.settlement},
@@ -745,6 +774,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   for (const ProjectGroup& group : input.projects) {
     QVariantMap project = group.summary;
     project.insert(QStringLiteral("threadCount"), threadCounts.value(group.key));
+    project.insert(QStringLiteral("status"), mostUrgentStatus(threadStatuses.value(group.key)));
     projects.append(project);
   }
   QVariantList drafts;
@@ -782,7 +812,124 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       {QStringLiteral("activeThreadKey"), nullable(input.activeThreadKey)},
       {QStringLiteral("activeDraftId"), input.activeDraftId},
   };
+  // In the order the rows render.
+  QStringList selected;
+  for (const QString& key : std::as_const(view.orderedKeys)) {
+    if (input.selectedKeys.contains(key)) selected.append(key);
+  }
+  view.state.insert(QStringLiteral("selectedKeys"), selected);
   return view;
+}
+
+namespace {
+
+const QString kOrderDigits = QStringLiteral("abcdefghijklmnopqrstuvwxyz");
+
+bool validOrderKey(const QString& key) {
+  if (key.isEmpty()) return false;
+  for (const QChar c : key) {
+    if (!kOrderDigits.contains(c)) return false;
+  }
+  // A trailing lowest digit leaves no room for a key just before this one.
+  return key.back() != kOrderDigits.front();
+}
+
+// The midpoint of two digit strings read as fractions; "" is the open bound.
+QString orderMidpoint(const QString& a, const QString& b) {
+  if (!b.isEmpty()) {
+    qsizetype n = 0;
+    while (n < b.size() && (n < a.size() ? a.at(n) : kOrderDigits.front()) == b.at(n)) ++n;
+    if (n > 0) return b.left(n) + orderMidpoint(a.mid(n), b.mid(n));
+  }
+  const qsizetype digitA = a.isEmpty() ? 0 : kOrderDigits.indexOf(a.front());
+  const qsizetype digitB = b.isEmpty() ? kOrderDigits.size() : kOrderDigits.indexOf(b.front());
+  if (digitB - digitA > 1) return QString(kOrderDigits.at((digitA + digitB + 1) / 2));
+  if (b.size() > 1) return QString(b.front());
+  return QString(kOrderDigits.at(digitA)) + orderMidpoint(a.mid(1), QString());
+}
+
+}  // namespace
+
+Nullable orderKeyBetween(const Nullable& before, const Nullable& after) {
+  const QString a = before.value_or(QString());
+  const QString b = after.value_or(QString());
+  if (!a.isEmpty() && !validOrderKey(a)) return std::nullopt;
+  if (!b.isEmpty() && !validOrderKey(b)) return std::nullopt;
+  if (!b.isEmpty() && a >= b) return std::nullopt;
+  return orderMidpoint(a, b);
+}
+
+QStringList spreadOrderKeys(int count) {
+  const qsizetype base = kOrderDigits.size();
+  int width = 2;
+  double space = double(base) * base;
+  while (space <= (count + 1) * 2) {
+    ++width;
+    space *= base;
+  }
+  const double step = space / (count + 1);
+  QStringList keys;
+  for (int index = 0; index < count; ++index) {
+    qint64 value = std::llround(step * (index + 1));
+    if (value % base == 0) ++value;
+    QString key;
+    for (int digit = 0; digit < width; ++digit) {
+      key.prepend(kOrderDigits.at(value % base));
+      value /= base;
+    }
+    keys.append(key);
+  }
+  return keys;
+}
+
+QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
+                                   const QString& movedKey) {
+  const qsizetype moved = orderedKeys.indexOf(movedKey);
+  if (moved < 0) return {};
+  QSet<QString> reserved;
+  for (auto it = orderKeys.cbegin(); it != orderKeys.cend(); ++it) {
+    if (!orderedKeys.contains(it.key()) && it.value()) reserved.insert(*it.value());
+  }
+  const bool hasBefore = moved > 0;
+  const bool hasAfter = moved < orderedKeys.size() - 1;
+  const Nullable beforeKey = hasBefore ? orderKeys.value(orderedKeys.at(moved - 1)) : std::nullopt;
+  const Nullable afterKey = hasAfter ? orderKeys.value(orderedKeys.at(moved + 1)) : std::nullopt;
+  if ((!hasBefore || beforeKey) && (!hasAfter || afterKey)) {
+    Nullable key = orderKeyBetween(beforeKey, afterKey);
+    while (key && reserved.contains(*key)) key = orderKeyBetween(key, afterKey);
+    if (key) return {{movedKey, *key}};
+  }
+  // A neighbour without a key (or corrupt ones): the section gets fresh keys in the new order.
+  QStringList fresh = spreadOrderKeys(int(orderedKeys.size() + reserved.size()));
+  fresh.removeIf([&reserved](const QString& key) { return reserved.contains(key); });
+  QList<OrderAssignment> assignments;
+  for (qsizetype index = 0; index < orderedKeys.size(); ++index) {
+    if (orderKeys.value(orderedKeys.at(index)) != fresh.at(index)) assignments.append({orderedKeys.at(index), fresh.at(index)});
+  }
+  return assignments;
+}
+
+Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, const QTimeZone& zone) {
+  QDateTime wake;
+  if (input.mode == QLatin1String("duration")) {
+    bool ok = false;
+    const double amount = input.amount.trimmed().toDouble(&ok);
+    if (!ok || !std::isfinite(amount) || amount <= 0) return std::nullopt;
+    const qint64 unitMs = input.unit == QLatin1String("minutes") ? kMinuteMs : input.unit == QLatin1String("days") ? kDayMs : kHourMs;
+    wake = now.addMSecs(std::llround(amount * double(unitMs)));
+  } else {
+    static const QRegularExpression datePattern(QStringLiteral("^\\d{4}-\\d{2}-\\d{2}$"));
+    static const QRegularExpression timePattern(QStringLiteral("^\\d{2}:\\d{2}$"));
+    if (!datePattern.match(input.date).hasMatch() || !timePattern.match(input.time).hasMatch()) return std::nullopt;
+    const QDate date = QDate::fromString(input.date, Qt::ISODate);
+    const QTime time = QTime::fromString(input.time, QStringLiteral("HH:mm"));
+    if (!date.isValid() || !time.isValid()) return std::nullopt;
+    wake = QDateTime(date, time, zone);
+    // A time of day the zone skips resolves to another one: that is not what was asked.
+    if (!wake.isValid() || wake.date() != date || wake.time() != time) return std::nullopt;
+  }
+  if (!wake.isValid() || wake <= now) return std::nullopt;
+  return formatIso(wake);
 }
 
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale) {

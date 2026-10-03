@@ -40,7 +40,7 @@ Feature: Creating threads
     When the user starts a new thread
     Then the draft uses the model "Opus" in plan mode
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A new thread uses the project default model when the project has one
     Given "shop" has the default model "Sonnet"
     And the current thread uses the model "Opus"
