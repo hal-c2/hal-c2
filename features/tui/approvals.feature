@@ -212,18 +212,18 @@ Feature: Approvals, questions and plans from the keyboard
     Given the latest turn proposed a plan and an older turn's plan was edited later
     Then the plan card shows the latest turn's plan
 
-  @backlog @tui
+  @tui
   Scenario: The plan shows step progress as the agent works
     Given the agent is implementing a plan with five steps
     Then the plan shows which steps are done, in progress and pending
 
-  @backlog @tui
+  @tui
   Scenario: The user copies or saves the plan as Markdown
     Given the agent proposed a plan
     When the user saves the plan as Markdown
     Then a Markdown file with the plan is written to the workspace
 
-  @backlog @tui
+  @tui
   Scenario: An implemented plan links to the thread that implemented it
     Given the plan was implemented in another thread
     Then the plan names that thread and the user can open it

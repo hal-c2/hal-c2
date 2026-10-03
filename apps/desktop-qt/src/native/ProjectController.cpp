@@ -152,6 +152,13 @@ void ProjectController::openFolder(const QString& path) {
 }
 
 void ProjectController::addFolder(const QString& environmentId, const QString& root) {
+  // The environment chosen went away while the folder was being picked.
+  if (!m_store->environmentOnline(environmentId)) {
+    const QString label = m_store->environment(environmentId).value(QLatin1String("label")).toString(environmentId);
+    NativeShell::of(this)->controller<ToastController>()->error(QStringLiteral("Environment unavailable"),
+                                                                tr("%1 is not connected.").arg(label));
+    return;
+  }
   const QString normalized = sidebar::normalizePath(root);
   for (const sidebar::Project& project : m_store->projects()) {
     if (project.environmentId == environmentId && sidebar::normalizePath(project.workspaceRoot) == normalized) {

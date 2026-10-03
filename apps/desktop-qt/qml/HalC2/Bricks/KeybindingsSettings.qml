@@ -172,6 +172,14 @@ Rectangle {
             }
 
             ShellButton {
+                objectName: "keybindingFile"
+                subtle: true
+                text: qsTr("Open keybindings.json")
+                enabled: Keybindings.filePath.length > 0
+                onClicked: Keybindings.openFile()
+            }
+
+            ShellButton {
                 objectName: "keybindingAdd"
                 subtle: true
                 text: qsTr("Add keybinding")

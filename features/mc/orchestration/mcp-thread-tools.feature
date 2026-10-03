@@ -150,7 +150,7 @@ Feature: Agents working with threads through MCP tools
     Then a new thread is created by an agent through MCP with the caller's model and modes
     And its first turn starts with that message
 
-  @mc @backlog
+  @mc
   Scenario: An agent launches a thread in a new worktree on a named branch
     When the agent of "caller" launches a thread in "demo" in a new worktree based on "feature/base" on branch "feature/demo"
     Then a new thread exists in "demo"

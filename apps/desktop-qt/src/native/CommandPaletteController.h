@@ -27,8 +27,10 @@ class ShellStore;
 //     Keybindings.commands (CommandRegistry), the sidebar's projects, the
 //     settings sections the brick hands over (js/settingsPages.js, those whose
 //     `requires` state is there) and the shell's threads, cluster and linked
-//     alike (by key `environmentId:threadId`, archived and subagent ones left
-//     out); from two characters on, threads whose messages match too
+//     alike (by key `environmentId:threadId`, subagent ones left out, and
+//     archived ones too unless the query finds their linked pull request,
+//     when each is marked "Linked thread" or "Archived thread"); from two
+//     characters on, threads whose messages match too
 //     (`orchestration.searchThreads` on every online environment). A query
 //     filters and ranks as the web does (CommandPalette.logic.ts); a leading
 //     ">" keeps to actions. A menu command (CommandRegistry::addMenu) opens its
@@ -154,7 +156,8 @@ public:
   Q_INVOKABLE bool run(int row);
   // Enter: the highlighted entry, or in browse mode with none, adds the path.
   Q_INVOKABLE bool runHighlighted();
-  // Adds the browsed path as a project (browse mode's mod+Enter).
+  // Adds the highlighted folder as a project, else the path typed (browse
+  // mode's mod+Enter).
   Q_INVOKABLE bool addBrowsedFolder();
   // Opens the palette on the menu `command`'s choices.
   void showMenu(const QString& command);
@@ -215,6 +218,12 @@ private:
     bool current = false;
     // Content matches: the file's group.
     QString group;
+    // A keybinding command among the settings: listed after every setting.
+    bool secondary = false;
+    // Threads: what its linked pull requests are found by, and whether it is
+    // archived (found by those alone, and said to be).
+    QString pullRequests;
+    bool archived = false;
   };
 
   struct Row {
@@ -265,6 +274,7 @@ private:
   void searchMessages(int generation);
   void searchFolders(int generation);
   QString browsedPath() const;
+  bool relativeWithoutProject() const;
   void followTarget();
 
   ShellBridge* m_bridge;

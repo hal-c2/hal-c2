@@ -227,6 +227,13 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/appearance.feature:An appearance setting can be put back*"),
     QStringLiteral("navigation/appearance.feature:A font preference can be reset*"),
     QStringLiteral("navigation/appearance.feature:Clearing *"),
+    QStringLiteral("navigation/appearance.feature:Holding the appearance shortcut*"),
+    QStringLiteral("navigation/appearance.feature:The theme shortcut opens*"),
+    QStringLiteral("navigation/appearance.feature:Interface sliders*"),
+    QStringLiteral("navigation/appearance.feature:Diff colors*"),
+    QStringLiteral("navigation/appearance.feature:Font smoothing*"),
+    QStringLiteral("navigation/appearance.feature:Composer context*"),
+    QStringLiteral("navigation/appearance.feature:Word wrap*"),
     QStringLiteral("navigation/theme-editor.feature"),
     QStringLiteral("settings/general.feature"),
     QStringLiteral("settings/saving-settings.feature"),
@@ -443,6 +450,11 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/palette-add-project.feature:Browsing starts in the home folder"),
     QStringLiteral("navigation/palette-add-project.feature:A clone's destination starts*"),
     QStringLiteral("navigation/palette-add-project.feature:Failures while adding*"),
+    QStringLiteral("navigation/palette-add-project.feature:The user chooses which environment*"),
+    QStringLiteral("navigation/palette-add-project.feature:An environment that goes away*"),
+    QStringLiteral("navigation/palette-add-project.feature:A folder that does not exist yet*"),
+    QStringLiteral("navigation/palette-add-project.feature:Relative paths need*"),
+    QStringLiteral("navigation/palette-add-project.feature:mod+Enter adds*"),
     QStringLiteral("files/removing-and-listing-projects.feature:Removing *"),
     QStringLiteral("files/removing-and-listing-projects.feature:Confirming removal*"),
     QStringLiteral("files/removing-and-listing-projects.feature:Cancelling removal*"),
@@ -504,6 +516,16 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/keybinding-settings.feature:Removing a custom binding"),
     QStringLiteral("navigation/keybinding-settings.feature:Adding a binding for a command"),
     QStringLiteral("navigation/keybinding-settings.feature:Save failures are reported*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Conditions are built*"),
+    QStringLiteral("navigation/keybinding-settings.feature:A change is saved to every connected environment"),
+    QStringLiteral("navigation/keybinding-settings.feature:The file *"),
+    // The settings navigation's search, on the SettingsNav brick (SettingsNavSteps.cpp).
+    QStringLiteral("navigation/focus.feature:Searching settings lists*"),
+    QStringLiteral("navigation/focus.feature:A settings result opens from the keyboard"),
+    QStringLiteral("navigation/focus.feature:Nothing matches the settings search"),
+    QStringLiteral("navigation/focus.feature:Escape clears the settings search"),
+    QStringLiteral("navigation/focus.feature:The search follows a query set elsewhere"),
+    QStringLiteral("navigation/focus.feature:Typing while a terminal starts*"),
     QStringLiteral("source-control/checkpoint-diffs.feature"),
     QStringLiteral("timeline/checkpoints.feature"),
     QStringLiteral("files/file-explorer.feature"),
@@ -535,6 +557,9 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:A hidden sidebar stays hidden after a restart"),
     QStringLiteral("navigation/layout.feature:Settings replace the thread list*"),
     QStringLiteral("navigation/layout.feature:The sidebar snaps*"),
+    QStringLiteral("navigation/layout.feature:Resizing the sidebar is remembered"),
+    QStringLiteral("navigation/layout.feature:The sidebar cannot be narrower*"),
+    QStringLiteral("navigation/layout.feature:Resetting the sidebar width"),
     QStringLiteral("navigation/layout.feature:Right panel contents survive a visit to settings"),
     QStringLiteral("navigation/layout.feature:A hidden right panel does no work"),
     QStringLiteral("navigation/layout.feature:The header runs the project's action the user ran last"),
@@ -604,10 +629,10 @@ QList<Scenario> collectScenarios() {
       // `@shared` is `@desktop @mobile @tui` (features/README.md).
       if (!scenario.tags.contains(QStringLiteral("@desktop")) && !scenario.tags.contains(QStringLiteral("@shared"))) continue;
       // Not delivered anywhere, dropped, or not on the desktop yet.
-      if (scenario.tags.contains(QStringLiteral("@backlog")) || scenario.tags.contains(QStringLiteral("@dropped")) ||
-          scenario.tags.contains(QStringLiteral("@backlog-desktop"))) {
-        continue;
-      }
+      const bool backlog = scenario.tags.contains(QStringLiteral("@backlog")) ||
+                           scenario.tags.contains(QStringLiteral("@backlog-desktop"));
+      if (scenario.tags.contains(QStringLiteral("@dropped")) || scenario.tags.contains(QStringLiteral("@blocked"))) continue;
+      if (backlog != qEnvironmentVariableIsSet("HAL_C2_BACKLOG")) continue;
       scenarios.append(scenario);
     }
   }

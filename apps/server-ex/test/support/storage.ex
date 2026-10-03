@@ -150,6 +150,31 @@ defmodule HalC2.Test.Storage do
     %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
+  @doc """
+  Runs `mix hal_c2.pair`, the MC's `hal-c2 pair`, from the other profile than the one
+  the scenario's server runs in (`context.running_profile`, nil for the installed one
+  or `:dev`): a checkout while the installed server runs, and the other way round, so
+  finding the server is the command's own doing. The lines it printed are
+  `context.pair_output`.
+  """
+  def pair(context) do
+    running = context.running_profile
+    other = if running == nil, do: :dev, else: nil
+    guard!(context, other)
+    store = HalC2.Store.home_path()
+    Application.put_env(:hal_c2, :home, other)
+    refute HalC2.Store.home_path() == store
+
+    lines =
+      try do
+        Mc.run_task(Mix.Tasks.HalC2.Pair, [])
+      after
+        Application.put_env(:hal_c2, :home, running)
+      end
+
+    Map.put(context, :pair_output, lines)
+  end
+
   # Every directory the MC may write to or migrate from is inside the scenario.
   defp guard!(context, spec) do
     fs = fs(context) <> "/"

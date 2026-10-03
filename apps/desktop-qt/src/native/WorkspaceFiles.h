@@ -112,8 +112,11 @@ public:
   QString truncatedNotice() const { return m_truncatedNotice; }
   bool fileEmpty() const { return m_fileStatus == QLatin1String("ready") && m_lines.rowCount() == 0; }
   int revealLine() const { return m_revealLine; }
-  bool wrap() const { return m_wrap; }
+  // Whether long lines wrap: what the user chose here, else the word wrap
+  // setting (setDefaultWrap).
+  bool wrap() const { return m_wrap.value_or(m_defaultWrap); }
   void setWrap(bool wrap);
+  void setDefaultWrap(bool wrap);
 
   // Opens a file in the viewer, at `line` when above 0, and reveals it in the tree.
   Q_INVOKABLE void openFile(const QString& path, int line = 0);
@@ -160,5 +163,6 @@ private:
   QString m_truncatedNotice;
   int m_revealLine = 0;
   QString m_revealing;
-  bool m_wrap = false;
+  std::optional<bool> m_wrap;
+  bool m_defaultWrap = false;
 };

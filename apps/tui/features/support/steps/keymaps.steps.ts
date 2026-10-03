@@ -14,6 +14,7 @@ import { ThreadId } from "@hal-c2/contracts";
 import { KEYMAP_LAYERS } from "../../../src/keymap.ts";
 import { step } from "../../steps.ts";
 import { shell } from "../fakeClient.ts";
+import { rebindingByName, unbindingByName } from "../keyNames.ts";
 import {
   configDir,
   expectProblem,
@@ -168,12 +169,13 @@ step(
 step(
   "a keymap file that binds {string} to {string}",
   (ctx: KeymapWorld, key: string, action: string) => {
-    keymapFile(ctx)[key] = action;
+    // tui/keymap.feature names the action first and the chord second.
+    Object.assign(keymapFile(ctx), rebindingByName(key, action) ?? { [key]: action });
   },
 );
 
 step("a keymap file that sets {string} to null", (ctx: KeymapWorld, key: string) => {
-  keymapFile(ctx)[key] = null;
+  Object.assign(keymapFile(ctx), unbindingByName(key) ?? { [key]: null });
 });
 
 step(

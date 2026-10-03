@@ -852,10 +852,18 @@ defmodule HalC2.OrchestrationTest do
       })
 
       await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      # The exit wakes the thread with a turn telling Codex; the session idles after it.
+      state = await_runs(thread_id, 2)
+
+      assert [_, %{"userMessageId" => wake}] = runs(state)
+
+      assert StreamState.get(state, "message")[wake]["text"] ==
+               "The background command `npm run dev` exited with code 0."
 
       assert [%{"status" => "completed", "output" => "listening on 5173\nbye\n", "exitCode" => 0}] =
-               commands(thread_id)
+               Enum.filter(commands(thread_id), &(&1["input"] == "npm run dev"))
 
+      await_shell_row(thread_id, &(&1["activeRunId"] == nil))
       assert HalC2.Orchestration.IdleSessions.check() == [thread_id]
     end
 

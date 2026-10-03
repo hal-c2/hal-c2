@@ -1,6 +1,8 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { resolveKeymapFile } from "../keymap.ts";
+
 /** What the user's shell config directory adds to the QML shell at start. */
 export interface TuiUserConfig {
   /** Extra plugin files (`HAL_C2_TUI_PLUGINS` entries ending in `.qml`). */
@@ -8,6 +10,17 @@ export interface TuiUserConfig {
   readonly pluginDirs: ReadonlyArray<string>;
   /** `keymap.json`: overrides merged into the shell's `Keymap`s. */
   readonly keymap: Record<string, unknown> | undefined;
+}
+
+/** Merge rebinds made in the client into `<configDir>/keymap.json` (created when missing). */
+export function saveKeymapOverrides(
+  configDir: string,
+  overrides: Record<string, string | null>,
+): void {
+  const path = NodePath.join(configDir, KEYMAP_FILE);
+  const current = readKeymapFile(path) ?? {};
+  NodeFS.mkdirSync(configDir, { recursive: true });
+  NodeFS.writeFileSync(path, `${JSON.stringify({ ...current, ...overrides }, null, 2)}\n`);
 }
 
 export const KEYMAP_FILE = "keymap.json";
@@ -36,11 +49,10 @@ export function readUserConfig(input: {
     else if (isDirectory(path)) pluginDirs.push(path);
     else input.warn(`plugin directory "${path}" does not exist; skipped`);
   }
-  return {
-    plugins,
-    pluginDirs,
-    keymap: readKeymapFile(NodePath.join(input.configDir, KEYMAP_FILE)),
-  };
+  const file = readKeymapFile(NodePath.join(input.configDir, KEYMAP_FILE));
+  const resolved = file ? resolveKeymapFile(file) : undefined;
+  for (const conflict of resolved?.conflicts ?? []) input.warn(conflict);
+  return { plugins, pluginDirs, keymap: resolved?.keymap };
 }
 
 function isDirectory(path: string): boolean {

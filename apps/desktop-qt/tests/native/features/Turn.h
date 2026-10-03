@@ -11,3 +11,8 @@ void pickAnswer(World& world, const QString& label);
 
 // Opens a thread of "shop" on a connected MC, unless one is open.
 void openTurnThread(World& world);
+
+// The same thread with its agent working on a turn, and a message waiting in
+// its queue behind that turn (its run is "run-queued-<text>").
+void startWorkingTurn(World& world);
+void queueTurnMessage(World& world, const QString& text);

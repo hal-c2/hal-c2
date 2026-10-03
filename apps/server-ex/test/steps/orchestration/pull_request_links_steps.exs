@@ -149,6 +149,85 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     discover(context, thread, "acme/app#7")
   end
 
+  # --- refreshing host state ----------------------------------------------------------
+
+  # The threads with an active pull request are the ones whose links the MC asks the
+  # host about when it refreshes (`HalC2.PullRequests.Sync`). The project is a GitHub
+  # checkout and `gh` is a fake that says every pull request it is asked about is open,
+  # so a thread counts as active exactly when `gh` is asked about its pull request.
+  # Beside the settled thread, "still-open" links an open pull request and stays active.
+  step "{string} links pull request {string} and settled after it merged",
+       %{args: [thread, pr]} = context do
+    merged = %{
+      "state" => "merged",
+      "title" => "PR",
+      "mergedAt" => World.iso_from_now(-60_000),
+      "syncedAt" => World.iso_from_now(0)
+    }
+
+    World.github_remote(context, World.project(context, "demo").root, "acme/app")
+
+    context =
+      context
+      |> World.cli_rules([
+        %{"args" => ["stacks?pull_request="], "stdout" => []},
+        %{
+          "args" => ["api graphql"],
+          "stdin" => ["PullRequestSummaries"],
+          "stdout" => %{"data" => Map.new(0..3, &{"s#{&1}", %{"pullRequest" => open_summary()}})}
+        }
+      ])
+      |> link(thread, pr, "manual")
+      |> ok!()
+      |> command(thread, "thread.pull-request-link.sync", sync(pr, merged))
+      |> ok!()
+      |> command(thread, "thread.settle", %{})
+      |> ok!()
+
+    World.await_row(World.thread_id(context, thread), fn row ->
+      row["settledOverride"] == "settled" and
+        match?([%{"snapshot" => %{"state" => "merged"}}], row["pullRequests"])
+    end)
+
+    # The sync starts knowing the settled thread; the open one is linked under its eyes
+    # and read at once.
+    HalC2.Test.Mc.ensure({HalC2.PullRequests.Sync, interval: nil})
+
+    context =
+      context
+      |> World.create_thread("still-open", "demo", %{"branch" => "feature/y"})
+      |> link("still-open", "acme/app#13", "manual")
+      |> ok!()
+
+    World.await_row(World.thread_id(context, "still-open"), fn row ->
+      match?([%{"snapshot" => %{"state" => "open"}}], row["pullRequests"])
+    end)
+
+    Map.put(context, :thread, thread)
+  end
+
+  step "the MC refreshes pull request state", context do
+    before = length(summary_reads(context))
+    :ok = HalC2.PullRequests.Sync.sweep()
+    Map.put(context, :refresh_reads, Enum.drop(summary_reads(context), before))
+  end
+
+  step "{string} is not listed among the threads with an active pull request",
+       %{args: [thread]} = context do
+    [%{"number" => settled}] = links(context, thread)
+    [%{"number" => open}] = links(context, "still-open")
+
+    # The refresh asked the host about the open pull request, and not about this one,
+    # neither now nor at any time since it settled.
+    assert [_ | _] = context.refresh_reads
+    assert Enum.any?(context.refresh_reads, &(&1 =~ "pullRequest(number: #{open})"))
+    refute Enum.any?(summary_reads(context), &(&1 =~ "pullRequest(number: #{settled})"))
+
+    assert %{"settledOverride" => "settled"} = World.thread(context, thread)
+    assert [%{"snapshot" => %{"state" => "merged"}}] = links(context, thread)
+    context
+  end
+
   # --- outcomes ---------------------------------------------------------------------
 
   step ~r/^thread "(?<thread>[^"]+)" (?:lists pull request|lists|shows) "(?<pr>[^"]+)"(?: again)?$/,
@@ -259,6 +338,29 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
   end
 
   defp links(context, thread), do: PullRequests.of(World.thread(context, thread))
+
+  # What GitHub says of an open pull request, as `gh api graphql` answers.
+  defp open_summary do
+    %{
+      "title" => "PR",
+      "url" => "https://github.com/acme/app/pull/13",
+      "state" => "OPEN",
+      "isDraft" => false,
+      "headRefName" => "feature/y",
+      "baseRefName" => "main",
+      "reviewDecision" => "REVIEW_REQUIRED",
+      "updatedAt" => "2026-09-02T00:00:00Z",
+      "mergedAt" => nil,
+      "author" => %{"login" => "octocat"}
+    }
+  end
+
+  # The queries the MC sent `gh` for pull request summaries, oldest first.
+  defp summary_reads(context) do
+    for call <- World.cli_calls(context, "graphql"),
+        call["stdin"] =~ "PullRequestSummaries",
+        do: call["stdin"]
+  end
 
   defp visible(context, thread) do
     for link <- PullRequests.visible(links(context, thread)),

@@ -8,13 +8,16 @@ class McClient;
 class ShellBridge;
 
 // The window's layout the shell keeps itself: whether the thread list is
-// hidden, and the app's zoom. Remembered on this device (`sidebarCollapsed`
-// and `zoomLevel` in its preferences); every window follows the zoom, as
-// Electron's zoom follows the app's origin.
+// hidden, how wide it is, and the app's zoom. Remembered on this device
+// (`sidebarCollapsed`, `sidebarWidth` and `zoomLevel` in its preferences);
+// every window follows the zoom, as Electron's zoom follows the app's origin.
 //
-// Publishes `layout` for ShellWindow: {sidebarCollapsed, zoom (a factor)}.
-// Action and keybinding command: `sidebar.toggle` (the sidebar's hide
-// button, the header's show button, mod+b). Commands `view.zoomIn`,
+// Publishes `layout` for ShellWindow: {sidebarCollapsed, sidebarWidth (what
+// it draws: the width chosen, less when the window leaves it no room), zoom
+// (a factor)}. Action and keybinding command: `sidebar.toggle` (the sidebar's
+// hide button, the header's show button, mod+b). `sidebar.resize {width}`
+// sets the width chosen (no width: back to the default), and
+// `layout.window {width}` says how wide the window is. Commands `view.zoomIn`,
 // `view.zoomOut` and `view.resetZoom` (the application menu's mod+= and
 // mod++, mod+-, mod+0).
 class LayoutController : public QObject, public NativeController {
@@ -33,6 +36,19 @@ public:
   double zoomLevel() const { return m_zoomLevel; }
   double zoom() const;
   void setZoomLevel(double level);
+  // The thread list's width: the web's default and minimum, and the room the
+  // thread keeps beside it.
+  static constexpr int kSidebarWidth = 256;
+  static constexpr int kSidebarMinWidth = 208;
+  static constexpr int kContentMinWidth = 480;
+  // The width drawn now.
+  int sidebarWidth() const;
+  // The width the user chose (the default when none), at least the minimum
+  // and no more than the window allows.
+  void setSidebarWidth(int width);
+  void resetSidebarWidth();
+  // The window's width, so the list shrinks to fit a narrow one.
+  void setWindowWidth(int width);
 
 private:
   void load();
@@ -43,4 +59,8 @@ private:
   bool m_active = false;
   bool m_sidebarCollapsed = false;
   double m_zoomLevel = 0;
+  int m_sidebarWidth = kSidebarWidth;
+  int m_windowWidth = 0;
+  // The widest the window leaves room for, or none while it has not said.
+  int sidebarRoom() const;
 };
