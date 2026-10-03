@@ -138,7 +138,7 @@ Feature: Editing the draft
     Then the user is asked to wait for file uploads before stashing
     And the draft is unchanged
 
-  @backlog @desktop
+  @desktop
   Scenario: Turning rich text off keeps the draft as plain Markdown
     Given rich text editing is on and the draft shows "bold" in bold
     When the user turns rich text editing off

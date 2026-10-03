@@ -6,6 +6,10 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
+#include <QQuickTextDocument>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextLayout>
 #include <QTest>
 
 #include "Brick.h"
@@ -278,6 +282,41 @@ const Steps steps([] {
   step(QStringLiteral("typed letters insert text"), [](World& world, const Captures&, const Table&) {
     typeInComposer(world, QStringLiteral("hi"));
     expect(editorText(world) == QLatin1String("hi"), QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+
+  // Rich text: the draft's Markdown drawn as it reads.
+  // Whether the editor draws the characters of `word` in bold.
+  const auto drawnBold = [](World& world, const QString& word) {
+    auto* quick = composerEditor(world)->property("textDocument").value<QQuickTextDocument*>();
+    expect(quick && quick->textDocument(), QStringLiteral("the editor has no document"));
+    const QString text = quick->textDocument()->toPlainText();
+    const qsizetype at = text.indexOf(word);
+    if (at < 0) return false;
+    const QTextBlock block = quick->textDocument()->findBlock(int(at));
+    int bold = 0;
+    for (const QTextLayout::FormatRange& range : block.layout()->formats()) {
+      if (range.format.fontWeight() < QFont::Bold) continue;
+      for (int i = range.start; i < range.start + range.length; ++i) {
+        const int position = block.position() + i;
+        if (position >= at && position < at + word.size()) ++bold;
+      }
+    }
+    return bold == word.size();
+  };
+  step(QStringLiteral("rich text editing is on and the draft shows %1 in bold").arg(q), [drawnBold](World& world, const Captures& c, const Table&) {
+    expect(world.native().controller<SettingsController>()->setting(QStringLiteral("composerRichTextEnabled")).toBool(), QStringLiteral("rich text is off"));
+    composerBrick(world);
+    typeInComposer(world, QStringLiteral("**%1**").arg(c[0]));
+    settleComposer(world);
+    world.waitFor([&] { return drawnBold(world, c[0]); }, [&] { return QStringLiteral("\"%1\" to be drawn bold").arg(c[0]); });
+    world.mc.part<Pressed>().text = c[0];
+  });
+  step(QStringLiteral("the user turns rich text editing off"), [drawnBold](World& world, const Captures&, const Table&) {
+    // The General page's "Rich text composer" switch.
+    world.native().controller<SettingsController>()->set(QStringLiteral("composerRichTextEnabled"), false);
+    const QString word = world.mc.part<Pressed>().text;
+    world.waitFor([&] { return !drawnBold(world, word); }, [&] { return QStringLiteral("\"%1\" to be drawn plain").arg(word); });
+    expect(editorText(world) == QStringLiteral("**%1**").arg(word), QStringLiteral("the editor reads \"%1\"").arg(editorText(world)));
   });
 
   // Text put into the composer by something else (voice input, a plugin).

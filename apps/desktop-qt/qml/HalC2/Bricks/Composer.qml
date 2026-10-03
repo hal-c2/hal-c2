@@ -40,6 +40,11 @@ Rectangle {
         return Settings.setting("composerVimKeys") === true;
     }
     readonly property alias vim: vim
+    // Rich text (Settings → General): the draft's Markdown reads as formatted.
+    readonly property bool richText: {
+        Settings.device;
+        return Settings.setting("composerRichTextEnabled") !== false;
+    }
 
     // Opt-in input plugins share the same draft synchronization as typing.
     property alias editor: input
@@ -318,6 +323,13 @@ Rectangle {
 
         composer: composer
         vimEnabled: composer.vimKeys
+    }
+
+    ComposerHighlighter {
+        document: input.textDocument
+        rich: composer.richText
+        markerColor: Qt.alpha(composer.muted, 0.6)
+        codeFont: Theme.fontMono
     }
 
     Timer {
