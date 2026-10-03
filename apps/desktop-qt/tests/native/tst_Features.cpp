@@ -461,6 +461,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/migration-and-handoffs.feature:The user is told threads were migrated"),
     QStringLiteral("threads/pull-request-links.feature"),
     QStringLiteral("threads/worktree-setup.feature"),
+    QStringLiteral("threads/fork-and-lineage.feature"),
     QStringLiteral("files/adding-projects.feature"),
     QStringLiteral("navigation/palette-add-project.feature:A project can come from*"),
     QStringLiteral("navigation/palette-add-project.feature:A repository source that is not set up*"),

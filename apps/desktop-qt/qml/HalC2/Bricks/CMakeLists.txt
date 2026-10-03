@@ -57,6 +57,7 @@ qt_add_qml_module(hal_c2_bricks
     CustomSnoozeDialog.qml
     WorktreeSetupCard.qml
     LimitRecoveryBanner.qml
+    ThreadLineage.qml
     DiffPanel.qml
     FilesPanel.qml
     AgentsPanel.qml

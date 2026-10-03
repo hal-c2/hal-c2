@@ -88,7 +88,7 @@ Item {
         id: timeline
         objectName: "threadTimeline"
 
-        anchors.top: setupCard.visible ? setupCard.bottom : problemBar.visible ? problemBar.bottom : parent.top
+        anchors.top: lineageBar.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
@@ -134,6 +134,17 @@ Item {
         }
     }
 
+    // Where the thread came from and the forks made of it.
+    ThreadLineage {
+        id: lineageBar
+
+        anchors.top: setupCard.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? implicitHeight : 0
+        visible: lineage !== null && !view.draft
+    }
+
     // The agent stopped on a usage limit: when it resets and what to do until then.
     LimitRecoveryBanner {
         id: limitBanner
@@ -149,10 +160,10 @@ Item {
     WorktreeSetupCard {
         id: setupCard
 
-        anchors.top: problemBar.visible ? problemBar.bottom : parent.top
+        anchors.top: problemBar.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        height: implicitHeight
+        height: visible ? implicitHeight : 0
         visible: setup !== null && !view.draft
     }
 
