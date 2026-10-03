@@ -171,6 +171,28 @@ Item {
             }
         }
 
+        // Files referenced with "@": a click on a chip drops it and its mention.
+        Item {
+            objectName: "composerReferences"
+            visible: dock.model.references.length > 0
+            flexDirection: "row"
+            height: 1
+            flexShrink: 0
+            overflow: "hidden"
+            Repeater {
+                model: dock.model.references
+                delegate: Text {
+                    objectName: "composerReference-" + modelData.path
+                    marginRight: 1
+                    flexShrink: 0
+                    wrapMode: "none"
+                    onMouseDown: Shell.dispatch("composer.reference.remove", { path: modelData.path })
+                    Span { text: "× "; color: Theme.colors.accent }
+                    Span { text: modelData.label; color: Theme.colors.text }
+                }
+            }
+        }
+
         Item {
             objectName: "composerAttachments"
             visible: dock.model.attachments.length > 0

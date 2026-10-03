@@ -12,6 +12,7 @@ import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts
 import { detectInlineImageTransport } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
 import { enginePluginPort } from "./host/plugins.ts";
+import { movePromptCursorToEnd } from "./host/promptCursor.ts";
 import { readUserConfig, saveKeymapOverrides } from "./host/userConfig.ts";
 import { resolveShellConfigDir } from "./shellConfigDir.ts";
 import {
@@ -176,12 +177,16 @@ async function main(): Promise<void> {
     resolveDone();
   };
 
+  let shellRoot: Parameters<typeof movePromptCursorToEnd>[0] | null = null;
   const host = createHost({
     client,
     size: { columns: renderer.width, rows: renderer.height },
     onQuit: handleExit,
     log: appendLog,
     startupWarnings: configWarnings,
+    promptCursorToEnd: (text) => {
+      if (shellRoot) movePromptCursorToEnd(shellRoot, text);
+    },
     features: {
       saveKeymap: (overrides) => saveKeymapOverrides(configDir, overrides),
     },
@@ -239,6 +244,7 @@ async function main(): Promise<void> {
       onWarning: host.reportWarning,
       onError: host.reportError,
     });
+    shellRoot = app.root;
     host.attachPlugins(enginePluginPort(app.engine));
 
     await done;

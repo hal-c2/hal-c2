@@ -104,6 +104,8 @@ export interface ComposerOptions {
   /** Read an image the user pasted as an absolute local path. */
   readonly readLocalImage: (path: string) => Promise<Uint8Array>;
   readonly decodeImage?: ImageDecoder;
+  /** The host completed the prompt's text (a picked command, skill or file): the cursor follows. */
+  readonly onTextCompleted?: (text: string) => void;
   /** A new-thread draft opened or closed: the sidebar row and the page follow it. */
   readonly onDraftChange?: () => void;
   /** The editor's rows or the composer's other rows changed: the layout follows. */
@@ -191,6 +193,8 @@ export interface TuiComposerState {
   readonly answering: boolean;
   /** The editor row while the editor does not have the keys. */
   readonly caption: StyledText;
+  /** Files referenced with "@", as chips (a click removes one, and its `@path` from the text). */
+  readonly references: ReadonlyArray<{ readonly path: string; readonly label: string }>;
   /** The chips that fit, and "+N more" for the rest (or ""). */
   readonly visibleAttachments: ReadonlyArray<TuiComposerAttachment>;
   readonly moreAttachments: string;
@@ -269,6 +273,8 @@ export interface TuiSelectState {
 }
 
 interface Draft {
+  /** Files picked with "@": each shows as a chip while its `@path` is still in the text. */
+  readonly references?: ReadonlyArray<string>;
   readonly text: string;
   readonly images: ReadonlyArray<ComposerImageAttachment>;
 }
@@ -358,6 +364,7 @@ export interface Composer {
     readonly threadId: string | null;
     readonly interactionMode: ProviderInteractionMode;
     readonly attachmentCount: number;
+    readonly referenceCount: number;
   };
 }
 
@@ -376,7 +383,14 @@ export function createComposer(options: ComposerOptions): Composer {
   let newDraft: NewDraft | null = null;
   let picker: Picker | null = null;
   /** The chrome rows by source, so a one-line prompt or a popover can drop some (ChatView). */
-  let chromeParts = { question: 0, attachments: 0, compact: 0, context: 0, notice: 0 };
+  let chromeParts = {
+    question: 0,
+    attachments: 0,
+    compact: 0,
+    context: 0,
+    notice: 0,
+    references: 0,
+  };
   /** Set by Ctrl+Up / Ctrl+Down; null follows the text. */
   let rowsOverride: number | null = null;
   let replyPending = false;
@@ -534,6 +548,10 @@ export function createComposer(options: ComposerOptions): Composer {
     const hiddenCount = Math.max(0, attachments.length - visibleCount);
     const hasText = draft.text.length > 0 || draft.images.length > 0;
     const context = composerContext(detail);
+    const references = referencesIn(draft).map((path) => ({
+      path,
+      label: clip(`@${path}`, 28),
+    }));
     const notice = providerNotice(model);
     // Wrapped to the box by word, so the way to fix it is never cut off.
     const noticeLines: string[] = [];
@@ -554,6 +572,7 @@ export function createComposer(options: ComposerOptions): Composer {
       compact: compact ? 1 : 0,
       context: context ? 1 : 0,
       notice: noticeLines.length,
+      references: references.length > 0 ? 1 : 0,
     };
     const chromeRows =
       4 +
@@ -561,7 +580,8 @@ export function createComposer(options: ComposerOptions): Composer {
       chromeParts.attachments +
       chromeParts.compact +
       chromeParts.context +
-      chromeParts.notice;
+      chromeParts.notice +
+      chromeParts.references;
     const footerWidth = Math.max(1, surfaceWidth - 2);
     const showOptions = footerWidth >= 24;
     return {
@@ -610,6 +630,7 @@ export function createComposer(options: ComposerOptions): Composer {
               ? chunk(draft.text, { fg: palette.text })
               : chunk(placeholder, { fg: palette.dim }),
           ),
+      references,
       visibleAttachments: attachments.slice(0, visibleCount),
       moreAttachments: hiddenCount > 0 ? `+${hiddenCount} more` : "",
       footer: {
@@ -1683,6 +1704,109 @@ export function createComposer(options: ComposerOptions): Composer {
     });
   };
 
+  // ── Context by trigger character ─────────────────────────────────────────
+
+  const referencesIn = (draft: Draft) =>
+    (draft.references ?? []).filter((path) => draft.text.includes(`@${path}`));
+
+  /** The trigger just typed: "/" opening the prompt, "$" or "@" opening a word. */
+  const typedTrigger = (before: string, text: string): "/" | "$" | "@" | null => {
+    if (text.length !== before.length + 1 || !text.startsWith(before)) return null;
+    const typed = text.at(-1);
+    if (typed === "/") return before === "" ? "/" : null;
+    if (typed !== "$" && typed !== "@") return null;
+    return before === "" || /\s$/.test(before) ? typed : null;
+  };
+
+  /** Put `token` where the trigger character was typed (the end of the prompt). */
+  const completeTrigger = (trigger: string, token: string, reference?: string) => {
+    setDraft(target(), (draft) => ({
+      ...draft,
+      text: `${draft.text.endsWith(trigger) ? draft.text.slice(0, -1) : draft.text}${token} `,
+      ...(reference ? { references: [...new Set([...(draft.references ?? []), reference])] } : {}),
+    }));
+    options.onTextCompleted?.(draftFor(target()).text);
+  };
+
+  /**
+   * "/" lists the provider's commands, "$" its skills and "@" the workspace's
+   * files, each in a searchable picker. Esc leaves the character as typed.
+   */
+  const openTriggerPicker = (trigger: "/" | "$" | "@") => {
+    const model = activeModel();
+    const provider = providers.find((candidate) => candidate.instanceId === model?.instanceId);
+    if (trigger === "@") {
+      const key = target();
+      void track(
+        client.listEntries(composerCwd()).then(
+          (entries) => {
+            // Nothing to offer, or the user typed on (or left) meanwhile: the "@" stays text.
+            const listed = entries.filter((entry) => entry.ignored !== true);
+            if (listed.length === 0 || target() !== key || !draftFor(key).text.endsWith("@")) {
+              return;
+            }
+            if (picker !== null) return;
+            openMenu({
+              title: "files",
+              searchable: true,
+              options: entries
+                .filter((entry) => entry.ignored !== true)
+                .map((entry) => ({
+                  label: entry.kind === "directory" ? `${entry.path}/` : entry.path,
+                  value: entry.path,
+                })),
+              onChoose: (path) => completeTrigger("@", `@${path}`, path),
+            });
+          },
+          () => {},
+        ),
+      );
+      return;
+    }
+    // A provider with no commands (or skills) opens nothing: the character is just text.
+    if (trigger === "/") {
+      if ((provider?.slashCommands ?? []).length === 0) return;
+      openMenu({
+        title: "commands",
+        searchable: true,
+        options: (provider?.slashCommands ?? []).map((command) => ({
+          label: `/${command.name}`,
+          description: command.description ?? "",
+          value: command.name,
+        })),
+        onChoose: (name) => completeTrigger("/", `/${name}`),
+      });
+      return;
+    }
+    if (!(provider?.skills ?? []).some((skill) => skill.enabled)) return;
+    openMenu({
+      title: "skills",
+      searchable: true,
+      options: (provider?.skills ?? [])
+        .filter((skill) => skill.enabled)
+        .map((skill) => ({
+          label: `$${skill.name}`,
+          description: skill.shortDescription ?? skill.description ?? "",
+          value: skill.name,
+        })),
+      onChoose: (name) => completeTrigger("$", `$${name}`),
+    });
+  };
+
+  /** Drop a reference chip and its `@path` from the text (the last one without a path). */
+  const removeReference = (path: unknown) => {
+    setDraft(target(), (draft) => {
+      const shown = referencesIn(draft);
+      const gone = typeof path === "string" ? path : shown.at(-1);
+      if (gone === undefined) return draft;
+      return {
+        ...draft,
+        references: (draft.references ?? []).filter((candidate) => candidate !== gone),
+        text: draft.text.replace(`@${gone} `, "").replace(`@${gone}`, ""),
+      };
+    });
+  };
+
   // ── $EDITOR ──────────────────────────────────────────────────────────────
 
   const editInEditor = () => {
@@ -1806,9 +1930,15 @@ export function createComposer(options: ComposerOptions): Composer {
       case "composer.text.set": {
         const text = field(payload, "text");
         if (typeof text !== "string") return true;
+        const before = draftFor(target()).text;
         setDraft(target(), (draft) => ({ ...draft, text }));
+        const trigger = typedTrigger(before, text);
+        if (trigger) openTriggerPicker(trigger);
         return true;
       }
+      case "composer.reference.remove":
+        removeReference(field(payload, "path"));
+        return true;
       case "composer.history.previous":
         return recallPrompt("previous");
       case "composer.history.next":
@@ -2012,6 +2142,7 @@ export function createComposer(options: ComposerOptions): Composer {
       (overlay.oneLine ? 0 : chromeParts.attachments) +
       (overlay.oneLine ? 0 : chromeParts.compact) +
       (overlay.oneLine ? 0 : chromeParts.notice) +
+      (overlay.oneLine ? 0 : chromeParts.references) +
       chromeParts.context,
     pickerRows,
     idle: async () => {
@@ -2029,6 +2160,7 @@ export function createComposer(options: ComposerOptions): Composer {
             ? threadInteraction(detail)
             : "default",
         attachmentCount: draftFor(target()).images.length,
+        referenceCount: referencesIn(draftFor(target())).length,
       };
     },
   };

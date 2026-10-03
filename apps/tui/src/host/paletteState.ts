@@ -51,6 +51,7 @@ export interface PaletteContext {
   readonly interactionMode: "default" | "plan";
   readonly hasProposedPlan: boolean;
   readonly attachmentCount: number;
+  readonly referenceCount: number;
 }
 
 /**
@@ -120,6 +121,14 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
   }
   if (context.threadId !== null && context.hasProposedPlan) {
     list.push({ id: "implement", title: "Implement plan", hint: "^Y", action: "plan.implement" });
+  }
+  if (composing && context.referenceCount > 0) {
+    list.push({
+      id: "remove-reference",
+      title: "Remove last file reference",
+      keywords: "mention chip context",
+      action: "composer.reference.remove",
+    });
   }
   if (composing && context.attachmentCount > 0) {
     list.push({

@@ -138,6 +138,8 @@ export interface HostOptions {
   readonly trace?: (action: string, payload: unknown) => void;
   /** Warnings from before the host existed (keymap.json conflicts, missing plugin directories). */
   readonly startupWarnings?: ReadonlyArray<string>;
+  /** Put the prompt's cursor after its text (see promptCursor.ts); runs once the text is set. */
+  readonly promptCursorToEnd?: (text: string) => void;
   /** What the feature areas need from the entry (see features/index.ts). */
   readonly features?: FeatureOptions;
 }
@@ -678,6 +680,7 @@ export function createHost(options: HostOptions): Host {
     homeDir: options.homeDir ?? NodeOS.homedir(),
     runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),
     readLocalImage: options.readLocalImage ?? readLocalImageFile,
+    ...(options.promptCursorToEnd ? { onTextCompleted: options.promptCursorToEnd } : {}),
     ...(options.decodeImage ? { decodeImage: options.decodeImage } : {}),
     onDraftChange: () => {
       publishSidebar();
