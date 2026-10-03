@@ -5,7 +5,7 @@ import HalC2.Shell
 
 // The centre for a thread or draft route (js/centreViews.js): the route's
 // thread from Threads (ThreadStore), or a draft's opening line with where it
-// will run. Loading says so without moving; a thread whose MC stopped
+// will run; clicking that line offers the other projects (`draft.project`). Loading says so without moving; a thread whose MC stopped
 // sending it says why and offers Retry.
 //
 // Web links open in the system browser; file links and files the agent
@@ -156,6 +156,22 @@ Item {
                     return project ? qsTr("What should we build in %1?").arg(project) : qsTr("Add a project to start");
                 }
                 return view.loading ? qsTr("Loading…") : qsTr("Send a message to start the conversation.");
+            }
+
+            // A draft's opening line picks its project.
+            HoverHandler {
+                enabled: view.draft
+                cursorShape: Qt.PointingHandCursor
+            }
+            TapHandler {
+                enabled: view.draft
+                onTapped: eventPoint => {
+                    const p = parent.mapToItem(null, eventPoint.position.x, eventPoint.position.y);
+                    Shell.dispatch("draft.project", {
+                        x: p.x,
+                        y: p.y
+                    });
+                }
             }
         }
         Label {
