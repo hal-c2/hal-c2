@@ -231,6 +231,60 @@ export function createServerFeature(kit: FeatureKit): Feature {
     );
   };
 
+  /** The relay client HAL-C2 Connect uses: whether the server has it, and installing it there. */
+  const checkRelay = () => {
+    kit.status("Checking the relay client…", "busy");
+    void kit.track(
+      client.relayStatus().then(
+        (relay) => {
+          if (relay.status === "available") {
+            kit.status(`The relay client ${relay.version} is installed.`, "success");
+            return;
+          }
+          if (relay.status === "unsupported") {
+            kit.status(
+              `The relay client does not run on ${relay.platform} ${relay.arch}.`,
+              "error",
+            );
+            return;
+          }
+          kit.status(`The relay client is missing (${relay.version}).`, "error");
+          kit.menu({
+            title: "relay client is missing",
+            options: [
+              {
+                label: `Install the relay client ${relay.version}`,
+                description: "Downloads it on the server; remote access needs it.",
+                value: "install",
+              },
+              { label: "Not now", description: "Remote access stays unavailable.", value: "skip" },
+            ],
+            onChoose: (choice) => {
+              if (choice === "install") installRelay();
+            },
+          });
+        },
+        (error: unknown) => kit.status(`Could not check the relay: ${errorText(error)}`, "error"),
+      ),
+    );
+  };
+  const installRelay = () => {
+    kit.status("Installing the relay client…", "busy");
+    void kit.track(
+      client
+        .installRelay((stage) =>
+          kit.status(`Installing the relay client: ${stage.replaceAll("_", " ")}…`, "busy"),
+        )
+        .then(
+          (relay) =>
+            relay?.status === "available"
+              ? kit.status(`The relay client ${relay.version} is installed.`, "success")
+              : kit.status("The relay client did not install.", "error"),
+          (error: unknown) => kit.status(`Relay install failed: ${errorText(error)}`, "error"),
+        ),
+    );
+  };
+
   const openDiagnostics = () => {
     kit.status("Reading diagnostics…", "busy");
     void kit.track(
@@ -356,6 +410,12 @@ export function createServerFeature(kit: FeatureKit): Feature {
         action: "settings.defaultWorkspace",
       },
       {
+        id: "relay.check",
+        title: "Relay client",
+        keywords: "remote access connect cloudflared install tunnel",
+        action: "relay.check",
+      },
+      {
         id: "diagnostics.open",
         title: "Diagnostics",
         keywords: "server version uptime errors processes health",
@@ -377,6 +437,9 @@ export function createServerFeature(kit: FeatureKit): Feature {
           return true;
         case "settings.defaultWorkspace":
           chooseDefaultWorkspace();
+          return true;
+        case "relay.check":
+          checkRelay();
           return true;
         case "diagnostics.open":
           openDiagnostics();

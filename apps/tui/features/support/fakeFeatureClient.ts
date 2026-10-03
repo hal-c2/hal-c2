@@ -7,6 +7,7 @@ import {
   type GitStackedAction,
   type PreviewSessionSnapshot,
   type ProviderInstanceMutation,
+  type RelayClientStatus,
   type ServerProcessDiagnosticsResult,
   type ServerProvider,
   type ServerSettings,
@@ -36,6 +37,8 @@ export interface FakeServer {
   previews: PreviewSessionSnapshot[];
   /** The repository's worktrees besides the main checkout. */
   worktrees: Array<{ path: string; refName: string }>;
+  /** The relay client on the server (missing until installed). */
+  relay: RelayClientStatus;
   /** The diff against a base, by `<baseRef>:all` or `<baseRef>:no-whitespace`. */
   readonly reviewDiffs: Map<string, string>;
   /** Pull requests on the provider, found by number from any reference. */
@@ -115,6 +118,7 @@ export function fakeFeatureClient(shell: FakeShellPort): {
     worktrees: [],
     pullRequests: [],
     reviewDiffs: new Map(),
+    relay: { status: "missing", version: "2026.6.0" },
   };
   let previewCount = 0;
   const status = () => {
@@ -131,6 +135,20 @@ export function fakeFeatureClient(shell: FakeShellPort): {
   };
   const client: TuiFeatureClient = {
     refreshVcsStatus: async () => status(),
+    relayStatus: async () => server.relay,
+    // The server downloads, checks and activates the binary, saying which stage it is in.
+    installRelay: async (onStage) => {
+      for (const stage of ["downloading", "verifying", "installing", "activating"] as const) {
+        onStage(stage);
+      }
+      server.relay = {
+        status: "available",
+        executablePath: "/opt/hal-c2/relay/cloudflared",
+        source: "managed",
+        version: server.relay.version,
+      };
+      return server.relay;
+    },
     reviewDiff: async (_cwd, baseRef, ignoreWhitespace) =>
       server.reviewDiffs.get(`${baseRef}:${ignoreWhitespace ? "no-whitespace" : "all"}`) ?? "",
     createRef: async (_cwd, refName) => {
