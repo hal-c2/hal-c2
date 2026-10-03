@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocale>
 #include <QRegularExpression>
 #include <QStringList>
 #include <QUuid>
@@ -116,6 +117,22 @@ QString newId() {
 
 // apps/web/src/promptStashStore.ts MAX_STASH_ENTRIES.
 constexpr qsizetype kMaxStashEntries = 20;
+// packages/contracts/src/chatAttachment.ts PROVIDER_SEND_TURN_MAX_INPUT_CHARS.
+constexpr qsizetype kMaxPromptChars = 120000;
+// apps/web/src/components/chat/composerPromptHistory.ts CLAUDE_ULTRATHINK_PREFIX.
+const QString kUltrathinkPrefix = QStringLiteral("Ultrathink:\n");
+
+// What the user typed of a sent message (the web's recallableComposerPrompt):
+// without the Ultrathink prefix and the context links a send appends; a plan
+// the app asked to implement is not a prompt.
+QString recallable(QString prompt) {
+  static const QRegularExpression contextLink(QStringLiteral(" ?\\[[^\\]]*\\]\\(hal-c2-context://[^)]*\\)"));
+  prompt = prompt.trimmed();
+  if (prompt.startsWith(kUltrathinkPrefix)) prompt = prompt.mid(kUltrathinkPrefix.size());
+  prompt.remove(contextLink);
+  prompt = prompt.trimmed();
+  return prompt.startsWith(kImplementPrefix.trimmed()) ? QString() : prompt;
+}
 
 }  // namespace
 
@@ -174,8 +191,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     publish();
     return true;
   }
-  // Prompt history is not the shell's yet.
-  if (action == QLatin1String("composer.history.step")) return true;
+  if (action == QLatin1String("composer.history.step")) {
+    if (!target.isEmpty()) stepHistory(target, map.value(QStringLiteral("direction")).toString() != QLatin1String("forward"));
+    return true;
+  }
   if (action == QLatin1String("composer.terminalContext.add")) return addTerminalContext(map);
   if (action == QLatin1String("composer.terminalContext.remove")) {
     if (target.isEmpty()) return true;
@@ -288,6 +307,56 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     return queueCommand(QStringLiteral("queued-message.promote-to-steer"), runId);
   }
   return false;
+}
+
+void ComposerController::stepHistory(const QString& target, bool backward) {
+  if (!m_timeline || target != m_thread) return;
+  const Draft kept = m_drafts.value(target);
+  const QString current = draft(target);
+  // Oldest first; a prompt sent twice in a row is one entry, its newest.
+  QList<std::pair<QString, QString>> entries;
+  for (const QJsonObject& item : itemsOf(m_timeline->entities(QStringLiteral("turn-item")), QStringLiteral("user_message"))) {
+    const QString prompt = recallable(str(item, QLatin1String("text")));
+    if (prompt.isEmpty()) continue;
+    if (!entries.isEmpty() && entries.constLast().second == prompt) entries.removeLast();
+    entries.append({str(item, QLatin1String("id")), prompt});
+  }
+  qsizetype active = -1;
+  if (m_recall && m_recall->target == target && m_recall->recalled == current) {
+    for (qsizetype i = 0; i < entries.size(); ++i) {
+      if (entries.at(i).first == m_recall->entryId) active = i;
+    }
+    for (qsizetype i = entries.size() - 1; active < 0 && i >= 0; --i) {
+      if (entries.at(i).second == current) active = i;
+    }
+  }
+  qsizetype next = -1;
+  if (backward) {
+    // Only an empty composer starts a recall: attachments count as content.
+    if (active < 0 && (!current.isEmpty() || !kept.attachments.isEmpty() || !kept.terminalContexts.isEmpty())) return;
+    next = active < 0 ? entries.size() - 1 : active - 1;
+    if (next < 0) return;
+  } else {
+    if (active < 0) return;
+    next = active + 1;
+  }
+  if (next >= entries.size()) {
+    m_recall.reset();
+    setText(target, QString(), 0);
+    return;
+  }
+  m_recall = Recall{target, entries.at(next).first, entries.at(next).second};
+  setText(target, entries.at(next).second, int(entries.at(next).second.size()));
+}
+
+// apps/web/src/components/chat/composerSubmission.ts
+// getComposerPromptLengthValidationMessage.
+QString ComposerController::promptProblem(const QString& text) {
+  const qsizetype excess = text.trimmed().size() - kMaxPromptChars;
+  if (excess <= 0) return {};
+  const QLocale english(QLocale::English, QLocale::UnitedStates);
+  return QStringLiteral("Prompt is %1 %2 over the %3-character limit. Shorten or split it before sending.")
+      .arg(english.toString(excess), excess == 1 ? QStringLiteral("character") : QStringLiteral("characters"), english.toString(kMaxPromptChars));
 }
 
 // The web's stashCurrentPrompt: the draft goes to the stash and the composer
@@ -411,6 +480,10 @@ bool ComposerController::submit(const QVariantMap& payload) {
   // The submit is the brick's newest edit, so it takes the cleared (or
   // restored) text as the answer to it.
   setText(target, text, int(text.size()), payload.value(QStringLiteral("edit")));
+  if (const QString problem = promptProblem(text); !problem.isEmpty()) {
+    toast(QStringLiteral("Message not sent"), problem);
+    return true;
+  }
   if (m_queuedEdit && m_queuedEdit->thread == target) return saveQueuedEdit(target, text);
   if (slashMode(target, text)) return true;
   if (!m_draftId.isEmpty()) return submitDraft(target, payload);

@@ -26,7 +26,7 @@ Feature: Desktop shell scenarios: composer
     Then plan mode is requested
     And the composer keeps the keyboard
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Up in an empty composer recalls the previous prompt
     Given the composer is empty with keyboard focus
     When the user presses Up
@@ -34,7 +34,7 @@ Feature: Desktop shell scenarios: composer
     When the shell recalls "Run the tests"
     Then the composer contains "Run the tests"
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Up below the first line moves the caret
     Given the composer holds two lines with the caret on the second
     When the user presses Up

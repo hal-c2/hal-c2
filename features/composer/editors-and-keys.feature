@@ -85,7 +85,7 @@ Feature: Editing the draft
     Then "bug.png" is attached
     And that line is not part of the prompt text
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Earlier prompts are recalled in an empty composer
     Given the user sent "first" and then "second" in this thread
     And the composer is empty

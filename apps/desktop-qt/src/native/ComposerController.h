@@ -74,7 +74,8 @@ class TimelineModel;
 // composer.queue.steer {runId?} (the first queued without one),
 // composer.queue.edit {runId?} (the last queued without one),
 // composer.queue.edit.cancel, composer.stash, composer.stash.restore {id},
-// composer.stash.delete {id}, composer.stash.menu {open?} (toggles without).
+// composer.stash.delete {id}, composer.stash.menu {open?} (toggles without),
+// composer.history.step {direction: "backward" | "forward"}.
 //
 // The stash (the web's promptStashStore) is this machine's, not a thread's:
 // the prompts set aside with composer.stash, newest first, at most 20, kept
@@ -199,6 +200,12 @@ private:
   // The message text with a context link per excerpt, and their records as
   // its `context`.
   static void withTerminalContexts(QJsonObject& message, const QList<TerminalContext>& contexts);
+  // Up and Down on the editor's edge lines walk the thread's sent prompts,
+  // text only (the web's composerPromptHistory): back from an empty draft,
+  // forward past the newest to an empty one. An edited recall is a draft.
+  void stepHistory(const QString& target, bool backward);
+  // Why the prompt cannot be sent as it is, or nothing: its length.
+  static QString promptProblem(const QString& text);
   bool stash(const QString& target);
   void restoreStash(const QString& target, const QString& id);
   void setStashOpen(bool open);
@@ -318,4 +325,11 @@ private:
     bool saving = false;
   };
   std::optional<QueuedEdit> m_queuedEdit;
+  // The sent prompt the composer is showing again: its message and text.
+  struct Recall {
+    QString target;
+    QString entryId;
+    QString recalled;
+  };
+  std::optional<Recall> m_recall;
 };

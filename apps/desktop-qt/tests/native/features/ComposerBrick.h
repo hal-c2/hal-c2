@@ -36,3 +36,5 @@ bool modelPickerLists(World& world, const QString& name, bool listed);
 bool modelPickerShows(World& world, const QString& name, const QString& reason);
 // "the user chooses X": the row named X of the open model picker.
 bool modelPickerChooses(World& world, const QString& name);
+// "the user removes X": the attachment X of the draft on screen.
+bool removeComposerAttachment(World& world, const QString& name);

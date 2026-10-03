@@ -89,7 +89,7 @@ Feature: Drafting and sending a message
     When the user types "second"
     Then the draft reads "second" after the send completes
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A message over the character limit is refused before sending
     Given the user has typed a prompt 10 characters over the 120,000-character limit
     When the user tries to send it

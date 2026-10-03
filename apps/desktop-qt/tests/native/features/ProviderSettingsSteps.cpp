@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include "ComposerBrick.h"
 #include "FakeConfig.h"
 #include "Harness.h"
 #include "NativeShell.h"
@@ -995,6 +996,7 @@ const Steps steps([] {
     }, QStringLiteral("to offer browser sign-in without a stored key"));
   });
   step(QStringLiteral("the user removes %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (removeComposerAttachment(world, c[0])) return;
     const QVariantList rows = variables(world, QStringLiteral("Claude Work"));
     for (qsizetype i = 0; i < rows.size(); ++i) {
       if (at(rows.at(i), QStringLiteral("name")) != c[0]) continue;

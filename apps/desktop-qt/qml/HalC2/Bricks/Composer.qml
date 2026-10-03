@@ -141,8 +141,8 @@ Rectangle {
     }
 
     // Up on the editor's first line recalls the thread's earlier prompts and
-    // Down on its last steps back. ComposerController keeps no prompt history
-    // yet and drops the step (features/composer/context-references.feature).
+    // Down on its last steps forward again; ComposerController decides whether
+    // the draft is one a recall may replace.
     function stepPromptHistory(direction) {
         const caret = input.positionToRectangle(input.cursorPosition).y;
         const edge = input.positionToRectangle(direction === "backward" ? 0 : input.length).y;
@@ -623,6 +623,7 @@ Rectangle {
                         delegate: ShellButton {
                             required property var modelData
 
+                            objectName: "attachment:" + modelData.name
                             implicitHeight: 24
                             iconName: "image"
                             text: modelData.name

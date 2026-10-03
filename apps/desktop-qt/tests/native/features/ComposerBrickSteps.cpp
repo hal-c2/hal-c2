@@ -310,6 +310,69 @@ const Steps steps([] {
     expect(draft == QLatin1String("for thread B") && editorText(world) == draft, QStringLiteral("thread B's draft reads \"%1\"").arg(draft));
   });
 
+  // Recalling sent prompts.
+  const auto sent = [](World& world, const QStringList& prompts) {
+    openTurnThread(world);
+    for (const QString& prompt : prompts) {
+      const QString run = startRun(world, 60, QStringLiteral("completed"));
+      set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run, {{QStringLiteral("text"), prompt}});
+    }
+  };
+  step(QStringLiteral("the user sent %1 and then %1 in this thread").arg(q), [sent](World& world, const Captures& c, const Table&) {
+    sent(world, {c[0], c[1]});
+  });
+  step(QStringLiteral("the user recalls the previous prompt twice"), [](World& world, const Captures&, const Table&) {
+    composerBrick(world);
+    pressInComposer(world, QStringLiteral("Up"));
+    pressInComposer(world, QStringLiteral("Up"));
+  });
+  step(QStringLiteral("the user moves forward again"), [](World& world, const Captures&, const Table&) { pressInComposer(world, QStringLiteral("Down")); });
+  step(QStringLiteral("the composer is empty with keyboard focus"), [sent](World& world, const Captures&, const Table&) {
+    // In a thread whose last prompt was "Run the tests".
+    sent(world, {QStringLiteral("Run the tests")});
+    composerBrick(world);
+    expect(editorText(world).isEmpty() && composerEditor(world)->hasActiveFocus(), QStringLiteral("the editor reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("the shell is asked for the previous prompt"), [](World& world, const Captures&, const Table&) {
+    // It answers with the thread's last prompt as the draft.
+    expect(world.native().controller<ComposerController>()->draft(target(world)) == QLatin1String("Run the tests"),
+           QStringLiteral("the shell's draft reads \"%1\"").arg(world.native().controller<ComposerController>()->draft(target(world))));
+  });
+  step(QStringLiteral("the shell recalls %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return shown(world).value(QStringLiteral("text")) == c[0]; }, [&] { return QStringLiteral("the shell to publish %1; it shows %2").arg(c[0], show(shown(world))); });
+  });
+  step(QStringLiteral("the composer contains %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return editorText(world) == c[0]; }, [&] { return QStringLiteral("the editor to read %1; it reads \"%2\"").arg(c[0], editorText(world)); });
+  });
+  step(QStringLiteral("the composer holds two lines with the caret on the second"), [sent](World& world, const Captures&, const Table&) {
+    sent(world, {QStringLiteral("Run the tests")});
+    const QString text = QStringLiteral("line one\nline two");
+    write(world, text, int(text.size()));
+  });
+  step(QStringLiteral("the shell is not asked for the previous prompt"), [](World& world, const Captures&, const Table&) {
+    settleComposer(world);
+    // Up moved the caret onto the first line and left the draft alone.
+    expect(editorText(world) == QLatin1String("line one\nline two") && cursor(world) <= 8,
+           QStringLiteral("the draft reads \"%1\" with the caret at %2").arg(editorText(world)).arg(cursor(world)));
+  });
+
+  // The message limit.
+  step(QStringLiteral("the user has typed a prompt (\\d+) characters over the 120,000-character limit"), [](World& world, const Captures& c, const Table&) {
+    const QString text(120000 + c[0].toInt(), QLatin1Char('x'));
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), target(world)}, {QStringLiteral("text"), text}, {QStringLiteral("cursor"), text.size()}});
+  });
+  step(QStringLiteral("the message is not sent"), [](World& world, const Captures&, const Table&) {
+    expect(messages(world).isEmpty(), QStringLiteral("the MC has %1 commands").arg(world.mc.commands.size()));
+    expect(!world.native().controller<ComposerController>()->draft(target(world)).isEmpty(), QStringLiteral("the draft was cleared"));
+  });
+  step(QStringLiteral("the user is told the prompt is (\\d+) characters over the limit and to shorten or split it"), [](World& world, const Captures& c, const Table&) {
+    const QString expected = QStringLiteral("Prompt is %1 characters over the 120,000-character limit. Shorten or split it before sending.").arg(c[0]);
+    const QVariantList toasts = world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
+    expect(std::any_of(toasts.cbegin(), toasts.cend(), [&](const QVariant& toast) { return toast.toMap().value(QStringLiteral("description")) == expected; }),
+           QStringLiteral("the toasts are %1").arg(show(toasts)));
+  });
+
   // The shell's own scenarios (qt-scenarios.feature).
   step(QStringLiteral("the composer has the draft %1").arg(q), [](World& world, const Captures& c, const Table&) {
     openTurnThread(world);
