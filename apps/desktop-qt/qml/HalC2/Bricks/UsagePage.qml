@@ -84,7 +84,7 @@ Rectangle {
     component Section: Label {
         Layout.topMargin: 12
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         font.weight: Font.DemiBold
     }
 
@@ -100,7 +100,7 @@ Rectangle {
             Label {
                 text: qsTr("Usage")
                 color: page.foreground
-                font.pixelSize: 18
+                font.pixelSize: Math.round(18 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -109,7 +109,7 @@ Rectangle {
                 visible: !page.limitsShown
                 text: page.model ? page.model.windowLabel : ""
                 color: page.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             Item {
@@ -187,7 +187,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: modelData
                 color: page.warning
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
         }
@@ -199,7 +199,7 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             color: page.muted
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             visible: text.length > 0
             text: page.model ? page.model.message : ""
         }
@@ -237,7 +237,7 @@ Rectangle {
                             Label {
                                 text: pool.modelData.label
                                 color: page.foreground
-                                font.pixelSize: 14
+                                font.pixelSize: Math.round(14 * Theme.fontScale)
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -267,20 +267,20 @@ Rectangle {
                                             Layout.fillWidth: true
                                             text: card.modelData.label
                                             color: page.muted
-                                            font.pixelSize: 12
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
                                         }
 
                                         Label {
                                             text: page.resetsIn(card.modelData.resetsAt)
                                             color: page.muted
-                                            font.pixelSize: 11
+                                            font.pixelSize: Math.round(11 * Theme.fontScale)
                                         }
                                     }
 
                                     Label {
                                         text: qsTr("%1% left").arg(card.modelData.remainingPercent)
                                         color: page.foreground
-                                        font.pixelSize: 20
+                                        font.pixelSize: Math.round(20 * Theme.fontScale)
                                         font.weight: Font.DemiBold
                                     }
 
@@ -317,7 +317,7 @@ Rectangle {
                                                     Layout.fillWidth: true
                                                     text: qsTr("%1 · %2%").arg(modelData.name).arg(Math.round(100 - modelData.usedPercent))
                                                     color: page.muted
-                                                    font.pixelSize: 11
+                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
                                                     elide: Text.ElideRight
                                                 }
                                             }
@@ -341,7 +341,7 @@ Rectangle {
                                 Label {
                                     text: pool.modelData.credits.length > 1 ? qsTr("%1: %2").arg(modelData.name).arg(page.credits(modelData)) : page.credits(modelData)
                                     color: page.muted
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                 }
 
                                 ShellButton {
@@ -362,7 +362,7 @@ Rectangle {
                                     visible: text.length > 0
                                     text: modelData.status
                                     color: page.foreground
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                     wrapMode: Text.Wrap
                                 }
                             }
@@ -380,7 +380,7 @@ Rectangle {
                         objectName: "usageTotal"
                         text: page.summary ? page.amount(page.summary) : ""
                         color: page.foreground
-                        font.pixelSize: 28
+                        font.pixelSize: Math.round(28 * Theme.fontScale)
                         font.weight: Font.DemiBold
                     }
 
@@ -396,7 +396,7 @@ Rectangle {
                             return qsTr("%1 · API estimate").arg(count);
                         }
                         color: page.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
 
                     Repeater {
@@ -416,13 +416,13 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: qsTr("%1  %2").arg(modelData.label).arg(page.sessions(modelData.sessions))
                                 color: page.foreground
-                                font.pixelSize: 13
+                                font.pixelSize: Math.round(13 * Theme.fontScale)
                             }
 
                             Label {
                                 text: page.amount(modelData)
                                 color: page.foreground
-                                font.pixelSize: 13
+                                font.pixelSize: Math.round(13 * Theme.fontScale)
                             }
                         }
                     }
@@ -443,13 +443,13 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: modelData[0]
                                 color: page.muted
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
 
                             Label {
                                 text: modelData[1]
                                 color: page.foreground
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
                         }
                     }
@@ -470,14 +470,14 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: modelData.model
                                 color: page.foreground
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                 elide: Text.ElideRight
                             }
 
                             Label {
                                 text: page.metric === "cost" && modelData.unpriced ? qsTr("Unpriced") : page.amount(modelData)
                                 color: page.foreground
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
                         }
                     }
@@ -509,7 +509,7 @@ Rectangle {
                                 Layout.preferredWidth: 64
                                 text: modelData.label
                                 color: page.muted
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
 
                             Item {
@@ -529,7 +529,7 @@ Rectangle {
                                 horizontalAlignment: Text.AlignRight
                                 text: page.amount(modelData)
                                 color: page.foreground
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
                         }
                     }
@@ -562,7 +562,7 @@ Rectangle {
             text: resetDialog.title
             padding: 20
             bottomPadding: 4
-            font.pixelSize: 17
+            font.pixelSize: Math.round(17 * Theme.fontScale)
             font.weight: Font.DemiBold
             color: page.foreground
         }
@@ -573,7 +573,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.")
                 color: page.muted
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 

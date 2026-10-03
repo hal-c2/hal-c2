@@ -12,6 +12,7 @@ import { testQml, type QmlTestApp } from "opentui-qml/testing";
 
 import { createHost, type Host, type HostOptions } from "../../src/host/host.ts";
 import { enginePluginPort } from "../../src/host/plugins.ts";
+import { movePromptCursorToEnd } from "../../src/host/promptCursor.ts";
 import type { StepContext } from "../steps.ts";
 import { fakeClient } from "./fakeClient.ts";
 
@@ -113,6 +114,9 @@ export async function boot(
       return true;
     },
     trace: (action, payload) => dispatched.push({ action, payload }),
+    promptCursorToEnd: (text) => {
+      if (ctx.app) movePromptCursorToEnd(ctx.app.root, text);
+    },
   });
   ctx.cleanups.push(() => host.destroy());
   await host.ready;

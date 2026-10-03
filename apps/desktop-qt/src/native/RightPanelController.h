@@ -193,4 +193,7 @@ private:
   int m_width = defaultWidth;
   QString m_storePath;
   QByteArray m_saved;
+  // What `panel` last said, to tell a toggle from a thread's own layout.
+  QString m_publishedThread;
+  bool m_publishedOpen = false;
 };

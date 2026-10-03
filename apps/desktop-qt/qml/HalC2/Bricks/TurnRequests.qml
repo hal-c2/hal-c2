@@ -125,7 +125,7 @@ Item {
                         text: requests.approval?.title ?? ""
                         color: requests.foreground
                         font.family: requests.uiFont
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         font.weight: Font.DemiBold
                     }
 
@@ -147,7 +147,7 @@ Item {
                         text: qsTr("%1/%2").arg(Math.min(requests.approvalIndex, requests.approvals.length - 1) + 1).arg(requests.approvals.length)
                         color: requests.muted
                         font.family: requests.uiFont
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
 
                     ShellButton {
@@ -169,7 +169,7 @@ Item {
                     text: requests.approval?.detail ?? ""
                     color: requests.foreground
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : requests.uiFont
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     wrapMode: Text.WrapAnywhere
                     maximumLineCount: 6
                     elide: Text.ElideRight
@@ -182,7 +182,7 @@ Item {
                     text: requests.approval?.problem ?? ""
                     color: requests.warning
                     font.family: requests.uiFont
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     wrapMode: Text.Wrap
                 }
 
@@ -223,7 +223,7 @@ Item {
                         text: qsTr("%1: %2").arg(modelData.label).arg(modelData.warning)
                         color: requests.warning
                         font.family: requests.uiFont
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         wrapMode: Text.Wrap
                     }
                 }
@@ -259,7 +259,7 @@ Item {
                             text: questionItem.modelData.question
                             color: requests.foreground
                             font.family: requests.uiFont
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                             font.weight: Font.DemiBold
                             wrapMode: Text.Wrap
                         }
@@ -350,7 +350,7 @@ Item {
                     text: requests.question?.problem ?? ""
                     color: requests.warning
                     font.family: requests.uiFont
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     wrapMode: Text.Wrap
                 }
 
@@ -409,7 +409,7 @@ Item {
                         text: requests.plan?.title ?? ""
                         color: requests.foreground
                         font.family: requests.uiFont
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
                     }
@@ -419,7 +419,7 @@ Item {
                         text: qsTr("Implement the plan, or send a message to refine it.")
                         color: requests.muted
                         font.family: requests.uiFont
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         elide: Text.ElideRight
                     }
                 }
@@ -455,7 +455,7 @@ Item {
                         text: modelData.text
                         color: requests.foreground
                         font.family: requests.uiFont
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         elide: Text.ElideRight
                         maximumLineCount: 1
                     }

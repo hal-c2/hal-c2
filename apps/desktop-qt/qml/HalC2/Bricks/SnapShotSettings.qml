@@ -38,7 +38,7 @@ SettingsPage {
             Label {
                 text: row.heading
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.weight: Font.Medium
             }
 
@@ -47,7 +47,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: row.description
                 color: snap.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -57,7 +57,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: row.status
                 color: snap.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
         }
@@ -175,7 +175,7 @@ SettingsPage {
             Label {
                 text: snap.wizard?.title ?? ""
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: 14
+                font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -189,7 +189,7 @@ SettingsPage {
                         required property var modelData
                         text: modelData.label
                         color: snap.wizard?.step === modelData.step ? Theme.palette.color("text", "#e4e4e7") : snap.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: snap.wizard?.step === modelData.step ? Font.DemiBold : Font.Normal
                     }
                 }
@@ -199,7 +199,7 @@ SettingsPage {
                 objectName: "heading"
                 text: snap.wizard?.heading ?? ""
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.weight: Font.Medium
             }
 
@@ -207,7 +207,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: snap.wizard?.body ?? ""
                 color: snap.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -216,7 +216,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: snap.wizard?.details ?? ""
                 color: Theme.palette.color("warning", "#fbbf24")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -240,7 +240,7 @@ SettingsPage {
                 visible: snap.wizard?.step === "shortcut" && text.length > 0
                 text: snap.wizard?.attention || (snap.shortcut?.status ?? "")
                 color: snap.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 

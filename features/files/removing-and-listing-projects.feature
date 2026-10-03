@@ -35,21 +35,21 @@ Feature: Removing and updating projects
     When a client renames an unknown project
     Then the MC answers "unknown project"
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario: Removing a project asks for confirmation and explains what is lost
     Given "shop" has 4 threads
     When the user asks to remove "shop"
     Then the user is told 4 threads and their conversation history will be cleared
     And the user is told the files on disk are kept
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario: Confirming removal clears the project and its drafts
     Given "shop" has an unsent draft
     When the user confirms removing "shop"
     Then "shop" is no longer listed for "laptop"
     And the draft for "shop" is gone
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario: Cancelling removal keeps the project
     When the user asks to remove "shop"
     And the user cancels
@@ -61,7 +61,7 @@ Feature: Removing and updating projects
     When the MC removes the project "shop"
     Then the removal confirmation is closed
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario: A removal the environment refuses keeps the project and says why
     Given the environment refuses to change projects with "Project shop is busy."
     When the user confirms removing "shop"

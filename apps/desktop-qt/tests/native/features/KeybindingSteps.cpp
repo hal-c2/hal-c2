@@ -298,11 +298,14 @@ void press(World& world, const QString& key) {
   }
   if (pressInComposer(world, key)) return;
   // A brick on screen that takes the scenario's keys gets them as its window does.
+  // What it leaves is the window's, as any other key.
   if (world.brick && world.brick->takesKeys) {
     keys(world).acted = true;
-    world.brick->press(key);
-    world.sync();
-    return;
+    if (world.brick->press(key)) {
+      keys(world).ran.clear();
+      world.sync();
+      return;
+    }
   }
   const auto shortcut = keybindings::parseShortcut(key.toLower());
   if (!shortcut) fail(QStringLiteral("%1 is not a key").arg(key));

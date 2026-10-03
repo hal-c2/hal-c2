@@ -49,6 +49,12 @@ public:
   void resetSidebarWidth();
   // The window's width, so the list shrinks to fit a narrow one.
   void setWindowWidth(int width);
+  // How long a panel takes to open or close, in ms: the Panel animations
+  // setting, or none when motion is reduced (the Reduce motion setting, or
+  // the system's preference where the platform reports it).
+  int panelAnimationMs() const;
+  // The system's preference (main.cpp asks the platform); every window follows it.
+  static void setSystemReducedMotion(bool reduced);
 
 private:
   void load();

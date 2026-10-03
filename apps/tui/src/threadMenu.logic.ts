@@ -7,6 +7,8 @@ import type { Row } from "./components/Sidebar.logic.ts";
 export type ThreadContextMenuAction =
   | "settle"
   | "unsettle"
+  | "snooze"
+  | "unsnooze"
   | "rename"
   | "copy-path"
   | "copy-branch"
@@ -18,9 +20,22 @@ export function buildThreadContextMenuItems(input: {
   readonly row: Pick<Extract<Row, { kind: "thread" }>, "section" | "thread">;
   readonly settlementSupported: boolean;
   readonly hasWorkspacePath: boolean;
-}): ReadonlyArray<ContextMenuItem<ThreadContextMenuAction>> {
+  /** Whether the thread may be snoozed now; omitted by a host that cannot snooze. */
+  readonly canSnooze?: boolean;
+  /** Entries a host adds after the copy group (moving the thread). */
+  readonly extra?: ReadonlyArray<ContextMenuItem>;
+}): ReadonlyArray<ContextMenuItem<ThreadContextMenuAction | string>> {
   const { row } = input;
   const settled = row.section === "settled";
+  const extra = input.extra ?? [];
+  const snooze =
+    input.canSnooze === undefined
+      ? []
+      : [
+          row.section === "snoozed"
+            ? { id: "unsnooze" as const, label: "Wake thread" }
+            : { id: "snooze" as const, label: "Snooze", disabled: !input.canSnooze },
+        ];
   return [
     ...(input.settlementSupported
       ? [
@@ -35,6 +50,7 @@ export function buildThreadContextMenuItems(input: {
       label: "Rename thread",
       separatorBefore: input.settlementSupported,
     },
+    ...snooze,
     {
       id: "copy-path",
       label: "Copy path",
@@ -43,6 +59,7 @@ export function buildThreadContextMenuItems(input: {
     },
     ...(row.thread.branch ? [{ id: "copy-branch" as const, label: "Copy branch" }] : []),
     { id: "copy-thread-id", label: "Copy thread ID" },
+    ...extra.map((item, index) => (index === 0 ? { ...item, separatorBefore: true } : item)),
     {
       id: "archive",
       label: "Archive thread",

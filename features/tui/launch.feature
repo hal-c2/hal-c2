@@ -234,8 +234,7 @@ Feature: Launching and leaving the terminal client
     Then every environment is listed with whether it is reachable
     And activating a reachable environment switches the client to it
 
-  # No relay status or install flow in the terminal client.
-  @backlog @tui
+  @tui
   Scenario: The user checks the relay client and installs it
     Given the relay client is not installed
     When the user checks relay status from the terminal client

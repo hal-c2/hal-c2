@@ -43,7 +43,7 @@ RowLayout {
         visible: git.unavailableReason !== ""
         text: git.compact ? qsTr("No git") : qsTr("Git unavailable")
         color: git.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
 
         HoverHandler {
             id: unavailableHover
@@ -55,7 +55,7 @@ RowLayout {
 
     ShellButton {
         implicitHeight: 24
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         iconName: "git-branch"
         visible: git.ready && !git.model.isRepo
         enabled: git.ready && !git.model.initPending
@@ -184,7 +184,7 @@ RowLayout {
             Text {
                 text: qsTr("Commit changes")
                 color: git.foreground
-                font.pixelSize: 15
+                font.pixelSize: Math.round(15 * Theme.fontScale)
                 font.bold: true
             }
 
@@ -192,7 +192,7 @@ RowLayout {
                 Layout.fillWidth: true
                 text: qsTr("Review and confirm your commit. Leave the message blank to auto-generate one.")
                 color: git.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -200,7 +200,7 @@ RowLayout {
                 visible: git.ready && git.model.isDefaultRef
                 text: qsTr("Warning: committing on the default branch %1").arg(git.ready ? (git.model.branch ?? "") : "")
                 color: Theme.palette.color("warning", "#e0af68")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             ListView {
@@ -237,20 +237,20 @@ RowLayout {
                         Layout.fillWidth: true
                         text: modelData.path
                         color: git.foreground
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         elide: Text.ElideMiddle
                     }
 
                     Text {
                         text: "+" + modelData.insertions
                         color: Theme.palette.color("update", "#22c55e")
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
 
                     Text {
                         text: "−" + modelData.deletions
                         color: Theme.palette.color("error", "#ef4444")
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
                 }
             }
@@ -274,7 +274,7 @@ RowLayout {
                         color: git.foreground
                         wrapMode: TextEdit.Wrap
                         background: null
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                     }
                 }
             }
@@ -341,7 +341,7 @@ RowLayout {
                 Layout.fillWidth: true
                 text: confirmDialog.pending ? confirmDialog.pending.title : ""
                 color: git.foreground
-                font.pixelSize: 15
+                font.pixelSize: Math.round(15 * Theme.fontScale)
                 font.bold: true
                 wrapMode: Text.Wrap
             }
@@ -350,7 +350,7 @@ RowLayout {
                 Layout.fillWidth: true
                 text: confirmDialog.pending ? confirmDialog.pending.description : ""
                 color: git.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -431,7 +431,7 @@ RowLayout {
             Text {
                 text: qsTr("Publish repository")
                 color: git.foreground
-                font.pixelSize: 15
+                font.pixelSize: Math.round(15 * Theme.fontScale)
                 font.bold: true
             }
 
@@ -439,7 +439,7 @@ RowLayout {
                 Layout.fillWidth: true
                 text: qsTr("Create the repository on its host, add it as a remote and push this branch.")
                 color: git.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -493,7 +493,7 @@ RowLayout {
                 placeholderText: qsTr("owner/repository")
                 placeholderTextColor: git.muted
                 color: git.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 enabled: !(publishDialog.form?.busy ?? false)
                 onAccepted: publishButton.clicked()
             }
@@ -503,7 +503,7 @@ RowLayout {
                 visible: text !== ""
                 text: publishDialog.form?.error ?? ""
                 color: Theme.palette.color("error", "#ef4444")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 

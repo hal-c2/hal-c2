@@ -183,7 +183,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: row.isResult ? row.modelData.title : row.modelData.label
                         color: nav.foreground
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         elide: Text.ElideRight
                     }
 
@@ -192,7 +192,7 @@ Rectangle {
                         visible: row.isResult
                         text: row.isResult ? row.modelData.sectionLabel : ""
                         color: nav.muted
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                         elide: Text.ElideRight
                     }
                 }
@@ -204,7 +204,7 @@ Rectangle {
                 visible: list.searching && list.count === 0
                 text: qsTr("No matching settings")
                 color: nav.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
         }
     }
@@ -232,7 +232,7 @@ Rectangle {
             text: restoreDialog.title
             padding: 20
             bottomPadding: 4
-            font.pixelSize: 17
+            font.pixelSize: Math.round(17 * Theme.fontScale)
             font.weight: Font.DemiBold
             color: Theme.palette.color("text", "#e4e4e7")
         }
@@ -244,7 +244,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("This will reset: %1.").arg(nav.changedLabels.join(", "))
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 

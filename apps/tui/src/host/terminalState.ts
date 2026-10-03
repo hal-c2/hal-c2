@@ -78,6 +78,8 @@ export interface TerminalThread {
   readonly title: string;
   readonly cwd: string;
   readonly worktreePath: string | null;
+  /** What the thread's shells find in their environment (the project and worktree folders). */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 export interface TerminalControllerOptions {
@@ -109,8 +111,15 @@ export interface TerminalController {
   readonly clear: () => void;
   readonly restart: () => void;
   readonly copy: () => void;
+  /** The active terminal's screen as text (what `copy` copies), or null with none open. */
+  readonly viewportText: () => string | null;
   readonly input: (data: string) => void;
   readonly paste: (text: string) => void;
+  /**
+   * Type a project action's command into the thread's terminal: the active
+   * one, or a new one while that is running something. False without a thread.
+   */
+  readonly runAction: (action: { readonly name: string; readonly command: string }) => boolean;
   readonly scroll: (action: TerminalScrollAction) => void;
   /** Grow (+) or shrink (−) the drawer by rows. */
   readonly resizeBy: (delta: number) => void;
@@ -233,6 +242,7 @@ class Pane {
         worktreePath: thread.worktreePath,
         cols,
         rows,
+        ...(thread.env ? { env: thread.env } : {}),
       },
       (event) => {
         if (event.type === "snapshot" || event.type === "restarted") {
@@ -334,6 +344,8 @@ export function createTerminalController(options: TerminalControllerOptions): Te
   let heightOverride: number | null = null;
   let tabsByThread: ReadonlyMap<string, ThreadTabs> = new Map();
   let known: ReadonlyMap<string, ReadonlyArray<string>> = new Map();
+  // Terminals (`thread:terminal`) the server says are running a command.
+  const busy = new Set<string>();
   const panes = new Map<string, Pane>();
   const inFlight = new Set<Promise<unknown>>();
   let renderTimer: ReturnType<typeof setTimeout> | null = null;
@@ -500,6 +512,17 @@ export function createTerminalController(options: TerminalControllerOptions): Te
 
   const unsubscribeMetadata = client.subscribeTerminalMetadata((event) => {
     known = reduceKnownTerminals(known, event);
+    if (event.type === "snapshot") busy.clear();
+    for (const summary of event.type === "snapshot"
+      ? event.terminals
+      : event.type === "upsert"
+        ? [event.terminal]
+        : []) {
+      const key = paneKey(summary.threadId, summary.terminalId);
+      if (summary.hasRunningSubprocess) busy.add(key);
+      else busy.delete(key);
+    }
+    if (event.type === "remove") busy.delete(paneKey(event.threadId, event.terminalId));
     if (
       event.type === "remove" &&
       tabsByThread.get(event.threadId)?.ids.includes(event.terminalId)
@@ -642,6 +665,10 @@ export function createTerminalController(options: TerminalControllerOptions): Te
           ),
       );
     },
+    viewportText: () => {
+      const pane = activePane();
+      return pane ? readTerminalViewport(pane.term, pane.offset) : null;
+    },
     copy: () => {
       const pane = activePane();
       if (!pane) return;
@@ -665,6 +692,50 @@ export function createTerminalController(options: TerminalControllerOptions): Te
       const pane = activePane();
       if (!pane || text.length === 0) return;
       pane.send(encodeTerminalPaste(text, pane.term.modes.bracketedPasteMode));
+    },
+    runAction: (action) => {
+      const thread = options.thread();
+      if (!thread) return false;
+      let tabs = updateTabs(thread.threadId, (current) => current ?? initialTabs())!;
+      if (busy.has(paneKey(thread.threadId, tabs.activeId))) {
+        if (tabs.ids.length >= MAX_TERMINALS_PER_THREAD) {
+          store.setStatus(`At most ${MAX_TERMINALS_PER_THREAD} terminals per thread.`, "error");
+          return true;
+        }
+        tabs = updateTabs(thread.threadId, (current) => addTab(current))!;
+      }
+      const terminalId = tabs.activeId;
+      // The drawer shows the run; the keys stay where they are.
+      open = true;
+      mergeDiscovered();
+      update();
+      const size = paneSize();
+      store.setStatus(`Starting ${action.name}…`, "busy");
+      track(
+        client
+          // The shell is started first (again, when it has ended), so the command always runs.
+          .terminalOpen({
+            threadId: thread.threadId as ThreadId,
+            terminalId,
+            cwd: thread.cwd,
+            worktreePath: thread.worktreePath,
+            cols: size.cols,
+            rows: size.rows,
+            ...(thread.env ? { env: thread.env } : {}),
+          })
+          .then(() =>
+            client.terminalWrite(thread.threadId as ThreadId, terminalId, `${action.command}\r`),
+          )
+          .then(
+            () => store.setStatus(`Running ${action.name} in the terminal.`, "success"),
+            (error) =>
+              store.setStatus(
+                `Failed to run action "${action.name}": ${errorText(error)}`,
+                "error",
+              ),
+          ),
+      );
+      return true;
     },
     scroll: (action) => {
       const pane = activePane();

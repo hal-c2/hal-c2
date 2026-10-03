@@ -31,7 +31,7 @@ Rectangle {
         id: glyph
 
         font.family: root.mono
-        font.pixelSize: 12
+        font.pixelSize: Theme.fontSizeCode
         text: "M"
     }
 
@@ -71,7 +71,7 @@ Rectangle {
                 return root.source.searchTruncated ? qsTr("Showing the first matches; refine the search for more.") : "";
             }
             color: root.source?.searchProblem.length > 0 ? root.errorColor : root.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
 
@@ -95,7 +95,7 @@ Rectangle {
                     horizontalAlignment: Text.AlignHCenter
                     text: (root.source?.root ?? "").length === 0 ? qsTr("This thread has no workspace.") : root.tree?.rootProblem ?? ""
                     color: root.rootStatus === "error" ? root.errorColor : root.muted
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     wrapMode: Text.Wrap
                 }
                 ShellButton {
@@ -170,7 +170,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: entry.kind === "loading" ? qsTr("Loading...") : entry.kind === "error" ? qsTr("%1 Click to retry.").arg(entry.problem) : entry.name
                             color: entry.kind === "error" ? root.errorColor : entry.ignored || entry.kind === "loading" ? root.muted : root.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             elide: Text.ElideMiddle
                         }
                     }
@@ -205,7 +205,7 @@ Rectangle {
                     text: root.source?.openPath ?? ""
                     color: root.foreground
                     font.family: root.mono
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSizeCode
                     elide: Text.ElideMiddle
                 }
                 ShellButton {
@@ -237,7 +237,7 @@ Rectangle {
                 visible: text.length > 0
                 text: root.source?.truncatedNotice ?? ""
                 color: Theme.palette.color("warning", "#f59e0b")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -268,7 +268,7 @@ Rectangle {
                             return "";
                         }
                         color: root.source?.fileStatus === "error" ? root.errorColor : root.muted
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         wrapMode: Text.Wrap
                     }
                     ShellButton {
@@ -326,7 +326,7 @@ Rectangle {
                             text: line.number
                             color: root.muted
                             font.family: root.mono
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSizeCode
                             topPadding: 2
                         }
                         Text {
@@ -337,7 +337,7 @@ Rectangle {
                             text: line.text.length > root.maxLineColumns ? line.text.slice(0, root.maxLineColumns) + "…" : line.text
                             color: root.foreground
                             font.family: root.mono
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontSizeCode
                             textFormat: Text.PlainText
                             wrapMode: lines.wrap ? Text.WrapAnywhere : Text.NoWrap
                             topPadding: 1

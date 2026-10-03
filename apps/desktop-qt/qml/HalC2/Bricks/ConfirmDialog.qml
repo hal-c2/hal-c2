@@ -43,7 +43,7 @@ Dialog {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: 17
+        font.pixelSize: Math.round(17 * Theme.fontScale)
         font.weight: Font.DemiBold
         color: Theme.palette.color("text", "#e4e4e7")
         wrapMode: Text.Wrap
@@ -55,7 +55,7 @@ Dialog {
             visible: text.length > 0
             text: dialog.question?.description ?? ""
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
         RowLayout {

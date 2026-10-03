@@ -46,7 +46,7 @@ Item {
                 text: Runtime.lastError.length > 0 ? Runtime.lastError : overlay.backendError
                 wrapMode: Text.Wrap
                 font.family: "monospace"
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 color: Theme.palette.color("textMuted", "#a1a1aa")
             }
 
@@ -57,7 +57,7 @@ Item {
                     Layout.fillWidth: true
                     text: Runtime.userShellPath
                     elide: Text.ElideMiddle
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                     color: Theme.palette.color("textMuted", "#a1a1aa")
                 }
 

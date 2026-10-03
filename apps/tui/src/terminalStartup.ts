@@ -22,6 +22,21 @@ export const TUI_RENDERER_CONFIG = {
   forwardEnvKeys: ["TERM", "COLORTERM", "TERM_PROGRAM"],
 } satisfies CliRendererConfig;
 
+/** `HAL_C2_TUI_MOUSE=0` (or `off`, `false`): leave the mouse to the terminal emulator. */
+export const mouseDisabled = (env: Readonly<Record<string, string | undefined>>): boolean =>
+  ["0", "off", "false", "no"].includes((env.HAL_C2_TUI_MOUSE ?? "").trim().toLowerCase());
+
+/**
+ * The renderer configuration for this environment. With the mouse turned off
+ * the client never asks the terminal to report it, so clicks, the wheel and
+ * drag-selection stay the emulator's; every action has a key or a palette entry.
+ */
+export function tuiRendererConfig(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): CliRendererConfig {
+  return mouseDisabled(env) ? { ...TUI_RENDERER_CONFIG, useMouse: false } : TUI_RENDERER_CONFIG;
+}
+
 export interface TerminalStartupEnvironment {
   readonly TMUX?: string;
   readonly TMUX_PANE?: string;

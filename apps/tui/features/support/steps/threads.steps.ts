@@ -1037,10 +1037,16 @@ step(
   },
 );
 
-// In an open picker (model, access, effort): among its options; otherwise a palette command.
+// In an open picker (model, access, effort) or thread menu (machines to move to): among its
+// choices; otherwise a palette command.
 step("{string} is offered", async (ctx: World, label: string) => {
   const picker = ctx.host!.state.get("select") as TuiSelectState;
-  if (picker.open) {
+  const menu = contextMenu(ctx);
+  if (menu) {
+    await settle(ctx);
+    const item = contextMenu(ctx)!.rows.find((row) => row.kind === "item" && row.label === label);
+    expect(item).toMatchObject({ disabled: false });
+  } else if (picker.open) {
     await settle(ctx);
     const options = (ctx.host!.state.get("select") as TuiSelectState).options;
     expect(options.map((option) => option.label)).toContain(label);
@@ -1119,7 +1125,8 @@ step("a draft thread opens in {string}", async (ctx: World, project: string) => 
   await flush(ctx);
   expect(ctx.host!.state.get("page")).toMatchObject({ kind: "draft", projectTitle: project });
   expect(draft(ctx)?.projectName).toBe(project);
-  expect(await snapshot(ctx)).toContain(`New thread · ${project}`);
+  // An empty draft has no row in the thread list; the prompt names its project.
+  expect(await snapshot(ctx)).toContain(`What should we build in ${project}?`);
 });
 
 step("the draft is listed at the top of the thread list", async (ctx: World) => {

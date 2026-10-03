@@ -146,6 +146,8 @@ var appearance = [
     { section: "Motion" },
     { key: "panelAnimationDurationMs", kind: "number", title: "Panel animations", min: 0, max: 400, step: 50, unit: "ms",
       description: "Set how fast panels open and close." },
+    { key: "reduceMotion", kind: "switch", title: "Reduce motion",
+      description: "Open and close panels at once, whatever the animation speed." },
 ];
 
 function describe(row, value) {

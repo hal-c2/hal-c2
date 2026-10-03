@@ -19,7 +19,7 @@ ComboBox {
     leftPadding: iconName.length > 0 ? 10 + iconSize + 6 : 10
     rightPadding: 10 + chevronSize + 4
     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
-    font.pixelSize: 14
+    font.pixelSize: Math.round(14 * Theme.fontScale)
     font.weight: Font.Medium
     hoverEnabled: true
     opacity: enabled ? 1 : 0.64

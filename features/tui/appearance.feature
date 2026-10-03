@@ -96,19 +96,19 @@ Feature: Colour, icons, mouse and images in the terminal
     Then "src/app.ts" is tinted for its file type
     And "notes.unknownext" is dimmed
 
-  @backlog @tui
+  @tui
   Scenario: A nerd font opts the client into richer icons
     Given the user has told the client their terminal uses a nerd font
     Then tool and file icons use nerd font glyphs
     And turning the option off returns to the single-column fallbacks
 
-  @backlog @tui
+  @tui
   Scenario: The user picks a colour theme for the client
     When the user chooses a colour theme in the terminal client
     Then the client redraws in that theme
     And choosing the terminal default again borrows the terminal's colours
 
-  @backlog @tui
+  @tui
   Scenario Outline: The client adapts to the terminal's colour depth
     Given the terminal supports <depth>
     Then status, diff and syntax colours stay distinguishable
@@ -118,7 +118,7 @@ Feature: Colour, icons, mouse and images in the terminal
       | truecolor       |
       | 256 colours     |
 
-  @backlog @tui
+  @tui
   Scenario: The client honours NO_COLOR
     Given the environment variable "NO_COLOR" is set
     When the terminal client opens
@@ -150,7 +150,7 @@ Feature: Colour, icons, mouse and images in the terminal
     When one click reaches the same control more than once
     Then the action runs once, after the click has been handled
 
-  @backlog @tui
+  @tui
   Scenario: The user turns mouse support off
     Given the user starts the terminal client with mouse support turned off
     Then clicks and wheel events go to the terminal emulator
@@ -233,24 +233,24 @@ Feature: Colour, icons, mouse and images in the terminal
     When the user clicks the image
     Then the preview's top row shows "screenshot.png · 48 KB" on the left and "Esc / click to close" on the right in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: Sixel terminals show inline images
     Given the user's terminal supports sixel but not the Kitty graphics protocol
     When a message with an image attachment is shown
     Then the image is drawn inline with sixel
 
-  @backlog @tui
+  @tui
   Scenario: Copying a message puts its text on the clipboard
     When the user copies a message from the timeline
     Then the message text is on the system clipboard
 
-  @backlog @tui
+  @tui
   Scenario: Opening an external link falls back to copying it
     Given the terminal cannot open links
     When the user opens a link from the timeline
     Then the link is copied and the status line says so
 
-  @backlog @tui
+  @tui
   Scenario: The user opens a file location in their editor
     When the user opens a file reference from the timeline
     Then the file opens in the user's editor at that line

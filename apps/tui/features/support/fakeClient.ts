@@ -19,6 +19,7 @@ import type {
   TuiThreadPage,
 } from "../../src/connection.ts";
 import { flattenModelOptions } from "../../src/models.ts";
+import { fakeFeatureClient, fakeGitProgress, type FakeServer } from "./fakeFeatureClient.ts";
 import { fakeSettingsMc, type FakeSettingsMc } from "./fakeSettingsMc.ts";
 
 // Fixtures and an in-memory TuiClient, shared by the component tests and the
@@ -163,6 +164,7 @@ const UNRECORDED = new Set([
   "subscribeScheduledTasks",
   "subscribeResourceTelemetry",
   "subscribeUsageLimits",
+  "subscribeAuthAccess",
 ]);
 
 export function fakeClient({
@@ -184,6 +186,7 @@ export function fakeClient({
     ({ cwd: destinationPath, remoteUrl, repository: null }) as never,
   createProject = async () => "p-new" as never,
   createThread = async () => "t-new" as never,
+  terminalOpen = async () => {},
   terminalClear = async () => {},
   terminalRestart = async () => {},
   terminalClose = async () => {},
@@ -195,6 +198,8 @@ export function fakeClient({
   deleteThread = async () => {},
   settleThread = async () => {},
   unsettleThread = async () => {},
+  snoozeThread = async () => {},
+  unsnoozeThread = async () => {},
   stopSession = async () => {},
   vcsStatus,
   runGitPull,
@@ -252,6 +257,7 @@ export function fakeClient({
   readonly cloneRepository?: TuiClient["cloneRepository"];
   readonly createProject?: TuiClient["createProject"];
   readonly createThread?: TuiClient["createThread"];
+  readonly terminalOpen?: TuiClient["terminalOpen"];
   readonly terminalClear?: TuiClient["terminalClear"];
   readonly terminalRestart?: TuiClient["terminalRestart"];
   readonly terminalClose?: TuiClient["terminalClose"];
@@ -263,6 +269,8 @@ export function fakeClient({
   readonly deleteThread?: TuiClient["deleteThread"];
   readonly settleThread?: TuiClient["settleThread"];
   readonly unsettleThread?: TuiClient["unsettleThread"];
+  readonly snoozeThread?: TuiClient["snoozeThread"];
+  readonly unsnoozeThread?: TuiClient["unsnoozeThread"];
   readonly stopSession?: TuiClient["stopSession"];
   readonly vcsStatus?: VcsStatusResult;
   /** Replaces the default pull (which ends as `setGitOutcome` says). */
@@ -290,6 +298,8 @@ export function fakeClient({
   readonly onTerminalWrite?: (terminal: FakeTerminal, data: string) => void;
 } = {}): {
   readonly client: TuiClient;
+  /** What the fake MC holds for the feature areas (fakeFeatureClient.ts). */
+  readonly server: FakeServer;
   readonly connect: () => void;
   readonly emitShell: (snapshot: OrchestrationShellSnapshot) => void;
   /** The shell snapshot the client last delivered (or will deliver on connect). */
@@ -396,7 +406,20 @@ export function fakeClient({
     if (outcome.kind === "fail") return Promise.reject(new Error(outcome.message));
     return Promise.resolve(value);
   };
+  const feature = fakeFeatureClient({
+    get: () => latestShell,
+    push: (snapshot) => {
+      latestShell = snapshot;
+      shellSubscriber?.(snapshot);
+    },
+    vcs: () => currentVcsStatus,
+    setVcs: (status) => {
+      currentVcsStatus = status;
+      for (const subscriber of vcsSubscribers) subscriber(status);
+    },
+  });
   const client = {
+    ...feature.client,
     ...settings.client,
     hostPlatform,
     subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => {
@@ -506,6 +529,7 @@ export function fakeClient({
       onTerminalWrite?.(terminal, data);
     },
     terminalResize: async () => {},
+    terminalOpen,
     terminalClear,
     terminalRestart,
     setInteractionMode:
@@ -518,6 +542,8 @@ export function fakeClient({
     deleteThread,
     settleThread,
     unsettleThread,
+    snoozeThread,
+    unsnoozeThread,
     stopSession,
     terminalClose,
     approve,
@@ -539,8 +565,14 @@ export function fakeClient({
           truncated: false,
         };
       }),
-    runGitStackedAction: () =>
-      settleGit(gitOutcome.kind === "succeed" ? (gitOutcome.result ?? null) : null),
+    // The server streams each phase and hook as it runs them, then the outcome.
+    runGitStackedAction: (
+      input: Parameters<TuiClient["runGitStackedAction"]>[0],
+      onProgress?: Parameters<TuiClient["runGitStackedAction"]>[1],
+    ) => {
+      for (const event of fakeGitProgress(input)) onProgress?.(event);
+      return settleGit(gitOutcome.kind === "succeed" ? (gitOutcome.result ?? null) : null);
+    },
     runGitPull: (cwd: string) => (runGitPull ? runGitPull(cwd) : settleGit(undefined)),
   } as unknown as TuiClient;
   const calls: FakeClientCall[] = [];
@@ -557,6 +589,7 @@ export function fakeClient({
   }
   return {
     client: recorded as unknown as TuiClient,
+    server: feature.server,
     calls,
     connect: () => {
       connectionPhase = "connected";

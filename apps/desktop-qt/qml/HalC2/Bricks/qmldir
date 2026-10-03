@@ -42,6 +42,7 @@ GeneralSettings 1.0 GeneralSettings.qml
 AppearanceSettings 1.0 AppearanceSettings.qml
 ThemeEditor 1.0 ThemeEditor.qml
 ThemeImportDialog 1.0 ThemeImportDialog.qml
+ThemeInspector 1.0 ThemeInspector.qml
 TurnRequests 1.0 TurnRequests.qml
 ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml

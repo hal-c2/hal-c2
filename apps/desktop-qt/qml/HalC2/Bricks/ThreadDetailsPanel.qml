@@ -32,7 +32,7 @@ Rectangle {
     component Heading: Text {
         Layout.topMargin: 10
         color: root.muted
-        font.pixelSize: 11
+        font.pixelSize: Math.round(11 * Theme.fontScale)
         font.weight: Font.Medium
         font.capitalization: Font.AllUppercase
     }
@@ -56,7 +56,7 @@ Rectangle {
             text: parent.value
             elide: Text.ElideMiddle
             color: parent.tint
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
     }
 
@@ -71,7 +71,7 @@ Rectangle {
             Layout.fillWidth: true
             text: qsTr("Thread details")
             color: root.foreground
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             font.weight: Font.Medium
         }
         ShellButton {
@@ -154,14 +154,14 @@ Rectangle {
                             Layout.fillWidth: true
                             text: relation.modelData.relation
                             color: root.muted
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                         }
                         Text {
                             Layout.fillWidth: true
                             text: relation.modelData.title
                             elide: Text.ElideRight
                             color: root.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                         }
                     }
                 }

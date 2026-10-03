@@ -182,7 +182,7 @@ Feature: Archiving and deleting threads
     Then the user is asked "Delete 3 threads?"
     And all three threads are deleted after confirming
 
-  @backlog @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Deleting is not possible while the environment is offline
     Given the environment is unreachable
     When the user deletes "Old spike"

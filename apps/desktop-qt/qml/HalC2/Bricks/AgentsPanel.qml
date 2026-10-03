@@ -40,7 +40,7 @@ Rectangle {
         wrapMode: Text.Wrap
         text: qsTr("No subagents or running commands in this thread.")
         color: root.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
     }
 
     ListView {
@@ -62,7 +62,7 @@ Rectangle {
             leftPadding: 6
             text: section === "command" ? qsTr("Running commands") : qsTr("Agents")
             color: root.muted
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             font.weight: Font.Medium
         }
 
@@ -132,7 +132,7 @@ Rectangle {
                 y: 7
                 text: row.elapsed
                 color: root.muted
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.family: root.mono
             }
 
@@ -146,7 +146,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: row.status === "failed" ? root.errorColor : root.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             Text {
@@ -159,7 +159,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.muted
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.family: root.mono
             }
         }

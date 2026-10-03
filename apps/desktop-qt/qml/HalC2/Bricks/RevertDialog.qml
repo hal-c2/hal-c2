@@ -50,7 +50,7 @@ Dialog {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: 17
+        font.pixelSize: Math.round(17 * Theme.fontScale)
         font.weight: Font.DemiBold
         color: dialog.foreground
     }
@@ -60,7 +60,7 @@ Dialog {
             Layout.fillWidth: true
             text: qsTr("The conversation after turn %1 is discarded. Reverting the files too puts the workspace back as it was after that turn. This cannot be undone.").arg(dialog.turn)
             color: dialog.foreground
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
         RowLayout {

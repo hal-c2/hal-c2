@@ -15,7 +15,7 @@ MenuItem {
     leftPadding: 8
     rightPadding: 8
     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
-    font.pixelSize: 14
+    font.pixelSize: Math.round(14 * Theme.fontScale)
     hoverEnabled: true
 
     contentItem: RowLayout {
