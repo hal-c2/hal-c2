@@ -690,7 +690,7 @@ const Steps steps([] {
   });
 
   // Adding an instance.
-  step(QStringLiteral("the user adds (?:a|another) %1 (?:provider|instance) labelled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the user adds (?:a|another) \"?([^\"]*?)\"? (?:provider|instance) labelled %1").arg(q), [](World& world, const Captures& c, const Table&) {
     startAdding(world, c[0], c[1]);
     finishAdding(world);
   });
