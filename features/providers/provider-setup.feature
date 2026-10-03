@@ -94,7 +94,6 @@ Feature: Provider setup, updates and sign-in
       | unsupported         | Unsupported version   |
       | known to be broken  | Known broken version  |
 
-  @backlog
   Scenario: No update is offered when the latest release is itself incompatible
     Given Codex is behind the latest release
     And that latest release is known to be broken with this HAL-C2 release
@@ -137,7 +136,7 @@ Feature: Provider setup, updates and sign-in
     When the user sends a response from the mobile app
     Then the response reaches the sign-in terminal on the MC
 
-  @desktop @mobile @backlog-mobile @backlog-mc
+  @desktop @mobile @backlog-mobile
   Scenario: Signing out asks for confirmation and keeps history
     Given the user is signed in to an ACP agent
     When the user signs out and confirms
