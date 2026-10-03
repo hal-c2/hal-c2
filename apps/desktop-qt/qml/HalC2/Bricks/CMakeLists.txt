@@ -59,6 +59,9 @@ qt_add_qml_module(hal_c2_bricks
     FilesPanel.qml
     FileEntryMenu.qml
     ProjectActionEditor.qml
+    ProjectIcon.qml
+    ProjectIconPicker.qml
+    EnvironmentIconPicker.qml
     AgentsPanel.qml
     js/lucide.js
     js/modelPicker.js

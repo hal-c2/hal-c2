@@ -16,6 +16,7 @@ Rectangle {
     property var details: null
     // The thread's project's actions (ProjectActionsController).
     readonly property var actions: details !== null ? Shell.state.projectActions ?? null : null
+    readonly property string environmentId: details !== null ? Shell.state.workspace?.activeEnvironmentId ?? "" : ""
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -106,13 +107,27 @@ Rectangle {
             }
             Fact {
                 objectName: "threadDetailsEnvironment"
-                icon: "server"
+                icon: Shell.state.environmentIcons?.[root.environmentId]?.icon ?? "server"
                 value: root.details ? (root.details.online ? root.details.environment : qsTr("%1 (unreachable)").arg(root.details.environment)) : ""
                 tint: root.details?.online === false ? Theme.palette.color("warning", "#f59e0b") : root.foreground
             }
-            Fact {
-                icon: "folder"
-                value: root.details?.project ?? ""
+            RowLayout {
+                Layout.fillWidth: true
+                visible: (root.details?.project ?? "").length > 0
+                spacing: 8
+
+                ProjectIcon {
+                    objectName: "threadDetailsProjectIcon"
+                    size: 14
+                    icon: Shell.state.projectIcons?.[Shell.state.projectActions?.projectKey ?? ""] ?? null
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: root.details?.project ?? ""
+                    elide: Text.ElideMiddle
+                    color: root.foreground
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                }
             }
             Fact {
                 objectName: "threadDetailsCheckout"
