@@ -66,7 +66,7 @@ Feature: Forking a thread and merging work back
     When the user forks "t1" at the checkpoint of run 1 as "f1"
     Then "f1" forked from run 1
 
-  @mc @backlog
+  @mc
   Scenario: Forking from a run the provider finished before the MC settled it
     Given the provider finished run 3 of "t1" but the MC has not settled it yet
     When the user forks "t1" at run 3 as "f1"

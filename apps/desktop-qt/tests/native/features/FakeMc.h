@@ -117,6 +117,10 @@ public:
   // Every `sub` frame, in order.
   QList<QJsonObject> subscriptions;
   QList<QJsonObject> commands;
+  // The environment each command was for ("" for the MC's own), beside `commands`.
+  QStringList commandEnvironments;
+  // Every call, in order, whoever answers it.
+  QList<Rpc> calls;
   QHash<QString, QString> refusals;
   // What an accepted command does to the MC's rows (the real MC's
   // projection), run before it is answered.
@@ -129,6 +133,8 @@ public:
       {QStringLiteral("threadSnooze"), true},
       {QStringLiteral("threadVisitedTracking"), true},
       {QStringLiteral("threadPinning"), true},
+      {QStringLiteral("threadPinReorder"), true},
+      {QStringLiteral("threadActiveReorder"), true},
       {QStringLiteral("threadTitleRegeneration"), true},
       {QStringLiteral("pullRequests"), true},
       {QStringLiteral("threadPullRequests"), true},

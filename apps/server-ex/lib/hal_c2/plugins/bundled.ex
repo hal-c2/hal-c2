@@ -62,8 +62,7 @@ defmodule HalC2.Plugins.Bundled.Codex do
   def providers(_settings),
     do:
       for(
-        entry <- [HalC2.Codex.Provider.entry()],
-        entry != nil,
+        entry <- HalC2.Codex.Provider.entries(),
         do: HalC2.ProviderUsageLimits.put(entry)
       )
 end
@@ -98,8 +97,7 @@ defmodule HalC2.Plugins.Bundled.Claude do
   def providers(_settings),
     do:
       for(
-        entry <- [HalC2.Claude.Provider.entry()],
-        entry != nil,
+        entry <- HalC2.Claude.Provider.entries(),
         do: HalC2.ProviderUsageLimits.put(entry)
       )
 end

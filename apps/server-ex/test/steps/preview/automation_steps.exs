@@ -534,8 +534,9 @@ defmodule HalC2.Steps.Preview.Automation do
     answer(context, "recordingStop", fn _request, _context -> {:ok, recording(nil)} end)
   end
 
-  # `run "..."` requests are the timeline's approval steps, not browser actions.
-  step ~r/^the agent asks to (?!run ")(?!.* allowing \d+ seconds$)(?<action>.+)$/,
+  # `run "..."` and `run the same command again` are approval steps (the timeline's and
+  # providers/permission-modes.feature's), not browser actions.
+  step ~r/^the agent asks to (?!run ")(?!run the same command again$)(?!.* allowing \d+ seconds$)(?<action>.+)$/,
        %{args: [action]} = context do
     act(context, action)
   end

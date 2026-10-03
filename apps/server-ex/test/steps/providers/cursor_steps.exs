@@ -368,6 +368,65 @@ defmodule HalC2.Steps.Providers.Cursor do
     Map.put(ctx, :thread, "Cursor")
   end
 
+  # --- commands ------------------------------------------------------------------------
+
+  defp commands(ctx) do
+    Acp.stream(ctx.threads["Cursor"])
+    |> HalC2.StreamState.list("turn-item")
+    |> Enum.filter(&(&1["type"] == "command_execution"))
+  end
+
+  step "Cursor is running a command", context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", "run a command and wait")
+
+    Acp.await_stream(ctx.threads["Cursor"], fn _ ->
+      match?([%{"input" => "npm test", "status" => "running"}], commands(ctx))
+    end)
+
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "the command is shown as interrupted", context do
+    assert [%{"status" => "interrupted"}] = Acp.await_runs(context.threads["Cursor"], 1)
+    assert [%{"input" => "npm test", "status" => "interrupted"}] = commands(context)
+    context
+  end
+
+  # Cursor did report the stopped command as a finished tool call.
+  step "it is not shown as a successful command", context do
+    assert [_] = Enum.filter(log(context), &(&1["event"] == "tool-completed"))
+    refute Enum.any?(commands(context), &(&1["status"] == "completed"))
+    context
+  end
+
+  step "Cursor is running a turn", context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "a shell command Cursor tries fails to start", context do
+    ctx = Acp.launch(context, "Cursor", "cursor", "try a command that cannot start")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the turn keeps going", context do
+    assert [%{"status" => "completed"}] = Acp.runs(context.threads["Cursor"])
+    assert Acp.assistant_text(context.threads["Cursor"]) =~ "That tool is not installed."
+    context
+  end
+
+  step "the command is shown as failed", context do
+    assert [%{"input" => "nosuchtool --version", "status" => "failed", "output" => output}] =
+             commands(context)
+
+    assert output =~ "ENOENT"
+    context
+  end
+
   step "the user sends a message to Cursor", context do
     run_on_cursor(context, "full-access")
   end

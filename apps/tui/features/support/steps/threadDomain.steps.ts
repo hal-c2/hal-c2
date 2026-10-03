@@ -3,6 +3,7 @@
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
+import { chooseCommand } from "../threadUi.ts";
 import { findObject, pressKey, snapshot } from "../world.ts";
 import {
   activity,
@@ -129,9 +130,38 @@ step("the user reverts the thread to the checkpoint after turn 1", async (ctx: D
   await pressKey(ctx, "Down");
   await pressKey(ctx, "Down");
   expect(await snapshot(ctx)).toContain("▸ turn 1 · 1 file");
+  // Enter picks the checkpoint, and again to confirm the rollback.
+  await pressKey(ctx, "Enter");
   await pressKey(ctx, "Enter");
   await settle();
 });
+
+// --- rolling back asks first ----------------------------------------------------------
+
+step("the user rolls back to a checkpoint", async (ctx: DomainWorld) => {
+  await chooseCommand(ctx, "Revert to checkpoint…");
+  expect(findObject(ctx, "revertPicker").get("visible")).toBe(true);
+  await pressKey(ctx, "Enter");
+  await settle();
+});
+
+step(
+  "the user is asked to confirm that the rollback cannot be undone",
+  async (ctx: DomainWorld) => {
+    // The newest checkpoint is the one picked; nothing was sent yet.
+    expect(hostState(ctx, "revert")).toMatchObject({ open: true, confirming: 3 });
+    expect(recorded(ctx, "revertCheckpoint")).toEqual([]);
+    const screen = await snapshot(ctx);
+    expect(screen).toContain("roll back to turn 3? This cannot be undone.");
+    expect(screen).toContain("Enter roll back · Esc cancel");
+    // Esc answers no: the thread stays as it was.
+    await pressKey(ctx, "Esc");
+    await settle();
+    expect(findObject(ctx, "revertPicker").get("visible")).toBe(false);
+    expect(recorded(ctx, "revertCheckpoint")).toEqual([]);
+    expect(await snapshot(ctx)).toContain("Answer 3");
+  },
+);
 
 step("turns 2 and 3 are removed from the conversation", async (ctx: DomainWorld) => {
   const screen = await snapshot(ctx);

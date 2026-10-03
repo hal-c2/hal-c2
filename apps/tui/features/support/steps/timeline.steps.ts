@@ -796,6 +796,9 @@ step(
 );
 
 step("confirming one restores the workspace to that checkpoint", async (ctx: ThreadWorld) => {
+  // Enter picks the checkpoint; a rollback cannot be undone, so a second Enter confirms it.
+  await pressKey(ctx, "Enter");
+  expect(recorded(ctx, "revertCheckpoint")).toEqual([]);
   await pressKey(ctx, "Enter");
   await settle();
   expect(recorded(ctx, "revertCheckpoint")).toEqual([["t1", 3]]);

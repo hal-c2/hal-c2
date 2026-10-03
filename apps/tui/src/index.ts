@@ -11,6 +11,7 @@ import { runShell } from "opentui-qml";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
 import { detectInlineImageTransport } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
+import { fileMutedThreads, MUTED_THREADS_FILE } from "./host/mutedThreads.ts";
 import { enginePluginPort } from "./host/plugins.ts";
 import { movePromptCursorToEnd } from "./host/promptCursor.ts";
 import { readUserConfig, saveKeymapOverrides } from "./host/userConfig.ts";
@@ -203,6 +204,11 @@ async function main(): Promise<void> {
       renderer.copyToClipboardOSC52(text);
       return renderer.isOsc52Supported();
     },
+    // The launcher says which HAL-C2 release this client is; servers behind it are offered an update.
+    appVersion: process.env.HAL_C2_TUI_APP_VERSION?.trim() || null,
+    dismissedUpdates: fileMutedThreads(NodePath.join(configDir, "dismissed-updates.json")),
+    // Muted threads are this device's: they live beside the user's shell config.
+    mutedThreads: fileMutedThreads(NodePath.join(configDir, MUTED_THREADS_FILE)),
     // ^G: hand the terminal to the editor, then take the screen back.
     runEditor: async ({ cmd, args }, file) => {
       renderer.suspend();

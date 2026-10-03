@@ -264,6 +264,10 @@ const Steps steps([] {
     for (const QVariant& theme : themes(world)->available()) {
       expect(theme.toMap().value(QStringLiteral("id")) != c[0], QStringLiteral("%1 is offered").arg(c[0]));
     }
+    // Nor is it a choice of the menu that is open (threads/snooze.feature).
+    for (const QVariant& item : at(world.state(QStringLiteral("menu")), QStringLiteral("items")).toList()) {
+      expect(!item.toMap().value(QStringLiteral("label")).toString().startsWith(c[0]), QStringLiteral("the menu offers %1").arg(show(item)));
+    }
   });
 
   // The shell theme file (docs/internals/desktop-qt.md).

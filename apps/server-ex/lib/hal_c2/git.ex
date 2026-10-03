@@ -8,11 +8,28 @@ defmodule HalC2.Git do
 
   @doc """
   Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:input` (stdin),
-  and `:max_bytes` (default 50 MB). Fails only when git cannot be started or will
-  not exit.
+  `:max_bytes` (default 50 MB) and `:timeout` (ms; none by default). Fails only when
+  git cannot be started, will not exit, or runs past its timeout, saying which.
+  `Application.get_env(:hal_c2, :git_command)` stands in for `git`.
   """
   @spec run(Path.t(), [String.t()], keyword) :: {:ok, result} | {:error, String.t()}
   def run(cwd, args, opts \\ []) do
+    case opts[:timeout] do
+      nil ->
+        stream(cwd, args, opts)
+
+      ms ->
+        # Killing the task takes git with it: Exile stops a process its owner left.
+        task = Task.async(fn -> stream(cwd, args, opts) end)
+
+        case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
+          {:ok, result} -> result
+          nil -> {:error, "git #{hd(args)} timed out after #{ms} ms"}
+        end
+    end
+  end
+
+  defp stream(cwd, args, opts) do
     max = Keyword.get(opts, :max_bytes, 50_000_000)
 
     # Git that closed its output gets time to exit before it is killed: on a machine
@@ -28,7 +45,7 @@ defmodule HalC2.Git do
         if(input = opts[:input], do: [input: [input]], else: [])
 
     {out, err, size, status} =
-      ["git" | args]
+      [Application.get_env(:hal_c2, :git_command, "git") | args]
       |> Exile.stream(exile_opts)
       |> Enum.reduce({[], [], 0, nil}, fn
         {:stdout, data}, {out, err, size, status} when size < max ->
@@ -54,7 +71,7 @@ defmodule HalC2.Git do
        truncated: size > max
      }}
   rescue
-    error -> {:error, Exception.message(error)}
+    error -> {:error, "git could not be started: #{Exception.message(error)}"}
   catch
     # Exile exits the caller when git outlives every signal (`:kill_timeout`).
     :exit, reason -> {:error, "git did not exit: #{inspect(reason)}"}

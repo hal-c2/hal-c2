@@ -3,14 +3,7 @@
 // server's diagnostics, each from the palette with the result in settings.
 import { expect } from "bun:test";
 
-import {
-  DEFAULT_SERVER_SETTINGS,
-  type ServerProcessDiagnosticsResult,
-  type ServerProvider,
-  type ServerTraceDiagnosticsResult,
-} from "@hal-c2/contracts";
-import * as DateTime from "effect/DateTime";
-import * as Option from "effect/Option";
+import { DEFAULT_SERVER_SETTINGS, type ServerProvider } from "@hal-c2/contracts";
 
 import type { TuiSelectState } from "../../../src/host/composerState.ts";
 import type { TuiSettingsState } from "../../../src/host/settingsState.ts";
@@ -220,7 +213,11 @@ step("a provider has an update available", async (ctx: ServerWorld) => {
   // Only the provider that is behind offers an update.
   await pressKey(ctx, "Ctrl+K");
   await typeText(ctx, "update");
-  expect(palette(ctx).commands.map((command) => command.title)).toEqual(["Update Codex to 1.5.0"]);
+  expect(
+    palette(ctx)
+      .commands.map((command) => command.title)
+      .filter((title) => title.startsWith("Update ")),
+  ).toEqual(["Update Codex to 1.5.0"]);
   await pressKey(ctx, "Esc");
 });
 
@@ -276,112 +273,66 @@ step("the update progress and result are shown", async (ctx: ServerWorld) => {
   );
 });
 
-// --- Diagnostics --------------------------------------------------------------------------------
+// --- Diagnostics (the settings page, sections/diagnostics.ts) ---
 
-const READ_AT = DateTime.makeUnsafe("2026-07-15T12:00:00.000Z");
-const PROCESSES: ServerProcessDiagnosticsResult = {
-  serverPid: 4100 as never,
-  readAt: READ_AT,
-  processCount: 2 as never,
-  totalRssBytes: (310 * 1024 * 1024) as never,
-  totalCpuPercent: 3.5,
-  processes: [
-    {
-      pid: 4100 as never,
-      startTimeMs: 0 as never,
-      ppid: 1 as never,
-      pgid: Option.none(),
-      status: "S" as never,
-      cpuPercent: 1.5,
-      rssBytes: (200 * 1024 * 1024) as never,
-      elapsed: "3-04:12:55" as never,
-      command: "beam.smp hal-c2-mc" as never,
-      depth: 0 as never,
-      childPids: [4180 as never],
-    },
-    {
-      pid: 4180 as never,
-      startTimeMs: 0 as never,
-      ppid: 4100 as never,
-      pgid: Option.none(),
-      status: "S" as never,
-      cpuPercent: 2,
-      rssBytes: (110 * 1024 * 1024) as never,
-      elapsed: "00:41:07" as never,
-      command: "codex app-server" as never,
-      depth: 1 as never,
-      childPids: [],
-    },
-  ],
-  error: Option.none(),
-};
-const TRACES = {
-  traceFilePath: "/var/log/hal-c2/trace.ndjson",
-  scannedFilePaths: [],
-  readAt: READ_AT,
-  recordCount: 120,
-  parseErrorCount: 0,
-  firstSpanAt: Option.none(),
-  lastSpanAt: Option.none(),
-  failureCount: 1,
-  interruptionCount: 0,
-  slowSpanThresholdMs: 1000,
-  slowSpanCount: 0,
-  logLevelCounts: {},
-  topSpansByCount: [],
-  slowestSpans: [],
-  commonFailures: [],
-  latestFailures: [
-    {
-      name: "vcs.pull",
-      cause: "remote rejected: non-fast-forward",
-      durationMs: 412,
-      endedAt: READ_AT,
-      traceId: "t1",
-      spanId: "s1",
-    },
-  ],
-  latestWarningAndErrorLogs: [
-    {
-      spanName: "provider.codex",
-      level: "Error",
-      message: "app-server exited with status 1",
-      seenAt: READ_AT,
-      traceId: "t2",
-      spanId: "s2",
-    },
-  ],
-  partialFailure: Option.none(),
-  error: Option.none(),
-} as unknown as ServerTraceDiagnosticsResult;
+const none = { _id: "Option", _tag: "None" };
+const diagnosticsProcess = (pid: number, command: string, elapsed: string) => ({
+  pid,
+  ppid: 1,
+  pgid: pid,
+  status: "S",
+  cpuPercent: 1.5,
+  rssBytes: 200 * 1024 * 1024,
+  elapsed,
+  startTimeMs: 1_767_225_600_000 + pid,
+  command,
+  depth: 0,
+  childPids: [],
+});
 
 step("the user opens diagnostics", async (ctx: ServerWorld) => {
   await openOnServer(ctx);
-  ctx.fake!.server.processDiagnostics = PROCESSES;
-  ctx.fake!.server.traceDiagnostics = TRACES;
+  const mc = ctx.fake!.settings;
+  mc.on("server.getProcessDiagnostics", () => ({
+    serverPid: 4100,
+    readAt: "2026-07-15T12:00:00.000Z",
+    processCount: 2,
+    totalRssBytes: 400 * 1024 * 1024,
+    totalCpuPercent: 3,
+    processes: [
+      diagnosticsProcess(4100, "beam.smp hal-c2-mc", "3-04:12:55"),
+      diagnosticsProcess(4180, "codex app-server", "00:41:07"),
+    ],
+    error: none,
+  }));
+  mc.on("server.getTraceDiagnostics", () => ({
+    recordCount: 120,
+    failureCount: 2,
+    slowSpanCount: 0,
+    parseErrorCount: 0,
+    latestFailures: [
+      { name: "vcs.pull", cause: "remote rejected: non-fast-forward" },
+      { name: "provider.codex", cause: "app-server exited with status 1" },
+    ],
+    error: none,
+  }));
   await chooseCommand(ctx, "Diagnostics");
   await settle(ctx);
 });
 
 step("the server's version, uptime and recent errors are shown", async (ctx: World) => {
-  expect(calls(ctx, "getProcessDiagnostics")).toHaveLength(1);
-  expect(calls(ctx, "getTraceDiagnostics")).toHaveLength(1);
-  expect(group(ctx, "Diagnostics")).toEqual([
-    ["version", "0.42.1"],
-    ["uptime", "3-04:12:55"],
-    ["processes", "2 · 310 MB"],
-    ["recent errors", "2"],
-    ["vcs.pull", "remote rejected: non-fast-forward"],
-    ["Error provider.codex", "app-server exited with status 1"],
-  ]);
-  // Settings opened on them; they sit below the keys' fold, so scroll to them.
-  expect(ctx.host!.state.get("mode")).toBe("settings");
-  let screen = await settle(ctx);
-  for (let page = 0; page < 6 && !screen.includes("Diagnostics"); page += 1) {
-    await pressKey(ctx, "PgDn");
-    screen = await settle(ctx);
-  }
-  for (const text of ["0.42.1", "3-04:12:55", "remote rejected: non-fast-forward"]) {
+  const section = ctx.host!.state.get("settingsSection") as { id: string; lines: string[] };
+  expect(section.id).toBe("diagnostics");
+  const page = section.lines.join("\n");
+  // The version the MC reports and how long its own process has run.
+  expect(page).toContain("version 0.42.1 · up 3-04:12:55");
+  // The latest failures it recorded, newest first, with why.
+  expect(page).toContain("2 failures");
+  expect(page).toContain("vcs.pull");
+  expect(page).toContain("remote rejected: non-fast-forward");
+  expect(page).toContain("app-server exited with status 1");
+  const screen = (await settle(ctx)).replace(/\s+/g, " ");
+  for (const text of ["version 0.42.1 · up 3-04:12:55", "remote rejected: non-fast-forward"]) {
     expect(screen).toContain(text);
   }
 });

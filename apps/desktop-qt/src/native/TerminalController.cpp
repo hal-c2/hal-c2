@@ -628,8 +628,14 @@ void TerminalController::split(const QString& terminalId, bool vertical) {
   if (!m_place) return;
   ThreadUi& ui = m_ui[m_threadKey];
   const QStringList ids = terminalIds();
-  const QString target = ids.contains(terminalId) ? terminalId : ids.contains(m_focused) ? m_focused : ui.active;
-  if (target.isEmpty()) return;
+  QString target = ids.contains(terminalId) ? terminalId : ids.contains(m_focused) ? m_focused : ui.active;
+  if (target.isEmpty() || !terminalIds().contains(target)) {
+    // A hidden drawer with no terminal yet gets its first one, then the split.
+    if (!ids.isEmpty()) return;
+    target = nextTerminalId();
+    ui.local.insert(target);
+    ui.active = target;
+  }
   Group* group = groupOf(ui, target);
   if (group && group->terminals.size() >= maxPerGroup) {
     toast(QStringLiteral("At most %1 terminals per group.").arg(maxPerGroup), QString());

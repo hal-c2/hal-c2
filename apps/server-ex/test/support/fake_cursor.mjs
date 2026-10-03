@@ -75,9 +75,49 @@ const makeAgent = (options) => {
       return {
         cancel: async () => cancel(),
         wait: async () => {
+          if (message.includes("run a command and wait")) {
+            // A shell that runs until the run is cancelled; the SDK then reports the
+            // killed shell as a finished tool call, like any other.
+            const toolCall = { type: "shell", args: { command: "npm test" } };
+            sendOptions.onDelta({
+              update: { type: "tool-call-started", callId: "cmd-1", toolCall },
+            });
+            await cancelled;
+            log({ event: "tool-completed", callId: "cmd-1" });
+            sendOptions.onDelta({
+              update: {
+                type: "tool-call-completed",
+                callId: "cmd-1",
+                toolCall: {
+                  ...toolCall,
+                  result: { status: "success", value: { stdout: "", stderr: "", exitCode: 143 } },
+                },
+              },
+            });
+            return { status: "cancelled" };
+          }
           if (message.includes("wait")) {
             await cancelled;
             return { status: "cancelled" };
+          }
+          if (message.includes("a command that cannot start")) {
+            // The shell could not be spawned: the tool call fails and the run goes on.
+            const toolCall = { type: "shell", args: { command: "nosuchtool --version" } };
+            sendOptions.onDelta({
+              update: { type: "tool-call-started", callId: "cmd-1", toolCall },
+            });
+            sendOptions.onDelta({
+              update: {
+                type: "tool-call-completed",
+                callId: "cmd-1",
+                toolCall: {
+                  ...toolCall,
+                  result: { status: "error", error: "spawn nosuchtool ENOENT" },
+                },
+              },
+            });
+            say("That tool is not installed.");
+            return { status: "finished" };
           }
           if (keys || message.includes("Return JSON with keys")) {
             const names = keys

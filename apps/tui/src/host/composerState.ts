@@ -110,6 +110,8 @@ export interface ComposerOptions {
   readonly onDraftChange?: () => void;
   /** The editor's rows or the composer's other rows changed: the layout follows. */
   readonly onRowsChange?: (rows: number) => void;
+  /** The user stopped this turn from here (its work stays open in the timeline). */
+  readonly onInterrupt?: (turnId: string) => void;
   /** The popover's inner width and content rows; an open picker windows to them. */
   readonly popover?: () => { readonly width: number; readonly maxRows: number };
   /** The agent's open question (not set aside), which the composer answers. */
@@ -1548,6 +1550,7 @@ export function createComposer(options: ComposerOptions): Composer {
     const detail = selectedDetail();
     if (!detail) return;
     void track(client.interrupt(detail.id).catch(() => {}));
+    if (detail.latestTurn) options.onInterrupt?.(detail.latestTurn.turnId);
     store.setStatus("Interrupt sent.", "success");
   };
 

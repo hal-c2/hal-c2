@@ -351,14 +351,44 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
-  # The fake logs the arguments of each process; only the session's takes these.
+  # The fake logs the arguments of each process; the app-server (a session's, or the
+  # one a status check reads) takes these alone, and `codex exec` right after `exec`.
   step "Codex is started with those arguments", context do
-    assert context.launch_args in for(
-             %{"argv" => argv} <- World.provider_log(context, "codex"),
-             do: argv
-           )
+    case context[:launch_occasion] do
+      :title ->
+        assert [%{"argv" => ["exec" | argv]}] = World.text_calls(context)
+        assert Enum.take(argv, length(context.launch_args)) == context.launch_args
+
+      _ ->
+        assert context.launch_args in for(
+                 %{"argv" => argv} <- World.provider_log(context, "codex"),
+                 do: argv
+               )
+    end
 
     context
+  end
+
+  # The status check reads Codex's version and, from its app-server, its models.
+  step "the MC checks Codex's version", context do
+    World.reset_provider_caches()
+    assert World.provider_log(context, "codex") == []
+    HalC2.Codex.Provider.load()
+    assert %{"version" => "0.50.0", "models" => [_ | _]} = HalC2.Codex.Provider.entry()
+    context
+  end
+
+  step "Codex writes a title for a new thread", context do
+    context = World.text_writers(context, [:codex])
+
+    World.merge_settings(%{
+      "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4-mini"}
+    })
+
+    assert {:ok, %{"title" => _}} =
+             HalC2.TextGeneration.thread_title(World.project(context).root, "Fix the login bug")
+
+    Map.put(context, :launch_occasion, :title)
   end
 
   step "Codex can call the HAL-C2 tools for this thread", context do

@@ -24,7 +24,7 @@ Feature: Changing model and provider mid-thread
     And a thread-model-selection-updated event is recorded
     And the next run continues the same provider conversation
 
-  @mc @shared @backlog
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Context occupancy survives a model change
     Given "t1" has used 80 percent of its provider context
     When the user changes "t1" to another model on the same provider
@@ -50,7 +50,7 @@ Feature: Changing model and provider mid-thread
     Then the transcript has a user line and an assistant line for each finished run
     And it is wrapped as conversation history ahead of the message
 
-  @mc @backlog
+  @mc
   Scenario: A failed turn's context goes with the conversation
     Given "t1" has a failed turn whose provider context is still usable
     When the user switches "t1" to "claudeAgent" and sends a message

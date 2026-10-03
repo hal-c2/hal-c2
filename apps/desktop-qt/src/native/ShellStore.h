@@ -32,6 +32,10 @@ public:
   QList<sidebar::Project> projects() const;
   std::optional<sidebar::Project> project(const QString& key) const;
   std::optional<sidebar::Thread> thread(const QString& key) const;
+  // Where the thread `key` went when it moved to another machine: its key on
+  // the environment its forwarding record names (HalC2.ThreadMove keeps the
+  // id). Nothing for a thread that lives where `key` says.
+  std::optional<QString> movedTo(const QString& key) const;
   // The raw rows, empty when the cluster has none by that key.
   QJsonObject threadRow(const QString& key) const;
   QJsonObject projectRow(const QString& environmentId, const QString& projectId) const;

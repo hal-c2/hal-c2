@@ -121,7 +121,6 @@ Feature: Codex
     When the user sends a message to a Codex thread
     Then the turn fails saying the launch arguments have a quote that is never closed
 
-  @backlog
   Scenario Outline: Codex launch arguments apply wherever Codex is started
     Given the Codex instance has launch arguments configured
     When <occasion>

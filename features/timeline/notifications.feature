@@ -12,9 +12,10 @@
 #   packages/contracts/src/settings.ts (notificationMode, inAppNotificationsEnabled)
 #
 # The desktop raises its alerts itself (AlertController); the page's coordinator stays off in
-# the shell. The TUI has no alerts. Mobile push lives in docs/user/mobile-notifications.md and is
-# out of scope. The desktop mutes the shown thread's alerts from the palette ("Mute alerts
-# for this thread"), on that device only; the phone's version is in
+# the shell. The TUI shows in-app alerts only (apps/tui/src/host/notificationsState.ts). Mobile
+# push lives in docs/user/mobile-notifications.md and is out of scope. The desktop and the TUI
+# mute the shown thread's alerts from the palette ("Mute alerts for this thread"), on that
+# device only (apps/tui/src/host/mutedThreads.ts); the phone's version is in
 # mobile/notifications.feature.
 
 Feature: Alerts when a thread needs the user
@@ -154,7 +155,7 @@ Feature: Alerts when a thread needs the user
     Then "Copied" is dismissed
     And no notifications are shown
 
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario: The user mutes alerts for one thread
     Given the thread "Tax fix" is working in the background
     When the user mutes alerts for "Tax fix"
@@ -162,7 +163,7 @@ Feature: Alerts when a thread needs the user
     Then no alert is raised for "Tax fix"
     And alerts for other threads in "shop" still arrive
 
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario: The user unmutes a thread
     Given alerts for "Tax fix" are muted
     When the user unmutes "Tax fix"

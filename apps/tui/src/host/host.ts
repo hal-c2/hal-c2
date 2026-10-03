@@ -24,9 +24,11 @@ import { revertableCheckpoints } from "../timeline.ts";
 import { createAddProjectController } from "./addProjectState.ts";
 import { createAsk } from "./askState.ts";
 import { createFeatures, type FeatureOptions } from "./features/index.ts";
+import { createClientActivity } from "./clientActivity.ts";
 import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer, type ImageDecoder } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
+import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { createFilesController } from "./filesState.ts";
 import {
   buildTuiLayoutState,
@@ -37,6 +39,13 @@ import {
 } from "./layoutState.ts";
 import { createPalette, type PaletteCommand } from "./paletteState.ts";
 import type { PluginPort, TuiPluginsState } from "./plugins.ts";
+import { registerSettingsSections } from "./sections/index.ts";
+import { createUpdateNotice } from "./sections/updates.ts";
+import {
+  createSettingsSections,
+  NO_SETTINGS_SECTION,
+  type SettingsSections,
+} from "./settingsSections.ts";
 import { buildTuiSettingsState } from "./settingsState.ts";
 import { buildTuiSidebarState, idFromKey, projectKey, threadKey } from "./sidebarState.ts";
 import { createSourceControl, SOURCE_CONTROL_PANEL } from "./sourceControl.ts";
@@ -136,6 +145,15 @@ export interface HostOptions {
   readonly inlineImages?: InlineImageTransport | null;
   /** Pixel size of a terminal cell, when the terminal reported it (sizes images). */
   readonly cellPixels?: () => CellPixels | null;
+  /** Where this device keeps the threads whose alerts it muted (default: this run only). */
+  readonly mutedThreads?: MutedThreadsStore;
+  /**
+   * The HAL-C2 version this client shipped as. A server on an older one is
+   * offered its update; without it no server is known to be behind.
+   */
+  readonly appVersion?: string | null;
+  /** Where this device keeps the update notices it dismissed (default: this run only). */
+  readonly dismissedUpdates?: MutedThreadsStore;
   /** Sees every action dispatched, from QML, keymaps or the palette (tests, debugging). */
   readonly trace?: (action: string, payload: unknown) => void;
   /** Warnings from before the host existed (keymap.json conflicts, missing plugin directories). */
@@ -212,6 +230,8 @@ const DECLINABLE_ACTIONS = new Set([
   "composer.history.next",
   "approval.approve",
   "approval.decline",
+  "approval.approveSession",
+  "approval.cancel",
   "approval.previous",
   "approval.next",
   "plan.implement",
@@ -271,6 +291,8 @@ export function createHost(options: HostOptions): Host {
     connection: connectionState("connecting"),
     graphics: { inlineImages: options.inlineImages ?? null } satisfies TuiGraphicsState,
     cluster: NO_CLUSTER_STATE,
+    settingsSection: NO_SETTINGS_SECTION,
+    updateNotice: null,
   });
 
   let pluginPort: PluginPort | null = null;
@@ -319,6 +341,8 @@ export function createHost(options: HostOptions): Host {
     composerWidth: () => composerSurfaceWidth(layout.chatWidth),
     paneReplacedChanged: () => publishLayout(),
     onQuestionChange: () => composer?.sync(),
+    copyToClipboard: options.copyToClipboard,
+    mutedThreads: options.mutedThreads,
   });
   let layout: TuiLayoutState;
   // The rows each popover above the prompt asks for, as ChatView sums them.
@@ -345,7 +369,10 @@ export function createHost(options: HostOptions): Host {
       sidebarCollapsed,
       // Like ChatView, the panel hides (without closing) while settings, the
       // files, diff or image view has the conversation pane.
-      rightPanel: filesOpen || settingsOpen || threadView.paneReplaced() ? null : rightPanel,
+      rightPanel:
+        filesOpen || settingsOpen || sections?.isOpen() || threadView.paneReplaced()
+          ? null
+          : rightPanel,
       rightPanelFocused,
       mode,
       // The drawer slot follows the selected thread's terminal.
@@ -363,6 +390,7 @@ export function createHost(options: HostOptions): Host {
     if (previous?.chatWidth !== layout.chatWidth || previous?.panesRows !== layout.panesRows) {
       threadView.resize();
       files?.sync();
+      sections?.relayout();
     }
     sourceControl.resize();
     // The footer's compact form follows the conversation width.
@@ -503,6 +531,7 @@ export function createHost(options: HostOptions): Host {
     }
     if (!prev || prev.selection !== next.selection || prev.detail !== next.detail) {
       terminal.sync();
+      clientActivity.sync();
     }
     if (prev && prev.selection !== next.selection) files.close();
     if (prev && prev.shell !== next.shell) addProject.sync();
@@ -513,11 +542,10 @@ export function createHost(options: HostOptions): Host {
    * is open, else an open question when one waits.
    */
   const setMode = (requested: TuiMode) => {
+    // An open settings page keeps the keys when a menu over it closes.
     const next =
       requested === "compose"
-        ? composer?.draft()
-          ? "newThread"
-          : threadView.composeMode()
+        ? (sections?.mode() ?? (composer?.draft() ? "newThread" : threadView.composeMode()))
         : requested;
     if (next === mode) return;
     mode = next;
@@ -581,6 +609,15 @@ export function createHost(options: HostOptions): Host {
       worktreePath,
     };
   };
+  // The MC does background work (git fetches) only for what a client is looking at.
+  const clientActivity = createClientActivity({
+    client,
+    watching: () => {
+      const workspace = selectedWorkspace();
+      return workspace ? { threadId: workspace.threadId, cwd: workspace.cwd } : null;
+    },
+    now,
+  });
   // The terminal fills the `layout.drawer` slot; the layout sizes it.
   const terminal = createTerminalController({
     client,
@@ -660,6 +697,34 @@ export function createHost(options: HostOptions): Host {
       palette.sync();
     },
   });
+  // The settings pages (scheduled tasks, diagnostics, …) take the conversation's place.
+  let sections: SettingsSections | null = null;
+  sections = createSettingsSections({
+    client,
+    store,
+    mode: () => mode,
+    setMode: (next) => setMode(next),
+    restingMode,
+    pane: () => ({ width: layout.chatWidth, rows: layout.panesRows }),
+    copyToClipboard: options.copyToClipboard,
+    now: () => Date.parse(now()),
+    publish: (next) => state.set("settingsSection", next),
+    openChanged: () => publishLayout(),
+  });
+  // A server behind this app is offered its update over the conversation.
+  const updateNotice = createUpdateNotice({
+    client,
+    appVersion: options.appVersion ?? null,
+    dismissed: options.dismissedUpdates ?? memoryMutedThreads(),
+    publish: (notice) => {
+      state.set("updateNotice", notice);
+      palette.sync();
+    },
+  });
+  registerSettingsSections(sections, {
+    appVersion: options.appVersion ?? null,
+    serverUpdated: () => updateNotice.check(),
+  });
   /** The files, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
     [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
@@ -689,6 +754,7 @@ export function createHost(options: HostOptions): Host {
       publishSidebar();
       publishPage();
     },
+    onInterrupt: (turnId) => threadView.turnInterrupted(turnId),
     onRowsChange: (rows) => {
       editorRows = rows;
       publishLayout();
@@ -716,6 +782,7 @@ export function createHost(options: HostOptions): Host {
     // diff, source-control, settings, files, add-project, terminal and cluster entries.
     extraCommands: () => [
       ...threadActions.paletteCommands(),
+      ...threadView.paletteCommands(),
       ...detailCommands({
         panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
         hasCheckpoints:
@@ -724,6 +791,8 @@ export function createHost(options: HostOptions): Host {
       ...areaCommands(),
       ...cluster.commands(),
       ...features.commands(),
+      ...sections!.commands(),
+      ...updateNotice.commands(),
     ],
     run: (action, payload) => {
       dispatch(action, payload);
@@ -873,6 +942,7 @@ export function createHost(options: HostOptions): Host {
         const key = payloadField(payload, "key");
         if (typeof key !== "string") return true;
         if (composer!.draft()) composer!.dispatch("newThread.cancel");
+        sections!.close();
         setMode("compose");
         store.select({ kind: "thread", id: idFromKey(key) });
         return true;
@@ -932,6 +1002,12 @@ export function createHost(options: HostOptions): Host {
       case "clock.tick":
         publishSidebar();
         return true;
+      case "update.notice.dismiss":
+        updateNotice.dismiss();
+        return true;
+      case "clientActivity.renew":
+        clientActivity.renew();
+        return true;
       case "rightPanel.toggle": {
         const kind = payloadField(payload, "kind");
         const next = typeof kind === "string" ? kind : SOURCE_CONTROL_PANEL;
@@ -956,8 +1032,15 @@ export function createHost(options: HostOptions): Host {
         if (rightPanel === null) return true;
         setRightPanel(null, false);
         return true;
+      case "section.open":
+        // A settings page takes the pane from the overview, the diff and the files.
+        if (settingsOpen) dispatch("settings.close");
+        if (mode === "diff") dispatch("diff.close");
+        files.close();
+        return sections!.dispatch(action, payload);
       case "settings.open":
         if (mode === "diff") dispatch("diff.close");
+        sections!.close();
         settingsOpen = true;
         publishSettings();
         void cluster.refresh();
@@ -1080,6 +1163,7 @@ export function createHost(options: HostOptions): Host {
         if (sourceControl.dispatch(action, payload)) return true;
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
         if (cluster.dispatch(action, payload)) return true;
+        if (sections!.dispatch(action, payload)) return true;
         // Known actions that decline when they do not apply (the key falls through).
         if (DECLINABLE_ACTIONS.has(action)) return false;
         if (!unknownActions.has(action)) {
@@ -1201,6 +1285,12 @@ export function createHost(options: HostOptions): Host {
     } else if (before === "reconnecting" && phase === "connected") {
       store.setStatus("The server is back; carrying on where you were.", "success");
     }
+    // A report belongs to the socket it was sent on: a new connection sends it again.
+    if (phase === "connected") {
+      clientActivity.renew();
+      // And the server may have come back on another version.
+      updateNotice.check();
+    }
   });
   store.start();
 
@@ -1227,6 +1317,8 @@ export function createHost(options: HostOptions): Host {
       await threadView.settled();
       await cluster.settled();
       await features.settled();
+      await sections!.settled();
+      await updateNotice.settled();
     },
     attachPlugins: (port) => {
       pluginPort = port;
@@ -1241,10 +1333,12 @@ export function createHost(options: HostOptions): Host {
     reportWarning: (message) => addProblem({ level: "warning", message, where: null }),
     destroy: () => {
       disposeStatusRow();
+      clientActivity.dispose();
       unsubscribeConnection();
       unsubscribe();
       terminal.dispose();
       features.dispose();
+      threadView.dispose();
       store.stop();
     },
   };

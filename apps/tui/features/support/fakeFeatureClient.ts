@@ -8,10 +8,8 @@ import {
   type PreviewSessionSnapshot,
   type ProviderInstanceMutation,
   type RelayClientStatus,
-  type ServerProcessDiagnosticsResult,
   type ServerProvider,
   type ServerSettings,
-  type ServerTraceDiagnosticsResult,
   type VcsStatusResult,
 } from "@hal-c2/contracts";
 
@@ -31,8 +29,6 @@ export interface FakeServer {
   settings: ServerSettings;
   /** The instance mutations `updateSettings` carried, in order. */
   readonly instanceMutations: ProviderInstanceMutation[];
-  processDiagnostics: ServerProcessDiagnosticsResult | null;
-  traceDiagnostics: ServerTraceDiagnosticsResult | null;
   /** The open previews of every thread. */
   previews: PreviewSessionSnapshot[];
   /** The repository's worktrees besides the main checkout. */
@@ -112,8 +108,6 @@ export function fakeFeatureClient(shell: FakeShellPort): {
     update: null,
     settings: DEFAULT_SERVER_SETTINGS,
     instanceMutations: [],
-    processDiagnostics: null,
-    traceDiagnostics: null,
     previews: [],
     worktrees: [],
     pullRequests: [],
@@ -230,14 +224,6 @@ export function fakeFeatureClient(shell: FakeShellPort): {
       }
       server.settings = { ...server.settings, ...patch, providerInstances } as ServerSettings;
       return server.settings;
-    },
-    getProcessDiagnostics: async () => {
-      if (!server.processDiagnostics) throw new Error("no process diagnostics");
-      return server.processDiagnostics;
-    },
-    getTraceDiagnostics: async () => {
-      if (!server.traceDiagnostics) throw new Error("no trace diagnostics");
-      return server.traceDiagnostics;
     },
     updateProject: async (projectId, change) => {
       const current = shell.get();

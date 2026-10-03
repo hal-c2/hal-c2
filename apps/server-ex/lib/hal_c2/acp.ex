@@ -711,6 +711,14 @@ defmodule HalC2.Acp do
   defp driver_fields(entry, "antigravity", id, _instance),
     do: HalC2.Acp.Antigravity.entry_fields(entry, id)
 
+  # What a registry agent's running session advertises (`put_commands/2`).
+  defp driver_fields(entry, "acpRegistry", id, _instance) do
+    Map.merge(entry, %{
+      "slashCommands" => :persistent_term.get({__MODULE__, id, :commands}, []),
+      "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
+    })
+  end
+
   defp driver_fields(entry, _driver, _id, _instance), do: entry
 
   defp opencode_version(entry, id, _instance) do
@@ -982,6 +990,19 @@ defmodule HalC2.Acp do
   @doc "The agent capabilities an instance reported when it was last probed, or `nil`."
   def capabilities(id), do: :persistent_term.get({__MODULE__, id, :capabilities}, nil)
 
+  @doc """
+  Whether a registry agent is signed out: one that refused its last check for want of
+  a sign-in is checked again now, since the user may have signed in outside HAL-C2.
+  """
+  def signed_out?(id) do
+    if driver(id) == @registry and :persistent_term.get({__MODULE__, id, :unauthenticated}, false) do
+      reload(id)
+      :persistent_term.get({__MODULE__, id, :unauthenticated}, false)
+    else
+      false
+    end
+  end
+
   @doc "Reads one instance's agent again, now."
   def reload(id) do
     forget(id)
@@ -1027,6 +1048,66 @@ defmodule HalC2.Acp do
 
     :ok
   end
+
+  @max_commands 200
+
+  @doc """
+  Replaces a registry instance's commands with those its session advertises (ACP's
+  `available_commands_update`), and tells subscribed clients. A name starting with
+  `$` is a skill of the agent's; the rest are its slash commands.
+  """
+  def put_commands(id, commands) when is_list(commands) do
+    if driver(id) == "acpRegistry" do
+      offered =
+        for(%{"name" => name} = command when is_binary(name) <- commands, do: command)
+        |> Enum.map(&Map.put(&1, "name", String.trim(&1["name"])))
+        |> Enum.reject(&(&1["name"] in ["", "$"]))
+        |> Enum.uniq_by(&String.downcase(&1["name"]))
+        |> Enum.take(@max_commands)
+
+      {skills, slash} = Enum.split_with(offered, &String.starts_with?(&1["name"], "$"))
+
+      slash =
+        for command <- slash do
+          %{"name" => command["name"]}
+          |> put_text("description", command["description"])
+          |> then(fn c ->
+            case get_in(command, ["input", "hint"]) do
+              hint when is_binary(hint) and hint != "" ->
+                Map.put(c, "input", %{"hint" => String.trim(hint)})
+
+              _ ->
+                c
+            end
+          end)
+        end
+
+      skills =
+        for %{"name" => "$" <> name} = command <- skills do
+          %{
+            "name" => name,
+            "path" => "acp://skill/" <> URI.encode_www_form(name),
+            "scope" => "agent",
+            "enabled" => true
+          }
+          |> put_text("description", command["description"])
+        end
+
+      changed =
+        :persistent_term.get({__MODULE__, id, :commands}, []) != slash or
+          :persistent_term.get({__MODULE__, id, :skills}, []) != skills
+
+      if changed do
+        :persistent_term.put({__MODULE__, id, :commands}, slash)
+        :persistent_term.put({__MODULE__, id, :skills}, skills)
+        HalC2.Settings.notify_providers()
+      end
+    end
+
+    :ok
+  end
+
+  def put_commands(_id, _commands), do: :ok
 
   # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name",
   # "capabilities"}`) follow the agent's own, skipping any the agent already offers.

@@ -21,6 +21,7 @@ Rectangle {
     flexDirection: "column"
 
     Notifications {}
+    UpdateNotice {}
 
     Rectangle {
         objectName: "conversationPane"

@@ -105,7 +105,7 @@ Feature: Delegating tasks to subagents
     Then "parent" is woken again for them
     And completions that arrive together may share one wake turn
 
-  @mc @backlog
+  @mc
   Scenario: A completion delivered twice wakes the caller once
     Given the agent in "parent" delegated a task without waiting
     When the subagent completes

@@ -2,11 +2,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerConfig,
-  type ServerProcessDiagnosticsResult,
   type ServerProvider,
-  type ServerTraceDiagnosticsResult,
 } from "@hal-c2/contracts";
-import * as Option from "effect/Option";
 
 import type { TuiSettingsExtraGroup } from "../settingsState.ts";
 import { errorText, payloadField, type Feature, type FeatureKit } from "./kit.ts";
@@ -46,17 +43,12 @@ const updatable = (provider: ServerProvider) =>
 
 /**
  * The server from the terminal: its providers (refresh, update, add an
- * instance with its key), the defaults new threads start with, and its
- * diagnostics. Everything lists in settings; changes run from the palette.
+ * instance with its key), the defaults new threads start with, and the relay
+ * client. Everything lists in settings; changes run from the palette.
  */
 export function createServerFeature(kit: FeatureKit): Feature {
   const { client } = kit;
   let config: ServerConfig | null = null;
-  let diagnostics: {
-    readonly process: ServerProcessDiagnosticsResult | null;
-    readonly trace: ServerTraceDiagnosticsResult | null;
-    readonly error: string | null;
-  } | null = null;
 
   const changed = () => {
     kit.settingsChanged();
@@ -285,65 +277,8 @@ export function createServerFeature(kit: FeatureKit): Feature {
     );
   };
 
-  const openDiagnostics = () => {
-    kit.status("Reading diagnostics…", "busy");
-    void kit.track(
-      Promise.allSettled([
-        client.getProcessDiagnostics(),
-        client.getTraceDiagnostics(),
-        load(),
-      ]).then(([process, trace]) => {
-        diagnostics = {
-          process: process.status === "fulfilled" ? process.value : null,
-          trace: trace.status === "fulfilled" ? trace.value : null,
-          error:
-            process.status === "rejected" && trace.status === "rejected"
-              ? errorText(process.reason)
-              : null,
-        };
-        changed();
-        kit.status(
-          diagnostics.error ? `Diagnostics failed: ${diagnostics.error}` : "Diagnostics read.",
-          diagnostics.error ? "error" : "success",
-        );
-        kit.dispatch("settings.open");
-      }),
-    );
-  };
-
-  const diagnosticsGroup = (): TuiSettingsExtraGroup[] => {
-    if (!diagnostics) return [];
-    const { process, trace } = diagnostics;
-    const server = process?.processes.find((entry) => entry.pid === process.serverPid);
-    const failures = trace?.latestFailures ?? [];
-    const logs = trace?.latestWarningAndErrorLogs ?? [];
-    const processError = process ? Option.getOrNull(process.error) : null;
-    return [
-      {
-        title: "Diagnostics",
-        rows: [
-          ["version", config?.environment?.serverVersion ?? "—"],
-          ["uptime", server?.elapsed ?? "—"],
-          [
-            "processes",
-            process
-              ? `${process.processCount} · ${Math.round(process.totalRssBytes / (1024 * 1024))} MB`
-              : "—",
-          ],
-          ...(processError ? [["process error", processError.message] as const] : []),
-          [
-            "recent errors",
-            failures.length + logs.length === 0 ? "none" : `${failures.length + logs.length}`,
-          ],
-          ...failures.map((failure) => [failure.name as string, failure.cause as string] as const),
-          ...logs.map((log) => [`${log.level} ${log.spanName}`, log.message as string] as const),
-        ],
-      },
-    ];
-  };
-
   const settingsGroups = (): TuiSettingsExtraGroup[] => {
-    if (!config) return diagnosticsGroup();
+    if (!config) return [];
     const instances = config.settings.providerInstances ?? {};
     const rows: Array<readonly [string, string]> = providers().map(
       (provider) => [providerName(provider), providerSummary(provider)] as const,
@@ -373,7 +308,6 @@ export function createServerFeature(kit: FeatureKit): Feature {
           ],
         ],
       },
-      ...diagnosticsGroup(),
     ];
   };
 
@@ -415,12 +349,6 @@ export function createServerFeature(kit: FeatureKit): Feature {
         keywords: "remote access connect cloudflared install tunnel",
         action: "relay.check",
       },
-      {
-        id: "diagnostics.open",
-        title: "Diagnostics",
-        keywords: "server version uptime errors processes health",
-        action: "diagnostics.open",
-      },
     ],
     dispatch: (action, payload) => {
       switch (action) {
@@ -440,9 +368,6 @@ export function createServerFeature(kit: FeatureKit): Feature {
           return true;
         case "relay.check":
           checkRelay();
-          return true;
-        case "diagnostics.open":
-          openDiagnostics();
           return true;
         default:
           return false;

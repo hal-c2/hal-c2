@@ -37,7 +37,7 @@ Feature: Recovering from restarts and releasing idle sessions
     And the answer stops streaming
     And the provider thread of "t1" is idle
 
-  @mc @backlog
+  @mc
   Scenario: A native subagent thread left running by a restart is settled
     Given a native provider subagent thread of "t1" was running when the MC stopped
     When the MC restarts
@@ -56,7 +56,7 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then only "t2" is settled
 
-  @mc @backlog
+  @mc
   Scenario: A settled thread continues when a restart ended its background work
     Given project "demo" continues threads after a server update
     And thread "t1" finished its turn and left a command running in the background
@@ -222,7 +222,7 @@ Feature: Recovering from restarts and releasing idle sessions
     And "t1" lists no background work
 
   # Upstream offers Codex a continuation turn saying the command finished.
-  @mc @backlog @plugin-codex
+  @mc @plugin-codex
   Scenario: A finished Codex background command wakes the thread
     Given thread "t1" left a Codex command running in the background
     When Codex reports the command exited with "bye"

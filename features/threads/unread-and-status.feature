@@ -51,19 +51,19 @@ Feature: Unread and status in the thread list
       | had its last run fail                  | Error            |
       | finished work the user has not seen    | Completed        |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The most urgent state wins
     Given "Build search" has an agent working and is waiting for an approval
     When the user looks at the thread list
     Then the row for "Build search" reads "Approval"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A project shows the most urgent state of its threads
     Given one thread in "shop" is working and another is waiting for an approval
     When the user looks at the project "shop"
     Then the project shows that a thread needs an approval
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A working thread shows how long it has been working
     Given the agent has been working in "Build search" for 3 minutes
     When the user looks at the thread
@@ -125,13 +125,13 @@ Feature: Unread and status in the thread list
     When a client marks "Build search" unread
     Then "Build search" is unread on every device
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Marking a thread unread from its menu
     Given "Build search" is read
     When the user marks "Build search" unread
     Then the row for "Build search" reads "Done"
 
-  @backlog @desktop
+  @desktop
   Scenario: Marking several threads unread
     Given the user has selected three read threads
     When the user marks the selection unread

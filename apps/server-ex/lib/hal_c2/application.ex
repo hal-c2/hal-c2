@@ -60,6 +60,7 @@ defmodule HalC2.Application do
           {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one},
           {DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one},
           Supervisor.child_spec({Task, &HalC2.Codex.Provider.load/0}, id: :codex_models),
+          Supervisor.child_spec({Task, &HalC2.ModelManifest.refresh/0}, id: :model_manifest),
           {Registry, keys: :unique, name: HalC2.Acp.Registry},
           {Registry, keys: :unique, name: HalC2.Pi.Registry},
           HalC2.Acp.UrlAuth,

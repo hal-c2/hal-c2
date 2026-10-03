@@ -172,12 +172,15 @@ defmodule HalC2.ScheduledTasks do
 
     state
     |> put(running)
-    |> Map.update!(:runs, &Map.put(&1, ref, %{id: task["id"], started: at, from: from}))
+    |> Map.update!(
+      :runs,
+      &Map.put(&1, ref, %{id: task["id"], started: at, from: from, trigger: trigger})
+    )
     |> changed()
   end
 
   defp complete(state, ref, result) do
-    {%{id: id, started: started, from: from}, runs} = Map.pop(state.runs, ref)
+    {%{id: id, started: started, from: from} = run, runs} = Map.pop(state.runs, ref)
     state = %{state | runs: runs}
 
     case state.tasks[id] do
@@ -187,14 +190,23 @@ defmodule HalC2.ScheduledTasks do
         {state, nil}
 
       task ->
-        task = finished(task, result, started)
+        task = finished(task, result, started, run[:trigger])
         if from, do: GenServer.reply(from, {:ok, %{"task" => task}})
         {put(state, task), task}
     end
   end
 
-  defp finished(task, result, started) do
+  # A scheduled run aims the next one afresh; a run asked for by hand ("manual")
+  # leaves the schedule where it was, so the pending run still fires when due.
+  defp finished(task, result, started, trigger \\ "scheduled") do
     at = now()
+
+    next =
+      cond do
+        not task["enabled"] -> nil
+        trigger == "manual" and task["nextRunAt"] != nil -> task["nextRunAt"]
+        true -> next_run(task["schedule"], at)
+      end
 
     Map.merge(task, %{
       "updatedAt" => iso(at),
@@ -206,7 +218,7 @@ defmodule HalC2.ScheduledTasks do
           {:error, message} -> message
         end,
       "runCount" => (task["runCount"] || 0) + 1,
-      "nextRunAt" => if(task["enabled"], do: next_run(task["schedule"], at))
+      "nextRunAt" => next
     })
   end
 

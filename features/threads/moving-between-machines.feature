@@ -53,14 +53,14 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Moving within a cluster
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: The user moves a thread to another machine
       When the user moves "Alpha" to "desktop"
       Then "Alpha" is listed under "desktop"
       And "Alpha" is no longer listed under "laptop"
       And the user is looking at "Alpha" on "desktop"
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Only machines that can take the thread are offered
       Given the cluster also has the machine "server", which is offline
       When the user chooses where to move "Alpha"
@@ -217,7 +217,7 @@ Feature: Moving a thread and its agent to another machine
       Then a new agent session starts on "desktop"
       And the agent receives the trimmed account of the conversation that a handoff gives
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario Outline: The user is told how the agent continues
       Given "Alpha" runs on an agent whose provider <can> carry its session
       When the user moves "Alpha" to "desktop"
@@ -245,7 +245,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Moving back
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: A moved thread can be moved back
       Given "Alpha" was moved from "laptop" to "desktop"
       And the user worked in "Alpha" on "desktop"
@@ -269,7 +269,7 @@ Feature: Moving a thread and its agent to another machine
       When the user follows the link
       Then "Alpha" opens on "desktop"
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: A notification from before the move opens the thread where it lives now
       Given the user was notified that "Alpha" finished while it lived on "laptop"
       And "Alpha" has since moved to "desktop"
@@ -298,14 +298,14 @@ Feature: Moving a thread and its agent to another machine
       Then the phone lists "Alpha" under "desktop" and no longer under "laptop"
       And the phone did not have to reconnect
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: A client looking at the thread follows it to its new machine
       Given the phone is showing "Alpha"
       When "Alpha" is moved to "desktop" from another client
       Then the phone keeps showing "Alpha"
       And a message sent from the phone reaches "Alpha" on "desktop"
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: A client sees that a thread is moving
       Given the phone lists "Alpha"
       When "Alpha" starts moving to "desktop"
@@ -327,14 +327,14 @@ Feature: Moving a thread and its agent to another machine
       Then the user is told to answer or stop "Alpha" before moving it
       And "Alpha" stays on "laptop"
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: The user can stop the turn and move the thread in one step
       Given the agent is working in "Alpha"
       When the user moves "Alpha" to "desktop" and chooses to stop it first
       Then the running turn of "Alpha" is interrupted
       And "Alpha" moves to "desktop"
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: A message cannot be sent while the thread is moving
       Given "Alpha" is moving to "desktop"
       When the user writes a message in "Alpha"
@@ -394,12 +394,12 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Moving threads from the list
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Moving from the thread's menu
       When the user opens the menu for "Alpha"
       Then moving to another machine is offered
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Moving from the command palette
       Given the user is looking at "Alpha"
       When the user asks the command palette to move the thread to another machine

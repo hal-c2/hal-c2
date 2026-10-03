@@ -209,9 +209,14 @@ defmodule HalC2.Acp.Sessions do
     end
   end
 
-  @doc "`server.logoutAcpRegistry`: signs the agent out; it is probed again."
+  @doc """
+  `server.logoutAcpRegistry`: signs the agent out; it is probed again. The instance's
+  running threads were working on that sign-in, so their turns end and their sessions
+  close; the threads keep their history, and their next message starts the agent again.
+  """
   def logout(%{"instanceId" => instance}) do
     with {:ok, _} <- call(instance, System.tmp_dir!(), "logout", %{}, :logout) do
+      HalC2.Acp.Antigravity.stop_sessions(instance)
       HalC2.Acp.forget(instance)
       HalC2.Settings.notify_providers()
       {:ok, %{"loggedOut" => true}}

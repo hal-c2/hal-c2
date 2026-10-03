@@ -1065,6 +1065,47 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     context
   end
 
+  # The file is outside the workspace (`/etc/hosts`): HAL-C2 serves workspace reads only.
+  # The fake keeps its mode with the session, as a real agent does: started again, it
+  # resumes the session still planning.
+  step "{string} has its own plan mode and the thread is in plan mode", %{args: [_]} = context do
+    ctx =
+      context
+      |> acme(%{"modes" => ["build", "plan"], "keepMode" => true})
+      |> run_on_acme("hello")
+
+    Acp.await_runs(thread(ctx), 1)
+    ctx |> interaction_mode("plan") |> Acp.follow_up("Acme", "plan the checkout")
+    Acp.await_runs(thread(ctx), 2)
+    assert [:prompt, {"mode", "plan"}, :prompt] = mode_calls(ctx)
+    ctx
+  end
+
+  step "the runtime of {string} restarted", %{args: [_]} = context do
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, thread(context))
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    context
+  end
+
+  step "the user switches the thread out of plan mode", context do
+    context |> interaction_mode("default") |> Acp.follow_up("Acme", "now build it")
+    Acp.await_runs(thread(context), 3)
+    context
+  end
+
+  step "{string} runs in the mode it had before plan mode", %{args: [_]} = context do
+    assert [:prompt, {"mode", "plan"}, :prompt, {"mode", "build"}, :prompt] =
+             mode_calls(context)
+
+    # The agent that ran the last turn is a new process, on the session it had.
+    root = World.project(context).root
+    assert [_, _] = Enum.filter(Acp.launches(context, "acme"), &(&1["cwd"] == root))
+    assert [_] = Acp.requests(context, "acme", "session/resume")
+    context
+  end
+
   step "{string} asks the client to read a file or run a terminal", %{args: [_]} = context do
     ctx = context |> acme() |> run_on_acme("read file")
     Acp.await_runs(thread(ctx), 1)
@@ -1073,8 +1114,172 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "the request is refused rather than left waiting", context do
     text = Acp.assistant_text(thread(context))
-    assert text =~ "fs: -32601"
+    assert text =~ "fs: -32002"
     assert text =~ "terminal: -32601"
+    context
+  end
+
+  step "{string} is waiting for approval to write a file", %{args: [_]} = context do
+    ctx = acme(context)
+    File.write!(Path.join(World.project(ctx).root, "notes.txt"), "line one\nline two\n")
+    ctx = run_on_acme(ctx, "change and read notes.txt", mode: "approval-required")
+
+    request =
+      Acp.await_stream(thread(ctx), fn state ->
+        Enum.find(
+          HalC2.StreamState.list(state, "runtime-request"),
+          &(&1["status"] == "pending" and &1["kind"] == "file-change")
+        )
+      end)
+
+    Map.put(ctx, :write_request, request["id"])
+  end
+
+  # The fake asks for the file right after the approval, and says what it got.
+  step "{string} asks the client to read a file in the workspace", %{args: [_]} = context do
+    answer =
+      Acp.await_stream(thread(context), fn _ ->
+        case Regex.run(~r/read: (.*)/, Acp.assistant_text(thread(context))) do
+          [_, json] -> JSON.decode!(json)
+          nil -> nil
+        end
+      end)
+
+    Map.put(context, :read_answer, answer)
+  end
+
+  step "the read is answered", context do
+    assert context.read_answer == %{"content" => "line one\nline two\n"}
+
+    context
+  end
+
+  step "the write is still waiting for approval", context do
+    state = Acp.stream(thread(context))
+    request = HalC2.StreamState.get(state, "runtime-request")[context.write_request]
+    assert request["status"] == "pending"
+    assert [%{"status" => "running"}] = HalC2.StreamState.list(state, "run")
+    context
+  end
+
+  # --- sign-in before a session ----------------------------------------------------------
+
+  step "{string} requires sign-in and the user has not signed in", %{args: [_]} = context do
+    signed_out_acme(context, [@browser])
+  end
+
+  step "a thread tries to start a session with {string}", %{args: [_]} = context do
+    ctx = run_on_acme(context, "hello")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "the thread fails with an authentication error", context do
+    assert [%{"status" => "failed"}] = Acp.runs(thread(context))
+
+    assert [%{"lastError" => message}] =
+             HalC2.StreamState.list(Acp.stream(thread(context)), "provider-session")
+
+    assert message =~ "acme is not signed in"
+    context
+  end
+
+  step "no session with {string} is created", %{args: [_]} = context do
+    # The agent is never started in the thread's workspace, and never prompted.
+    refute Enum.any?(Acp.launches(context, "acme"), &(&1["cwd"] == World.project(context).root))
+    assert Acp.requests(context, "acme", "session/prompt") == []
+
+    assert [%{"nativeThreadRef" => nil}] =
+             HalC2.StreamState.list(Acp.stream(thread(context)), "provider-thread")
+
+    context
+  end
+
+  # --- commands and skills ---------------------------------------------------------------
+
+  step "a running {string} session offers the command {string} and the skill {string}",
+       %{args: [_, "/" <> command, skill]} = context do
+    ctx =
+      context
+      |> acme(%{
+        "commands" => [
+          %{
+            "name" => command,
+            "description" => "Review the changes",
+            "input" => %{"hint" => "path"}
+          },
+          %{"name" => skill, "description" => "Ship it"}
+        ]
+      })
+      |> watch_providers()
+      |> run_on_acme("offer commands")
+
+    {entry, ctx} = await_acme(ctx, &(&1["slashCommands"] != []))
+    assert [%{"status" => "running"}] = Acp.runs(thread(ctx))
+    Map.put(ctx, :entry, entry)
+  end
+
+  step "the user types a slash", context do
+    Map.put(context, :entry, Acp.provider("acme"))
+  end
+
+  step "{string} is offered under the provider's commands", %{args: ["/" <> name]} = context do
+    assert [
+             %{
+               "name" => ^name,
+               "description" => "Review the changes",
+               "input" => %{"hint" => "path"}
+             }
+           ] =
+             context.entry["slashCommands"]
+
+    context
+  end
+
+  step "{string} is offered in the skill menu", %{args: ["$" <> name]} = context do
+    assert [%{"name" => ^name, "description" => "Ship it", "enabled" => true, "scope" => "agent"}] =
+             context.entry["skills"]
+
+    # A skill is not also a slash command.
+    refute Enum.any?(context.entry["slashCommands"], &(&1["name"] =~ name))
+    context
+  end
+
+  # --- the agent's own terminal ----------------------------------------------------------
+
+  step "an ACP v2 agent runs a command in its own terminal", context do
+    ctx = context |> acme() |> run_on_acme("own terminal")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "the command, its output and exit status are shown", context do
+    assert [command] =
+             Acp.stream(thread(context))
+             |> HalC2.StreamState.list("turn-item")
+             |> Enum.filter(&(&1["type"] == "command_execution"))
+
+    assert %{
+             "input" => "npm test",
+             "output" => "running 2 tests\n1 failed\n",
+             "exitCode" => 1,
+             "status" => "failed"
+           } = command
+
+    context
+  end
+
+  step "the user cannot type into that terminal", context do
+    HalC2.Test.Mc.Terminal.ensure(context)
+
+    # It is a command of the turn: no terminal session exists to write to.
+    assert {:error, _} =
+             HalC2.Terminal.write(%{
+               "threadId" => thread(context),
+               "terminalId" => "term-1",
+               "data" => "echo hi\n"
+             })
+
     context
   end
 

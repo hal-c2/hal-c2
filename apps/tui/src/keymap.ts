@@ -62,6 +62,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "Ctrl+Shift+E", description: "Effort picker", chords: ["ctrl+shift+e"] },
       { keys: "^Y", description: "Implement the proposed plan", chords: ["ctrl+y"] },
       { keys: "^A / ^R", description: "Approve / decline a request", chords: ["ctrl+a", "ctrl+r"] },
+      {
+        keys: "^S / ^X",
+        description: "Always allow a request this session / cancel it",
+        chords: ["ctrl+s", "ctrl+x"],
+      },
       { keys: "^U", description: "Reopen a pending question", chords: ["ctrl+u"] },
       { keys: "Space", description: "Question: toggle an option", chords: ["space"] },
       { keys: "Esc", description: "Clear the draft / stop the turn", chords: ["escape"] },
@@ -186,8 +191,9 @@ const COMPOSE: KeymapLayer = {
   "ctrl+y": "plan.implement",
   "ctrl+a": "approval.approve",
   "ctrl+r": "approval.decline",
+  "ctrl+s": "approval.approveSession",
+  "ctrl+x": "approval.cancel",
   "ctrl+u": "userInput.reopen",
-  "ctrl+x": "leader.open",
   escape: "composer.escape",
   return: "composer.submit",
 };
@@ -202,7 +208,14 @@ export const KEYMAP_LAYERS = {
    * Under every mode but the terminal drawer, which passes ^C to the shell.
    * "quit" is the action keymap.json files name (the host runs it as app.quit).
    */
-  global: { "ctrl+c": "quit", "ctrl+p": "composer.focus", f1: "help.open" },
+  // ^X cancels a pending approval at the prompt (COMPOSE); with none the host
+  // declines that, the key falls through to here, and it opens the leader layer.
+  global: {
+    "ctrl+c": "quit",
+    "ctrl+p": "composer.focus",
+    f1: "help.open",
+    "ctrl+x": "leader.open",
+  },
   compose: COMPOSE,
   newThread: COMPOSE,
   userInput: {
@@ -282,6 +295,17 @@ export const KEYMAP_LAYERS = {
     "escape, ctrl+p": "settings.close",
     r: "keymap.rebind.open",
   },
+  /** A settings page: its rows, then its one-line field and its yes / no question. */
+  section: {
+    "up, k": "section.previous",
+    "down, j": "section.next",
+    return: "section.activate",
+    escape: "section.back",
+    "ctrl+p": "section.close",
+    "ctrl+k": "palette.open",
+  },
+  sectionInput: { escape: "section.input.cancel" },
+  sectionConfirm: { y: "section.confirm.yes", "n, escape": "section.confirm.no" },
   panel: {
     up: "rightPanel.previous",
     down: "rightPanel.next",

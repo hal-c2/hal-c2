@@ -27,7 +27,7 @@ Popup {
     padding: 8
     closePolicy: Popup.CloseOnPressOutside
 
-    Component.onCompleted: PaletteModel.setSettingsSections(Pages.sections)
+    Component.onCompleted: PaletteModel.setSettingsSections(Pages.paletteEntries(Qt.platform.os))
 
     Connections {
         target: PaletteModel
@@ -104,6 +104,17 @@ Popup {
                 }
                 event.accepted = true;
             }
+        }
+
+        // A thread search names the environments it could not reach.
+        Text {
+            visible: PaletteModel.mode === "command" && text.length > 0
+            Layout.fillWidth: true
+            text: PaletteModel.status
+            color: Theme.palette.color("textMuted", "#a1a1aa")
+            font.pixelSize: 11
+            leftPadding: 4
+            elide: Text.ElideRight
         }
 
         // Project search: its options and how many matches it found.

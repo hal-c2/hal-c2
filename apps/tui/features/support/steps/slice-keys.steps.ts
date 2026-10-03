@@ -109,7 +109,13 @@ step("pressing {string} cancels the leader without acting", async (ctx: World, k
   await settle(ctx);
   expect(mode(ctx)).toBe("compose");
   expect(select(ctx).open).toBe(false);
-  expect(ctx.dispatched!.map((entry) => entry.action)).toEqual(["leader.open", "leader.cancel"]);
+  // ^X is the approval's cancel first; with no approval waiting the host declines
+  // that and the key opens the leader.
+  expect(ctx.dispatched!.map((entry) => entry.action)).toEqual([
+    "approval.cancel",
+    "leader.open",
+    "leader.cancel",
+  ]);
   expect(ctx.host!.state.get("page")).toEqual(before);
   // The same key after the leader does act: the layer was live, Esc left it.
   await pressKey(ctx, "Ctrl+X");

@@ -9,12 +9,10 @@ import {
   type ProviderInstanceMutation,
   type RelayClientInstallProgressStage,
   type RelayClientStatus,
-  type ServerProcessDiagnosticsResult,
   type ServerProvider,
   type ServerProviderUpdateInput,
   type ServerSettings,
   type ServerSettingsPatch,
-  type ServerTraceDiagnosticsResult,
   type GitPreparePullRequestThreadResult,
   type GitResolvePullRequestResult,
   type SourceControlPublishRepositoryInput,
@@ -44,8 +42,6 @@ export interface TuiFeatureClient {
     patch: ServerSettingsPatch,
     providerInstanceMutation?: ProviderInstanceMutation,
   ) => Promise<ServerSettings>;
-  readonly getProcessDiagnostics: () => Promise<ServerProcessDiagnosticsResult>;
-  readonly getTraceDiagnostics: () => Promise<ServerTraceDiagnosticsResult>;
   /** Rename a project or replace its scripts (`project.update`). */
   readonly updateProject: (
     projectId: ProjectId,
@@ -131,10 +127,6 @@ export function makeFeatureClient(runtime: TuiRuntime): TuiFeatureClient {
           ...(providerInstanceMutation ? { providerInstanceMutation } : {}),
         }),
       ),
-    getProcessDiagnostics: () =>
-      runtime.runPromise(request(WS_METHODS.serverGetProcessDiagnostics, {})),
-    getTraceDiagnostics: () =>
-      runtime.runPromise(request(WS_METHODS.serverGetTraceDiagnostics, {})),
     updateProject: (projectId, change) =>
       runtime.runPromise(updateProject({ projectId, ...change }).pipe(Effect.asVoid)),
     deleteProject: (projectId) =>
