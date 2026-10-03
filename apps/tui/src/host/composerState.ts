@@ -216,7 +216,26 @@ export type TuiSelectKind =
   | "runtime"
   | "workspace"
   | "branch"
-  | "project-scope";
+  | "project-scope"
+  | "menu";
+
+/** A list another controller opens in the picker (`Composer.openMenu`). */
+export interface TuiMenuSpec {
+  readonly title: string;
+  readonly status?: TuiSelectState["status"];
+  readonly options: ReadonlyArray<{
+    readonly label: string;
+    readonly description?: string;
+    readonly value: string;
+  }>;
+  readonly index?: number;
+  /** Runs with the chosen option's value after the menu closed. */
+  readonly onChoose: (value: string) => void;
+  /** The mode that has the keys while it is open ("select" unless given). */
+  readonly mode?: TuiMode;
+  /** The mode the keys go back to when it closes ("compose" unless given). */
+  readonly returnMode?: TuiMode;
+}
 
 /** Published under `select`: the one open picker (or `{ open: false }`). */
 export interface TuiSelectState {
@@ -267,6 +286,7 @@ interface SelectOption {
 }
 
 interface Picker {
+  readonly menu?: TuiMenuSpec;
   readonly kind: TuiSelectKind;
   readonly title: string;
   readonly status: TuiSelectState["status"];
@@ -297,6 +317,10 @@ const envMode = (mode: ThreadEnvMode | null | undefined): "local" | "worktree" |
 export interface Composer {
   /** Handle a `composer.*`, `select.*`, `thread.new` or `newThread.*` action. */
   readonly dispatch: (action: string, payload?: unknown) => boolean;
+  /** Open (or replace) a list in the picker for another controller. */
+  readonly openMenu: (spec: TuiMenuSpec) => void;
+  /** Close the picker when a menu (with this title, if given) is open. */
+  readonly closeMenu: (title?: string) => void;
   /** The open new-thread draft's id and project, for the sidebar row and the page. */
   readonly draft: () => { readonly draftId: string; readonly projectId: string | null } | null;
   /** Re-derive after a store change (selection, detail, shell). */
@@ -752,15 +776,29 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const openPicker = (next: Picker) => {
     picker = next;
-    options.setMode("select");
+    options.setMode(next.menu?.mode ?? "select");
     publish();
   };
   const closePicker = () => {
     if (!picker) return;
+    const menu = picker.menu;
     picker = null;
-    if (options.mode() === "select") options.setMode("compose");
+    if (options.mode() === (menu?.mode ?? "select")) options.setMode(menu?.returnMode ?? "compose");
     publish();
   };
+  const openMenu = (spec: TuiMenuSpec) =>
+    openPicker({
+      menu: spec,
+      kind: "menu",
+      title: spec.title,
+      status: spec.status ?? (spec.options.length > 0 ? "ready" : "empty"),
+      options: spec.options.map((option) => ({
+        label: option.label,
+        description: option.description ?? "",
+        value: option.value,
+      })),
+      index: Math.min(Math.max(0, spec.index ?? 0), Math.max(0, spec.options.length - 1)),
+    });
   /** Opening the picker that is already open closes it (clicking a control twice). */
   const toggles = (kind: TuiSelectKind) => {
     if (picker?.kind !== kind) return false;
@@ -1563,6 +1601,9 @@ export function createComposer(options: ComposerOptions): Composer {
     }
     closePicker();
     switch (current.kind) {
+      case "menu":
+        current.menu?.onChoose(value);
+        return;
       case "model": {
         const parsed = JSON.parse(value) as { instanceId: string; model: string };
         setModel(parsed.instanceId, parsed.model);
@@ -1778,6 +1819,10 @@ export function createComposer(options: ComposerOptions): Composer {
 
   return {
     dispatch,
+    openMenu,
+    closeMenu: (title) => {
+      if (picker?.kind === "menu" && (title === undefined || picker.title === title)) closePicker();
+    },
     draft: () => (newDraft ? { draftId: newDraft.draftId, projectId: newDraft.projectId } : null),
     sync,
     relayout: publish,

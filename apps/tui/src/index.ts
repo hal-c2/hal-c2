@@ -12,7 +12,7 @@ import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts
 import { detectInlineImageTransport } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
 import { enginePluginPort } from "./host/plugins.ts";
-import { readUserConfig } from "./host/userConfig.ts";
+import { readUserConfig, saveKeymapOverrides } from "./host/userConfig.ts";
 import { resolveShellConfigDir } from "./shellConfigDir.ts";
 import {
   connectRemoteMc,
@@ -181,6 +181,10 @@ async function main(): Promise<void> {
     size: { columns: renderer.width, rows: renderer.height },
     onQuit: handleExit,
     log: appendLog,
+    startupWarnings: configWarnings,
+    features: {
+      saveKeymap: (overrides) => saveKeymapOverrides(configDir, overrides),
+    },
     inlineImages,
     // Cell pixels size image previews; unknown until the terminal reports them.
     cellPixels: () =>
@@ -209,7 +213,6 @@ async function main(): Promise<void> {
       }
     },
   });
-  for (const message of configWarnings) host.reportWarning(message);
 
   try {
     // Raw mode usually delivers Ctrl+C as a keystroke (the shell dispatches

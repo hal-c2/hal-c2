@@ -29,7 +29,10 @@ Item {
     readonly property string auxMode: Shell.state.mode === "rename" && Shell.state.overlay !== null
         ? "rename"
         : Shell.state.mode === "commit" && Shell.state.git.commitPrompt !== null ? "commit"
-        : Shell.state.mode === "join" && Shell.state.cluster.joining ? "join" : ""
+        : Shell.state.mode === "join" && Shell.state.cluster.joining ? "join"
+        : Shell.state.mode === "ask" && Shell.state.ask !== null ? "ask" : ""
+    // What the box is asking for: the mode's name, or the host's question (`ask.label`).
+    readonly property string auxLabel: auxMode === "ask" ? Shell.state.ask.label : auxMode
     // Prefill the title each time a rename opens, and start each commit message
     // empty (typing breaks a `text` binding).
     onAuxModeChanged: {
@@ -37,6 +40,9 @@ Item {
         if (auxMode === "commit") commitInput.text = ""
         if (auxMode === "join") joinInput.text = ""
     }
+    // One question can follow another without the mode changing.
+    readonly property int askSeq: Shell.state.ask !== null ? Shell.state.ask.seq : 0
+    onAskSeqChanged: if (Shell.state.ask !== null) askInput.text = Shell.state.ask.value
 
     width: model.surfaceWidth
     alignSelf: "center"
@@ -59,8 +65,24 @@ Item {
             height: 1
             Text {
                 flexShrink: 0
-                text: dock.auxMode + " ▸ "
+                text: dock.auxLabel + " ▸ "
                 color: Theme.colors.accent
+            }
+            TextInput {
+                id: askInput
+                objectName: "askInput"
+                visible: dock.auxMode === "ask"
+                flexGrow: 1
+                height: 1
+                focus: dock.auxMode === "ask"
+                placeholderText: Shell.state.ask !== null ? Shell.state.ask.placeholder : ""
+                placeholderColor: Theme.colors.dim
+                cursorColor: Theme.colors.accent
+                color: Theme.colors.text
+                focusedColor: Theme.colors.text
+                backgroundColor: Theme.colors.bg
+                focusedBackgroundColor: Theme.colors.bg
+                onAccepted: Shell.dispatch("ask.submit", { text: text })
             }
             TextInput {
                 id: renameInput
@@ -112,7 +134,7 @@ Item {
             }
         }
         Text {
-            text: "Enter " + dock.auxMode + " · Esc cancel"
+            text: (dock.auxMode === "ask" ? "Enter accept" : "Enter " + dock.auxMode) + " · Esc cancel"
             color: Theme.colors.dim
         }
     }

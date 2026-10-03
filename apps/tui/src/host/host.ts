@@ -17,6 +17,8 @@ import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
 import { revertableCheckpoints } from "../timeline.ts";
 import { createAddProjectController } from "./addProjectState.ts";
+import { createAsk } from "./askState.ts";
+import { createFeatures, type FeatureOptions } from "./features/index.ts";
 import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer, type ImageDecoder } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
@@ -131,6 +133,10 @@ export interface HostOptions {
   readonly cellPixels?: () => CellPixels | null;
   /** Sees every action dispatched, from QML, keymaps or the palette (tests, debugging). */
   readonly trace?: (action: string, payload: unknown) => void;
+  /** Warnings from before the host existed (keymap.json conflicts, missing plugin directories). */
+  readonly startupWarnings?: ReadonlyArray<string>;
+  /** What the feature areas need from the entry (see features/index.ts). */
+  readonly features?: FeatureOptions;
 }
 
 /**
@@ -270,7 +276,12 @@ export function createHost(options: HostOptions): Host {
     state.set("problems", { items: problems });
     // A plugin that failed may have left the registry.
     refreshPlugins();
+    // Problems are listed in settings; one from before the first snapshot is
+    // announced once the client is connected (the snapshot sets the status).
+    if (store.getState().shell === null) startupProblems += 1;
+    publishSettings();
   };
+  let startupProblems = 0;
 
   const rowsNow = (next = store.getState()) =>
     buildRows(
@@ -316,7 +327,11 @@ export function createHost(options: HostOptions): Host {
     const popoverOpen = wantedPopoverRows() > 0 || mode === "contextMenu";
     // ChatView's rename, commit and filter focus: the prompt is one line.
     const oneLineComposer =
-      mode === "rename" || mode === "commit" || mode === "filter" || mode === "join";
+      mode === "rename" ||
+      mode === "commit" ||
+      mode === "filter" ||
+      mode === "join" ||
+      mode === "ask";
     layout = buildTuiLayoutState({
       size,
       sidebarCollapsed,
@@ -369,6 +384,17 @@ export function createHost(options: HostOptions): Host {
         detail: current.detail,
         vcsStatus: current.vcsStatus,
         cluster: cluster.state(),
+        extra: [
+          ...features.settingsGroups(),
+          ...(problems.length > 0
+            ? [
+                {
+                  title: "Problems",
+                  rows: problems.map((problem) => [problem.level, problem.message] as const),
+                },
+              ]
+            : []),
+        ],
         // Before the first layout the pane is the whole terminal.
         width: (layout as TuiLayoutState | undefined)?.chatWidth ?? size.columns,
       }),
@@ -440,6 +466,16 @@ export function createHost(options: HostOptions): Host {
       prev.projectScopeId !== next.projectScopeId
     ) {
       publishSidebar();
+    }
+    if (prev?.shell == null && next.shell !== null && startupProblems > 0) {
+      const count = startupProblems;
+      startupProblems = 0;
+      queueMicrotask(() =>
+        store.setStatus(
+          `${count} problem${count === 1 ? "" : "s"} at startup: see Settings (^K)`,
+          "error",
+        ),
+      );
     }
     if (!prev || prev.status !== next.status || prev.statusKind !== next.statusKind) {
       state.set("status", { kind: next.statusKind, text: next.status } satisfies TuiStatusState);
@@ -670,6 +706,7 @@ export function createHost(options: HostOptions): Host {
       }),
       ...areaCommands(),
       ...cluster.commands(),
+      ...features.commands(),
     ],
     run: (action, payload) => {
       dispatch(action, payload);
@@ -988,6 +1025,7 @@ export function createHost(options: HostOptions): Host {
         if (sourceControl.dispatch(action, payload)) return true;
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
         if (cluster.dispatch(action, payload)) return true;
+        if (ask.dispatch(action, payload) || features.dispatch(action, payload)) return true;
         // Known actions that decline when they do not apply (the key falls through).
         if (DECLINABLE_ACTIONS.has(action)) return false;
         if (!unknownActions.has(action)) {
@@ -1009,6 +1047,36 @@ export function createHost(options: HostOptions): Host {
     settlementSupported: () => settlementSupported,
     copyToClipboard: options.copyToClipboard,
   });
+
+  const ask = createAsk({ state, mode: () => mode, setMode: (next) => setMode(next) });
+  const features = createFeatures(
+    {
+      client,
+      store,
+      state,
+      mode: () => mode,
+      setMode: (next) => setMode(next),
+      menu: (spec) => composer!.openMenu(spec),
+      closeMenu: (title) => composer!.closeMenu(title),
+      ask: (spec) => ask.ask(spec),
+      status: (text, kind) => store.setStatus(text, kind),
+      copy: (text) => options.copyToClipboard?.(text) === true,
+      workspace: () => {
+        const workspace = selectedWorkspace();
+        if (!workspace) return null;
+        const current = store.getState();
+        const projectId =
+          (current.detail?.id === workspace.threadId ? current.detail.projectId : null) ??
+          current.shell?.threads.find((thread) => thread.id === workspace.threadId)?.projectId ??
+          null;
+        return { threadId: workspace.threadId, projectId, cwd: workspace.cwd };
+      },
+      dispatch: (action, payload) => dispatch(action, payload),
+      commandsChanged: () => palette.sync(),
+      settingsChanged: () => publishSettings(),
+    },
+    options.features ?? {},
+  );
 
   // The composer loads the new-thread defaults itself; this is the settlement flag.
   const ready = client.getServerConfig().then(
@@ -1054,8 +1122,12 @@ export function createHost(options: HostOptions): Host {
   const unsubscribe = store.subscribe(() => {
     publish();
     composer!.sync();
+    features.sync();
     palette.sync();
   });
+  for (const message of options.startupWarnings ?? []) {
+    addProblem({ level: "warning", message, where: null });
+  }
   const unsubscribeConnection = client.subscribeConnection((phase) =>
     state.set("connection", connectionState(phase)),
   );
@@ -1083,6 +1155,7 @@ export function createHost(options: HostOptions): Host {
       await terminal.settled();
       await threadView.settled();
       await cluster.settled();
+      await features.settled();
     },
     attachPlugins: (port) => {
       pluginPort = port;
@@ -1100,6 +1173,7 @@ export function createHost(options: HostOptions): Host {
       unsubscribeConnection();
       unsubscribe();
       terminal.dispose();
+      features.dispose();
       store.stop();
     },
   };
