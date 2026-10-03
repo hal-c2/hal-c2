@@ -711,6 +711,10 @@ defmodule HalC2.Acp do
   defp driver_fields(entry, "antigravity", id, _instance),
     do: HalC2.Acp.Antigravity.entry_fields(entry, id)
 
+  # Cursor has a plan mode of its own, which the thread's plan toggle chooses.
+  defp driver_fields(entry, "cursor", _id, _instance),
+    do: Map.put(entry, "showInteractionModeToggle", true)
+
   # What a registry agent's running session advertises (`put_commands/2`).
   defp driver_fields(entry, "acpRegistry", id, _instance) do
     Map.merge(entry, %{

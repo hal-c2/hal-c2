@@ -68,7 +68,13 @@ const makeAgent = (options, resumed) => {
     agentId,
     close: () => {},
     send: async (message, sendOptions) => {
-      log({ event: "send", agentId, message, model: sendOptions.model });
+      log({
+        event: "send",
+        agentId,
+        message,
+        model: sendOptions.model,
+        mode: sendOptions.mode ?? null,
+      });
       let cancel;
       const cancelled = new Promise((resolve) => (cancel = resolve));
       const say = (text) => sendOptions.onDelta({ update: { type: "text-delta", text } });
@@ -100,6 +106,37 @@ const makeAgent = (options, resumed) => {
           if (message.includes("wait")) {
             await cancelled;
             return { status: "cancelled" };
+          }
+          if (message.includes("make a plan")) {
+            // Plan mode: the task list, then the plan itself.
+            const todos = [
+              { content: "Read the code", status: "completed" },
+              { content: "Write the plan", status: "inProgress" },
+              { content: "Dropped", status: "cancelled" },
+            ];
+            sendOptions.onDelta({
+              update: {
+                type: "tool-call-completed",
+                callId: "todos-1",
+                toolCall: {
+                  type: "updateTodos",
+                  args: { todos },
+                  result: { status: "success", value: { todos } },
+                },
+              },
+            });
+            const plan = { type: "createPlan", args: { plan: "# Plan\n- do it" } };
+            sendOptions.onDelta({
+              update: { type: "tool-call-started", callId: "plan-1", toolCall: plan },
+            });
+            sendOptions.onDelta({
+              update: {
+                type: "tool-call-completed",
+                callId: "plan-1",
+                toolCall: { ...plan, result: { status: "success", value: {} } },
+              },
+            });
+            return { status: "finished" };
           }
           if (message.includes("a command that cannot start")) {
             // The shell could not be spawned: the tool call fails and the run goes on.

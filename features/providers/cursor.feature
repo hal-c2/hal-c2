@@ -110,7 +110,6 @@ Feature: Cursor
     When the user opens the provider list
     Then Cursor is shown with a warning that no models were found
 
-  @backlog
   Scenario: Cursor's plan and task list are shown
     Given the thread is in plan mode on Cursor
     When Cursor finishes planning

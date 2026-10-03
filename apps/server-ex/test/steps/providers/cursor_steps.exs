@@ -390,6 +390,8 @@ defmodule HalC2.Steps.Providers.Cursor do
     assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
     assert [%{"status" => "running"}] = Acp.runs(thread)
     assert Registry.lookup(HalC2.Acp.Registry, thread) == []
+    # The sidebar still shows it as the thread's active run, which the check reads.
+    World.await_row(thread, &is_binary(&1["activeRunId"]))
     Map.put(ctx, :thread, "Cursor")
   end
 
@@ -418,6 +420,46 @@ defmodule HalC2.Steps.Providers.Cursor do
              Enum.map(Acp.await_runs(context.threads["Cursor"], 2), & &1["status"])
 
     assert Acp.assistant_text(context.threads["Cursor"]) =~ "Hello from Cursor"
+    context
+  end
+
+  # --- plan mode ------------------------------------------------------------------------
+
+  step "the thread is in plan mode on Cursor", context do
+    sign_in("cursor")
+    {entry, ctx} = enabled(context)
+    # Clients offer the plan toggle for Cursor.
+    assert entry["showInteractionModeToggle"] == true
+    ctx
+  end
+
+  step "Cursor finishes planning", context do
+    ctx = Acp.launch(context, "Cursor", "cursor", "make a plan", interaction: "plan")
+    assert [%{"status" => "completed"}] = Acp.await_runs(ctx.threads["Cursor"], 1)
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "the plan is shown as a proposed plan with its task list", context do
+    # Cursor ran in its plan mode.
+    assert [%{"mode" => "plan"}] = Enum.filter(log(context), &(&1["event"] == "send"))
+    plans = HalC2.StreamState.list(Acp.stream(context.threads["Cursor"]), "plan")
+
+    assert [%{"markdown" => "# Plan\n- do it", "status" => "active"}] =
+             Enum.filter(plans, &(&1["kind"] == "proposed_plan"))
+
+    assert [%{"steps" => steps}] = Enum.filter(plans, &(&1["kind"] == "todo_list"))
+
+    assert [
+             %{"text" => "Read the code", "status" => "completed"},
+             %{"text" => "Write the plan", "status" => "running"}
+           ] = steps
+
+    # Neither is shown as a tool call.
+    refute Enum.any?(
+             HalC2.StreamState.list(Acp.stream(context.threads["Cursor"]), "turn-item"),
+             &(&1["type"] == "dynamic_tool")
+           )
+
     context
   end
 

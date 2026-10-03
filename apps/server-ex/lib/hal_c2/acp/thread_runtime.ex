@@ -1009,6 +1009,27 @@ defmodule HalC2.Acp.ThreadRuntime do
     state |> flush() |> write_todo("acp-plan:#{state.turn.ids.run}", steps)
   end
 
+  # A plan the agent proposes (HAL-C2's own update, which the Cursor agent sends for
+  # Cursor's plan tool): a proposed plan the user can implement once it is whole.
+  defp update(%{"sessionUpdate" => "proposed_plan", "planId" => id} = u, state)
+       when is_binary(id) do
+    native = "plan:#{id}"
+    state = state |> flush() |> ensure_item(native, :plan)
+    markdown = if is_binary(u["markdown"]) and u["markdown"] != "", do: u["markdown"]
+
+    cond do
+      Map.get(state.items[native], :proposed) ->
+        state
+
+      u["status"] == "completed" and markdown != nil ->
+        state = finish_plan(state, native, markdown)
+        %{state | items: Map.update!(state.items, native, &Map.put(&1, :proposed, true))}
+
+      true ->
+        state
+    end
+  end
+
   # Models the agent adds or drops mid-session reach the picker without a provider refresh.
   defp update(%{"sessionUpdate" => "config_option_update", "configOptions" => options}, state)
        when is_list(options) do

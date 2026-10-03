@@ -84,6 +84,8 @@ const authRequired = () => new RpcError(-32000, "Sign in to Cursor to use this a
 interface Session {
   readonly agent: CursorAgent;
   model: ModelSelection;
+  /** Cursor's conversation mode for the next run: the client's plan toggle sets it. */
+  mode: "agent" | "plan";
   run: CursorRun | undefined;
 }
 
@@ -140,6 +142,22 @@ export function makeCursorAcp(input: {
           ...models.map((model) => ({ value: model.id, name: model.displayName })),
         ],
       },
+      // Cursor's own plan mode, which the client's plan toggle chooses.
+      ...(text
+        ? []
+        : [
+            {
+              id: "mode",
+              name: "Mode",
+              category: "mode",
+              type: "select",
+              currentValue: "agent",
+              options: [
+                { value: "agent", name: "Agent" },
+                { value: "plan", name: "Plan" },
+              ],
+            },
+          ]),
     ];
   };
 
@@ -153,7 +171,7 @@ export function makeCursorAcp(input: {
         : sdk.resumeAgent(agentId, agentOptions(cwd, key, model)),
     );
     sessions.get(agent.agentId)?.agent.close();
-    sessions.set(agent.agentId, { agent, model, run: undefined });
+    sessions.set(agent.agentId, { agent, model, mode: "agent", run: undefined });
     return {
       ...(agentId === undefined ? { sessionId: agent.agentId } : {}),
       configOptions: await modelOption(key, model.id),
@@ -197,6 +215,7 @@ export function makeCursorAcp(input: {
     const run = await guard(
       current.agent.send(text, {
         model: current.model,
+        mode: current.mode,
         onDelta: ({ update }) => updates(update),
       }),
     );
@@ -262,6 +281,9 @@ export function makeCursorAcp(input: {
       if (params.configId === "model" && typeof params.value === "string") {
         current.model = { id: params.value };
       }
+      if (params.configId === "mode") {
+        current.mode = params.value === "plan" ? "plan" : "agent";
+      }
       return { configOptions: [] };
     },
     "session/prompt": prompt,
@@ -308,6 +330,48 @@ export function makeUpdateTranslator(emit: (update: object) => void) {
   };
 
   return (update: InteractionUpdate) => {
+    // Cursor's plan and its task list are not tool calls of the transcript: the plan
+    // is a proposed plan (a HAL-C2 update, which ACP has none for) and the todos are
+    // ACP's plan entries.
+    if (update.type === "tool-call-started" || update.type === "tool-call-completed") {
+      const toolCall = update.toolCall;
+      if (toolCall.type === "createPlan") {
+        nextSegment("tool");
+        emit({
+          sessionUpdate: "proposed_plan",
+          planId: update.callId,
+          markdown: toolCall.args.plan,
+          status:
+            update.type !== "tool-call-completed"
+              ? "in_progress"
+              : toolFailed(toolCall)
+                ? "failed"
+                : "completed",
+        });
+        return;
+      }
+      if (toolCall.type === "updateTodos") {
+        nextSegment("tool");
+        const todos =
+          toolCall.result?.status === "success" ? toolCall.result.value.todos : toolCall.args.todos;
+        emit({
+          sessionUpdate: "plan",
+          entries: todos
+            .filter((todo) => todo.status !== "cancelled" && todo.content.trim().length > 0)
+            .map((todo) => ({
+              content: todo.content,
+              priority: "medium",
+              status:
+                todo.status === "inProgress"
+                  ? "in_progress"
+                  : todo.status === "completed"
+                    ? "completed"
+                    : "pending",
+            })),
+        });
+        return;
+      }
+    }
     switch (update.type) {
       case "text-delta":
         emit({
