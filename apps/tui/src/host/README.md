@@ -82,14 +82,18 @@ The source-control panel is the `rightPanel` kind `"sourceControl"`
 panel focused (`mode: "panel"`, or `"commit"` while a commit message is asked
 for): `git.next`, `git.previous`, `git.select {index}`, `git.activate
 {index?}`, `git.run {action, label?}`, `git.pull`, `git.openPr` (copies the PR
-link), `git.commit {message}`, `git.commit.cancel`. `settings`
+link), `git.commit {message}`, `git.commit.generate` (Tab in the commit prompt:
+the MC's writer model writes the message), `git.commit.cancel`. An action that
+would land on the default branch asks first, in the picker. `git.progress` is
+the running action's stage and elapsed time, which move when the MC reports
+something, never on a timer. `settings`
 (`settingsState.ts`) is the settings page in place of the conversation:
 `settings.open`, `settings.close` (`mode: "settings"`).
 
 `settingsSection` (`settingsSections.ts`, null-like when `open` is false) is a
 settings page the terminal can act on, in the conversation's place: scheduled
 tasks, storage, background activity, diagnostics, the resource monitor, source
-control tools, updates, usage limits and usage hubs (`sections/*.ts`, each
+control tools, updates, usage, usage limits, usage hubs and plugins (`sections/*.ts`, each
 opened by its palette entry, `section.open {id}`). A page is rows: `rows` is the
 window that fits, each painted and marked selected; `input` is the one-line
 field a row asks its value in, `confirm` the yes / no question before something
