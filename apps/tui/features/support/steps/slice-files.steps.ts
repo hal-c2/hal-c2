@@ -1,6 +1,7 @@
 // tui/files.feature: attaching an image from the browser, Markdown files
 // rendered in the viewer, and a workspace file in the user's $EDITOR (with the
 // conflict check when it changed on disk meanwhile).
+import { editInPlace } from "./files-viewer.steps.ts";
 import { expect } from "bun:test";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -153,7 +154,10 @@ step("the file opens in the user's editor", async (ctx: SliceFilesWorld) => {
   expect(status(ctx).text).toBe("No changes to src/app.ts.");
 });
 
+// The shared files/ scenarios (also the desktop's) edit in the viewer, saving as the typing
+// pauses; tui/files.feature edits a copy in $EDITOR and writes it back on exit.
 step("the user is editing {string}", async (ctx: SliceFilesWorld, path: string) => {
+  if (ctx.tags.includes("@desktop")) return editInPlace(ctx, path);
   useEditor(ctx);
   ctx.editorHold = deferred();
   ctx.held = (ctx.held ?? 0) + 1;

@@ -60,7 +60,7 @@ Feature: Moving a thread and its agent to another machine
       And "Alpha" is no longer listed under "laptop"
       And the user is looking at "Alpha" on "desktop"
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: Only machines that can take the thread are offered
       Given the cluster also has the machine "server", which is offline
       When the user chooses where to move "Alpha"
@@ -217,7 +217,7 @@ Feature: Moving a thread and its agent to another machine
       Then a new agent session starts on "desktop"
       And the agent receives the trimmed account of the conversation that a handoff gives
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario Outline: The user is told how the agent continues
       Given "Alpha" runs on an agent whose provider <can> carry its session
       When the user moves "Alpha" to "desktop"
@@ -327,7 +327,7 @@ Feature: Moving a thread and its agent to another machine
       Then the user is told to answer or stop "Alpha" before moving it
       And "Alpha" stays on "laptop"
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: The user can stop the turn and move the thread in one step
       Given the agent is working in "Alpha"
       When the user moves "Alpha" to "desktop" and chooses to stop it first
@@ -394,12 +394,12 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Moving threads from the list
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: Moving from the thread's menu
       When the user opens the menu for "Alpha"
       Then moving to another machine is offered
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: Moving from the command palette
       Given the user is looking at "Alpha"
       When the user asks the command palette to move the thread to another machine

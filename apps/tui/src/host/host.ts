@@ -5,6 +5,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@hal-c2/contracts";
+import { projectScriptRuntimeEnv } from "@hal-c2/shared/projectScripts";
 import { createComputed, createPropertyMap, createRoot, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
@@ -15,6 +16,7 @@ import {
   SIDEBAR_SETTLED_SECTION_ID,
 } from "../components/Sidebar.logic.ts";
 import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
+import { PROJECT_ACTION_RUN_PREFIX, projectActionKeymap } from "../projectActions.ts";
 import type { EditorCommand } from "../promptEditor.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
@@ -56,6 +58,7 @@ import {
   type TerminalThread,
 } from "./terminalState.ts";
 import { createThreadActions } from "./threadActions.ts";
+import { createThreadMove } from "./threadMove.ts";
 import { createTuiTheme, tuiThemeState, type TuiTheme } from "./theme.ts";
 import { createThreadView } from "./threadView.ts";
 import type { CellPixels } from "./timelineState.ts";
@@ -289,6 +292,7 @@ export function createHost(options: HostOptions): Host {
     theme: tuiThemeState(),
     notifications: { items: [] },
     keybindings: { layers: KEYMAP_LAYERS, groups: KEYBINDING_GROUPS, parity: KEYMAP_PARITY },
+    projectActionKeys: {},
     paneScroll,
     plugins: { items: [] } satisfies TuiPluginsState,
     problems: { items: [] },
@@ -301,6 +305,10 @@ export function createHost(options: HostOptions): Host {
     settingsSection: NO_SETTINGS_SECTION,
     updateNotice: null,
   });
+
+  // "reconnecting" is a connection that was up and is lost: the environment is offline.
+  let connectionPhase: TuiConnectionPhase = "connecting";
+  const offline = () => connectionPhase === "reconnecting";
 
   let pluginPort: PluginPort | null = null;
   const refreshPlugins = () => {
@@ -552,7 +560,9 @@ export function createHost(options: HostOptions): Host {
     // An open settings page keeps the keys when a menu over it closes.
     const next =
       requested === "compose"
-        ? (sections?.mode() ?? (composer?.draft() ? "newThread" : threadView.composeMode()))
+        ? (sections?.mode() ??
+          // The file browser keeps the keys when the palette over it closes.
+          (filesOpen ? files.mode() : composer?.draft() ? "newThread" : threadView.composeMode()))
         : requested;
     if (next === mode) return;
     mode = next;
@@ -561,10 +571,12 @@ export function createHost(options: HostOptions): Host {
   };
   // Where keys go when a menu, prompt or palette closes (setMode resolves it).
   const restingMode = (): TuiMode => "compose";
-  /** The draft's sidebar row: only a draft with a project is listed. */
+  /** The draft's sidebar row: only a draft with a project and content is listed. */
   const sidebarDraft = () => {
     const draft = composer?.draft();
-    return draft?.projectId ? { draftId: draft.draftId, projectId: draft.projectId } : null;
+    return draft?.projectId
+      ? { draftId: draft.draftId, projectId: draft.projectId, listed: draft.hasContent }
+      : null;
   };
 
   /** The mode a focused detail panel of `kind` takes. */
@@ -598,7 +610,7 @@ export function createHost(options: HostOptions): Host {
   });
 
   /** The selected thread's terminal and file workspace: its worktree, else the project root. */
-  const selectedWorkspace = (): TerminalThread | null => {
+  const selectedWorkspace = (): (TerminalThread & { readonly projectId: string | null }) | null => {
     const current = store.getState();
     if (current.selection?.kind !== "thread") return null;
     const threadId = current.selection.id;
@@ -614,6 +626,8 @@ export function createHost(options: HostOptions): Host {
       title: detail?.title ?? shellThread?.title ?? "",
       cwd: worktreePath ?? workspaceRoot,
       worktreePath,
+      projectId: projectId ?? null,
+      env: projectScriptRuntimeEnv({ project: { cwd: workspaceRoot }, worktreePath }),
     };
   };
   // The MC does background work (git fetches) only for what a client is looking at.
@@ -651,7 +665,12 @@ export function createHost(options: HostOptions): Host {
       filesOpen = open;
       publishLayout();
       if (open) setMode("files");
-      else if (mode === "files") setMode(restingMode());
+      else if (mode === "files" || mode === "fileEdit") setMode(restingMode());
+    },
+    status: (text, kind) => store.setStatus(text, kind),
+    setEditing: (editing) => {
+      if (editing) setMode("fileEdit");
+      else if (mode === "fileEdit") setMode("files");
     },
     publish: (next) => state.set("files", next),
     attach: (path) => composer!.dispatch("composer.attach", { path }),
@@ -731,13 +750,37 @@ export function createHost(options: HostOptions): Host {
   registerSettingsSections(sections, {
     appVersion: options.appVersion ?? null,
     serverUpdated: () => updateNotice.check(),
+    // An action runs in the open thread's workspace, so only for a thread of its project.
+    runProjectAction: (projectId, script) =>
+      selectedWorkspace()?.projectId === projectId && terminal.runAction(script),
+    removeProject: (projectId) => {
+      dispatch("project.remove", { projectId });
+    },
+    searchWorkspace: () => {
+      const workspace = selectedWorkspace();
+      if (workspace) return { cwd: workspace.cwd, label: workspace.title };
+      const current = store.getState();
+      const projects = current.shell?.projects ?? [];
+      const project =
+        projects.find((candidate) => candidate.id === current.projectScopeId) ??
+        (projects.length === 1 ? projects[0] : undefined);
+      return project ? { cwd: project.workspaceRoot, label: project.title } : null;
+    },
+    // The file viewer shows the open thread's workspace.
+    openFile: (cwd, path, line) => {
+      if (selectedWorkspace()?.cwd !== cwd) return false;
+      sections!.close();
+      return dispatch("files.view", { path, line });
+    },
   });
   /** The files, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
     [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
-      id: command.action,
+      // An action offered several times (one per editor) is told apart by its title.
+      id: "payload" in command ? `${command.action}:${command.title}` : command.action,
       title: command.title,
       action: command.action,
+      ...("payload" in command ? { payload: command.payload } : {}),
     }));
 
   let composer: ReturnType<typeof createComposer> | null = null;
@@ -789,6 +832,7 @@ export function createHost(options: HostOptions): Host {
     // diff, source-control, settings, files, add-project, terminal and cluster entries.
     extraCommands: () => [
       ...threadActions.paletteCommands(),
+      ...threadMove.paletteCommands(selectedShellThread()),
       ...threadView.paletteCommands(),
       ...detailCommands({
         panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
@@ -806,6 +850,13 @@ export function createHost(options: HostOptions): Host {
     },
   });
 
+  const selectedShellThread = () => {
+    const current = store.getState();
+    const selection = current.selection;
+    return selection?.kind === "thread"
+      ? (current.shell?.threads.find((thread) => thread.id === selection.id) ?? null)
+      : null;
+  };
   const theme = createTuiTheme();
   /**
    * The palette changed under everything already drawn: the bricks follow
@@ -843,6 +894,15 @@ export function createHost(options: HostOptions): Host {
   const handleAlias = (action: string): boolean | null => {
     const jump = /^thread\.jump\.([1-9])$/.exec(action);
     if (jump) return handle("thread.jump", { index: Number(jump[1]) });
+    if (action.startsWith(PROJECT_ACTION_RUN_PREFIX)) {
+      // A shortcut runs its action only in a thread of a project that has it.
+      const workspace = selectedWorkspace();
+      const script = store
+        .getState()
+        .shell?.projects.find((project) => project.id === workspace?.projectId)
+        ?.scripts?.find((entry) => entry.id === action.slice(PROJECT_ACTION_RUN_PREFIX.length));
+      return script ? terminal.runAction(script) : false;
+    }
     switch (action) {
       case "timeline.pageUp":
         return handle("timeline.scroll", { by: -10 });
@@ -926,10 +986,24 @@ export function createHost(options: HostOptions): Host {
       void cluster.refresh();
     }
     if (palette.dispatch(action, payload)) return true;
+    // A draft would have nowhere to go: say so instead of opening one.
+    if (action === "thread.new" && offline()) {
+      store.setStatus("The environment is offline.", "error");
+      return true;
+    }
     // A paste the composer does not take (plain text) is inserted by the prompt.
     if (action === "composer.paste") return composer!.dispatch(action, payload);
     if (composer!.dispatch(action, payload)) return true;
     if (threadActions.dispatch(action, payload)) return true;
+    if (action === "thread.move") {
+      const key = payloadField(payload, "key");
+      const thread =
+        typeof key === "string"
+          ? (store.getState().shell?.threads.find((entry) => entry.id === idFromKey(key)) ?? null)
+          : selectedShellThread();
+      if (thread) threadMove.choose(thread);
+      return true;
+    }
     // ↑/↓ walk the approvals only while the prompt is empty (then they edit it).
     if (
       (action === "approval.previous" || action === "approval.next") &&
@@ -1191,6 +1265,20 @@ export function createHost(options: HostOptions): Host {
     restingMode,
     settlementSupported: () => settlementSupported,
     copyToClipboard: options.copyToClipboard,
+    offline: () => offline(),
+    now,
+    extraMenuItems: () => threadMove.menuItems(),
+    runExtraMenuItem: (thread, id) => threadMove.runMenuItem(thread, id),
+  });
+  // Moving a thread to another machine of the cluster: from its menu and the palette.
+  const threadMove = createThreadMove({
+    client,
+    store,
+    clustered: () => {
+      const status = cluster.state().status;
+      return status?.clustered === true && status.members.length > 0;
+    },
+    openSubmenu: (thread, submenu) => threadActions.openSubmenu(thread, submenu),
   });
 
   const ask = createAsk({ state, mode: () => mode, setMode: (next) => setMode(next) });
@@ -1236,6 +1324,8 @@ export function createHost(options: HostOptions): Host {
     (config) => {
       settlementSupported = config.environment?.capabilities?.threadSettlement === true;
       publishSidebar();
+      // The shortcuts the user gave project actions join the client's own chords.
+      state.set("projectActionKeys", projectActionKeymap(config.keybindings ?? []));
     },
     () => {
       // Defaults stay usable while disconnected or on an older server.
@@ -1284,7 +1374,6 @@ export function createHost(options: HostOptions): Host {
   // A server restart reads here as the connection dropping and coming back.
   // What the user was doing (the thread, the draft, open panels) is the
   // host's own state and stays; the status line says what happened.
-  let connectionPhase: TuiConnectionPhase = "connecting";
   const unsubscribeConnection = client.subscribeConnection((phase) => {
     const before = connectionPhase;
     connectionPhase = phase;
@@ -1297,6 +1386,8 @@ export function createHost(options: HostOptions): Host {
     // A report belongs to the socket it was sent on: a new connection sends it again.
     if (phase === "connected") {
       clientActivity.renew();
+      // Whether threads can move depends on the cluster this connection reaches.
+      void cluster.refresh();
       // And the server may have come back on another version.
       updateNotice.check();
     }
@@ -1325,6 +1416,7 @@ export function createHost(options: HostOptions): Host {
       await terminal.settled();
       await threadView.settled();
       await cluster.settled();
+      await threadMove.settled();
       await features.settled();
       await sections!.settled();
       await updateNotice.settled();

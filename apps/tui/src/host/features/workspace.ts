@@ -6,12 +6,6 @@ import { errorText, payloadField, type Feature, type FeatureKit } from "./kit.ts
 
 const URL_IN_OUTPUT = /https?:\/\/[^\s"'<>)\]]+/g;
 
-const slug = (text: string) =>
-  text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-
 /**
  * The open thread's project from the terminal: rename it, remove it, run its
  * scripts in the thread's terminal, and the preview links it serves (the
@@ -24,16 +18,21 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
   // Scripts that open their URL as a preview once the terminal shows it.
   let awaitingUrls: Array<{ readonly threadId: string; readonly url: string }> = [];
 
+  /** The open thread's project, else the list's scope, else the only project there is. */
   const project = () => {
     const current = store.getState();
     const selection = current.selection;
+    const projects = current.shell?.projects ?? [];
     const id =
       selection?.kind === "project"
         ? selection.id
         : selection?.kind === "thread"
           ? (current.shell?.threads.find((thread) => thread.id === selection.id)?.projectId ?? null)
           : current.projectScopeId;
-    return current.shell?.projects.find((candidate) => candidate.id === id) ?? null;
+    return (
+      projects.find((candidate) => candidate.id === id) ??
+      (id === null && projects.length === 1 ? projects[0]! : null)
+    );
   };
   const scripts = (): ReadonlyArray<ProjectScript> => project()?.scripts ?? [];
   /** The script the user ran last here, else the project's first. */
@@ -63,19 +62,27 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
     });
   };
 
-  const remove = () => {
-    const current = project();
+  /** Ask, then remove `projectId` (the current project without one). */
+  const remove = (projectId?: string) => {
+    const current =
+      projectId === undefined
+        ? project()
+        : (store.getState().shell?.projects.find((candidate) => candidate.id === projectId) ??
+          null);
     if (!current) return;
     const threads = (store.getState().shell?.threads ?? []).filter(
       (thread) => thread.projectId === current.id,
     ).length;
     kit.menu({
-      title: `remove ${current.title}?`,
+      title: `remove ${current.title}? its files on disk are kept`,
       options: [
         { label: `Keep ${current.title}`, description: "Change nothing.", value: "keep" },
         {
           label: `Remove ${current.title}`,
-          description: `Its ${threads} thread${threads === 1 ? " goes" : "s go"} too; ${current.workspaceRoot} stays on disk.`,
+          description:
+            threads === 0
+              ? "It has no threads."
+              : `Clears its ${threads} thread${threads === 1 ? " and its" : "s and their"} conversation history.`,
           value: "remove",
         },
       ],
@@ -88,7 +95,8 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
                 `Removed ${current.title}; ${current.workspaceRoot} is untouched.`,
                 "success",
               ),
-            (error: unknown) => kit.status(`Remove failed: ${errorText(error)}`, "error"),
+            (error: unknown) =>
+              kit.status(`Failed to remove project: ${errorText(error)}`, "error"),
           ),
         );
       },
@@ -105,12 +113,11 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
       return;
     }
     lastRun.set(current.id, script.id);
-    kit.dispatch("terminal.open");
-    kit.dispatch("terminal.input", { data: `${script.command}\r` });
+    // One runner for the palette, the projects page and a script's shortcut (terminalState.ts).
+    kit.dispatch("project.action.run", { projectId: current.id, actionId: script.id });
     if (script.autoOpenPreview === true && script.previewUrl) {
       awaitingUrls = [...awaitingUrls, { threadId: workspace.threadId, url: script.previewUrl }];
     }
-    kit.status(`Running ${script.name} in the terminal.`, "success");
     kit.commandsChanged();
   };
 
@@ -135,54 +142,6 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
       onChoose: (id) => {
         const script = scripts().find((candidate) => candidate.id === id);
         if (script) run(script);
-      },
-    });
-  };
-
-  /** Name, then command: an existing name is edited, a new one added. */
-  const editScript = () => {
-    const current = project();
-    if (!current) return;
-    kit.ask({
-      label: "script name",
-      placeholder: "A new name adds a script, an existing one edits it",
-      onSubmit: (name) => {
-        if (name === "") return;
-        const existing = scripts().find(
-          (script) => script.name.toLowerCase() === name.toLowerCase(),
-        );
-        kit.ask({
-          label: `command for ${name}`,
-          value: existing?.command ?? "",
-          placeholder: "The command to run, like bun run build",
-          onSubmit: (command) => {
-            if (command === "") {
-              kit.status("A script needs a command.", "error");
-              return;
-            }
-            const next: ProjectScript[] = existing
-              ? scripts().map((script) =>
-                  script.id === existing.id ? { ...script, command: command as never } : script,
-                )
-              : [
-                  ...scripts(),
-                  {
-                    id: (slug(name) || `script-${scripts().length + 1}`) as never,
-                    name: name as never,
-                    command: command as never,
-                    icon: "play",
-                    runOnWorktreeCreate: false,
-                  },
-                ];
-            void kit.track(
-              client.updateProject(current.id, { scripts: next }).then(
-                () => kit.status(`${existing ? "Updated" : "Added"} ${name}.`, "success"),
-                (error: unknown) =>
-                  kit.status(`Could not save ${name}: ${errorText(error)}`, "error"),
-              ),
-            );
-          },
-        });
       },
     });
   };
@@ -371,9 +330,11 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
         case "project.rename":
           rename();
           return true;
-        case "project.remove":
-          remove();
+        case "project.remove": {
+          const id = payloadField(payload, "projectId");
+          remove(typeof id === "string" ? id : undefined);
           return true;
+        }
         case "script.run": {
           const id = payloadField(payload, "id");
           const script =
@@ -387,9 +348,12 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
         case "script.pick":
           pickScript();
           return true;
-        case "script.edit":
-          editScript();
+        case "script.edit": {
+          // The project's page holds its scripts: add, edit, delete, import from hal-c2.json.
+          const current = project();
+          if (current) kit.dispatch("section.open", { id: "projects", projectId: current.id });
           return true;
+        }
         case "previews.open":
           openPreviews();
           return true;

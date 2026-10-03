@@ -13,7 +13,7 @@ desktop shell's contract names, extended for the terminal), `mode`, `status`,
 `git`, `settings`, `paneScroll`, `terminal`, `files`, `addProject`,
 `settingsSection`, `updateNotice`,
 `keybindings` (`src/keymap.ts`: the chord layers per mode, the reference
-groups and the web parity table), `plugins`, `problems`, `connection` (see
+groups and the web parity table), `projectActionKeys` (the server's `script.<id>.run` shortcuts as chords, live in the prompt), `plugins`, `problems`, `connection` (see
 "Plugins, problems and connection"), `graphics`, and the open thread's keys
 from `threadView.ts` (below).
 
@@ -21,7 +21,7 @@ from `threadView.ts` (below).
   card, as in the OpenTUI client), the list viewport (`lines`, `listRows`,
   `scrollTop`, counted in lines; `sidebar.scroll` moves it without following
   the selection), `scopeLabel`/`scopeLine` for the project row, and a `draft`
-  row while a new-thread draft is open. Section rows toggle their shelf; the
+  row while a new-thread draft holds text or an image (an empty one is not listed). Section rows toggle their shelf; the
   "more" row pages the settled shelf.
 - `layout` adds the extension slots a shell fills: `rightPanel`
   (`visible`, `focused`, `kind`, `asMain`, `width`;
@@ -59,15 +59,15 @@ from `threadView.ts` (below).
 
 Actions, by area (payloads use `key` / `projectKey` from `sidebarState.ts`):
 
-| Area        | Actions                                                                                                                                                                                                                                         |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Thread list | `thread.open`, `thread.next`, `thread.previous`, `thread.jump {index}`, `sidebar.toggle`, `sidebar.filter.focus/set/commit/cancel`, `sidebar.list.focus/blur`, `sidebar.section.toggle {section}`, `sidebar.more`, `sidebar.scope {projectKey}` |
-| Thread rows | `thread.menu {key, x, y}`, `thread.rename {key, title?}`, `thread.archive`, `thread.unarchive`, `thread.delete` (asks), `thread.delete.confirm`, `thread.settle`, `thread.unsettle`, `thread.copy {key, what}`, `thread.stop`                   |
-| Menus       | `contextMenu.move {delta}`, `contextMenu.select {index?}`, `overlay.cancel`, `palette.open/close/query.set/next/previous/run {index? id?}`                                                                                                      |
-| Composer    | `composer.text.set {text}`, `composer.submit`, `composer.escape`, `composer.paste`, `composer.history.previous/next`, `composer.grow/shrink`, `composer.*Picker.toggle`, `composer.editor.open`, `select.*`, `composer.focus`                   |
-| New thread  | `thread.new {projectKey?}`, `newThread.workspaceMode {mode}`, `newThread.branch {name}`, `newThread.submit {message?}`, `newThread.cancel`                                                                                                      |
-| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.*` (below), `layout.popover {rows}`, `clock.tick`, `app.quit` (or `quit`)                                                                                            |
-| Plugins     | `plugins.refresh`, `plugin.remove {id}`, `plugin.load {file}`                                                                                                                                                                                   |
+| Area        | Actions                                                                                                                                                                                                                                                                             |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Thread list | `thread.open`, `thread.next`, `thread.previous`, `thread.jump {index}`, `sidebar.toggle`, `sidebar.filter.focus/set/commit/cancel`, `sidebar.list.focus/blur`, `sidebar.section.toggle {section}`, `sidebar.more`, `sidebar.scope {projectKey}`                                     |
+| Thread rows | `thread.menu {key, x, y}`, `thread.rename {key, title?}`, `thread.archive`, `thread.unarchive`, `thread.delete` (asks), `thread.delete.confirm`, `thread.settle`, `thread.unsettle`, `thread.snooze` (asks until when), `thread.unsnooze`, `thread.copy {key, what}`, `thread.stop` |
+| Menus       | `contextMenu.move {delta}`, `contextMenu.select {index?}`, `overlay.cancel`, `palette.open/close/query.set/next/previous/run {index? id?}`                                                                                                                                          |
+| Composer    | `composer.text.set {text}`, `composer.submit`, `composer.escape`, `composer.paste`, `composer.history.previous/next`, `composer.grow/shrink`, `composer.*Picker.toggle`, `composer.editor.open`, `select.*`, `composer.focus`                                                       |
+| New thread  | `thread.new {projectKey?}`, `newThread.workspaceMode {mode}`, `newThread.branch {name}`, `newThread.submit {message?}`, `newThread.cancel`                                                                                                                                          |
+| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.*` (below), `layout.popover {rows}`, `clock.tick`, `app.quit` (or `quit`)                                                                                                                                |
+| Plugins     | `plugins.refresh`, `plugin.remove {id}`, `plugin.load {file}`                                                                                                                                                                                                                       |
 
 The palette (`paletteState.ts`) lists the composer's commands (new thread,
 plan mode, workspace, model, effort, access, editor, "Implement plan"), then
@@ -98,6 +98,15 @@ actions `section.previous/next/activate {id?}/back/close`,
 `section.input.submit {text}/cancel` and `section.confirm.yes/no`. A section
 only describes its page (`page()`); it never touches the selection or the keys.
 
+The `projects` section (`sections/projects.ts`) is where a project is changed:
+where its new threads start and its actions (add, edit, delete, import from
+`hal-c2.json`), through `client.updateProject`. Removing it and the palette's
+run entries are the workspace feature's (`features/workspace.ts`); its
+"Add or edit a project script…" opens this page. `project.action.run
+{projectId, actionId}` is the one runner (palette, page, shortcut): it types an
+action's command into the open thread's terminal (`terminal.runAction`: the active terminal, or a new one while that
+runs something), with `HAL_C2_PROJECT_ROOT` / `HAL_C2_WORKTREE_PATH` set.
+
 Settings reach machines other than the one the terminal is connected to
 (linked environments and cluster members, `sections/shared.ts` `readMachines`),
 so their calls go through `client.mcCall(method, payload, environmentId?)` by
@@ -112,12 +121,26 @@ user dismisses it for that version (`update.notice.dismiss`;
 MC what is on screen (`clientActivity.ts`, `server.reportClientActivity` for
 the open thread and its checkout), renewed every 30 seconds.
 
+The `connections` section (`sections/connections.ts`) lists the environments
+this MC is linked to (`hal-c2.environmentLinks`, add with a pairing link,
+remove) and who may reach this machine: its pairing links and paired clients,
+followed through `client.subscribeAuthAccess` and revoked with
+`hal-c2.revokeClient` / `hal-c2.revokeOtherClients` / `hal-c2.revokePairingLink`.
+
 `cluster` (`clusterState.ts`) is this machine's cluster as the MC reports
-it (`cluster.status`, read again when settings or the palette open), the last
+it (`cluster.status`, read again when settings or the palette open, and every
+30 seconds while the settings overview is up), the last
 invite, and `joining` while the one-line join prompt has the keys (`mode:
 "join"`). Settings list it; the palette runs `cluster.invite {tailscale?}`
 (copies the link), `cluster.join.open`, `cluster.join {link}`,
 `cluster.join.cancel` and `cluster.remove {id}`.
+
+`threadMove.ts` moves a thread to another machine of the cluster (`thread.move
+{key?}`, the thread menu's "Move to another machine…" and the palette, offered
+only while the cluster has other members): `hal-c2.moveDestinations` fills a
+menu of machines, a running thread is offered "stop it and move", and
+`hal-c2.moveThread`'s questions (what stays behind, which project) are asked in
+the same menu before the move is sent again. The MC's message is the status.
 
 `threadView.ts` publishes the open thread's keys and handles their actions
 (the timeline wraps at `layout.contentWidth`):
@@ -165,6 +188,15 @@ window of tree rows around the selection, and `viewer` for an opened file (a
 slice of its lines from `top`). It opens focused (`mode: "files"`); another
 panel kind or another thread closes it. Actions are `files.*`
 (`filesState.ts`); stale listings and reads are dropped by generation.
+A Markdown, CSV / TSV or HTML file opens rendered (`viewer.rendered`, laid out by
+the timeline's Markdown renderer; `src/filePreview.ts`) and `s` switches to
+its text. `e` edits a copy in `$EDITOR` (`features/editor.ts`); `i` opens the editor in the viewer (`mode: "fileEdit"`, a `TextArea` filled when
+`viewer.editSeq` changes): the brick's timer asks for `files.editor.save` half a
+second after the last key, Esc saves and leaves, and a refused write keeps the
+editor open. `o` (or the palette, per editor) opens the file in an editor on
+the environment (`shell.openInEditor`). `files.view {path, line}` opens a file
+from elsewhere; the `projectSearch` section (`projects.searchContents`) uses it
+for its matches.
 
 `addProject` is the add-project flow (`addProjectState.ts`): source, then a
 local folder or a repository and its clone destination, with the folders

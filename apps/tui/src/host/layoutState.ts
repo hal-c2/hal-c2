@@ -19,6 +19,8 @@ export type TuiMode =
   | "section"
   | "sectionInput"
   | "sectionConfirm"
+  // The file viewer's editor has the keys (`filesState.ts`).
+  | "fileEdit"
   // A one-line question from a feature area, and the leader layer (^X).
   | "ask"
   | "leader";

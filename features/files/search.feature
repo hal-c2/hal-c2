@@ -147,7 +147,7 @@ Feature: Searching project files
       When the user switches to the project "docs"
       Then the content search is empty
 
-    @backlog @tui
+    @tui
     Scenario: The terminal client searches project contents
       When the user searches the project contents for "total"
       Then "src/cart.ts" is listed with its matching line

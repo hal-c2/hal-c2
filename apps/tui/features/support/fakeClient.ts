@@ -164,6 +164,7 @@ const UNRECORDED = new Set([
   "subscribeScheduledTasks",
   "subscribeResourceTelemetry",
   "subscribeUsageLimits",
+  "subscribeAuthAccess",
 ]);
 
 export function fakeClient({
@@ -185,6 +186,7 @@ export function fakeClient({
     ({ cwd: destinationPath, remoteUrl, repository: null }) as never,
   createProject = async () => "p-new" as never,
   createThread = async () => "t-new" as never,
+  terminalOpen = async () => {},
   terminalClear = async () => {},
   terminalRestart = async () => {},
   terminalClose = async () => {},
@@ -196,6 +198,8 @@ export function fakeClient({
   deleteThread = async () => {},
   settleThread = async () => {},
   unsettleThread = async () => {},
+  snoozeThread = async () => {},
+  unsnoozeThread = async () => {},
   stopSession = async () => {},
   vcsStatus,
   runGitPull,
@@ -253,6 +257,7 @@ export function fakeClient({
   readonly cloneRepository?: TuiClient["cloneRepository"];
   readonly createProject?: TuiClient["createProject"];
   readonly createThread?: TuiClient["createThread"];
+  readonly terminalOpen?: TuiClient["terminalOpen"];
   readonly terminalClear?: TuiClient["terminalClear"];
   readonly terminalRestart?: TuiClient["terminalRestart"];
   readonly terminalClose?: TuiClient["terminalClose"];
@@ -264,6 +269,8 @@ export function fakeClient({
   readonly deleteThread?: TuiClient["deleteThread"];
   readonly settleThread?: TuiClient["settleThread"];
   readonly unsettleThread?: TuiClient["unsettleThread"];
+  readonly snoozeThread?: TuiClient["snoozeThread"];
+  readonly unsnoozeThread?: TuiClient["unsnoozeThread"];
   readonly stopSession?: TuiClient["stopSession"];
   readonly vcsStatus?: VcsStatusResult;
   /** Replaces the default pull (which ends as `setGitOutcome` says). */
@@ -522,6 +529,7 @@ export function fakeClient({
       onTerminalWrite?.(terminal, data);
     },
     terminalResize: async () => {},
+    terminalOpen,
     terminalClear,
     terminalRestart,
     setInteractionMode:
@@ -534,6 +542,8 @@ export function fakeClient({
     deleteThread,
     settleThread,
     unsettleThread,
+    snoozeThread,
+    unsnoozeThread,
     stopSession,
     terminalClose,
     approve,

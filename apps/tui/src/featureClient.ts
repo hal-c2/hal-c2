@@ -45,7 +45,12 @@ export interface TuiFeatureClient {
   /** Rename a project or replace its scripts (`project.update`). */
   readonly updateProject: (
     projectId: ProjectId,
-    change: { readonly title?: string; readonly scripts?: ReadonlyArray<ProjectScript> },
+    change: {
+      readonly title?: string;
+      readonly scripts?: ReadonlyArray<ProjectScript>;
+      /** Where the project's new threads start; null follows the environment. */
+      readonly defaultThreadEnvMode?: "local" | "worktree" | null;
+    },
   ) => Promise<void>;
   /** Forget a project and its threads; its folder is not touched (`project.delete`). */
   readonly deleteProject: (projectId: ProjectId) => Promise<void>;
@@ -130,7 +135,8 @@ export function makeFeatureClient(runtime: TuiRuntime): TuiFeatureClient {
     updateProject: (projectId, change) =>
       runtime.runPromise(updateProject({ projectId, ...change }).pipe(Effect.asVoid)),
     deleteProject: (projectId) =>
-      runtime.runPromise(deleteProject({ projectId }).pipe(Effect.asVoid)),
+      // The MC only removes a project that still has threads when told to take them along.
+      runtime.runPromise(deleteProject({ projectId, force: true }).pipe(Effect.asVoid)),
     listPreviews: (threadId) =>
       runtime.runPromise(
         request(WS_METHODS.previewList, { threadId }).pipe(Effect.map((result) => result.sessions)),

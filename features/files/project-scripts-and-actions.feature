@@ -22,7 +22,7 @@ Feature: Project actions
 
   Rule: Running actions
 
-    @desktop @tui @backlog-tui
+    @desktop @tui
     Scenario: Running an action types its command into a terminal for the thread's workspace
       Given the user is looking at a thread in "shop" on a worktree
       When the user runs the action "Dev"
@@ -35,7 +35,7 @@ Feature: Project actions
       When the user runs "Dev" from the thread's details
       Then "bun dev" runs in a terminal for the thread's workspace
 
-    @desktop @tui @backlog-tui
+    @desktop @tui
     Scenario: Running an action while the terminal is busy opens a new terminal
       Given the thread's terminal is running a command
       When the user runs the action "Dev"
@@ -48,13 +48,13 @@ Feature: Project actions
       When the user runs the action "Test"
       Then "Test" is offered first the next time the user runs an action in "shop"
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-desktop
     Scenario: An action runs from its keyboard shortcut
       Given "Dev" has the shortcut "mod+shift+d"
       When the user presses "mod+shift+d" in a thread of "shop"
       Then "bun dev" runs in the thread's terminal
 
-    @desktop @tui @backlog-tui
+    @desktop @tui
     Scenario: A failure to start an action is reported
       Given terminals cannot be opened for the thread
       When the user runs the action "Dev"
@@ -96,13 +96,13 @@ Feature: Project actions
 
   Rule: Adding, editing and removing actions
 
-    @backlog @desktop @mobile @tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile
     Scenario: Adding an action
       When the user adds an action named "Test" running "bun test" with the test icon
       Then "shop" has the action "Test"
       And "Test" can be run
 
-    @backlog @desktop @mobile @tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile
     Scenario Outline: An action needs a name and a command
       When the user adds an action with <missing>
       Then the user is told "<message>"
@@ -113,12 +113,12 @@ Feature: Project actions
         | no name        | Name is required.     |
         | no command     | Command is required.  |
 
-    @backlog @desktop @mobile @tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile
     Scenario: Editing an action
       When the user changes the command of "Dev" to "bun run dev --host"
       Then "Dev" runs "bun run dev --host"
 
-    @backlog @desktop @mobile @tui
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile
     Scenario: Deleting an action asks first and cannot be undone
       When the user deletes the action "Dev"
       Then the user is asked to confirm deleting "Dev" because it cannot be undone

@@ -113,7 +113,7 @@ Feature: Snoozing threads
     When the user looks at the snoozed thread
     Then its wake label reads "1m"
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario Outline: A thread that is waiting on the user cannot be snoozed
     Given "Refactor cart" <state>
     When the user tries to snooze "Refactor cart"

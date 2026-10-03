@@ -60,6 +60,8 @@ export interface Environment {
   refs: VcsRef[];
   connected: boolean;
   created: number;
+  /** `ServerConfig.keybindings`, as the server resolves them (project action shortcuts). */
+  keybindings: unknown[];
 }
 
 interface EnvWorld extends World {
@@ -84,6 +86,7 @@ export function env(ctx: World): Environment {
       refs: [{ name: "main", current: true, isDefault: true, worktreePath: null } as VcsRef],
       connected: false,
       created: 0,
+      keybindings: [],
     };
     ctx.nowMs ??= DEFAULT_NOW_MS;
   }
@@ -197,6 +200,7 @@ function installClient(ctx: World): void {
           defaultThreadEnvMode: environment.defaultThreadEnvMode ?? undefined,
         },
         environment: { capabilities: { threadSettlement: environment.settlement } },
+        keybindings: environment.keybindings,
       }) as never,
     renameThread: (id, title) =>
       update(id, (thread) => {

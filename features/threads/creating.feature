@@ -22,7 +22,7 @@ Feature: Creating threads
     Given a connected environment with the project "shop"
     And the user is looking at a thread in "shop"
 
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario: A new thread starts in the project the user is looking at
     When the user starts a new thread
     Then a draft thread opens in "shop"
@@ -165,7 +165,7 @@ Feature: Creating threads
     When the user starts a new thread
     Then the user is told "Could not create thread"
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: A new thread cannot be created while the environment is offline
     Given the environment is unreachable
     When the user starts a new thread

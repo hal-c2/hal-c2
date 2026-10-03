@@ -67,6 +67,8 @@ import {
   setThreadInteractionMode,
   setThreadRuntimeMode,
   settleThread as settleThreadOp,
+  snoozeThread as snoozeThreadOp,
+  unsnoozeThread as unsnoozeThreadOp,
   startThreadTurn,
   revertThreadCheckpoint,
   stopThreadSession,
@@ -527,9 +529,21 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
       readonly worktreePath: string | null;
       readonly cols: number;
       readonly rows: number;
+      /** What a shell started by this attach finds in its environment. */
+      readonly env?: Readonly<Record<string, string>>;
     },
     onEvent: (event: TerminalAttachStreamEvent) => void,
   ) => () => void;
+  /** Start the terminal's shell (again, when it has ended) so a command can be written to it. */
+  readonly terminalOpen: (input: {
+    readonly threadId: ThreadId;
+    readonly terminalId: string;
+    readonly cwd: string;
+    readonly worktreePath: string | null;
+    readonly cols: number;
+    readonly rows: number;
+    readonly env?: Readonly<Record<string, string>>;
+  }) => Promise<void>;
   readonly sendReply: (
     thread: Pick<OrchestrationThread, "id" | "runtimeMode" | "interactionMode">,
     text: string,
@@ -566,6 +580,9 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly settleThread: (threadId: ThreadId) => Promise<void>;
   /** Return a settled thread to Active, pinned there until real activity clears the pin server-side. */
   readonly unsettleThread: (threadId: ThreadId) => Promise<void>;
+  /** Hide the thread until `snoozedUntil` (ISO); the server refuses one that waits on the user. */
+  readonly snoozeThread: (threadId: ThreadId, snoozedUntil: string) => Promise<void>;
+  readonly unsnoozeThread: (threadId: ThreadId) => Promise<void>;
   readonly stopSession: (threadId: ThreadId) => Promise<void>;
   readonly revertCheckpoint: (threadId: ThreadId, turnCount: number) => Promise<void>;
   /** Live git status for a worktree (folded from the snapshot/local/remote stream). */
@@ -894,6 +911,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         worktreePath: input.worktreePath,
         cols: input.cols,
         rows: input.rows,
+        ...(input.env ? { env: input.env } : {}),
         restartIfNotRunning: true,
       }).pipe(Stream.tap((event) => Effect.sync(() => onEvent(event))));
       return drainStreamUntilUnsubscribe(stream);
@@ -1046,6 +1064,12 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
     unsettleThread: (threadId) =>
       runtime.runPromise(unsettleThreadOp({ threadId, reason: "user" }).pipe(Effect.asVoid)),
 
+    snoozeThread: (threadId, snoozedUntil) =>
+      runtime.runPromise(snoozeThreadOp({ threadId, snoozedUntil }).pipe(Effect.asVoid)),
+
+    unsnoozeThread: (threadId) =>
+      runtime.runPromise(unsnoozeThreadOp({ threadId, reason: "user" }).pipe(Effect.asVoid)),
+
     stopSession: (threadId) =>
       runtime.runPromise(stopThreadSession({ threadId }).pipe(Effect.asVoid)),
 
@@ -1157,6 +1181,19 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           cwd: TrimmedNonEmptyString.make(cwd),
           refName: TrimmedNonEmptyString.make(refName),
         }),
+      ),
+
+    terminalOpen: (input) =>
+      runtime.runPromise(
+        request(WS_METHODS.terminalOpen, {
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+          cwd: input.cwd,
+          worktreePath: input.worktreePath,
+          cols: input.cols,
+          rows: input.rows,
+          ...(input.env ? { env: input.env } : {}),
+        }).pipe(Effect.asVoid),
       ),
 
     terminalWrite: (threadId, terminalId, data) =>

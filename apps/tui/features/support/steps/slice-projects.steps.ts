@@ -5,6 +5,7 @@ import { expect } from "bun:test";
 import type { TuiSelectState } from "../../../src/host/composerState.ts";
 import { step } from "../../steps.ts";
 import { objectRows } from "../design.ts";
+import { chooseRow, fillField, sectionState } from "../settingsWorld.ts";
 import { chooseCommand } from "../threadUi.ts";
 import { pressKey, settle, typeText, type World } from "../world.ts";
 import { ensureOpen, type FilesWorld } from "./files.steps.ts";
@@ -58,7 +59,7 @@ step("the user removes the project {string}", async (ctx: FilesWorld, title: str
     { label: `Keep ${title}`, description: "Change nothing." },
     {
       label: `Remove ${title}`,
-      description: "Its 1 thread goes too; ~/code/shop stays on disk.",
+      description: "Clears its 1 thread and its conversation history.",
     },
   ]);
   await pressKey(ctx, "Down");
@@ -196,13 +197,18 @@ step("{string} runs in a terminal", (ctx: World, name: string) => {
 
 step("the user adds the script {string} to {string}", async (ctx: NamedWorld, name: string) => {
   await setScripts(ctx, [script("dev"), script("test")]);
+  // The project's page holds its scripts (files-projects.steps.ts drives the rest of it).
   await command(ctx, "Add or edit a project script…");
-  await typeText(ctx, name);
-  await pressKey(ctx, "Enter");
+  expect(sectionState(ctx)).toMatchObject({ id: "projects", title: "project · shop" });
+  await chooseRow(ctx, "+ Add an action");
+  await chooseRow(ctx, "Name");
+  await fillField(ctx, name);
+  await chooseRow(ctx, "Command");
+  await fillField(ctx, COMMANDS[name]!);
+  await chooseRow(ctx, "Add action");
   await settle(ctx);
-  expect(ctx.host!.state.get("ask")).toMatchObject({ label: `command for ${name}`, value: "" });
-  await typeText(ctx, COMMANDS[name]!);
-  await pressKey(ctx, "Enter");
+  // Back to the conversation, where the scripts are run from.
+  ctx.host!.dispatch("section.close");
   await settle(ctx);
 });
 

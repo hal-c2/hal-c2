@@ -237,7 +237,7 @@ Feature: Linking an MC to environments outside its cluster
     When "beast" stops
     Then the MC lists "beast" as a linked environment that is unreachable
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user links the MC from its connection settings
     Given the user has a pairing link from "beast"
     When the user adds it as a linked environment in the connection settings

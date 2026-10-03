@@ -7,6 +7,7 @@
 // its wire method names, addressed by environment id, and return the MC's JSON
 // as it was sent. The pages read plain objects; nothing here is decoded.
 import {
+  type AuthAccessStreamEvent,
   type ResourceTelemetrySnapshot,
   type ScheduledTask,
   type ServerProvider,
@@ -15,6 +16,7 @@ import {
 } from "@hal-c2/contracts";
 import { EnvironmentSupervisor } from "@hal-c2/client-runtime/connection";
 import { subscribe } from "@hal-c2/client-runtime/rpc";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import type * as ManagedRuntime from "effect/ManagedRuntime";
@@ -49,6 +51,14 @@ export interface TuiSettingsClient {
    */
   readonly subscribeUsageLimits: (
     onSnapshot: (snapshot: UsageLimitsSnapshot) => void,
+  ) => () => void;
+  /**
+   * This machine's pairing links and paired clients: a snapshot, then each
+   * change. `onError` gets the MC's refusal (a session that may not read access).
+   */
+  readonly subscribeAuthAccess: (
+    onEvent: (event: AuthAccessStreamEvent) => void,
+    onError?: (message: string) => void,
   ) => () => void;
   /** This machine's resource monitor: a snapshot every few seconds while subscribed. */
   readonly subscribeResourceTelemetry: (
@@ -126,6 +136,15 @@ export function makeTuiSettingsClient(
         ),
       );
     },
+    subscribeAuthAccess: (onEvent, onError) =>
+      drain(
+        subscribe(WS_METHODS.subscribeAuthAccess, {}).pipe(
+          Stream.tap((event) => Effect.sync(() => onEvent(event))),
+          Stream.catchCause((cause) =>
+            Stream.fromEffect(Effect.sync(() => onError?.(String(Cause.squash(cause))))),
+          ),
+        ),
+      ),
     subscribeResourceTelemetry: (onSnapshot) =>
       drain(
         subscribe(WS_METHODS.subscribeResourceTelemetry, {}).pipe(

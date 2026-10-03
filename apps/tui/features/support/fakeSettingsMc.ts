@@ -3,7 +3,11 @@
 // `hal-c2.readSettings`, …), answered by handlers a step installs with `on`.
 // Like the fake MC of launch.feature, a method nobody answers is refused as
 // unsupported. Every call is kept in `calls` with the environment it addressed.
-import type { ResourceTelemetrySnapshot, ScheduledTask } from "@hal-c2/contracts";
+import type {
+  AuthAccessStreamEvent,
+  ResourceTelemetrySnapshot,
+  ScheduledTask,
+} from "@hal-c2/contracts";
 
 import type { TuiSettingsClient, UsageLimitsSnapshot } from "../../src/settingsClient.ts";
 
@@ -36,6 +40,11 @@ export interface FakeSettingsMc {
   readonly emitUsageLimits: () => void;
   /** How many clients follow limits right now. */
   readonly usageLimitWatchers: () => number;
+  /** Tell whoever follows the access list (pairing links, paired clients) what changed. */
+  readonly emitAuthAccess: (event: AuthAccessStreamEvent) => void;
+  /** Called when a client starts following the access list (send it the snapshot). */
+  onAuthAccessSubscribe: (() => void) | null;
+  readonly authAccessWatchers: () => number;
 }
 
 export function fakeSettingsMc(): FakeSettingsMc {
@@ -44,7 +53,13 @@ export function fakeSettingsMc(): FakeSettingsMc {
   const taskWatchers = new Set<(tasks: ReadonlyArray<ScheduledTask>) => void>();
   const telemetryWatchers = new Set<(snapshot: ResourceTelemetrySnapshot) => void>();
   const limitWatchers = new Set<(snapshot: UsageLimitsSnapshot) => void>();
+  const accessWatchers = new Set<(event: AuthAccessStreamEvent) => void>();
   const fake: FakeSettingsMc = {
+    emitAuthAccess: (event) => {
+      for (const watcher of accessWatchers) watcher(event);
+    },
+    onAuthAccessSubscribe: null,
+    authAccessWatchers: () => accessWatchers.size,
     usageLimits: { providers: [], sources: [] },
     emitUsageLimits: () => {
       for (const watcher of limitWatchers) watcher(fake.usageLimits);
@@ -84,6 +99,13 @@ export function fakeSettingsMc(): FakeSettingsMc {
         onSnapshot(fake.usageLimits);
         return () => {
           limitWatchers.delete(onSnapshot);
+        };
+      },
+      subscribeAuthAccess: (onEvent) => {
+        accessWatchers.add(onEvent);
+        fake.onAuthAccessSubscribe?.();
+        return () => {
+          accessWatchers.delete(onEvent);
         };
       },
       subscribeResourceTelemetry: (onSnapshot) => {

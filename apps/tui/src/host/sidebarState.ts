@@ -159,8 +159,15 @@ export interface TuiSidebarStateInput {
   readonly now: string;
   /** The server settles threads (`capabilities.threadSettlement`). */
   readonly settlementSupported?: boolean;
-  /** An open new-thread draft, listed above the threads. */
-  readonly draft?: { readonly draftId: string; readonly projectId: string } | null;
+  /**
+   * An open new-thread draft: no thread row reads as the open one. Only a
+   * draft with content (`listed`, the default) gets a row above the threads.
+   */
+  readonly draft?: {
+    readonly draftId: string;
+    readonly projectId: string;
+    readonly listed?: boolean;
+  } | null;
   /** Lines the list can show at once; unbounded when omitted. */
   readonly viewportRows?: number;
   /** The previous scroll offset in lines, kept unless the selection left the view. */
@@ -345,9 +352,10 @@ export function buildTuiSidebarState(input: TuiSidebarStateInput): TuiSidebarSta
     }
   });
 
-  const drafts: ShellSidebarDraft[] = draft
-    ? [{ draftId: draft.draftId, projectKey: projectKey(draft.projectId), label: "New thread" }]
-    : [];
+  const drafts: ShellSidebarDraft[] =
+    draft && draft.listed !== false
+      ? [{ draftId: draft.draftId, projectKey: projectKey(draft.projectId), label: "New thread" }]
+      : [];
   const projectTitle = (id: string) =>
     shell?.projects.find((project) => project.id === id)?.title ?? id;
   const unplaced: UnplacedRow[] = [
