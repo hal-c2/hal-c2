@@ -233,6 +233,8 @@ private:
   bool slashMode(const QString& target, const QString& text);
   void setInteractionMode(const QString& target, const QString& mode);
   bool selectModel(const QString& target, const QString& instanceId, const QString& model);
+  // A send used this model: new threads start from it.
+  void rememberModel(const QJsonObject& selection);
   bool setOption(const QString& target, const QString& id, const QVariant& value);
   bool selectSuggestion(const QString& target, const QString& id);
   // The suggestions for the caret, with the trigger they answer.
@@ -276,6 +278,10 @@ private:
     QHash<QString, Draft> drafts;
     // Newest first.
     QList<StashEntry> stash;
+    // The model last sent with on each provider instance, and the instance
+    // last sent with: a new thread starts from them (the web's sticky model).
+    QHash<QString, QJsonObject> lastModels;
+    QString lastInstance;
     QString path;
     // The images last written beside the drafts (imagesPath), so a keystroke
     // does not rewrite them.

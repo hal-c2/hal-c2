@@ -38,3 +38,5 @@ bool modelPickerShows(World& world, const QString& name, const QString& reason);
 bool modelPickerChooses(World& world, const QString& name);
 // "the user removes X": the attachment X of the draft on screen.
 bool removeComposerAttachment(World& world, const QString& name);
+// "the agent receives X": the message the composer on screen just sent.
+bool composerMessageReceived(World& world, const QString& text);

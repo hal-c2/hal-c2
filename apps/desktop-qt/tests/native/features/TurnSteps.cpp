@@ -9,6 +9,7 @@
 #include <QVariantMap>
 
 #include "CommandPaletteController.h"
+#include "ComposerBrick.h"
 #include "ComposerController.h"
 #include "Harness.h"
 #include "Keymap.h"
@@ -369,6 +370,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user answers %1").arg(q), [](World& world, const Captures& c, const Table&) { answer(world, c[0]); });
   step(QStringLiteral("the agent receives %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (composerMessageReceived(world, c[0])) return;
     const QVariant received = receivedAnswer(world);
     expect(received == QVariant(c[0]), QStringLiteral("the agent received %1").arg(show(received)));
   });

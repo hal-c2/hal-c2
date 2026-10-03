@@ -135,7 +135,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user toggles back
     Then the next turn builds again
 
-  @backlog @desktop
+  @desktop
   Scenario: Ultrathink prefixes the prompt
     Given the thread runs on Claude
     When the user turns on Ultrathink and sends "design the cache"
@@ -154,14 +154,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user looks through the models
     Then only Codex models can be chosen
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: The last model used with each provider is remembered
     Given the user last used "gpt-5" with Codex
     When the user starts a new thread on Codex
     Then "gpt-5" is chosen
     But a model set for the project takes precedence
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: New threads start with the default permissions
     Given the default permissions for new threads are Supervised
     When the user starts a new thread

@@ -556,6 +556,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   };
   const QJsonObject modelSelection = selection(target);
   if (!modelSelection.isEmpty()) message.insert(QStringLiteral("modelSelection"), modelSelection);
+  rememberModel(modelSelection);
   if (implement) {
     message.insert(QStringLiteral("sourcePlanRef"),
                    QJsonObject{{QStringLiteral("threadId"), thread->id}, {QStringLiteral("planId"), str(plan, QLatin1String("id"))}});
@@ -632,6 +633,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                                                      {QStringLiteral("attachments"), QJsonArray()}}},
   };
   if (!modelSelection.isEmpty()) input.insert(QStringLiteral("modelSelection"), modelSelection);
+  rememberModel(modelSelection);
   if (!contexts.isEmpty()) {
     QJsonObject initial = input.value(QLatin1String("initialMessage")).toObject();
     withTerminalContexts(initial, contexts);
@@ -1111,6 +1113,14 @@ QJsonObject ComposerController::baseSelection(const QString& key) const {
     selection = m_store->projectRow(kept->environmentId, kept->projectId).value(QLatin1String("defaultModelSelection")).toObject();
   }
   if (selection.isEmpty()) selection = setting(QStringLiteral("defaultModelSelection"));
+  // Then the model last sent with, while its provider can still run it.
+  if (selection.isEmpty()) {
+    const QJsonObject last = m_kept.lastModels.value(m_kept.lastInstance);
+    const composer::Instance* instance = instanceOf(last);
+    if (instance && instance->ready() && !composer::findModel(*instance, last.value(QLatin1String("model")).toString()).isEmpty()) {
+      selection = last;
+    }
+  }
   return selection;
 }
 
@@ -1350,6 +1360,13 @@ void ComposerController::setInteractionMode(const QString& target, const QString
   publish();
 }
 
+void ComposerController::rememberModel(const QJsonObject& selection) {
+  const QString instanceId = selection.value(QLatin1String("instanceId")).toString();
+  if (instanceId.isEmpty() || (m_kept.lastInstance == instanceId && m_kept.lastModels.value(instanceId) == selection)) return;
+  m_kept.lastInstance = instanceId;
+  m_kept.lastModels.insert(instanceId, selection);
+}
+
 // As the web's handleModelSelect: a started thread keeps its provider, and a
 // model its session cannot switch to says why instead.
 bool ComposerController::selectModel(const QString& target, const QString& instanceId, const QString& model) {
@@ -1388,6 +1405,27 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
   const QJsonArray descriptors =
       composer::descriptors(composer::findModel(*instance, chosen.value(QLatin1String("model")).toString()),
                             chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
+  // A choice the provider takes from the prompt (Claude's ultrathink) is put
+  // there instead (the web's TraitsPicker); any other choice takes it out.
+  static const QRegularExpression prefix(QStringLiteral("^Ultrathink:\\s*"), QRegularExpression::CaseInsensitiveOption);
+  static const QRegularExpression slashCommand(QStringLiteral("^/[^\\s/]+(?:\\s|$)"));
+  for (const QJsonValue& entry : descriptors) {
+    const QJsonObject descriptor = entry.toObject();
+    const QJsonArray injected = descriptor.value(QLatin1String("promptInjectedValues")).toArray();
+    if (str(descriptor, QLatin1String("id")) != id || injected.isEmpty()) continue;
+    const QString text = draft(target).trimmed();
+    if (injected.contains(QJsonValue::fromVariant(value))) {
+      if (!text.startsWith(kUltrathinkPrefix.trimmed()) && !slashCommand.match(text).hasMatch()) {
+        const QString next = kUltrathinkPrefix + text;
+        setText(target, next, int(next.size()));
+      }
+      return true;
+    }
+    if (prefix.match(text).hasMatch()) {
+      const QString next = QString(text).remove(prefix);
+      setText(target, next, int(next.size()));
+    }
+  }
   const std::optional<QJsonArray> options = composer::applyOption(descriptors, id, value);
   if (!options) return false;
   chosen.insert(QStringLiteral("options"), *options);
@@ -1501,6 +1539,16 @@ bool ComposerController::planModeOn(const composer::Instance* instance) const {
 QString ComposerController::runtimeModeOf(const QString& target) const {
   if (const QString mode = m_drafts.value(target).runtimeMode; !mode.isEmpty()) return mode;
   if (const auto thread = m_store->thread(target); thread && !thread->runtimeMode.isEmpty()) return thread->runtimeMode;
+  // A new thread: its project's default permissions, else the default for
+  // new threads (Settings → Project defaults).
+  auto* shell = NativeShell::of(this);
+  const auto* settings = shell->controller<SettingsController>();
+  if (const auto kept = shell->controller<DraftController>()->draft(target); kept && settings) {
+    for (const QString& path : {QStringLiteral("projectSettingsOverrides.%1.defaultRuntimeMode").arg(kept->projectId),
+                                QStringLiteral("defaultRuntimeMode")}) {
+      if (const QString mode = settings->value(path).toString(); !mode.isEmpty()) return mode;
+    }
+  }
   return QStringLiteral("full-access");
 }
 
@@ -1600,6 +1648,18 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       instance ? composer::shellOptions(composer::descriptors(composer::findModel(*instance, selectedModel),
                                                               chosen.value(QLatin1String("options")).toArray(), planOn))
                : QVariantList();
+  // An effort the prompt asks for (Ultrathink) is the one shown.
+  QVariantList shownOptions = options;
+  if (instance && text.trimmed().startsWith(kUltrathinkPrefix.trimmed())) {
+    const QJsonArray described = composer::descriptors(composer::findModel(*instance, selectedModel), chosen.value(QLatin1String("options")).toArray(), planOn);
+    for (qsizetype i = 0; i < described.size() && i < shownOptions.size(); ++i) {
+      const QJsonArray injected = described.at(i).toObject().value(QLatin1String("promptInjectedValues")).toArray();
+      if (injected.isEmpty()) continue;
+      QVariantMap option = shownOptions.at(i).toMap();
+      option.insert(QStringLiteral("value"), injected.first().toVariant());
+      shownOptions[i] = option;
+    }
+  }
   const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
   return QVariantMap{
       {QStringLiteral("target"), target},
@@ -1630,7 +1690,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("showPlanFollowUpPrompt"), showPlanFollowUp},
       {QStringLiteral("selectedInstanceId"), orNull(selectedInstance)},
       {QStringLiteral("selectedModel"), orNull(selectedModel)},
-      {QStringLiteral("options"), options},
+      {QStringLiteral("options"), shownOptions},
       {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},
       {QStringLiteral("interactionMode"), interactionModeOf(target)},
@@ -1705,6 +1765,9 @@ void ComposerController::setStorePath(const QString& path) {
     }
     if (!kept.id.isEmpty()) m_kept.stash.append(kept);
   }
+  m_kept.lastInstance = str(stored, QLatin1String("lastInstance"));
+  const QJsonObject lastModels = stored.value(QLatin1String("lastModels")).toObject();
+  for (auto it = lastModels.begin(); it != lastModels.end(); ++it) m_kept.lastModels.insert(it.key(), it.value().toObject());
   const QJsonObject targets = stored.value(QLatin1String("targets")).toObject();
   for (auto it = targets.begin(); it != targets.end(); ++it) {
     const QJsonObject entry = it.value().toObject();
@@ -1793,6 +1856,12 @@ void ComposerController::save() const {
   if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     QJsonObject stored{{QStringLiteral("targets"), targets}};
     if (!stash.isEmpty()) stored.insert(QStringLiteral("stash"), stash);
+    if (!m_kept.lastInstance.isEmpty()) {
+      QJsonObject lastModels;
+      for (auto it = m_kept.lastModels.cbegin(); it != m_kept.lastModels.cend(); ++it) lastModels.insert(it.key(), it.value());
+      stored.insert(QStringLiteral("lastInstance"), m_kept.lastInstance);
+      stored.insert(QStringLiteral("lastModels"), lastModels);
+    }
     file.write(QJsonDocument(stored).toJson(QJsonDocument::Compact));
   }
   // The drafts' images, apart: rewritten only when they change.
