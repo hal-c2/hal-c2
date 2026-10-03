@@ -136,6 +136,12 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Vim keys
+
+On desktop, turn on **Vim keys in the composer** in Settings → General. `Esc` leaves insert
+mode; `h`, `j`, `k`, `l`, `w`, `b`, `0` and `$` move, `x` deletes, `u` undoes, and `i`, `a`, `I`
+and `A` insert again. `Enter` sends only in insert mode.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,

@@ -253,8 +253,8 @@ rather than positioning buttons over the timeline.
 allows opt-in input handling, and `insertText(text, capturedTarget)` replaces the
 selection only while that draft remains selected and editable. Capture
 `publishedTarget` before asynchronous work; insertion does not submit a turn.
-`ComposerVimKeys` implements a deliberately limited, disabled-by-default modal
-editor. Focus and rename entry points are `Composer.focusInput()`,
+`Composer` hosts a `ComposerVimKeys`, a deliberately limited modal editor the
+`composerVimKeys` setting turns on; a layout must not add a second one. Focus and rename entry points are `Composer.focusInput()`,
 `Composer.toggleCheckoutPicker()`, `Workspace.beginRename()`, and
 `TerminalDrawer.focusTerminal()`.
 
