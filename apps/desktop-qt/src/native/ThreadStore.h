@@ -83,6 +83,9 @@ private:
   void onFrame(const QString& threadKey, const QJsonObject& frame);
   void retry();
   void evict();
+  // Asks the thread's MC for an image's address (`assets.createUrl`) and
+  // gives it to the model.
+  void signAttachment(TimelineModel* model, const QString& threadKey, const QString& id);
   // The device's timestampFormat, for every timeline.
   void readSettings();
   void configure(TimelineModel* model) const;

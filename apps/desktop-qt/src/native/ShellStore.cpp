@@ -74,21 +74,29 @@ bool ShellStore::reaches(const QString& environmentId) const {
   return m_linked.contains(environmentId) || servesEnvironment(environmentId);
 }
 
-bool ShellStore::mayOperate(const QString& environmentId) const {
-  if (servesEnvironment(environmentId)) return true;
-  // The link to it, or to the cluster it is a member of.
+// The link to the environment, or to the cluster it is a member of.
+QJsonObject ShellStore::linkTo(const QString& environmentId) const {
   QString via = m_linked.contains(environmentId) ? environmentId : QString();
   for (const Mc& mc : m_mcs) {
     if (via.isEmpty() && mc.environmentId == environmentId) via = mc.link;
   }
   for (const QJsonValue& value : m_links) {
     const QJsonObject link = value.toObject();
-    if (link.value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString() != via) continue;
-    // A link paired before the MC kept scopes lists none; the other side still checks.
-    const QJsonValue scopes = link.value(QLatin1String("scopes"));
-    return !scopes.isArray() || scopes.toArray().contains(QStringLiteral("orchestration:operate"));
+    if (link.value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString() == via) return link;
   }
-  return true;
+  return {};
+}
+
+bool ShellStore::mayOperate(const QString& environmentId) const {
+  if (servesEnvironment(environmentId)) return true;
+  // A link paired before the MC kept scopes lists none; the other side still checks.
+  const QJsonValue scopes = linkTo(environmentId).value(QLatin1String("scopes"));
+  return !scopes.isArray() || scopes.toArray().contains(QStringLiteral("orchestration:operate"));
+}
+
+QUrl ShellStore::linkOrigin(const QString& environmentId) const {
+  if (servesEnvironment(environmentId)) return {};
+  return QUrl(linkTo(environmentId).value(QLatin1String("origin")).toString());
 }
 
 // The whole list of links: a link that left takes its MCs and rows with it.
