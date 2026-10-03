@@ -48,7 +48,7 @@ Rectangle {
         }
     }
 
-    // The editor (`e`): what is typed is saved once the typing pauses, and on Esc.
+    // The editor (`i`): what is typed is saved once the typing pauses, and on Esc.
     TextArea {
         id: editor
         objectName: "fileEditor"

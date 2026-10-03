@@ -108,7 +108,7 @@ step(
 async function edit(ctx: ViewerWorld, path: string) {
   await openFile(ctx, path);
   servesWrites(ctx);
-  await pressKey(ctx, "e");
+  await pressKey(ctx, "i");
   await settle(ctx);
   expect(ctx.host!.state.get("mode")).toBe("fileEdit");
   expect(viewer(ctx)).toMatchObject({ path, editing: true, save: "saved" });

@@ -182,7 +182,7 @@ panel kind or another thread closes it. Actions are `files.*`
 (`filesState.ts`); stale listings and reads are dropped by generation.
 A Markdown, CSV / TSV or HTML file opens rendered (`viewer.lines`, laid out by
 the timeline's Markdown renderer; `src/filePreview.ts`) and `s` switches to
-its text. `e` opens the editor (`mode: "fileEdit"`, a `TextArea` filled when
+its text. `i` opens the editor (`mode: "fileEdit"`, a `TextArea` filled when
 `viewer.editSeq` changes): the brick's timer asks for `files.edit.save` half a
 second after the last key, Esc saves and leaves, and a refused write keeps the
 editor open. `o` (or the palette, per editor) opens the file in an editor on

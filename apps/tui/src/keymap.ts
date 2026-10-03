@@ -96,9 +96,9 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "Enter · →", description: "Run / open / apply", chords: ["return", "right"] },
       { keys: "← · Backspace", description: "Files: up a folder", chords: ["left", "backspace"] },
       {
-        keys: "s · e · o",
+        keys: "s · i · o",
         description: "File: rendered / source, edit, open in the environment's editor",
-        chords: ["s", "e", "o"],
+        chords: ["s", "i", "o"],
       },
       {
         keys: "PgUp/PgDn",
@@ -242,7 +242,7 @@ export const KEYMAP_LAYERS = {
     "return, right": "files.activate",
     "left, backspace": "files.up",
     s: "files.viewer.toggleSource",
-    e: "files.edit",
+    i: "files.edit",
     o: "files.openInEditor",
     "ctrl+k": "palette.open",
     escape: "files.back",

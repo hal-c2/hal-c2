@@ -248,7 +248,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
       hint: viewer?.edit
         ? `  ·  ${viewer.edit.save === "error" ? "not saved" : viewer.edit.save === "pending" ? "saving…" : "saved"} · Esc done`
         : viewer
-          ? // `e` (edit) and `o` (the environment's editor) are in the palette and the key reference.
+          ? // `i` (edit) and `o` (the environment's editor) are in the palette and the key reference.
             `  ·  PgUp/PgDn scroll · ${renderable ? `s ${rendering ? "source" : "rendered"} · ` : ""}Esc back`
           : "  ·  ↑/↓ select · Enter open/expand · Esc close",
       status,
