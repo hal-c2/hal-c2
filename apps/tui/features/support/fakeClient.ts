@@ -162,6 +162,7 @@ const UNRECORDED = new Set([
   "mcCall",
   "subscribeScheduledTasks",
   "subscribeResourceTelemetry",
+  "subscribeUsageLimits",
 ]);
 
 export function fakeClient({

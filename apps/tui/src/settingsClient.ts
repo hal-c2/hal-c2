@@ -6,7 +6,13 @@
 // (cluster members and linked environments), so their calls go to the MC by
 // its wire method names, addressed by environment id, and return the MC's JSON
 // as it was sent. The pages read plain objects; nothing here is decoded.
-import { type ResourceTelemetrySnapshot, type ScheduledTask, WS_METHODS } from "@hal-c2/contracts";
+import {
+  type ResourceTelemetrySnapshot,
+  type ScheduledTask,
+  type ServerProvider,
+  type UsageLimitSourceSnapshots,
+  WS_METHODS,
+} from "@hal-c2/contracts";
 import { EnvironmentSupervisor } from "@hal-c2/client-runtime/connection";
 import { subscribe } from "@hal-c2/client-runtime/rpc";
 import * as Effect from "effect/Effect";
@@ -15,6 +21,12 @@ import type * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+
+/** What the limits page pools: this machine's providers and the hubs it reads. */
+export interface UsageLimitsSnapshot {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly sources: UsageLimitSourceSnapshots;
+}
 
 export interface TuiSettingsClient {
   /**
@@ -30,6 +42,13 @@ export interface TuiSettingsClient {
   /** This machine's scheduled tasks: the whole list now and after every change. */
   readonly subscribeScheduledTasks: (
     onTasks: (tasks: ReadonlyArray<ScheduledTask>) => void,
+  ) => () => void;
+  /**
+   * This machine's providers and usage hubs, now and whenever either changes.
+   * The MC reads its hubs only for clients that follow them, so unsubscribe on leaving.
+   */
+  readonly subscribeUsageLimits: (
+    onSnapshot: (snapshot: UsageLimitsSnapshot) => void,
   ) => () => void;
   /** This machine's resource monitor: a snapshot every few seconds while subscribed. */
   readonly subscribeResourceTelemetry: (
@@ -72,6 +91,41 @@ export function makeTuiSettingsClient(
           Stream.tap((result) => Effect.sync(() => onTasks(result.tasks))),
         ),
       ),
+    subscribeUsageLimits: (onSnapshot) => {
+      let snapshot: UsageLimitsSnapshot = { providers: [], sources: [] };
+      const emit = (next: Partial<UsageLimitsSnapshot>) =>
+        Effect.sync(() => {
+          snapshot = { ...snapshot, ...next };
+          onSnapshot(snapshot);
+        });
+      return drain(
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const supervisor = yield* EnvironmentSupervisor;
+            return SubscriptionRef.changes(supervisor.session);
+          }),
+        ).pipe(
+          // A new connection has a new session: follow its config in place of the old one's.
+          Stream.switchMap((session) =>
+            Option.isNone(session)
+              ? Stream.empty
+              : session.value
+                  .subscribeServerConfig({ usageLimitSources: true })
+                  .pipe(Stream.catchCause(() => Stream.empty)),
+          ),
+          Stream.tap((event) => {
+            if (event.type === "snapshot") return emit({ providers: event.config.providers });
+            if (event.type === "providerStatuses") {
+              return emit({ providers: event.payload.providers });
+            }
+            if (event.type === "usageLimitSourcesUpdated") {
+              return emit({ sources: event.payload.sources });
+            }
+            return Effect.void;
+          }),
+        ),
+      );
+    },
     subscribeResourceTelemetry: (onSnapshot) =>
       drain(
         subscribe(WS_METHODS.subscribeResourceTelemetry, {}).pipe(

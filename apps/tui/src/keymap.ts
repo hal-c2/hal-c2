@@ -251,6 +251,7 @@ export const KEYMAP_LAYERS = {
     return: "section.activate",
     escape: "section.back",
     "ctrl+p": "section.close",
+    "ctrl+k": "palette.open",
   },
   sectionInput: { escape: "section.input.cancel" },
   sectionConfirm: { y: "section.confirm.yes", "n, escape": "section.confirm.no" },

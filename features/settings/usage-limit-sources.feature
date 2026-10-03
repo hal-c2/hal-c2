@@ -43,26 +43,26 @@ Feature: Usage limit sources
     When the redeem request is sent again after a dropped connection
     Then the hub counts one redemption
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A hub's accounts are pooled into limits
     Given the hub "Team hub" reports a Codex account
     When the user views limits
     Then Codex limits include the account "codex-ops" of the hub
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: An account both a hub and this machine report counts once
     Given Codex is signed in here as "sam@example.com"
     And the hub "Team hub" reports the Codex account "sam@example.com"
     When the user views limits
     Then Codex limits count one account
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A hub that cannot be read is named in limits
     Given the hub "Team hub" cannot be read: "Hub unreachable."
     When the user views limits
     Then usage says "Team hub: Hub unreachable."
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A reset credit a hub also reports is spent through the hub
     Given Codex has a reset credit banked
     And the hub "Team hub" reports the Codex account "sam@example.com" with a banked reset credit
@@ -79,7 +79,7 @@ Feature: Usage limit sources
     When the user fills in a URL but no management key
     Then the user cannot add the hub
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user removes a hub
     Given a hub "Team hub"
     When the user removes "Team hub" and confirms

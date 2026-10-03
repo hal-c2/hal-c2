@@ -421,6 +421,9 @@ export function createSettingsSections(ctx: {
       sections.set(id, build(hostFor(id)));
     },
     isOpen: () => current !== null,
+    /** The mode an open page has the keys in; null when none is open. */
+    mode: (): TuiMode | null =>
+      current === null ? null : question ? "sectionConfirm" : field ? "sectionInput" : "section",
     close,
     /** The pane was resized: rows are painted to its width and windowed to its height. */
     relayout: () => {

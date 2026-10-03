@@ -5,7 +5,7 @@
 // unsupported. Every call is kept in `calls` with the environment it addressed.
 import type { ResourceTelemetrySnapshot, ScheduledTask } from "@hal-c2/contracts";
 
-import type { TuiSettingsClient } from "../../src/settingsClient.ts";
+import type { TuiSettingsClient, UsageLimitsSnapshot } from "../../src/settingsClient.ts";
 
 export interface FakeMcCall {
   readonly method: string;
@@ -30,6 +30,12 @@ export interface FakeSettingsMc {
   /** How many clients watch the resource monitor right now. */
   readonly telemetryWatchers: () => number;
   onTelemetrySubscribe: (() => void) | null;
+  /** This machine's providers and hubs, as its config says; set them, then `emitUsageLimits`. */
+  usageLimits: UsageLimitsSnapshot;
+  /** Tell whoever follows limits what `usageLimits` holds now. */
+  readonly emitUsageLimits: () => void;
+  /** How many clients follow limits right now. */
+  readonly usageLimitWatchers: () => number;
 }
 
 export function fakeSettingsMc(): FakeSettingsMc {
@@ -37,7 +43,13 @@ export function fakeSettingsMc(): FakeSettingsMc {
   const calls: FakeMcCall[] = [];
   const taskWatchers = new Set<(tasks: ReadonlyArray<ScheduledTask>) => void>();
   const telemetryWatchers = new Set<(snapshot: ResourceTelemetrySnapshot) => void>();
+  const limitWatchers = new Set<(snapshot: UsageLimitsSnapshot) => void>();
   const fake: FakeSettingsMc = {
+    usageLimits: { providers: [], sources: [] },
+    emitUsageLimits: () => {
+      for (const watcher of limitWatchers) watcher(fake.usageLimits);
+    },
+    usageLimitWatchers: () => limitWatchers.size,
     calls,
     on: (method, handler) => {
       handlers.set(method, handler);
@@ -64,6 +76,14 @@ export function fakeSettingsMc(): FakeSettingsMc {
         fake.onScheduledTasksSubscribe?.();
         return () => {
           taskWatchers.delete(onTasks);
+        };
+      },
+      // Like the config stream, a subscriber gets the current state at once.
+      subscribeUsageLimits: (onSnapshot) => {
+        limitWatchers.add(onSnapshot);
+        onSnapshot(fake.usageLimits);
+        return () => {
+          limitWatchers.delete(onSnapshot);
         };
       },
       subscribeResourceTelemetry: (onSnapshot) => {

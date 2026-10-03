@@ -498,11 +498,10 @@ export function createHost(options: HostOptions): Host {
    * is open, else an open question when one waits.
    */
   const setMode = (requested: TuiMode) => {
+    // An open settings page keeps the keys when a menu over it closes.
     const next =
       requested === "compose"
-        ? composer?.draft()
-          ? "newThread"
-          : threadView.composeMode()
+        ? (sections?.mode() ?? (composer?.draft() ? "newThread" : threadView.composeMode()))
         : requested;
     if (next === mode) return;
     mode = next;

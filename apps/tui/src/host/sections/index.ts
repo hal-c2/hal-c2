@@ -9,6 +9,7 @@ import { sourceControlSection } from "./sourceControl.ts";
 import { storageSection } from "./storage.ts";
 import { updatesSection } from "./updates.ts";
 import { usageHubsSection } from "./usageHubs.ts";
+import { usageLimitsSection } from "./usageLimits.ts";
 
 export function registerSettingsSections(
   sections: SettingsSections,
@@ -25,6 +26,7 @@ export function registerSettingsSections(
   sections.register("backgroundActivity", backgroundActivitySection);
   sections.register("diagnostics", diagnosticsSection);
   sections.register("resourceMonitor", resourceMonitorSection);
+  sections.register("usageLimits", usageLimitsSection);
   sections.register("usageHubs", usageHubsSection);
   sections.register("updates", (host) =>
     updatesSection(host, { appVersion: options.appVersion, updated: options.serverUpdated }),
