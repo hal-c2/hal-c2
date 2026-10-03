@@ -11,6 +11,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "McClient.h"
+#include "ProjectScripts.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -118,6 +119,8 @@ void WorkspaceController::activate() {
     connect(settings, &SettingsController::configChanged, this, &WorkspaceController::publish);
     connect(settings, &SettingsController::configChanged, this, &WorkspaceController::configChanged);
     connect(settings, &SettingsController::deviceChanged, this, &WorkspaceController::publish);
+    // The environment's default actions reach every project without its own.
+    connect(settings, &SettingsController::settingsChanged, this, &WorkspaceController::refresh);
   }
   // The web's OpenInPicker shortcut: the route's folder in the preferred editor.
   if (auto* keys = shell->controller<KeybindingController>()) {
@@ -208,7 +211,14 @@ std::optional<WorkspaceController::Place> WorkspaceController::resolve() const {
   }
   const QJsonObject project = m_store->projectRow(place.environmentId, place.projectId);
   place.root = text(project, "workspaceRoot");
-  place.scripts = project.value(QLatin1String("scripts")).toArray();
+  // Its own actions, else its environment's defaults (Settings → Project, Actions).
+  QJsonObject settings;
+  if (place.environmentId == m_client->environment()) {
+    if (const auto* own = NativeShell::of(this)->controller<SettingsController>()) settings = own->settings();
+  } else if (place.environmentId == m_configEnvironment) {
+    settings = m_configElsewhere.value(QLatin1String("settings")).toObject();
+  }
+  place.scripts = projectScripts::resolve(settings, place.projectId, project.value(QLatin1String("scripts")).toArray());
   return place;
 }
 
@@ -339,11 +349,14 @@ void WorkspaceController::watchConfig(const QString& environmentId) {
           m_configElsewhere = frame.value(QLatin1String("config")).toObject();
         } else if (type == QLatin1String("config.providers")) {
           m_configElsewhere.insert(QStringLiteral("providers"), frame.value(QLatin1String("providers")));
+        } else if (type == QLatin1String("config.settings")) {
+          m_configElsewhere.insert(QStringLiteral("settings"), frame.value(QLatin1String("settings")));
         } else {
           return;
         }
         emit configChanged();
-        publish();
+        // Its settings resolve the project's actions.
+        refresh();
       });
 }
 

@@ -290,6 +290,8 @@ SettingsPage {
         description: qsTr("Which submodules a new worktree checks out.")
     }
 
+    ProjectActionsSettings {}
+
     Caption {
         objectName: "note"
         visible: text.length > 0
