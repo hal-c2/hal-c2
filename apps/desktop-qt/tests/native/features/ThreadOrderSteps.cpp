@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "FilesFolders.h"
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
@@ -98,6 +99,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user tries to move %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (tryMoveManagedFolder(world, c[0])) return;
     scene(world).commandsBefore = world.mc.commands.size();
     pickFromMenu(world, c[0], QStringLiteral("move-up"));
     world.sync();
