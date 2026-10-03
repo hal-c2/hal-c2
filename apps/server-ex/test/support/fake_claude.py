@@ -8,7 +8,10 @@
 # (--resume-session-at); "usage limit until EPOCH" stops on a usage limit; "in the
 # background" starts a background subagent (task task-agent-N) and a background command
 # (task task-bash-N) and ends the turn while both run, their task_notification left to
-# the test. Rules a
+# the test; "subagent leaves work running" runs a subagent that starts a background
+# command and returns "Dev server started" while the command runs on; "subagent approve
+# run: CMD" runs a subagent that asks permission for CMD and returns "ran CMD" when
+# allowed, "was not allowed to run CMD" otherwise. Rules a
 # permission answer adds for the session (updatedPermissions) let later matching
 # commands run without asking. Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
@@ -81,6 +84,7 @@ if os.environ.get("FAKE_CLAUDE_ARGV_LOG"):
 turn = 0
 session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
+asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
@@ -97,6 +101,15 @@ for line in sys.stdin:
             send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
             continue
         allowed = reply["behavior"] == "allow"
+        if asking_subagent:
+            agent, cmd = asking_subagent
+            asking_subagent = None
+            report = f"ran {cmd}" if allowed else f"was not allowed to run {cmd}"
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+                  "content": [{"type": "text", "text": report}]}]}})
+            send({"type": "assistant", "session_id": session, "message": {"id": "m-sub-perm", "role": "assistant", "content": [{"type": "text", "text": f"The subagent {report}"}]}})
+            send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+            continue
         for update in reply.get("updatedPermissions") or []:
             if update.get("destination") == "session" and update.get("behavior") == "allow":
                 session_rules += [r.get("ruleContent") for r in update.get("rules", []) if r.get("toolName") == "Bash"]
@@ -177,6 +190,29 @@ for line in sys.stdin:
         continue
     if "wait" in text:
         continue
+    if text.startswith("subagent "):
+        agent, bash = f"agent-{turn}", f"bash-{turn}"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}s", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+            "description": "Helper", "prompt": text[len("subagent "):], "subagent_type": "general-purpose"}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+              "description": "Helper", "task_type": "local_agent", "prompt": text[len("subagent "):], "is_backgrounded": False})
+        if "approve run: " in text:
+            cmd = text.split("run: ", 1)[1]
+            asking_subagent = (agent, cmd)
+            send({"type": "control_request", "request_id": f"perm-{agent}", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": cmd},
+                  "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": cmd}], "behavior": "allow", "destination": "localSettings"}]}})
+            continue
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": agent, "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "tool_use", "id": bash, "name": "Bash", "input": {
+            "command": "npm run dev", "description": "Dev server", "run_in_background": True}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{bash}", "tool_use_id": bash,
+              "description": "Dev server", "task_type": "local_bash"})
+        send({"type": "user", "session_id": session, "parent_tool_use_id": agent, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": bash,
+              "content": f"Command running in background with ID: task-{bash}", "is_error": False}]}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+              "content": [{"type": "text", "text": "Dev server started"}]}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "The subagent started the dev server"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
     if "in the background" in text:
         agent, bash = f"agent-{turn}", f"bash-{turn}"
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
@@ -214,7 +250,9 @@ for line in sys.stdin:
             send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}r", "role": "assistant", "content": [{"type": "text", "text": f"ran {cmd} without asking"}]}})
             send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
             continue
-        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": cmd},
+        # Claude Code's request ids are unique; a resumed process must not reuse the first's.
+        perm = f"perm-{uuid.uuid4().hex[:8]}" if "--resume" in sys.argv else "perm-1"
+        send({"type": "control_request", "request_id": perm, "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": cmd},
               "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": cmd}], "behavior": "allow", "destination": "localSettings"}]}})
         continue
     # "question first" asks before it plans; the answer brings the plan.

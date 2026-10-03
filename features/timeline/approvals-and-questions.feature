@@ -60,7 +60,7 @@ Feature: Approvals and agent questions
     And the agent asks to run "npm test" again
     Then the command runs without asking
 
-  @plugin-claude @mc @backlog
+  @plugin-claude @mc
   Scenario: A released Claude session forgets its approvals
     Given the user always allowed "npm test" for this session on Claude
     When the Claude session is released and a new session starts

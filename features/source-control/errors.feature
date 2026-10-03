@@ -72,7 +72,7 @@ Feature: When source control goes wrong
       | a missing pull request     | Pull request not found.     |
       | a missing merge request    | Merge request not found.    |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Runaway git commands are stopped
     Given a git command <condition>
     When status is read for "shop"

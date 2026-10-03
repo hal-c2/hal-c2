@@ -88,6 +88,45 @@ defmodule HalC2.Steps.SourceControl.Errors do
     context
   end
 
+  # A stand-in for git (`:git_command`) that misbehaves the way the row names, with
+  # limits small enough to reach at once (`:vcs_status_limits`).
+  step ~r/^a git command (?<condition>runs past its time limit|prints more than the limit|cannot be started)$/,
+       %{args: [condition]} = context do
+    dir = HalC2.Test.Mc.tmp_dir(context.mc, "runaway-git")
+    script = Path.join(dir, "git")
+
+    {command, limits} =
+      case condition do
+        "runs past its time limit" ->
+          File.write!(script, "#!/bin/sh\nexec sleep 60\n")
+          {script, timeout: 200}
+
+        "prints more than the limit" ->
+          File.write!(script, "#!/bin/sh\nhead -c 200000 /dev/zero | tr '\\0' 'x'\n")
+          {script, max_bytes: 100_000}
+
+        "cannot be started" ->
+          {Path.join(dir, "no-such-git"), []}
+      end
+
+    if File.exists?(script), do: File.chmod!(script, 0o755)
+    World.put_app_env(:git_command, command)
+    World.put_app_env(:vcs_status_limits, limits)
+    context
+  end
+
+  step ~r/^the user is told the command (?<result>timed out|produced too much output|could not be started)$/,
+       %{args: [result]} = context do
+    assert {:error, message, detail} = context.reply
+    root = World.project(context, "shop").root
+    assert detail["_tag"] == "GitCommandError"
+    assert detail["command"] == "git"
+    assert detail["cwd"] == root
+    assert detail["detail"] =~ result
+    assert message =~ result
+    context
+  end
+
   step "the user is told the repository could not be found on GitHub", context do
     assert {:error, message, detail} = context.reply
     assert detail["provider"] == "github"
