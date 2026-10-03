@@ -566,6 +566,16 @@ export const ShellGitState = Schema.Struct({
   ),
   /** Why git is unavailable for a checkout the MC cannot reach (a linked thread's). */
   unavailableReason: Schema.optional(Schema.String),
+  /** The running action: its stage, how long it has run ("12s", "1m 4s") and a hook's last line. */
+  progress: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        stage: Schema.String,
+        elapsed: Schema.String,
+        hookLine: Schema.NullOr(Schema.String),
+      }),
+    ),
+  ),
   /** Set while the publish-repository dialog is open. */
   publishing: Schema.optional(
     Schema.NullOr(Schema.Struct({ busy: Schema.Boolean, error: Schema.NullOr(Schema.String) })),

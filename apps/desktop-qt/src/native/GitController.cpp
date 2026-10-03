@@ -104,7 +104,10 @@ QVariantMap defaultBranchCopy(const QString& action, const QString& branch, bool
 }  // namespace
 
 GitController::GitController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
+    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
+  m_elapsedTick.setInterval(1000);
+  connect(&m_elapsedTick, &QTimer::timeout, this, &GitController::publish);
+}
 
 GitController::~GitController() {
   if (m_action) m_client->unsubscribe(m_action);
@@ -296,6 +299,15 @@ void GitController::publish() {
   }
   QVariant pending = QVariant::fromValue(nullptr);
   if (m_pending) pending = defaultBranchCopy(m_pending->action, m_pending->branch, m_pending->includesCommit, terms(s));
+  // The web's formatGitActionElapsed.
+  QVariant progress = QVariant::fromValue(nullptr);
+  if (m_action != 0 && m_startedAt.isValid()) {
+    const qint64 seconds = std::max<qint64>(0, m_startedAt.secsTo(toasts()->now()));
+    progress = QVariantMap{{QStringLiteral("stage"), m_stage},
+                           {QStringLiteral("elapsed"), seconds < 60 ? QStringLiteral("%1s").arg(seconds)
+                                                                    : QStringLiteral("%1m %2s").arg(seconds / 60).arg(seconds % 60)},
+                           {QStringLiteral("hookLine"), nullable(m_hookLine)}};
+  }
   QVariant publishing = QVariant::fromValue(nullptr);
   if (m_publishing) {
     publishing = QVariantMap{{QStringLiteral("busy"), m_publishing->busy}, {QStringLiteral("error"), nullable(m_publishing->error)}};
@@ -320,6 +332,7 @@ void GitController::publish() {
           {QStringLiteral("files"), files},
           {QStringLiteral("pendingDefaultBranch"), pending},
           {QStringLiteral("publishing"), publishing},
+          {QStringLiteral("progress"), progress},
       });
 }
 
@@ -439,6 +452,9 @@ void GitController::run(const QString& action, const QString& message, const std
     input.insert(QStringLiteral("projectId"), place.projectId);
   }
   m_stage = QStringLiteral("Starting source control action...");
+  m_startedAt = toasts()->now();
+  m_hookLine.clear();
+  m_elapsedTick.start();
   m_progressToast = toasts()->show(QStringLiteral("loading"), m_stage, {}, {}, 0);
   m_action = m_client->subscribe(this, 
       {
@@ -465,9 +481,14 @@ void GitController::onActionFrame(const QJsonObject& frame) {
     const QString label = text(event, "label");
     if (!label.isEmpty() && label != QLatin1String("Running source control action")) m_stage = label;
     toasts()->update(m_progressToast, m_stage);
+    publish();
   } else if (kind == QLatin1String("hook_output")) {
     const QStringList lines = text(event, "text").split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-    if (!lines.isEmpty()) toasts()->update(m_progressToast, m_stage, lines.last().trimmed());
+    if (!lines.isEmpty()) {
+      m_hookLine = lines.last().trimmed();
+      toasts()->update(m_progressToast, m_stage, m_hookLine);
+      publish();
+    }
   } else if (kind == QLatin1String("action_failed")) {
     finishAction();
     toasts()->show(QStringLiteral("error"), QStringLiteral("Action failed"), text(event, "message"), {}, 0);
@@ -492,6 +513,8 @@ void GitController::onActionFrame(const QJsonObject& frame) {
 void GitController::finishAction() {
   if (m_action) m_client->unsubscribe(m_action);
   m_action = 0;
+  m_elapsedTick.stop();
+  m_startedAt = {};
   if (!m_progressToast.isEmpty()) toasts()->dismiss(m_progressToast);
   m_progressToast.clear();
   workspace()->refreshGit();

@@ -13,9 +13,11 @@
 #include <QRegularExpression>
 #include <QUrl>
 
+#include <memory>
 #include <optional>
 #include <utility>
 
+#include "Brick.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
 #include "KeybindingController.h"
@@ -60,6 +62,8 @@ struct FakeCheckout {
   // What the next action does instead of finishing at once.
   QString hookLine;  // the pre-commit hook prints it
   bool waitAfterHook = false;  // the action waits there until released
+  bool waitWhileWriting = false;  // the action waits while its message is written
+  QString failPhase = QStringLiteral("commit");  // the stage a failing action fails in
   std::optional<int> held;
   QString failWith;
   QString refusePull;
@@ -213,6 +217,10 @@ void run(FakeMc& mc, int id, const QJsonObject& input) {
   sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("action_started")}, {QStringLiteral("phases"), QJsonArray{action}}});
   if (action.startsWith(QLatin1String("commit"))) {
     if (!input.contains(QLatin1String("commitMessage"))) phase(mc, id, QStringLiteral("commit"), QStringLiteral("Generating commit message..."));
+    if (git.waitWhileWriting) {
+      git.held = id;
+      return;
+    }
     phase(mc, id, QStringLiteral("commit"), QStringLiteral("Committing..."));
     if (!git.hookLine.isEmpty()) {
       sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("hook_started")}, {QStringLiteral("hookName"), QStringLiteral("pre-commit")}});
@@ -221,7 +229,7 @@ void run(FakeMc& mc, int id, const QJsonObject& input) {
     }
   }
   if (!git.failWith.isEmpty()) {
-    sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("action_failed")}, {QStringLiteral("phase"), QStringLiteral("commit")}, {QStringLiteral("message"), git.failWith}});
+    sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("action_failed")}, {QStringLiteral("phase"), git.failPhase}, {QStringLiteral("message"), git.failWith}});
     return;
   }
   if (git.waitAfterHook) {
@@ -626,7 +634,8 @@ const Steps steps([] {
     world.waitFor([&] { return menuEntry(world, QStringLiteral("Commit")).value(QStringLiteral("disabledReason")).isNull(); },
                   [&] { return QStringLiteral("Commit to be on offer; the git actions are %1").arg(show(git(world))); });
     dispatch(world, QStringLiteral("git.commit"), payload);
-    awaitIdle(world);
+    // A slow hook leaves the action running for the scenario to watch.
+    if (!fake(world).waitWhileWriting) awaitIdle(world);
   };
   step(QStringLiteral("the user commits with the message %1").arg(q), [commit](World& world, const Captures& c, const Table&) {
     commit(world, {{QStringLiteral("message"), c[0]}, {QStringLiteral("filePaths"), QVariant::fromValue(nullptr)}});
@@ -695,6 +704,70 @@ const Steps steps([] {
     finish(world.mc, *std::exchange(checkout.held, std::nullopt), checkout.inputs.last());
     awaitIdle(world);
   });
+  // A running action's stage, elapsed time and hook line (`git.progress`), as the pill draws them.
+  step(QStringLiteral("the repository has a slow pre-commit hook"), [](World& world, const Captures&, const Table&) {
+    fake(world).hookLine = QStringLiteral("lint: 12 files checked");
+    fake(world).waitWhileWriting = true;
+    fake(world).waitAfterHook = true;
+  });
+  step(QStringLiteral("the user sees %1 and then %1 with the elapsed time").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto progress = [&world] { return git(world).value(QStringLiteral("progress")).toMap(); };
+    world.waitFor([&] { return progress().value(QStringLiteral("stage")) == c[0] && progress().value(QStringLiteral("elapsed")) == QLatin1String("0s"); },
+                  [&] { return QStringLiteral("the action to say %1; the git actions are %2").arg(c[0], show(git(world))); });
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nGitActions {}\n", QSize(900, 200));
+    world.waitFor([&] { return world.brick->shows(c[0] + QStringLiteral(" 0s")); }, QStringLiteral("the pill to say \"%1 0s\"").arg(c[0]));
+    // Five seconds on, the message is written and the hook runs.
+    world.setTime(world.now().addSecs(5));
+    FakeCheckout& checkout = fake(world);
+    expect(checkout.held.has_value(), QStringLiteral("no action is waiting"));
+    checkout.waitWhileWriting = false;
+    const int id = *std::exchange(checkout.held, std::nullopt);
+    const QJsonObject input = checkout.inputs.takeLast();
+    // run() picks the action up where it waited.
+    phase(world.mc, id, QStringLiteral("commit"), QStringLiteral("Committing..."));
+    sendEvent(world.mc, id, {{QStringLiteral("kind"), QStringLiteral("hook_started")}, {QStringLiteral("hookName"), QStringLiteral("pre-commit")}});
+    sendEvent(world.mc, id, {{QStringLiteral("kind"), QStringLiteral("hook_output")}, {QStringLiteral("hookName"), QStringLiteral("pre-commit")},
+                             {QStringLiteral("stream"), QStringLiteral("stdout")}, {QStringLiteral("text"), QStringLiteral("lint: starting\n") + checkout.hookLine + QLatin1Char('\n')}});
+    checkout.inputs.append(input);
+    checkout.held = id;
+    world.waitFor([&] { return progress().value(QStringLiteral("stage")) == c[1] && progress().value(QStringLiteral("elapsed")) == QLatin1String("5s"); },
+                  [&] { return QStringLiteral("the action to say %1 after 5s; the git actions are %2").arg(c[1], show(git(world))); });
+    world.waitFor([&] { return world.brick->shows(c[1] + QStringLiteral(" 5s")); }, QStringLiteral("the pill to say \"%1 5s\"").arg(c[1]));
+  });
+  step(QStringLiteral("the last line the hook printed"), [](World& world, const Captures&, const Table&) {
+    const QString line = fake(world).hookLine;
+    expect(at(git(world), QStringLiteral("progress.hookLine")) == line, QStringLiteral("the git actions are %1").arg(show(git(world))));
+    expect(toastTitled(world, QStringLiteral("Committing...")).value(QStringLiteral("description")) == line,
+           QStringLiteral("the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+    // Once the hook is done the action finishes and the progress goes.
+    FakeCheckout& checkout = fake(world);
+    checkout.waitAfterHook = false;
+    finish(world.mc, *std::exchange(checkout.held, std::nullopt), checkout.inputs.last());
+    awaitIdle(world);
+    expect(git(world).value(QStringLiteral("progress")).isNull(), QStringLiteral("the git actions are %1").arg(show(git(world))));
+  });
+
+  // A failure stays until the user closes it (errors.feature).
+  step(QStringLiteral("the push will be rejected by the remote"), [](World& world, const Captures&, const Table&) {
+    clean(fake(world));
+    fake(world).ahead = {QStringLiteral("Add tax")};
+    fake(world).failWith = QStringLiteral("remote: rejected (non-fast-forward)");
+    fake(world).failPhase = QStringLiteral("push");
+    settle(world);
+  });
+  step(QStringLiteral("the failure stays visible until the user dismisses it"), [](World& world, const Captures&, const Table&) {
+    const auto failure = [&world] { return toastTitled(world, QStringLiteral("Action failed")); };
+    world.waitFor([&] { return failure().value(QStringLiteral("type")) == QLatin1String("error"); },
+                  [&] { return QStringLiteral("the failure; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
+    expect(failure().value(QStringLiteral("description")) == QLatin1String("remote: rejected (non-fast-forward)"), QStringLiteral("the failure reads %1").arg(show(failure())));
+    // Long after a result would have gone away by itself.
+    world.setTime(world.now().addSecs(3600));
+    world.sync();
+    expect(!failure().isEmpty(), QStringLiteral("the failure went away by itself"));
+    dispatch(world, QStringLiteral("notification.dismiss"), {{QStringLiteral("id"), failure().value(QStringLiteral("id"))}});
+    expect(failure().isEmpty(), QStringLiteral("the shell still shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+  });
+
   step(QStringLiteral("the MC fails the action with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).failWith = c[0]; });
   step(QStringLiteral("the MC refuses to pull with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).refusePull = c[0]; });
   step(QStringLiteral("the MC refuses to initialize Git with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).refuseInit = c[0]; });

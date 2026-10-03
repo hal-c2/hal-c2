@@ -136,7 +136,7 @@ Feature: Committing with written or generated messages
     When the user commits
     Then the action reports the hook starting, its output "lint ok" and the hook finishing
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: The running action shows its stage, elapsed time and last hook line
     Given the repository has a slow pre-commit hook
     When the user commits without writing a message

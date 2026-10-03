@@ -506,6 +506,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/commit-and-generated-messages.feature:A failed action is reported"),
     QStringLiteral("source-control/commit-and-generated-messages.feature:A commit offers to push it"),
     QStringLiteral("source-control/commit-and-generated-messages.feature:A git action on a linked environment*"),
+    QStringLiteral("source-control/commit-and-generated-messages.feature:The running action shows*"),
+    QStringLiteral("source-control/errors.feature:A failed git action stays*"),
     QStringLiteral("source-control/commit-and-generated-messages.feature:Opening a changed file from the commit review"),
     QStringLiteral("source-control/commit-and-generated-messages.feature:No editor to open a changed file in"),
     QStringLiteral("files/project-scripts-and-actions.feature"),

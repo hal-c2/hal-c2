@@ -11,6 +11,8 @@ RowLayout {
 
     readonly property var model: Shell.state.git ?? null
     readonly property bool ready: model !== null && model.available
+    // The running action's stage, elapsed time and last hook line, or null.
+    readonly property var progress: ready ? model.progress ?? null : null
     // Why a checkout the MC cannot reach (a linked thread's) has no git actions.
     readonly property string unavailableReason: model !== null && !model.available ? (model.unavailableReason ?? "") : ""
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -69,8 +71,9 @@ RowLayout {
         actionEnabled: git.ready && git.model.quickAction.disabledReason === null
         compact: git.compact
         iconName: git.quickIcon
-        text: git.ready ? git.model.quickAction.label : ""
-        toolTip: git.ready ? (git.model.quickAction.disabledReason ?? "") : ""
+        // A running action says its stage and how long it has run.
+        text: !git.ready ? "" : git.progress ? qsTr("%1 %2").arg(git.progress.stage).arg(git.progress.elapsed) : git.model.quickAction.label
+        toolTip: !git.ready ? "" : git.progress ? (git.progress.hookLine ?? "") : (git.model.quickAction.disabledReason ?? "")
         onClicked: Shell.dispatch("git.quick")
         onMenuRequested: {
             Shell.dispatch("git.refresh");
