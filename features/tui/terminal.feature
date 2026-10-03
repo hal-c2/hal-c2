@@ -110,7 +110,7 @@ Feature: Terminal drawer in the terminal client
     When another client closes the second terminal
     Then its tab disappears
 
-  @backlog @tui
+  @tui
   Scenario: Terminals of a thread on another MC of the cluster appear as tabs
     Given the terminal client is connected to one MC of a cluster
     And the thread runs on another MC of the cluster
@@ -235,13 +235,13 @@ Feature: Terminal drawer in the terminal client
     And the tab marker "▸" is in the accent colour and its number in the text colour
     And the other tab's number is in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: Terminals that outlived the client come back as tabs
     Given a thread whose terminals outlived the terminal client session
     When the terminal client opens the thread
     Then its tabs list every terminal the MC kept
 
-  @backlog @tui
+  @tui
   Scenario: A terminal the user closed does not come back
     Given the user closed a terminal
     When the terminal client lists the thread's terminals again
