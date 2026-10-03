@@ -86,7 +86,8 @@ resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
 # classifier approves the command "approve" would otherwise ask about.
 mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
-trace({"argv": sys.argv[1:]})
+# The start also traces where it was pointed: its config directory and any router.
+trace({"argv": sys.argv[1:], "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k == "CLAUDE_CONFIG_DIR"}})
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})

@@ -559,6 +559,91 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- routers ---------------------------------------------------------------------------
+
+  @router_model "anthropic/claude-sonnet-router"
+
+  # The Claude instance's variables in settings: its own config directory, and the
+  # router Claude Code is pointed at (the token is a secret of the instance).
+  step "a Claude instance with its own config directory and a router's endpoint and token in its environment",
+       context do
+    context = World.fake_providers(context)
+    config = Mc.tmp_dir(context.mc, "claude-router")
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providerInstances", %{}), "claudeAgent"], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "environment" => [
+            %{"name" => "CLAUDE_CONFIG_DIR", "value" => config, "sensitive" => false},
+            %{
+              "name" => "ANTHROPIC_BASE_URL",
+              "value" => "https://openrouter.test/api",
+              "sensitive" => false
+            },
+            %{"name" => "ANTHROPIC_AUTH_TOKEN", "value" => "sk-or-secret", "sensitive" => true}
+          ]
+        })
+      end)
+
+    Map.put(context, :router_config, config)
+  end
+
+  step "the router's model id is added as a custom model", context do
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, ["providerInstances", "claudeAgent", "config"], %{
+          "customModels" => [@router_model]
+        })
+      end)
+
+    {providers, context} = World.provider_list(context)
+    assert @router_model in Enum.map(claude(providers)["models"], & &1["slug"])
+    context
+  end
+
+  step "the user sends a message with that model", context do
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "hello", %{"model" => @router_model})
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the turn runs through the router with that model", context do
+    assert [%{"argv" => argv, "env" => env}] =
+             Enum.filter(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+
+    assert ["--model", @router_model] in pairs(argv)
+
+    assert env == %{
+             "CLAUDE_CONFIG_DIR" => context.router_config,
+             "ANTHROPIC_BASE_URL" => "https://openrouter.test/api",
+             "ANTHROPIC_AUTH_TOKEN" => "sk-or-secret"
+           }
+
+    # The token is kept as a secret: the settings a client reads do not carry it.
+    {%{"settings" => settings}, context} = World.call!(context, "hal-c2.readSettings")
+    refute inspect(settings, limit: :infinity) =~ "sk-or-secret"
+    assert "Hello from claude" in World.replies(context, @thread)
+    context
+  end
+
+  # Writes the settings as a client does.
+  defp write_settings(context, fun) do
+    {%{"settings" => settings, "version" => version}, context} =
+      World.call!(context, "hal-c2.readSettings")
+
+    {_, context} =
+      World.call!(context, "hal-c2.writeSettings", %{
+        "settings" => fun.(settings),
+        "version" => version
+      })
+
+    context
+  end
+
   step "the thread is in plan mode on Claude", context do
     context |> World.fake_providers() |> Map.put(:interaction_mode, "plan")
   end

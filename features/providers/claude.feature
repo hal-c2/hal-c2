@@ -232,7 +232,6 @@ Feature: Claude
     When the user enables Claude
     Then Claude is offered again
 
-  @backlog
   Scenario: A Claude instance can route through OpenRouter or another router
     Given a Claude instance with its own config directory and a router's endpoint and token in its environment
     And the router's model id is added as a custom model
