@@ -35,8 +35,34 @@ Rectangle {
     // and the closed panel then takes no width.
     property bool ownToggle: true
 
-    // Not animated: a width animation relays out the thread on every frame.
-    implicitWidth: open ? openWidth : ownToggle ? 36 : 0
+    // Snaps by default: a width animation relays out the thread on every
+    // frame. With Panel animations set, a toggle slides for that long
+    // (model.transitionMs, none for a thread's own layout or reduced motion).
+    readonly property int targetWidth: open ? openWidth : ownToggle ? 36 : 0
+    property real shownWidth: targetWidth
+
+    implicitWidth: shownWidth
+    onTargetWidthChanged: {
+        const duration = dragWidth < 0 ? (model?.transitionMs ?? 0) : 0;
+        slide.stop();
+        if (duration > 0) {
+            slide.from = shownWidth;
+            slide.to = targetWidth;
+            slide.duration = duration;
+            slide.start();
+        } else {
+            shownWidth = targetWidth;
+        }
+    }
+
+    NumberAnimation {
+        id: slide
+        objectName: "panelSlide"
+
+        target: panel
+        property: "shownWidth"
+        easing.type: Easing.OutCubic
+    }
     color: Theme.palette.color("chrome", "#0b0b0d")
     clip: true
 

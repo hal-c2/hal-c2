@@ -183,20 +183,20 @@ Feature: Appearance
       When the user toggles the sidebar
       Then the sidebar appears without animation
 
-    @backlog @desktop
+    @desktop
     Scenario: Panel animations can be slowed down
       When the user sets panel animations to 200 ms
       And the user toggles the right panel
       Then the right panel slides open over 200 ms
 
-    @backlog @desktop
+    @desktop
     Scenario: Panel animations respect reduced motion
       Given the operating system asks for reduced motion
       And panel animations are set to 200 ms
       When the user toggles the right panel
       Then the right panel opens immediately
 
-    @backlog @desktop
+    @desktop
     Scenario: Switching threads never replays panel transitions
       Given panel animations are set to 200 ms
       When the user switches to a thread with a different panel layout

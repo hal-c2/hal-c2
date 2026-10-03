@@ -12,6 +12,8 @@
 #include <QWindow>
 #include <QtLogging>
 
+#include "PlatformWindow.h"
+#include "LayoutController.h"
 #include "AlertController.h"
 #include "BackendProcess.h"
 #include "LicensesController.h"
@@ -165,6 +167,7 @@ int main(int argc, char* argv[]) {
   // Each window reopens where the user left it (its route and panels are
   // state); the drafts are every window's unsent work (data).
   native.setStoreDirs(storage.state, storage.data);
+  LayoutController::setSystemReducedMotion(systemReducedMotion());
   native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
   ThemeStore theme(configDir);
   // ThemeController's resolved theme is the palette under theme.json.

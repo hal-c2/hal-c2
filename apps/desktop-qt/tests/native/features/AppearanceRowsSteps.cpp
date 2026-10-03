@@ -8,6 +8,8 @@
 
 #include "Brick.h"
 #include "Harness.h"
+#include "LayoutController.h"
+#include "Stream.h"
 #include "NavigationController.h"
 #include "RightPanelController.h"
 #include "SettingsController.h"
@@ -135,6 +137,84 @@ const Steps steps([] {
     world.waitFor([&] { return world.theme().fontTerminal() == c[0] && world.theme().fontSizeTerminal() == c[1].toInt(); },
                   [&] { return QStringLiteral("the terminal font; it is %1 at %2").arg(world.theme().fontTerminal()).arg(world.theme().fontSizeTerminal()); });
     untouched(world, {QStringLiteral("interface"), QStringLiteral("prompt"), QStringLiteral("code")});
+  });
+
+  // Motion: the right panel as the desktop draws it, on a thread.
+  const auto panelBrick = [](World& world) -> Brick& {
+    if (!world.brick) {
+      world.mc.projects.insert(stream::kProject, {{QStringLiteral("id"), stream::kProject}, {QStringLiteral("title"), stream::kProject},
+                                                    {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")}, {QStringLiteral("scripts"), QJsonArray()}});
+      world.mc.sendRow(stream::kProject, world.mc.projects.value(stream::kProject), QStringLiteral("project"));
+      world.sync();
+      stream::lookAtThread(world, stream::kProject);
+      world.waitFor([&] { return world.state(QStringLiteral("panel")).toMap().value(QStringLiteral("threadKey")).toString().endsWith(stream::kThread); },
+                    QStringLiteral("the thread's panel"));
+      world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nRightPanel { objectName: \"panel\"; ownToggle: false; height: 600 }\n",
+                                            QSize(900, 600));
+    }
+    return *world.brick;
+  };
+  struct Motion {
+    ~Motion() { LayoutController::setSystemReducedMotion(false); }
+  };
+  const auto panelState = [](World& world) { return world.state(QStringLiteral("panel")).toMap(); };
+  const auto slide = [](Brick& brick) { return brick.root()->findChild<QObject*>(QStringLiteral("panelSlide")); };
+  const auto settled = [](Brick& brick) { return brick.root()->property("shownWidth").toReal() == brick.root()->property("targetWidth").toReal(); };
+  step(QStringLiteral("(?:the user sets panel animations to|panel animations are set to) (\\d+) ms"), [panelBrick](World& world, const Captures& c, const Table&) {
+    set(world, QStringLiteral("panelAnimationDurationMs"), c[0].toInt());
+    panelBrick(world);
+  });
+  step(QStringLiteral("the operating system asks for reduced motion"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<Motion>();
+    LayoutController::setSystemReducedMotion(true);
+  });
+  step(QStringLiteral("the right panel slides open over (\\d+) ms"), [panelBrick, panelState, slide, settled](World& world, const Captures& c, const Table&) {
+    Brick& brick = panelBrick(world);
+    expect(panelState(world).value(QStringLiteral("isOpen")).toBool() && panelState(world).value(QStringLiteral("transitionMs")).toInt() == c[0].toInt(),
+           show(panelState(world)));
+    // The brick slides to its open width in that time, then stops.
+    QObject* animation = slide(brick);
+    expect(animation && animation->property("duration").toInt() == c[0].toInt() &&
+               animation->property("to").toReal() == brick.root()->property("targetWidth").toReal() && animation->property("from").toReal() == 0,
+           QStringLiteral("the panel's slide is %1 ms").arg(animation ? animation->property("duration").toInt() : -1));
+    world.waitFor([&] { return settled(brick) && !animation->property("running").toBool(); }, QStringLiteral("the panel to finish opening"));
+    expect(brick.root()->property("shownWidth").toReal() > 0, QStringLiteral("the panel is closed"));
+  });
+  step(QStringLiteral("the right panel opens immediately"), [panelBrick, panelState, slide, settled](World& world, const Captures&, const Table&) {
+    Brick& brick = panelBrick(world);
+    expect(panelState(world).value(QStringLiteral("isOpen")).toBool() && panelState(world).value(QStringLiteral("transitionMs")).toInt() == 0,
+           show(panelState(world)));
+    expect(settled(brick) && brick.root()->property("shownWidth").toReal() > 0 && !slide(brick)->property("running").toBool(),
+           QStringLiteral("the panel is still sliding"));
+  });
+  step(QStringLiteral("the user switches to a thread with a different panel layout"), [panelBrick, panelState, slide, settled](World& world, const Captures&, const Table&) {
+    Brick& brick = panelBrick(world);
+    // This thread's panel is open (and slid open); another's is closed.
+    world.bridge().dispatch(QStringLiteral("rightPanel.toggle"), QVariantMap());
+    world.waitFor([&] { return panelState(world).value(QStringLiteral("isOpen")).toBool() && settled(brick) && !slide(brick)->property("running").toBool(); },
+                  QStringLiteral("the panel to open"));
+    world.mc.threads.insert(QStringLiteral("thread-2"), {{QStringLiteral("id"), QStringLiteral("thread-2")}, {QStringLiteral("title"), QStringLiteral("Other")},
+                                                          {QStringLiteral("projectId"), stream::kProject},
+                                                          {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T08:00:00Z")},
+                                                          {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T08:00:00Z")}});
+    world.mc.sendRow(QStringLiteral("thread-2"), world.mc.threads.value(QStringLiteral("thread-2")));
+    world.sync();
+    world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), world.mc.environmentId + QStringLiteral(":thread-2")}});
+    world.waitFor([&] { return panelState(world).value(QStringLiteral("threadKey")).toString().endsWith(QLatin1String("thread-2")); },
+                  [&] { return QStringLiteral("the other thread's panel; it is %1").arg(show(panelState(world))); });
+  });
+  step(QStringLiteral("the panels snap to that thread's layout"), [panelBrick, panelState, slide, settled](World& world, const Captures&, const Table&) {
+    Brick& brick = panelBrick(world);
+    expect(!panelState(world).value(QStringLiteral("isOpen")).toBool() && panelState(world).value(QStringLiteral("transitionMs")).toInt() == 0,
+           show(panelState(world)));
+    expect(settled(brick) && brick.root()->property("shownWidth").toReal() == 0 && !slide(brick)->property("running").toBool(),
+           QStringLiteral("the panel is sliding shut (%1 wide)").arg(brick.root()->property("shownWidth").toReal()));
+    // And back: the first thread's open panel is there at once too.
+    world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), world.mc.environmentId + QLatin1Char(':') + stream::kThread}});
+    world.waitFor([&] { return panelState(world).value(QStringLiteral("threadKey")).toString().endsWith(stream::kThread); }, QStringLiteral("the first thread's panel"));
+    expect(panelState(world).value(QStringLiteral("isOpen")).toBool() && panelState(world).value(QStringLiteral("transitionMs")).toInt() == 0 && settled(brick) &&
+               brick.root()->property("shownWidth").toReal() > 0 && !slide(brick)->property("running").toBool(),
+           QStringLiteral("coming back slid the panel open: %1").arg(show(panelState(world))));
   });
 
   step(QStringLiteral("the user turns on word wrap"), [](World& world, const Captures&, const Table&) {

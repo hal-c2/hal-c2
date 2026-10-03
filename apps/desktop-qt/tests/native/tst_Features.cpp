@@ -238,6 +238,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/appearance.feature:Composer context*"),
     QStringLiteral("navigation/appearance.feature:Word wrap*"),
     QStringLiteral("navigation/appearance.feature:Font preferences*"),
+    QStringLiteral("navigation/appearance.feature:Panel animations*"),
+    QStringLiteral("navigation/appearance.feature:Switching threads never*"),
     QStringLiteral("navigation/theme-editor.feature"),
     QStringLiteral("settings/general.feature"),
     QStringLiteral("settings/saving-settings.feature"),

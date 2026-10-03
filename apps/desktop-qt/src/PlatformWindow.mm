@@ -246,3 +246,7 @@ void applyWindowBlur(QWindow* window, bool enabled, bool dark, bool liquidGlass)
     applyEffectView(native, false, dark);
   }
 }
+
+bool systemReducedMotion() {
+  return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion];
+}
