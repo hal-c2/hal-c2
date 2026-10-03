@@ -47,7 +47,7 @@ Feature: Pull requests linked to a thread
     When a client unlinks pull request "acme/app#99" from "t1"
     Then no event is recorded
 
-  @mc @backlog
+  @mc
   Scenario: A settled thread whose pull request merged is not an active pull request thread
     Given "t1" links pull request "acme/app#12" and settled after it merged
     When the MC refreshes pull request state
