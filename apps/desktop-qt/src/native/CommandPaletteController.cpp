@@ -263,6 +263,7 @@ QString CommandPaletteController::emptyText() const {
       return hasQuery && !searching() && m_error.isEmpty() ? tr("No results found.")
                                                            : tr("Type to search across your project.");
     case Mode::Browse:
+      if (relativeWithoutProject()) return tr("Relative paths require an active project.");
       if (!m_error.isEmpty()) return m_error;
       if (!m_browseOptions.emptyText.isEmpty()) return m_browseOptions.emptyText;
       return hasQuery && !searching() ? tr("Press Enter to create this folder and add it as a project.") : QString();
@@ -550,13 +551,39 @@ bool CommandPaletteController::runHighlighted() {
     submit(text);
     return true;
   }
-  if (m_mode == Mode::Browse && (m_highlighted < 0 || m_highlighted >= count())) return addBrowsedFolder();
+  if (m_mode == Mode::Browse && (m_highlighted < 0 || m_highlighted >= count())) {
+    // Enter with nothing highlighted adds the path typed.
+    if (relativeWithoutProject() || !m_add || browsedPath().isEmpty()) return false;
+    const QString path = browsedPath();
+    if (m_browseOptions.keepOpen) {
+      const auto add = m_add;
+      add(path);
+      return true;
+    }
+    const auto add = std::exchange(m_add, nullptr);
+    close(false);
+    add(path);
+    return true;
+  }
   return run(m_highlighted);
 }
 
+// A path that is not absolute is under the folder of the project the window
+// shows; without one there is nowhere for it to be.
+bool CommandPaletteController::relativeWithoutProject() const {
+  const QString query = m_query.trimmed();
+  return m_mode == Mode::Browse && !query.isEmpty() && !query.startsWith(QLatin1Char('/')) &&
+         !query.startsWith(QLatin1Char('~')) && target().root.isEmpty();
+}
+
 bool CommandPaletteController::addBrowsedFolder() {
-  if (!m_open || m_mode != Mode::Browse || !m_add) return false;
-  const QString path = browsedPath();
+  if (!m_open || m_mode != Mode::Browse || !m_add || relativeWithoutProject()) return false;
+  // The folder highlighted, else the path typed.
+  QString path = browsedPath();
+  if (m_highlighted >= 0 && m_highlighted < count()) {
+    const Entry& entry = m_entries.at(m_rows.at(m_highlighted).entry);
+    if (entry.kind == Kind::Folder) path = entry.id;
+  }
   if (path.isEmpty()) return false;
   if (m_browseOptions.keepOpen) {
     // A copy: it stays for another try until the chooser closes the palette.
@@ -1168,6 +1195,13 @@ void CommandPaletteController::searchFolders(int generation) {
     refilter(true);
     return;
   }
+  if (relativeWithoutProject()) {
+    m_error.clear();
+    m_entries.clear();
+    m_browseEntries = {};
+    refilter(true);
+    return;
+  }
   // With a pinned name the whole folder is listed and filtered here, as the
   // web does: a leaf that is the pinned name hides nothing.
   const QString& pinned = m_browseOptions.pinned;
@@ -1175,9 +1209,12 @@ void CommandPaletteController::searchFolders(int generation) {
   const QString asked = pinned.isEmpty() || slash < 0 ? query : query.left(slash + 1);
   const QString leaf = asked == query ? QString() : query.mid(slash + 1);
   const QString filter = leaf == pinned ? QString() : leaf;
+  const bool relative = !asked.startsWith(QLatin1Char('/')) && !asked.startsWith(QLatin1Char('~'));
   ++m_pending;
   m_client->call(this, m_browseEnvironment, QStringLiteral("filesystem.browse"),
-                 QJsonObject{{QStringLiteral("partialPath"), asked}},
+                 // A relative path is under the shown project's folder (the contract's cwd).
+                 relative ? QJsonObject{{QStringLiteral("partialPath"), asked}, {QStringLiteral("cwd"), target().root}}
+                          : QJsonObject{{QStringLiteral("partialPath"), asked}},
                  [this, generation, query, asked, filter](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation || m_mode != Mode::Browse) return;
                    m_pending = 0;

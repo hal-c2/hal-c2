@@ -156,7 +156,8 @@ public:
   Q_INVOKABLE bool run(int row);
   // Enter: the highlighted entry, or in browse mode with none, adds the path.
   Q_INVOKABLE bool runHighlighted();
-  // Adds the browsed path as a project (browse mode's mod+Enter).
+  // Adds the highlighted folder as a project, else the path typed (browse
+  // mode's mod+Enter).
   Q_INVOKABLE bool addBrowsedFolder();
   // Opens the palette on the menu `command`'s choices.
   void showMenu(const QString& command);
@@ -273,6 +274,7 @@ private:
   void searchMessages(int generation);
   void searchFolders(int generation);
   QString browsedPath() const;
+  bool relativeWithoutProject() const;
   void followTarget();
 
   ShellBridge* m_bridge;

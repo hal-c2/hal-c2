@@ -276,6 +276,12 @@ void press(World& world, const QString& key) {
     world.sync();
     return;
   }
+  // And mod+Enter, which adds the folder being browsed.
+  if (palette && palette->isOpen() && key.toLower() == QLatin1String("mod+enter") && palette->mode() == QLatin1String("browse")) {
+    palette->addBrowsedFolder();
+    world.sync();
+    return;
+  }
   if (palette && palette->isOpen() && key == QLatin1String("Backspace") && palette->query().isEmpty()) {
     palette->leaveSubmenu();
     world.sync();
