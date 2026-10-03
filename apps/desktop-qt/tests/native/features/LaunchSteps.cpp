@@ -10,23 +10,23 @@
 #include "ComposerController.h"
 #include "DraftController.h"
 #include "Harness.h"
+#include "Launch.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "World.h"
 
 namespace {
 
-// `orchestration.launchThread`: the MC makes the thread (its shell row) and
-// answers with its id; refused like a command, held with the answers.
-struct FakeLaunches {
-  QList<QJsonObject> calls;
-};
-
+// `orchestration.launchThread`: the machine it is asked of makes the thread
+// (its shell row) and answers with its id; refused like a command, held with
+// the answers.
 const FakeMc::Extension launches([](FakeMc& mc) {
   mc.onRpc(QStringLiteral("orchestration.launchThread"), [&mc](const FakeMc::Rpc& rpc) {
     const QString method = QStringLiteral("orchestration.launchThread");
+    const QString machine = rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
     mc.part<FakeLaunches>().calls.append(rpc.payload);
-    const auto answer = [&mc, rpc, method] {
+    mc.part<FakeLaunches>().machines.append(machine);
+    const auto answer = [&mc, rpc, method, machine] {
       if (mc.refusals.contains(method)) {
         mc.refuse(rpc, mc.refusals.value(method));
         return;
@@ -39,8 +39,12 @@ const FakeMc::Extension launches([](FakeMc& mc) {
           {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")},
           {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T10:00:00Z")},
       };
-      mc.threads.insert(threadId, row);
-      mc.sendRow(threadId, row);
+      if (mc.members.contains(machine)) {
+        mc.sendPeerRow(machine, threadId, row);
+      } else {
+        mc.threads.insert(threadId, row);
+        mc.sendRow(threadId, row);
+      }
       mc.reply(rpc, QJsonObject{{QStringLiteral("threadId"), threadId}, {QStringLiteral("resumed"), false}});
     };
     if (mc.holding(QStringLiteral("answers"))) {

@@ -12,6 +12,7 @@
 #include "CommandPaletteController.h"
 #include "ComposerController.h"
 #include "Harness.h"
+#include "LoadBalancing.h"
 #include "Move.h"
 #include "NavigationController.h"
 #include "ShellStore.h"
@@ -327,7 +328,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("the project %1 on each machine is a checkout of the same repository").arg(q),
        [](World& world, const Captures& c, const Table&) {
-         expect(c[0] == kProject, QStringLiteral("the machines' project is \"%1\"").arg(kProject));
+         // Any other project is one a new thread is placed in (LoadBalancing.h).
+         if (c[0] != kProject) return shareProject(world.mc, c[0]);
          world.mc.projects.insert(kProject, project());
          for (const QString& machine : std::as_const(world.mc.members)) {
            world.mc.sendPeerRow(machine, kProject, project(), QStringLiteral("project"));

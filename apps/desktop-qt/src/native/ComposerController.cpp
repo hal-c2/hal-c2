@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QStringList>
+#include <QTimer>
 #include <QUuid>
 
 #include <algorithm>
@@ -35,6 +36,10 @@ const NativeControllerRegistrar<ComposerController> registrar(QStringLiteral("co
 
 // apps/web/src/proposedPlan.ts PLAN_IMPLEMENTATION_PROMPT_PREFIX.
 const QString kImplementPrefix = QStringLiteral("PLEASE IMPLEMENT THIS PLAN:\n");
+// How long a new thread waits to be placed before it starts where the user
+// picked: the MC itself waits a second for the picked machine and a second for
+// the others.
+constexpr int kPlacementWaitMs = 3000;
 // apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx.
 const QString kProviderGone = QStringLiteral("Provider process is gone — interrupt or restart the run to respond.");
 
@@ -524,11 +529,47 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   return true;
 }
 
-// A new thread's first send, as the web's: its images are stored, then the
-// thread is launched with the message in the draft's checkout. The draft (its
-// text and images) stays until the MC confirms; the window then shows the
-// thread in its place. A background send (mod+alt+Enter) leaves the window on
-// the draft, emptied for another prompt.
+// Where a new thread starts. With more than one machine in the cluster the MC
+// this shell is connected to chooses (`hal-c2.placeThread`, HalC2.LoadBalancing):
+// it answers the user's own pick while balancing is off or no machine has more
+// room, else another machine and its checkout of the repository. The pick
+// stands for a draft the user tied to its machine, and whenever the MC cannot
+// be followed: it refuses, takes longer than kPlacementWaitMs, or names a
+// project or machine this shell cannot reach. Balancing never holds a first
+// message back.
+void ComposerController::place(const QString& environmentId, const QString& projectId, bool tied, const QString& instanceId,
+                               std::function<void(const QString&, const QString&)> then) {
+  QStringList machines = m_store->environments();
+  machines.removeDuplicates();
+  if (tied || machines.size() < 2) {
+    then(environmentId, projectId);
+    return;
+  }
+  QJsonObject input{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("projectId"), projectId}};
+  if (!instanceId.isEmpty()) input.insert(QStringLiteral("instanceId"), instanceId);
+  // The MC's answer or the wait running out, whichever is first.
+  const auto answered = std::make_shared<bool>(false);
+  const auto answer = [this, environmentId, projectId, then, answered](const QJsonValue& result, const std::optional<QString>& error) {
+    if (std::exchange(*answered, true)) return;
+    const QString placedOn = str(result.toObject(), QLatin1String("environmentId"));
+    const QString placedIn = str(result.toObject(), QLatin1String("projectId"));
+    const bool reachable = !error && m_store->environmentOnline(placedOn) && !m_store->projectRow(placedOn, placedIn).isEmpty();
+    if (reachable) {
+      then(placedOn, placedIn);
+    } else {
+      then(environmentId, projectId);
+    }
+  };
+  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.placeThread"), input, answer);
+  QTimer::singleShot(kPlacementWaitMs, this, [answer] { answer(QJsonValue(), QStringLiteral("no answer")); });
+}
+
+// A new thread's first send, as the web's: the thread is placed, its images
+// are stored, then it is launched with the message in the draft's checkout
+// (or the one it was placed in). The draft (its text and images) stays until
+// the MC confirms; the window then shows the thread in its place. A
+// background send (mod+alt+Enter) leaves the window on the draft, emptied for
+// another prompt.
 bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& payload) {
   auto* shell = NativeShell::of(this);
   auto* drafts = shell->controller<DraftController>();
@@ -586,54 +627,70 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
     m_launching.insert(draftId);
   }
   publish();
-  const QString environmentId = where.environmentId;
-  const auto start = [this, draftId, environmentId, background, text, attachments, contexts](const QJsonObject& input) {
-    m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), input,
-                   [this, draftId, environmentId, input, background, text, attachments, contexts](
-                       const QJsonValue& result, const std::optional<QString>& error) {
-                     QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
-                     if (threadId.isEmpty()) threadId = str(input, QLatin1String("threadId"));
-                     const QString threadKey = environmentId + QLatin1Char(':') + threadId;
-                     if (background) {
-                       launchedInBackground(draftId, text, attachments, contexts, threadKey, error);
-                     } else {
-                       launched(draftId, threadKey, error);
+  const QString threadId = kept->threadId;
+  // The images go to the machine the thread starts on, then the thread does.
+  const auto begin = [this, draftId, threadId, background, text, attachments, contexts](const QString& environmentId,
+                                                                                         QJsonObject input) {
+    const auto start = [this, draftId, environmentId, background, text, attachments, contexts](const QJsonObject& input) {
+      m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), input,
+                     [this, draftId, environmentId, input, background, text, attachments, contexts](
+                         const QJsonValue& result, const std::optional<QString>& error) {
+                       QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
+                       if (threadId.isEmpty()) threadId = str(input, QLatin1String("threadId"));
+                       const QString threadKey = environmentId + QLatin1Char(':') + threadId;
+                       if (background) {
+                         launchedInBackground(draftId, text, attachments, contexts, threadKey, error);
+                       } else {
+                         launched(draftId, threadKey, error);
+                       }
+                     });
+    };
+    if (attachments.isEmpty()) {
+      start(input);
+      return;
+    }
+    QJsonArray images;
+    for (const Attachment& attachment : attachments) {
+      QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
+                        {QStringLiteral("name"), attachment.name},
+                        {QStringLiteral("mimeType"), attachment.mimeType},
+                        {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                        {QStringLiteral("dataUrl"), attachment.dataUrl}};
+      if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+      images.append(image);
+    }
+    QJsonObject message = input.value(QLatin1String("initialMessage")).toObject();
+    m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
+                   QJsonObject{{QStringLiteral("threadId"), threadId},
+                               {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
+                               {QStringLiteral("attachments"), images}},
+                   [this, draftId, input, message, start, background, text, attachments, contexts](
+                       const QJsonValue& result, const std::optional<QString>& error) mutable {
+                     if (error) {
+                       if (background) {
+                         launchedInBackground(draftId, text, attachments, contexts, QString(), error);
+                       } else {
+                         launched(draftId, QString(), error);
+                       }
+                       return;
                      }
+                     message.insert(QStringLiteral("attachments"), result.toObject().value(QLatin1String("attachments")));
+                     input.insert(QStringLiteral("initialMessage"), message);
+                     start(input);
                    });
   };
-  if (attachments.isEmpty()) {
-    start(input);
-    return true;
-  }
-  QJsonArray images;
-  for (const Attachment& attachment : attachments) {
-    QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
-                      {QStringLiteral("name"), attachment.name},
-                      {QStringLiteral("mimeType"), attachment.mimeType},
-                      {QStringLiteral("sizeBytes"), attachment.sizeBytes},
-                      {QStringLiteral("dataUrl"), attachment.dataUrl}};
-    if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
-    images.append(image);
-  }
-  QJsonObject message = input.value(QLatin1String("initialMessage")).toObject();
-  m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
-                 QJsonObject{{QStringLiteral("threadId"), kept->threadId},
-                             {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
-                             {QStringLiteral("attachments"), images}},
-                 [this, draftId, input, message, start, background, text, attachments, contexts](
-                     const QJsonValue& result, const std::optional<QString>& error) mutable {
-                   if (error) {
-                     if (background) {
-                       launchedInBackground(draftId, text, attachments, contexts, QString(), error);
-                     } else {
-                       launched(draftId, QString(), error);
-                     }
-                     return;
-                   }
-                   message.insert(QStringLiteral("attachments"), result.toObject().value(QLatin1String("attachments")));
-                   input.insert(QStringLiteral("initialMessage"), message);
-                   start(input);
-                 });
+  place(where.environmentId, where.projectId, where.tied, str(modelSelection, QLatin1String("instanceId")),
+        [where, input, begin](const QString& environmentId, const QString& projectId) mutable {
+          if (environmentId != where.environmentId || projectId != where.projectId) {
+            input.insert(QStringLiteral("projectId"), projectId);
+            // The branch this machine's checkout is on says nothing of
+            // another's; a new worktree's base is the repository's on either.
+            QJsonObject strategy = where.strategy;
+            if (str(strategy, QLatin1String("type")) == QLatin1String("root")) strategy.remove(QLatin1String("branch"));
+            input.insert(QStringLiteral("workspaceStrategy"), strategy);
+          }
+          begin(environmentId, input);
+        });
   return true;
 }
 

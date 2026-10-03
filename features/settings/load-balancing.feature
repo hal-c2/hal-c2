@@ -4,8 +4,16 @@
 #   apps/web/src/components/ChatView.tsx (balanced environment for new drafts)
 #   apps/server-ex/lib/hal_c2/load_balancing.ex (hal-c2.placeThread)
 #   apps/server-ex/lib/hal_c2/rpc.ex (server.getHostResources)
+#   apps/tui/src/loadBalancing.ts (placeNewThread, the preference a weight shows as)
+#   apps/tui/src/host/loadBalancingState.ts (settings rows and palette commands)
+#   apps/tui/src/host/composerState.ts (submitNewThread)
+#   apps/desktop-qt/src/native/ComposerController.cpp (place: a new thread's first send asks the MC)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (launch: a draft tied to its machine)
+#   apps/desktop-qt/src/native/LoadBalancingController.cpp
+#   apps/desktop-qt/qml/HalC2/Bricks/LoadBalancingGroup.qml
+#   apps/desktop-qt/tests/native/features/LoadBalancingSteps.cpp
 #   packages/contracts/src/rpc.ts (server.getHostResources)
-#   docs/user/remote-access.md (Balance new threads across machines: web and desktop only)
+#   docs/user/remote-access.md (Balance new threads across machines: desktop and terminal client)
 #
 # Decisions:
 #   - The MC chooses, not the client. The legacy web client collected every machine's
@@ -29,7 +37,7 @@ Feature: Load balancing new threads across machines
     When a client asks the MC for its host resources
     Then the MC answers with its CPU count, CPU use and free memory
 
-  @mc @desktop @tui @backlog-desktop @backlog-tui
+  @mc @desktop @tui
   Scenario: Load balancing is off by default
     Given a cluster of the machines "laptop" and "server"
     And the project "api" on each machine is a checkout of the same repository
@@ -37,7 +45,7 @@ Feature: Load balancing new threads across machines
     When the user starts a new thread in "api" on "laptop"
     Then the thread starts on "laptop"
 
-  @mc @desktop @tui @backlog-desktop @backlog-tui
+  @mc @desktop @tui
   Scenario: A new thread starts on the machine with the most room
     Given a cluster of the machines "laptop" and "server"
     And the project "api" on each machine is a checkout of the same repository
@@ -46,7 +54,7 @@ Feature: Load balancing new threads across machines
     When the user starts a new thread in "api" on "laptop"
     Then the thread starts on "server" in its checkout of "api"
 
-  @mc @desktop @tui @backlog-desktop @backlog-tui
+  @mc @desktop @tui
   Scenario: A thread stays on the machine the user picked when no other has more room
     Given a cluster of the machines "laptop" and "server"
     And the project "api" on each machine is a checkout of the same repository
@@ -55,7 +63,7 @@ Feature: Load balancing new threads across machines
     When the user starts a new thread in "api" on "laptop"
     Then the thread starts on "laptop"
 
-  @mc @desktop @tui @backlog-desktop @backlog-tui
+  @mc @desktop @tui
   Scenario Outline: A machine is skipped when it cannot take work
     Given a cluster of the machines "laptop" and "server"
     And the project "api" on each machine is a checkout of the same repository
@@ -75,7 +83,7 @@ Feature: Load balancing new threads across machines
       | does not have the chosen provider signed in |
       | instead has no checkout of the repository   |
 
-  @mc @desktop @tui @backlog-desktop @backlog-tui
+  @mc @desktop @tui
   Scenario: Preferring a machine sends it more new threads
     Given a cluster of the machines "laptop" and "server"
     And the project "api" on each machine is a checkout of the same repository
@@ -85,14 +93,14 @@ Feature: Load balancing new threads across machines
     When the user starts a new thread in "api" on "laptop"
     Then the thread starts on "server" in its checkout of "api"
 
-  @backlog @desktop @tui
+  @desktop @tui
   Scenario: A draft already tied to a machine is not moved
     Given load balancing is on
     And the user chose a branch for the new thread on "laptop"
     When the user sends the first message
     Then the thread starts on "laptop"
 
-  @backlog @desktop @tui
+  @desktop @tui
   Scenario: Load balancing needs more than one machine
     Given only one machine is connected
     When the user opens connection settings

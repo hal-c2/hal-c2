@@ -3,6 +3,7 @@ FolderExplorer 1.0 FolderExplorer.qml
 FolderOperationDialog 1.0 FolderOperationDialog.qml
 ClusterSettings 1.0 ClusterSettings.qml
 ConnectionsSettings 1.0 ConnectionsSettings.qml
+LoadBalancingGroup 1.0 LoadBalancingGroup.qml
 Composer 1.0 Composer.qml
 ModelPicker 1.0 ModelPicker.qml
 ProviderIcon 1.0 ProviderIcon.qml

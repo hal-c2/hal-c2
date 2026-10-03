@@ -9,6 +9,7 @@
 
 #include "FakeConfig.h"
 #include "Harness.h"
+#include "LoadBalancing.h"
 #include "NavigationController.h"
 #include "World.h"
 #include "WorkspaceController.h"
@@ -530,6 +531,21 @@ const Steps steps([] {
   step(QStringLiteral("the composer switches to the previous worktree"), [usesPrevious](World& world, const Captures&, const Table&) {
     usesPrevious(world, QStringLiteral("feature/tax"));
     expect(!world.actionsOf(QStringLiteral("composer.focus")).isEmpty(), QStringLiteral("the composer did not take the keyboard back: %1").arg(world.describeBrickActions()));
+  });
+
+  // A draft the picked branch ties to its machine (settings/load-balancing.feature).
+  step(QStringLiteral("the user chose a branch for the new thread on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString project = clusterWithRoomElsewhere(world, c[0]);
+    const QString branch = QStringLiteral("feature/tax");
+    gitRepo(world, project, {QStringLiteral("main"), branch}, QStringLiteral("main"), QStringLiteral("main"));
+    world.connect();
+    world.sync();
+    openDraft(world, project);
+    dispatch(world, QStringLiteral("workspace.branch.search"), {{QStringLiteral("query"), QString()}});
+    dispatch(world, QStringLiteral("workspace.branch.select"), {{QStringLiteral("name"), branch}});
+    world.waitFor([&] { return world.native().controller<WorkspaceController>()->checkout(world.draftId).branch == branch; },
+                  [&] { return QStringLiteral("the draft on %1; the header shows %2").arg(branch, show(workspace(world))); });
+    world.mc.part<FakePlacement>().tied = true;
   });
 
   // Editors.

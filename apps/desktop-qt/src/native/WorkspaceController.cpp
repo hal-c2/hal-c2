@@ -151,6 +151,7 @@ WorkspaceController::Launch WorkspaceController::launch(const QString& draftId) 
   const bool moved = !checkout.environmentId.isEmpty();
   launch.environmentId = moved ? checkout.environmentId : draft->environmentId;
   launch.projectId = moved ? checkout.projectId : draft->projectId;
+  launch.tied = moved || checkout.branch || checkout.worktreePath;
   // The checkout's status is known only for the draft the window shows.
   const bool shown = m_place && m_place->draftId == draftId;
   const bool repo = !(shown && m_git && !m_git->local.value(QLatin1String("isRepo")).toBool(true));

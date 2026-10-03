@@ -9,7 +9,8 @@
 //   requires   shell state the section needs before it is listed
 //   keywords   what the native search matches, beside the label
 //   rows       the section's settingsRows.js rows, each found by its title and description
-//   settings   other settings on the page the search finds: {title, targetId, keywords}
+//   settings   other settings on the page the search finds: {title, targetId, keywords,
+//              requires (shell state the setting needs before it is found)}
 var sections = [
     { to: "/settings/general", label: "General", brick: "GeneralSettings", rows: Rows.general,
       keywords: "project grouping auto-resume snooze limited threads auto-settle merged inactive notifications time format response streaming whitespace diff layout proactive panels skills slash rich text composer collapse send shortcut follow-up provider update checks continue restarts origin worktree add project unpin archive delete confirmation quit text generation model legacy plan context window sidebar" },
@@ -46,6 +47,8 @@ var sections = [
       keywords: "storage cleanup disk worktrees delete inactive merged unchanged browser artifacts captures rotated logs retention days" },
     { to: "/settings/connections", label: "Connections", brick: "ConnectionsSettings", action: "connections.open",
       requires: "connections", detail: "Pairing links and clients",
+      settings: [{ title: "Load balancing", targetId: "load-balancing", requires: "loadBalancing",
+                   keywords: "automatic machine environment resources cpu memory capacity preference weight shared projects" }],
       keywords: "connections pairing link code clients revoke access remote" },
     { to: "/settings/archived", label: "Archive", brick: "ArchivedThreads", requires: "archivedThreads",
       detail: "Archived threads, unarchived or deleted", keywords: "archive archived threads unarchive restore delete" },
@@ -123,7 +126,9 @@ function searchRows(query, state, bindings) {
         // Rows this platform does not show are not found.
         var settings = Rows.visible(section.rows || [], Qt.platform.os).filter(function (row) { return row.key !== undefined || row.link !== undefined; }).map(function (row) {
             return { title: row.title, targetId: "settingsRow:" + (row.key ?? row.id), keywords: row.description || "" };
-        }).concat(section.settings || []);
+        }).concat((section.settings || []).filter(function (setting) {
+            return !setting.requires || (state[setting.requires] !== undefined && state[setting.requires] !== null);
+        }));
         settings.forEach(function (setting) {
             add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title, setting.keywords, false);
         });
