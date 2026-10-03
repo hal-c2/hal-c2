@@ -1155,11 +1155,39 @@ Rectangle {
                 }
             }
 
-            Note {
-                visible: card.provider.models.length > 0
-                text: qsTr("Models: %1").arg(card.provider.models.map(model => model.name || model.slug).join(", "))
-                elide: Text.ElideRight
-                maximumLineCount: 2
+            // The models it reports: how many, a filter once the list is long, and what each can do.
+            RowLayout {
+                Layout.fillWidth: true
+                visible: card.provider.modelCount > 0
+                spacing: 8
+
+                Note {
+                    objectName: "modelSummary"
+                    Layout.fillWidth: true
+                    text: card.provider.modelSummary
+                }
+
+                ShellTextField {
+                    objectName: "modelFilter"
+                    visible: card.provider.modelCount > 6
+                    implicitWidth: 160
+                    placeholderText: qsTr("Filter models")
+                    text: card.provider.modelFilter
+                    Accessible.name: qsTr("Filter %1 models").arg(card.provider.name)
+                    onTextEdited: page.act("filterModels", card.provider, { query: text })
+                }
+            }
+
+            Repeater {
+                model: card.provider.models
+
+                delegate: Note {
+                    required property var modelData
+
+                    objectName: "model:" + modelData.slug
+                    text: (modelData.favorite ? "★ " : "") + (modelData.name || modelData.slug) + (modelData.labels.length > 0 ? " · " + modelData.labels.join(" · ") : "") + (modelData.hidden ? qsTr(" · hidden") : "")
+                    elide: Text.ElideRight
+                }
             }
         }
     }

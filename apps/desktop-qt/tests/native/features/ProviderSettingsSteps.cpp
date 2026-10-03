@@ -14,6 +14,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "Stream.h"
+#include "SettingsController.h"
 #include "World.h"
 
 namespace {
@@ -2000,6 +2001,73 @@ const Steps customModelIdSteps([] {
     const QJsonArray saved = savedInstance(world, QStringLiteral("claudeAgent")).value(QLatin1String("config")).toObject().value(QLatin1String("customModels")).toArray();
     expect(fakeConfig(world.mc).writes.size() == fake(world).writesBefore && saved == QJsonArray{QStringLiteral("my-model")},
            QStringLiteral("Claude holds %1 after %2 writes").arg(show(saved.toVariantList())).arg(fakeConfig(world.mc).writes.size() - fake(world).writesBefore));
+  });
+});
+
+// The models list of a provider's card.
+const Steps modelListSteps([] {
+  const QString q = kQuoted;
+  const auto boolean = [](const QString& id, const QString& label) {
+    return QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("label"), label}, {QStringLiteral("type"), QStringLiteral("boolean")}};
+  };
+
+  step(QStringLiteral("Claude reports a model with fast mode, thinking and reasoning options"), [boolean](World& world, const Captures&, const Table&) {
+    QJsonObject effort = reasoning();
+    effort.insert(QStringLiteral("id"), QStringLiteral("effort"));
+    const QJsonArray models{
+        QJsonObject{{QStringLiteral("slug"), QStringLiteral("claude-opus")}, {QStringLiteral("name"), QStringLiteral("Claude Opus")},
+                    {QStringLiteral("capabilities"),
+                     QJsonObject{{QStringLiteral("optionDescriptors"),
+                                  QJsonArray{boolean(QStringLiteral("fastMode"), QStringLiteral("Fast Mode")), boolean(QStringLiteral("thinking"), QStringLiteral("Thinking")), effort}}}}},
+        // One that can do none of it, to tell them apart.
+        QJsonObject{{QStringLiteral("slug"), QStringLiteral("claude-haiku")}, {QStringLiteral("name"), QStringLiteral("Claude Haiku")}}};
+    seedInstance(world, QStringLiteral("claudeAgent"), {{QStringLiteral("driver"), QStringLiteral("claudeAgent")}, {QStringLiteral("enabled"), true}},
+                 provider(QStringLiteral("claudeAgent"), QStringLiteral("claudeAgent"), QStringLiteral("Claude"), {{QStringLiteral("models"), models}}));
+  });
+  step(QStringLiteral("the user opens (Claude|Codex)'s models"), [](World& world, const Captures& c, const Table&) {
+    waitForEntry(world, c[0], [](const QVariantMap& found) { return !found.value(QStringLiteral("models")).toList().isEmpty(); }, QStringLiteral("to list its models"));
+  });
+  step(QStringLiteral("that model is labelled %1, %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList models = entry(world, QStringLiteral("Claude")).value(QStringLiteral("models")).toList();
+    expect(models.size() == 2 && models.at(0).toMap().value(QStringLiteral("labels")).toStringList() == QStringList{c[0], c[1], c[2]} &&
+               models.at(1).toMap().value(QStringLiteral("labels")).toStringList().isEmpty(),
+           QStringLiteral("Claude lists %1").arg(show(models)));
+  });
+  step(QStringLiteral("Codex reports twelve models, two of them favourites and one hidden"), [](World& world, const Captures&, const Table&) {
+    QJsonArray models;
+    for (int index = 1; index <= 12; ++index) {
+      // Three minis: two by name, one by id alone.
+      const QString slug = index <= 2 ? QStringLiteral("gpt-5-mini-%1").arg(index) : index == 3 ? QStringLiteral("o4-mini") : QStringLiteral("gpt-5-%1").arg(index);
+      models.append(QJsonObject{{QStringLiteral("slug"), slug}, {QStringLiteral("name"), index == 3 ? QStringLiteral("O4 Small") : slug.toUpper()}});
+    }
+    auto* device = world.native().controller<SettingsController>();
+    device->writeDevice(QStringLiteral("favorites"),
+                        QVariantList{QVariantMap{{QStringLiteral("provider"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5-4")}},
+                                     QVariantMap{{QStringLiteral("provider"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5-5")}},
+                                     // Another instance's favourite is not counted here.
+                                     QVariantMap{{QStringLiteral("provider"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), QStringLiteral("gpt-5-6")}}});
+    device->writeDevice(QStringLiteral("providerModelPreferences"),
+                        QVariantMap{{QStringLiteral("codex"), QVariantMap{{QStringLiteral("hiddenModels"), QStringList{QStringLiteral("gpt-5-12")}}}}});
+    seedInstance(world, QStringLiteral("codex"), {{QStringLiteral("driver"), QStringLiteral("codex")}, {QStringLiteral("enabled"), true}},
+                 provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"), {{QStringLiteral("models"), models}}));
+  });
+  step(QStringLiteral("the list says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap found = entry(world, QStringLiteral("Codex"));
+    expect(found.value(QStringLiteral("modelSummary")) == c[0] && found.value(QStringLiteral("models")).toList().size() == 12,
+           QStringLiteral("the list says \"%1\" over %2 models").arg(found.value(QStringLiteral("modelSummary")).toString()).arg(found.value(QStringLiteral("models")).toList().size()));
+  });
+  step(QStringLiteral("the user filters the models by %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    act(world, QStringLiteral("filterModels"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("query"), c[0]}});
+  });
+  step(QStringLiteral("only models whose name or id has %1 are listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap found = entry(world, QStringLiteral("Codex"));
+    QStringList slugs;
+    for (const QVariant& model : found.value(QStringLiteral("models")).toList()) slugs.append(model.toMap().value(QStringLiteral("slug")).toString());
+    expect(slugs == QStringList{QStringLiteral("gpt-5-mini-1"), QStringLiteral("gpt-5-mini-2"), QStringLiteral("o4-mini")} && c[0] == QLatin1String("mini"),
+           QStringLiteral("Codex lists %1").arg(slugs.join(QStringLiteral(", "))));
+    // The count is still of every model.
+    expect(found.value(QStringLiteral("modelSummary")).toString().startsWith(QLatin1String("12 models")),
+           QStringLiteral("the list says \"%1\"").arg(found.value(QStringLiteral("modelSummary")).toString()));
   });
 });
 

@@ -501,13 +501,13 @@ Feature: Providers settings panel
 
   Rule: The models list
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A model lists what it can do
       Given Claude reports a model with fast mode, thinking and reasoning options
       When the user opens Claude's models
       Then that model is labelled "Fast mode", "Thinking" and "Reasoning"
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A long models list can be filtered and counted
       Given Codex reports twelve models, two of them favourites and one hidden
       When the user opens Codex's models

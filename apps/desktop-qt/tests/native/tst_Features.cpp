@@ -390,6 +390,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/providers-panel.feature:Logging out of an ACP agent"),
     QStringLiteral("settings/providers-panel.feature:A custom option must be complete before saving*"),
     QStringLiteral("settings/providers-panel.feature:A custom model id is checked*"),
+    QStringLiteral("settings/providers-panel.feature:A model lists what it can do"),
+    QStringLiteral("settings/providers-panel.feature:A long models list*"),
     QStringLiteral("settings/providers-panel.feature:A custom model without options uses the provider's defaults"),
     QStringLiteral("providers/provider-setup.feature:Signing out asks*"),
     QStringLiteral("threads/menu-actions.feature"),

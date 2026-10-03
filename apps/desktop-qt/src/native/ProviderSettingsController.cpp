@@ -19,6 +19,7 @@
 #include "NavigationController.h"
 #include "McClient.h"
 #include "ProviderDrivers.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -258,6 +259,12 @@ void ProviderSettingsController::activate() {
   connect(m_store, &ShellStore::changed, this, [this] {
     if (m_open) update();
   });
+  // This device's favourite and hidden models mark the models lists.
+  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    connect(settings, &SettingsController::deviceChanged, this, [this] {
+      if (m_open) publish();
+    });
+  }
   setOpen(navigation->route() == section);
   publish();
 }
@@ -271,11 +278,15 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
   // An environment this session may only view takes no changes, only a
   // different environment, docs and copying its update command.
   static const QSet<QString> viewing{QStringLiteral("providerSettings.environment"), QStringLiteral("providerSettings.openDocs"),
-                                     QStringLiteral("providerSettings.copyUpdateCommand")};
+                                     QStringLiteral("providerSettings.copyUpdateCommand"), QStringLiteral("providerSettings.filterModels")};
   if (!viewing.contains(action) && !m_followed.isEmpty() && !m_store->mayOperate(m_followed)) return true;
   if (action == QLatin1String("providerSettings.environment")) {
     m_environment = input.value(QStringLiteral("id")).toString();
     update();
+  } else if (action == QLatin1String("providerSettings.filterModels")) {
+    // The models whose name or id has the typed text.
+    m_modelFilter.insert(instanceId, input.value(QStringLiteral("query")).toString());
+    publish();
   } else if (action == QLatin1String("providerSettings.refresh")) {
     if (m_followed.isEmpty()) return true;
     ++m_refreshing;
@@ -701,11 +712,64 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   const QString driver = provider.value(QLatin1String("driver")).toString();
   const QJsonObject auth = provider.value(QLatin1String("auth")).toObject();
   const auto [headline, detail] = summary(provider);
-  QVariantList models;
-  for (const QJsonValue& model : provider.value(QLatin1String("models")).toArray()) {
-    models.append(QVariantMap{{QStringLiteral("slug"), model.toObject().value(QLatin1String("slug")).toString()},
-                              {QStringLiteral("name"), model.toObject().value(QLatin1String("name")).toString()}});
+  // The models list (the web's ProviderModelsSection): what each can do, this
+  // device's favourites and hidden ones, and the filter typed over it.
+  const auto* device = NativeShell::of(this)->controller<SettingsController>();
+  const QJsonObject preferences = device ? device->deviceSettings() : QJsonObject();
+  QSet<QString> favorites;
+  for (const QJsonValue& favorite : preferences.value(QLatin1String("favorites")).toArray()) {
+    if (favorite.toObject().value(QLatin1String("provider")).toString() == instanceId) {
+      favorites.insert(favorite.toObject().value(QLatin1String("model")).toString());
+    }
   }
+  QSet<QString> hidden;
+  for (const QJsonValue& slug : preferences.value(QLatin1String("providerModelPreferences")).toObject().value(instanceId).toObject()
+                                    .value(QLatin1String("hiddenModels")).toArray()) {
+    hidden.insert(slug.toString());
+  }
+  const QString filter = m_modelFilter.value(instanceId).trimmed().toLower();
+  QVariantList models;
+  int favoriteCount = 0;
+  int hiddenCount = 0;
+  const QJsonArray reported = provider.value(QLatin1String("models")).toArray();
+  for (const QJsonValue& value : reported) {
+    const QJsonObject model = value.toObject();
+    const QString slug = model.value(QLatin1String("slug")).toString();
+    const QString modelName = model.value(QLatin1String("name")).toString();
+    const bool isFavorite = favorites.contains(slug);
+    // A custom model is never hidden.
+    const bool isHidden = !model.value(QLatin1String("isCustom")).toBool() && hidden.contains(slug);
+    favoriteCount += isFavorite;
+    hiddenCount += isHidden;
+    if (!filter.isEmpty() && !slug.toLower().contains(filter) && !modelName.toLower().contains(filter)) continue;
+    QStringList labels;
+    bool fast = false, thinking = false, reasoning = false;
+    for (const QJsonValue& entry : model.value(QLatin1String("capabilities")).toObject().value(QLatin1String("optionDescriptors")).toArray()) {
+      const QJsonObject descriptor = entry.toObject();
+      const QString id = descriptor.value(QLatin1String("id")).toString();
+      const bool select = descriptor.value(QLatin1String("type")).toString() == QLatin1String("select");
+      if (id == QLatin1String("fastMode")) fast = true;
+      if (id == QLatin1String("serviceTier") && select) {
+        for (const QJsonValue& option : descriptor.value(QLatin1String("options")).toArray()) {
+          fast = fast || option.toObject().value(QLatin1String("id")).toString() == QLatin1String("fast") ||
+                 option.toObject().value(QLatin1String("label")).toString() == QLatin1String("Fast");
+        }
+      }
+      if (id == QLatin1String("thinking")) thinking = true;
+      if (select && (id == QLatin1String("reasoningEffort") || id == QLatin1String("effort") || id == QLatin1String("reasoning") ||
+                     id == QLatin1String("variant"))) {
+        reasoning = true;
+      }
+    }
+    if (fast) labels.append(QStringLiteral("Fast mode"));
+    if (thinking) labels.append(QStringLiteral("Thinking"));
+    if (reasoning) labels.append(QStringLiteral("Reasoning"));
+    models.append(QVariantMap{{QStringLiteral("slug"), slug}, {QStringLiteral("name"), modelName}, {QStringLiteral("labels"), labels},
+                              {QStringLiteral("favorite"), isFavorite}, {QStringLiteral("hidden"), isHidden}});
+  }
+  QString modelSummary = reported.size() == 1 ? QStringLiteral("1 model") : QStringLiteral("%1 models").arg(reported.size());
+  if (favoriteCount > 0) modelSummary += QStringLiteral(" · %1 favorite%2").arg(favoriteCount).arg(favoriteCount == 1 ? QString() : QStringLiteral("s"));
+  if (hiddenCount > 0) modelSummary += QStringLiteral(" · %1 hidden").arg(hiddenCount);
   const QVariant advice = advisory(provider);
   const QString updateStatus = provider.value(QLatin1String("updateState")).toObject().value(QLatin1String("status")).toString();
   const bool updating = m_updating.contains(instanceId) || updateStatus == QLatin1String("queued") ||
@@ -724,6 +788,9 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
       {QStringLiteral("detail"), detail},
       {QStringLiteral("email"), text(auth.value(QLatin1String("email")))},
       {QStringLiteral("models"), models},
+      {QStringLiteral("modelCount"), int(reported.size())},
+      {QStringLiteral("modelSummary"), modelSummary},
+      {QStringLiteral("modelFilter"), m_modelFilter.value(instanceId)},
       {QStringLiteral("advisory"), advice},
       {QStringLiteral("canUpdate"), updatable(provider)},
       {QStringLiteral("installLabel"), installable(provider).isEmpty() ? QString() : QStringLiteral("Install ") + versionLabel(installable(provider))},

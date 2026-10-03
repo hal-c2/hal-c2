@@ -197,5 +197,7 @@ private:
   // custom model change was refused, by instance.
   QHash<QString, QVariantMap> m_modelDraft;
   QHash<QString, QString> m_modelError;
+  // What the user typed over each instance's models list.
+  QHash<QString, QString> m_modelFilter;
   int m_refreshing = 0;
 };
