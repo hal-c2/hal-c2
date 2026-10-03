@@ -168,25 +168,25 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the thread runs in Supervised
     But a project that overrides the default uses its own permissions
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user chooses which environment runs a new thread
     Given two environments are connected
     When the user starts a new thread on the second environment
     Then the thread is created in the second environment
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user chooses to work in the current checkout or a new worktree
     Given the project is a Git repository
     When the user chooses to work in a new worktree from branch "main"
     Then the first turn works in a new worktree based on "main"
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A branch that does not exist is created when chosen
     Given the project has no branch "feature/cache"
     When the user searches for "feature/cache" and confirms it
     Then the thread works on a new branch "feature/cache"
 
-  @backlog @desktop
+  @desktop
   Scenario: New worktree mode needs a base branch before sending
     Given the user chose to work in a new worktree
     And no base branch is chosen

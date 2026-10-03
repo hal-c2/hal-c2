@@ -1103,6 +1103,7 @@ Rectangle {
 
                 ShellButton {
                     id: branchButton
+                    objectName: "branchButton"
 
                     visible: contextStrip.wsReady && (contextStrip.ws.branch !== null || contextStrip.ws.branchChangeable)
                     enabled: contextStrip.wsReady && contextStrip.ws.branchChangeable && !contextStrip.ws.branchSwitchPending

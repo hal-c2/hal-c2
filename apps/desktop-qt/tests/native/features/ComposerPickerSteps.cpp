@@ -237,6 +237,8 @@ void toolbarDraft(World& world) {
   world.connect();
   world.sync();
   world.mc.join(QStringLiteral("mc-b"), QStringLiteral("env-b"));
+  world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.mc")}, {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
+                 {QStringLiteral("mc"), QStringLiteral("mc-b")}, {QStringLiteral("online"), true}});
   world.mc.sendRows(QStringLiteral("mc-b"), {QJsonValue(QJsonArray{QStringLiteral("shop-copy"), QStringLiteral("project"),
                                                                     QJsonObject{{QStringLiteral("id"), QStringLiteral("shop-copy")}, {QStringLiteral("title"), project},
                                                                                 {QStringLiteral("workspaceRoot"), QStringLiteral("/srv/shop")}, {QStringLiteral("scripts"), QJsonArray()},
