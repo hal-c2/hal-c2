@@ -270,10 +270,19 @@ a higher `priority` wins a chord the shell binds.
 
 ## Plugins, problems and connection
 
-- `plugins` lists what the QML engine registered (`{ items: [{ id, kind:
-"qml" | "script", file, order }] }`). The entry attaches the engine with
-  `attachPlugins(enginePluginPort(engine))`; actions `plugins.refresh`,
-  `plugin.remove { id }` and `plugin.load { file }` go through that port.
+- `plugins` lists what the QML engine registered (`items: [{ id, kind:
+"qml" | "script", file, order }]`), the plugins the user turned off
+  (`disabled`) and the URL a downloaded one came from (`sources`, by id). The
+  entry attaches the engine with `attachPlugins(enginePluginPort(engine))`;
+  `pluginCatalog.ts` handles `plugins.refresh`, `plugin.remove { id }`,
+  `plugin.load { file }`, `plugin.disable/enable { id }`, `plugin.install
+{ url }` and `plugin.reload { file }` through that port. A disabled plugin's
+  file stays where it is; `HostOptions.pluginStore` remembers it, and it is
+  dropped again right after the engine starts, so a file that only fails once
+  turned off is never a reason to lose it. A plugin is reloaded by reading its
+  new version before the running one is unregistered: a version that does not
+  parse leaves the old one running. Only dev mode (`HAL_C2_TUI_DEV=1`) watches
+  plugin files.
 - `problems` holds what the runtime reported through `onError`/`onWarning`
   (plugin load, setup and render failures, bad keymap entries, missing plugin
   directories), capped at 50. The runtime never throws for a plugin, so this is

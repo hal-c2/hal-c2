@@ -40,7 +40,8 @@ import {
   type TuiSize,
 } from "./layoutState.ts";
 import { createPalette, type PaletteCommand } from "./paletteState.ts";
-import type { PluginPort, TuiPluginsState } from "./plugins.ts";
+import { createPluginCatalog, type PluginCatalogOptions } from "./pluginCatalog.ts";
+import type { PluginPort, PluginStore, TuiPluginsState } from "./plugins.ts";
 import { registerSettingsSections } from "./sections/index.ts";
 import { createUpdateNotice } from "./sections/updates.ts";
 import {
@@ -167,6 +168,14 @@ export interface HostOptions {
   readonly promptCursorToEnd?: (text: string) => void;
   /** What the feature areas need from the entry (see features/index.ts). */
   readonly features?: FeatureOptions;
+  /** Where this device keeps which plugins are turned off and where they came from. */
+  readonly pluginStore?: PluginStore;
+  /** Where downloaded plugin files are kept (the config directory's `plugins`). */
+  readonly pluginDir?: string | null;
+  /** Fetch a plugin file's text; `fetch` when absent. */
+  readonly downloadPlugin?: PluginCatalogOptions["download"];
+  /** Dev mode: tell the host when a loaded plugin's file is saved (see pluginCatalog.ts). */
+  readonly watchPlugins?: PluginCatalogOptions["watch"];
 }
 
 /**
@@ -294,7 +303,7 @@ export function createHost(options: HostOptions): Host {
     keybindings: { layers: KEYMAP_LAYERS, groups: KEYBINDING_GROUPS, parity: KEYMAP_PARITY },
     projectActionKeys: {},
     paneScroll,
-    plugins: { items: [] } satisfies TuiPluginsState,
+    plugins: { items: [], disabled: [], sources: {} } satisfies TuiPluginsState,
     problems: { items: [] },
     connection: connectionState("connecting"),
     graphics: {
@@ -310,9 +319,16 @@ export function createHost(options: HostOptions): Host {
   let connectionPhase: TuiConnectionPhase = "connecting";
   const offline = () => connectionPhase === "reconnecting";
 
-  let pluginPort: PluginPort | null = null;
+  const plugins = createPluginCatalog({
+    state,
+    status: (text, kind) => store.setStatus(text, kind),
+    store: options.pluginStore,
+    pluginDir: options.pluginDir,
+    download: options.downloadPlugin,
+    watch: options.watchPlugins,
+  });
   const refreshPlugins = () => {
-    if (pluginPort) state.set("plugins", { items: pluginPort.list() } satisfies TuiPluginsState);
+    if (plugins.port()) plugins.publish();
   };
   let problems: ReadonlyArray<TuiProblem> = [];
   const addProblem = (problem: TuiProblem) => {
@@ -756,6 +772,15 @@ export function createHost(options: HostOptions): Host {
       selectedWorkspace()?.projectId === projectId && terminal.runAction(script),
     removeProject: (projectId) => {
       dispatch("project.remove", { projectId });
+    },
+    plugins: {
+      view: () => ({
+        ...(state.get("plugins") as TuiPluginsState),
+        problems,
+      }),
+      disable: (id) => plugins.disable(id),
+      enable: (id) => plugins.enable(id),
+      install: (url) => plugins.install(url),
     },
     searchWorkspace: () => {
       const workspace = selectedWorkspace();
@@ -1213,15 +1238,34 @@ export function createHost(options: HostOptions): Host {
         return true;
       case "plugin.remove": {
         const id = payloadField(payload, "id");
-        if (typeof id !== "string" || !pluginPort) return true;
-        pluginPort.remove(id);
+        const port = plugins.port();
+        if (typeof id !== "string" || !port) return true;
+        port.remove(id);
         refreshPlugins();
         return true;
       }
       case "plugin.load": {
         const file = payloadField(payload, "file");
-        if (typeof file !== "string" || !pluginPort) return true;
-        void pluginPort.load(file).then(refreshPlugins);
+        const port = plugins.port();
+        if (typeof file !== "string" || !port) return true;
+        void port.load(file).then(refreshPlugins);
+        return true;
+      }
+      case "plugin.disable":
+      case "plugin.enable": {
+        const id = payloadField(payload, "id");
+        if (typeof id === "string") plugins[action === "plugin.disable" ? "disable" : "enable"](id);
+        return true;
+      }
+      // Asked for and confirmed on the plugins page; a dispatch is taken as confirmed.
+      case "plugin.install": {
+        const url = payloadField(payload, "url");
+        if (typeof url === "string") plugins.install(url);
+        return true;
+      }
+      case "plugin.reload": {
+        const file = payloadField(payload, "file");
+        if (typeof file === "string") void plugins.reload(file);
         return true;
       }
       case "icons.nerdFont.set": {
@@ -1422,12 +1466,10 @@ export function createHost(options: HostOptions): Host {
       await threadMove.settled();
       await features.settled();
       await sections!.settled();
+      await plugins.settled();
       await updateNotice.settled();
     },
-    attachPlugins: (port) => {
-      pluginPort = port;
-      refreshPlugins();
-    },
+    attachPlugins: (port) => plugins.attach(port),
     reportError: (error, where) =>
       addProblem({
         level: "error",
@@ -1436,6 +1478,7 @@ export function createHost(options: HostOptions): Host {
       }),
     reportWarning: (message) => addProblem({ level: "warning", message, where: null }),
     destroy: () => {
+      plugins.dispose();
       disposeStatusRow();
       clientActivity.dispose();
       unsubscribeConnection();

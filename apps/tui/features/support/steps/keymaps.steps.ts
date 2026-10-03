@@ -19,6 +19,7 @@ import {
   configDir,
   expectProblem,
   planShell,
+  togglePlugin,
   problems,
   problemText,
   start,
@@ -426,7 +427,13 @@ step("a new thread is started", (ctx: KeymapWorld) => {
   expect(actions(ctx)).toContain("thread.new");
 });
 
+// A plugin keymap by its name; otherwise a plugin, turned off on the plugins page
+// (plugins/ui-plugins.feature).
 step("the user disables {string}", async (ctx: KeymapWorld, name: string) => {
+  if (!ctx.keymaps?.[name] && !ctx.rawPlugins?.has(`${name}.qml`)) {
+    await togglePlugin(ctx, name, "enabled");
+    return;
+  }
   await startKeymaps(ctx);
   ctx.keymaps![name]!.enabled = false;
 });
