@@ -1,9 +1,10 @@
 defmodule HalC2.Orchestration.Rollback do
   @moduledoc """
-  `checkpoint.rollback`: rewinds a thread to one of its checkpoints. The provider
-  drops the later turns from its conversation, the worktree goes back to the
-  checkpoint unless `restoreFiles` is false, and the later runs become
-  `rolled_back`, which hides them from the timeline.
+  `checkpoint.rollback`: rewinds a thread to one of its checkpoints. The worktree goes
+  back to the checkpoint unless `restoreFiles` is false, the provider drops the later
+  turns from its conversation, and the later runs become `rolled_back`, which hides
+  them from the timeline. A step that fails undoes the ones before it, so files,
+  conversation and thread never disagree about where the thread stands.
 
   Restoring files resets the whole checkout, so it needs a worktree only this
   thread uses.
@@ -19,14 +20,39 @@ defmodule HalC2.Orchestration.Rollback do
 
   @spec run(map) :: :ok | {:error, String.t()}
   def run(%{"threadId" => thread_id} = command) do
+    # The files go back first: a restore that fails then leaves the provider's
+    # conversation as it was, still matching what the thread shows. The provider drops
+    # its turns second, and if it cannot, the files return to where they were.
     with {:ok, plan} <- HalC2.Streams.transact(thread_id, :thread, &{[], plan(&1, command)}),
-         {:ok, patch} <- rewind(plan),
-         :ok <- restore(plan),
+         {:ok, undo} <- restore(plan),
+         {:ok, patch} <- rewind(plan) |> or_undo(plan, undo),
          :ok <- HalC2.Streams.transact(thread_id, :thread, &{settle(&1, plan, patch), :ok}) do
+      for checkpoint <- plan.stale, do: HalC2.Checkpoint.delete_ref(plan.cwd, checkpoint["ref"])
+      if undo, do: HalC2.Checkpoint.delete_ref(plan.cwd, undo)
       HalC2.Vcs.Watch.refresh(plan.cwd)
       HalC2.Workspace.invalidate(plan.cwd)
       :ok
     end
+  end
+
+  defp or_undo({:ok, _} = ok, _plan, _undo), do: ok
+
+  defp or_undo(error, plan, undo) do
+    undo(plan, undo)
+    error
+  end
+
+  # Puts the worktree back as `restore/1` found it (best effort) and drops the snapshot.
+  defp undo(_plan, nil), do: :ok
+
+  defp undo(plan, ref) do
+    with {:error, reason} <- HalC2.Checkpoint.restore(plan.cwd, ref) do
+      require Logger
+      Logger.warning("rewind of #{plan.thread_id} could not put its files back: #{inspect(reason)}")
+    end
+
+    HalC2.Checkpoint.delete_ref(plan.cwd, ref)
+    :ok
   end
 
   defp plan(state, command) do
@@ -147,16 +173,25 @@ defmodule HalC2.Orchestration.Rollback do
     end
   end
 
-  defp restore(plan) do
-    result =
-      if plan.restore, do: HalC2.Checkpoint.restore(plan.cwd, plan.checkpoint["ref"]), else: :ok
+  # Restores the files when asked: `{:ok, ref}` names a snapshot of the worktree as it
+  # was (nil when nothing was restored), for `undo/2`.
+  defp restore(%{restore: false}), do: {:ok, nil}
 
-    with :ok <- result do
-      for checkpoint <- plan.stale, do: HalC2.Checkpoint.delete_ref(plan.cwd, checkpoint["ref"])
-      :ok
+  defp restore(plan) do
+    undo = "refs/hal-c2/orchestration-v2/rewind-undo/#{HalC2.Environment.uuid4()}"
+
+    with :ok <- HalC2.Checkpoint.capture(plan.cwd, undo),
+         :ok <- HalC2.Checkpoint.restore(plan.cwd, plan.checkpoint["ref"]) do
+      {:ok, undo}
     else
-      {:error, {_status, detail}} -> {:error, "Could not restore the checkpoint: #{detail}"}
-      {:error, reason} -> {:error, "Could not restore the checkpoint: #{inspect(reason)}"}
+      error ->
+        undo(plan, undo)
+
+        case error do
+          {:error, {_status, detail}} -> {:error, "Could not restore the checkpoint: #{detail}"}
+          {:error, reason} -> {:error, "Could not restore the checkpoint: #{inspect(reason)}"}
+          other -> {:error, "Could not restore the checkpoint: #{inspect(other)}"}
+        end
     end
   end
 
