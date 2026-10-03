@@ -3,6 +3,7 @@ import { backgroundActivitySection } from "./backgroundActivity.ts";
 import type { ProjectScript } from "@hal-c2/contracts";
 
 import { diagnosticsSection } from "./diagnostics.ts";
+import { projectSearchSection } from "./projectSearch.ts";
 import { projectsSection } from "./projects.ts";
 import { resourceMonitorSection } from "./resourceMonitor.ts";
 import { scheduledTasksSection } from "./scheduledTasks.ts";
@@ -23,10 +24,19 @@ export function registerSettingsSections(
     readonly serverUpdated: () => void;
     /** Run a project action in the open thread's terminal; false when it cannot. */
     readonly runProjectAction: (projectId: string, script: ProjectScript) => boolean;
+    /** The workspace a content search covers, and opening one of its files at a line. */
+    readonly searchWorkspace: () => { readonly cwd: string; readonly label: string } | null;
+    readonly openFile: (cwd: string, path: string, line: number) => boolean;
   },
 ): void {
   sections.register("projects", (host) =>
     projectsSection(host, { runAction: options.runProjectAction }),
+  );
+  sections.register("projectSearch", (host) =>
+    projectSearchSection(host, {
+      workspace: options.searchWorkspace,
+      openFile: options.openFile,
+    }),
   );
   sections.register("scheduledTasks", scheduledTasksSection);
   sections.register("storage", storageSection);

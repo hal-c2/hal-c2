@@ -511,7 +511,9 @@ export function createHost(options: HostOptions): Host {
     // An open settings page keeps the keys when a menu over it closes.
     const next =
       requested === "compose"
-        ? (sections?.mode() ?? (composer?.draft() ? "newThread" : threadView.composeMode()))
+        ? (sections?.mode() ??
+          // The file browser keeps the keys when the palette over it closes.
+          (filesOpen ? files.mode() : composer?.draft() ? "newThread" : threadView.composeMode()))
         : requested;
     if (next === mode) return;
     mode = next;
@@ -614,7 +616,12 @@ export function createHost(options: HostOptions): Host {
       filesOpen = open;
       publishLayout();
       if (open) setMode("files");
-      else if (mode === "files") setMode(restingMode());
+      else if (mode === "files" || mode === "fileEdit") setMode(restingMode());
+    },
+    status: (text, kind) => store.setStatus(text, kind),
+    setEditing: (editing) => {
+      if (editing) setMode("fileEdit");
+      else if (mode === "fileEdit") setMode("files");
     },
     publish: (next) => state.set("files", next),
   });
@@ -689,13 +696,31 @@ export function createHost(options: HostOptions): Host {
     // An action runs in the open thread's workspace, so only for a thread of its project.
     runProjectAction: (projectId, script) =>
       selectedWorkspace()?.projectId === projectId && terminal.runAction(script),
+    searchWorkspace: () => {
+      const workspace = selectedWorkspace();
+      if (workspace) return { cwd: workspace.cwd, label: workspace.title };
+      const current = store.getState();
+      const projects = current.shell?.projects ?? [];
+      const project =
+        projects.find((candidate) => candidate.id === current.projectScopeId) ??
+        (projects.length === 1 ? projects[0] : undefined);
+      return project ? { cwd: project.workspaceRoot, label: project.title } : null;
+    },
+    // The file viewer shows the open thread's workspace.
+    openFile: (cwd, path, line) => {
+      if (selectedWorkspace()?.cwd !== cwd) return false;
+      sections!.close();
+      return dispatch("files.view", { path, line });
+    },
   });
   /** The files, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
     [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
-      id: command.action,
+      // An action offered several times (one per editor) is told apart by its title.
+      id: "payload" in command ? `${command.action}:${command.title}` : command.action,
       title: command.title,
       action: command.action,
+      ...("payload" in command ? { payload: command.payload } : {}),
     }));
 
   let composer: ReturnType<typeof createComposer> | null = null;

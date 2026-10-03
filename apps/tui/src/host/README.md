@@ -173,6 +173,15 @@ window of tree rows around the selection, and `viewer` for an opened file (a
 slice of its lines from `top`). It opens focused (`mode: "files"`); another
 panel kind or another thread closes it. Actions are `files.*`
 (`filesState.ts`); stale listings and reads are dropped by generation.
+A Markdown, CSV / TSV or HTML file opens rendered (`viewer.lines`, laid out by
+the timeline's Markdown renderer; `src/filePreview.ts`) and `s` switches to
+its text. `e` opens the editor (`mode: "fileEdit"`, a `TextArea` filled when
+`viewer.editSeq` changes): the brick's timer asks for `files.edit.save` half a
+second after the last key, Esc saves and leaves, and a refused write keeps the
+editor open. `o` (or the palette, per editor) opens the file in an editor on
+the environment (`shell.openInEditor`). `files.view {path, line}` opens a file
+from elsewhere; the `projectSearch` section (`projects.searchContents`) uses it
+for its matches.
 
 `addProject` is the add-project flow (`addProjectState.ts`): source, then a
 local folder or a repository and its clone destination, with the folders

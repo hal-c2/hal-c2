@@ -39,6 +39,7 @@ Item {
     Keymap { priority: 1; enabled: keys.mode === "imagePreview"; bindings: keys.layers.imagePreview; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "diff"; bindings: keys.layers.diff; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "files"; bindings: keys.layers.files; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { priority: 1; enabled: keys.mode === "fileEdit"; bindings: keys.layers.fileEdit; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "settings"; bindings: keys.layers.settings; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "section"; bindings: keys.layers.section; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "sectionInput"; bindings: keys.layers.sectionInput; onActivated: (action, event) => keys.run(action, event) }

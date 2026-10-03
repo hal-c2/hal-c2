@@ -12,6 +12,7 @@ import type { TuiFilesState } from "../../../src/host/filesState.ts";
 import { threadKey } from "../../../src/host/sidebarState.ts";
 import type { Environment } from "../environment.ts";
 import { project, shell } from "../fakeClient.ts";
+import { PREVIEW_FILES } from "../filePreviewFixtures.ts";
 import { chooseCommand } from "../threadUi.ts";
 import { openRevertPicker } from "./timeline.steps.ts";
 import { boot, findObject, pressKey, settle, useClient, type World } from "../world.ts";
@@ -99,8 +100,8 @@ async function selectRow(ctx: World, path: string) {
 }
 
 /** Open a file from the tree: expand each folder on its path, then Enter on it. */
-async function openFile(ctx: FilesWorld, path: string) {
-  if (!files(ctx)?.open) await browse(ctx);
+export async function openFile(ctx: FilesWorld, path: string) {
+  if (!ctx.host || !files(ctx)?.open) await browse(ctx);
   const segments = path.split("/");
   for (let depth = 1; depth < segments.length; depth += 1) {
     const folder = segments.slice(0, depth).join("/");
@@ -279,9 +280,13 @@ step("the tree groups them into the same folders as forward slashes", async (ctx
 // --- Opening files -----------------------------------------------------------------
 
 // One step for every "the user opens …": the revert picker by its palette title, else a file.
-step("the user opens {string}", (ctx: FilesWorld, label: string) =>
-  label === "Revert to checkpoint…" ? openRevertPicker(ctx) : openFile(ctx, label),
-);
+step("the user opens {string}", (ctx: FilesWorld, label: string) => {
+  if (label === "Revert to checkpoint…") return openRevertPicker(ctx);
+  // The files the viewer renders (files-viewer.steps.ts) are in the workspace when asked for.
+  const preview = PREVIEW_FILES[label];
+  if (preview) ctx.files = { ...(ctx.files ?? DEFAULT_FILES()), [label]: preview.contents };
+  return openFile(ctx, label);
+});
 step("the user browses files and opens {string}", async (ctx: FilesWorld, path: string) => {
   await browse(ctx);
   await openFile(ctx, path);

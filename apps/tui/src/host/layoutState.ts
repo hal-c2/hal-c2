@@ -18,7 +18,9 @@ export type TuiMode =
   // A settings page (`settingsSections.ts`): its rows, its one-line field, its question.
   | "section"
   | "sectionInput"
-  | "sectionConfirm";
+  | "sectionConfirm"
+  // The file viewer's editor has the keys (`filesState.ts`).
+  | "fileEdit";
 
 export interface TuiSize {
   readonly columns: number;

@@ -96,6 +96,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "Enter · →", description: "Run / open / apply", chords: ["return", "right"] },
       { keys: "← · Backspace", description: "Files: up a folder", chords: ["left", "backspace"] },
       {
+        keys: "s · e · o",
+        description: "File: rendered / source, edit, open in the environment's editor",
+        chords: ["s", "e", "o"],
+      },
+      {
         keys: "PgUp/PgDn",
         description: "Scroll a file, diff or settings",
         chords: ["pageup", "pagedown"],
@@ -236,6 +241,10 @@ export const KEYMAP_LAYERS = {
     pagedown: "files.scrollDown",
     "return, right": "files.activate",
     "left, backspace": "files.up",
+    s: "files.viewer.toggleSource",
+    e: "files.edit",
+    o: "files.openInEditor",
+    "ctrl+k": "palette.open",
     escape: "files.back",
     "ctrl+p": "rightPanel.blur",
   },
@@ -253,6 +262,7 @@ export const KEYMAP_LAYERS = {
     "ctrl+p": "section.close",
     "ctrl+k": "palette.open",
   },
+  fileEdit: { escape: "files.edit.done" },
   sectionInput: { escape: "section.input.cancel" },
   sectionConfirm: { y: "section.confirm.yes", "n, escape": "section.confirm.no" },
   panel: {

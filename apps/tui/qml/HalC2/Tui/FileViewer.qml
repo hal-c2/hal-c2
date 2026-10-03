@@ -36,9 +36,53 @@ Rectangle {
         color: viewer.file && viewer.file.status === "error" ? Theme.colors.error : Theme.colors.dim
     }
 
+    // The rendering of a Markdown, table or HTML file; `s` switches to its text.
+    Repeater {
+        model: viewer.file !== null && viewer.file.message === "" && viewer.file.rendered ? viewer.file.lines : []
+        delegate: Text {
+            flexShrink: 0
+            height: 1
+            wrapMode: "none"
+            truncate: true
+            text: modelData
+        }
+    }
+
+    // The editor (`e`): what is typed is saved once the typing pauses, and on Esc.
+    TextArea {
+        id: editor
+        objectName: "fileEditor"
+        readonly property bool editing: viewer.file !== null && viewer.file.editing
+        // Typing breaks a `text` binding, so the editor is filled each time it opens.
+        readonly property int editSeq: viewer.file ? viewer.file.editSeq : 0
+        onEditSeqChanged: if (viewer.file && viewer.file.editing) text = viewer.file.editText
+        visible: editing
+        onVisibleChanged: if (visible) forceActiveFocus()
+        focus: editing
+        flexGrow: 1
+        flexShrink: 1
+        flexBasis: 0
+        wrapMode: "none"
+        color: Theme.colors.text
+        focusedColor: Theme.colors.text
+        backgroundColor: Theme.colors.bg
+        focusedBackgroundColor: Theme.colors.bg
+        cursorColor: Theme.colors.accent
+        onTextEdited: {
+            Shell.dispatch("files.edit.set", { text: text })
+            saveTimer.restart()
+        }
+    }
+
+    Timer {
+        id: saveTimer
+        interval: 500
+        onTriggered: Shell.dispatch("files.edit.save")
+    }
+
     Code {
         objectName: "fileViewerCode"
-        visible: viewer.file !== null && viewer.file.message === ""
+        visible: viewer.file !== null && viewer.file.message === "" && !viewer.file.rendered && !viewer.file.editing
         flexGrow: 1
         flexShrink: 1
         flexBasis: 0
