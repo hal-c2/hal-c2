@@ -17,6 +17,7 @@ import {
 import { createAttachmentPreviews } from "./attachmentPreviews.ts";
 import { buildImageViewerState, type TuiImageViewerState } from "./imageViewer.ts";
 import type { TuiMode, TuiSize } from "./layoutState.ts";
+import type { PaletteCommand } from "./paletteState.ts";
 import { chunk, styled } from "./styledText.ts";
 import {
   nextThreadAlerts,
@@ -63,6 +64,8 @@ export interface ThreadViewOptions {
   readonly onQuestionChange?: () => void;
   /** The diff or image view opened or closed over the conversation pane. */
   readonly paneReplacedChanged?: () => void;
+  /** Put text on the terminal's clipboard; false when the terminal refuses. */
+  readonly copyToClipboard?: ((text: string) => boolean) | undefined;
 }
 
 export interface ThreadView {
@@ -78,6 +81,10 @@ export interface ThreadView {
   readonly resize: () => void;
   /** The diff or image view has the conversation pane. */
   readonly paneReplaced: () => boolean;
+  /** The user stopped this turn from this client. */
+  readonly turnInterrupted: (turnId: string) => void;
+  /** The open thread's palette entries (copy the reply, …). */
+  readonly paletteCommands: () => PaletteCommand[];
   /** Resolves once attachment links and previews asked for so far have landed. */
   readonly settled: () => Promise<void>;
   /** The question the composer shows (open, not set aside): how many options it lists. */
@@ -164,6 +171,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   let alerts: ReadonlyArray<ThreadAlert> = [];
   let alertSeq = 0;
   let viewedThreadId: string | null = null;
+  /** Turns the user stopped in this session: their work stays open once they settle. */
+  const interruptedTurns = new Set<string>();
   let imageViewer: TuiImageViewerState | null = null;
   const cellPixels = () => options.cellPixels?.() ?? null;
   const attachments = createAttachmentPreviews({
@@ -191,6 +200,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       loadingOlderTurns: page?.loadingOlder ?? false,
       approvalCount: approvals.length,
       view,
+      openTurns: interruptedTurns,
       paneWidth,
       nowMs: options.nowMs(),
       palette,
@@ -244,6 +254,37 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     viewImage(null);
     if (options.mode() === "imagePreview") options.setMode("compose");
   };
+
+  // --- clipboard -------------------------------------------------------------
+
+  const copy = (text: string, label: string) => {
+    const copied = options.copyToClipboard?.(text) ?? false;
+    store.setStatus(
+      copied ? `${label} copied.` : "Clipboard not supported by this terminal.",
+      copied ? "success" : "error",
+    );
+    return copied;
+  };
+
+  /** The agent's latest finished reply, as it was written (its markdown). */
+  const latestReply = () =>
+    detail?.messages.findLast(
+      (message) =>
+        message.role === "assistant" && !message.streaming && message.text.trim().length > 0,
+    ) ?? null;
+
+  const paletteCommands = (): PaletteCommand[] => [
+    ...(latestReply()
+      ? [
+          {
+            id: "copy-reply",
+            title: "Copy reply",
+            keywords: "clipboard markdown answer",
+            action: "timeline.reply.copy",
+          },
+        ]
+      : []),
+  ];
 
   const requestScroll = (to: "top" | "bottom" | null, by = 0) => {
     scrollSeq += 1;
@@ -830,6 +871,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "timeline.files.toggleAll":
         toggleAllDirs(Number(field(payload, "turnCount")));
         return true;
+      case "timeline.reply.copy": {
+        const reply = latestReply();
+        if (reply) copy(reply.text, "Reply");
+        return true;
+      }
       case "image.open":
         openImage(field(payload, "id"));
         return true;
@@ -923,6 +969,10 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       if (imageViewer) viewImage(imageViewer.id);
     },
     paneReplaced: () => diff.open || imageViewer !== null,
+    turnInterrupted: (turnId) => {
+      interruptedTurns.add(turnId);
+    },
+    paletteCommands,
     settled: attachments.settled,
     question: () => {
       const current = activeQuestion()?.questions[question.questionIndex];

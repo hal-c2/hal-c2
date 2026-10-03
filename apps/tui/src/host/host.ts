@@ -300,6 +300,7 @@ export function createHost(options: HostOptions): Host {
     composerWidth: () => composerSurfaceWidth(layout.chatWidth),
     paneReplacedChanged: () => publishLayout(),
     onQuestionChange: () => composer?.sync(),
+    copyToClipboard: options.copyToClipboard,
   });
   let layout: TuiLayoutState;
   // The rows each popover above the prompt asks for, as ChatView sums them.
@@ -636,6 +637,7 @@ export function createHost(options: HostOptions): Host {
       publishSidebar();
       publishPage();
     },
+    onInterrupt: (turnId) => threadView.turnInterrupted(turnId),
     onRowsChange: (rows) => {
       editorRows = rows;
       publishLayout();
@@ -663,6 +665,7 @@ export function createHost(options: HostOptions): Host {
     // diff, source-control, settings, files, add-project, terminal and cluster entries.
     extraCommands: () => [
       ...threadActions.paletteCommands(),
+      ...threadView.paletteCommands(),
       ...detailCommands({
         panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
         hasCheckpoints:

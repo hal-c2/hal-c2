@@ -25,6 +25,7 @@ import {
   workLogLabel,
   workLogPreview,
   workLogStatusKind,
+  workLogStatusLabel,
   type WorkLogEntry,
 } from "../worklog.ts";
 import type { AttachmentPreview } from "./attachmentPreviews.ts";
@@ -51,6 +52,7 @@ export function resolveTimelineWindow(
 /** View state the host keeps per thread for the timeline. */
 export interface TimelineView {
   readonly expandedGroups: ReadonlySet<string>;
+  /** Turn folds the user flipped from how they start (folded, or open for `openTurns`). */
   readonly expandedFolds: ReadonlySet<string>;
   readonly expandedMessages: ReadonlySet<string>;
   /** Collapsed changed-files folders, keyed by checkpoint turn count. */
@@ -144,6 +146,8 @@ export interface TimelineInput {
   readonly loadingOlderTurns: boolean;
   readonly approvalCount: number;
   readonly view: TimelineView;
+  /** Turns whose fold starts open: the ones the user stopped in this session. */
+  readonly openTurns?: ReadonlySet<string>;
   /** Width of the conversation pane (border and padding included). */
   readonly paneWidth: number;
   readonly nowMs: number;
@@ -215,6 +219,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     palette,
     width,
     view,
+    openTurns: input.openTurns ?? new Set(),
     checkpointByMessage,
     attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
     cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
@@ -343,6 +348,7 @@ interface RowContext {
   readonly palette: Palette;
   readonly width: number;
   readonly view: TimelineView;
+  readonly openTurns: ReadonlySet<string>;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
   readonly attachments: (attachmentId: string) => AttachmentPreview;
   readonly cellPixels: CellPixels;
@@ -438,7 +444,7 @@ function pushRow(items: TimelineItem[], row: TimelineRow, ctx: RowContext): void
     pushFoldable(items, row, ctx);
     return;
   }
-  const expanded = ctx.view.expandedFolds.has(row.id);
+  const expanded = ctx.view.expandedFolds.has(row.id) !== ctx.openTurns.has(row.turnId);
   items.push(
     item(
       row.id,
@@ -619,14 +625,17 @@ function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
   const label = workLogLabel(entry);
   const preview = workLogPreview(entry);
   const status = workLogStatusKind(entry);
-  const glyph = status === "neutral" ? null : STATUS_ICONS[status].glyph;
+  const word = workLogStatusLabel(entry);
+  // A call that neither succeeded nor failed (declined, stopped) is the neutral dash.
+  const glyph = status !== "neutral" || word !== null ? STATUS_ICONS[status].glyph : null;
+  const mark = [glyph, word].filter((part) => part !== null).join(" ");
   return styled(
     chunk(`${workLogIcon(entry)} `, {
       fg: entry.tone === "error" ? palette.error : palette.accent,
     }),
     chunk(label),
-    glyph !== null &&
-      chunk(` ${glyph}`, {
+    mark.length > 0 &&
+      chunk(` ${mark}`, {
         fg:
           status === "success"
             ? palette.success
@@ -635,7 +644,9 @@ function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
               : palette.faint,
       }),
     preview !== null &&
-      chunk(`  ${clip(preview, Math.max(8, width - label.length - 8))}`, { fg: palette.dim }),
+      chunk(`  ${clip(preview, Math.max(8, width - label.length - mark.length - 8))}`, {
+        fg: palette.dim,
+      }),
   );
 }
 
