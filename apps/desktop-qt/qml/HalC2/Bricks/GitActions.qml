@@ -406,12 +406,19 @@ RowLayout {
         }
     }
     // ---- Publish repository ------------------------------------------
+    // Three steps: the host (and whether it is ready), the repository and
+    // its visibility, then a summary to confirm.
     Popup {
         id: publishDialog
         objectName: "publishDialog"
 
         // Open while GitController has the dialog open; Escape and Cancel tell it.
         readonly property var form: git.ready ? (git.model.publishing ?? null) : null
+        readonly property bool busy: form?.busy ?? false
+        readonly property var hosts: form?.hosts ?? []
+        readonly property var host: hosts.length > 0 ? hosts[Math.max(0, provider.currentIndex)] : null
+        // 0: host, 1: repository, 2: summary.
+        property int step: 0
 
         onFormChanged: {
             if (form !== null && !opened) {
@@ -435,7 +442,10 @@ RowLayout {
                 Shell.dispatch("git.publish.cancel");
             }
         }
-        onOpened: repository.text = ""
+        onOpened: {
+            repository.text = "";
+            step = 0;
+        }
 
         background: Rectangle {
             radius: Theme.radius
@@ -455,69 +465,83 @@ RowLayout {
             }
 
             Text {
+                objectName: "publishStep"
                 Layout.fillWidth: true
-                text: qsTr("Create the repository on its host, add it as a remote and push this branch.")
+                text: [qsTr("Step 1 of 3 · Host"), qsTr("Step 2 of 3 · Repository"), qsTr("Step 3 of 3 · Summary")][publishDialog.step]
                 color: git.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+            }
+
+            // The host.
+            ComboBox {
+                id: provider
+
+                objectName: "publishHost"
+                Layout.fillWidth: true
+                visible: publishDialog.step === 0
+                popup.scale: publishDialog.scale
+                popup.transformOrigin: Item.TopLeft
+                textRole: "label"
+                valueRole: "value"
+                model: publishDialog.hosts
+            }
+            Text {
+                objectName: "publishHostHint"
+                Layout.fillWidth: true
+                visible: publishDialog.step === 0 && text.length > 0
+                text: publishDialog.host?.hint ?? ""
+                color: Theme.palette.color("warning", "#e0af68")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 6
-
-                ComboBox {
-                    id: provider
-
-                    popup.scale: publishDialog.scale
-                    popup.transformOrigin: Item.TopLeft
-                    textRole: "label"
-                    valueRole: "value"
-                    model: [
-                        {
-                            value: "github",
-                            label: "GitHub"
-                        },
-                        {
-                            value: "gitlab",
-                            label: "GitLab"
-                        }
-                    ]
-                }
-
-                ComboBox {
-                    id: visibility
-
-                    popup.scale: publishDialog.scale
-                    popup.transformOrigin: Item.TopLeft
-                    textRole: "label"
-                    valueRole: "value"
-                    model: [
-                        {
-                            value: "private",
-                            label: qsTr("Private")
-                        },
-                        {
-                            value: "public",
-                            label: qsTr("Public")
-                        }
-                    ]
-                }
-            }
-
+            // The repository and who sees it.
             TextField {
                 id: repository
 
+                objectName: "publishRepository"
                 Layout.fillWidth: true
+                visible: publishDialog.step === 1
                 placeholderText: qsTr("owner/repository")
                 placeholderTextColor: git.muted
                 color: git.foreground
                 font.pixelSize: Math.round(13 * Theme.fontScale)
-                enabled: !(publishDialog.form?.busy ?? false)
-                onAccepted: publishButton.clicked()
+                onAccepted: nextButton.clicked()
+            }
+            ComboBox {
+                id: visibility
+
+                objectName: "publishVisibility"
+                visible: publishDialog.step === 1
+                popup.scale: publishDialog.scale
+                popup.transformOrigin: Item.TopLeft
+                textRole: "label"
+                valueRole: "value"
+                model: [
+                    {
+                        value: "private",
+                        label: qsTr("Private")
+                    },
+                    {
+                        value: "public",
+                        label: qsTr("Public")
+                    }
+                ]
+            }
+
+            // What publishing will do.
+            Text {
+                objectName: "publishSummary"
+                Layout.fillWidth: true
+                visible: publishDialog.step === 2
+                text: qsTr("Create the %1 repository %2 on %3, add it as the remote origin and push %4.").arg(visibility.currentValue === "public" ? qsTr("public") : qsTr("private")).arg(repository.text.trim()).arg(publishDialog.host?.label ?? "").arg(git.ready && git.model.branch ? git.model.branch : qsTr("this branch"))
+                color: git.foreground
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                wrapMode: Text.Wrap
             }
 
             Text {
+                objectName: "publishError"
                 Layout.fillWidth: true
                 visible: text !== ""
                 text: publishDialog.form?.error ?? ""
@@ -535,17 +559,40 @@ RowLayout {
                 }
 
                 ShellButton {
-                    text: qsTr("Cancel")
-                    enabled: !(publishDialog.form?.busy ?? false)
-                    onClicked: publishDialog.close()
+                    objectName: "publishBack"
+                    text: publishDialog.step === 0 ? qsTr("Cancel") : qsTr("Back")
+                    enabled: !publishDialog.busy
+                    onClicked: {
+                        if (publishDialog.step === 0) {
+                            publishDialog.close();
+                        } else {
+                            publishDialog.step -= 1;
+                        }
+                    }
                 }
 
                 ShellButton {
-                    id: publishButton
+                    id: nextButton
 
+                    objectName: "publishNext"
                     primary: true
-                    text: publishDialog.form?.busy ? qsTr("Publishing…") : qsTr("Publish")
-                    enabled: !(publishDialog.form?.busy ?? false) && repository.text.trim() !== ""
+                    visible: publishDialog.step < 2
+                    text: qsTr("Next")
+                    // A host that is not ready goes no further.
+                    enabled: publishDialog.step === 0 ? (publishDialog.host?.ready ?? false) : repository.text.trim() !== ""
+                    onClicked: {
+                        if (enabled) {
+                            publishDialog.step += 1;
+                        }
+                    }
+                }
+
+                ShellButton {
+                    objectName: "publishConfirm"
+                    primary: true
+                    visible: publishDialog.step === 2
+                    text: publishDialog.busy ? qsTr("Publishing…") : qsTr("Publish")
+                    enabled: !publishDialog.busy
                     onClicked: Shell.dispatch("git.publish.submit", {
                         provider: provider.currentValue,
                         visibility: visibility.currentValue,

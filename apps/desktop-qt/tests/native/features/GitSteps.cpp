@@ -10,7 +10,9 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QQuickItem>
 #include <QRegularExpression>
+#include <QTest>
 #include <QUrl>
 
 #include <memory>
@@ -366,27 +368,203 @@ void onDefaultBranch(FakeCheckout& git, const QString& branch) {
   if (git.changed.isEmpty()) git.changed = {QStringLiteral("src/cart.ts")};
 }
 
+// The project's folder becomes the checkout the fake reports.
+void checkoutOf(World& world, const QString& project) {
+  FakeCheckout& checkout = fake(world);
+  checkout.cwd = QStringLiteral("/work/") + project;
+  world.mc.checkouts.insert(checkout.cwd, [&mc = world.mc] {
+    const FakeCheckout& git = mc.part<FakeCheckout>();
+    return QJsonObject{{QStringLiteral("local"), local(git)}, {QStringLiteral("remote"), remote(git)}};
+  });
+  world.mc.projects.insert(project, {{QStringLiteral("id"), project}, {QStringLiteral("title"), project}, {QStringLiteral("workspaceRoot"), checkout.cwd}, {QStringLiteral("scripts"), QJsonArray()}});
+}
+
+// A thread of `project` on the fake's checkout, open, on an MC that is
+// connected (now, or already).
+void openThreadIn(World& world, const QString& project) {
+  checkoutOf(world, project);
+  world.mc.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), project},
+                                      {QStringLiteral("branch"), QStringLiteral("feature/tax")},
+                                      {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+  if (world.shellSubscriptions() == 0) {
+    world.connect();
+  } else {
+    world.mc.sendRow(project, world.mc.projects.value(project), QStringLiteral("project"));
+    world.mc.sendRow(kThread, world.mc.threads.value(kThread));
+    world.sync();
+  }
+  const QString key = world.mc.environmentId + QLatin1Char(':') + kThread;
+  world.native().controller<NavigationController>()->open(NavigationController::Route::thread(key));
+  world.waitFor([&] { return git(world).value(QStringLiteral("available")).toBool(); },
+                [&] { return QStringLiteral("the git actions to show; they are %1").arg(show(git(world))); });
+}
+
+// The git actions as the GitActions brick draws them, with its dialogs.
+Brick& gitBrick(World& world) {
+  if (!world.brick) world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nGitActions {}\n", QSize(900, 700));
+  return *world.brick;
+}
+
+const QString kNotAuthenticated = QStringLiteral("GitHub is not authenticated. Open Settings -> Source Control for setup guidance.");
+
 const Steps steps([] {
   const QString q = kQuoted;
 
   step(QStringLiteral("a connected environment with a thread in the git project %1(?: with the remote %1)?").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString project = c[0];
-    FakeCheckout& checkout = fake(world);
-    checkout.cwd = QStringLiteral("/work/") + project;
-    if (!c.value(1).isEmpty()) checkout.remoteName = c.value(1);
-    world.mc.checkouts.insert(checkout.cwd, [&mc = world.mc] {
-      const FakeCheckout& git = mc.part<FakeCheckout>();
-      return QJsonObject{{QStringLiteral("local"), local(git)}, {QStringLiteral("remote"), remote(git)}};
-    });
-    world.mc.projects.insert(project, {{QStringLiteral("id"), project}, {QStringLiteral("title"), project}, {QStringLiteral("workspaceRoot"), checkout.cwd}, {QStringLiteral("scripts"), QJsonArray()}});
-    world.mc.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), project},
-                                        {QStringLiteral("branch"), QStringLiteral("feature/tax")},
-                                        {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+    if (!c.value(1).isEmpty()) fake(world).remoteName = c.value(1);
+    openThreadIn(world, c[0]);
+  });
+  // status-and-changes.feature and repository-discovery-clone-publish.feature.
+  step(QStringLiteral("a connected environment with the project %1 in a git repository").arg(q), [](World& world, const Captures& c, const Table&) {
+    checkoutOf(world, c[0]);
     world.connect();
-    const QString key = world.mc.environmentId + QLatin1Char(':') + kThread;
-    world.native().controller<NavigationController>()->open(NavigationController::Route::thread(key));
-    world.waitFor([&] { return git(world).value(QStringLiteral("available")).toBool(); },
-                  [&] { return QStringLiteral("the git actions to show; they are %1").arg(show(git(world))); });
+    world.sync();
+  });
+  step(QStringLiteral("a connected environment"), [](World& world, const Captures&, const Table&) {
+    world.connect();
+    world.sync();
+  });
+  step(QStringLiteral("the agent's turn ends after editing a file"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return git(world).value(QStringLiteral("available")).toBool() && git(world).value(QStringLiteral("files")).toList().isEmpty(); },
+                  [&] { return QStringLiteral("a clean checkout; the git actions are %1").arg(show(git(world))); });
+    // The MC watches the checkout and says what changed (vcs/watch.ex).
+    fake(world).changed = {QStringLiteral("src/cart.ts")};
+    settle(world);
+  });
+  step(QStringLiteral("the thread's status shows the new change without the user asking for a refresh"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QVariantList files = git(world).value(QStringLiteral("files")).toList();
+      return files.size() == 1 && files.first().toMap().value(QStringLiteral("path")) == QLatin1String("src/cart.ts");
+    }, [&] { return QStringLiteral("the change to show; the git actions are %1").arg(show(git(world))); });
+    expect(at(git(world), QStringLiteral("quickAction.label")).toString().startsWith(QLatin1String("Commit")), QStringLiteral("the git actions are %1").arg(show(git(world))));
+    for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+      expect(rpc.method != QLatin1String("vcs.refreshStatus"), QStringLiteral("the shell asked the MC to refresh"));
+    }
+  });
+  step(QStringLiteral("the project %1 is not in a git repository").arg(q), [](World& world, const Captures& c, const Table&) {
+    clean(fake(world));
+    fake(world).isRepo = false;
+    openThreadIn(world, c[0]);
+    world.waitFor([&] { return git(world).value(QStringLiteral("isRepo")) == false; },
+                  [&] { return QStringLiteral("Initialize Git to be on offer; the git actions are %1").arg(show(git(world))); });
+  });
+  step(QStringLiteral("the user initializes Git for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.state(QStringLiteral("workspace")).toMap().value(QStringLiteral("projectTitle")) == c[0], QStringLiteral("the thread is not in %1").arg(c[0]));
+    dispatch(world, QStringLiteral("git.init"));
+  });
+  step(QStringLiteral("%1 becomes a git repository").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return fake(world).initialized && git(world).value(QStringLiteral("isRepo")) == true && !git(world).value(QStringLiteral("initPending")).toBool(); },
+                  [&] { return QStringLiteral("the git actions are %1").arg(show(git(world))); });
+    bool asked = false;
+    for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+      asked = asked || (rpc.method == QLatin1String("vcs.init") && rpc.payload.value(QLatin1String("cwd")) == QStringLiteral("/work/") + c[0]);
+    }
+    expect(asked, QStringLiteral("the MC was not asked to initialize %1").arg(c[0]));
+  });
+  step(QStringLiteral("the git actions for %1 become available").arg(q), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return git(world).value(QStringLiteral("available")).toBool() && !git(world).value(QStringLiteral("menu")).toList().isEmpty(); },
+                  [&] { return QStringLiteral("the git actions; they are %1").arg(show(git(world))); });
+    expect(!menuEntry(world, QStringLiteral("Commit")).isEmpty(), QStringLiteral("the git menu is %1").arg(show(git(world).value(QStringLiteral("menu")))));
+  });
+
+  // Publishing (repository-discovery-clone-publish.feature), through the brick's dialog.
+  step(QStringLiteral("the project %1 has (?:commits and )?no remote").arg(q), [](World& world, const Captures& c, const Table&) {
+    clean(fake(world));
+    fake(world).hasRemote = false;
+    fake(world).upstream = false;
+    fake(world).ahead = {QStringLiteral("Add notes")};
+    openThreadIn(world, c[0]);
+    world.waitFor([&] { return at(git(world), QStringLiteral("quickAction.kind")) == QLatin1String("open_publish"); },
+                  [&] { return QStringLiteral("Publish repository to be recommended; the git actions are %1").arg(show(git(world))); });
+  });
+  step(QStringLiteral("the user chooses to publish the repository"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("git.quick"));
+  });
+  step(QStringLiteral("publishing begins for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return git(world).value(QStringLiteral("publishing")).typeId() == QMetaType::QVariantMap; },
+                  [&] { return QStringLiteral("the publish dialog to open; the git actions are %1").arg(show(git(world))); });
+    expect(world.state(QStringLiteral("workspace")).toMap().value(QStringLiteral("projectTitle")) == c[0] && fake(world).publishes.isEmpty(),
+           QStringLiteral("publishing is not for %1").arg(c[0]));
+    Brick& brick = gitBrick(world);
+    world.waitFor([&] { return brick.shows(QStringLiteral("Publish repository")) && brick.shows(QStringLiteral("Step 1 of 3 · Host")); },
+                  QStringLiteral("the publish dialog to be drawn"));
+  });
+  step(QStringLiteral("the user publishes the repository"), [](World& world, const Captures&, const Table&) {
+    gitBrick(world);
+    dispatch(world, QStringLiteral("git.quick"));
+    world.waitFor([&] { return at(git(world), QStringLiteral("publishing.hosts")).toList().value(0).toMap().value(QStringLiteral("ready")).toBool(); },
+                  [&] { return QStringLiteral("the hosts to be known; the git actions are %1").arg(show(git(world))); });
+  });
+  step(QStringLiteral("the user picks a host, names the repository, picks its visibility and confirms a summary"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = gitBrick(world);
+    const auto onStep = [&](const QString& label) {
+      world.waitFor([&] { return brick.shows(label); }, QStringLiteral("the dialog to reach \"%1\"").arg(label));
+    };
+    // The host.
+    onStep(QStringLiteral("Step 1 of 3 · Host"));
+    expect(brick.item(QStringLiteral("publishHost"))->property("currentValue") == QLatin1String("github"), QStringLiteral("GitHub is not the host offered first"));
+    brick.click(QStringLiteral("publishNext"));
+    // The repository and its visibility: no name, no next step.
+    onStep(QStringLiteral("Step 2 of 3 · Repository"));
+    expect(!brick.item(QStringLiteral("publishNext"))->isEnabled(), QStringLiteral("a repository with no name can be published"));
+    brick.click(QStringLiteral("publishRepository"));
+    for (const QChar ch : QStringLiteral("acme/notes")) QTest::keyClick(&brick.window(), ch.toLatin1());
+    brick.item(QStringLiteral("publishVisibility"))->setProperty("currentIndex", 1);
+    brick.click(QStringLiteral("publishNext"));
+    // The summary; nothing is published until it is confirmed.
+    onStep(QStringLiteral("Step 3 of 3 · Summary"));
+    const QString summary = brick.item(QStringLiteral("publishSummary"))->property("text").toString();
+    expect(summary == QLatin1String("Create the public repository acme/notes on GitHub, add it as the remote origin and push feature/tax."),
+           QStringLiteral("the summary reads \"%1\"").arg(summary));
+    expect(fake(world).publishes.isEmpty(), QStringLiteral("the repository was published before the summary was confirmed"));
+    // Back and forth keeps what was entered.
+    brick.click(QStringLiteral("publishBack"));
+    onStep(QStringLiteral("Step 2 of 3 · Repository"));
+    brick.click(QStringLiteral("publishNext"));
+    onStep(QStringLiteral("Step 3 of 3 · Summary"));
+    brick.click(QStringLiteral("publishConfirm"));
+    world.waitFor([&] { return git(world).value(QStringLiteral("publishing")).isNull(); },
+                  [&] { return QStringLiteral("the publish dialog to close; the git actions are %1").arg(show(git(world))); });
+    expect(fake(world).publishes.size() == 1, QStringLiteral("the MC was asked to publish %1 times").arg(fake(world).publishes.size()));
+    const QJsonObject input = fake(world).publishes.first();
+    expect(input.value(QLatin1String("repository")) == QLatin1String("acme/notes") && input.value(QLatin1String("visibility")) == QLatin1String("public") &&
+               input.value(QLatin1String("provider")) == QLatin1String("github") && input.value(QLatin1String("cwd")) == QLatin1String("/work/notes"),
+           QStringLiteral("the MC was asked %1").arg(show(input.toVariantMap())));
+  });
+  step(QStringLiteral("the GitHub CLI is not signed in"), [](World& world, const Captures&, const Table&) {
+    // `gh` is installed and has no account (SourceControlProviderDiscoveryItem).
+    world.mc.onRpc(QStringLiteral("server.discoverSourceControl"), [&mc = world.mc](const FakeMc::Rpc& rpc) {
+      const QJsonObject none{{QStringLiteral("_tag"), QStringLiteral("None")}};
+      mc.reply(rpc, QJsonObject{{QStringLiteral("versionControlSystems"), QJsonArray()},
+                                {QStringLiteral("sourceControlProviders"),
+                                 QJsonArray{QJsonObject{{QStringLiteral("kind"), QStringLiteral("github")}, {QStringLiteral("label"), QStringLiteral("GitHub")},
+                                                        {QStringLiteral("executable"), QStringLiteral("gh")}, {QStringLiteral("status"), QStringLiteral("available")},
+                                                        {QStringLiteral("installHint"), QStringLiteral("Install GitHub and make sure `gh` is on the PATH.")},
+                                                        {QStringLiteral("version"), none},
+                                                        {QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), QStringLiteral("unauthenticated")}, {QStringLiteral("account"), none},
+                                                                                              {QStringLiteral("host"), none}, {QStringLiteral("detail"), none}}}}}}});
+    });
+  });
+  step(QStringLiteral("the user picks GitHub to publish to"), [](World& world, const Captures&, const Table&) {
+    // A repository with nothing published yet.
+    clean(fake(world));
+    fake(world).hasRemote = false;
+    fake(world).upstream = false;
+    fake(world).ahead = {QStringLiteral("Add notes")};
+    openThreadIn(world, QStringLiteral("notes"));
+    Brick& brick = gitBrick(world);
+    dispatch(world, QStringLiteral("git.publish"));
+    world.waitFor([&] { return brick.shows(QStringLiteral("Step 1 of 3 · Host")); }, QStringLiteral("the publish dialog to be drawn"));
+    brick.item(QStringLiteral("publishHost"))->setProperty("currentIndex", 0);
+    expect(brick.item(QStringLiteral("publishHost"))->property("currentText") == QLatin1String("GitHub"), QStringLiteral("GitHub is not offered"));
+  });
+  step(QStringLiteral("the user is told GitHub is not authenticated and how to fix it"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = gitBrick(world);
+    world.waitFor([&] { return brick.shows(kNotAuthenticated); },
+                  [&] { return QStringLiteral("the host's hint; the git actions are %1").arg(show(git(world))); });
+    // And it goes no further.
+    expect(!brick.item(QStringLiteral("publishNext"))->isEnabled(), QStringLiteral("a host that is not signed in can be published to"));
+    expect(fake(world).publishes.isEmpty(), QStringLiteral("the MC was asked to publish"));
   });
 
   // The checkout's states.

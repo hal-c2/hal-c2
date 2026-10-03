@@ -31,7 +31,9 @@ class WorkspaceController;
 // republished once a second while it runs; anything that would land on the default branch waits for
 // `git.defaultBranch`. Pull is `vcs.pull`, Initialize Git `vcs.init`, and
 // Publish repository `sourceControl.publishRepository` from the brick's own
-// dialog (`git.publish` opens it). Actions on a linked environment run
+// dialog (`git.publish` opens it), which walks through the host (with whether
+// it is installed and signed in, from `server.discoverSourceControl`), the
+// repository and a summary to confirm. Actions on a linked environment run
 // through the link; a link that is down says why.
 class GitController : public QObject, public NativeController {
   Q_OBJECT
@@ -65,6 +67,8 @@ private:
            bool featureBranch = false, bool confirmed = false);
   void pull();
   void init();
+  // Opens the publish dialog and asks the MC which hosts are ready.
+  void openPublish();
   void submitPublish(const QVariantMap& args);
   void openPullRequest();
   void onActionFrame(const QJsonObject& frame);
@@ -104,6 +108,10 @@ private:
   struct Publishing {
     bool busy = false;
     QString error;
+    // The hosts it can publish to: [{value, label, ready, hint, account}],
+    // `hint` saying how to make a host ready (the web's
+    // getPublishProviderReadiness). Until the MC answers, none is ready.
+    QVariantList hosts;
   };
   std::optional<Publishing> m_publishing;
 };
