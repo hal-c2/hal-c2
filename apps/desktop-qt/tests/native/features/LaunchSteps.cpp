@@ -10,6 +10,7 @@
 #include "ComposerController.h"
 #include "DraftController.h"
 #include "Harness.h"
+#include "Launch.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "World.h"
@@ -281,3 +282,7 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+QList<QJsonObject> launchCalls(World& world) {
+  return world.mc.part<FakeLaunches>().calls;
+}

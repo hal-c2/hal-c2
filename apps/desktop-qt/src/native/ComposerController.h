@@ -291,6 +291,14 @@ private:
   QSet<QString> m_closed;
   // Drafts whose first send is on the way.
   QSet<QString> m_launching;
+  // The models a new thread's first message goes to when the user picked
+  // several (`composer.model.toggle {instanceId, model}`, a Shift-click in the
+  // picker), by draft: each starts its own thread in its own new worktree, in
+  // the background, so the project has to be a Git repository. Choosing a
+  // model the usual way goes back to one. Published as `modelPicker.multiple`.
+  QHash<QString, QList<QJsonObject>> m_fanout;
+  void toggleFanout(const QString& draftId, const QString& instanceId, const QString& model);
+  bool submitFanout(const QString& draftId);
   QVariantMap m_published;
   QVariant m_publishedComposer;
   QVariantMap m_publishedPicker;

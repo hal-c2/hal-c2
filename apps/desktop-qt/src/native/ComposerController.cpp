@@ -192,7 +192,12 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     }
     return true;
   }
+  if (action == QLatin1String("composer.model.toggle")) {
+    if (!m_draftId.isEmpty()) toggleFanout(m_draftId, map.value(QStringLiteral("instanceId")).toString(), map.value(QStringLiteral("model")).toString());
+    return true;
+  }
   if (action == QLatin1String("composer.model.select")) {
+    if (m_fanout.remove(target) > 0) publish();
     if (!target.isEmpty()) {
       selectModel(target, map.value(QStringLiteral("instanceId")).toString(), map.value(QStringLiteral("model")).toString());
     }
@@ -545,6 +550,8 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   if (text.trimmed().isEmpty() && attachments.isEmpty() && contexts.isEmpty()) return true;
   if (m_launching.contains(draftId)) return true;
 
+  if (m_fanout.value(draftId).size() > 1) return submitFanout(draftId);
+
   const WorkspaceController::Launch where = shell->controller<WorkspaceController>()->launch(draftId);
   if (!where.problem.isEmpty()) {
     toast(QStringLiteral("Could not create thread"), where.problem);
@@ -638,6 +645,106 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                    input.insert(QStringLiteral("initialMessage"), message);
                    start(input);
                  });
+  return true;
+}
+
+void ComposerController::toggleFanout(const QString& draftId, const QString& instanceId, const QString& model) {
+  auto* shell = NativeShell::of(this);
+  const auto* workspace = shell->controller<WorkspaceController>();
+  const bool repo = workspace && workspace->git() && workspace->git()->local.value(QLatin1String("isRepo")).toBool();
+  if (!repo) {
+    // One thread, in the project's folder: only one model can run there.
+    shell->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Only one model can be chosen"),
+                                               QStringLiteral("Multiple models need a new thread in a Git project. Each gets its own worktree."));
+    selectModel(draftId, instanceId, model);
+    return;
+  }
+  const QJsonObject picked{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}};
+  const auto same = [&picked](const QJsonObject& other) {
+    return other.value(QLatin1String("instanceId")) == picked.value(QLatin1String("instanceId")) &&
+           other.value(QLatin1String("model")) == picked.value(QLatin1String("model"));
+  };
+  QList<QJsonObject> list = m_fanout.value(draftId);
+  if (list.isEmpty()) {
+    const QJsonObject current = selection(draftId);
+    if (!current.isEmpty()) list.append({{QStringLiteral("instanceId"), current.value(QLatin1String("instanceId"))}, {QStringLiteral("model"), current.value(QLatin1String("model"))}});
+  }
+  if (list.removeIf(same) == 0) list.append(picked);
+  if (list.size() > 1) {
+    m_fanout.insert(draftId, list);
+  } else {
+    m_fanout.remove(draftId);
+    if (list.size() == 1) selectModel(draftId, list.constFirst().value(QLatin1String("instanceId")).toString(), list.constFirst().value(QLatin1String("model")).toString());
+  }
+  publish();
+}
+
+// One prompt to several models, as the web's: a thread per model, each in a
+// new worktree off the draft's base branch, started in the background while
+// the window stays on the draft.
+bool ComposerController::submitFanout(const QString& draftId) {
+  auto* shell = NativeShell::of(this);
+  auto* drafts = shell->controller<DraftController>();
+  auto* toasts = shell->controller<ToastController>();
+  const auto kept = drafts->draft(draftId);
+  if (!kept) return true;
+  const QString trimmed = kept->text.trimmed();
+  const WorkspaceController::Launch where = shell->controller<WorkspaceController>()->launch(draftId);
+  const QString base = where.strategy.value(QLatin1String("baseRef")).toString(where.strategy.value(QLatin1String("branch")).toString());
+  const auto* workspace = shell->controller<WorkspaceController>();
+  const bool repo = workspace->git() && workspace->git()->local.value(QLatin1String("isRepo")).toBool();
+  if (!where.problem.isEmpty() || !repo || base.isEmpty() || trimmed.isEmpty() || !m_drafts.value(draftId).attachments.isEmpty()) {
+    toasts->show(QStringLiteral("warning"), QStringLiteral("Choose models and a base branch"),
+                 QStringLiteral("Multiple models need a text prompt in a new thread of a Git project. Each gets its own worktree."));
+    return true;
+  }
+  if (!m_client->isReady() || !m_store->environmentOnline(where.environmentId)) {
+    toasts->show(QStringLiteral("warning"), QStringLiteral("Not connected: message not sent"),
+                 QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
+    return true;
+  }
+  struct Batch {
+    qsizetype pending = 0;
+    qsizetype started = 0;
+    QString problem;
+  };
+  auto batch = std::make_shared<Batch>();
+  const QList<QJsonObject> selections = m_fanout.take(draftId);
+  batch->pending = selections.size();
+  for (const QJsonObject& modelSelection : selections) {
+    const QJsonObject input{
+        {QStringLiteral("commandId"), newId()},
+        {QStringLiteral("creationSource"), QStringLiteral("web")},
+        {QStringLiteral("threadId"), newId()},
+        {QStringLiteral("projectId"), where.projectId},
+        {QStringLiteral("title"), launchTitle(trimmed, QString())},
+        {QStringLiteral("generateTitle"), true},
+        {QStringLiteral("runtimeMode"), runtimeModeOf(draftId)},
+        {QStringLiteral("interactionMode"), interactionModeOf(draftId)},
+        {QStringLiteral("workspaceStrategy"), QJsonObject{{QStringLiteral("type"), QStringLiteral("worktree")}, {QStringLiteral("baseRef"), base}}},
+        {QStringLiteral("modelSelection"), modelSelection},
+        {QStringLiteral("initialMessage"), QJsonObject{{QStringLiteral("messageId"), newId()}, {QStringLiteral("text"), trimmed}, {QStringLiteral("attachments"), QJsonArray()}}},
+    };
+    m_client->call(this, where.environmentId, QStringLiteral("orchestration.launchThread"), input,
+                   [this, batch](const QJsonValue&, const std::optional<QString>& error) {
+                     if (error) {
+                       if (batch->problem.isEmpty()) batch->problem = *error;
+                     } else {
+                       ++batch->started;
+                     }
+                     if (--batch->pending > 0) return;
+                     auto* toasts = NativeShell::of(this)->controller<ToastController>();
+                     if (batch->started > 0) {
+                       toasts->show(QStringLiteral("success"), QStringLiteral("Started %1 %2 in background").arg(batch->started).arg(
+                                                                   batch->started == 1 ? QStringLiteral("thread") : QStringLiteral("threads")));
+                     }
+                     if (!batch->problem.isEmpty()) toasts->error(QStringLiteral("A background prompt could not be sent"), batch->problem);
+                   });
+  }
+  // The draft is ready for another prompt.
+  drafts->renew(draftId);
+  setText(draftId, QString(), 0);
+  publish();
   return true;
 }
 
@@ -1609,6 +1716,11 @@ QVariantMap ComposerController::pickerState() const {
                                  current.value(QLatin1String("instanceId")).toString(),
                                  current.value(QLatin1String("model")).toString())},
       {QStringLiteral("locked"), lock.has_value()},
+      {QStringLiteral("multiple"), [this, &target] {
+         QVariantList picked;
+         for (const QJsonObject& selection : m_fanout.value(target)) picked.append(selection.toVariantMap());
+         return picked;
+       }()},
       {QStringLiteral("shortcut"),
        toggle.isNull() ? QVariant::fromValue(nullptr) : toggle.toMap().value(QStringLiteral("label"))},
       {QStringLiteral("previousProvider"), key(QStringLiteral("modelPicker.previousProvider"))},
