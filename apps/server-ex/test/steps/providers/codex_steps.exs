@@ -270,6 +270,162 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
+  # --- questions asked without waiting ---------------------------------------------------
+
+  # Codex's async question: an agent message that carries questions and waits for no
+  # reply, delivered as the app-server reports it.
+  defp ask_async(context) do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    context =
+      World.codex_notify(context, @thread, "item/completed", %{
+        "threadId" => runtime.native_thread_id,
+        "turnId" => runtime.turn.native_turn_id,
+        "item" => %{
+          "type" => "agentMessage",
+          "id" => "msg-async",
+          "delivery" => "async",
+          "text" => "",
+          "questions" => [%{"title" => "Which color?", "options" => ["Red", "Blue"]}]
+        }
+      })
+
+    request = World.await_request(context, @thread)
+    assert request["responseCapability"] == %{"type" => "message"}
+    Map.put(context, :request, request)
+  end
+
+  defp answer_async(context) do
+    reply =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "commandId" => "cmd-answer-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "answers" => %{"0" => "Red"}
+      })
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  defp request_now(context),
+    do: StreamState.get(World.stream(context, @thread), "runtime-request")[context.request["id"]]
+
+  step "Codex asked a question and kept working", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+    context = ask_async(context)
+    # The question does not hold the run: it is still running, not waiting.
+    assert %{"status" => "running"} = World.latest_run(context, @thread)
+    context
+  end
+
+  step "the user answers it", context do
+    answer_async(context)
+  end
+
+  step "the answer reaches the running turn as a new message", context do
+    steer =
+      World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/steer"))
+
+    assert [%{"text" => "Which color?
+Red"}] = get_in(steer, ["in", "params", "input"])
+    assert %{"status" => "resolved"} = request_now(context)
+    assert [_] = World.runs(context, @thread)
+    context
+  end
+
+  step "Codex asked a question and then finished the turn", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+    context = ask_async(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+
+    World.await_runs(context, @thread, ["completed"])
+    assert %{"status" => "pending"} = request_now(context)
+    context
+  end
+
+  step "the answer starts a new turn", context do
+    World.await_value(context, @thread, fn state ->
+      runs = state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
+      with [%{"status" => "completed"}, %{"userMessageId" => message}] <- runs,
+           %{"text" => "Which color?
+Red"} <- StreamState.get(state, "message")[message],
+           do: true,
+           else: (_ -> nil)
+    end)
+
+    assert %{"status" => "resolved"} = request_now(context)
+    # Sending the same answer again changes nothing.
+    answer_async(context)
+    assert length(World.runs(context, @thread)) == 2
+    context
+  end
+
+  step "Codex asked a question that is not answered yet", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+    ask_async(context)
+  end
+
+  # The client's socket drops, and the provider behind the question goes with its run.
+  step "the client reconnects to the MC", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    World.await_runs(context, @thread, ["failed"])
+    context |> World.disconnect() |> World.put_client(HalC2.Test.Mc.connect(context.mc))
+  end
+
+  step "the question is still waiting for an answer", context do
+    thread_id = World.thread_id(context, @thread)
+    id = System.unique_integer([:positive])
+
+    client =
+      HalC2.Test.Mc.sub(World.client(context), id, %{
+        "type" => "stream",
+        "mc" => Atom.to_string(node()),
+        "stream" => thread_id
+      })
+
+    {frame, client} = HalC2.Test.Mc.await(client, &(&1["id"] == id), 5_000)
+    context = World.put_client(context, client)
+    request_id = context.request["id"]
+
+    # The new socket's snapshot of the thread carries the open question.
+    assert Enum.any?(
+             frame["rows"],
+             &match?(["runtime-request", ^request_id, %{"status" => "pending"}], &1)
+           )
+
+    assert %{"status" => "pending"} = request_now(context)
+
+    assert [%{"status" => "waiting", "questions" => [%{"question" => "Which color?"}]}] =
+             World.entities(context, @thread, "turn-item")
+             |> Enum.filter(&(&1["type"] == "user_input_request"))
+
+    # It can still be answered: the answer starts a turn.
+    answer_async(context)
+    assert %{"status" => "resolved"} = request_now(context)
+    context
+  end
+
   step "the thread is in plan mode on Codex", context do
     World.fake_providers(context)
   end

@@ -186,19 +186,16 @@ Feature: Codex
     When the user opens the model picker in an existing Codex thread
     Then that instance is not offered for the thread
 
-  @backlog
   Scenario: Answering a question while Codex keeps working
     Given Codex asked a question and kept working
     When the user answers it
     Then the answer reaches the running turn as a new message
 
-  @backlog
   Scenario: An answer after Codex finished starts a new turn
     Given Codex asked a question and then finished the turn
     When the user answers it
     Then the answer starts a new turn
 
-  @backlog
   Scenario: Unanswered Codex questions survive a reconnect
     Given Codex asked a question that is not answered yet
     When the client reconnects to the MC

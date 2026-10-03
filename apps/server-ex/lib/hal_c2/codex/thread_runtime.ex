@@ -806,6 +806,37 @@ defmodule HalC2.Codex.ThreadRuntime do
          |> ensure_item(native, :command, %{"input" => "", "output" => ""})
          |> buffer(native, "output", delta)
 
+  # A question Codex asks without waiting for the answer (`delivery: "async"`): there
+  # is no call to answer, so the user's answer goes back as a message
+  # (`HalC2.Orchestration`'s `runtime-request.respond`).
+  defp notification(
+         "item/completed",
+         %{
+           "item" =>
+             %{"type" => "agentMessage", "delivery" => "async", "questions" => [_ | _] = asked} =
+               item
+         },
+         state
+       ) do
+    questions =
+      for {question, index} <- Enum.with_index(asked) do
+        %{
+          "id" => Integer.to_string(index),
+          "header" => "Question",
+          "question" => text(question["title"], "Choose an answer."),
+          "options" =>
+            for(
+              label <- question["options"] || [],
+              is_binary(label),
+              do: %{"label" => label, "description" => ""}
+            )
+        }
+      end
+
+    {state, _request_id} = open_async_question(flush(state), "async:#{item["id"]}", questions)
+    state
+  end
+
   defp notification("item/completed", %{"item" => item}, state),
     do: complete_item(flush(state), item)
 

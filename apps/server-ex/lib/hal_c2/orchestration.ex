@@ -550,13 +550,33 @@ defmodule HalC2.Orchestration do
 
   # An approval's decision, or answers to questions (`answers`, by question id).
   def dispatch(%{"type" => "runtime-request.respond", "threadId" => thread_id} = command) do
-    with {:ok, response} <- response(thread_id, command),
-         do: respond(thread_id, command["requestId"], response)
+    case message_request(thread_id, command["requestId"]) do
+      nil ->
+        with {:ok, response} <- response(thread_id, command),
+             do: respond(thread_id, command["requestId"], response)
+
+      request ->
+        answer_with_message(thread_id, request, command)
+    end
   end
 
   # Closing questions without answering them.
-  def dispatch(%{"type" => "thread.user-input.dismiss", "threadId" => thread_id} = command),
-    do: respond(thread_id, command["requestId"], %{"dismissed" => true})
+  def dispatch(%{"type" => "thread.user-input.dismiss", "threadId" => thread_id} = command) do
+    case message_request(thread_id, command["requestId"]) do
+      nil ->
+        respond(thread_id, command["requestId"], %{"dismissed" => true})
+
+      %{"status" => "pending"} = request ->
+        HalC2.Streams.transact(thread_id, :thread, fn state ->
+          {resolve_message_request(state, request, "cancelled", nil), :ok}
+        end)
+
+        {:ok, %{"sequence" => sequence(thread_id)}}
+
+      _ ->
+        {:error, "This question has already been answered."}
+    end
+  end
 
   # Delegated tasks (`HalC2.Orchestration.Delegation`).
   def dispatch(%{"type" => "delegated_task." <> _, "parentThreadId" => thread_id} = command) do
@@ -609,6 +629,116 @@ defmodule HalC2.Orchestration do
   end
 
   def dispatch(%{"type" => type}), do: {:error, "#{type} is not supported by this MC yet"}
+
+  # A question the provider asked without waiting (Codex's async questions) has no
+  # provider call to answer: its answer is a user message.
+  defp message_request(thread_id, request_id) do
+    request =
+      HalC2.Streams.ensure(thread_id)
+      |> HalC2.Streams.Server.state()
+      |> StreamState.get("runtime-request")
+      |> Map.get(request_id)
+
+    if request && HalC2.Orchestration.TurnWriter.message_request?(request), do: request
+  end
+
+  # The answer resolves the request and goes to the provider as a message: into the
+  # running turn when there is one to steer, else as the thread's next turn. Sending
+  # the same answer again changes nothing.
+  defp answer_with_message(thread_id, request, command) do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    item = StreamState.get(state, "turn-item")[question_item(request)] || %{}
+    answers = command["answers"] || %{}
+
+    replies =
+      for question <- item["questions"] || [] do
+        case answers[question["id"]] do
+          answer when is_binary(answer) ->
+            if String.trim(answer) != "", do: question["question"] <> "
+" <> String.trim(answer)
+
+          _ ->
+            nil
+        end
+      end
+
+    message_id = "async-answer:" <> request["id"]
+
+    cond do
+      request["status"] != "pending" ->
+        if StreamState.get(state, "message")[message_id],
+          do: {:ok, %{"sequence" => sequence(thread_id)}},
+          else: {:error, "This question has already been answered."}
+
+      replies == [] or Enum.any?(replies, &is_nil/1) ->
+        {:error, "Answer each question before sending."}
+
+      true ->
+        answer = %{"requestId" => request["id"], "answers" => answers}
+
+        HalC2.Streams.transact(thread_id, :thread, fn state ->
+          {resolve_message_request(state, request, "resolved", answer), :ok}
+        end)
+
+        running =
+          state
+          |> StreamState.list("run")
+          |> Enum.find(&(&1["status"] == "running"))
+
+        dispatch(%{
+          "type" => "message.dispatch",
+          "commandId" => command["commandId"],
+          "threadId" => thread_id,
+          "messageId" => message_id,
+          "text" => Enum.join(replies, "
+
+"),
+          "attachments" => [],
+          "createdBy" => "user",
+          "creationSource" => "server",
+          "dispatchMode" =>
+            if(running,
+              do: %{"type" => "steer_active", "targetRunId" => running["id"]},
+              else: %{"type" => "queue_after_active"}
+            )
+        })
+    end
+  end
+
+  # A pending request a provider waits on. A question answered with a message holds
+  # nothing up.
+  defp blocking_request?(state) do
+    Enum.any?(
+      StreamState.list(state, "runtime-request"),
+      &(&1["status"] == "pending" and not HalC2.Orchestration.TurnWriter.message_request?(&1))
+    )
+  end
+
+  defp question_item(request),
+    do: String.replace_prefix(request["nodeId"] || "", "node:approval:", "turn-item:approval:")
+
+  defp resolve_message_request(state, request, status, answer) do
+    at = Entities.now()
+    item_status = if status == "resolved", do: "completed", else: "cancelled"
+
+    [
+      upsert(state, "runtime-request", request["id"], fn request ->
+        request
+        |> Map.merge(%{"status" => status, "resolvedAt" => at})
+        |> then(&if(answer, do: Map.put(&1, "answers", answer["answers"]), else: &1))
+      end),
+      upsert(state, "turn-item", question_item(request), fn
+        nil ->
+          nil
+
+        item ->
+          item
+          |> Map.merge(%{"status" => item_status, "completedAt" => at, "updatedAt" => at})
+          |> then(&if(answer, do: Map.put(&1, "questionAnswer", answer), else: &1))
+      end)
+    ]
+    |> Enum.filter(&is_tuple/1)
+  end
 
   defp response(thread_id, %{"answers" => %{} = answers} = command) do
     by_question = command["attachmentsByQuestionId"] || %{}
@@ -1838,11 +1968,10 @@ defmodule HalC2.Orchestration do
           (run["status"] == "queued" and not automatic?(state, run))
       end)
 
-    if busy? or
-         Enum.any?(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending")),
-       do:
-         {:error,
-          "Thread #{command["threadId"]} has active or blocked work and cannot be settled."}
+    if busy? or blocking_request?(state),
+      do:
+        {:error,
+         "Thread #{command["threadId"]} has active or blocked work and cannot be settled."}
   end
 
   # A snoozed thread rests until its wake time, so it must be able to: nothing may be
@@ -1855,7 +1984,7 @@ defmodule HalC2.Orchestration do
       not future?(until) ->
         {:error, "Thread #{id} snooze wake time #{until} is not in the future."}
 
-      Enum.any?(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending")) ->
+      blocking_request?(state) ->
         {:error,
          "Thread #{id} has a pending approval or user-input request and cannot be snoozed."}
 
