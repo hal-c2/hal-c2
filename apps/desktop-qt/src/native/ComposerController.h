@@ -63,6 +63,8 @@ class TimelineModel;
 // composer.suggest.select {id}, composer.suggest.dismiss,
 // composer.model.select {instanceId, model},
 // composer.model.favorite.toggle {instanceId, model},
+// composer.model.multiple.toggle {instanceId, model} (a new thread's prompt
+// goes to each model so chosen),
 // composer.option.set {id, value}, composer.runtimeMode.set {mode},
 // composer.interactionMode.set {mode}, composer.submit {text, intent, edit},
 // composer.interrupt, composer.attach {files, folders} (a file is {name,
@@ -187,6 +189,9 @@ private:
     std::optional<QJsonObject> modelSelection;
     QString runtimeMode;
     QString interactionMode;
+    // A new thread's prompt goes to each of these instead: one thread per
+    // model, each in its own worktree (the web's multiple models).
+    std::optional<QList<QJsonObject>> multipleModels;
     QList<Attachment> attachments;
     QList<TerminalContext> terminalContexts;
   };
@@ -216,6 +221,12 @@ private:
   // A new thread's first send: its images, then the thread with its message.
   bool submitDraft(const QString& draftId, const QVariantMap& payload);
   void launched(const QString& draftId, const QString& threadKey, const std::optional<QString>& error);
+  // The prompt to every chosen model: `input` is the launch for one, less
+  // its thread, model and checkout.
+  bool submitToModels(const QString& draftId, const QList<QJsonObject>& models, const QJsonObject& input,
+                      const QJsonObject& strategy, const QString& environmentId, const QString& text,
+                      const QList<Attachment>& attachments, const QList<TerminalContext>& contexts);
+  bool toggleMultipleModel(const QString& target, const QString& instanceId, const QString& model);
   // A background send's answer: a toast that opens the thread, or one that
   // gives the prompt back.
   void launchedInBackground(const QString& draftId, const QString& text, const QList<Attachment>& attachments,

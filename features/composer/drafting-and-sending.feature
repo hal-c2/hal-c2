@@ -133,7 +133,7 @@ Feature: Drafting and sending a message
     Then the user is told the background prompt could not be sent
     And the user can restore "refactor utils" into the composer
 
-  @backlog @desktop
+  @desktop
   Scenario: One prompt starts a thread for each chosen model
     Given the project is a Git repository
     And the user is starting a new thread

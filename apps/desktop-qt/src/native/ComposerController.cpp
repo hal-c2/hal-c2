@@ -212,6 +212,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     }
     return true;
   }
+  if (action == QLatin1String("composer.model.multiple.toggle")) {
+    if (!target.isEmpty()) toggleMultipleModel(target, map.value(QStringLiteral("instanceId")).toString(), map.value(QStringLiteral("model")).toString());
+    return true;
+  }
   if (action == QLatin1String("composer.model.favorite.toggle")) {
     auto* settings = NativeShell::of(this)->controller<SettingsController>();
     if (!settings) return true;
@@ -693,6 +697,9 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
     input.insert(QStringLiteral("initialMessage"), initial);
   }
 
+  if (const auto models = m_drafts.value(draftId).multipleModels) {
+    return submitToModels(draftId, *models, input, where.strategy, where.environmentId, text, attachments, contexts);
+  }
   if (background) {
     // The thread is on its way; the draft takes the next prompt under a new
     // thread id, so the launched thread's row does not end it.
@@ -761,6 +768,139 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                    input.insert(QStringLiteral("initialMessage"), message);
                    start(input);
                  });
+  return true;
+}
+
+// A started thread, or a model with one sibling, is one model's; a new
+// thread's draft may name several.
+bool ComposerController::toggleMultipleModel(const QString& target, const QString& instanceId, const QString& model) {
+  if (m_draftId.isEmpty() || target != m_draftId) return false;
+  const composer::Instance* instance = composer::find(m_catalogue, instanceId);
+  if (!instance || !instance->ready() || composer::findModel(*instance, model).isEmpty()) return false;
+  Draft& kept = m_drafts[target];
+  QList<QJsonObject> models = kept.multipleModels.value_or(QList<QJsonObject>{selection(target)});
+  const auto same = [&](const QJsonObject& chosen) {
+    return chosen.value(QLatin1String("instanceId")) == instanceId && chosen.value(QLatin1String("model")) == model;
+  };
+  if (models.removeIf(same) == 0) models.append({{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}});
+  if (models.size() <= 1) {
+    // One model left is the draft's model again.
+    if (!models.isEmpty()) kept.modelSelection = models.constFirst();
+    kept.multipleModels.reset();
+  } else {
+    // Each model's thread starts in a worktree of its own.
+    if (!kept.multipleModels) m_bridge->dispatch(QStringLiteral("workspace.envMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("worktree")}});
+    m_drafts[target].multipleModels = models;
+  }
+  save();
+  publish();
+  return true;
+}
+
+// As the web's send to multiple models: each gets a thread of its own, in a
+// new worktree off the draft's branch, and the draft is ready for the next
+// prompt. A thread that fails to start says so; if none starts the prompt
+// comes back.
+bool ComposerController::submitToModels(const QString& draftId, const QList<QJsonObject>& models, const QJsonObject& input,
+                                        const QJsonObject& strategy, const QString& environmentId, const QString& text,
+                                        const QList<Attachment>& attachments, const QList<TerminalContext>& contexts) {
+  auto* shell = NativeShell::of(this);
+  const QString type = str(strategy, QLatin1String("type"));
+  const QString base = type == QLatin1String("worktree") ? str(strategy, QLatin1String("baseRef"))
+                       : type == QLatin1String("root")   ? str(strategy, QLatin1String("branch"))
+                                                         : QString();
+  if (base.isEmpty()) {
+    shell->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("Choose models and a base branch"),
+        QStringLiteral("Multiple models need a new thread in a Git project. Each gets its own worktree."));
+    return true;
+  }
+  QJsonObject worktree{{QStringLiteral("type"), QStringLiteral("worktree")}, {QStringLiteral("baseRef"), base}};
+  if (strategy.value(QLatin1String("startFromOrigin")).toBool()) worktree.insert(QStringLiteral("startFromOrigin"), true);
+
+  m_drafts[draftId].attachments.clear();
+  m_drafts[draftId].terminalContexts.clear();
+  shell->controller<DraftController>()->renew(draftId);
+  setText(draftId, QString(), 0);
+
+  struct Progress {
+    qsizetype pending = 0;
+    qsizetype started = 0;
+    QString first;
+  };
+  const auto progress = std::make_shared<Progress>();
+  progress->pending = models.size();
+  const auto settled = [this, progress, draftId, text, attachments, contexts](const QString& model, const QString& threadKey,
+                                                                               const std::optional<QString>& error) {
+    auto* shell = NativeShell::of(this);
+    if (error) {
+      toast(tr("Could not start a thread on %1").arg(model), *error);
+    } else if (progress->started++ == 0) {
+      progress->first = threadKey;
+    }
+    if (--progress->pending > 0) return;
+    if (progress->started > 0) {
+      auto* navigation = shell->controller<NavigationController>();
+      const QString first = progress->first;
+      shell->controller<ToastController>()->show(
+          QStringLiteral("success"), tr("Started %n thread(s) in background", nullptr, int(progress->started)), {},
+          ToastController::Action{QStringLiteral("Open"), [navigation, first] { navigation->open(NavigationController::Route::thread(first)); }});
+      return;
+    }
+    // Nothing started: the prompt goes back into an untouched draft.
+    if (!shell->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty()) return;
+    m_drafts[draftId].attachments = attachments;
+    m_drafts[draftId].terminalContexts = contexts;
+    setText(draftId, text, int(text.size()));
+  };
+
+  QJsonArray images;
+  for (const Attachment& attachment : attachments) {
+    if (attachment.file) continue;
+    QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")}, {QStringLiteral("name"), attachment.name},
+                      {QStringLiteral("mimeType"), attachment.mimeType}, {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                      {QStringLiteral("dataUrl"), attachment.dataUrl}};
+    if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+    images.append(image);
+  }
+  const QJsonArray files = fileRecords(attachments);
+  for (const QJsonObject& model : models) {
+    QJsonObject launch = input;
+    QJsonObject message = launch.value(QLatin1String("initialMessage")).toObject();
+    const QString threadId = newId();
+    message.insert(QStringLiteral("messageId"), newId());
+    message.insert(QStringLiteral("attachments"), files);
+    launch.insert(QStringLiteral("commandId"), newId());
+    launch.insert(QStringLiteral("threadId"), threadId);
+    launch.insert(QStringLiteral("modelSelection"), model);
+    launch.insert(QStringLiteral("workspaceStrategy"), worktree);
+    launch.insert(QStringLiteral("initialMessage"), message);
+    const QString name = str(model, QLatin1String("model"));
+    const QString threadKey = environmentId + QLatin1Char(':') + threadId;
+    const auto start = [this, environmentId, name, threadKey, settled](const QJsonObject& launch) {
+      m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), launch,
+                     [name, threadKey, settled](const QJsonValue&, const std::optional<QString>& error) { settled(name, threadKey, error); });
+    };
+    if (images.isEmpty()) {
+      start(launch);
+      continue;
+    }
+    m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
+                   QJsonObject{{QStringLiteral("threadId"), threadId}, {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
+                               {QStringLiteral("attachments"), images}},
+                   [launch, message, files, start, name, threadKey, settled](const QJsonValue& result, const std::optional<QString>& error) mutable {
+                     if (error) {
+                       settled(name, threadKey, error);
+                       return;
+                     }
+                     QJsonArray stored = result.toObject().value(QLatin1String("attachments")).toArray();
+                     for (const QJsonValue& file : files) stored.append(file);
+                     message.insert(QStringLiteral("attachments"), stored);
+                     launch.insert(QStringLiteral("initialMessage"), message);
+                     start(launch);
+                   });
+  }
+  publish();
   return true;
 }
 
@@ -1716,6 +1856,7 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
     chosen.insert(QStringLiteral("options"), current.value(QLatin1String("options")));
   }
   kept.modelSelection = chosen;
+  kept.multipleModels.reset();
   save();
   publish();
   return true;
@@ -2045,6 +2186,16 @@ QVariantMap ComposerController::pickerState() const {
                                  current.value(QLatin1String("instanceId")).toString(),
                                  current.value(QLatin1String("model")).toString())},
       {QStringLiteral("locked"), lock.has_value()},
+      // A new thread may go to several models: [{instanceId, model}] once
+      // more than one is chosen.
+      {QStringLiteral("supportsMultiple"), !m_draftId.isEmpty() && target == m_draftId},
+      {QStringLiteral("multiple"), [&]() -> QVariant {
+         const auto models = m_drafts.value(target).multipleModels;
+         if (!models) return QVariant::fromValue(nullptr);
+         QVariantList list;
+         for (const QJsonObject& model : *models) list.append(model.toVariantMap());
+         return list;
+       }()},
       {QStringLiteral("shortcut"),
        toggle.isNull() ? QVariant::fromValue(nullptr) : toggle.toMap().value(QStringLiteral("label"))},
       {QStringLiteral("previousProvider"), key(QStringLiteral("modelPicker.previousProvider"))},

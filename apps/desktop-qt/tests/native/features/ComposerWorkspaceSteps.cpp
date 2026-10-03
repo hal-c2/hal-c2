@@ -9,6 +9,7 @@
 
 #include "Brick.h"
 #include "ComposerBrick.h"
+#include "FakeConfig.h"
 #include "FakeGit.h"
 #include "Harness.h"
 #include "Launches.h"
@@ -165,6 +166,63 @@ int choiceLabelled(World& world, const QString& label) {
 
 const Steps steps([] {
   const QString q = kQuoted;
+
+  // One prompt, several models (drafting-and-sending.feature).
+  step(QStringLiteral("the user is starting a new thread"), [](World& world, const Captures&, const Table&) {
+    // With Codex and Claude ready to take it.
+    if (world.state(QStringLiteral("modelPicker")).toMap().value(QStringLiteral("instances")).toList().isEmpty()) {
+      const auto provider = [](const QString& id, const QString& name, const QStringList& models) {
+        QJsonArray list;
+        for (const QString& slug : models) list.append(QJsonObject{{QStringLiteral("slug"), slug}, {QStringLiteral("name"), slug}});
+        return QJsonObject{{QStringLiteral("instanceId"), id}, {QStringLiteral("driver"), id}, {QStringLiteral("displayName"), name}, {QStringLiteral("enabled"), true},
+                           {QStringLiteral("installed"), true}, {QStringLiteral("status"), QStringLiteral("ready")}, {QStringLiteral("models"), list}};
+      };
+      publishProviders(world.mc, {provider(QStringLiteral("codex"), QStringLiteral("Codex"), {QStringLiteral("gpt-5"), QStringLiteral("gpt-5-codex")}),
+                                  provider(QStringLiteral("claudeAgent"), QStringLiteral("Claude"), {QStringLiteral("claude-opus"), QStringLiteral("claude-sonnet")})});
+      world.sync();
+    }
+    newThread(world);
+    world.waitFor([&] { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("selectedModel")) == QLatin1String("gpt-5"); },
+                  [&] { return QStringLiteral("the draft on gpt-5; the composer shows %1").arg(show(world.state(QStringLiteral("composer")))); });
+  });
+  step(QStringLiteral("the user chooses two models and a base branch and sends %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The draft's own model, and Claude's beside it.
+    click(world, part(world, QStringLiteral("modelPicker")));
+    world.waitFor([&] { return composerPart(world, QStringLiteral("modelPickerProvider:claudeAgent")) != nullptr; }, QStringLiteral("the model picker to open"));
+    click(world, part(world, QStringLiteral("modelPickerProvider:claudeAgent")));
+    world.waitFor([&] { return composerPart(world, QStringLiteral("modelPickerMultiple:claudeAgent:claude-opus")) != nullptr; }, QStringLiteral("Claude's models"));
+    click(world, part(world, QStringLiteral("modelPickerMultiple:claudeAgent:claude-opus")));
+    world.waitFor([&] { return world.state(QStringLiteral("modelPicker")).toMap().value(QStringLiteral("multiple")).toList().size() == 2; },
+                  [&] { return QStringLiteral("two models; the picker has %1").arg(show(world.state(QStringLiteral("modelPicker")).toMap().value(QStringLiteral("multiple")))); });
+    expect(part(world, QStringLiteral("modelPickerTitle"))->property("text") == QLatin1String("2 models"), QStringLiteral("the picker does not say two models"));
+    pressInComposer(world, QStringLiteral("Escape"));
+    confirmBranch(world, QStringLiteral("main"));
+    QMetaObject::invokeMethod(composerItem(world), "focusInput");
+    typeInComposer(world, c[0]);
+    pressInComposer(world, QStringLiteral("Enter"));
+  });
+  step(QStringLiteral("one thread per model starts with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return launchCalls(world).size() == 2; }, [&] { return QStringLiteral("two launches; the MC got %1 and the toasts are %2").arg(launchCalls(world).size()).arg(show(toasts(world))); });
+    QStringList models;
+    for (const QJsonObject& call : launchCalls(world)) {
+      expect(call.value(QLatin1String("initialMessage")).toObject().value(QLatin1String("text")) == c[0], QStringLiteral("the launch is %1").arg(show(call.toVariantMap())));
+      models.append(call.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("model")).toString());
+    }
+    models.sort();
+    expect(models == QStringList{QStringLiteral("claude-opus"), QStringLiteral("gpt-5")}, QStringLiteral("the threads run on %1").arg(models.join(u", ")));
+    world.sync();
+    expect(std::any_of(toasts(world).cbegin(), toasts(world).cend(), [](const QVariant& toast) { return toast.toMap().value(QStringLiteral("title")).toString().startsWith(QLatin1String("Started 2 thread")); }),
+           QStringLiteral("the toasts are %1").arg(show(toasts(world))));
+  });
+  step(QStringLiteral("each thread works in its own worktree"), [](World& world, const Captures&, const Table&) {
+    const QList<QJsonObject> calls = launchCalls(world);
+    for (const QJsonObject& call : calls) {
+      const QJsonObject strategy = call.value(QLatin1String("workspaceStrategy")).toObject();
+      expect(strategy.value(QLatin1String("type")) == QLatin1String("worktree") && strategy.value(QLatin1String("baseRef")) == QLatin1String("main"),
+             QStringLiteral("the launch works in %1").arg(show(strategy.toVariantMap())));
+    }
+    expect(calls.at(0).value(QLatin1String("threadId")) != calls.at(1).value(QLatin1String("threadId")), QStringLiteral("both launches name one thread"));
+  });
 
   // Auto balance.
   step(QStringLiteral("the project exists on two connected machines and load balancing is on"), [](World& world, const Captures&, const Table&) {
