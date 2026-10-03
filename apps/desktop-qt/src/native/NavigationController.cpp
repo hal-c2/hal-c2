@@ -153,6 +153,12 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     if (m_route.kind != QLatin1String("settings")) open(Route::settings());
   } else if (action == QLatin1String("settings.back")) {
     back();
+  } else if (action == QLatin1String("settings.search")) {
+    // Settings, searching for `query`: its navigation's field follows.
+    if (m_route.kind != QLatin1String("settings")) open(Route::settings());
+    m_search = map.value(QStringLiteral("query")).toString();
+    ++m_searchSeq;
+    publish();
   } else if (action == QLatin1String("pullRequests.open")) {
     open(Route::of(QStringLiteral("pullRequests")));
   } else if (action == QLatin1String("usage.open")) {
@@ -201,6 +207,7 @@ void NavigationController::forward() {
 void NavigationController::go(const Route& route, bool replace) {
   if (route != m_route) {
     m_target.clear();
+    if (route.kind != QLatin1String("settings")) m_search.clear();
     const bool settingsToSettings =
         route.kind == QLatin1String("settings") && m_route.kind == QLatin1String("settings");
     if (!replace) m_forwardStack.clear();
@@ -236,6 +243,8 @@ void NavigationController::publish() {
   state.insert(QStringLiteral("canGoBack"), !m_backStack.isEmpty());
   state.insert(QStringLiteral("target"), m_target);
   state.insert(QStringLiteral("targetSeq"), m_targetSeq);
+  state.insert(QStringLiteral("search"), m_search);
+  state.insert(QStringLiteral("searchSeq"), m_searchSeq);
   m_bridge->publish(QStringLiteral("route"), state);
 }
 

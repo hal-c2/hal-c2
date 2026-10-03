@@ -15,6 +15,10 @@ Rectangle {
     readonly property var route: Shell.state.route ?? null
     readonly property string currentSection: Pages.current(route !== null && route.kind === "settings" ? route.section : "")
     readonly property string query: search.text.trim().toLowerCase()
+    // A query set from elsewhere (settings.search); the field follows each asking.
+    readonly property int searchSeq: route !== null ? (route.searchSeq ?? 0) : 0
+
+    onSearchSeqChanged: search.text = route !== null ? (route.search ?? "") : ""
     // Every row says whether it is a search result, so a row never reads the
     // other shape while the query and the rows change together.
     readonly property var rows: {
@@ -111,6 +115,7 @@ Rectangle {
             Layout.rightMargin: 10
             Layout.bottomMargin: 6
             placeholderText: qsTr("Search settings")
+            text: nav.route !== null ? (nav.route.search ?? "") : ""
             Keys.onEscapePressed: text = ""
         }
 

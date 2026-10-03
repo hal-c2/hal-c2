@@ -117,6 +117,8 @@ public:
   // Every `sub` frame, in order.
   QList<QJsonObject> subscriptions;
   QList<QJsonObject> commands;
+  // Every call, in order, whoever answers it.
+  QList<Rpc> calls;
   QHash<QString, QString> refusals;
   // What an accepted command does to the MC's rows (the real MC's
   // projection), run before it is answered.

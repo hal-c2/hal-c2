@@ -227,6 +227,11 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/appearance.feature:An appearance setting can be put back*"),
     QStringLiteral("navigation/appearance.feature:A font preference can be reset*"),
     QStringLiteral("navigation/appearance.feature:Clearing *"),
+    QStringLiteral("navigation/appearance.feature:Holding the appearance shortcut*"),
+    QStringLiteral("navigation/appearance.feature:The theme shortcut opens*"),
+    QStringLiteral("navigation/appearance.feature:Interface sliders*"),
+    QStringLiteral("navigation/appearance.feature:Diff colors*"),
+    QStringLiteral("navigation/appearance.feature:Font smoothing*"),
     QStringLiteral("navigation/theme-editor.feature"),
     QStringLiteral("settings/general.feature"),
     QStringLiteral("settings/saving-settings.feature"),
@@ -495,6 +500,15 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/keybinding-settings.feature:Removing a custom binding"),
     QStringLiteral("navigation/keybinding-settings.feature:Adding a binding for a command"),
     QStringLiteral("navigation/keybinding-settings.feature:Save failures are reported*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Conditions are built*"),
+    QStringLiteral("navigation/keybinding-settings.feature:A change is saved to every connected environment"),
+    QStringLiteral("navigation/keybinding-settings.feature:The file *"),
+    // The settings navigation's search, on the SettingsNav brick (SettingsNavSteps.cpp).
+    QStringLiteral("navigation/focus.feature:Searching settings lists*"),
+    QStringLiteral("navigation/focus.feature:A settings result opens from the keyboard"),
+    QStringLiteral("navigation/focus.feature:Nothing matches the settings search"),
+    QStringLiteral("navigation/focus.feature:Escape clears the settings search"),
+    QStringLiteral("navigation/focus.feature:The search follows a query set elsewhere"),
     QStringLiteral("source-control/checkpoint-diffs.feature"),
     QStringLiteral("timeline/checkpoints.feature"),
     QStringLiteral("files/file-explorer.feature"),
@@ -595,10 +609,10 @@ QList<Scenario> collectScenarios() {
       // `@shared` is `@desktop @mobile @tui` (features/README.md).
       if (!scenario.tags.contains(QStringLiteral("@desktop")) && !scenario.tags.contains(QStringLiteral("@shared"))) continue;
       // Not delivered anywhere, dropped, or not on the desktop yet.
-      if (scenario.tags.contains(QStringLiteral("@backlog")) || scenario.tags.contains(QStringLiteral("@dropped")) ||
-          scenario.tags.contains(QStringLiteral("@backlog-desktop"))) {
-        continue;
-      }
+      const bool backlog = scenario.tags.contains(QStringLiteral("@backlog")) ||
+                           scenario.tags.contains(QStringLiteral("@backlog-desktop"));
+      if (scenario.tags.contains(QStringLiteral("@dropped")) || scenario.tags.contains(QStringLiteral("@blocked"))) continue;
+      if (backlog != qEnvironmentVariableIsSet("HAL_C2_BACKLOG")) continue;
       scenarios.append(scenario);
     }
   }

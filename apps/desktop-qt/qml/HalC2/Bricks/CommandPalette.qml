@@ -27,7 +27,7 @@ Popup {
     padding: 8
     closePolicy: Popup.CloseOnPressOutside
 
-    Component.onCompleted: PaletteModel.setSettingsSections(Pages.sections)
+    Component.onCompleted: PaletteModel.setSettingsSections(Pages.paletteEntries(Qt.platform.os))
 
     Connections {
         target: PaletteModel

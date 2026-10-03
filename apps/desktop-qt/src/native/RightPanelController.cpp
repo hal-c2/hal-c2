@@ -116,7 +116,14 @@ void RightPanelController::activate() {
       keys->commands()->add(command, keybindings::commandLabel(command), std::move(run));
     };
     add(QStringLiteral("rightPanel.toggle"), [this] { toggle(); });
-    add(QStringLiteral("rightPanel.close"), [this] { closeTab(); });
+    // The web's mod+w closes the innermost thing: the active tab, else the window.
+    add(QStringLiteral("rightPanel.close"), [this] {
+      if (m_onThread && panel().open && !panel().active.isEmpty()) {
+        closeTab();
+      } else {
+        m_bridge->windowCommand(QStringLiteral("close"));
+      }
+    });
     add(QStringLiteral("rightPanel.toggleMaximized"), [this] { toggleMaximized(); });
     add(QStringLiteral("threadPanel.toggle"), [this] { toggleDetails(); });
     add(QStringLiteral("diff.toggle"), [this] { toggleDiff(); });

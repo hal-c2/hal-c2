@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQmlPropertyMap>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <limits>
@@ -145,6 +146,8 @@ void CommandPaletteController::activate() {
     connect(commands, signal, this, &CommandPaletteController::rebuild);
   }
   connect(commands, &QAbstractItemModel::dataChanged, this, &CommandPaletteController::rebuild);
+  connect(shell->controller<KeybindingController>(), &KeybindingController::bindingsChanged, this,
+          &CommandPaletteController::rebuild);
   connect(commands, &CommandRegistry::menuRequested, this, &CommandPaletteController::showMenu);
   connect(commands, &CommandRegistry::failed, this, [this](const QString& command, const QString& message) {
     if (command != m_running) return;
@@ -657,9 +660,19 @@ bool CommandPaletteController::openEntry(const Entry& entry) {
       }
       return true;
     }
-    case Kind::Setting:
-      navigation->open(Route::settings(entry.id));
+    case Kind::Setting: {
+      // "<section>#<setting>" opens the section at that setting, and
+      // "<section>?<command>" a command's keybindings.
+      const qsizetype mark = entry.id.indexOf(QRegularExpression(QStringLiteral("[#?]")));
+      if (mark >= 0 && entry.id.at(mark) == QLatin1Char('#')) {
+        m_bridge->dispatch(QStringLiteral("settings.openResult"),
+                           QVariantMap{{QStringLiteral("to"), entry.id.left(mark)},
+                                       {QStringLiteral("targetId"), entry.id.mid(mark + 1)}});
+      } else {
+        navigation->open(Route::settings(mark < 0 ? entry.id : entry.id.left(mark)));
+      }
       return true;
+    }
     case Kind::File:
       shell->controller<RightPanelController>()->open(QStringLiteral("files"), {{QStringLiteral("path"), entry.id}});
       return true;
@@ -776,8 +789,28 @@ void CommandPaletteController::rebuildCommand() {
       if (!needed.isValid() || needed.isNull()) continue;
     }
     const QString label = section.value(QStringLiteral("label")).toString();
-    entries.append({Kind::Setting, section.value(QStringLiteral("to")).toString(), label, tr("Settings"), {},
+    // A setting on the section's page is found by its own title, and opens there.
+    const QString target = section.value(QStringLiteral("targetId")).toString();
+    const QString to = section.value(QStringLiteral("to")).toString();
+    entries.append({Kind::Setting, target.isEmpty() ? to : to + QLatin1Char('#') + target, label,
+                    target.isEmpty() ? tr("Settings") : section.value(QStringLiteral("detail")).toString(), {},
                     {normalize(label), normalize(section.value(QStringLiteral("keywords")).toString())}});
+  }
+  // Each keybinding command, after the settings it mirrors (the web's
+  // secondary settings results): found by its label, id and keys.
+  QHash<QString, qsizetype> shortcuts;
+  for (const QVariant& value : shell->controller<KeybindingController>()->bindings()) {
+    const QVariantMap binding = value.toMap();
+    const QString command = binding.value(QStringLiteral("command")).toString();
+    if (!shortcuts.contains(command)) {
+      const QString label = binding.value(QStringLiteral("label")).toString();
+      shortcuts.insert(command, entries.size());
+      Entry entry{Kind::Setting, NavigationController::kKeybindingsSection + QLatin1Char('?') + command, label,
+                  tr("Keybindings"), {}, {normalize(label), normalize(command)}};
+      entry.secondary = true;
+      entries.append(entry);
+    }
+    entries[shortcuts.value(command)].terms << normalize(binding.value(QStringLiteral("key")).toString());
   }
 
   for (Entry& entry : entries) entry.haystack = entry.terms.join(QLatin1Char(' ')).simplified();
@@ -876,6 +909,8 @@ void CommandPaletteController::refilter(bool refreshed) {
   for (const int group : {Actions, Projects, Settings, Threads}) {
     QList<Match>& matches = byGroup[group];
     std::stable_sort(matches.begin(), matches.end(), [this](const Match& left, const Match& right) {
+      const bool secondary = m_entries.at(left.entry).secondary;
+      if (secondary != m_entries.at(right.entry).secondary) return !secondary;
       if (left.rank != right.rank) return left.rank > right.rank;
       if (left.tiebreak != right.tiebreak) return left.tiebreak > right.tiebreak;
       return m_entries.at(left.entry).recency > m_entries.at(right.entry).recency;

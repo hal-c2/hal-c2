@@ -215,6 +215,8 @@ private:
     bool current = false;
     // Content matches: the file's group.
     QString group;
+    // A keybinding command among the settings: listed after every setting.
+    bool secondary = false;
   };
 
   struct Row {

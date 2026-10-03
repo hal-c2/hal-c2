@@ -47,7 +47,7 @@ Feature: Appearance
         | Light  | Dark   |
         | Dark   | System |
 
-    @backlog @desktop
+    @desktop
     Scenario: Holding the appearance shortcut does not spin through modes
       Given the appearance is System
       When the user holds the appearance shortcut down
@@ -66,7 +66,7 @@ Feature: Appearance
       When the user chooses the "Nord" theme in Settings → Appearance
       Then the app uses "Nord"
 
-    @backlog @desktop
+    @desktop
     Scenario: The theme shortcut opens the theme picker without leaving the thread
       When the user presses the theme shortcut
       Then the theme picker opens over the thread
@@ -109,15 +109,21 @@ Feature: Appearance
 
   Rule: Interface
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Interface sliders change the look
       When the user sets <setting> to <value>
       Then <effect>
 
       Examples:
         | setting       | value | effect                                   |
-        | contrast      | 20    | text and borders stand out more          |
         | glass opacity | 50    | translucent surfaces are more see-through |
+
+      # Contrast runs from 50 to 200 (packages/contracts settings.ts), so 20 is not a
+      # value the row can take, and below 100 it softens rather than sharpens.
+      @backlog
+      Examples: Not drawn by the desktop yet
+        | setting       | value | effect                                   |
+        | contrast      | 20    | text and borders stand out more          |
 
     @backlog @desktop
     Scenario Outline: The environment can be identified at a glance
@@ -131,7 +137,7 @@ Feature: Appearance
         | Version pill | the app shows a Nightly version pill           |
         | None         | the app shows no environment marker            |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Diff colors can be changed
       When the user sets diff colors to "<scheme>"
       Then added and removed lines are shown in <colors>
@@ -216,7 +222,7 @@ Feature: Appearance
       When the user resets the interface font
       Then the interface uses the system default font
 
-    @backlog @desktop
+    @desktop
     Scenario: Font smoothing is offered only on macOS
       Given the user is on Linux
       Then font smoothing is not offered

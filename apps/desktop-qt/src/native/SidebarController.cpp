@@ -177,7 +177,7 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
                                       if (pinOrderKey) pin.insert(QStringLiteral("orderKey"), *pinOrderKey);
                                       command(environmentId, pin, QStringLiteral("Failed to pin thread"));
                                     });
-                          }});
+                          }, false, QStringLiteral("Settled")});
          });
   } else if (action == QLatin1String("thread.unsettle")) {
     command(thread->environmentId,
@@ -310,7 +310,7 @@ void SidebarController::snooze(const QString& key, const QString& snoozedUntil) 
                         ToastController::Action{QStringLiteral("Undo"), [this, key] {
                                                   m_bridge->dispatch(QStringLiteral("thread.unsnooze"),
                                                                      QVariantMap{{QStringLiteral("key"), key}});
-                                                }});
+                                                }, false, QStringLiteral("Snoozed")});
        });
 }
 

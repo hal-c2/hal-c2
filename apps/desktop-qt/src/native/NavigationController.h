@@ -20,7 +20,9 @@ class ShellStore;
 // pullRequests, usage. `target` is the setting a settings
 // search result opened (its objectName in the settings section) until the
 // route moves on; `targetSeq` counts the openings, so opening it again reveals
-// it again.
+// it again. `search` is the query `settings.search {query}` set for the
+// settings navigation's search field (`searchSeq` counts the askings); it
+// opens settings when the window is elsewhere.
 //
 // Home is where the window has no thread; DraftController lands it on a
 // draft from there. The open thread going away (deleted here or elsewhere)
@@ -100,6 +102,9 @@ private:
   // The setting the last search result opened, until the route moves on.
   QString m_target;
   int m_targetSeq = 0;
+  // The settings search `settings.search` asked for, while in settings.
+  QString m_search;
+  int m_searchSeq = 0;
   // The open thread's row has been seen, so its absence means it went away
   // rather than has not arrived yet.
   bool m_threadSeen = false;

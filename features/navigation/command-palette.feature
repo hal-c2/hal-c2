@@ -195,7 +195,7 @@ Feature: Command palette
       And the "Appearance" setting is listed before the thread "Appearance"
 
     # The web's settings search lists each keybinding command as a secondary entry.
-    @backlog @desktop
+    @desktop
     Scenario: Shortcut entries sort after the settings they mirror
       When the user searches the palette for "model"
       Then the "Default model" setting is listed before the "Model Picker" shortcut
@@ -346,7 +346,7 @@ Feature: Command palette
         | Change appearance | Dark      | the app appearance is dark         |
         | New thread in...  | docs-site | a new thread starts in "docs-site" |
 
-    @backlog @desktop
+    @desktop
     Scenario: A settings result opens that setting
       When the user searches the palette for "word wrap" and chooses the setting
       Then settings open with the word wrap setting highlighted
