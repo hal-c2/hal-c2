@@ -294,6 +294,10 @@ QString fileLink(const QString& path) {
 
 }  // namespace
 
+QString mention(const QString& path) {
+  return fileLink(path).chopped(1);
+}
+
 QList<Instance> instances(const QJsonArray& providers) {
   QList<Instance> list;
   for (const QJsonValue& value : providers) {

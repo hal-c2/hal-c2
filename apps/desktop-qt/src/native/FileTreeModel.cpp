@@ -3,6 +3,7 @@
 #include <QSet>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -36,8 +37,57 @@ void FileTreeModel::clear() {
   m_rows.clear();
   m_selected.clear();
   endResetModel();
+  if (std::exchange(m_expandAll, false)) emit allExpandedChanged();
   emit rootChanged();
   emit selectedChanged();
+}
+
+void FileTreeModel::expandUnder(const QString& folder) {
+  // By value: expanding loads, and a listing may land while walking.
+  const QList<Entry> children = m_folders.value(folder).children;
+  for (const Entry& child : children) {
+    if (!child.directory || child.ignored) continue;
+    if (m_searching) {
+      // The search's rows are on screen: the user's tree opens behind them.
+      Folder& entry = m_folders[child.path];
+      entry.expanded = true;
+      if (entry.state == State::Unloaded) {
+        entry.state = State::Loading;
+        if (m_fetch) m_fetch(child.path);
+      }
+    } else {
+      expand(child.path);
+    }
+    expandUnder(child.path);
+  }
+}
+
+void FileTreeModel::expandAll() {
+  if (!m_expandAll) {
+    m_expandAll = true;
+    emit allExpandedChanged();
+  }
+  expandUnder(QString());
+}
+
+void FileTreeModel::collapseAll() {
+  if (m_expandAll) {
+    m_expandAll = false;
+    emit allExpandedChanged();
+  }
+  beginResetModel();
+  for (auto it = m_folders.begin(); it != m_folders.end(); ++it) it->expanded = it.key().isEmpty();
+  m_rows = rowsUnder(QString(), 0);
+  endResetModel();
+}
+
+void FileTreeModel::refresh() {
+  if (!m_fetch) return;
+  QStringList loadedFolders;
+  for (auto it = m_folders.cbegin(); it != m_folders.cend(); ++it) {
+    if (it->state == State::Loaded) loadedFolders.append(it.key());
+  }
+  for (const QString& folder : std::as_const(loadedFolders)) m_fetch(folder);
 }
 
 void FileTreeModel::reload() {
@@ -62,6 +112,7 @@ void FileTreeModel::setListing(const QString& folder, const QList<Entry>& entrie
   entry.children = entries;
   sortEntries(entry.children);
   if (!m_searching) refill(folder);
+  if (m_expandAll) expandUnder(folder);
   if (folder.isEmpty()) emit rootChanged();
   emit folderSettled(folder);
 }

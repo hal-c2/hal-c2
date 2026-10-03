@@ -1249,6 +1249,16 @@ QVariant ComposerController::setting(const QString& key) const {
   return settings ? settings->setting(key) : QVariant();
 }
 
+bool ComposerController::insertAtEnd(const QString& text) {
+  const QString where = target();
+  if (where.isEmpty()) return false;
+  QString next = draft(where);
+  if (!next.isEmpty() && !next.back().isSpace()) next += u' ';
+  next += text;
+  setText(where, next, int(next.size()));
+  return true;
+}
+
 void ComposerController::setText(const QString& target, const QString& text, int cursor, const QVariant& edit) {
   Draft& kept = m_drafts[target];
   if (edit.isValid() && !edit.isNull()) kept.edit = edit;

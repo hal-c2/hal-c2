@@ -2,6 +2,7 @@
 
 #include <QAbstractListModel>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QTimer>
 
@@ -12,6 +13,7 @@
 #include "FileTreeModel.h"
 
 class McClient;
+class TimelineModel;
 
 // A file's text as one row per line, so a ListView only lays out the lines on
 // screen: a 1 MB file is one string and a list of offsets into it.
@@ -100,6 +102,12 @@ public:
   // Only a shown tab loads anything.
   void setActive(bool active);
 
+  // The thread whose agent changes the workspace: the tree lists its loaded
+  // folders again once a command or file change settles or a checkpoint
+  // lands (the web's workspaceMutationId), at once while the tab shows, else
+  // when it next does.
+  void setTimeline(TimelineModel* timeline);
+  QString environment() const { return m_environment; }
   QString root() const { return m_root; }
   QString query() const { return m_query; }
   void setQuery(const QString& query);
@@ -140,6 +148,9 @@ private:
   void list(const QString& folder);
   void search();
   void walkReveal();
+  // What the agent last did to the workspace, or empty.
+  QString mutation() const;
+  void followMutation();
 
   McClient* m_client;
   FileTreeModel m_tree;
@@ -163,6 +174,10 @@ private:
   QString m_truncatedNotice;
   int m_revealLine = 0;
   QString m_revealing;
+  QPointer<TimelineModel> m_timeline;
+  QString m_mutation;
+  // The workspace changed while the tab was hidden.
+  bool m_stale = false;
   std::optional<bool> m_wrap;
   bool m_defaultWrap = false;
 };

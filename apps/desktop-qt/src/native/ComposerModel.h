@@ -129,6 +129,8 @@ QList<Suggestion> slashItems(const Instance* instance, const Trigger& trigger, b
 QList<Suggestion> skillItems(const Instance* instance, const Trigger& trigger);
 // The @ menu: the entries of a workspace search, as file links.
 QList<Suggestion> pathItems(const QList<std::pair<QString, bool>>& entries);
+// A file as the draft links it ([name](path)), without the space after it.
+QString mention(const QString& path);
 // The text the empty menu shows for the trigger.
 QString emptyText(const QString& kind);
 

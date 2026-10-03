@@ -57,6 +57,7 @@ qt_add_qml_module(hal_c2_bricks
     CustomSnoozeDialog.qml
     DiffPanel.qml
     FilesPanel.qml
+    FileEntryMenu.qml
     AgentsPanel.qml
     js/lucide.js
     js/modelPicker.js

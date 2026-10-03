@@ -5,8 +5,10 @@
 #include <QLocale>
 
 #include <algorithm>
+#include <utility>
 
 #include "McClient.h"
+#include "TimelineModel.h"
 
 namespace {
 
@@ -101,6 +103,50 @@ void WorkspaceFiles::setActive(bool active) {
   if (m_active && !m_root.isEmpty() && m_tree.rootStatus() == QLatin1String("loading") && !m_tree.loaded(QString()) &&
       m_tree.rowCount() == 0) {
     m_tree.reload();
+  } else if (m_active && std::exchange(m_stale, false)) {
+    m_tree.refresh();
+  }
+}
+
+void WorkspaceFiles::setTimeline(TimelineModel* timeline) {
+  if (timeline == m_timeline) return;
+  if (m_timeline) disconnect(m_timeline, nullptr, this, nullptr);
+  m_timeline = timeline;
+  m_stale = false;
+  m_mutation = mutation();
+  if (m_timeline) connect(m_timeline, &TimelineModel::workspaceChanged, this, &WorkspaceFiles::followMutation);
+}
+
+QString WorkspaceFiles::mutation() const {
+  if (!m_timeline) return {};
+  QString item;
+  int ordinal = -1;
+  const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
+  for (auto it = items.cbegin(); it != items.cend(); ++it) {
+    const QString type = it->value(QLatin1String("type")).toString();
+    if (type != QLatin1String("command_execution") && type != QLatin1String("file_change")) continue;
+    const QString status = it->value(QLatin1String("status")).toString();
+    if (status == QLatin1String("pending") || status == QLatin1String("running") || status == QLatin1String("waiting")) continue;
+    if (const int at = it->value(QLatin1String("ordinal")).toInt(); at > ordinal) {
+      ordinal = at;
+      item = it.key();
+    }
+  }
+  QStringList checkpoints;
+  const QHash<QString, QJsonObject> kept = m_timeline->entities(QStringLiteral("checkpoint"));
+  for (auto it = kept.cbegin(); it != kept.cend(); ++it) checkpoints.append(it.key() + QLatin1Char('=') + it->value(QLatin1String("status")).toString());
+  checkpoints.sort();
+  return item + QLatin1Char('\n') + checkpoints.join(QLatin1Char(','));
+}
+
+void WorkspaceFiles::followMutation() {
+  const QString now = mutation();
+  if (now == m_mutation) return;
+  m_mutation = now;
+  if (m_active) {
+    m_tree.refresh();
+  } else {
+    m_stale = true;
   }
 }
 

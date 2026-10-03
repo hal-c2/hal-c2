@@ -35,21 +35,42 @@ Rectangle {
         text: "M"
     }
 
+    FileEntryMenu {
+        id: entryMenu
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        ShellTextField {
-            id: search
-
-            objectName: "filesSearch"
+        RowLayout {
             Layout.fillWidth: true
             Layout.margins: 8
-            placeholderText: qsTr("Search files")
-            enabled: (root.source?.root ?? "").length > 0
-            text: root.source?.query ?? ""
-            onTextEdited: root.source.query = text
-            Keys.onEscapePressed: root.source.query = ""
+            spacing: 4
+
+            ShellTextField {
+                id: search
+
+                objectName: "filesSearch"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Search files")
+                enabled: (root.source?.root ?? "").length > 0
+                text: root.source?.query ?? ""
+                onTextEdited: root.source.query = text
+                Keys.onEscapePressed: root.source.query = ""
+            }
+            ShellButton {
+                objectName: "filesExpandAll"
+                subtle: true
+                iconName: root.tree?.allExpanded ? "chevron-up" : "chevron-down"
+                iconSize: 13
+                iconTint: root.muted
+                implicitWidth: 26
+                implicitHeight: 26
+                enabled: root.rootStatus === "ready"
+                Accessible.name: root.tree?.allExpanded ? qsTr("Collapse all folders") : qsTr("Expand all folders")
+                onClicked: root.tree.allExpanded ? root.tree.collapseAll() : root.tree.expandAll()
+            }
         }
 
         Text {
@@ -153,6 +174,14 @@ Rectangle {
                             root.source.openFile(path, 0);
                         else if (kind === "error")
                             root.tree.retry(path);
+                    }
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        enabled: entry.kind === "file"
+                        onTapped: {
+                            entryMenu.path = entry.path;
+                            entryMenu.popup(entry);
+                        }
                     }
                     background: Rectangle {
                         color: entry.selected ? Theme.palette.color("sidebarRowSelected", "#25314d") : entry.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
