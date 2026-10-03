@@ -23,6 +23,7 @@ import {
 import { createAttachmentPreviews } from "./attachmentPreviews.ts";
 import { buildImageViewerState, type TuiImageViewerState } from "./imageViewer.ts";
 import type { TuiMode, TuiSize } from "./layoutState.ts";
+import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import type { PaletteCommand } from "./paletteState.ts";
 import { chunk, styled } from "./styledText.ts";
 import {
@@ -72,6 +73,8 @@ export interface ThreadViewOptions {
   readonly onQuestionChange?: () => void;
   /** The diff or image view opened or closed over the conversation pane. */
   readonly paneReplacedChanged?: () => void;
+  /** This device's muted threads (default: kept for this run only). */
+  readonly mutedThreads?: MutedThreadsStore | undefined;
   /** Put text on the terminal's clipboard; false when the terminal refuses. */
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
 }
@@ -178,11 +181,15 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   /** The request an answer is on its way for (blocks a second submit). */
   let answering: string | null = null;
   let revertIndex = 0;
+  let revertConfirming = false;
   let diff: DiffState = CLOSED_DIFF;
   let diffRequest = 0;
   let alerts: ReadonlyArray<ThreadAlert> = [];
   let alertSeq = 0;
   let viewedThreadId: string | null = null;
+  const mutedStore = options.mutedThreads ?? memoryMutedThreads();
+  /** Threads that raise no alert on this device. */
+  const muted = new Set(mutedStore.load());
   /** Turns the user stopped in this session: their work stays open once they settle. */
   const interruptedTurns = new Set<string>();
   /** The code block or table just copied, and the timer that clears the mark. */
@@ -303,6 +310,18 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     ) ?? null;
 
   const paletteCommands = (): PaletteCommand[] => [
+    ...(viewedThreadId !== null
+      ? [
+          {
+            id: "mute-alerts",
+            title: muted.has(viewedThreadId)
+              ? "Unmute alerts for this thread"
+              : "Mute alerts for this thread",
+            keywords: "mute unmute alerts notifications",
+            action: "thread.alerts.toggleMute",
+          },
+        ]
+      : []),
     ...(latestReply()
       ? [
           {
@@ -642,14 +661,24 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       Math.max(0, index - windowSize + 1),
       Math.max(0, list.length - windowSize),
     );
+    const confirming = open && revertConfirming ? (list[index] ?? null) : null;
     state.set("revert", {
       open,
       index,
-      title: styled(
-        chunk("revert ▸ ", { fg: palette.error }),
-        chunk("pick a checkpoint — discards changes made after it", { fg: palette.dim }),
-      ),
-      hint: "↑/↓ select · Enter revert · Esc cancel",
+      // Set once a checkpoint is picked: the rollback waits for a second Enter.
+      confirming: confirming?.checkpointTurnCount ?? null,
+      title: confirming
+        ? styled(
+            chunk("revert ▸ ", { fg: palette.error }),
+            chunk(`roll back to turn ${confirming.checkpointTurnCount}? This cannot be undone.`, {
+              fg: palette.text,
+            }),
+          )
+        : styled(
+            chunk("revert ▸ ", { fg: palette.error }),
+            chunk("pick a checkpoint — discards changes made after it", { fg: palette.dim }),
+          ),
+      hint: confirming ? "Enter roll back · Esc cancel" : "↑/↓ select · Enter revert · Esc cancel",
       emptyText: "No checkpoints to revert to yet.",
       rows: list.slice(windowStart, windowStart + windowSize).map((checkpoint, offset) => {
         const active = windowStart + offset === index;
@@ -672,17 +701,25 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const openRevert = () => {
     if (!detail) return;
     revertIndex = 0;
+    revertConfirming = false;
     options.setMode("revert");
     publishRevert();
   };
 
   const closeRevert = () => {
+    revertConfirming = false;
     options.setMode("compose");
     publishRevert();
   };
 
+  /** Enter picks a checkpoint, then asks: a rollback cannot be undone. A second Enter does it. */
   const confirmRevert = () => {
     const checkpoint = checkpoints()[revertIndex];
+    if (checkpoint && !revertConfirming) {
+      revertConfirming = true;
+      publishRevert();
+      return;
+    }
     closeRevert();
     if (!detail || !checkpoint) return;
     const turnCount = checkpoint.checkpointTurnCount;
@@ -815,7 +852,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     if (next.shell && prev?.shell !== next.shell) {
       alerts = nextThreadAlerts(
         alerts,
-        threadTransitions(prev?.shell?.threads ?? null, next.shell.threads),
+        threadTransitions(prev?.shell?.threads ?? null, next.shell.threads).filter(
+          (transition) => !muted.has(transition.thread.id),
+        ),
         selectedThreadId,
         () => `thread-alert:${++alertSeq}`,
       );
@@ -1010,6 +1049,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         if (count > 0) {
           const delta = Number(field(payload, "delta") ?? 1) < 0 ? -1 : 1;
           revertIndex = (revertIndex + delta + count) % count;
+          // Moving on to another checkpoint takes the question back.
+          revertConfirming = false;
         }
         publishRevert();
         return true;
@@ -1020,6 +1061,21 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "checkpoint.revert.cancel":
         closeRevert();
         return true;
+      case "thread.alerts.toggleMute": {
+        if (viewedThreadId === null) return true;
+        const title = detail?.id === viewedThreadId ? detail.title : "this thread";
+        if (muted.delete(viewedThreadId)) {
+          store.setStatus(`Alerts unmuted for ${title}.`, "success");
+        } else {
+          muted.add(viewedThreadId);
+          // An alert already up for it goes with the mute.
+          alerts = alerts.filter((alert) => alert.threadId !== viewedThreadId);
+          publishNotifications();
+          store.setStatus(`Alerts muted for ${title}.`, "success");
+        }
+        mutedStore.save([...muted]);
+        return true;
+      }
       case "notification.dismiss":
         dismissAlert(field(payload, "id"));
         return true;

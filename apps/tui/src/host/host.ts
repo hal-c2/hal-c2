@@ -20,6 +20,7 @@ import { createAddProjectController } from "./addProjectState.ts";
 import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer, type ImageDecoder } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
+import type { MutedThreadsStore } from "./mutedThreads.ts";
 import { createFilesController } from "./filesState.ts";
 import {
   buildTuiLayoutState,
@@ -129,6 +130,8 @@ export interface HostOptions {
   readonly inlineImages?: InlineImageTransport | null;
   /** Pixel size of a terminal cell, when the terminal reported it (sizes images). */
   readonly cellPixels?: () => CellPixels | null;
+  /** Where this device keeps the threads whose alerts it muted (default: this run only). */
+  readonly mutedThreads?: MutedThreadsStore;
   /** Sees every action dispatched, from QML, keymaps or the palette (tests, debugging). */
   readonly trace?: (action: string, payload: unknown) => void;
 }
@@ -303,6 +306,7 @@ export function createHost(options: HostOptions): Host {
     paneReplacedChanged: () => publishLayout(),
     onQuestionChange: () => composer?.sync(),
     copyToClipboard: options.copyToClipboard,
+    mutedThreads: options.mutedThreads,
   });
   let layout: TuiLayoutState;
   // The rows each popover above the prompt asks for, as ChatView sums them.
