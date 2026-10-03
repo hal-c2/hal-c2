@@ -131,9 +131,7 @@ Feature: Editing the draft
     Then the user sees a "warning" toast "Oldest stashed prompt discarded" saying "The stash holds 20 prompts; the oldest was removed to make room."
     And 20 prompts are stashed, "one more" first
 
-  # The desktop uploads a draft's files only when it sends, so none can be
-  # uploading while the prompt is stashed.
-  @backlog @desktop
+  @desktop
   Scenario: A prompt cannot be stashed while its files are uploading
     Given the draft carries a file that is still uploading
     When the user stashes the prompt

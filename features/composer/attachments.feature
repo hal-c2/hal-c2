@@ -85,7 +85,7 @@ Feature: Attaching images and files to a message
     When more than 24 hours pass
     Then the MC discards the unclaimed upload
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A failed upload blocks sending until it is retried or removed
     Given the upload of "design.pdf" failed
     When the user tries to send the message
@@ -93,7 +93,7 @@ Feature: Attaching images and files to a message
     When the user retries the upload and it succeeds
     Then the message can be sent
 
-  @backlog @desktop
+  @desktop
   Scenario: A very large paste becomes a text file attachment
     When the user pastes 40 KiB of log output
     Then the paste is attached as a text file instead of being inserted
@@ -101,32 +101,32 @@ Feature: Attaching images and files to a message
     When the user removes the attachment and pastes the log as plain text instead
     Then the text is inserted into the draft where it can be edited
 
-  @backlog @desktop
+  @desktop
   Scenario: Dropping a folder references its path
     Given the environment is local
     When the user drops the folder "src/components" onto the composer
     Then the draft references the folder "src/components"
 
-  @backlog @desktop
+  @desktop
   Scenario: Dropping a folder into a remote environment is refused
     Given the environment is remote
     When the user drops a folder onto the composer
     Then the user is told folders cannot be dropped into remote environments
     And the user is told to type the folder path instead
 
-  @backlog @desktop
+  @desktop
   Scenario: Paste as Text keeps a very large paste in the draft
     When the user pastes 40 KiB of log output with Paste as Text
     Then the text is inserted into the draft where it can be edited
     And nothing is attached
 
-  @backlog @desktop
+  @desktop
   Scenario: A Snap Shot attachment names the window it came from
     Given the draft carries a Snap Shot of the "Terminal" window titled "npm test"
     When the user looks at the attachment
     Then it names the app "Terminal" and the window "npm test"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The user checks what text a Snap Shot captured
     Given the draft carries a Snap Shot <captured>
     When the user opens the Snap Shot's accessibility data

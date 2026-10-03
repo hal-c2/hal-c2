@@ -1,6 +1,7 @@
 #include "ComposerController.h"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -105,7 +106,8 @@ QString imagesSignature(const QJsonObject& targets) {
   QStringList signature;
   for (auto it = targets.begin(); it != targets.end(); ++it) {
     for (const QJsonValue& image : it.value().toArray()) {
-      signature.append(it.key() + u'/' + image.toObject().value(QLatin1String("id")).toString());
+      signature.append(it.key() + u'/' + image.toObject().value(QLatin1String("id")).toString() + u'/' +
+                       image.toObject().value(QLatin1String("remoteId")).toString() + image.toObject().value(QLatin1String("upload")).toString());
     }
   }
   return signature.join(u'\n');
@@ -261,14 +263,43 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
 
   if (action == QLatin1String("composer.interrupt")) return interrupt();
   if (action == QLatin1String("composer.submit")) return submit(map);
-  if (action == QLatin1String("composer.attach")) return attach(map.value(QStringLiteral("files")).toList());
-  if (action == QLatin1String("composer.attachment.remove")) {
+  if (action == QLatin1String("composer.attach")) {
     if (target.isEmpty()) return true;
-    QList<Attachment>& attachments = m_drafts[target].attachments;
+    const QVariantList folders = map.value(QStringLiteral("folders")).toList();
+    if (!folders.isEmpty()) attachFolders(target, folders);
+    const QVariantList files = map.value(QStringLiteral("files")).toList();
+    if (files.isEmpty()) return true;
+    // While the agent waits on an answer, files are the answer's.
+    const QVariantList questions = turnState().value(QStringLiteral("questions")).toList();
+    if (!questions.isEmpty()) return attachToAnswer(questions.constFirst().toMap().value(QStringLiteral("requestId")).toString(), {}, files);
+    return attach(files);
+  }
+  if (action == QLatin1String("composer.question.attach")) {
+    return attachToAnswer(map.value(QStringLiteral("requestId")).toString(), map.value(QStringLiteral("questionId")).toString(),
+                          map.value(QStringLiteral("files")).toList());
+  }
+  if (action == QLatin1String("composer.attachment.remove") || action == QLatin1String("composer.question.attachment.remove")) {
     const QString id = map.value(QStringLiteral("id")).toString();
-    if (attachments.removeIf([&](const Attachment& attachment) { return attachment.id == id; }) > 0) {
-      save();
-      publish();
+    const Attachment* found = findAttachment(id);
+    if (!found) return true;
+    // An upload no message took is the MC's to drop.
+    if (!found->remoteId.isEmpty()) {
+      m_client->call(this, found->environmentId, QStringLiteral("attachments.delete"),
+                     QJsonObject{{QStringLiteral("attachmentId"), found->remoteId}}, [](const QJsonValue&, const std::optional<QString>&) {});
+    }
+    const auto matches = [&](const Attachment& attachment) { return attachment.id == id; };
+    for (Draft& draft : m_drafts) draft.attachments.removeIf(matches);
+    for (auto& questions : m_answerFiles) {
+      for (QList<Attachment>& files : questions) files.removeIf(matches);
+    }
+    save();
+    publish();
+    return true;
+  }
+  if (action == QLatin1String("composer.attachment.retry")) {
+    const QString id = map.value(QStringLiteral("id")).toString();
+    if (const Attachment* found = findAttachment(id); found && found->file && found->upload == QLatin1String("failed")) {
+      uploadFile(id, found->environmentId.isEmpty() ? environmentOf(m_thread) : found->environmentId);
     }
     return true;
   }
@@ -278,9 +309,17 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
                    QStringLiteral("Failed to submit approval decision."));
   }
   if (action == QLatin1String("composer.question.answer")) {
-    return respond(map.value(QStringLiteral("requestId")).toString(),
-                   {{QStringLiteral("answers"), QJsonObject::fromVariantMap(map.value(QStringLiteral("answers")).toMap())}},
-                   QStringLiteral("Failed to submit answers."));
+    const QString requestId = map.value(QStringLiteral("requestId")).toString();
+    QJsonObject fields{{QStringLiteral("answers"), QJsonObject::fromVariantMap(map.value(QStringLiteral("answers")).toMap())}};
+    QJsonObject files;
+    const QHash<QString, QList<Attachment>> attached = m_answerFiles.value(requestId);
+    for (auto it = attached.cbegin(); it != attached.cend(); ++it) {
+      if (it->isEmpty()) continue;
+      if (filesBlock(*it, QStringLiteral("answering"))) return true;
+      files.insert(it.key(), fileRecords(*it));
+    }
+    if (!files.isEmpty()) fields.insert(QStringLiteral("attachmentsByQuestionId"), files);
+    return respond(requestId, fields, QStringLiteral("Failed to submit answers."));
   }
   if (action == QLatin1String("composer.question.dismiss")) {
     return respond(map.value(QStringLiteral("requestId")).toString(), {}, QStringLiteral("Failed to dismiss the question."));
@@ -371,6 +410,10 @@ bool ComposerController::stash(const QString& target) {
     return true;
   }
   Draft& kept = m_drafts[target];
+  if (std::any_of(kept.attachments.cbegin(), kept.attachments.cend(), [](const Attachment& a) { return a.upload == QLatin1String("uploading"); })) {
+    NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Wait for file uploads before stashing this prompt"), {});
+    return true;
+  }
   const QString text = draft(target).trimmed();
   if (text.isEmpty() && kept.attachments.isEmpty() && kept.terminalContexts.isEmpty()) {
     if (m_kept.stash.size() == 1) {
@@ -512,6 +555,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
         QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
     return true;
   }
+  if (fromDraft && filesBlock(m_drafts.value(target).attachments, QStringLiteral("sending"))) return true;
   const QString trimmed = text.trimmed();
   QJsonObject plan;
   if (planFollowUp) {
@@ -616,6 +660,15 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
     return true;
   }
 
+  // A file sent to another machine before the draft moved goes up again.
+  bool moved = false;
+  for (const Attachment& attachment : std::as_const(attachments)) {
+    if (!attachment.file || attachment.upload != QString() || attachment.environmentId == where.environmentId) continue;
+    moved = true;
+    uploadFile(attachment.id, where.environmentId);
+  }
+  if (moved) attachments = m_drafts.value(draftId).attachments;
+  if (filesBlock(attachments, QStringLiteral("sending"))) return true;
   const QString trimmed = text.trimmed();
   const QJsonObject modelSelection = selection(draftId);
   QJsonObject input{
@@ -666,12 +719,19 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                      }
                    });
   };
-  if (attachments.isEmpty()) {
+  const QJsonArray files = fileRecords(attachments);
+  if (std::all_of(attachments.cbegin(), attachments.cend(), [](const Attachment& a) { return a.file; })) {
+    if (!files.isEmpty()) {
+      QJsonObject initial = input.value(QLatin1String("initialMessage")).toObject();
+      initial.insert(QStringLiteral("attachments"), files);
+      input.insert(QStringLiteral("initialMessage"), initial);
+    }
     start(input);
     return true;
   }
   QJsonArray images;
   for (const Attachment& attachment : attachments) {
+    if (attachment.file) continue;
     QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
                       {QStringLiteral("name"), attachment.name},
                       {QStringLiteral("mimeType"), attachment.mimeType},
@@ -685,7 +745,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                  QJsonObject{{QStringLiteral("threadId"), kept->threadId},
                              {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                              {QStringLiteral("attachments"), images}},
-                 [this, draftId, input, message, start, background, text, attachments, contexts](
+                 [this, draftId, input, message, start, background, text, attachments, contexts, files](
                      const QJsonValue& result, const std::optional<QString>& error) mutable {
                    if (error) {
                      if (background) {
@@ -695,7 +755,9 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                      }
                      return;
                    }
-                   message.insert(QStringLiteral("attachments"), result.toObject().value(QLatin1String("attachments")));
+                   QJsonArray stored = result.toObject().value(QLatin1String("attachments")).toArray();
+                   for (const QJsonValue& file : files) stored.append(file);
+                   message.insert(QStringLiteral("attachments"), stored);
                    input.insert(QStringLiteral("initialMessage"), message);
                    start(input);
                  });
@@ -802,12 +864,20 @@ void ComposerController::sendNext(const QString& target) {
       sendNext(target);
     }
   };
-  if (send.attachments.isEmpty()) {
-    dispatchAll(send, 0, finish);
+  const QJsonArray files = fileRecords(send.attachments);
+  if (std::all_of(send.attachments.cbegin(), send.attachments.cend(), [](const Attachment& a) { return a.file; })) {
+    Send ready = send;
+    if (!files.isEmpty()) {
+      QJsonObject message = ready.commands.constLast();
+      message.insert(QStringLiteral("attachments"), files);
+      ready.commands.last() = message;
+    }
+    dispatchAll(ready, 0, finish);
     return;
   }
   QJsonArray images;
   for (const Attachment& attachment : send.attachments) {
+    if (attachment.file) continue;
     QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
                       {QStringLiteral("name"), attachment.name},
                       {QStringLiteral("mimeType"), attachment.mimeType},
@@ -821,12 +891,14 @@ void ComposerController::sendNext(const QString& target) {
                  QJsonObject{{QStringLiteral("threadId"), send.threadId},
                              {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                              {QStringLiteral("attachments"), images}},
-                 [this, send, message, finish](const QJsonValue& result, const std::optional<QString>& error) mutable {
+                 [this, send, message, finish, files](const QJsonValue& result, const std::optional<QString>& error) mutable {
                    if (error) {
                      finish(error);
                      return;
                    }
-                   message.insert(QStringLiteral("attachments"), result.toObject().value(QLatin1String("attachments")));
+                   QJsonArray carried = result.toObject().value(QLatin1String("attachments")).toArray();
+                   for (const QJsonValue& file : files) carried.append(file);
+                   message.insert(QStringLiteral("attachments"), carried);
                    Send stored = send;
                    stored.commands.last() = message;
                    dispatchAll(stored, 0, finish);
@@ -845,23 +917,265 @@ void ComposerController::dispatchAll(const Send& send, qsizetype index,
                             });
 }
 
-// Images the brick read from disk ({name, mimeType, base64}) join the route
-// thread's draft.
+// What the brick read from disk or the clipboard joins the route's draft: an
+// image as its bytes, any other file by its path, a pasted text as itself.
+// Files go to the MC at once.
 bool ComposerController::attach(const QVariantList& files) {
   const QString target = this->target();
   if (target.isEmpty()) return true;
-  QList<Attachment>& attachments = m_drafts[target].attachments;
+  const QString environmentId = environmentOf(target);
+  QStringList added;
   for (const QVariant& value : files) {
     const QVariantMap file = value.toMap();
-    const QString base64 = file.value(QStringLiteral("base64")).toString();
+    const QString name = file.value(QStringLiteral("name")).toString();
     const QString mimeType = file.value(QStringLiteral("mimeType")).toString();
-    attachments.append({newId(), file.value(QStringLiteral("name")).toString(),
-                        mimeType, QByteArray::fromBase64(base64.toLatin1()).size(),
-                        QStringLiteral("data:%1;base64,%2").arg(mimeType, base64)});
+    QList<Attachment>& attachments = m_drafts[target].attachments;
+    if (file.contains(QStringLiteral("base64"))) {
+      const QString base64 = file.value(QStringLiteral("base64")).toString();
+      attachments.append({newId(), name, mimeType, QByteArray::fromBase64(base64.toLatin1()).size(),
+                          QStringLiteral("data:%1;base64,%2").arg(mimeType, base64)});
+      continue;
+    }
+    Attachment attachment{newId(), name, mimeType.isEmpty() ? QStringLiteral("application/octet-stream") : mimeType};
+    attachment.file = true;
+    if (file.contains(QStringLiteral("text"))) {
+      attachment.content = file.value(QStringLiteral("text")).toString().toUtf8();
+      attachment.pastedText = true;
+      attachment.mimeType = QStringLiteral("text/plain");
+      attachment.sizeBytes = attachment.content.size();
+      // nextPastedTextFileName: pasted-text.txt, then pasted-text-2.txt, ...
+      const auto taken = [&](const QString& candidate) {
+        return std::any_of(attachments.cbegin(), attachments.cend(), [&](const Attachment& other) { return other.name.compare(candidate, Qt::CaseInsensitive) == 0; });
+      };
+      attachment.name = QStringLiteral("pasted-text.txt");
+      for (int n = 2; taken(attachment.name); ++n) attachment.name = QStringLiteral("pasted-text-%1.txt").arg(n);
+      NativeShell::of(this)->controller<ToastController>()->show(
+          QStringLiteral("info"), tr("Large paste attached as %1").arg(attachment.name),
+          tr("%1 · Use %2 to keep a large paste inline.")
+              .arg(QLocale(QLocale::English, QLocale::UnitedStates).formattedDataSize(attachment.sizeBytes, 1, QLocale::DataSizeIecFormat),
+                   NativeShell::of(this)->controller<KeybindingController>()->mac() ? QStringLiteral("⌘⇧V") : QStringLiteral("Ctrl+Shift+V")));
+    } else {
+      attachment.path = file.value(QStringLiteral("path")).toString();
+      attachment.sizeBytes = QFileInfo(attachment.path).size();
+    }
+    attachments.append(attachment);
+    added.append(attachment.id);
   }
   save();
   publish();
+  for (const QString& id : std::as_const(added)) uploadFile(id, environmentId);
   return true;
+}
+
+// The same for the answer to a question: `questionId`, else the first of the
+// request that takes a typed answer. A question of fixed choices takes none.
+bool ComposerController::attachToAnswer(const QString& requestId, QString questionId, const QVariantList& files) {
+  const QVariantList pending = turnState().value(QStringLiteral("questions")).toList();
+  const auto request = std::find_if(pending.cbegin(), pending.cend(), [&](const QVariant& entry) {
+    return entry.toMap().value(QStringLiteral("requestId")) == requestId;
+  });
+  if (request == pending.cend()) return true;
+  bool accepts = false;
+  for (const QVariant& entry : request->toMap().value(QStringLiteral("questions")).toList()) {
+    const QVariantMap question = entry.toMap();
+    if (!question.value(QStringLiteral("allowCustomAnswer")).toBool()) continue;
+    if (questionId.isEmpty()) questionId = question.value(QStringLiteral("id")).toString();
+    if (questionId == question.value(QStringLiteral("id")).toString()) accepts = true;
+  }
+  if (!accepts) {
+    toast(QStringLiteral("This question cannot accept attachments."), {});
+    return true;
+  }
+  const QString environmentId = environmentOf(m_thread);
+  QStringList added;
+  for (const QVariant& value : files) {
+    const QVariantMap file = value.toMap();
+    Attachment attachment{newId(), file.value(QStringLiteral("name")).toString(), file.value(QStringLiteral("mimeType")).toString()};
+    if (attachment.mimeType.isEmpty()) attachment.mimeType = QStringLiteral("application/octet-stream");
+    attachment.file = true;
+    if (file.contains(QStringLiteral("base64"))) {
+      attachment.content = QByteArray::fromBase64(file.value(QStringLiteral("base64")).toString().toLatin1());
+      attachment.sizeBytes = attachment.content.size();
+    } else if (file.contains(QStringLiteral("text"))) {
+      attachment.content = file.value(QStringLiteral("text")).toString().toUtf8();
+      attachment.sizeBytes = attachment.content.size();
+    } else {
+      attachment.path = file.value(QStringLiteral("path")).toString();
+      attachment.sizeBytes = QFileInfo(attachment.path).size();
+    }
+    m_answerFiles[requestId][questionId].append(attachment);
+    added.append(attachment.id);
+  }
+  publish();
+  for (const QString& id : std::as_const(added)) uploadFile(id, environmentId);
+  return true;
+}
+
+// apps/web ChatComposer addDroppedFolders: a folder is named by its path,
+// which only means something where the MC shares this machine's disk.
+bool ComposerController::attachFolders(const QString& target, const QVariantList& folders) {
+  if (!m_bridge->localFolders() || environmentOf(target) != m_client->environment()) {
+    toast(QStringLiteral("Folders can't be dropped into remote environments"), QStringLiteral("Type the folder path with @ instead."));
+    return true;
+  }
+  QString text = draft(target);
+  for (const QVariant& folder : folders) {
+    if (!text.isEmpty() && !text.back().isSpace()) text += u' ';
+    text += composer::pathLink(folder.toString());
+  }
+  setText(target, text, int(text.size()));
+  return true;
+}
+
+ComposerController::Attachment* ComposerController::findAttachment(const QString& id) {
+  for (Draft& draft : m_drafts) {
+    for (Attachment& attachment : draft.attachments) {
+      if (attachment.id == id) return &attachment;
+    }
+  }
+  for (auto& questions : m_answerFiles) {
+    for (QList<Attachment>& files : questions) {
+      for (Attachment& attachment : files) {
+        if (attachment.id == id) return &attachment;
+      }
+    }
+  }
+  return nullptr;
+}
+
+QString ComposerController::environmentOf(const QString& target) const {
+  if (const auto thread = m_store->thread(target)) return thread->environmentId;
+  auto* shell = NativeShell::of(this);
+  if (!shell->controller<DraftController>()->draft(target)) return {};
+  return shell->controller<WorkspaceController>()->launch(target).environmentId;
+}
+
+// `attachments.createUploadUrl`, then the bytes to the URL it answers with;
+// the message later names the upload, and the MC moves it into the thread.
+void ComposerController::uploadFile(const QString& id, const QString& environmentId) {
+  Attachment* attachment = findAttachment(id);
+  if (!attachment) return;
+  const auto failed = [this, id](const QString& why) {
+    if (Attachment* found = findAttachment(id)) {
+      found->upload = QStringLiteral("failed");
+      found->error = why;
+    }
+    save();
+    publish();
+  };
+  attachment->upload = QStringLiteral("uploading");
+  attachment->error.clear();
+  attachment->remoteId.clear();
+  attachment->environmentId = environmentId;
+  QByteArray bytes = attachment->content;
+  if (!attachment->path.isEmpty()) {
+    QFile file(attachment->path);
+    if (!file.open(QIODevice::ReadOnly)) {
+      failed(tr("%1 could not be read.").arg(attachment->name));
+      return;
+    }
+    bytes = file.readAll();
+  }
+  const QString mimeType = attachment->mimeType;
+  publish();
+  m_client->call(this, environmentId, QStringLiteral("attachments.createUploadUrl"),
+                 QJsonObject{{QStringLiteral("type"), QStringLiteral("file")},
+                             {QStringLiteral("name"), attachment->name},
+                             {QStringLiteral("mimeType"), mimeType},
+                             {QStringLiteral("sizeBytes"), bytes.size()}},
+                 [this, id, bytes, mimeType, failed](const QJsonValue& result, const std::optional<QString>& error) {
+                   const QString url = result.toObject().value(QLatin1String("relativeUrl")).toString();
+                   const QString remoteId = result.toObject().value(QLatin1String("attachmentId")).toString();
+                   if (error || url.isEmpty() || remoteId.isEmpty()) {
+                     failed(error.value_or(tr("The environment did not take the upload.")));
+                     return;
+                   }
+                   m_client->upload(this, url, bytes, mimeType, [this, id, remoteId, failed](const QJsonValue&, const std::optional<QString>& error) {
+                     if (error) {
+                       failed(*error);
+                       return;
+                     }
+                     if (Attachment* found = findAttachment(id)) {
+                       found->upload.clear();
+                       found->remoteId = remoteId;
+                     }
+                     save();
+                     publish();
+                   });
+                 });
+}
+
+// The web's send guards (ChatView): nothing leaves while a file is still on
+// its way, or after one failed.
+bool ComposerController::filesBlock(const QList<Attachment>& attachments, const QString& what) {
+  bool uploading = false, failed = false;
+  for (const Attachment& attachment : attachments) {
+    uploading = uploading || attachment.upload == QLatin1String("uploading");
+    failed = failed || attachment.upload == QLatin1String("failed");
+  }
+  if (failed) {
+    toast(tr("Retry or remove failed uploads before %1.").arg(what), {});
+  } else if (uploading) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), tr("Wait for attachments to finish uploading, or remove failed uploads."), {});
+  }
+  return failed || uploading;
+}
+
+// ChatFileAttachment for each uploaded file.
+QJsonArray ComposerController::fileRecords(const QList<Attachment>& attachments) {
+  QJsonArray files;
+  for (const Attachment& attachment : attachments) {
+    if (!attachment.file) continue;
+    QJsonObject file{{QStringLiteral("type"), QStringLiteral("file")},
+                     {QStringLiteral("id"), attachment.remoteId},
+                     {QStringLiteral("name"), attachment.name},
+                     {QStringLiteral("mimeType"), attachment.mimeType},
+                     {QStringLiteral("sizeBytes"), attachment.sizeBytes}};
+    if (attachment.pastedText) file.insert(QStringLiteral("source"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("pasted-text")}});
+    files.append(file);
+  }
+  return files;
+}
+
+// What the composer shows of each: {id, name, kind, status, error, source};
+// `source` is a Snap Shot's {appName, windowTitle, accessibility}, the
+// last being what its window said of itself, in the web's words
+// (SnapShotAttachmentDetails.tsx).
+QVariantList ComposerController::shownAttachments(const QList<Attachment>& attachments) {
+  QVariantList shown;
+  for (const Attachment& attachment : attachments) {
+    QVariant source = QVariant::fromValue(nullptr);
+    if (str(attachment.source, QLatin1String("kind")) == QLatin1String("snap-shot")) {
+      // SnapShotAttachmentDetails.tsx: the text the window said of itself,
+      // else its element tree when any element has a name or value.
+      const QJsonObject accessibility = attachment.source.value(QLatin1String("accessibility")).toObject();
+      QString said = str(accessibility, QLatin1String("format")) == QLatin1String("flat-text") ? str(accessibility, QLatin1String("text")).trimmed()
+                                                                                             : str(attachment.source, QLatin1String("accessibleText")).trimmed();
+      const std::function<bool(const QJsonObject&)> readable = [&readable](const QJsonObject& node) {
+        if (!str(node, QLatin1String("name")).isEmpty() || !str(node, QLatin1String("value")).isEmpty()) return true;
+        const QJsonArray children = node.value(QLatin1String("children")).toArray();
+        return std::any_of(children.begin(), children.end(), [&](const QJsonValue& child) { return readable(child.toObject()); });
+      };
+      if (said.isEmpty() && readable(accessibility.value(QLatin1String("root")).toObject())) {
+        said = QString::fromUtf8(QJsonDocument(accessibility).toJson(QJsonDocument::Indented));
+      }
+      if (said.isEmpty()) {
+        said = accessibility.isEmpty() ? QStringLiteral("The app or capture backend did not provide verified accessibility data.")
+                                       : QStringLiteral("Structured accessibility elements were included, but they have no readable names or values.");
+      }
+      source = QVariantMap{{QStringLiteral("appName"), str(attachment.source, QLatin1String("appName"))},
+                           {QStringLiteral("windowTitle"), str(attachment.source, QLatin1String("windowTitle"))},
+                           {QStringLiteral("accessibility"), said}};
+    }
+    shown.append(QVariantMap{{QStringLiteral("id"), attachment.id},
+                             {QStringLiteral("name"), attachment.name},
+                             {QStringLiteral("kind"), attachment.file ? QStringLiteral("file") : QStringLiteral("image")},
+                             {QStringLiteral("status"), attachment.upload},
+                             {QStringLiteral("error"), attachment.error},
+                             {QStringLiteral("source"), source}});
+  }
+  return shown;
 }
 
 void ComposerController::attachImage(const QString& target, const QString& name, const QString& mimeType,
@@ -985,6 +1299,7 @@ bool ComposerController::respond(const QString& requestId, const QJsonObject& fi
   m_client->dispatchCommand(this, thread->environmentId, command,
                             [this, requestId, failure](const QJsonValue&, const std::optional<QString>& error) {
                               m_responding.remove(requestId);
+                              if (!error) m_answerFiles.remove(requestId);
                               if (error && staleRequest(*error)) {
                                 m_closed.insert(requestId);
                               } else if (error) {
@@ -1250,7 +1565,15 @@ QVariantMap ComposerController::turnState() const {
   for (const QJsonObject& item : itemsOf(items, QStringLiteral("user_input_request"))) {
     QVariantMap question;
     if (!pending(item, question, false)) continue;
-    question.insert(QStringLiteral("questions"), item.value(QLatin1String("questions")).toArray().toVariantList());
+    // Each question with the files attached to its answer.
+    const QHash<QString, QList<Attachment>> files = m_answerFiles.value(question.value(QStringLiteral("requestId")).toString());
+    QVariantList asked;
+    for (const QJsonValue& value : item.value(QLatin1String("questions")).toArray()) {
+      QVariantMap one = value.toObject().toVariantMap();
+      one.insert(QStringLiteral("attachments"), shownAttachments(files.value(one.value(QStringLiteral("id")).toString())));
+      asked.append(one);
+    }
+    question.insert(QStringLiteral("questions"), asked);
     questions.append(question);
   }
   state.insert(QStringLiteral("questions"), questions);
@@ -1592,10 +1915,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
     if (!waiting && !composer::emptyText(trigger->kind).isEmpty()) emptyText = composer::emptyText(trigger->kind);
   }
 
-  QVariantList attachments;
-  for (const Attachment& attachment : kept.attachments) {
-    attachments.append(QVariantMap{{QStringLiteral("id"), attachment.id}, {QStringLiteral("name"), attachment.name}});
-  }
+  const QVariantList attachments = shownAttachments(kept.attachments);
   QVariantList terminalContexts;
   for (const TerminalContext& context : kept.terminalContexts) {
     terminalContexts.append(QVariantMap{{QStringLiteral("id"), context.id},
@@ -1789,11 +2109,26 @@ void ComposerController::setStorePath(const QString& path) {
       for (const QJsonValue& value : it.value().toArray()) {
         const QJsonObject image = value.toObject();
         const QString dataUrl = image.value(QLatin1String("dataUrl")).toString();
-        if (!dataUrl.startsWith(QLatin1String("data:image/"))) continue;
-        attachments.append({image.value(QLatin1String("id")).toString(), image.value(QLatin1String("name")).toString(),
-                            image.value(QLatin1String("mimeType")).toString(),
-                            qint64(image.value(QLatin1String("sizeBytes")).toDouble()), dataUrl,
-                            image.value(QLatin1String("source")).toObject()});
+        const bool file = image.value(QLatin1String("file")).toBool();
+        if (!file && !dataUrl.startsWith(QLatin1String("data:image/"))) continue;
+        Attachment attachment{image.value(QLatin1String("id")).toString(), image.value(QLatin1String("name")).toString(),
+                              image.value(QLatin1String("mimeType")).toString(),
+                              qint64(image.value(QLatin1String("sizeBytes")).toDouble()), file ? QString() : dataUrl,
+                              image.value(QLatin1String("source")).toObject()};
+        if (file) {
+          attachment.file = true;
+          attachment.path = image.value(QLatin1String("path")).toString();
+          attachment.content = QByteArray::fromBase64(dataUrl.section(u',', 1).toLatin1());
+          attachment.pastedText = image.value(QLatin1String("pastedText")).toBool();
+          attachment.remoteId = image.value(QLatin1String("remoteId")).toString();
+          attachment.environmentId = image.value(QLatin1String("environmentId")).toString();
+          // An upload this shell did not see end has to go again.
+          if (attachment.remoteId.isEmpty()) {
+            attachment.upload = QStringLiteral("failed");
+            attachment.error = tr("The upload was interrupted.");
+          }
+        }
+        attachments.append(attachment);
       }
     }
     m_kept.images = imagesSignature(kept);
@@ -1875,6 +2210,15 @@ void ComposerController::save() const {
                         {QStringLiteral("sizeBytes"), attachment.sizeBytes},
                         {QStringLiteral("dataUrl"), attachment.dataUrl}};
       if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+      if (attachment.file) {
+        image.insert(QStringLiteral("file"), true);
+        image.insert(QStringLiteral("path"), attachment.path);
+        image.insert(QStringLiteral("dataUrl"), QStringLiteral("data:;base64,") + QString::fromLatin1(attachment.content.toBase64()));
+        image.insert(QStringLiteral("pastedText"), attachment.pastedText);
+        image.insert(QStringLiteral("remoteId"), attachment.remoteId);
+        image.insert(QStringLiteral("environmentId"), attachment.environmentId);
+        image.insert(QStringLiteral("upload"), attachment.upload);
+      }
       list.append(image);
     }
     if (!list.isEmpty()) images.insert(it.key(), list);

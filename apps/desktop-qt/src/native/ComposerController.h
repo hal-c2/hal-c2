@@ -65,7 +65,11 @@ class TimelineModel;
 // composer.model.favorite.toggle {instanceId, model},
 // composer.option.set {id, value}, composer.runtimeMode.set {mode},
 // composer.interactionMode.set {mode}, composer.submit {text, intent, edit},
-// composer.interrupt, composer.attach {files}, composer.attachment.remove {id},
+// composer.interrupt, composer.attach {files, folders} (a file is {name,
+// mimeType, base64} for an image, {name, mimeType, path} for any other file,
+// {name, text} for a pasted text), composer.attachment.remove {id},
+// composer.attachment.retry {id}, composer.question.attach {requestId,
+// questionId, files}, composer.question.attachment.remove {id},
 // composer.terminalContext.add {terminalId, terminalLabel, lineStart, lineEnd,
 // text}, composer.terminalContext.remove {id},
 // composer.approval.respond {requestId, decision},
@@ -133,7 +137,36 @@ private:
     qint64 sizeBytes = 0;
     QString dataUrl;
     QJsonObject source;
+    // A file (not an image) goes to the MC when it is added and the message
+    // names the upload (`attachments.createUploadUrl`); an image goes with
+    // its message (`assets.persistChatAttachments`).
+    bool file = false;
+    // Where a file's bytes are: a path on this machine, or a pasted text.
+    QString path;
+    QByteArray content;
+    bool pastedText = false;
+    // A file's upload: "uploading", "failed" (why, in `error`), or empty once
+    // the MC has it as `remoteId` on `environmentId`.
+    QString upload;
+    QString error;
+    QString remoteId;
+    QString environmentId;
   };
+  // The attachment `id` of any draft or answer; null when it is gone.
+  Attachment* findAttachment(const QString& id);
+  // Sends a file's bytes to the environment `target` runs on.
+  void uploadFile(const QString& id, const QString& environmentId);
+  // The environment a thread's or a new thread's files go to.
+  QString environmentOf(const QString& target) const;
+  // Why the files keep a send (or `what`) waiting, toasted; false when none do.
+  bool filesBlock(const QList<Attachment>& attachments, const QString& what);
+  static QJsonArray fileRecords(const QList<Attachment>& attachments);
+  static QVariantList shownAttachments(const QList<Attachment>& attachments);
+  // A dropped folder becomes a path the prompt names, where the MC shares
+  // this machine's folders.
+  bool attachFolders(const QString& target, const QVariantList& folders);
+  // Files for the answer to one question of a pending request.
+  bool attachToAnswer(const QString& requestId, QString questionId, const QVariantList& files);
   // A terminal selection on the draft (apps/web/src/lib/terminalContext.ts).
   struct TerminalContext {
     QString id;
@@ -299,6 +332,9 @@ private:
   QString m_draftId;
   QPointer<TimelineModel> m_timeline;
   QMetaObject::Connection m_timelineConnection;
+  // The files attached to each question's answer, by request id then
+  // question id; they go with the answer and stay out of the thread's draft.
+  QHash<QString, QHash<QString, QList<Attachment>>> m_answerFiles;
   // Requests answered and waiting for the MC, and ones it said are gone.
   QSet<QString> m_responding;
   QSet<QString> m_closed;

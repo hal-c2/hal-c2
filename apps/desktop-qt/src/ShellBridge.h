@@ -61,6 +61,18 @@ public:
   // Reads image files for the composer: [{name, mimeType, base64}], skipping
   // anything that is not an image or is over the attachment size limit.
   Q_INVOKABLE QVariantList readImageFiles(const QList<QUrl>& urls) const;
+  // Reads files for the composer: an image as readImageFiles has it, any
+  // other file as {name, mimeType, path} (its bytes go up from the path);
+  // folders, empty files and ones over the attachment limits are skipped.
+  Q_INVOKABLE QVariantList readAttachmentFiles(const QList<QUrl>& urls) const;
+  // The folders among `urls`, as paths on this machine.
+  Q_INVOKABLE QStringList directoryPaths(const QList<QUrl>& urls) const;
+  // The clipboard's text, for the composer's own paste.
+  Q_INVOKABLE QString clipboardText() const;
+  // Whether pasting `text` into a prompt of `promptLength` characters makes
+  // it a text file instead (packages/client-runtime textPaste.ts): 32 KiB or
+  // more, or more than the prompt can hold.
+  Q_INVOKABLE bool pasteAttaches(const QString& text, int promptLength) const;
   // A drop imports an existing local directory, never creates or deletes it.
   Q_INVOKABLE QString localDirectoryPath(const QUrl& url) const;
 

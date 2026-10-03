@@ -1,5 +1,7 @@
 #include "ShellBridge.h"
 
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QDesktopServices>
 #include <QFile>
 #include <QFileInfo>
@@ -85,6 +87,50 @@ QString ShellBridge::localDirectoryPath(const QUrl& url) const {
   }
   const QFileInfo directory(url.toLocalFile());
   return directory.isDir() ? directory.canonicalFilePath() : QString();
+}
+
+QVariantList ShellBridge::readAttachmentFiles(const QList<QUrl>& urls) const {
+  constexpr qint64 kMaxFileBytes = 50 * 1024 * 1024;
+  QMimeDatabase mimeDatabase;
+  QVariantList result;
+  for (const QUrl& url : urls) {
+    const QFileInfo info(url.toLocalFile());
+    if (!url.isLocalFile() || !info.isFile()) continue;
+    const QMimeType mime = mimeDatabase.mimeTypeForFile(info.filePath());
+    if (mime.name().startsWith(QStringLiteral("image/"))) {
+      result.append(readImageFiles({url}));
+      continue;
+    }
+    if (info.size() < 1 || info.size() > kMaxFileBytes) {
+      qInfo().noquote() << "[shell] skipping attachment (empty or too large)" << info.filePath();
+      continue;
+    }
+    result.append(QVariantMap{
+        {QStringLiteral("name"), info.fileName()},
+        {QStringLiteral("mimeType"), mime.name()},
+        {QStringLiteral("path"), info.absoluteFilePath()},
+    });
+  }
+  return result;
+}
+
+QStringList ShellBridge::directoryPaths(const QList<QUrl>& urls) const {
+  QStringList paths;
+  for (const QUrl& url : urls) {
+    const QFileInfo info(url.toLocalFile());
+    if (url.isLocalFile() && info.isDir()) paths.append(info.absoluteFilePath());
+  }
+  return paths;
+}
+
+QString ShellBridge::clipboardText() const {
+  return QGuiApplication::clipboard()->text();
+}
+
+bool ShellBridge::pasteAttaches(const QString& text, int promptLength) const {
+  constexpr qsizetype kThresholdBytes = 32 * 1024;
+  constexpr qsizetype kMaxPromptChars = 120000;
+  return !text.isEmpty() && (text.toUtf8().size() >= kThresholdBytes || promptLength + text.size() > kMaxPromptChars);
 }
 
 QVariantList ShellBridge::readImageFiles(const QList<QUrl>& urls) const {

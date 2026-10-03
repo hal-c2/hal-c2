@@ -11,6 +11,7 @@ qt_add_qml_module(hal_c2_bricks
     ClusterSettings.qml
     ConnectionsSettings.qml
     Composer.qml
+    ComposerAttachment.qml
     ModelPicker.qml
     ProviderIcon.qml
     ComposerVimKeys.qml

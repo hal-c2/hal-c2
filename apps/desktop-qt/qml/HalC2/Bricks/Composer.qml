@@ -205,14 +205,33 @@ Rectangle {
         });
     }
 
+    // Files join the draft (or the answer the agent waits on); a folder is
+    // named by its path.
     function attach(urls) {
-        const files = Shell.readImageFiles(urls);
-        if (files.length === 0) {
+        const files = Shell.readAttachmentFiles(urls);
+        const folders = Shell.directoryPaths(urls);
+        if (files.length === 0 && folders.length === 0) {
             return;
         }
         Shell.dispatch("composer.attach", {
-            files: files
+            files: files,
+            folders: folders
         });
+    }
+
+    // A paste too large for the prompt becomes a text file; Paste as Text
+    // (mod+shift+V) keeps it in the editor.
+    function paste(asText) {
+        const text = Shell.clipboardText();
+        if (text.length === 0) return false;
+        const selected = input.selectionEnd - input.selectionStart;
+        if (!asText && Shell.pasteAttaches(text, input.length - selected)) {
+            Shell.dispatch("composer.attach", {
+                files: [{ name: "pasted-text.txt", text: text }]
+            });
+            return true;
+        }
+        return composer.insertText(text);
     }
 
     // What Enter with these modifiers sends, as the controller resolves it from the
@@ -312,6 +331,7 @@ Rectangle {
     // that hosts the composer can answer it.
     TurnRequests {
         id: turnRequests
+        objectName: "turnRequests"
 
         anchors.top: parent.top
         anchors.left: parent.left
@@ -620,16 +640,14 @@ Rectangle {
                     Repeater {
                         model: composer.attachments
 
-                        delegate: ShellButton {
+                        delegate: ComposerAttachment {
                             required property var modelData
 
-                            objectName: "attachment:" + modelData.name
-                            implicitHeight: 24
-                            iconName: "image"
-                            text: modelData.name
-                            font.pixelSize: 12
-                            Accessible.name: qsTr("Remove %1").arg(modelData.name)
-                            onClicked: Shell.dispatch("composer.attachment.remove", {
+                            attachment: modelData
+                            onRemoveRequested: Shell.dispatch("composer.attachment.remove", {
+                                id: modelData.id
+                            })
+                            onRetryRequested: Shell.dispatch("composer.attachment.retry", {
                                 id: modelData.id
                             })
                         }
@@ -693,6 +711,10 @@ Rectangle {
                             event.accepted = false;
                             composer.editorKeyPressed(event);
                             if (event.accepted) return;
+                            if (event.key === Qt.Key_V && (event.modifiers & ~Qt.ShiftModifier) === Qt.ControlModifier) {
+                                event.accepted = composer.paste((event.modifiers & Qt.ShiftModifier) !== 0);
+                                if (event.accepted) return;
+                            }
                             if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
                                 if (event.key === Qt.Key_Escape) {
                                     event.accepted = true;
@@ -764,15 +786,15 @@ Rectangle {
                         iconTint: composer.iconMuted
                         Layout.leftMargin: -10
                         enabled: composer.ready && !composer.model.editorDisabled
-                        Accessible.name: qsTr("Attach image")
+                        Accessible.name: qsTr("Attach files")
                         onClicked: imagePicker.open()
 
                         FileDialog {
                             id: imagePicker
 
-                            title: qsTr("Attach images")
+                            title: qsTr("Attach files")
                             fileMode: FileDialog.OpenFiles
-                            nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif)")]
+                            nameFilters: [qsTr("All files (*)"), qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif)")]
                             onAccepted: composer.attach(selectedFiles)
                         }
                     }
@@ -887,11 +909,11 @@ Rectangle {
                         readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0 && composer.attachments.length === 0
                         // A send during a turn joins it or waits behind it, per the
                         // follow-up setting; the button says which before the click.
-                        readonly property string followUp: composer.model.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
+                        readonly property string followUp: composer.model?.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
 
                         implicitWidth: 32
                         implicitHeight: 32
-                        enabled: composer.ready && (stopMode || composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
+                        enabled: composer.ready && (stopMode || composer.model?.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
                         hoverEnabled: true
                         opacity: enabled ? 1 : 0.3
                         scale: down ? 0.97 : hovered ? 1.05 : 1
