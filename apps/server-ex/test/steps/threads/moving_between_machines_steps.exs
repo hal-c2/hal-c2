@@ -864,6 +864,57 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     furnish(context, title)
   end
 
+  step "{string} has an attachment larger than the machines send at once",
+       %{args: [title]} = context do
+    id = World.thread_id(context, title)
+    assert %{"status" => "completed"} = World.finish_turn(context, title, "write run-1.txt")
+    recording = "#{String.replace(id, ~r/[^a-z0-9_-]/i, "-")}-recording"
+    # Three pieces of a move and part of a fourth, no two of them alike.
+    bytes = for n <- 1..400_000, into: <<>>, do: <<n::32>>
+    File.mkdir_p!(HalC2.Attachments.dir())
+    File.write!(Path.join(HalC2.Attachments.dir(), recording <> ".bin"), bytes)
+
+    context
+    |> World.add_message(title, "user", "Here is the recording", nil, %{
+      "attachments" => [
+        %{
+          "type" => "file",
+          "id" => recording,
+          "name" => "recording.bin",
+          "mimeType" => "application/octet-stream",
+          "sizeBytes" => byte_size(bytes)
+        }
+      ]
+    })
+    |> Map.merge(%{recording: recording, recording_sha256: :crypto.hash(:sha256, bytes)})
+  end
+
+  step "the partial copy on {string} holds the attachment as a file",
+       %{args: [machine]} = context do
+    staged = Machines.on(context, machine, Machines, :incoming_move_files, [])
+    assert context.recording_sha256 in staged
+    # The source's bundle of the thread's checkpoints is a file too.
+    assert [_ | _] = Machines.archive_bundles()
+
+    context
+  end
+
+  step "once the move finishes the attachment on {string} is the same as it was on {string}",
+       %{args: [machine, _source]} = context do
+    send(context.held.pid, :release)
+    context = held_result(context)
+    moved!(context)
+    path = Machines.on(context, machine, HalC2.Attachments, :path, [%{"id" => context.recording}])
+    assert :crypto.hash(:sha256, File.read!(path)) == context.recording_sha256
+    context
+  end
+
+  step "neither machine keeps the copies it made for the move", context do
+    assert Machines.archive_bundles() == []
+    assert Machines.on(context, context.move_to, Machines, :incoming_moves, []) == []
+    context
+  end
+
   step "a client opens the image in {string}", %{args: [title]} = context do
     id = World.thread_id(context, title)
     assert {:ok, where} = HalC2.ThreadMove.locate(id)

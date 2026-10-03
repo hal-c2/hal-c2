@@ -30,6 +30,11 @@
 #     source keeps it, unchanged and read-only. A move that fails leaves the thread where it was.
 #   - Terminal scrollback travels as history. Running terminals do not: they belong to the source
 #     machine and are closed when the thread leaves, after the user is told.
+#   - What a thread carries can be far larger than the thread: its repository's commits, its
+#     agent's session. A move sends a list of the files and the destination copies each one from
+#     the source's disk to its own, a piece at a time, so neither machine holds one in memory.
+#     What a machine writes for a move it writes under its own directories, not the system's
+#     temporary one, which is often kept in memory.
 #   - Moving has no default shortcut. It is rare and deliberate; the menu, the palette and the
 #     agent tool are enough.
 #   - Export and import copy a thread between machines that are not in one cluster. Exporting
@@ -161,6 +166,14 @@ Feature: Moving a thread and its agent to another machine
       When "Alpha" moves to "desktop"
       And a client opens the image in "Alpha"
       Then "desktop" serves the image
+
+    @mc
+    Scenario: A thread's files go from disk to disk, never whole through memory
+      Given "Alpha" has an attachment larger than the machines send at once
+      When "Alpha" is being copied to "desktop"
+      Then the partial copy on "desktop" holds the attachment as a file
+      And once the move finishes the attachment on "desktop" is the same as it was on "laptop"
+      And neither machine keeps the copies it made for the move
 
     @mc
     Scenario: Checkpoints are carried into the destination's repository

@@ -5,12 +5,19 @@ defmodule HalC2.ThreadArchive do
   (`HalC2.ThreadMove`) sends.
 
   Version 2 carries the thread's stream as entities (`HalC2.StreamState.rows/1`), the
-  project it lived in (its root and repository), attachments and terminal scrollback
-  (base64 with sha256), a `git bundle` of its checkpoint refs, a bundle of the branch
-  of its own worktree and, when its provider can carry one, the agent's native session
+  project it lived in (its root and repository), attachments and terminal scrollback,
+  a `git bundle` of its checkpoint refs, a bundle of the branch of its own worktree
+  and, when its provider can carry one, the agent's native session
   (`HalC2.PortableSessions`). Version 1 is
   the Node server's archive (`apps/server/scripts/thread-transfer.ts`); it imports
   through `HalC2.Import.V2` without a session.
+
+  Every carried file has a name and a sha256. A built archive leaves the large ones
+  where they are on this machine's disk (`"path"`, with their `"size"`), so a thread
+  with a large session or repository is never held in memory: `export_file/3` writes
+  them into the file a piece at a time, as base64 (`"dataBase64"`), and a move copies
+  them to the destination's disk beside the rest (`HalC2.ThreadMove.accept/3`). Only
+  reading a `.hal-c2-thread` file holds it whole, its files' bytes under `"data"`.
 
   An import checks the whole file before it writes anything. The thread lands in a
   named project or the one project here that is a checkout of the same repository;
@@ -26,6 +33,8 @@ defmodule HalC2.ThreadArchive do
   @format "hal-c2-thread-export"
   @version 2
   @extension ".hal-c2-thread"
+  # How much of a file is read at a time; whole base64 groups, so the pieces join.
+  @piece 3 * 256 * 1024
 
   @type archive :: map
 
@@ -35,7 +44,8 @@ defmodule HalC2.ThreadArchive do
 
   @doc """
   The archive of a thread on this MC, by id or title. `opts[:session]` false
-  leaves the agent's session out.
+  leaves the agent's session out. `discard/1` it once it is written or sent: the
+  bundles it carries are files made for it.
   """
   @spec build(String.t(), keyword) :: {:ok, archive} | {:error, String.t()}
   def build(ref, opts \\ []) do
@@ -84,10 +94,105 @@ defmodule HalC2.ThreadArchive do
     with {:ok, archive} <- build(ref, opts) do
       path = Path.expand(path)
       File.mkdir_p!(Path.dirname(path))
-      File.write!(path, JSON.encode_to_iodata!(archive))
-      File.chmod!(path, 0o600)
-      {:ok, summary(archive)}
+
+      try do
+        write_file(path, archive)
+        File.chmod!(path, 0o600)
+        {:ok, summary(archive)}
+      after
+        discard(archive)
+      end
     end
+  end
+
+  @doc "Removes the files `build/2` made for an archive."
+  def discard(archive) do
+    for %{"temporary" => true, "path" => path} <- files(archive), do: File.rm(path)
+    :ok
+  end
+
+  @doc "Every file an archive carries."
+  def files(archive) do
+    List.wrap(archive["attachments"]) ++
+      List.wrap(archive["terminalLogs"]) ++
+      for(key <- ~w(checkpoints worktree), %{"bundle" => bundle} <- [archive[key]], do: bundle) ++
+      case archive["session"] do
+        %{"files" => files} when is_list(files) -> files
+        _ -> []
+      end
+  end
+
+  @doc "The archive with `fun` applied to every file it carries."
+  def map_files(archive, fun) do
+    each = fn files -> files && Enum.map(files, fun) end
+    bundle = fn value -> value && Map.update!(value, "bundle", fun) end
+
+    Enum.reduce(
+      [
+        {"attachments", each},
+        {"terminalLogs", each},
+        {"checkpoints", bundle},
+        {"worktree", bundle},
+        {"session", fn session -> session && Map.update!(session, "files", each) end}
+      ],
+      archive,
+      fn {key, update}, archive ->
+        if is_map_key(archive, key), do: Map.update!(archive, key, update), else: archive
+      end
+    )
+  end
+
+  @doc """
+  An archive as JSON. Its entities are encoded one at a time: encoding a long thread's
+  all at once takes many times their size in memory.
+  """
+  def encode(%{"entities" => entities} = archive) when is_list(entities) do
+    marker = "hal-c2-entities-#{Base.encode16(:crypto.strong_rand_bytes(12))}"
+
+    [before, rest] =
+      %{archive | "entities" => marker} |> JSON.encode!() |> String.split(JSON.encode!(marker))
+
+    Enum.reduce(entities, {before <> "[", ""}, fn entity, {json, comma} ->
+      {json <> comma <> JSON.encode!(entity), ","}
+    end)
+    |> elem(0)
+    |> Kernel.<>("]" <> rest)
+  end
+
+  def encode(archive), do: JSON.encode!(archive)
+
+  # The archive's JSON with the files on disk in it as base64, written a piece at a
+  # time: each stands in the JSON as a marker and its sha256, which is cut there for
+  # its bytes.
+  defp write_file(path, archive) do
+    marker = "hal-c2-file-#{Base.encode16(:crypto.strong_rand_bytes(12))}-"
+
+    on_disk =
+      for %{"path" => source, "sha256" => sha} <- files(archive), into: %{}, do: {sha, source}
+
+    [first | pieces] =
+      archive
+      |> map_files(fn
+        %{"path" => _, "sha256" => sha} = file ->
+          file |> Map.drop(~w(path temporary)) |> Map.put("dataBase64", marker <> sha)
+
+        file ->
+          file
+      end)
+      |> encode()
+      |> String.split(marker)
+
+    File.open!(path, [:write, :raw, :binary], fn out ->
+      :ok = :file.write(out, first)
+
+      for <<sha::binary-size(64), rest::binary>> <- pieces do
+        on_disk[sha]
+        |> File.stream!(@piece)
+        |> Enum.each(&(:ok = :file.write(out, Base.encode64(&1))))
+
+        :ok = :file.write(out, rest)
+      end
+    end)
   end
 
   # --- import --------------------------------------------------------------------
@@ -120,13 +225,18 @@ defmodule HalC2.ThreadArchive do
   end
 
   @doc """
-  Checks an archive: its format, version and every checksum. Returns it decoded,
-  each carried file's bytes under `"data"`.
+  Checks an archive: its format, version and every checksum. Returns it decoded:
+  the bytes of each file it carried as base64 under `"data"`, the files on disk as
+  they were.
   """
   @spec decode(binary | map) :: {:ok, archive} | {:error, String.t()}
   def decode(data) when is_binary(data) do
-    case JSON.decode(data) do
-      {:ok, %{} = map} -> decode(map)
+    # A thread file holds the bytes of the files it carries: one that names a file on
+    # this machine instead is not one.
+    with {:ok, %{} = map} <- JSON.decode(data),
+         false <- Enum.any?(files(map), &match?(%{"path" => _}, &1)) do
+      decode(map)
+    else
       _ -> {:error, "The file is damaged: it is not a HAL-C2 thread file. Nothing was imported."}
     end
   end
@@ -163,7 +273,7 @@ defmodule HalC2.ThreadArchive do
   defp verify(files, what) when is_list(files) do
     Enum.reduce_while(files, {:ok, []}, fn file, {:ok, acc} ->
       case verified(file) do
-        {:ok, data} -> {:cont, {:ok, [Map.put(file, "data", data) | acc]}}
+        {:ok, file} -> {:cont, {:ok, [file | acc]}}
         :error -> {:halt, damaged("#{what} #{file["fileName"]}")}
       end
     end)
@@ -179,7 +289,7 @@ defmodule HalC2.ThreadArchive do
 
   defp verify_bundle(%{"bundle" => bundle} = value, what) do
     case verified(bundle) do
-      {:ok, data} -> {:ok, Map.put(value, "bundle", Map.put(bundle, "data", data))}
+      {:ok, bundle} -> {:ok, Map.put(value, "bundle", bundle)}
       :error -> damaged(what)
     end
   end
@@ -193,13 +303,19 @@ defmodule HalC2.ThreadArchive do
          do: {:ok, %{session | "files" => files}}
   end
 
-  defp verified(%{"sha256" => sha, "dataBase64" => b64}) when is_binary(b64) do
+  defp verified(%{"sha256" => sha, "dataBase64" => b64} = file) when is_binary(b64) do
     with {:ok, data} <- Base.decode64(b64),
          true <- sha256(data) == String.downcase(to_string(sha)) do
-      {:ok, data}
+      {:ok, file |> Map.delete("dataBase64") |> Map.put("data", data)}
     else
       _ -> :error
     end
+  end
+
+  defp verified(%{"sha256" => sha, "path" => path} = file) when is_binary(path) do
+    if File.regular?(path) and file_sha256(path) == String.downcase(to_string(sha)),
+      do: {:ok, file},
+      else: :error
   end
 
   defp verified(_), do: :error
@@ -311,14 +427,14 @@ defmodule HalC2.ThreadArchive do
       |> Enum.map(&carried(&1, id, worktree, meta, dest_root))
       |> Enum.map(&with_session(&1, carried_session))
 
-    for %{"fileName" => name, "data" => data} <- archive["attachments"] do
+    for %{"fileName" => name} = file <- archive["attachments"] do
       path = Path.join(Attachments.dir(), Path.basename(name))
       File.mkdir_p!(Path.dirname(path))
-      File.write!(path, data)
+      put(file, path)
     end
 
-    for %{"fileName" => terminal, "data" => data} <- archive["terminalLogs"],
-        do: Terminal.put_scrollback(id, terminal, data)
+    for %{"fileName" => terminal} = file <- archive["terminalLogs"],
+        do: Terminal.put_scrollback(id, terminal, bytes(file))
 
     at = archive["updatedAt"] || System.os_time(:millisecond)
     changes = changes(id, entities, at)
@@ -437,15 +553,15 @@ defmodule HalC2.ThreadArchive do
       File.rm(source)
     end
 
-    for %{"fileName" => name, "data" => data} <- archive["attachments"] do
+    for %{"fileName" => name} = file <- archive["attachments"] do
       path = Path.join(Attachments.dir(), Path.basename(name))
       File.mkdir_p!(Path.dirname(path))
-      File.write!(path, data)
+      put(file, path)
     end
 
-    for %{"fileName" => name, "data" => data} <- archive["terminalLogs"],
+    for %{"fileName" => name} = file <- archive["terminalLogs"],
         terminal = v1_terminal(name, id),
-        do: Terminal.put_scrollback(id, terminal, data)
+        do: Terminal.put_scrollback(id, terminal, bytes(file))
 
     # The Node server's provider sessions do not come along: the next message hands
     # the conversation over.
@@ -543,7 +659,7 @@ defmodule HalC2.ThreadArchive do
         path = Attachments.path(attachment),
         path != nil,
         uniq: true,
-        do: file(Path.basename(path), File.read!(path))
+        do: carried(Path.basename(path), path)
   end
 
   # The thread's checkpoint refs (and the workspace before its first run) as one
@@ -562,12 +678,9 @@ defmodule HalC2.ThreadArchive do
     cwd = scope_cwd(scopes, root)
 
     with [_ | _] <- refs,
-         bundle =
-           Path.join(System.tmp_dir!(), "hal-c2-bundle-#{System.unique_integer([:positive])}"),
+         bundle = scratch(),
          {:ok, _} <- HalC2.Git.ok(cwd, ["bundle", "create", bundle | refs]) do
-      data = File.read!(bundle)
-      File.rm(bundle)
-      %{"refs" => refs, "bundle" => file("checkpoints.bundle", data)}
+      %{"refs" => refs, "bundle" => made("checkpoints.bundle", bundle)}
     else
       _ -> nil
     end
@@ -577,13 +690,11 @@ defmodule HalC2.ThreadArchive do
   # pushed.
   defp worktree(%{"worktreePath" => path, "branch" => branch})
        when is_binary(path) and is_binary(branch) do
-    bundle = Path.join(System.tmp_dir!(), "hal-c2-bundle-#{System.unique_integer([:positive])}")
+    bundle = scratch()
 
     with true <- File.dir?(path),
          {:ok, _} <- HalC2.Git.ok(path, ["bundle", "create", bundle, "refs/heads/#{branch}"]) do
-      data = File.read!(bundle)
-      File.rm(bundle)
-      %{"branch" => branch, "path" => path, "bundle" => file("worktree.bundle", data)}
+      %{"branch" => branch, "path" => path, "bundle" => made("worktree.bundle", bundle)}
     else
       _ -> nil
     end
@@ -603,19 +714,14 @@ defmodule HalC2.ThreadArchive do
 
   defp place_checkpoints(%{"checkpoints" => checkpoints, "thread" => meta}, project, true) do
     root = project["workspaceRoot"]
-    bundle = Path.join(System.tmp_dir!(), "hal-c2-bundle-#{System.unique_integer([:positive])}")
-    File.write!(bundle, checkpoints["bundle"]["data"])
-
     specs = for ref <- checkpoints["refs"], do: "+#{ref}:#{ref}"
 
-    try do
+    on_disk(checkpoints["bundle"], fn bundle ->
       case HalC2.Git.ok(root, ["fetch", "--no-tags", "-q", bundle | specs]) do
         {:ok, _} -> {[], true}
         {:error, _} -> {[checkpoints_note(meta, project, :failed)], false}
       end
-    after
-      File.rm(bundle)
-    end
+    end)
   end
 
   defp place_checkpoints(%{"thread" => meta}, project, false),
@@ -629,19 +735,17 @@ defmodule HalC2.ThreadArchive do
   defp place_worktree(%{"worktree" => worktree, "thread" => meta} = archive, project, true) do
     root = project["workspaceRoot"]
     branch = worktree["branch"]
-    bundle = Path.join(System.tmp_dir!(), "hal-c2-bundle-#{System.unique_integer([:positive])}")
-    File.write!(bundle, worktree["bundle"]["data"])
 
     fetched =
-      HalC2.Git.ok(root, [
-        "fetch",
-        "--no-tags",
-        "-q",
-        bundle,
-        "refs/heads/#{branch}:refs/heads/#{branch}"
-      ])
-
-    File.rm(bundle)
+      on_disk(worktree["bundle"], fn bundle ->
+        HalC2.Git.ok(root, [
+          "fetch",
+          "--no-tags",
+          "-q",
+          bundle,
+          "refs/heads/#{branch}:refs/heads/#{branch}"
+        ])
+      end)
 
     with {:ok, _} <- fetched,
          {:ok, %{"worktree" => %{"path" => path}}} <-
@@ -681,7 +785,8 @@ defmodule HalC2.ThreadArchive do
       "Checkpoints of #{meta["title"]} could not be copied into #{project["title"]} on #{label()}, so runs from before the move have no diff and cannot be rewound to."
 
   defp session(state, thread, cwd) do
-    PortableSessions.export(state, thread, cwd)
+    with %{"files" => files} = session <- PortableSessions.export(state, thread, cwd),
+         do: %{session | "files" => for({name, path} <- files, do: carried(name, path))}
   end
 
   defp place_session(%{"session" => nil}, _root, _opts), do: {nil, []}
@@ -740,7 +845,62 @@ defmodule HalC2.ThreadArchive do
   defp file(name, data),
     do: %{"fileName" => name, "sha256" => sha256(data), "dataBase64" => Base.encode64(data)}
 
+  # A file carried from where it is on this machine's disk.
+  defp carried(name, path) do
+    %{
+      "fileName" => name,
+      "sha256" => file_sha256(path),
+      "size" => File.stat!(path).size,
+      "path" => path
+    }
+  end
+
+  # A carried file that was made for the archive (`discard/1`).
+  defp made(name, path), do: name |> carried(path) |> Map.put("temporary", true)
+
+  @doc "A carried file's bytes."
+  def bytes(%{"data" => data}), do: data
+  def bytes(%{"path" => path}), do: File.read!(path)
+
+  # Writes a carried file to `path`.
+  defp put(%{"data" => data}, path), do: File.write!(path, data)
+  defp put(%{"path" => source}, path), do: File.cp!(source, path)
+
+  # Runs `fun` with a carried file's path on this machine's disk.
+  defp on_disk(%{"path" => path}, fun), do: fun.(path)
+
+  defp on_disk(%{"data" => data}, fun) do
+    path = scratch()
+    File.write!(path, data)
+
+    try do
+      fun.(path)
+    after
+      File.rm(path)
+    end
+  end
+
+  # Where a bundle made for an archive is written: the MC's own disk, since a system's
+  # temporary directory is often kept in memory.
+  defp scratch do
+    File.mkdir_p!(scratch_dir())
+    Path.join(scratch_dir(), Integer.to_string(System.unique_integer([:positive])))
+  end
+
+  defp scratch_dir, do: Path.join(HalC2.Paths.cache_dir(), "thread-bundles")
+
+  @doc "Removes the bundles an MC that stopped part way through an archive left behind."
+  def clear_scratch, do: File.rm_rf(scratch_dir())
+
   defp sha256(data), do: :crypto.hash(:sha256, data) |> Base.encode16(case: :lower)
+
+  defp file_sha256(path) do
+    path
+    |> File.stream!(@piece)
+    |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
+    |> :crypto.hash_final()
+    |> Base.encode16(case: :lower)
+  end
 
   @doc "A thread on this MC by id, or by title when only one has it."
   def find_thread(ref) do
