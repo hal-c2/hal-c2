@@ -42,6 +42,8 @@ import {
   ThreadMoveDestination,
   type ThreadMoveInput,
   ThreadMoveResult,
+  ThreadPlacement,
+  type ThreadPlacementInput,
   TrimmedNonEmptyString,
   type UploadChatImageAttachment,
   type ServerConfig,
@@ -507,6 +509,18 @@ export interface TuiClient {
    * (ask again with `confirmed`) or `choose_project` (ask again with a `projectId`).
    */
   readonly moveThread: (input: ThreadMoveInput) => Promise<ThreadMoveResult>;
+  /**
+   * Where the MC would start a new thread the user is starting in a project of
+   * one of the cluster's machines: that same pair, or another machine's checkout.
+   */
+  readonly placeThread: (input: ThreadPlacementInput) => Promise<ThreadPlacement>;
+  /** The MC's settings document, and the version to write it back at. */
+  readonly readSettings: () => Promise<McSettings>;
+  /**
+   * Replace the MC's settings document. False when it changed since `version`
+   * was read: read it again and reapply the edit.
+   */
+  readonly writeSettings: (settings: McSettings["settings"], version: number) => Promise<boolean>;
   readonly cloneRepository: (
     remoteUrl: string,
     destinationPath: string,
@@ -643,10 +657,24 @@ export interface TuiClient {
   readonly dispose: () => Promise<void>;
 }
 
-// `hal-c2.moveDestinations` and `hal-c2.moveThread` are outside the RPC contract,
-// so their answers are decoded here.
+// The MC's own methods (`hal-c2.*`) are outside the RPC contract, so their
+// answers are decoded here.
 const decodeMoveDestinations = Schema.decodeUnknownSync(Schema.Array(ThreadMoveDestination));
 const decodeMoveResult = Schema.decodeUnknownSync(ThreadMoveResult);
+const decodePlacement = Schema.decodeUnknownSync(ThreadPlacement);
+
+/** The MC's settings document as stored: a client edits the keys it knows and keeps the rest. */
+const McSettings = Schema.Struct({
+  settings: Schema.Record(Schema.String, Schema.Unknown),
+  version: Schema.Int,
+});
+export type McSettings = typeof McSettings.Type;
+const decodeSettings = Schema.decodeUnknownSync(McSettings);
+
+/** The MC refused a settings write because another client wrote first. */
+const isStaleSettings = (error: unknown): boolean =>
+  (error as { readonly detail?: { readonly _tag?: unknown } } | null)?.detail?._tag ===
+  "StaleSettings";
 
 const randomUuid = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -848,6 +876,18 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         .then(decodeMoveDestinations),
     moveThread: (input) =>
       runtime.runPromise(mcRequest("hal-c2.moveThread", input)).then(decodeMoveResult),
+    placeThread: (input) =>
+      runtime.runPromise(mcRequest("hal-c2.placeThread", input)).then(decodePlacement),
+    readSettings: () =>
+      runtime.runPromise(mcRequest("hal-c2.readSettings", {})).then(decodeSettings),
+    writeSettings: (settings, version) =>
+      runtime.runPromise(mcRequest("hal-c2.writeSettings", { settings, version })).then(
+        () => true,
+        (error: unknown) => {
+          if (isStaleSettings(error)) return false;
+          throw error;
+        },
+      ),
     cloneRepository: (remoteUrl, destinationPath) =>
       runtime.runPromise(
         request(WS_METHODS.sourceControlCloneRepository, {
