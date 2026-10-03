@@ -23,7 +23,13 @@ export type SectionTone = "text" | "dim" | "accent" | "error" | "warning" | "suc
 export type SectionItem =
   | { readonly kind: "heading"; readonly text: string }
   /** Words for the user: wrapped to the pane, never selected. */
-  | { readonly kind: "note"; readonly text: string; readonly tone?: SectionTone }
+  | {
+      readonly kind: "note";
+      readonly text: string;
+      readonly tone?: SectionTone;
+      /** Cells to set the note in by (under the row it belongs to). */
+      readonly indent?: number;
+    }
   | { readonly kind: "blank" }
   | {
       readonly kind: "row";
@@ -177,12 +183,13 @@ function paint(items: ReadonlyArray<SectionItem>, width: number): Painted[] {
         paint: () => line,
       });
     } else if (item.kind === "note") {
-      wrapWords(item.text, width - 2).forEach((text, part) => {
-        const line = styled(chunk(`  ${text}`, { fg: toneColor(item.tone ?? "dim") }));
+      const indent = " ".repeat(2 + (item.indent ?? 0));
+      wrapWords(item.text, width - indent.length).forEach((text, part) => {
+        const line = styled(chunk(`${indent}${text}`, { fg: toneColor(item.tone ?? "dim") }));
         painted.push({
           id: `note-${index}-${part}`,
           selectable: false,
-          text: `  ${text}`,
+          text: `${indent}${text}`,
           paint: () => line,
         });
       });

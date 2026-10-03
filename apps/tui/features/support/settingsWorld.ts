@@ -6,6 +6,7 @@ import { expect } from "bun:test";
 import type { TuiSettingsSectionState } from "../../src/host/settingsSections.ts";
 import type { FakeSettingsMc } from "./fakeSettingsMc.ts";
 import { objectRows } from "./design.ts";
+import { project, shell } from "./fakeClient.ts";
 import { boot, pressKey, settle, useClient, type World } from "./world.ts";
 
 /** The fake MC's settings side, creating the fake client on first use. */
@@ -14,12 +15,90 @@ export const mc = (ctx: World): FakeSettingsMc => (ctx.fake ?? useClient(ctx)).s
 export const sectionState = (ctx: World) =>
   ctx.host!.state.get("settingsSection") as TuiSettingsSectionState;
 
-/** Start the client connected to its MC. */
-export async function connected(ctx: World): Promise<void> {
+/** Another machine this MC is linked to, as `hal-c2.environmentLinks` lists it. */
+export interface FakeLink {
+  readonly id: string;
+  label: string;
+  online: boolean;
+  serverVersion: string;
+  capabilities: Record<string, unknown>;
+  host?: string;
+}
+
+/** What the scenario's MC holds besides its settings calls: its projects and its links. */
+export interface SettingsFixture {
+  /** Project ids are their titles ("api"); empty leaves the fake client's default shell. */
+  readonly projects: string[];
+  readonly links: FakeLink[];
+}
+
+export interface SettingsWorld extends World {
+  settingsFixture?: SettingsFixture;
+}
+
+/** The scenario's projects and links; the links answer `hal-c2.environmentLinks`. */
+export function fixture(ctx: SettingsWorld): SettingsFixture {
+  if (ctx.settingsFixture) return ctx.settingsFixture;
+  const created: SettingsFixture = { projects: [], links: [] };
+  ctx.settingsFixture = created;
+  mc(ctx).on("hal-c2.environmentLinks", () =>
+    created.links.map((link) => ({
+      environment: {
+        environmentId: link.id,
+        label: link.label,
+        serverVersion: link.serverVersion,
+        capabilities: link.capabilities,
+        ...(link.host ? { host: link.host } : {}),
+      },
+      origin: `http://${link.id}.example:3773`,
+      online: link.online,
+      ...(link.online ? {} : { problem: "unreachable" }),
+    })),
+  );
+  return created;
+}
+
+/** Link another machine to the MC (connected unless said otherwise). */
+export function linkMachine(ctx: SettingsWorld, label: string, online = true): FakeLink {
+  const links = fixture(ctx).links;
+  let link = links.find((known) => known.label === label);
+  if (!link) {
+    link = { id: `env-${label}`, label, online, serverVersion: "1.4.0", capabilities: {} };
+    links.push(link);
+  }
+  link.online = online;
+  return link;
+}
+
+/** Codex's and Claude's models, as the server lists them. */
+export const MODELS = [
+  { instanceId: "codex", model: "codex-model", label: "codex-model", providerLabel: "Codex" },
+  { instanceId: "claude", model: "claude-model", label: "claude-model", providerLabel: "Claude" },
+];
+
+const fixtureProject = (title: string) => ({
+  ...project,
+  id: title,
+  title,
+  workspaceRoot: `/work/${title}`,
+  // Claude's model, so a default that is not the first listed one shows.
+  defaultModelSelection: { instanceId: "claude", model: "claude-model" },
+});
+
+/** Start the client connected to its MC, showing the scenario's projects. */
+export async function connected(ctx: SettingsWorld): Promise<void> {
   if (ctx.app) return;
-  ctx.fake ?? useClient(ctx);
-  ctx.connectOnBoot = true;
-  await boot(ctx);
+  const fake = ctx.fake ?? useClient(ctx);
+  const projects = ctx.settingsFixture?.projects ?? [];
+  if (projects.length === 0) {
+    ctx.connectOnBoot = true;
+    await boot(ctx);
+  } else {
+    fake.override("listModels", (async () => MODELS) as never);
+    await boot(ctx);
+    fake.emitConnection("connected");
+    fake.emitShell(shell([] as never, projects.map(fixtureProject) as never));
+  }
   await settle(ctx);
 }
 
