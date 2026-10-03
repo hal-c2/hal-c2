@@ -10,6 +10,8 @@
 #   apps/server/src/serviceLauncher.ts
 #   apps/server/src/cloud/bootService.ts (status problems, the lingering prerequisite, restart-pending)
 #   apps/server-ex/lib/hal_c2/service.ex
+#   apps/tui/src/host/clientActivity.ts (what the terminal client reports)
+#   apps/tui/src/host/sections/backgroundActivity.ts (custom intervals)
 
 Feature: Background activity and the background service
   The MC does periodic work such as fetching git and checking providers only
@@ -55,12 +57,12 @@ Feature: Background activity and the background service
       When the client does not renew the report for its lifetime
       Then the MC stops checking provider health for it
 
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: Clients report what the user is looking at
       When the user opens a thread in the client
       Then the client tells the MC it is watching that thread's git status
 
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: The user sets custom background intervals
       When the user chooses advanced background activity for the environment
       And the user sets git fetch to every 2 minutes and turns off pausing when locked

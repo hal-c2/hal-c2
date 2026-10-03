@@ -10,7 +10,15 @@ import type { KeyBindingMode } from "../hooks/useKeyBindings.ts";
 
 /** Key-routing modes: the old TUI's focus modes, the new-thread draft, and `list` (the thread list
  * has the keys; its "list" keymap is live). */
-export type TuiMode = KeyBindingMode | "newThread" | "list" | "join";
+export type TuiMode =
+  | KeyBindingMode
+  | "newThread"
+  | "list"
+  | "join"
+  // A settings page (`settingsSections.ts`): its rows, its one-line field, its question.
+  | "section"
+  | "sectionInput"
+  | "sectionConfirm";
 
 export interface TuiSize {
   readonly columns: number;

@@ -120,6 +120,7 @@ import type { HttpClient } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { createAttachmentImageCache } from "./attachmentImages.ts";
+import { makeTuiSettingsClient, type TuiSettingsClient } from "./settingsClient.ts";
 import type { ImagePreview } from "@hal-c2/opentui-image";
 import {
   presentTuiShell,
@@ -480,7 +481,7 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
 /** Where the loopback connection is: first connect, live, or retrying after a drop. */
 export type TuiConnectionPhase = "connecting" | "connected" | "reconnecting";
 
-export interface TuiClient {
+export interface TuiClient extends TuiSettingsClient {
   readonly hostPlatform: NodeJS.Platform;
   /** Live connection phase (emits the current one first). Returns an unsubscribe fn. */
   readonly subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => () => void;
@@ -804,6 +805,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
   };
 
   return {
+    ...makeTuiSettingsClient(runtime),
     hostPlatform,
     browseFilesystem: (partialPath, cwd) =>
       runtime.runPromise(
