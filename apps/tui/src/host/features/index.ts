@@ -4,6 +4,8 @@ import { createArchiveFeature } from "./archive.ts";
 import { createConversationFeature } from "./conversation.ts";
 import { createEditorFeature, type EditorOptions } from "./editor.ts";
 import { createKeysFeature } from "./keys.ts";
+import { createPlansFeature } from "./plans.ts";
+import { createServerFeature } from "./server.ts";
 import type { Feature, FeatureKit } from "./kit.ts";
 
 export interface FeatureOptions extends Partial<EditorOptions> {
@@ -40,6 +42,8 @@ export function createFeatures(
     createKeysFeature(kit, options),
     createArchiveFeature(kit),
     createConversationFeature(kit),
+    createPlansFeature(kit),
+    createServerFeature(kit),
     createEditorFeature(kit, {
       env: options.env ?? {},
       runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),

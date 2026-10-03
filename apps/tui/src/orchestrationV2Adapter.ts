@@ -293,6 +293,19 @@ function itemPayload(
         status: request?.status ?? item.status,
       };
     }
+    case "todo_list": {
+      const plan = projection.plans.find((candidate) => candidate.id === item.planId);
+      return {
+        explanation: plan?.kind === "todo_list" ? (plan.explanation ?? null) : null,
+        plan:
+          plan?.kind === "todo_list"
+            ? plan.steps.map((step) => ({
+                step: step.text,
+                status: step.status === "running" ? "inProgress" : step.status,
+              }))
+            : [],
+      };
+    }
     case "user_input_request":
       return {
         requestId: item.requestId,
@@ -310,9 +323,9 @@ function itemActivityKind(
   projection: OrchestrationV2ThreadProjection,
 ): string | null {
   if (item.type === "user_message" || item.type === "assistant_message") return null;
-  if (item.type === "checkpoint" || item.type === "proposed_plan" || item.type === "todo_list") {
-    return null;
-  }
+  if (item.type === "checkpoint" || item.type === "proposed_plan") return null;
+  // The agent's own step list, as the plan progress reads it (the work log skips it).
+  if (item.type === "todo_list") return "turn.plan.updated";
   if (item.type === "reasoning") {
     return item.status === "running" ? "task.progress" : "task.completed";
   }

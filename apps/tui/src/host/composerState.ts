@@ -9,6 +9,7 @@ import {
   type OrchestrationThread,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type ServerProvider,
   type ServerSettings,
   type ThreadEnvMode,
   type VcsRef,
@@ -204,6 +205,10 @@ export interface TuiComposerState {
     readonly primary: StyledText;
   };
   readonly context: TuiComposerContext | null;
+  /** The selected provider is disabled or signed out: what is wrong and how to fix it. */
+  readonly notice: string | null;
+  /** The notice wrapped to the composer, one entry per row. */
+  readonly noticeLines: ReadonlyArray<string>;
   /** Rows besides the editor: borders, footer, question, attachments, context row. */
   readonly chromeRows: number;
   /** Editor height in rows: grows with the text from 3 to 8, or as set by Ctrl+Up / Ctrl+Down. */
@@ -366,10 +371,12 @@ export function createComposer(options: ComposerOptions): Composer {
   const modelOverrides = new Map<string, ModelSelection>();
   let modelOptions: ReadonlyArray<ModelOption> = [];
   let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
+  // Every configured provider (signed out and disabled ones too), for the composer's notice.
+  let providers: ReadonlyArray<ServerProvider> = [];
   let newDraft: NewDraft | null = null;
   let picker: Picker | null = null;
   /** The chrome rows by source, so a one-line prompt or a popover can drop some (ChatView). */
-  let chromeParts = { question: 0, attachments: 0, compact: 0, context: 0 };
+  let chromeParts = { question: 0, attachments: 0, compact: 0, context: 0, notice: 0 };
   /** Set by Ctrl+Up / Ctrl+Down; null follows the text. */
   let rowsOverride: number | null = null;
   let replyPending = false;
@@ -527,18 +534,34 @@ export function createComposer(options: ComposerOptions): Composer {
     const hiddenCount = Math.max(0, attachments.length - visibleCount);
     const hasText = draft.text.length > 0 || draft.images.length > 0;
     const context = composerContext(detail);
+    const notice = providerNotice(model);
+    // Wrapped to the box by word, so the way to fix it is never cut off.
+    const noticeLines: string[] = [];
+    if (notice) {
+      const room = Math.max(8, surfaceWidth - 6);
+      let line = "";
+      for (const word of notice.split(" ")) {
+        if (line !== "" && Bun.stringWidth(`${line} ${word}`) > room) {
+          noticeLines.push(line);
+          line = word;
+        } else line = line === "" ? word : `${line} ${word}`;
+      }
+      noticeLines.push(line);
+    }
     chromeParts = {
       question: question ? question.visibleOptions + 4 : 0,
       attachments: attachments.length === 0 ? 0 : options.inlineImages ? 4 : 1,
       compact: compact ? 1 : 0,
       context: context ? 1 : 0,
+      notice: noticeLines.length,
     };
     const chromeRows =
       4 +
       chromeParts.question +
       chromeParts.attachments +
       chromeParts.compact +
-      chromeParts.context;
+      chromeParts.context +
+      chromeParts.notice;
     const footerWidth = Math.max(1, surfaceWidth - 2);
     const showOptions = footerWidth >= 24;
     return {
@@ -617,8 +640,27 @@ export function createComposer(options: ComposerOptions): Composer {
               ),
       },
       context,
+      notice,
+      noticeLines,
       chromeRows,
     };
+  };
+
+  /** Why the selected model's provider cannot run a turn right now, and how to fix it. */
+  const providerNotice = (model: ModelSelection | null): string | null => {
+    const provider = model
+      ? providers.find((candidate) => candidate.instanceId === model.instanceId)
+      : undefined;
+    if (!provider) return null;
+    const name = provider.displayName ?? provider.driver ?? provider.instanceId;
+    const then = "then ^K → Refresh providers";
+    if (provider.enabled === false) {
+      return `${name} is disabled: enable it in provider settings, ${then}.`;
+    }
+    if (provider.auth?.status === "unauthenticated") {
+      return `${name} needs sign-in: ${provider.message ?? `sign in to ${name} on this machine`}, ${then}.`;
+    }
+    return null;
   };
 
   /** ComposerFooter's Chip: a dim (accent when active) key hint, then the label. */
@@ -1053,6 +1095,26 @@ export function createComposer(options: ComposerOptions): Composer {
     else {
       const detail = selectedDetail();
       if (!detail) return;
+      // Some providers keep the model a conversation started with (the web's
+      // getStartedThreadModelChangeBlockReason): say so instead of failing the turn.
+      const current = threadModel(detail);
+      const started = detail.messages.length > 0 || detail.latestTurn !== null;
+      const changes =
+        current !== null && (current.instanceId !== instanceId || current.model !== model);
+      const locked = (candidate: ModelSelection | null) =>
+        candidate !== null &&
+        modelOptions.some(
+          (entry) =>
+            entry.instanceId === candidate.instanceId &&
+            entry.requiresNewThreadForModelChange === true,
+        );
+      if (started && changes && (locked(current) || locked(selection))) {
+        store.setStatus(
+          `Start a new thread (^N) to use ${option.label}: ${option.providerLabel} cannot change models once a conversation has started.`,
+          "error",
+        );
+        return;
+      }
       modelOverrides.set(detail.id, selection);
     }
     store.setStatus(`Model → ${option.model} (next turn)`, "success");
@@ -1072,8 +1134,64 @@ export function createComposer(options: ComposerOptions): Composer {
       if (!detail) return;
       modelOverrides.set(detail.id, next);
     }
-    store.setStatus(`Effort → ${String(value)} (next turn)`, "success");
+    const label =
+      modelOptionStates(modelOptions, selection).find((option) => option.id === id)?.label ??
+      "Effort";
+    const reasoning = reasoningChoicesForSelection(modelOptions, selection)?.descriptorId === id;
+    store.setStatus(
+      `${reasoning ? "Effort" : label} → ${typeof value === "boolean" ? (value ? "on" : "off") : value} (next turn)`,
+      "success",
+    );
     publish();
+  };
+
+  /**
+   * Every option of the selected model in one list: a switch flips when
+   * chosen, a choice opens its values. The compact footer has no room for the
+   * controls themselves, so its effort chord opens this instead.
+   */
+  const openOptionsPicker = () => {
+    const selection = activeModel();
+    if ((!newDraft && !selectedDetail()) || !selection) {
+      store.setStatus("Select a model first.", "info");
+      return;
+    }
+    const traits = modelOptionStates(modelOptions, selection);
+    if (traits.length === 0) {
+      store.setStatus("This model has no options.", "info");
+      return;
+    }
+    const shown = (trait: ModelOptionState) =>
+      trait.type === "boolean"
+        ? trait.value === true
+          ? "on"
+          : "off"
+        : (trait.choices.find((choice) => choice.id === trait.value)?.label ?? "—");
+    openMenu({
+      title: "options",
+      options: traits.map((trait) => ({
+        label: `${trait.label}: ${shown(trait)}`,
+        description: trait.type === "boolean" ? "Enter switches it." : "Enter picks a value.",
+        value: trait.id,
+      })),
+      onChoose: (id) => {
+        const trait = traits.find((candidate) => candidate.id === id);
+        if (!trait) return;
+        if (trait.type === "boolean") {
+          setOption(trait.id, trait.value !== true);
+          return;
+        }
+        openMenu({
+          title: trait.label.toLowerCase(),
+          options: trait.choices.map((choice) => ({ label: choice.label, value: choice.id })),
+          index: Math.max(
+            0,
+            trait.choices.findIndex((choice) => choice.id === trait.value),
+          ),
+          onChoose: (choice) => setOption(trait.id, choice),
+        });
+      },
+    });
   };
 
   const setRuntimeMode = (mode: RuntimeMode) => {
@@ -1781,7 +1899,25 @@ export function createComposer(options: ComposerOptions): Composer {
         openModelPicker();
         return true;
       case "composer.effortPicker.toggle":
-        openReasoningPicker();
+        // The compact footer shows no option controls: one menu holds them all.
+        if (composerSurfaceWidth(options.chatWidth()) < COMPACT_SURFACE_WIDTH) openOptionsPicker();
+        else openReasoningPicker();
+        return true;
+      case "composer.optionsPicker.toggle":
+        openOptionsPicker();
+        return true;
+      case "composer.providers.reload":
+        void loadModels().catch(() => {});
+        void track(
+          client.getServerConfig().then(
+            (config) => {
+              settings = config.settings;
+              providers = config.providers ?? [];
+              publish();
+            },
+            () => {},
+          ),
+        );
         return true;
       case "composer.runtimePicker.toggle":
         openRuntimePicker();
@@ -1854,6 +1990,8 @@ export function createComposer(options: ComposerOptions): Composer {
     client.getServerConfig().then(
       (config) => {
         settings = config.settings;
+        providers = config.providers ?? [];
+        publish();
       },
       () => {},
     ),
@@ -1873,6 +2011,7 @@ export function createComposer(options: ComposerOptions): Composer {
       (overlay.oneLine || overlay.popover ? 0 : chromeParts.question) +
       (overlay.oneLine ? 0 : chromeParts.attachments) +
       (overlay.oneLine ? 0 : chromeParts.compact) +
+      (overlay.oneLine ? 0 : chromeParts.notice) +
       chromeParts.context,
     pickerRows,
     idle: async () => {

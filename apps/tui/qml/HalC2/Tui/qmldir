@@ -18,6 +18,7 @@ Timeline 1.0 Timeline.qml
 TimelineLine 1.0 TimelineLine.qml
 WorkingIndicator 1.0 WorkingIndicator.qml
 Approvals 1.0 Approvals.qml
+PlanStatus 1.0 PlanStatus.qml
 PendingUserInput 1.0 PendingUserInput.qml
 RevertPicker 1.0 RevertPicker.qml
 DiffViewer 1.0 DiffViewer.qml

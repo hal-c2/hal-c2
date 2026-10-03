@@ -153,6 +153,24 @@ Item {
 
         PendingUserInput {}
 
+        // The provider cannot run a turn (signed out, disabled): what to do about it.
+        Item {
+            objectName: "composerNotice"
+            visible: dock.model.notice !== null
+            flexDirection: "column"
+            flexShrink: 0
+            Repeater {
+                model: dock.model.noticeLines
+                delegate: Text {
+                    height: 1
+                    flexShrink: 0
+                    wrapMode: "none"
+                    text: (index === 0 ? "⚠ " : "  ") + modelData
+                    color: Theme.colors.warning
+                }
+            }
+        }
+
         Item {
             objectName: "composerAttachments"
             visible: dock.model.attachments.length > 0

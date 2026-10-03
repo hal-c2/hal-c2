@@ -97,6 +97,12 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
         action: "composer.effortPicker.toggle",
       },
       {
+        id: "options",
+        title: "Change model options",
+        keywords: "traits fast mode thinking provider settings",
+        action: "composer.optionsPicker.toggle",
+      },
+      {
         id: "runtime",
         title: "Change runtime access",
         hint: "^O",

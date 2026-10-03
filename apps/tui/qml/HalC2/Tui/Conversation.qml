@@ -60,6 +60,7 @@ Rectangle {
             text: conversation.timeline.context ?? ""
         }
         Timeline { visible: conversation.timeline.kind !== "none" && !conversation.draft }
+        PlanStatus { visible: !conversation.draft && Shell.state.planStatus !== null }
         Approvals { visible: !conversation.draft && Shell.state.approvals.count > 0 }
     }
     FilesPanel {}
