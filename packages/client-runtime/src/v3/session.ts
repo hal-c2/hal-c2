@@ -1407,6 +1407,7 @@ export function makeV3Session(input: {
       ready: Effect.void,
       probe: Effect.void,
       closed: Effect.never,
+      mcCall,
     } satisfies RpcSession;
   });
 }

@@ -59,6 +59,90 @@ export type ClusterJoinInput = typeof ClusterJoinInput.Type;
 export const ClusterRemoveInput = Schema.Struct({ id: Schema.String });
 export type ClusterRemoveInput = typeof ClusterRemoveInput.Type;
 
+/**
+ * Moving a thread to another machine of the cluster (apps/server-ex
+ * `HalC2.ThreadMove`). The MC that holds the thread does the move, so these are
+ * asked of that machine.
+ */
+export const ThreadMoveProject = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  workspaceRoot: Schema.String,
+  /** A checkout of the repository the thread's project is. */
+  sameRepository: Schema.optional(Schema.Boolean),
+});
+export type ThreadMoveProject = typeof ThreadMoveProject.Type;
+
+/** Another member the thread could move to; one that is offline lists no projects. */
+export const ThreadMoveDestination = Schema.Struct({
+  machine: Schema.String,
+  environmentId: Schema.String,
+  online: Schema.Boolean,
+  projects: Schema.Array(ThreadMoveProject),
+});
+export type ThreadMoveDestination = typeof ThreadMoveDestination.Type;
+
+export const ThreadMoveInput = Schema.Struct({
+  threadId: Schema.String,
+  /** The destination's label, environment id or MC name. */
+  machine: Schema.String,
+  /** The project to land in, when the destination has several that fit. */
+  projectId: Schema.optional(Schema.String),
+  /** The user accepted what the move leaves behind (a `confirm` answer's notes). */
+  confirmed: Schema.optional(Schema.Boolean),
+});
+export type ThreadMoveInput = typeof ThreadMoveInput.Type;
+
+export const ThreadMoveResult = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("moved"),
+    threadId: Schema.String,
+    machine: Schema.String,
+    environmentId: Schema.String,
+    projectId: Schema.String,
+    /** The agent continues its own session there; otherwise it gets a summary. */
+    sessionCarried: Schema.Boolean,
+    /** What to tell the user: where the thread went and how the agent continues. */
+    message: Schema.String,
+    notes: Schema.Array(Schema.String),
+  }),
+  /** Nothing moved: ask again with `confirmed` once the user accepts the notes. */
+  Schema.Struct({
+    status: Schema.Literal("confirm"),
+    message: Schema.String,
+    notes: Schema.Array(Schema.String),
+  }),
+  /** Nothing moved: ask again with one of these as `projectId`. */
+  Schema.Struct({
+    status: Schema.Literal("choose_project"),
+    message: Schema.String,
+    projects: Schema.Array(ThreadMoveProject),
+  }),
+]);
+export type ThreadMoveResult = typeof ThreadMoveResult.Type;
+
+/**
+ * Where a new thread starts (`hal-c2.placeThread`, apps/server-ex
+ * `HalC2.LoadBalancing`). A client asks the MC it is connected to, naming the
+ * machine and project the user picked, and starts the thread where the answer
+ * says. The MC reads `loadBalancingEnabled` and `loadBalancingWeights` from its
+ * settings document, and answers with the user's pick when balancing is off.
+ */
+export const ThreadPlacementInput = Schema.Struct({
+  environmentId: Schema.String,
+  projectId: Schema.String,
+  /** The agent the thread will run on; machines that cannot run it are passed over. */
+  instanceId: Schema.optional(Schema.String),
+});
+export type ThreadPlacementInput = typeof ThreadPlacementInput.Type;
+
+/** The machine chosen and its own checkout of the project's repository. */
+export const ThreadPlacement = Schema.Struct({
+  environmentId: Schema.String,
+  projectId: Schema.String,
+});
+export type ThreadPlacement = typeof ThreadPlacement.Type;
+
 export class ClusterError extends Schema.TaggedError<ClusterError>()("ClusterError", {
   /** `link_lacks_access`, `link_invalid`, `unreachable`, `not_booted_for_clustering`, ... */
   reason: Schema.String,

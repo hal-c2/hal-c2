@@ -1493,6 +1493,13 @@ export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
 export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
+/** The cluster machine a thread is moving, or moved, to. */
+export const OrchestrationV2ThreadMoveTarget = Schema.Struct({
+  label: Schema.String,
+  environmentId: Schema.String,
+});
+export type OrchestrationV2ThreadMoveTarget = typeof OrchestrationV2ThreadMoveTarget.Type;
+
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -1573,6 +1580,13 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       }),
     ),
   ),
+  /** An MC is moving the thread to this machine of its cluster (`HalC2.ThreadMove`). */
+  moving: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMoveTarget)),
+  /**
+   * The thread moved to this machine; the row is what the machine it left keeps
+   * to forward to it, and the thread itself is listed by the machine it is on.
+   */
+  movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMoveTarget)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
