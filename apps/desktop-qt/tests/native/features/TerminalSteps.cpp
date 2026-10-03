@@ -755,7 +755,9 @@ struct TerminalFocus {
 };
 
 const Steps focusSteps([] {
-  step(QStringLiteral("the user is typing in the composer"), [](World& world, const Captures&, const Table&) {
+  // "The user is typing in the composer" is ThreadOrderSteps'; the thread they
+  // type in is opened here, with the drawer watched for who it hands the keyboard.
+  step(QStringLiteral("a terminal starts on its own"), [](World& world, const Captures&, const Table&) {
     ensureProject(world);
     TerminalFocus& focus = world.mc.part<TerminalFocus>();
     focus.thread = ensureThread(world);
@@ -765,8 +767,7 @@ const Steps focusSteps([] {
     world.bridge().dispatch(QStringLiteral("composer.text.set"),
                             QVariantMap{{QStringLiteral("target"), world.mc.environmentId + QLatin1Char(':') + focus.thread},
                                         {QStringLiteral("text"), QStringLiteral("Add tax to")}, {QStringLiteral("cursor"), 10}});
-  });
-  step(QStringLiteral("a terminal starts on its own"), [](World& world, const Captures&, const Table&) {
+    world.sync();
     // One the agent or a setup script started: the MC lists it.
     addTerminal(world.mc, world.mc.part<TerminalFocus>().thread, QStringLiteral("term-agent"), QStringLiteral("bun dev"), true);
     world.sync();
