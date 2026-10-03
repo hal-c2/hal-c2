@@ -85,6 +85,7 @@ import { ShellSnapshotLoader } from "@hal-c2/client-runtime/state/shell";
 import type { RpcSession } from "@hal-c2/client-runtime/rpc";
 import { buildTemporaryWorktreeBranchName } from "@hal-c2/shared/git";
 
+import { makeFeatureClient, type TuiFeatureClient } from "./featureClient.ts";
 import { mergeVcsStatus } from "./gitActions.logic.ts";
 
 import { flattenModelOptions, type ModelOption } from "./models.ts";
@@ -480,7 +481,7 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
 /** Where the loopback connection is: first connect, live, or retrying after a drop. */
 export type TuiConnectionPhase = "connecting" | "connected" | "reconnecting";
 
-export interface TuiClient {
+export interface TuiClient extends TuiFeatureClient {
   readonly hostPlatform: NodeJS.Platform;
   /** Live connection phase (emits the current one first). Returns an unsubscribe fn. */
   readonly subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => () => void;
@@ -804,6 +805,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
   };
 
   return {
+    ...makeFeatureClient(runtime),
     hostPlatform,
     browseFilesystem: (partialPath, cwd) =>
       runtime.runPromise(

@@ -19,6 +19,7 @@ import type {
   TuiThreadPage,
 } from "../../src/connection.ts";
 import { flattenModelOptions } from "../../src/models.ts";
+import { fakeFeatureClient, type FakeServer } from "./fakeFeatureClient.ts";
 
 // Fixtures and an in-memory TuiClient, shared by the component tests and the
 // Gherkin world. Feed it with `connect()` (the default shell snapshot),
@@ -284,6 +285,8 @@ export function fakeClient({
   readonly onTerminalWrite?: (terminal: FakeTerminal, data: string) => void;
 } = {}): {
   readonly client: TuiClient;
+  /** What the fake MC holds for the feature areas (fakeFeatureClient.ts). */
+  readonly server: FakeServer;
   readonly connect: () => void;
   readonly emitShell: (snapshot: OrchestrationShellSnapshot) => void;
   /** The shell snapshot the client last delivered (or will deliver on connect). */
@@ -387,7 +390,9 @@ export function fakeClient({
     if (outcome.kind === "fail") return Promise.reject(new Error(outcome.message));
     return Promise.resolve(value);
   };
+  const feature = fakeFeatureClient();
   const client = {
+    ...feature.client,
     hostPlatform,
     subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => {
       connectionSubscribers.add(onPhase);
@@ -547,6 +552,7 @@ export function fakeClient({
   }
   return {
     client: recorded as unknown as TuiClient,
+    server: feature.server,
     calls,
     connect: () => {
       connectionPhase = "connected";

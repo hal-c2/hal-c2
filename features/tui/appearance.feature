@@ -239,18 +239,18 @@ Feature: Colour, icons, mouse and images in the terminal
     When a message with an image attachment is shown
     Then the image is drawn inline with sixel
 
-  @backlog @tui
+  @tui
   Scenario: Copying a message puts its text on the clipboard
     When the user copies a message from the timeline
     Then the message text is on the system clipboard
 
-  @backlog @tui
+  @tui
   Scenario: Opening an external link falls back to copying it
     Given the terminal cannot open links
     When the user opens a link from the timeline
     Then the link is copied and the status line says so
 
-  @backlog @tui
+  @tui
   Scenario: The user opens a file location in their editor
     When the user opens a file reference from the timeline
     Then the file opens in the user's editor at that line

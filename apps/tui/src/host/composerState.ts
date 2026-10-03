@@ -235,6 +235,8 @@ export interface TuiMenuSpec {
   readonly mode?: TuiMode;
   /** The mode the keys go back to when it closes ("compose" unless given). */
   readonly returnMode?: TuiMode;
+  /** A search field above the options: typing narrows them by label and description. */
+  readonly searchable?: boolean;
 }
 
 /** Published under `select`: the one open picker (or `{ open: false }`). */
@@ -245,6 +247,9 @@ export interface TuiSelectState {
   readonly status: "loading" | "ready" | "empty" | "error";
   readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
   readonly index: number;
+  /** The picker has a search field; `query` is what was typed into it. */
+  readonly searchable: boolean;
+  readonly query: string;
   /**
    * The options in view, as SelectOverlay draws them: a window around the
    * highlighted one, each its marked name over its description (when that
@@ -287,6 +292,7 @@ interface SelectOption {
 
 interface Picker {
   readonly menu?: TuiMenuSpec;
+  readonly query?: string;
   readonly kind: TuiSelectKind;
   readonly title: string;
   readonly status: TuiSelectState["status"];
@@ -719,6 +725,8 @@ export function createComposer(options: ComposerOptions): Composer {
           status: picker.status,
           options: picker.options.map(({ label, description }) => ({ label, description })),
           index: picker.index,
+          searchable: picker.menu?.searchable === true,
+          query: picker.query ?? "",
           rows: selectRows(picker),
         }
       : {
@@ -728,9 +736,38 @@ export function createComposer(options: ComposerOptions): Composer {
           status: "empty",
           options: [],
           index: 0,
+          searchable: false,
+          query: "",
           rows: [],
         };
-  const pickerRows = () => (picker ? Math.max(picker.options.length, 1) * 2 + 3 : 0);
+  const pickerRows = () =>
+    picker ? Math.max(picker.options.length, 1) * 2 + 3 + (picker.menu?.searchable ? 1 : 0) : 0;
+  /** Narrow a searchable menu to the options whose label or description holds the query. */
+  const searchMenu = (query: string) => {
+    const spec = picker?.menu;
+    if (!picker || !spec?.searchable) return;
+    const needle = query.trim().toLowerCase();
+    const matches = spec.options
+      .filter(
+        (option) =>
+          needle === "" ||
+          option.label.toLowerCase().includes(needle) ||
+          (option.description ?? "").toLowerCase().includes(needle),
+      )
+      .map((option) => ({
+        label: option.label,
+        description: option.description ?? "",
+        value: option.value,
+      }));
+    picker = {
+      ...picker,
+      query,
+      options: matches,
+      index: 0,
+      status: matches.length > 0 ? "ready" : "empty",
+    };
+    publish();
+  };
 
   let lastComposer = "";
   let lastNewThread = "";
@@ -1801,6 +1838,11 @@ export function createComposer(options: ComposerOptions): Composer {
       case "select.close":
         closePicker();
         return true;
+      case "select.query.set": {
+        const query = field(payload, "query");
+        if (typeof query === "string") searchMenu(query);
+        return true;
+      }
       default:
         return false;
     }

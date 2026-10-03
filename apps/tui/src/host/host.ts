@@ -1,7 +1,10 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
-import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+} from "@hal-c2/contracts";
 import { createComputed, createPropertyMap, createRoot, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
@@ -602,6 +605,14 @@ export function createHost(options: HostOptions): Host {
       else if (mode === "files") setMode(restingMode());
     },
     publish: (next) => state.set("files", next),
+    attach: (path) => composer!.dispatch("composer.attach", { path }),
+    canAttach: () => {
+      const context = composer!.context();
+      return (
+        (context.newDraft || store.getState().selection?.kind === "thread") &&
+        context.attachmentCount < PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+      );
+    },
   });
   // Adding a project is a page over the conversation (mode "project").
   const addProject = createAddProjectController({
@@ -1021,11 +1032,12 @@ export function createHost(options: HostOptions): Host {
         options.onQuit?.();
         return true;
       default:
+        // The feature areas first: they take over `link.open` from the thread view.
+        if (ask.dispatch(action, payload) || features.dispatch(action, payload)) return true;
         if (threadView.dispatch(action, payload)) return true;
         if (sourceControl.dispatch(action, payload)) return true;
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
         if (cluster.dispatch(action, payload)) return true;
-        if (ask.dispatch(action, payload) || features.dispatch(action, payload)) return true;
         // Known actions that decline when they do not apply (the key falls through).
         if (DECLINABLE_ACTIONS.has(action)) return false;
         if (!unknownActions.has(action)) {
@@ -1071,11 +1083,16 @@ export function createHost(options: HostOptions): Host {
           null;
         return { threadId: workspace.threadId, projectId, cwd: workspace.cwd };
       },
+      nowMs: () => Date.parse(now()),
       dispatch: (action, payload) => dispatch(action, payload),
       commandsChanged: () => palette.sync(),
       settingsChanged: () => publishSettings(),
     },
-    options.features ?? {},
+    {
+      env: options.env ?? { VISUAL: process.env.VISUAL, EDITOR: process.env.EDITOR },
+      ...(options.runEditor ? { runEditor: options.runEditor } : {}),
+      ...options.features,
+    },
   );
 
   // The composer loads the new-thread defaults itself; this is the settlement flag.

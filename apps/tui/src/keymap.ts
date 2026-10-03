@@ -106,7 +106,8 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "^P", description: "Back to the prompt from any pane", chords: ["ctrl+p"] },
       { keys: "s", description: "Diff: toggle split / stacked", chords: ["s"] },
       { keys: "y / n", description: "Delete a thread: confirm / keep", chords: ["y", "n"] },
-      { keys: "r", description: "Settings: rebind a key", chords: ["r"] },
+      { keys: "r", description: "Settings: rebind a key · Files: list again", chords: ["r"] },
+      { keys: "e", description: "Files: edit in $EDITOR", chords: ["e"] },
       {
         keys: "Tab · ^Enter",
         description: "Add project: browse ⇄ edit · run the action",
@@ -264,6 +265,8 @@ export const KEYMAP_LAYERS = {
     pagedown: "files.scrollDown",
     "return, right": "files.activate",
     "left, backspace": "files.up",
+    e: "files.edit",
+    r: "files.refresh",
     escape: "files.back",
     "ctrl+p": "rightPanel.blur",
   },

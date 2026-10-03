@@ -1,9 +1,12 @@
 import type { PaletteCommand } from "../paletteState.ts";
 import type { TuiSettingsExtraGroup } from "../settingsState.ts";
+import { createArchiveFeature } from "./archive.ts";
+import { createConversationFeature } from "./conversation.ts";
+import { createEditorFeature, type EditorOptions } from "./editor.ts";
 import { createKeysFeature } from "./keys.ts";
 import type { Feature, FeatureKit } from "./kit.ts";
 
-export interface FeatureOptions {
+export interface FeatureOptions extends Partial<EditorOptions> {
   readonly saveKeymap?: ((overrides: Record<string, string | null>) => void) | undefined;
 }
 
@@ -33,7 +36,15 @@ export function createFeatures(
       return promise;
     },
   };
-  const features: Feature[] = [createKeysFeature(kit, options)];
+  const features: Feature[] = [
+    createKeysFeature(kit, options),
+    createArchiveFeature(kit),
+    createConversationFeature(kit),
+    createEditorFeature(kit, {
+      env: options.env ?? {},
+      runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),
+    }),
+  ];
   return {
     dispatch: (action, payload) => features.some((feature) => feature.dispatch(action, payload)),
     commands: () => features.flatMap((feature) => [...(feature.commands?.() ?? [])]),

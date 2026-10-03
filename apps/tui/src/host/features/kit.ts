@@ -33,6 +33,8 @@ export interface FeatureKit {
   /** Put text on the clipboard; false when the terminal cannot. */
   readonly copy: (text: string) => boolean;
   readonly workspace: () => FeatureWorkspace | null;
+  /** The host's clock (tests pin it). */
+  readonly nowMs: () => number;
   /** Run another host action (a palette command, a chord's action). */
   readonly dispatch: (action: string, payload?: unknown) => boolean;
   /** Keep a request in `host.settled()` until it lands. */

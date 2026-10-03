@@ -98,7 +98,7 @@ Feature: Browsing workspace files and projects in the terminal
       | the workspace cannot be listed | the user browses files      | failed to list files |
       | "secret.bin" cannot be read    | the user opens "secret.bin" | failed to read file  |
 
-  @backlog @tui
+  @tui
   Scenario: The user attaches an image by picking it from the workspace
     When the user chooses "Attach image" from the command palette
     Then the file browser opens and says Enter attaches the selection
@@ -153,19 +153,19 @@ Feature: Browsing workspace files and projects in the terminal
     When the user adds the script "build" to "shop"
     Then "build" is offered with the other scripts
 
-  @backlog @tui
+  @tui
   Scenario: Image and Markdown files preview in the browser
     When the user opens "README.md" in the file browser
     Then it is shown as rendered Markdown
 
-  @backlog @tui
+  @tui
   Scenario: The user edits and saves a file with conflict handling
     Given the user is editing "src/app.ts"
     And the file changed on disk since it was opened
     When the user saves
     Then the client warns about the conflict instead of overwriting
 
-  @backlog @tui
+  @tui
   Scenario: The user opens a file in their editor
     When the user opens "src/app.ts" in their editor
     Then the file opens in the user's editor
