@@ -52,6 +52,11 @@ public:
     // "Run on" another machine's checkout; empty keeps the draft's own.
     QString environmentId;
     QString projectId;
+    // "Auto balance": the machine is picked for the thread, the one with
+    // the most room among those with a checkout (the web's load balancing).
+    // `balanced` once the machines answered and one was picked.
+    bool automatic = false;
+    bool balanced = false;
   };
   // Where the route's thread is and what its terminals start in.
   struct Place {
@@ -104,7 +109,10 @@ public:
   };
   Launch launch(const QString& draftId) const;
   // The draft is gone (sent or discarded).
-  void forgetDraft(const QString& draftId) { m_checkouts.remove(draftId); }
+  void forgetDraft(const QString& draftId) {
+    m_checkouts.remove(draftId);
+    m_balancing.remove(draftId);
+  }
   // Resolves the route again (a draft moved, say).
   void refresh();
   // The ServerConfig of the route's environment: the shell's own
@@ -121,6 +129,21 @@ signals:
   void configChanged();
 
 private:
+  // Asks every machine with a checkout for its free resources
+  // (`server.getHostResources`) and moves the draft to the one with the most
+  // room (packages/client-runtime load-balancing.ts).
+  void balance(const QString& draftId);
+  // What the picker's automatic entry reads for the route's draft.
+  QString automaticLabel() const;
+  // A draft's resource checks: how many machines still owe an answer, and
+  // whether any failed.
+  struct Balancing {
+    int pending = 0;
+    bool failed = false;
+    int request = 0;
+    QList<QJsonObject> answers;  // {key, weight, resources}
+  };
+  QHash<QString, Balancing> m_balancing;
   std::optional<Place> resolve() const;
   void follow(const QString& cwd);
   void watchConfig(const QString& environmentId);

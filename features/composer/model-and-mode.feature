@@ -201,19 +201,19 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the new thread is in "scratch" on "server"
     And the prompt is still there
 
-  @backlog @desktop
+  @desktop
   Scenario: The user lets a new thread's machine be picked automatically
     Given the project exists on two connected machines and load balancing is on
     When the user chooses "Auto balance" as the machine a new thread runs on
     Then the thread starts on the machine with the most room when the first message is sent
 
-  @backlog @desktop
+  @desktop
   Scenario: Auto balance says when it cannot check the machines
     Given the user chose "Auto balance" for a new thread
     When checking the machines' free resources fails
     Then the picker shows "Auto balance unavailable"
 
-  @backlog @desktop
+  @desktop
   Scenario: The user takes a new thread off Auto balance
     Given the user chose "Auto balance" for a new thread
     When the user chooses the machine "laptop" instead

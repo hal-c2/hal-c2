@@ -1028,7 +1028,8 @@ Rectangle {
                     iconName: "monitor"
                     enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
                     model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
-                    currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId) : -1
+                    // Auto balance leads the list while it picks the machine.
+                    currentIndex: !contextStrip.wsReady ? -1 : contextStrip.ws.environmentAutomatic ? contextStrip.ws.environments.findIndex(env => env.key === "auto") : contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId)
                     Accessible.name: qsTr("Environment")
                     onActivated: index => Shell.dispatch("workspace.environment.set", {
                             environmentId: contextStrip.ws.environments[index].environmentId,

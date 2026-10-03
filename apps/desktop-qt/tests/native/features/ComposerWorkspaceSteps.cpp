@@ -13,6 +13,7 @@
 #include "Harness.h"
 #include "Launches.h"
 #include "NavigationController.h"
+#include "SettingsController.h"
 #include "Stream.h"
 #include "World.h"
 #include "WorkspaceController.h"
@@ -50,8 +51,10 @@ void pick(World& world, const QString& pickerName, int index) {
   Brick& brick = composerBrick(world);
   QQuickItem* picker = part(world, pickerName);
   QObject* popup = picker->property("popup").value<QObject*>();
+  world.waitFor([&] { return !popup->property("visible").toBool(); }, [&] { return QStringLiteral("%1 to be closed").arg(pickerName); });
   click(world, picker);
-  world.waitFor([&] { return popup->property("opened").toBool(); }, [&] { return QStringLiteral("%1 to open").arg(pickerName); });
+  world.waitFor([&] { return popup->property("opened").toBool(); },
+                [&] { return QStringLiteral("%1 to open (visible %2, enabled %3, focus %4)").arg(pickerName).arg(popup->property("visible").toBool()).arg(picker->isEnabled()).arg(picker->hasActiveFocus()); });
   for (int guard = 0; picker->property("highlightedIndex").toInt() != index && guard < 8; ++guard) {
     QTest::keyClick(&brick.window(), picker->property("highlightedIndex").toInt() < index ? Qt::Key_Down : Qt::Key_Up);
   }
@@ -94,8 +97,123 @@ QJsonObject launch(World& world) {
   return launchCalls(world).constLast();
 }
 
+// `server.getHostResources` (HostResourcesSnapshot): each machine's free CPU
+// and memory, by environment; `refuse` fails the check.
+struct FakeResources {
+  QHash<QString, QJsonObject> machines;
+  QString refuse;
+  int asked = 0;
+};
+
+const FakeMc::Extension resources([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("server.getHostResources"), [&mc](const FakeMc::Rpc& rpc) {
+    ++mc.part<FakeResources>().asked;
+    const auto answer = [&mc, rpc] {
+      const FakeResources& fake = mc.part<FakeResources>();
+      if (!fake.refuse.isEmpty()) {
+        mc.refuse(rpc, fake.refuse);
+        return;
+      }
+      const QString environment = rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
+      mc.reply(rpc, fake.machines.value(environment));
+    };
+    if (mc.holding(QStringLiteral("resources"))) {
+      mc.defer(answer);
+    } else {
+      answer();
+    }
+  });
+});
+
+QJsonObject machine(double cpuUtilization, double freeMemory) {
+  return {{QStringLiteral("sampledAt"), 1790157600000.0},
+          {QStringLiteral("cpuUtilization"), cpuUtilization},
+          {QStringLiteral("cpuCount"), 8},
+          {QStringLiteral("availableMemoryBytes"), freeMemory * 16e9},
+          {QStringLiteral("totalMemoryBytes"), 16e9}};
+}
+
+// "shop" on this machine ("laptop") and on "server", with load balancing on:
+// the laptop is busy, the server idle.
+void twoBalancedMachines(World& world) {
+  const QJsonObject identity{{QStringLiteral("canonicalKey"), QStringLiteral("github.com/acme/shop")}};
+  QJsonObject row = world.mc.projects.value(kProject);
+  row.insert(QStringLiteral("repositoryIdentity"), identity);
+  world.mc.projects.insert(kProject, row);
+  world.mc.sendRows(world.mc.name, {QJsonValue(QJsonArray{kProject, QStringLiteral("project"), row})});
+  world.mc.peers.insert(kPeerEnvironment, kPeer);
+  const int shell = world.mc.subscribers(QStringLiteral("shell")).value(0);
+  world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.environment")}, {QStringLiteral("id"), shell}, {QStringLiteral("mc"), kPeer},
+                 {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), kPeerEnvironment}, {QStringLiteral("label"), QStringLiteral("server")}, {QStringLiteral("capabilities"), world.mc.capabilities}}}});
+  world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.mc")}, {QStringLiteral("id"), shell}, {QStringLiteral("mc"), kPeer}, {QStringLiteral("online"), true}});
+  world.mc.sendRows(kPeer, {QJsonValue(QJsonArray{QStringLiteral("shop-copy"), QStringLiteral("project"),
+                                                  QJsonObject{{QStringLiteral("id"), QStringLiteral("shop-copy")}, {QStringLiteral("title"), kProject},
+                                                              {QStringLiteral("workspaceRoot"), QStringLiteral("/srv/shop")}, {QStringLiteral("scripts"), QJsonArray()},
+                                                              {QStringLiteral("repositoryIdentity"), identity}}})});
+  world.mc.part<FakeResources>().machines = {{world.mc.environmentId, machine(0.9, 0.2)}, {kPeerEnvironment, machine(0.1, 0.8)}};
+  world.native().controller<SettingsController>()->set(QStringLiteral("loadBalancingEnabled"), true);
+  world.sync();
+}
+
+int choiceLabelled(World& world, const QString& label) {
+  const QVariantList environments = workspace(world).value(QStringLiteral("environments")).toList();
+  for (qsizetype i = 0; i < environments.size(); ++i) {
+    if (environments.at(i).toMap().value(QStringLiteral("label")) == label) return int(i);
+  }
+  fail(QStringLiteral("the composer offers %1, not %2").arg(show(environments), label));
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
+
+  // Auto balance.
+  step(QStringLiteral("the project exists on two connected machines and load balancing is on"), [](World& world, const Captures&, const Table&) {
+    twoBalancedMachines(world);
+  });
+  step(QStringLiteral("the user chooses \"Auto balance\" as the machine a new thread runs on"), [](World& world, const Captures&, const Table&) {
+    newThread(world);
+    pick(world, QStringLiteral("hostPicker"), choiceLabelled(world, QStringLiteral("Auto balance")));
+  });
+  step(QStringLiteral("the thread starts on the machine with the most room when the first message is sent"), [](World& world, const Captures&, const Table&) {
+    expect(part(world, QStringLiteral("hostPicker"))->property("displayText") == QLatin1String("Auto balance") && world.mc.part<FakeResources>().asked == 2,
+           QStringLiteral("the picker reads \"%1\" after %2 checks").arg(part(world, QStringLiteral("hostPicker"))->property("displayText").toString()).arg(world.mc.part<FakeResources>().asked));
+    sendFirstMessage(world);
+    // The idle server's checkout, not the busy laptop's.
+    const QJsonObject call = launch(world);
+    expect(call.value(QLatin1String("projectId")) == QLatin1String("shop-copy"), QStringLiteral("the launch is %1").arg(show(call.toVariantMap())));
+  });
+  step(QStringLiteral("the user chose \"Auto balance\" for a new thread"), [](World& world, const Captures&, const Table&) {
+    twoBalancedMachines(world);
+    // The machines have not answered yet.
+    world.mc.hold(QStringLiteral("resources"));
+    newThread(world);
+    pick(world, QStringLiteral("hostPicker"), choiceLabelled(world, QStringLiteral("Auto balance")));
+    world.waitFor([&] { return part(world, QStringLiteral("hostPicker"))->property("displayText") == QStringLiteral("Checking machines…"); },
+                  [&] { return QStringLiteral("the picker to check the machines; it reads \"%1\"").arg(part(world, QStringLiteral("hostPicker"))->property("displayText").toString()); });
+  });
+  step(QStringLiteral("checking the machines' free resources fails"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakeResources>().refuse = QStringLiteral("resource telemetry is unavailable");
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the picker shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return part(world, QStringLiteral("hostPicker"))->property("displayText") == c[0]; },
+                  [&] { return QStringLiteral("the picker to read %1; it reads \"%2\"").arg(c[0], part(world, QStringLiteral("hostPicker"))->property("displayText").toString()); });
+  });
+  step(QStringLiteral("the user chooses the machine %1 instead").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.label = c[0];
+    pick(world, QStringLiteral("hostPicker"), 1);
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the thread starts on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(workspace(world).value(QStringLiteral("activeEnvironmentId")) == world.mc.environmentId && !workspace(world).value(QStringLiteral("environmentAutomatic")).toBool(),
+           QStringLiteral("the header shows %1").arg(show(workspace(world))));
+    sendFirstMessage(world);
+    // This machine's checkout, though the server has more room.
+    const QJsonObject call = launch(world);
+    expect(call.value(QLatin1String("projectId")) == kProject && c[0] == world.mc.label, QStringLiteral("the launch is %1").arg(show(call.toVariantMap())));
+  });
 
   // The machine.
   step(QStringLiteral("two environments are connected"), [](World& world, const Captures&, const Table&) {

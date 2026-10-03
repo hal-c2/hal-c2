@@ -60,6 +60,8 @@ const QList<Row>& rows() {
       {"composerRichTextEnabled", true, true},
       {"composerCollapseOnScroll", true, true},
       {"composerVimKeys", true, false},
+      {"loadBalancingEnabled", true, false},
+      {"loadBalancingWeights", true, QJsonObject()},
       {"sendShortcut", true, QStringLiteral("enter")},
       {"followUpBehavior", true, QStringLiteral("steer")},
       {"enableProviderUpdateChecks", false, true},
