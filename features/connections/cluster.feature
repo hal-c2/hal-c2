@@ -364,7 +364,10 @@ Feature: Clustering one person's machines
     Then the machine stays listed
     And the user can remove it like any environment
 
-  @backlog @desktop
+  # The desktop is paired with one MC, its own, so it has no second machine to hand an
+  # invite to. A machine joins from its own Cluster page with an invite made on another
+  # (the scenarios above), which needs no command line either.
+  @dropped @desktop
   Scenario: A user adds a machine to the cluster from settings
     Given the app is paired with two machines that are not clustered
     When the user adds one to the other's cluster from settings
