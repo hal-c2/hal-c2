@@ -1,29 +1,46 @@
 defmodule HalC2.Claude.Provider do
   @moduledoc """
   The Claude entry in this MC's `ServerConfig.providers`, present when the `claude`
-  CLI is on the MC's PATH. Models are the Claude catalog of the bundled model manifest,
-  read at compile time, less those the installed CLI is too old to run.
+  CLI is on the MC's PATH. Models are the Claude catalog of the model manifest in use
+  (`HalC2.ModelManifest`), less those the installed CLI is too old to run.
   """
 
-  @manifest Path.expand("../../../priv/model-manifest.json", __DIR__)
-  @external_resource @manifest
-  @catalog @manifest |> File.read!() |> JSON.decode!() |> get_in(["providers", "claudeAgent"])
+  # A fetched manifest may leave Claude out; the release's own catalog then stands.
+  defp catalog do
+    HalC2.ModelManifest.catalog("claudeAgent") ||
+      get_in(HalC2.ModelManifest.bundled(), ["providers", "claudeAgent"]) ||
+      %{"defaults" => %{}, "profiles" => %{}, "models" => []}
+  end
 
-  @spec entry() :: map | nil
-  def entry do
+  @doc """
+  The entries of every Claude instance: the built-in `claudeAgent` and each instance
+  the settings add for the `claudeAgent` driver, which runs its own `binaryPath`.
+  """
+  @spec entries() :: [map]
+  def entries do
+    for id <- ["claudeAgent" | HalC2.Settings.instances_of("claudeAgent")],
+        entry = entry(id),
+        do: entry
+  end
+
+  @doc """
+  The entry of Claude instance `id`, or nil when Claude is not installed on this MC.
+  An instance whose `binaryPath` names nothing is listed as not installed.
+  """
+  @spec entry(String.t()) :: map | nil
+  def entry(id \\ "claudeAgent") do
     with [executable | _] <-
            HalC2.Settings.instance_command(
-             "claudeAgent",
+             id,
              Application.get_env(:hal_c2, :claude_command, ["claude"])
            ),
          path when is_binary(path) <- System.find_executable(executable) do
       %{
-        "instanceId" => "claudeAgent",
+        "instanceId" => id,
         "driver" => "claudeAgent",
         # Turned off in settings (`providers.claudeAgent.enabled`), it stays listed so it can be
         # turned back on; clients leave it out of the model picker.
-        "enabled" =>
-          get_in(HalC2.Settings.settings(), ["providers", "claudeAgent", "enabled"]) != false,
+        "enabled" => HalC2.Settings.instance_enabled?(id, "claudeAgent"),
         "installed" => true,
         "version" => version(path),
         "versionAdvisory" => HalC2.ProviderUpdates.advisory("claudeAgent", path, version(path)),
@@ -41,19 +58,21 @@ defmodule HalC2.Claude.Provider do
         "skills" => []
       }
     else
-      _ -> nil
+      _ -> HalC2.Settings.not_installed_entry(id, "claudeAgent", "Claude")
     end
   end
 
   # The catalog's models the CLI at `version` can run, in manifest order.
   defp models(version) do
-    for model <- @catalog["models"], runs?(model, version) do
+    catalog = catalog()
+
+    for model <- catalog["models"], runs?(model, version) do
       %{
         "slug" => model["slug"],
         "name" => model["name"],
         "aliases" => model["aliases"] || [],
         "isCustom" => false,
-        "isDefault" => model["slug"] == @catalog["defaults"]["chat"],
+        "isDefault" => model["slug"] == get_in(catalog, ["defaults", "chat"]),
         "isLegacy" => model["status"] == "legacy",
         "capabilities" => profile(model)["capabilities"]
       }
@@ -124,14 +143,14 @@ defmodule HalC2.Claude.Provider do
   defp find(model) when is_binary(model) do
     name = String.downcase(model)
 
-    Enum.find(@catalog["models"], fn entry ->
+    Enum.find(catalog()["models"], fn entry ->
       Enum.any?([entry["slug"] | entry["aliases"] || []], &(String.downcase(&1) == name))
     end)
   end
 
   defp find(_model), do: nil
 
-  defp profile(model), do: @catalog["profiles"][model["profile"]] || %{}
+  defp profile(model), do: catalog()["profiles"][model["profile"]] || %{}
 
   defp descriptor(descriptors, id), do: Enum.find(descriptors, &(&1["id"] == id))
 
@@ -163,10 +182,12 @@ defmodule HalC2.Claude.Provider do
     end
   end
 
-  # Read once per executable: a changed binary path reads the new one.
+  # Read once per executable, so each instance's binary path has its own.
   defp version(path) do
-    case :persistent_term.get({__MODULE__, :version}, nil) do
-      {^path, version} ->
+    versions = :persistent_term.get({__MODULE__, :version}, %{})
+
+    case versions do
+      %{^path => version} ->
         version
 
       _ ->
@@ -176,7 +197,7 @@ defmodule HalC2.Claude.Provider do
             _ -> "unknown"
           end
 
-        :persistent_term.put({__MODULE__, :version}, {path, version})
+        :persistent_term.put({__MODULE__, :version}, Map.put(versions, path, version))
         version
     end
   rescue

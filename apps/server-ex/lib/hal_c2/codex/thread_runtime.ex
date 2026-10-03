@@ -149,6 +149,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   @impl true
   def handle_call({:start_turn, turn}, _from, state) do
+    # A thread saved under an older model name runs on the model it names today.
+    turn = %{turn | model: HalC2.Codex.Provider.current_slug(turn.model)}
     state = %{state | turn: turn, items: %{}, failure: nil, running: %{}}
 
     case begin_turn(state, turn) do

@@ -74,19 +74,18 @@ Feature: Provider instances
       | 9lives          | Instance ID must start with a letter and use only letters, digits, '-', or '_'. |
       | codex           | An instance named 'codex' already exists.                                 |
 
-  @desktop @mobile @backlog-mobile @backlog-mc
+  @desktop @mobile @backlog-mobile
   Scenario: An instance can be renamed and given an accent colour
     Given the instance "claudeAgent_work"
     When the user renames it to "Work Claude" and picks a green accent
     Then the model picker shows "Work Claude" in green
 
-  @desktop @mobile @backlog-mobile @backlog-mc
+  @desktop @mobile @backlog-mobile
   Scenario: Clearing the accent colour goes back to the default
     Given the instance "claudeAgent_work" has a green accent
     When the user clears the accent colour
     Then the instance uses the default colour
 
-  @backlog
   Scenario: Deleting a custom instance removes it
     Given the custom instance "claudeAgent_work"
     When the user deletes it
@@ -98,9 +97,6 @@ Feature: Provider instances
     When the user resets Codex to its defaults
     Then Codex's settings are back to their defaults
 
-  # Today apps/server-ex orchestration.ex driver_for/1 runs any unknown non-ACP instance on the
-  # Codex runtime instead of refusing the turn.
-  @backlog
   Scenario: An instance whose driver this MC does not have is kept and shown as unavailable
     Given the settings contain the instance "acme_work" for a driver this MC does not have
     When the user opens the provider list
@@ -118,7 +114,6 @@ Feature: Provider instances
     Then clients see "OPENAI_KEY" with no value set
     And the secret of "API_KEY" is forgotten
 
-  @backlog
   Scenario: A variable with an invalid name is not saved
     When the user adds the variable "1BAD" to an instance
     Then the variables are not saved until the name is fixed
@@ -128,7 +123,7 @@ Feature: Provider instances
     When the user removes that variable
     Then Grok no longer runs with it
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-desktop @backlog-mobile
   Scenario: A client with view-only access cannot change providers
     Given the client has view-only access to the environment
     When the user opens provider settings
@@ -212,7 +207,6 @@ Feature: Provider instances
       | Codex    | /opt/codex/bin/codex    |
       | Claude   | /opt/claude/bin/claude  |
 
-  @backlog
   Scenario Outline: A binary path with nothing at it lists the provider as not installed
     Given the <provider> instance has a binary path where nothing is installed
     When a client lists the providers
