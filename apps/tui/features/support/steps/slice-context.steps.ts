@@ -81,17 +81,17 @@ step("a bounded chip with that output is attached to the prompt", async (ctx: Wo
   expect(composer(ctx).contexts).toHaveLength(1);
   expect(composer(ctx).contexts[0]).toMatchObject({
     kind: "terminal",
-    label: "terminal · 5 lines",
+    label: "Terminal 1 · 5 lines",
   });
   // The chip names what it holds; the output itself is not poured into the prompt.
   expect(composer(ctx).text).toBe("");
   const [row] = await objectRows(ctx, "composerReferences");
-  expect(row!.trim()).toBe("× terminal · 5 lines");
+  expect(row!.trim()).toBe("× Terminal 1 · 5 lines");
   expect(TERMINAL_CONTEXT_MAX_LINES).toBe(200);
   // Sent, the message names the chip and carries exactly the lines that were picked.
   const { text, context } = await send(ctx, "Why does this fail?");
   const reference = REFERENCE.exec(text);
-  expect(text.startsWith("Why does this fail?\n\n[terminal · 5 lines](")).toBe(true);
+  expect(text.startsWith("Why does this fail?\n\n[Terminal 1 · 5 lines](")).toBe(true);
   expect(reference?.[2]).toBe("terminal");
   expect(context?.version).toBe(1);
   expect(context?.records).toHaveLength(1);

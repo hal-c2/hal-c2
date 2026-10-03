@@ -1,4 +1,4 @@
-import type { ProjectScript, ThreadId } from "@hal-c2/contracts";
+import type { PreviewSessionSnapshot, ProjectScript, ThreadId } from "@hal-c2/contracts";
 import { createComputed, createRoot } from "opentui-qml";
 
 import { plainText, type StyledText } from "../styledText.ts";
@@ -154,6 +154,12 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
   };
   const announcedUrls = () => [...new Set(terminalText().match(URL_IN_OUTPUT) ?? [])];
 
+  /** Why a preview's page did not load, or null when it did (or is still loading). */
+  const loadFailure = (session: PreviewSessionSnapshot | undefined): string | null =>
+    session?.navStatus._tag === "LoadFailed"
+      ? session.navStatus.description || `error ${session.navStatus.code}`
+      : null;
+
   const previewActions = (threadId: ThreadId, url: string, tabId: string | null) => {
     kit.menu({
       title: url,
@@ -184,12 +190,27 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
           );
           return;
         }
+        if (choice === "refresh") {
+          // The page is loaded where the MC shows it; what it found is read back.
+          void kit.track(
+            client
+              .refreshPreview(threadId, tabId!)
+              .then(() => client.listPreviews(threadId))
+              .then(
+                (sessions) => {
+                  const failure = loadFailure(sessions.find((session) => session.tabId === tabId));
+                  if (failure) kit.status(`Preview unreachable: ${url} (${failure})`, "error");
+                  else kit.status(`Preview refreshed: ${url}`, "success");
+                },
+                (error: unknown) => kit.status(`Preview failed: ${errorText(error)}`, "error"),
+              ),
+          );
+          return;
+        }
         const request =
           choice === "open"
             ? client.openPreview(threadId, url).then(() => `Preview opened: ${url}`)
-            : choice === "refresh"
-              ? client.refreshPreview(threadId, tabId!).then(() => `Preview refreshed: ${url}`)
-              : client.closePreview(threadId, tabId!).then(() => `Preview closed: ${url}`);
+            : client.closePreview(threadId, tabId!).then(() => `Preview closed: ${url}`);
         void kit.track(
           request.then(
             (message) => kit.status(message, "success"),
@@ -209,13 +230,25 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
         (sessions) => {
           const open = sessions.flatMap((session) =>
             "url" in session.navStatus
-              ? [{ url: session.navStatus.url as string, tabId: session.tabId as string }]
+              ? [
+                  {
+                    url: session.navStatus.url as string,
+                    tabId: session.tabId as string,
+                    failure: loadFailure(session),
+                  },
+                ]
               : [],
           );
-          const announced = announcedUrls().filter(
-            (url) => !open.some((session) => session.url === url),
+          const listed = new Set(open.map((session) => session.url));
+          // The addresses the project's scripts are set to serve, then what the terminal printed.
+          const configured = scripts().flatMap((script) =>
+            script.previewUrl && !listed.has(script.previewUrl)
+              ? [{ url: script.previewUrl, name: script.name }]
+              : [],
           );
-          if (open.length + announced.length === 0) {
+          for (const entry of configured) listed.add(entry.url);
+          const announced = announcedUrls().filter((url) => !listed.has(url));
+          if (open.length + configured.length + announced.length === 0) {
             kit.status("No previews: nothing is open and the terminal shows no URL.", "info");
             return;
           }
@@ -225,8 +258,15 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
             options: [
               ...open.map((session) => ({
                 label: session.url,
-                description: "open preview",
-                value: JSON.stringify(session),
+                description: session.failure
+                  ? `open preview · unreachable: ${session.failure}`
+                  : "open preview",
+                value: JSON.stringify({ url: session.url, tabId: session.tabId }),
+              })),
+              ...configured.map((entry) => ({
+                label: entry.url,
+                description: `configured for ${entry.name}`,
+                value: JSON.stringify({ url: entry.url, tabId: null }),
               })),
               ...announced.map((url) => ({
                 label: url,

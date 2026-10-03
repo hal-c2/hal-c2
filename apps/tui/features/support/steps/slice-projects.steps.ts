@@ -91,7 +91,7 @@ const COMMANDS: Record<string, string> = {
   lint: "bun lint",
   build: "bun run build",
 };
-const script = (name: string, extra: Record<string, unknown> = {}) => ({
+export const script = (name: string, extra: Record<string, unknown> = {}) => ({
   id: name,
   name,
   command: COMMANDS[name] ?? `bun run ${name}`,
@@ -115,13 +115,13 @@ const typedIntoTerminal = (ctx: World) =>
   [...ctx.fake!.terminals.values()].flatMap((terminal) => terminal.writes).join("");
 
 /** Choose a palette command from wherever the keys are (the drawer hands them back first). */
-async function command(ctx: World, title: string) {
+export async function command(ctx: World, title: string) {
   await chooseCommand(ctx, title);
   await settle(ctx);
 }
 
 /** Give the project its scripts, as a shell snapshot from the server. */
-async function setScripts(ctx: NamedWorld, scripts: Array<ReturnType<typeof script>>) {
+export async function setScripts(ctx: NamedWorld, scripts: Array<ReturnType<typeof script>>) {
   await ensureOpen(ctx);
   const current = ctx.fake!.latestShell();
   ctx.fake!.emitShell({
@@ -143,7 +143,7 @@ async function setScripts(ctx: NamedWorld, scripts: Array<ReturnType<typeof scri
 }
 
 /** The program behind the thread's terminal prints `data`. */
-async function terminalPrints(ctx: World, data: string) {
+export async function terminalPrints(ctx: World, data: string) {
   const [terminal] = [...ctx.fake!.terminals.values()];
   expect(terminal).toBeDefined();
   terminal!.emit({

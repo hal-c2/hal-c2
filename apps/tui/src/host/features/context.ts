@@ -62,7 +62,7 @@ export function createContextFeature(kit: FeatureKit): Feature {
       | {
           open: boolean;
           activeId: string | null;
-          title: string;
+          tabs: ReadonlyArray<{ id: string; number: number }>;
         }
       | undefined;
   const diff = () =>
@@ -90,14 +90,17 @@ export function createContextFeature(kit: FeatureKit): Feature {
     const text = kept.join("\n").slice(-COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS);
     const start = from + (lines.length - kept.length);
     const count = kept.length;
+    // Named as its tab is numbered, so two excerpts from two terminals read apart.
+    const number = current.tabs.find((tab) => tab.id === current.activeId)?.number;
+    const name = number === undefined ? "Terminal" : `Terminal ${number}`;
     attach(
       {
         version: 1,
         contextId: contextId("terminal"),
         kind: "terminal",
-        label: `terminal · ${count} line${count === 1 ? "" : "s"}`,
+        label: `${name} · ${count} line${count === 1 ? "" : "s"}`,
         terminalId: current.activeId as never,
-        terminalLabel: (current.title || "terminal") as never,
+        terminalLabel: name as never,
         lineStart: start as never,
         lineEnd: (start + count - 1) as never,
         text,

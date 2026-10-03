@@ -311,13 +311,13 @@ Feature: In-app preview browser
       When the tab at "http://localhost:5173" is closed on the MC
       Then no browser tabs are listed
 
-    @backlog @tui
+    @tui
     Scenario: The terminal client lists preview addresses without an embedded browser
       Given a project with configured and discovered preview addresses
       When the user opens previews in the terminal client
       Then the addresses are listed with ways to open or copy each one
 
-    @backlog @tui
+    @tui
     Scenario: The terminal client refreshes or closes existing preview tabs
       Given the thread has preview tabs
       When the user refreshes or closes one in the terminal client
