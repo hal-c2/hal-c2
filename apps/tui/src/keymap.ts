@@ -95,6 +95,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "Esc", description: "Return to the conversation", chords: ["escape"] },
       { keys: "^L", description: "Close the panel", chords: ["ctrl+l"] },
       { keys: "x", description: "Dismiss the last action's log", chords: ["x"] },
+      {
+        keys: "Tab",
+        description: "Commit message: let the writer model write it",
+        chords: ["tab"],
+      },
     ],
   },
   {
@@ -326,7 +331,7 @@ export const KEYMAP_LAYERS = {
     "ctrl+l": "rightPanel.toggle",
     x: "git.log.dismiss",
   },
-  commit: { escape: "git.commit.cancel", "ctrl+p": "rightPanel.blur" },
+  commit: { escape: "git.commit.cancel", "ctrl+p": "rightPanel.blur", tab: "git.commit.generate" },
   project: {
     up: "project.add.previous",
     down: "project.add.next",

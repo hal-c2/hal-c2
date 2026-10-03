@@ -66,7 +66,7 @@ Feature: Recommended git action and the git menu
     Then the recommended action is "Publish repository"
     And the git menu offers only committing and publishing
 
-  @backlog @tui
+  @tui
   Scenario: Publishing a repository from the terminal client
     Given the checkout has commits and no remote
     When the user publishes the repository from the terminal client
@@ -110,7 +110,7 @@ Feature: Recommended git action and the git menu
     When the user opens the git menu
     Then the menu reflects the checkout as it is now
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario Outline: The actions use the host's own name for a pull request
     Given the project's primary remote is on <host>
     When the user opens the git menu

@@ -4,6 +4,11 @@ import type {
   VcsStatusRemoteResult,
   VcsStatusResult,
 } from "@hal-c2/contracts";
+import { resolveChangeRequestPresentation } from "@hal-c2/shared/sourceControl";
+
+/** What the checkout's host calls a pull request, short: "PR" on GitHub, "MR" on GitLab. */
+const changeRequestName = (status: VcsStatusResult | null): string =>
+  resolveChangeRequestPresentation(status?.sourceControlProvider).shortName;
 
 /**
  * Fold the VCS-status stream's split local/remote results into the combined
@@ -31,7 +36,7 @@ export function mergeVcsStatus(
 // GitActionsControl.logic.ts (buildMenuItems / resolveQuickAction). Given a
 // folded VCS status + busy flag it decides the single recommended action label
 // (e.g. "Commit", "Push & create PR", "View PR") and the contextual menu items.
-// "PR" terminology is fixed (the TUI doesn't resolve provider-specific labels).
+// The pull request is named as the checkout's host names it ("PR", "MR").
 
 export type GitQuickAction =
   | {
@@ -128,6 +133,7 @@ export function resolveGitQuickAction(
     };
   }
 
+  const pr = changeRequestName(status);
   const hasBranch = status.refName !== null;
   const hasChanges = status.hasWorkingTreeChanges;
   const hasOpenPr = status.pr?.state === "open";
@@ -143,7 +149,7 @@ export function resolveGitQuickAction(
       kind: "show_hint",
       label: "Commit",
       disabled: true,
-      hint: "Create and checkout a ref before pushing or opening a PR.",
+      hint: `Create and checkout a ref before pushing or opening a ${pr}.`,
     };
   }
 
@@ -156,7 +162,7 @@ export function resolveGitQuickAction(
     }
     return {
       kind: "run_action",
-      label: "Commit, push & PR",
+      label: `Commit, push & ${pr}`,
       action: "commit_push_pr",
       disabled: false,
     };
@@ -164,11 +170,11 @@ export function resolveGitQuickAction(
 
   if (!status.hasUpstream) {
     if (!hasPrimaryRemote) {
-      if (hasOpenPr && !isAhead) return { kind: "open_pr", label: "View PR", disabled: false };
+      if (hasOpenPr && !isAhead) return { kind: "open_pr", label: `View ${pr}`, disabled: false };
       return { kind: "open_publish", label: "Publish repository", disabled: false };
     }
     if (!isAhead) {
-      if (hasOpenPr) return { kind: "open_pr", label: "View PR", disabled: false };
+      if (hasOpenPr) return { kind: "open_pr", label: `View ${pr}`, disabled: false };
       return {
         kind: "show_hint",
         label: "Push",
@@ -184,7 +190,12 @@ export function resolveGitQuickAction(
         disabled: false,
       };
     }
-    return { kind: "run_action", label: "Push & create PR", action: "create_pr", disabled: false };
+    return {
+      kind: "run_action",
+      label: `Push & create ${pr}`,
+      action: "create_pr",
+      disabled: false,
+    };
   }
 
   if (isDiverged) {
@@ -209,15 +220,20 @@ export function resolveGitQuickAction(
         disabled: false,
       };
     }
-    return { kind: "run_action", label: "Push & create PR", action: "create_pr", disabled: false };
+    return {
+      kind: "run_action",
+      label: `Push & create ${pr}`,
+      action: "create_pr",
+      disabled: false,
+    };
   }
 
   if (hasOpenPr && status.hasUpstream) {
-    return { kind: "open_pr", label: "View PR", disabled: false };
+    return { kind: "open_pr", label: `View ${pr}`, disabled: false };
   }
 
   if (hasDefaultBranchDelta && !isDefaultRef) {
-    return { kind: "run_action", label: "Create PR", action: "create_pr", disabled: false };
+    return { kind: "run_action", label: `Create ${pr}`, action: "create_pr", disabled: false };
   }
 
   return {
@@ -232,6 +248,7 @@ export function resolveGitQuickAction(
 export function buildGitMenuItems(status: VcsStatusResult | null, isBusy: boolean): GitMenuItem[] {
   if (!status) return [];
 
+  const pr = changeRequestName(status);
   const hasBranch = status.refName !== null;
   const hasChanges = status.hasWorkingTreeChanges;
   const hasOpenPr = status.pr?.state === "open";
@@ -261,8 +278,8 @@ export function buildGitMenuItems(status: VcsStatusResult | null, isBusy: boolea
   if (!status.hasPrimaryRemote) return [commitItem];
 
   const prItem: GitMenuItem = hasOpenPr
-    ? { id: "pr", label: "View PR", disabled: !canOpenPr, action: null, openUrl: status.pr?.url }
-    : { id: "pr", label: "Create PR", disabled: !canCreatePr, action: "create_pr" };
+    ? { id: "pr", label: `View ${pr}`, disabled: !canOpenPr, action: null, openUrl: status.pr?.url }
+    : { id: "pr", label: `Create ${pr}`, disabled: !canCreatePr, action: "create_pr" };
 
   return [commitItem, { id: "push", label: "Push", disabled: !canPush, action: "push" }, prItem];
 }
@@ -273,6 +290,7 @@ function menuItemDisabledHint(
   isBusy: boolean,
 ): string | undefined {
   if (!item.disabled) return undefined;
+  const pr = changeRequestName(status);
   if (isBusy) return "A git action is already in progress.";
   if (item.id === "commit") return "No uncommitted changes.";
   if (item.id === "push") {
@@ -281,9 +299,9 @@ function menuItemDisabledHint(
     if (!status.hasPrimaryRemote) return "Publish the repository before pushing.";
     return "No local commits to push.";
   }
-  if (status.behindCount > 0) return "Pull or rebase before creating a PR.";
-  if (status.hasWorkingTreeChanges) return "Commit changes before creating a PR.";
-  return "No commits are ready for a PR.";
+  if (status.behindCount > 0) return `Pull or rebase before creating a ${pr}.`;
+  if (status.hasWorkingTreeChanges) return `Commit changes before creating a ${pr}.`;
+  return `No commits are ready for a ${pr}.`;
 }
 
 /**

@@ -9,7 +9,7 @@ import {
   type GitPanelAction,
 } from "../gitActions.logic.ts";
 import { clip } from "../format.ts";
-import type { GitLogLine } from "../store.ts";
+import { gitElapsed, type GitLogLine, type GitProgress } from "../store.ts";
 
 /** One row of the source-control panel's action list. */
 export interface TuiGitAction {
@@ -53,6 +53,8 @@ export interface TuiGitState extends ShellGitState {
   readonly log: ReadonlyArray<{ readonly kind: GitLogLine["kind"]; readonly text: string }>;
   /** The last action failed: its error stays in `log` until dismissed. */
   readonly failed: boolean;
+  /** The running action's stage ("Committing...") and how long it has run ("7s"); null when idle. */
+  readonly progress: { readonly stage: string; readonly elapsed: string } | null;
 }
 
 export function buildTuiGitState(input: {
@@ -63,6 +65,7 @@ export function buildTuiGitState(input: {
   /** The panel's width; RightPanel clips its rows to the room inside border and padding. */
   readonly width: number;
   readonly log?: ReadonlyArray<GitLogLine>;
+  readonly progress?: GitProgress | null;
 }): TuiGitState {
   const { status, busy } = input;
   const room = Math.max(6, input.width - 4);
@@ -140,6 +143,9 @@ export function buildTuiGitState(input: {
       ),
     })),
     failed: (input.log ?? []).some((line) => line.kind === "error"),
+    progress: input.progress
+      ? { stage: input.progress.stage, elapsed: gitElapsed(input.progress.elapsedMs) }
+      : null,
   };
 }
 

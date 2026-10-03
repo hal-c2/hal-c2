@@ -138,6 +138,7 @@ step("the user adds a note on a diff line", async (ctx: ThreadWorld) => {
   await pick(ctx, CHANGED);
   await pressKey(ctx, "Enter");
   await settle(ctx);
+  // The last changed line of the file: there is nothing for the note to run through.
   expect(ctx.host!.state.get("ask")).toMatchObject({ label: "note" });
   await typeText(ctx, NOTE);
   await pressKey(ctx, "Enter");

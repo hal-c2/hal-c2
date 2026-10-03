@@ -606,6 +606,7 @@ export function createHost(options: HostOptions): Host {
     }),
     width: () => (layout ? layout.rightPanel.width : 0),
     focusPanel: () => setRightPanel(SOURCE_CONTROL_PANEL, true),
+    menu: (spec) => composer!.openMenu(spec),
     copyToClipboard: options.copyToClipboard,
   });
 

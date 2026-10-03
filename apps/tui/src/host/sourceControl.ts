@@ -2,6 +2,7 @@ import type { GitStackedAction } from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
 import type { Store, StoreState } from "../store.ts";
+import type { TuiMenuSpec } from "./composerState.ts";
 import { buildTuiGitState, clampIndex, planGitRun, type TuiGitState } from "./gitState.ts";
 import type { TuiMode } from "./layoutState.ts";
 
@@ -28,12 +29,16 @@ export function createSourceControl(deps: {
   readonly width: () => number;
   /** Open the source-control panel with the keys on it. */
   readonly focusPanel: () => void;
+  /** Ask the user to choose (the picker). */
+  readonly menu: (spec: TuiMenuSpec) => void;
   /** Put text on the system clipboard; false when the terminal cannot (OSC 52). */
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
 }) {
   const { store, state } = deps;
   let gitIndex = 0;
   let commitPrompt: TuiGitState["commitPrompt"] = null;
+  /** The user chose a new branch for the action the commit prompt is asking about. */
+  let featureBranch = false;
 
   const current = () => store.getState();
 
@@ -45,6 +50,7 @@ export function createSourceControl(deps: {
       commitPrompt,
       width: deps.width(),
       log: current().gitLog,
+      progress: current().gitProgress,
     });
   const publishGit = () => {
     const next = gitState();
@@ -53,19 +59,50 @@ export function createSourceControl(deps: {
   };
 
   const runGit = (action: GitStackedAction, label: string) => {
-    const plan = planGitRun(action, current().vcsStatus);
+    const status = current().vcsStatus;
+    const plan = planGitRun(action, status);
     if (plan.kind === "nothing") {
       store.setStatus(plan.message);
       return;
     }
-    if (plan.kind === "run") {
-      store.runGitAction(plan.action);
+    const start = (onNewBranch: boolean) => {
+      if (plan.kind === "run") {
+        store.runGitAction(plan.action, undefined, { featureBranch: onNewBranch });
+        return;
+      }
+      // The message is asked for in the panel, which opens for it if needed.
+      featureBranch = onNewBranch;
+      commitPrompt = { action: plan.action, label };
+      publishGit();
+      deps.focusPanel();
+    };
+    // Nothing reaches the default branch (or a pull request from it) unasked.
+    if (!status?.isDefaultRef || plan.action === "commit") {
+      start(false);
       return;
     }
-    // The message is asked for in the panel, which opens for it if needed.
-    commitPrompt = { action: plan.action, label };
-    publishGit();
-    deps.focusPanel();
+    const branch = status.refName ?? "the default branch";
+    deps.menu({
+      title: `${label} on the default branch ${branch}?`,
+      returnMode: deps.panel().focused ? "panel" : "compose",
+      options: [
+        {
+          label: `Continue on ${branch}`,
+          description: `${label} lands on ${branch}.`,
+          value: "continue",
+        },
+        {
+          label: "Create a feature branch and continue",
+          description: `The same action, on a new branch off ${branch}.`,
+          value: "branch",
+        },
+        { label: "Cancel", description: "Nothing is committed or pushed.", value: "cancel" },
+      ],
+      index: 2,
+      onChoose: (choice) => {
+        if (choice !== "cancel") start(choice === "branch");
+      },
+    });
   };
 
   const copyPrUrl = (url: string) => {
@@ -96,6 +133,7 @@ export function createSourceControl(deps: {
 
   const endCommitPrompt = () => {
     commitPrompt = null;
+    featureBranch = false;
     publishGit();
     deps.setMode(deps.panel().focused ? "panel" : "compose");
   };
@@ -145,10 +183,19 @@ export function createSourceControl(deps: {
         if (!commitPrompt) return true;
         const text = typeof message === "string" ? message.trim() : "";
         // An empty message keeps the prompt open; the store says why.
-        store.runGitAction(commitPrompt.action, text);
+        store.runGitAction(commitPrompt.action, text, { featureBranch });
         if (text.length > 0) endCommitPrompt();
         return true;
       }
+      // Tab in the commit prompt: the server's writer model writes the message.
+      case "git.commit.generate":
+        if (!commitPrompt) return false;
+        store.runGitAction(commitPrompt.action, undefined, {
+          generateMessage: true,
+          featureBranch,
+        });
+        endCommitPrompt();
+        return true;
       case "git.commit.cancel":
         endCommitPrompt();
         return true;
@@ -167,6 +214,7 @@ export function createSourceControl(deps: {
       !prev ||
       prev.vcsStatus !== next.vcsStatus ||
       prev.gitBusy !== next.gitBusy ||
+      prev.gitProgress !== next.gitProgress ||
       prev.gitLog !== next.gitLog
     ) {
       publishGit();
