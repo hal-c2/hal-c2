@@ -178,19 +178,20 @@ defmodule HalC2.Orchestration.Rollback do
   defp restore(%{restore: false}), do: {:ok, nil}
 
   defp restore(plan) do
-    undo = "refs/hal-c2/orchestration-v2/rewind-undo/#{HalC2.Environment.uuid4()}"
+    ref = "refs/hal-c2/orchestration-v2/rewind-undo/#{HalC2.Environment.uuid4()}"
+    # A worktree that cannot be snapshotted is still restored, just without a way back.
+    undo = if HalC2.Checkpoint.capture(plan.cwd, ref) == :ok, do: ref
 
-    with :ok <- HalC2.Checkpoint.capture(plan.cwd, undo),
-         :ok <- HalC2.Checkpoint.restore(plan.cwd, plan.checkpoint["ref"]) do
-      {:ok, undo}
-    else
+    case HalC2.Checkpoint.restore(plan.cwd, plan.checkpoint["ref"]) do
+      :ok ->
+        {:ok, undo}
+
       error ->
         undo(plan, undo)
 
         case error do
           {:error, {_status, detail}} -> {:error, "Could not restore the checkpoint: #{detail}"}
           {:error, reason} -> {:error, "Could not restore the checkpoint: #{inspect(reason)}"}
-          other -> {:error, "Could not restore the checkpoint: #{inspect(other)}"}
         end
     end
   end
