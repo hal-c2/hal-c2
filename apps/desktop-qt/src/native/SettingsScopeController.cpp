@@ -19,7 +19,7 @@ const NativeControllerRegistrar<SettingsScopeController> registrar(QStringLitera
 const QString kKey = QStringLiteral("settingsScope");
 
 // The native sections that edit environments' settings, which follow the scope.
-const QStringList kScopedSections{QStringLiteral("/settings/storage"), QStringLiteral("/settings/source-control"),
+const QStringList kScopedSections{QStringLiteral("/settings/general"), QStringLiteral("/settings/storage"), QStringLiteral("/settings/source-control"),
                                   QStringLiteral("/settings/projects"), QStringLiteral("/settings/scheduled-tasks"),
                                   QStringLiteral("/settings/integrations")};
 
@@ -51,7 +51,9 @@ void SettingsScopeController::activate() {
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
   const auto follow = [this, navigation] {
     const NavigationController::Route& route = navigation->route();
-    m_open = route.kind == QLatin1String("settings") && kScopedSections.contains(route.section);
+    // Bare /settings shows General.
+    m_open = route.kind == QLatin1String("settings") && (route.section.isEmpty() || route.section == QLatin1String("/settings") ||
+                                                         kScopedSections.contains(route.section));
     update();
   };
   connect(navigation, &NavigationController::changed, this, follow);

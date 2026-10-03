@@ -7,4 +7,6 @@ SettingsPage {
     objectName: "generalSettings"
     title: qsTr("General")
     rows: Rows.general
+
+    SettingsScopeSentence {}
 }

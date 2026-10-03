@@ -1,4 +1,5 @@
 #include "SettingsController.h"
+#include "SettingsScopeController.h"
 
 #include <QDir>
 #include <QFile>
@@ -264,9 +265,87 @@ QVariant SettingsController::defaultOf(const QString& key) const {
   return row ? row->fallback.toVariant() : QVariant();
 }
 
+namespace {
+
+// The MC's rows a project can override (packages/contracts ProjectSettingsOverrides).
+bool projectOverridable(const QString& key) {
+  static const QStringList keys{QStringLiteral("newWorktreesStartFromOrigin"), QStringLiteral("sidebarAutoSettleOnMerge"),
+                                QStringLiteral("sidebarAutoSettleAfterDays"), QStringLiteral("continueThreadsAfterServerUpdate"),
+                                QStringLiteral("responseStreamingMode")};
+  return keys.contains(key);
+}
+
+// A row's stored value on one environment: the project's override when the
+// scope is a project and it has one, else the environment's; undefined when unset.
+QJsonValue storedIn(const QJsonObject& settings, const QString& projectId, const QString& key) {
+  if (!projectId.isEmpty() && projectOverridable(key)) {
+    const QJsonValue override = SettingsScopeController::overrideOf(settings, projectId, key);
+    if (!override.isUndefined()) return override;
+  }
+  return settings.contains(key) ? settings.value(key) : QJsonValue(QJsonValue::Undefined);
+}
+
+}  // namespace
+
+SettingsScopeController* SettingsController::scope() const {
+  auto* shell = NativeShell::of(this);
+  auto* scope = shell ? shell->controller<SettingsScopeController>() : nullptr;
+  if (scope && !m_followsScope) {
+    m_followsScope = true;
+    connect(scope, &SettingsScopeController::changed, this, &SettingsController::settingsChanged);
+  }
+  return scope;
+}
+
+SettingsScopeController* SettingsController::scopeFor(const QString& key) const {
+  const Row* row = rowOf(key);
+  if (!row || row->device) return nullptr;
+  SettingsScopeController* scope = this->scope();
+  if (!scope) return nullptr;
+  const QStringList targets = scope->targets();
+  if (targets.isEmpty()) return nullptr;
+  if (!scope->projectScope() && targets == QStringList{m_client->environment()}) return nullptr;
+  return scope;
+}
+
+bool SettingsController::mixed(const QString& key) const {
+  const SettingsScopeController* scope = scopeFor(key);
+  if (!scope) return false;
+  const Row* row = rowOf(key);
+  // An environment that leaves the row unset holds its default.
+  return scope
+      ->read([key, row](const QJsonObject& settings, const QString& projectId) {
+        const QJsonValue stored = storedIn(settings, projectId, key);
+        return stored.isUndefined() ? row->fallback : stored;
+      })
+      .mixed;
+}
+
+QString SettingsController::disabledReason(const QString& key) const {
+  const Row* row = rowOf(key);
+  if (!row || row->device) return {};
+  const SettingsScopeController* scope = this->scope();
+  if (!scope) return {};
+  if (scope->projectScope() && !projectOverridable(key)) return QStringLiteral("Environment-wide setting. Select an environment to change it.");
+  return scopeFor(key) ? scope->disabledReason() : QString();
+}
+
+bool SettingsController::supports(const QString& capability) const {
+  const SettingsScopeController* scope = this->scope();
+  if (!scope || scope->targets().isEmpty()) return false;
+  for (const QString& environmentId : scope->targets()) {
+    if (!scope->settings(environmentId)) return false;
+  }
+  return scope->lacking(capability).isEmpty();
+}
+
 QVariant SettingsController::setting(const QString& key) const {
   const Row* row = rowOf(key);
   if (!row) return {};
+  if (const SettingsScopeController* scope = scopeFor(key)) {
+    const auto reading = scope->read([key](const QJsonObject& settings, const QString& projectId) { return storedIn(settings, projectId, key); });
+    if (reading.known > 0) return reading.value.isUndefined() ? row->fallback.toVariant() : reading.value.toVariant();
+  }
   const QJsonObject& store = row->device ? m_device : m_settings;
   // An explicit null is a value (inactive settling off), an absent key is not.
   return store.contains(key) ? store.value(key).toVariant() : row->fallback.toVariant();
@@ -275,6 +354,15 @@ QVariant SettingsController::setting(const QString& key) const {
 bool SettingsController::isDefault(const QString& key) const {
   const Row* row = rowOf(key);
   if (!row) return true;
+  if (const SettingsScopeController* scope = scopeFor(key)) {
+    // A project is at its default while it inherits; environments while none holds another value.
+    const bool project = scope->projectScope() && projectOverridable(key);
+    const auto reading = scope->read([key, row, project](const QJsonObject& settings, const QString& projectId) {
+      if (project) return QJsonValue(SettingsScopeController::overrideOf(settings, projectId, key).isUndefined());
+      return QJsonValue(!settings.contains(key) || settings.value(key) == row->fallback);
+    });
+    if (reading.known > 0) return !reading.mixed && reading.value.toBool();
+  }
   const QJsonObject& store = row->device ? m_device : m_settings;
   return !store.contains(key) || store.value(key) == row->fallback;
 }
@@ -297,6 +385,21 @@ void SettingsController::set(const QString& key, const QVariant& value) {
     if (!setDeviceSettings(device)) toast(QStringLiteral("Setting not saved"), m_deviceError);
     return;
   }
+  if (!disabledReason(key).isEmpty()) {
+    toast(QStringLiteral("Setting not saved"), disabledReason(key));
+    return;
+  }
+  if (SettingsScopeController* scope = scopeFor(key)) {
+    const bool project = scope->projectScope();
+    scope->write([key, json, absent, project](QJsonObject settings, const QString& projectId) {
+      // A project keeps its own value as an override.
+      if (project) return SettingsScopeController::withOverride(settings, projectId, key, json);
+      if (absent) settings.remove(key);
+      else settings.insert(key, json);
+      return settings;
+    });
+    return;
+  }
   change(
       [key, json, absent](QJsonObject settings) {
         if (absent) settings.remove(key);
@@ -309,6 +412,13 @@ void SettingsController::set(const QString& key, const QVariant& value) {
 }
 
 void SettingsController::reset(const QString& key) {
+  // A project goes back to inheriting its environment's value.
+  if (SettingsScopeController* scope = scopeFor(key); scope && scope->projectScope() && projectOverridable(key)) {
+    scope->write([key](QJsonObject settings, const QString& projectId) {
+      return SettingsScopeController::withOverride(settings, projectId, key, QJsonValue(QJsonValue::Undefined));
+    });
+    return;
+  }
   if (const Row* row = rowOf(key)) set(key, row->fallback.toVariant());
 }
 

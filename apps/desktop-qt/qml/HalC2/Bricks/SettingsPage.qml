@@ -110,6 +110,11 @@ Rectangle {
                     required property var modelData
 
                     Layout.fillWidth: true
+                    // A row every selected environment must support is listed once they do.
+                    visible: {
+                        Settings.document;
+                        return !modelData.requires || Settings.supports(modelData.requires);
+                    }
                     sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : settingRow
 
                     Component {

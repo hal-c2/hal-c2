@@ -25,6 +25,19 @@ ColumnLayout {
     }
     // Rows the MC keeps wait for its document.
     readonly property bool ready: Settings.onDevice(spec.key) || Settings.ready
+    // The selected environments disagree on it.
+    readonly property bool mixed: {
+        Settings.document;
+        return Settings.mixed(spec.key);
+    }
+    // Why it cannot be changed here: the scope, or a capability an environment lacks.
+    readonly property string blocked: {
+        Settings.document;
+        Shell.state.settingsScope;
+        const reason = Settings.disabledReason(spec.key);
+        if (reason.length > 0) return reason;
+        return spec.needs && !Settings.supports(spec.needs) ? spec.unsupported : "";
+    }
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     // Project grouping remembers the mode it was on for turning it back on.
@@ -73,9 +86,19 @@ ColumnLayout {
 
             Label {
                 Layout.fillWidth: true
-                text: Rows.describe(row.spec, row.value)
+                text: row.mixed && row.spec.mixedDescription ? row.spec.mixedDescription : Rows.describe(row.spec, row.value)
                 visible: text.length > 0
                 color: row.muted
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "status"
+                Layout.fillWidth: true
+                text: row.blocked
+                visible: text.length > 0
+                color: Theme.palette.color("warning", "#fbbf24")
                 font.pixelSize: 12
                 wrapMode: Text.Wrap
             }
@@ -83,7 +106,7 @@ ColumnLayout {
 
         Loader {
             Layout.alignment: Qt.AlignVCenter
-            enabled: row.ready
+            enabled: row.ready && row.blocked.length === 0
             sourceComponent: {
                 switch (row.spec.kind) {
                 case "switch":
@@ -147,7 +170,8 @@ ColumnLayout {
 
         Switch {
             objectName: "control"
-            checked: row.value === true
+            // Mixed reads as off: a click turns it on everywhere.
+            checked: !row.mixed && row.value === true
             Accessible.name: row.spec.title
             onToggled: row.set(checked)
         }
@@ -187,7 +211,8 @@ ColumnLayout {
             implicitWidth: 220
             model: row.spec.options
             textRole: "label"
-            currentIndex: Rows.optionIndex(row.spec, row.value)
+            currentIndex: row.mixed ? -1 : Rows.optionIndex(row.spec, row.value)
+            displayText: row.mixed ? qsTr("Mixed") : currentText
             Accessible.name: row.spec.title
             onActivated: index => row.set(row.spec.options[index].value)
         }

@@ -23,6 +23,18 @@ QtObject {
     function defaultOf(key) {
         return defaults[key];
     }
+    // The settings scope: one environment with every capability, unless a test says.
+    property var mixedKeys: []
+    property var missingCapabilities: []
+    function mixed(key) {
+        return mixedKeys.indexOf(key) >= 0;
+    }
+    function disabledReason(key) {
+        return "";
+    }
+    function supports(capability) {
+        return missingCapabilities.indexOf(capability) < 0;
+    }
     function onDevice(key) {
         return mcKeys.indexOf(key) < 0;
     }
@@ -53,5 +65,7 @@ QtObject {
         document = {};
         defaults = {};
         mcKeys = [];
+        mixedKeys = [];
+        missingCapabilities = [];
     }
 }

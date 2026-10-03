@@ -101,7 +101,7 @@ Feature: General settings
       When the user applies the shown auto-settle defaults to all environments
       Then "server" settles threads after 3 days
 
-    @backlog @desktop
+    @desktop
     Scenario: Settling rows are hidden when a chosen environment cannot settle threads
       Given the settings scope includes an environment whose MC does not settle threads
       Then the auto-settle rows are not shown
@@ -130,7 +130,7 @@ Feature: General settings
         | paragraph | a finished paragraph or closed code block at a time          |
         | turn      | only when a boundary such as a tool call or the turn end comes |
 
-    @backlog @desktop
+    @desktop
     Scenario: Environments with different streaming modes read as mixed
       Given the settings scope covers two environments with different streaming modes
       Then the response streaming row reads "Mixed"
@@ -227,7 +227,7 @@ Feature: General settings
       When the MC starts again
       Then the thread stays interrupted
 
-    @backlog @desktop
+    @desktop
     Scenario: Restart continuation cannot be turned on for an environment that lacks it
       Given the settings scope includes an environment that cannot continue threads after restarts
       Then the continuation switch is disabled

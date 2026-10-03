@@ -9,6 +9,11 @@
 // Rows that need logic beyond reading and writing the key:
 // A section with `folded` starts closed: its rows are listed once it is opened.
 //
+// Rows of the MC's follow the settings scope (Settings.mixed, Settings.disabledReason):
+//   requires          a capability every selected environment must have for the row to be listed
+//   needs             one they must have for it to be changed; `unsupported` says so otherwise
+//   mixedDescription  the description while the selected environments disagree
+//
 //   grouping   a switch over sidebarProjectGroupingMode ("separate" is off)
 //   settleDays a switch plus a number: null days is off
 
@@ -24,9 +29,9 @@ var general = [
       description: "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation." },
     { key: "snoozeLimitedThreads", kind: "switch", title: "Snooze limited threads",
       description: "Snooze usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake." },
-    { key: "sidebarAutoSettleOnMerge", kind: "switch", title: "Auto-settle merged threads",
+    { key: "sidebarAutoSettleOnMerge", kind: "switch", title: "Auto-settle merged threads", requires: "threadAutoSettlement",
       description: "Settle a thread when its pull request merges. Closed pull requests still settle automatically." },
-    { key: "sidebarAutoSettleAfterDays", kind: "settleDays", title: "Auto-settle inactive threads",
+    { key: "sidebarAutoSettleAfterDays", kind: "settleDays", title: "Auto-settle inactive threads", requires: "threadAutoSettlement",
       description: "Sidebar threads with no activity for this long settle automatically.",
       daysTitle: "Days of inactivity before auto-settle",
       daysDescription: "Any new activity un-settles a thread automatically.", min: 1, max: 90 },
@@ -42,6 +47,7 @@ var general = [
       description: "System default follows your browser or OS clock preference.",
       options: [option("locale", "System default"), option("12-hour", "12-hour"), option("24-hour", "24-hour")] },
     { key: "responseStreamingMode", kind: "select", title: "Response streaming",
+      mixedDescription: "The selected targets use different streaming modes.",
       descriptions: { turn: "Text appears once the agent finishes its turn.",
                       paragraph: "Each paragraph or code block appears as soon as it is complete." },
       options: [option("paragraph", "Show finished paragraphs"), option("turn", "Wait for the full response")] },
@@ -71,6 +77,7 @@ var general = [
     { key: "enableProviderUpdateChecks", kind: "switch", title: "Provider update checks",
       description: "Check installed provider CLIs for newer available versions." },
     { key: "continueThreadsAfterServerUpdate", kind: "switch", title: "Continue threads after restarts",
+      needs: "threadRestartContinuation", unsupported: "All selected connected environments must support restart continuation.",
       description: "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments. Update older servers first." },
 
     { section: "Projects & threads" },
