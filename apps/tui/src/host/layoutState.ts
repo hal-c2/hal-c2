@@ -18,7 +18,10 @@ export type TuiMode =
   // A settings page (`settingsSections.ts`): its rows, its one-line field, its question.
   | "section"
   | "sectionInput"
-  | "sectionConfirm";
+  | "sectionConfirm"
+  // A one-line question from a feature area, and the leader layer (^X).
+  | "ask"
+  | "leader";
 
 export interface TuiSize {
   readonly columns: number;

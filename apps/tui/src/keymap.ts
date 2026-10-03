@@ -25,6 +25,13 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "^N", description: "New thread", chords: ["ctrl+n"] },
       { keys: "^F", description: "Filter threads", chords: ["ctrl+f"] },
       { keys: "^L", description: "Toggle source-control panel", chords: ["ctrl+l"] },
+      { keys: "F1", description: "Keys for what has focus", chords: ["f1"] },
+      {
+        keys: "^X …",
+        description:
+          "Leader: n new · k commands · f filter · l panel · e terminal · s settings · b files",
+        chords: ["ctrl+x", "n", "k", "f", "l", "e", "s", "b"],
+      },
     ],
   },
   {
@@ -87,6 +94,7 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "Enter", description: "Run the action / copy the PR link", chords: ["return"] },
       { keys: "Esc", description: "Return to the conversation", chords: ["escape"] },
       { keys: "^L", description: "Close the panel", chords: ["ctrl+l"] },
+      { keys: "x", description: "Dismiss the last action's log", chords: ["x"] },
     ],
   },
   {
@@ -104,6 +112,13 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "^P", description: "Back to the prompt from any pane", chords: ["ctrl+p"] },
       { keys: "s", description: "Diff: toggle split / stacked", chords: ["s"] },
       { keys: "y / n", description: "Delete a thread: confirm / keep", chords: ["y", "n"] },
+      {
+        keys: "r",
+        description: "Settings: rebind a key · Files: list again · Diff: load again",
+        chords: ["r"],
+      },
+      { keys: "e", description: "Files: edit in $EDITOR", chords: ["e"] },
+      { keys: "c", description: "Diff: note a line for the prompt", chords: ["c"] },
       {
         keys: "Tab · ^Enter",
         description: "Add project: browse ⇄ edit · run the action",
@@ -124,6 +139,29 @@ export type KeymapLayer = Readonly<Record<string, string>>;
 const THREAD_JUMPS: KeymapLayer = Object.fromEntries(
   Array.from({ length: 9 }, (_, index) => [`alt+${index + 1}`, `thread.jump.${index + 1}`]),
 );
+
+/** The keys that can follow the leader (^X), and the host action each runs. */
+export const LEADER_ACTIONS: ReadonlyArray<{
+  readonly key: string;
+  readonly title: string;
+  readonly action: string;
+}> = [
+  { key: "n", title: "New thread", action: "thread.new" },
+  { key: "k", title: "Command palette", action: "palette.open" },
+  { key: "f", title: "Filter threads", action: "sidebar.filter.focus" },
+  { key: "l", title: "Source-control panel", action: "rightPanel.toggle" },
+  { key: "e", title: "Terminal", action: "terminal.toggle" },
+  { key: "s", title: "Settings", action: "settings.open" },
+  { key: "b", title: "Browse files", action: "files.open" },
+];
+
+const LEADER_LAYER: KeymapLayer = {
+  ...Object.fromEntries(LEADER_ACTIONS.map((entry) => [entry.key, `leader.run.${entry.key}`])),
+  up: "select.previous",
+  down: "select.next",
+  return: "select.confirm",
+  escape: "leader.cancel",
+};
 
 /**
  * The prompt's chords (a reply or a new-thread draft). Keys an action cannot
@@ -171,7 +209,14 @@ export const KEYMAP_LAYERS = {
    * Under every mode but the terminal drawer, which passes ^C to the shell.
    * "quit" is the action keymap.json files name (the host runs it as app.quit).
    */
-  global: { "ctrl+c": "quit", "ctrl+p": "composer.focus" },
+  // ^X cancels a pending approval at the prompt (COMPOSE); with none the host
+  // declines that, the key falls through to here, and it opens the leader layer.
+  global: {
+    "ctrl+c": "quit",
+    "ctrl+p": "composer.focus",
+    f1: "help.open",
+    "ctrl+x": "leader.open",
+  },
   compose: COMPOSE,
   newThread: COMPOSE,
   userInput: {
@@ -193,6 +238,7 @@ export const KEYMAP_LAYERS = {
     "ctrl+up": "terminal.grow",
     "ctrl+down": "terminal.shrink",
     "ctrl+o": "terminal.copy",
+    f1: "help.open",
     "shift+pageup": "terminal.scroll.pageUp",
     "shift+pagedown": "terminal.scroll.pageDown",
     "shift+up": "terminal.scroll.lineUp",
@@ -219,6 +265,8 @@ export const KEYMAP_LAYERS = {
   },
   rename: { escape: "overlay.cancel" },
   join: { escape: "cluster.join.cancel" },
+  ask: { escape: "ask.cancel" },
+  leader: LEADER_LAYER,
   imagePreview: { escape: "image.close" },
   confirmDelete: { y: "thread.delete.confirm", "n, escape": "overlay.cancel" },
   diff: {
@@ -227,6 +275,8 @@ export const KEYMAP_LAYERS = {
     pageup: "diff.scrollUp",
     pagedown: "diff.scrollDown",
     s: "diff.toggleView",
+    r: "diff.refresh",
+    c: "context.diffNote",
     "escape, ctrl+p": "diff.close",
   },
   files: {
@@ -236,6 +286,8 @@ export const KEYMAP_LAYERS = {
     pagedown: "files.scrollDown",
     "return, right": "files.activate",
     "left, backspace": "files.up",
+    e: "files.edit",
+    r: "files.refresh",
     escape: "files.back",
     "ctrl+p": "rightPanel.blur",
   },
@@ -243,6 +295,7 @@ export const KEYMAP_LAYERS = {
     "up, pageup": "settings.scrollUp",
     "down, pagedown": "settings.scrollDown",
     "escape, ctrl+p": "settings.close",
+    r: "keymap.rebind.open",
   },
   /** A settings page: its rows, then its one-line field and its yes / no question. */
   section: {
@@ -261,6 +314,7 @@ export const KEYMAP_LAYERS = {
     return: "rightPanel.activate",
     "escape, ctrl+p": "rightPanel.blur",
     "ctrl+l": "rightPanel.toggle",
+    x: "git.log.dismiss",
   },
   commit: { escape: "git.commit.cancel", "ctrl+p": "rightPanel.blur" },
   project: {
@@ -292,6 +346,150 @@ export function boundChords(layers: Record<string, KeymapLayer> = KEYMAP_LAYERS)
     }
   }
   return [...chords];
+}
+
+const splitChords = (chords: string): string[] => chords.split(",").map((part) => part.trim());
+
+const KEY_NAMES: Record<string, string> = {
+  esc: "escape",
+  enter: "return",
+  pgup: "pageup",
+  pgdn: "pagedown",
+  del: "delete",
+};
+const MODIFIERS = ["ctrl", "alt", "shift"];
+
+/** "Ctrl+T" or "^t" as a Keymap chord ("ctrl+t"); null when it names no key. */
+export function normalizeChord(text: string): string | null {
+  const spelled = text.trim().toLowerCase().replace(/^\^/, "ctrl+").replace(/\s+/g, "");
+  if (spelled === "") return null;
+  const parts = spelled.split("+");
+  const key = parts.pop() ?? "";
+  if (key === "" || MODIFIERS.includes(key)) return null;
+  const modifiers = parts.map((part) =>
+    part === "control" ? "ctrl" : part === "meta" ? "alt" : part,
+  );
+  if (modifiers.some((part) => !MODIFIERS.includes(part))) return null;
+  return [...MODIFIERS.filter((part) => modifiers.includes(part)), KEY_NAMES[key] ?? key].join("+");
+}
+
+/** A chord as the client spells it for the user: "ctrl+shift+m" → "Ctrl+Shift+M". */
+export function chordLabel(chords: string): string {
+  return splitChords(chords)
+    .map((chord) =>
+      chord
+        .split("+")
+        .map((part) =>
+          part.length === 1 ? part.toUpperCase() : part[0]!.toUpperCase() + part.slice(1),
+        )
+        .join("+"),
+    )
+    .join(" / ");
+}
+
+// The reference group that documents each mode's chords first.
+const MODE_GROUP: Record<string, string> = {
+  terminal: "Terminal",
+  panel: "Source control",
+  commit: "Source control",
+  compose: "Conversation",
+  newThread: "Conversation",
+  userInput: "Conversation",
+};
+
+/** What the reference says a chord does in `mode`; the action's name when it is undocumented. */
+export function describeChord(chords: string, action: string, mode: string): string {
+  const first = splitChords(chords)[0]!;
+  const preferred = MODE_GROUP[mode] ?? "Overlays (palette / diff / files / pickers)";
+  const ordered = [
+    ...KEYBINDING_GROUPS.filter((group) => group.title === preferred),
+    ...KEYBINDING_GROUPS.filter((group) => group.title === "Global"),
+    ...KEYBINDING_GROUPS.filter((group) => group.title !== preferred && group.title !== "Global"),
+  ];
+  for (const group of ordered) {
+    const binding = group.bindings.find((candidate) => candidate.chords?.includes(first));
+    if (binding) return binding.description;
+  }
+  return action;
+}
+
+/** What the reference says `action` does in `mode`, by the chord it has by default. */
+export function describeAction(action: string, mode: string): string {
+  const layers: Record<string, KeymapLayer> = KEYMAP_LAYERS;
+  for (const layer of [layers[mode] ?? {}, layers.global ?? {}]) {
+    const chord = Object.keys(layer).find((candidate) => layer[candidate] === action);
+    if (chord !== undefined) return describeChord(chord, action, mode);
+  }
+  return action;
+}
+
+/**
+ * Give `action` the chord `chord` in every layer that binds it, in place of
+ * the chords it had there (`freed`, for the layers the prompt uses).
+ */
+export function rebindLayers(
+  layers: Record<string, KeymapLayer>,
+  action: string,
+  chord: string,
+): { readonly layers: Record<string, KeymapLayer>; readonly freed: string[] } {
+  const freed = new Set<string>();
+  const next: Record<string, KeymapLayer> = {};
+  for (const [name, layer] of Object.entries(layers)) {
+    const bound = Object.entries(layer).filter(([, candidate]) => candidate === action);
+    if (bound.length === 0) {
+      next[name] = layer;
+      continue;
+    }
+    for (const [old] of bound) for (const part of splitChords(old)) freed.add(part);
+    next[name] = {
+      ...Object.fromEntries(Object.entries(layer).filter(([, candidate]) => candidate !== action)),
+      [chord]: action,
+    };
+  }
+  freed.delete(chord);
+  return { layers: next, freed: [...freed] };
+}
+
+/**
+ * Check a user's keymap.json (chord → action, null unbinds). Two entries
+ * that spell the same chord for different actions ("ctrl+t" and "Ctrl+T")
+ * conflict: JSON would let the later one win silently, so both are dropped
+ * (each action keeps its default chord) and the conflict is reported.
+ * Sections for named keymaps (`{ "list": { … } }`) pass through.
+ */
+export function resolveKeymapFile(file: Record<string, unknown>): {
+  readonly keymap: Record<string, unknown>;
+  readonly conflicts: string[];
+} {
+  const actionsByChord = new Map<string, Set<string>>();
+  const chordsOf = (key: string) => splitChords(key).map((part) => normalizeChord(part) ?? part);
+  for (const [key, value] of Object.entries(file)) {
+    if (typeof value !== "string") continue;
+    for (const chord of chordsOf(key)) {
+      actionsByChord.set(chord, (actionsByChord.get(chord) ?? new Set()).add(value));
+    }
+  }
+  const contested = [...actionsByChord].filter(([, actions]) => actions.size > 1);
+  const keymap: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(file)) {
+    if (typeof value !== "string" && value !== null) {
+      keymap[key] = value;
+      continue;
+    }
+    // Spelled the engine's way ("ctrl+t"), so "Ctrl+T" binds too.
+    const chords = chordsOf(key);
+    if (chords.some((chord) => contested.some(([taken]) => taken === chord))) continue;
+    keymap[chords.join(", ")] = value;
+  }
+  return {
+    keymap,
+    conflicts: contested.map(
+      ([chord, actions]) =>
+        `keymap.json binds ${chordLabel(chord)} to ${[...actions]
+          .map((action) => `"${action}"`)
+          .join(" and ")}; neither is applied`,
+    ),
+  };
 }
 
 /** How the terminal lines up with the web app's keybindings (the parity table). */

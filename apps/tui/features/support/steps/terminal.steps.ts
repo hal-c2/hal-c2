@@ -35,7 +35,7 @@ type Overrides = {
   listTerminalIds?: () => Promise<ReadonlyArray<string>>;
 };
 
-interface TerminalWorld extends World {
+export interface TerminalWorld extends World {
   history?: Record<string, string>;
   overrides?: Overrides;
   gates?: Deferred[];
@@ -120,7 +120,7 @@ const print = (ctx: World, data: string, terminalId = state(ctx).activeId!) =>
 export const printToTerminal = (ctx: World, data: string) => print(ctx, data);
 
 /** Booted, connected, with the project's first thread selected. */
-async function openThread(ctx: TerminalWorld) {
+export async function openThread(ctx: TerminalWorld) {
   if (ctx.app) return;
   useTerminalClient(ctx);
   await boot(ctx);
@@ -130,7 +130,7 @@ async function openThread(ctx: TerminalWorld) {
 }
 
 /** The thread's drawer is open (with its default terminal) and focused. */
-async function openDrawer(ctx: TerminalWorld) {
+export async function openDrawer(ctx: TerminalWorld) {
   await openThread(ctx);
   if (!state(ctx).open) await pressKey(ctx, "Ctrl+E");
   if (ctx.host!.state.get("mode") !== "terminal") ctx.host!.dispatch("terminal.focus.toggle");
@@ -154,7 +154,7 @@ async function paletteTitles(ctx: World): Promise<string[]> {
 }
 
 /** Open terminals until the thread has `count`, then activate `active`. */
-async function haveTerminals(ctx: TerminalWorld, count: number, active?: number) {
+export async function haveTerminals(ctx: TerminalWorld, count: number, active?: number) {
   await openDrawer(ctx);
   while (state(ctx).tabs.length < count) await runCommand(ctx, "New terminal");
   if (active !== undefined) {
@@ -494,6 +494,9 @@ step(
 );
 
 async function closeActive(ctx: TerminalWorld) {
+  // "it" is whatever the scenario's Given opened (a preview, in slice-files.steps.ts).
+  const closeIt = (ctx as { closeIt?: () => Promise<void> }).closeIt;
+  if (closeIt) return closeIt();
   ctx.acted = true;
   await runCommand(ctx, "Close terminal");
 }

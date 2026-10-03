@@ -33,6 +33,7 @@ Rectangle {
     }
     ScrollView {
         id: body
+        objectName: "diffScroll"
         visible: viewer.diff.message === ""
         flexGrow: 1
         flexShrink: 1

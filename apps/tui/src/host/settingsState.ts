@@ -95,6 +95,11 @@ function clusterRows(cluster: TuiClusterState, width: number): TuiSettingsRow[] 
   return rows;
 }
 
+export interface TuiSettingsExtraGroup {
+  readonly title: string;
+  readonly rows: ReadonlyArray<readonly [label: string, value: string]>;
+}
+
 export function buildTuiSettingsState(input: {
   readonly active: boolean;
   readonly detail: OrchestrationThread | null;
@@ -102,6 +107,8 @@ export function buildTuiSettingsState(input: {
   readonly cluster: TuiClusterState;
   /** The pane's width (the conversation column); values clip to it. */
   readonly width: number;
+  /** Groups other areas list after the cluster: label and value per row, wrapped to the pane. */
+  readonly extra?: ReadonlyArray<TuiSettingsExtraGroup>;
 }): TuiSettingsState {
   const width = input.width;
   const controls = composerControls(input.detail);
@@ -136,6 +143,10 @@ export function buildTuiSettingsState(input: {
         ],
       },
       { title: "Cluster", rows: clusterRows(input.cluster, width) },
+      ...(input.extra ?? []).map((group) => ({
+        title: group.title,
+        rows: group.rows.flatMap(([label, value]) => wrappedRows(label, value || "—", width)),
+      })),
       ...KEYBINDING_GROUPS.map((group) => ({
         title: group.title,
         rows: group.bindings.map((binding) => keyRow(binding.keys, binding.description, width)),

@@ -169,40 +169,40 @@ Feature: Keyboard map of the terminal client
     Then the keybinding reference lists the Global, Conversation, Terminal, Source control and Overlays groups
     And every chord the client handles appears in it
 
-  @backlog @tui
+  @tui
   Scenario: A help overlay lists the chords available in the current focus
     Given the terminal drawer has focus
     When the user asks for help
     Then an overlay lists the chords that work in the terminal drawer
     And closing it returns focus to the terminal drawer
 
-  @backlog @tui
+  @tui
   Scenario: A leader key opens a second layer of chords
     When the user presses the leader key
     Then the client shows the chords that can follow it
     And pressing "Esc" cancels the leader without acting
 
-  @backlog @tui
+  @tui
   Scenario: The user rebinds a chord with a keymap JSON file
     Given a keymap file that binds "new thread" to "Ctrl+T"
     When the user starts the terminal client with that keymap file
     Then "Ctrl+T" starts a new thread
     And "Ctrl+N" no longer does
 
-  @backlog @tui
+  @tui
   Scenario: Removing a binding in the keymap file frees the chord
     Given a keymap file that sets "filter threads" to null
     When the user starts the terminal client with that keymap file
     Then "Ctrl+F" is passed through to the focused input
 
-  @backlog @tui
+  @tui
   Scenario: A conflicting custom binding is reported instead of silently winning
     Given a keymap file that binds "new thread" and "command palette" to the same chord
     When the user starts the terminal client with that keymap file
     Then the client reports the conflict
     And both actions keep their default chords
 
-  @backlog @tui
+  @tui
   Scenario: Custom keybindings are edited from the client with conflict checks
     When the user rebinds "toggle terminal" from settings
     Then the new chord takes effect immediately

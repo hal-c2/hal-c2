@@ -172,6 +172,40 @@ under the typed path. `invite` is true while the environment has no
 projects. Actions are `project.add` and `project.add.*` (`mode: "project"`).
 An added project opens a new-thread draft for it (`thread.new {projectKey}`).
 
+## Feature areas
+
+Most of what the palette offers beyond the panes above lives in
+`features/`: one file per area (keys, archive, conversation, editor, plans,
+server, workspace, repository, appearance, context, reach), each a `Feature` with palette
+commands and a `dispatch`. They own no brick. A feature talks to the user
+through three things the host hands it (`features/kit.ts`):
+
+- `menu`: a list in the picker (`select`, kind `"menu"`), optionally with a
+  search field (`select.query.set`). Choosing closes it, then runs the choice.
+- `ask`: a one-line question in the prompt's place (`ask`, mode `"ask"`;
+  `ask.submit {text}`, `ask.cancel`).
+- `status`: the status line.
+
+Their requests are in `src/featureClient.ts`, next to the client's core in
+`connection.ts`. Actions a feature takes over from another controller
+(`link.open`) reach it first: `features.dispatch` runs ahead of the thread view.
+
+Keys they publish: `planStatus` (the agent's step list and the thread an
+implemented plan went to), `keybindings` (the live layers, which a rebind
+rewrites), and groups appended to `settings` (`settingsGroups`: provider
+instances, defaults, diagnostics; the host adds `Problems`).
+
+The palette is the theme too: `theme.set {id}` and `icons.nerdFont.set {on}`
+rewrite the one `THEME` object (and the icon registry) in place, and the host
+repaints every key it styled. A brick must read colours from `Theme.colors`,
+and host-styled text from the palette at build time, never from a captured
+constant, or it will not follow.
+
+A brick that handles the mouse needs a keyboard route as well: a chord, a
+palette entry, or (for rows whose action the host chose) an entry in
+`features/reach.ts`. The client runs with the mouse off (`HAL_C2_TUI_MOUSE=0`),
+and `slice-mouse.steps.ts` fails on a mouse handler that has no route.
+
 ## Keys and actions
 
 Chords live in one place: `KEYMAP_LAYERS` in `src/keymap.ts` maps each mode's

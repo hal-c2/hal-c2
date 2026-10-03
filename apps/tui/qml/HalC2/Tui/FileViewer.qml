@@ -36,9 +36,24 @@ Rectangle {
         color: viewer.file && viewer.file.status === "error" ? Theme.colors.error : Theme.colors.dim
     }
 
+    // A Markdown file reads as rendered lines (the host draws them).
+    Item {
+        objectName: "fileViewerRendered"
+        visible: viewer.file !== null && viewer.file.message === "" && viewer.file.rendered !== null
+        flexDirection: "column"
+        flexGrow: 1
+        flexShrink: 1
+        flexBasis: 0
+        overflow: "hidden"
+        Repeater {
+            model: viewer.file !== null && viewer.file.rendered !== null ? viewer.file.rendered : []
+            delegate: Text { height: 1; flexShrink: 0; wrapMode: "none"; text: modelData }
+        }
+    }
+
     Code {
         objectName: "fileViewerCode"
-        visible: viewer.file !== null && viewer.file.message === ""
+        visible: viewer.file !== null && viewer.file.message === "" && viewer.file.rendered === null
         flexGrow: 1
         flexShrink: 1
         flexBasis: 0

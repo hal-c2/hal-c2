@@ -9,6 +9,7 @@ import {
   type GitPanelAction,
 } from "../gitActions.logic.ts";
 import { clip } from "../format.ts";
+import type { GitLogLine } from "../store.ts";
 
 /** One row of the source-control panel's action list. */
 export interface TuiGitAction {
@@ -48,6 +49,10 @@ export interface TuiGitState extends ShellGitState {
   readonly changesLine: string;
   /** Set while the panel asks for a commit message for this action. */
   readonly commitPrompt: { readonly action: GitStackedAction; readonly label: string } | null;
+  /** The running (or last) action's phases, hooks and hook output, clipped to the panel. */
+  readonly log: ReadonlyArray<{ readonly kind: GitLogLine["kind"]; readonly text: string }>;
+  /** The last action failed: its error stays in `log` until dismissed. */
+  readonly failed: boolean;
 }
 
 export function buildTuiGitState(input: {
@@ -57,6 +62,7 @@ export function buildTuiGitState(input: {
   readonly commitPrompt: TuiGitState["commitPrompt"];
   /** The panel's width; RightPanel clips its rows to the room inside border and padding. */
   readonly width: number;
+  readonly log?: ReadonlyArray<GitLogLine>;
 }): TuiGitState {
   const { status, busy } = input;
   const room = Math.max(6, input.width - 4);
@@ -125,6 +131,15 @@ export function buildTuiGitState(input: {
           )
         : "working tree clean",
     commitPrompt: input.commitPrompt,
+    // The newest lines that fit a short pane; an error is always the last and stays.
+    log: (input.log ?? []).slice(-8).map((line) => ({
+      kind: line.kind,
+      text: clip(
+        `${line.kind === "phase" ? "▸ " : line.kind === "error" ? "✗ " : line.kind === "hook" ? "⚙ " : "  "}${line.text}`,
+        room,
+      ),
+    })),
+    failed: (input.log ?? []).some((line) => line.kind === "error"),
   };
 }
 

@@ -55,7 +55,7 @@ Rectangle {
             width: layer.viewer ? layer.viewer.columns : 0
             height: layer.viewer ? layer.viewer.rows : 0
             fit: "fill"
-            protocol: "kitty"
+            protocol: Shell.state.graphics.protocol
             source: layer.viewer ? layer.viewer.source : null
         }
     }
