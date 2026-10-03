@@ -139,7 +139,8 @@ defmodule HalC2.Steps.Providers.CapabilitiesControls do
     Map.put(context, :composer, %{entry: entry, session: session})
   end
 
-  step "the plan/build toggle is not offered", context do
+  # A regex: `/` separates alternatives in a Cucumber expression.
+  step ~r/^the plan\/build toggle is not offered$/, context do
     assert %{"showInteractionModeToggle" => false} = context.composer.entry
     context
   end

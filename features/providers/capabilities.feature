@@ -98,7 +98,6 @@ Feature: Provider capabilities
       | OpenCode | OpenCode writes it with every tool refused         |
       | Cursor   | Cursor writes it with every tool refused           |
 
-  @backlog
   Scenario Outline: Controls a provider does not support are hidden
     Given a <provider> thread
     When the user looks at the composer
@@ -115,7 +114,6 @@ Feature: Provider capabilities
       | Antigravity | forking the thread          |
       | Grok        | rewinding the thread        |
 
-  @backlog
   Scenario Outline: Providers that cannot steer interrupt and restart instead
     Given a <provider> thread with a running turn
     When the user sends a follow-up and asks to steer
@@ -132,7 +130,6 @@ Feature: Provider capabilities
     When the user rewinds to the first turn
     Then the files are restored and the user is told the conversation cannot be rewound
 
-  @backlog
   Scenario Outline: Proposed plans are shown for providers that make them
     Given a <provider> thread in plan mode
     When the provider finishes a plan
@@ -140,8 +137,13 @@ Feature: Provider capabilities
 
     Examples:
       | provider |
-      | Cursor   |
       | Grok     |
+
+    # The Cursor and OpenCode rows are split out: the MC captures no proposed plan from them yet.
+    @backlog
+    Examples: Not yet on the MC
+      | provider |
+      | Cursor   |
       | OpenCode |
 
   @backlog
@@ -159,7 +161,7 @@ Feature: Provider capabilities
       | OpenCode    |
       | Antigravity |
 
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: An ACP subagent's messages stay in its own thread
     Given an ACP agent starts a native child session
     When the child sends messages and a final summary
