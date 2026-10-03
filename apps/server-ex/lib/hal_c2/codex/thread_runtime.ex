@@ -815,6 +815,44 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification("item/completed", %{"item" => item}, state),
     do: complete_item(flush(state), item)
 
+  # How full the conversation's context is, for the context meter. It belongs to the
+  # provider thread, so it outlives the run, and a model change, until Codex says more.
+  defp notification(
+         "thread/tokenUsage/updated",
+         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage},
+         state
+       )
+       when is_integer(used) do
+    counts =
+      for {key, field} <- [
+            {"inputTokens", "inputTokens"},
+            {"cachedInputTokens", "cachedInputTokens"},
+            {"outputTokens", "outputTokens"},
+            {"reasoningOutputTokens", "reasoningOutputTokens"}
+          ],
+          is_integer(last[field]),
+          into: %{"usedTokens" => max(used, 0)},
+          do: {key, max(last[field], 0)}
+
+    window = usage["modelContextWindow"]
+
+    snapshot =
+      if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(
+          stream,
+          "provider-thread",
+          state.turn.ids.provider_thread,
+          &Map.put(&1, "contextUsage", snapshot)
+        )
+      ]
+    end)
+
+    state
+  end
+
   defp notification("error", %{"error" => error} = params, state) do
     cond do
       params["willRetry"] == true ->
