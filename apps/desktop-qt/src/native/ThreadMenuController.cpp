@@ -6,6 +6,8 @@
 #include <QJsonArray>
 #include <QUuid>
 
+#include <algorithm>
+
 #include "../ShellBridge.h"
 #include "DraftController.h"
 #include "KeybindingController.h"
@@ -160,13 +162,10 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   add(copy, false);
   if (projectKey) add({QStringLiteral("project-settings"), QStringLiteral("Project settings"), QStringLiteral("settings")}, false);
   add({QStringLiteral("fork"), QStringLiteral("Fork thread"), QStringLiteral("git-fork")});
-  // Another machine of the cluster can take a thread the cluster serves.
-  bool elsewhere = false;
-  if (m_store->servesEnvironment(thread->environmentId)) {
-    for (const QString& environment : m_store->environments()) {
-      if (environment != thread->environmentId && m_store->servesEnvironment(environment)) elsewhere = true;
-    }
-  }
+  // Another machine of the cluster can take the thread.
+  const QStringList environments = m_store->environments();
+  const bool elsewhere = std::any_of(environments.cbegin(), environments.cend(),
+                                     [&](const QString& environment) { return environment != thread->environmentId; });
   if (elsewhere) add({QStringLiteral("move"), QStringLiteral("Move to another machine…"), QStringLiteral("arrow-right-left")});
   Item archive{QStringLiteral("archive"), QStringLiteral("Archive thread"), QStringLiteral("archive")};
   archive.separatorBefore = true;

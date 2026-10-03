@@ -212,8 +212,7 @@ void UsageController::update() {
 QStringList UsageController::targets() const {
   QStringList environments;
   for (const QString& environmentId : m_store->environments()) {
-    if (!m_environment.isEmpty() && environmentId != m_environment) continue;
-    if (m_store->reaches(environmentId)) environments.append(environmentId);
+    if (m_environment.isEmpty() || environmentId == m_environment) environments.append(environmentId);
   }
   return environments;
 }
@@ -773,7 +772,6 @@ void UsageController::publish() {
   QVariantList environments;
   bool scanning = false;
   for (const QString& environmentId : m_store->environments()) {
-    if (!m_store->reaches(environmentId)) continue;
     const Answer answer = m_answers.value(environmentId);
     QString status = m_store->environmentOnline(environmentId) ? answer.status : QStringLiteral("offline");
     if (status.isEmpty()) status = QStringLiteral("scanning");

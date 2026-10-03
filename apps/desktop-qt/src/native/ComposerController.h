@@ -33,7 +33,7 @@ class TimelineModel;
 // the same in every window (NativeShell::common); a new thread's text is
 // DraftController's. The catalogue is the `providers` of
 // the route environment's config (WorkspaceController::environmentConfig), so
-// a linked thread lists its own machine's models. A new thread's first send
+// a thread elsewhere lists its own machine's models. A new thread's first send
 // launches it (`orchestration.launchThread`) in the checkout WorkspaceController
 // picked, and the window moves to the thread in the draft's place; a
 // background send launches it and leaves the draft ready for another prompt.

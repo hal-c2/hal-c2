@@ -170,9 +170,9 @@ void expectShown(World& world, const QString& environment) {
                 [&] { return QStringLiteral("the usage of %1 to be shown; the page is %2").arg(environment, show(usage(world))); });
 }
 
-void link(World& world, const QString& environment, const QString& provider) {
+void join(World& world, const QString& environment, const QString& provider) {
   fake(world).providers.insert(environment, provider);
-  world.mc.link(environment);
+  world.mc.join(environment);
 }
 
 QList<FakeMc::Rpc> summariesFor(World& world, const QString& environment) {
@@ -289,16 +289,16 @@ const Steps steps([] {
     });
   });
   step(QStringLiteral("%1 is still scanning and %1 has finished").arg(q), [](World& world, const Captures& c, const Table&) {
-    link(world, c[0], QStringLiteral("grok"));
-    link(world, c[1], QStringLiteral("claude"));
+    join(world, c[0], QStringLiteral("grok"));
+    join(world, c[1], QStringLiteral("claude"));
     fake(world).scanning.insert(c[0]);
   });
   step(QStringLiteral("%1 is offline").arg(q), [](World& world, const Captures& c, const Table&) {
-    link(world, c[0], QStringLiteral("claude"));
-    world.mc.setLinkProblem(c[0], QStringLiteral("unreachable"));
+    join(world, c[0], QStringLiteral("claude"));
+    world.mc.setOnline(c[0], false);
   });
   step(QStringLiteral("%1 runs an older server version").arg(q), [](World& world, const Captures& c, const Table&) {
-    link(world, c[0], QStringLiteral("claude"));
+    join(world, c[0], QStringLiteral("claude"));
     fake(world).versions.insert(c[0], 3);
   });
   step(QStringLiteral("the user views usage for all environments"), [](World& world, const Captures&, const Table&) {
@@ -518,7 +518,7 @@ const Steps steps([] {
         QStringLiteral("Studio"),
         QJsonObject{{QStringLiteral("providers"),
                      QJsonArray{codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits(60, 1))}}});
-    world.mc.link(QStringLiteral("Studio"));
+    world.mc.join(QStringLiteral("Studio"));
     // The hub's read is the oldest, the other environment's the freshest.
     QJsonObject account = hubAccount(world, QStringLiteral("sam@example.com"), false);
     QJsonObject read = account.value(QLatin1String("usageLimits")).toObject();

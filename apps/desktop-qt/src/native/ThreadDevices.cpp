@@ -67,9 +67,8 @@ void ThreadDevices::setTab(const QString& tabId) {
   if (tabId == m_tab) return;
   const bool shown = m_tab.isEmpty() && !tabId.isEmpty();
   m_tab = tabId;
-  // Showing the tab lists again (the linked environment's only read).
-  if (shown && (m_mc.isEmpty() || (m_loaded && text(m_state, QLatin1String("hostStatus")) != QLatin1String("disabled"))))
-    list();
+  // Showing the tab lists again.
+  if (shown && m_loaded && text(m_state, QLatin1String("hostStatus")) != QLatin1String("disabled")) list();
   retarget();
   publish();
 }
@@ -103,8 +102,7 @@ void ThreadDevices::take(const QJsonObject& state) {
   m_state = state;
   const bool first = !m_loaded;
   m_loaded = true;
-  if (first && !m_tab.isEmpty() && text(state, QLatin1String("hostStatus")) != QLatin1String("disabled") && !m_mc.isEmpty())
-    list();
+  if (first && !m_tab.isEmpty() && text(state, QLatin1String("hostStatus")) != QLatin1String("disabled")) list();
   watchSessions();
   retarget();
   publish();

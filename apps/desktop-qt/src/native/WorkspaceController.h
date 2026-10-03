@@ -79,10 +79,9 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   const std::optional<Place>& place() const { return m_place; }
-  // The route's checkout status; none while unknown or not followed (a linked
-  // environment's, whose `vcs` the MC does not route).
+  // The route's checkout status; none while unknown or not followed.
   const std::optional<Git>& git() const { return m_git; }
-  // Why the checkout's status could not be followed (a link that is down).
+  // Why the checkout's status could not be followed (a machine that is unreachable).
   const QString& gitError() const { return m_gitError; }
   // Asks the MC to read the checkout's status again.
   void refreshGit();
@@ -108,8 +107,8 @@ public:
   // Resolves the route again (a draft moved, say).
   void refresh();
   // The ServerConfig of the route's environment: the shell's own
-  // (SettingsController::config()), or the one watched on the linked
-  // environment the route is on (empty until it arrives).
+  // (SettingsController::config()), or the one watched on the other machine
+  // the route is on (empty until it arrives).
   QJsonObject environmentConfig() const;
 
 signals:

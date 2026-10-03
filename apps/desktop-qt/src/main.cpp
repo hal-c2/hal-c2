@@ -226,8 +226,8 @@ int main(int argc, char* argv[]) {
   if (!storage.root.isEmpty()) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
   }
-  // Attach mode: the host starts no MC; it pairs the shell with the linked
-  // MC, and fails for a URL that is not one.
+  // Attach mode: the host starts no MC; it pairs the shell with the MC the
+  // link names, and fails for a URL that is not one.
   if (parser.isSet(urlOption)) {
     backendOptions.hostArguments.prepend(
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));

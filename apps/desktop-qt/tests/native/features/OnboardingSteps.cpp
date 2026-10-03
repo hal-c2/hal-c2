@@ -128,11 +128,10 @@ QVariantMap computer(World& world, const QString& label) {
   return {};
 }
 
-// Links a computer the MC reaches, named `label`.
-void linkComputer(World& world, const QString& label, const QString& problem = {}) {
-  world.mc.linkLabels.insert(label, label);
-  if (!problem.isEmpty()) world.mc.linkProblems.insert(label, problem);
-  world.mc.link(label);
+// Another computer of the cluster, named `label`.
+void joinComputer(World& world, const QString& label, bool online = true) {
+  if (!online) world.mc.offline.insert(label);
+  world.mc.join(label);
 }
 
 void continueTo(World& world, const QString& step) {
@@ -355,7 +354,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("a saved computer and a computer discovered through HAL-C2 Connect"), [](World& world, const Captures&, const Table&) {
     world.mc.label = QStringLiteral("studio");
-    linkComputer(world, QStringLiteral("laptop"));
+    joinComputer(world, QStringLiteral("laptop"));
     openWizard(world);
     world.mc.join(QStringLiteral("mc-b"), QStringLiteral("env-found"));
     world.sync();
@@ -370,7 +369,7 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("both selected; the wizard is %1").arg(show(onboarding(world))); });
   });
   step(QStringLiteral("a selected, connected computer %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    linkComputer(world, c[0]);
+    joinComputer(world, c[0]);
     openWizard(world);
     world.waitFor([&] { return computer(world, c[0]).value(QStringLiteral("connected")).toBool() && computer(world, c[0]).value(QStringLiteral("selected")).toBool(); },
                   [&] { return QStringLiteral("%1 selected; the wizard is %2").arg(c[0], show(onboarding(world))); });
@@ -387,15 +386,15 @@ const Steps steps([] {
     }), QStringLiteral("the wizard sets up %1").arg(show(sections)));
   });
   step(QStringLiteral("%1 stays connected").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(computer(world, c[0]).value(QStringLiteral("connected")).toBool() && world.mc.linked.contains(c[0]),
+    expect(computer(world, c[0]).value(QStringLiteral("connected")).toBool() && world.mc.members.contains(c[0]),
            QStringLiteral("%1 is no longer connected; the wizard is %2").arg(c[0], show(onboarding(world))));
   });
-  step(QStringLiteral("the user adds a computer by pasting a pairing link"), [](World& world, const Captures&, const Table&) {
-    world.mc.onRpc(QStringLiteral("hal-c2.linkEnvironment"), [&world](const FakeMc::Rpc& rpc) {
-      expect(rpc.payload.value(QLatin1String("pairingUrl")) == QLatin1String("http://desk:3773/pair#token=abc"),
-             QStringLiteral("paired with %1").arg(rpc.payload.value(QLatin1String("pairingUrl")).toString()));
-      linkComputer(world, QStringLiteral("desk"));
-      world.mc.reply(rpc, QJsonObject{{QStringLiteral("environmentId"), QStringLiteral("desk")}, {QStringLiteral("label"), QStringLiteral("desk")}});
+  step(QStringLiteral("the user adds a computer by pasting an invite link"), [](World& world, const Captures&, const Table&) {
+    world.mc.onRpc(QStringLiteral("cluster.join"), [&world](const FakeMc::Rpc& rpc) {
+      expect(rpc.payload.value(QLatin1String("link")) == QLatin1String("http://desk:3773/pair#token=abc"),
+             QStringLiteral("joined with %1").arg(rpc.payload.value(QLatin1String("link")).toString()));
+      joinComputer(world, QStringLiteral("desk"));
+      world.mc.passOn(rpc);
     });
     openWizard(world);
     act(world, QStringLiteral("onboarding.pair"), {{QStringLiteral("pairingUrl"), QStringLiteral(" http://desk:3773/pair#token=abc ")}});
@@ -407,15 +406,15 @@ const Steps steps([] {
              !onboarding(world).value(QStringLiteral("pairing")).toBool();
     }, [&] { return QStringLiteral("desk selected; the wizard is %1").arg(show(onboarding(world))); });
   });
-  step(QStringLiteral("the user adds a computer with a pairing link that fails"), [](World& world, const Captures&, const Table&) {
-    world.mc.onRpc(QStringLiteral("hal-c2.linkEnvironment"), [&world](const FakeMc::Rpc& rpc) {
+  step(QStringLiteral("the user adds a computer with an invite link that fails"), [](World& world, const Captures&, const Table&) {
+    world.mc.onRpc(QStringLiteral("cluster.join"), [&world](const FakeMc::Rpc& rpc) {
       world.mc.refuse(rpc, QStringLiteral("the pairing link is invalid or expired"));
     });
     openWizard(world);
     act(world, QStringLiteral("onboarding.pair"), {{QStringLiteral("pairingUrl"), QStringLiteral("http://desk:3773/pair#token=old")}});
   });
   step(QStringLiteral("a selected computer is still connecting"), [](World& world, const Captures&, const Table&) {
-    linkComputer(world, QStringLiteral("laptop"), QStringLiteral("connecting"));
+    joinComputer(world, QStringLiteral("laptop"), false);
     openWizard(world);
     world.waitFor([&] { return computer(world, QStringLiteral("laptop")).value(QStringLiteral("selected")).toBool(); },
                   [&] { return QStringLiteral("laptop selected; the wizard is %1").arg(show(onboarding(world))); });
@@ -426,7 +425,7 @@ const Steps steps([] {
     expect(onboarding(world).value(QStringLiteral("step")) == QLatin1String("connection"), QStringLiteral("the wizard moved on"));
   });
   step(QStringLiteral("that computer connects"), [](World& world, const Captures&, const Table&) {
-    world.mc.setLinkProblem(QStringLiteral("laptop"), {});
+    world.mc.setOnline(QStringLiteral("laptop"), true);
     world.sync();
   });
   step(QStringLiteral("the user can continue"), [](World& world, const Captures&, const Table&) {
@@ -553,7 +552,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the app opens"), [](World& world, const Captures&, const Table&) { appOpens(world); });
   step(QStringLiteral("the user is on the import step"), [](World& world, const Captures&, const Table&) {
-    linkComputer(world, QStringLiteral("laptop"));
+    joinComputer(world, QStringLiteral("laptop"));
     openWizard(world);
     world.waitFor([&] { return !computer(world, QStringLiteral("laptop")).isEmpty(); }, QStringLiteral("laptop to be offered"));
     act(world, QStringLiteral("onboarding.select"), {{QStringLiteral("environmentId"), QStringLiteral("laptop")}, {QStringLiteral("selected"), false}});

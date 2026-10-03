@@ -138,8 +138,13 @@ Feature: Alerts when a thread needs the user
 
     Examples:
       | where                     |
-      | a linked environment      |
       | another MC of the cluster |
+
+    # MCs join only by clustering (connections/links.feature).
+    @dropped
+    Examples:
+      | where                |
+      | a linked environment |
 
   @desktop
   Scenario: A notification's action runs it

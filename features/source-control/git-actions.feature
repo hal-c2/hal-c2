@@ -8,7 +8,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml
 #   apps/desktop-qt/src/native/GitController.cpp (the desktop's recommended action and menu, results, init)
 #   apps/server-ex/lib/hal_c2/vcs.ex (vcs.init)
-#   apps/server-ex/lib/hal_c2/links.ex (the error while a link is down)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (the error while a cluster member is offline)
 #   apps/tui/src/gitActions.logic.ts (resolveGitQuickAction, buildGitMenuItems, buildGitPanelActions)
 #   apps/tui/src/components/RightPanel.tsx
 
@@ -155,12 +155,12 @@ Feature: Recommended git action and the git menu
     Then the user sees an "error" toast "Git initialization failed" saying "Permission denied"
 
   @desktop
-  Scenario: A link that is down says why its git actions cannot run
-    Given the MC is linked to "env-c"
+  Scenario: A machine that is offline says why its git actions cannot run
+    Given the MC is clustered with "mc-c", which serves "env-c"
     And "env-c" has the thread "t7" titled "Deploy" in "shop" on the branch "feature/tax"
     And "env-c" becomes unreachable
     When the user goes to "env-c:t7"
-    Then the git actions say "env-c cannot be reached."
+    Then the git actions say "MC unavailable: noconnection"
     When "env-c" is reachable again
     Then the git actions are available again
 

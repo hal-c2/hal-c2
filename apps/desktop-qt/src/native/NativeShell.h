@@ -80,7 +80,6 @@ private:
 // terminal drawer, navigation and the rest, beside the shared ones every
 // window reads alike (settings, alerts, quitting). The controllers start once
 // the first shell snapshot lands.
-// Environments outside the cluster are the MC's links (ConnectionsController).
 class NativeShell : public QObject {
   Q_OBJECT
 

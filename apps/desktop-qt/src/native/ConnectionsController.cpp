@@ -8,7 +8,6 @@
 #include "NavigationController.h"
 #include "McClient.h"
 #include "ShellBridge.h"
-#include "ShellStore.h"
 
 namespace {
 
@@ -30,35 +29,29 @@ QVariant null() {
   return QVariant::fromValue(nullptr);
 }
 
-// A pairing link as the web app's code field takes it: a host (with or
-// without a scheme) and the code.
-QString pairingUrl(const QString& host, const QString& code) {
-  return host + QStringLiteral("/pair#token=") + code;
+// The link a client pairs with: this MC's origin and the code.
+QString pairingUrl(const QString& origin, const QString& code) {
+  return origin + QStringLiteral("/pair#token=") + code;
 }
 
 }  // namespace
 
-ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
+ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* client, QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
       m_client(client),
-      m_store(store),
       m_state{
-          {QStringLiteral("links"), QVariantList()},
           {QStringLiteral("access"), null()},
           {QStringLiteral("accessError"), null()},
           {QStringLiteral("busy"), false},
           {QStringLiteral("notice"), null()},
           {QStringLiteral("created"), null()},
-          {QStringLiteral("removing"), null()},
       } {}
 
 void ConnectionsController::activate() {
   if (m_active) return;
   m_active = true;
-  updateLinks();
   publish();
-  connect(m_store, &ShellStore::changed, this, &ConnectionsController::updateLinks);
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
   auto opened = [navigation] {
     return navigation->route() == NavigationController::Route::settings(NavigationController::kConnectionsSection);
@@ -74,28 +67,6 @@ bool ConnectionsController::handle(const QString& action, const QVariant& payloa
   const QVariantMap input = payload.toMap();
   if (action == QLatin1String("connections.refresh")) {
     watchAccess();
-  } else if (action == QLatin1String("connections.link")) {
-    const QString url = input.value(QStringLiteral("pairingUrl")).toString().trimmed();
-    const QString host = input.value(QStringLiteral("host")).toString().trimmed();
-    const QString code = input.value(QStringLiteral("code")).toString().trimmed();
-    if (!url.isEmpty()) {
-      link(url, {});
-    } else if (host.isEmpty() || code.isEmpty()) {
-      setNotice(QStringLiteral("error"), QStringLiteral("Enter a pairing link, or a host and its pairing code."));
-    } else if (host.contains(QLatin1String("://"))) {
-      link(pairingUrl(host, code), {});
-    } else {
-      // A host without a scheme: HTTPS first, then plain HTTP when that cannot connect.
-      link(pairingUrl(QStringLiteral("https://") + host, code), pairingUrl(QStringLiteral("http://") + host, code));
-    }
-  } else if (action == QLatin1String("connections.unlink.request")) {
-    set(QStringLiteral("removing"), input.value(QStringLiteral("environmentId")).toString());
-  } else if (action == QLatin1String("connections.unlink.cancel")) {
-    set(QStringLiteral("removing"), null());
-  } else if (action == QLatin1String("connections.unlink")) {
-    const QString id = input.value(QStringLiteral("environmentId")).toString();
-    m_state.insert(QStringLiteral("removing"), null());
-    if (!id.isEmpty()) unlink(id);
   } else if (action == QLatin1String("connections.pairingLink.create")) {
     createPairingLink(input);
   } else if (action == QLatin1String("connections.pairingLink.copy")) {
@@ -146,7 +117,6 @@ void ConnectionsController::setOpen(bool open) {
   if (open == m_open) return;
   m_open = open;
   m_state.insert(QStringLiteral("notice"), null());
-  m_state.insert(QStringLiteral("removing"), null());
   if (open) {
     watchAccess();
     return;
@@ -216,68 +186,6 @@ void ConnectionsController::publishAccess() {
                                             {QStringLiteral("clients"), m_clients.toVariantList()}});
 }
 
-// The MC's links, from the shell shape, with what each row says.
-void ConnectionsController::updateLinks() {
-  QVariantList links;
-  for (const QJsonValue& value : m_store->links()) {
-    const QJsonObject link = value.toObject();
-    const QJsonObject environment = link.value(QLatin1String("environment")).toObject();
-    const QString id = environment.value(QLatin1String("environmentId")).toString();
-    const QString problem = link.value(QLatin1String("problem")).toString();
-    const bool online = link.value(QLatin1String("online")).toBool();
-    QString status = QStringLiteral("Connecting");
-    if (online) {
-      status = QStringLiteral("Connected");
-    } else if (problem == QLatin1String("refused")) {
-      status = QStringLiteral("Access refused: pair it again");
-    } else if (problem == QLatin1String("unreachable")) {
-      status = QStringLiteral("Offline");
-    }
-    links.append(QVariantMap{
-        {QStringLiteral("environmentId"), id},
-        {QStringLiteral("label"), environment.value(QLatin1String("label")).toString(id)},
-        {QStringLiteral("origin"), link.value(QLatin1String("origin")).toString()},
-        {QStringLiteral("online"), online},
-        {QStringLiteral("problem"), problem.isEmpty() ? null() : QVariant(problem)},
-        {QStringLiteral("status"), status},
-    });
-  }
-  if (links == m_state.value(QStringLiteral("links")).toList()) return;
-  set(QStringLiteral("links"), links);
-}
-
-// Pairs the MC with the environment behind `pairingUrl`, or behind
-// `fallbackUrl` when the first cannot be reached.
-void ConnectionsController::link(const QString& pairingUrl, const QString& fallbackUrl) {
-  set(QStringLiteral("busy"), true);
-  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.linkEnvironment"),
-                 QJsonObject{{QStringLiteral("pairingUrl"), pairingUrl}},
-                 [this, fallbackUrl](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (error && !fallbackUrl.isEmpty() && error->startsWith(QLatin1String("cannot reach"))) {
-                     link(fallbackUrl, {});
-                     return;
-                   }
-                   m_state.insert(QStringLiteral("busy"), false);
-                   if (error) {
-                     QString text = QStringLiteral("Could not add the environment: %1").arg(explain(*error));
-                     if (error->contains(QLatin1String("invalid or expired"))) text += QStringLiteral(". Ask for a fresh link.");
-                     setNotice(QStringLiteral("error"), text);
-                     return;
-                   }
-                   const QJsonObject descriptor = result.toObject();
-                   const QString label = descriptor.value(QLatin1String("label"))
-                                             .toString(descriptor.value(QLatin1String("environmentId")).toString());
-                   setNotice(QStringLiteral("success"), QStringLiteral("%1 is linked.").arg(label));
-                 });
-}
-
-void ConnectionsController::unlink(const QString& environmentId) {
-  const QString label = labelOf(environmentId);
-  change(QStringLiteral("hal-c2.unlinkEnvironment"), {{QStringLiteral("environmentId"), environmentId}},
-         [this, label](const QJsonObject&) { setNotice(QStringLiteral("success"), QStringLiteral("%1 was removed.").arg(label)); },
-         QStringLiteral("Could not remove %1").arg(label));
-}
-
 void ConnectionsController::createPairingLink(const QVariantMap& input) {
   const QStringList scopes = input.value(QStringLiteral("scopes")).toStringList();
   if (scopes.isEmpty()) {
@@ -313,15 +221,6 @@ void ConnectionsController::change(const QString& method, const QJsonObject& pay
                    }
                    done(result.toObject());
                  });
-}
-
-QString ConnectionsController::labelOf(const QString& environmentId) const {
-  for (const QVariant& link : m_state.value(QStringLiteral("links")).toList()) {
-    if (link.toMap().value(QStringLiteral("environmentId")) == environmentId) {
-      return link.toMap().value(QStringLiteral("label")).toString();
-    }
-  }
-  return environmentId;
 }
 
 void ConnectionsController::setNotice(const QString& kind, const QString& text) {

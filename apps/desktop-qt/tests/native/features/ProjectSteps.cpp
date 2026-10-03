@@ -46,9 +46,9 @@ const FakeMc::Extension projects([](FakeMc& mc) {
       mc.refuse(rpc, fake.refusedOn.value(environment));
       return;
     }
-    // A linked environment's projects are its link rows.
+    // Another member's projects are its rows.
     if (environment != mc.environmentId) {
-      const QJsonArray entry = mc.linkedRows.value(environment).value(id);
+      const QJsonArray entry = mc.peerRows.value(environment).value(id);
       if (entry.isEmpty() || (type != QLatin1String("project.update") && type != QLatin1String("project.delete"))) {
         mc.refuse(rpc, type + QStringLiteral(" of ") + id + QStringLiteral(" is not supported"));
         return;
@@ -62,7 +62,7 @@ const FakeMc::Extension projects([](FakeMc& mc) {
         }
       }
       mc.reply(rpc, QJsonObject());
-      mc.sendLinkRow(environment, id, row, QStringLiteral("project"));
+      mc.sendPeerRow(environment, id, row, QStringLiteral("project"));
       return;
     }
     if (type == QLatin1String("project.update")) {

@@ -255,7 +255,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user connected a second environment that publishes %1").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureConnected(world);
-    world.mc.link(QStringLiteral("env-b"));
+    world.mc.join(QStringLiteral("env-b"));
     publish(world, QStringLiteral("env-b"), {published(c[0], QStringLiteral("#444444"))});
     world.sync();
   });

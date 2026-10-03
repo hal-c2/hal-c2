@@ -150,15 +150,14 @@ void PullRequestListController::setOpen(bool open) {
   load();
 }
 
-// The environments asked: every one the MC reaches, or the one the filters name.
+// The environments asked: every one of the cluster, or the one the filters name.
 QStringList PullRequestListController::targets() const {
   QString only = m_filters.value(QStringLiteral("environmentId")).toString();
   const QString project = m_filters.value(QStringLiteral("projectKey")).toString();
   if (!project.isEmpty()) only = project.section(QLatin1Char(':'), 0, 0);
   QStringList environments;
   for (const QString& environmentId : m_store->environments()) {
-    if (!only.isEmpty() && environmentId != only) continue;
-    if (m_store->reaches(environmentId)) environments.append(environmentId);
+    if (only.isEmpty() || environmentId == only) environments.append(environmentId);
   }
   return environments;
 }

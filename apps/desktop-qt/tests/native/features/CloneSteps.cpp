@@ -227,8 +227,8 @@ QJsonObject started(World& world) {
 
 // --- Clones the MC reports ---------------------------------------------------------------
 
-// A linked environment the scenario's clones run on.
-const QString kLinked = QStringLiteral("beast");
+// Another machine of the cluster the scenario's clones run on.
+const QString kMember = QStringLiteral("beast");
 
 void reportClone(World& world, const QString& repository, QJsonObject fields, const QString& environment = {}) {
   const QString on = environmentOf(world.mc, environment);
@@ -395,19 +395,19 @@ const Steps steps([] {
                               {QStringLiteral("stage"), QStringLiteral("receiving")},
                               {QStringLiteral("percent"), c[1].toInt()}});
   });
-  step(QStringLiteral("a clone of %1 is receiving objects at (\\d+) percent on a linked environment").arg(q),
+  step(QStringLiteral("a clone of %1 is receiving objects at (\\d+) percent on another machine of the cluster").arg(q),
        [](World& world, const Captures& c, const Table&) {
-         world.mc.link(kLinked);
+         world.mc.join(kMember);
          world.waitFor([&] {
            for (const int id : world.mc.subscribers(QStringLiteral("projectClones"))) {
-             if (world.mc.shapeOf(id).value(QLatin1String("environment")) == kLinked) return true;
+             if (world.mc.shapeOf(id).value(QLatin1String("environment")) == kMember) return true;
            }
            return false;
-         }, QStringLiteral("the clones of the linked environment to be followed"));
+         }, QStringLiteral("the clones of the other machine to be followed"));
          reportClone(world, c[0], {{QStringLiteral("phase"), QStringLiteral("running")},
                                    {QStringLiteral("stage"), QStringLiteral("receiving")},
                                    {QStringLiteral("percent"), c[1].toInt()}},
-                     kLinked);
+                     kMember);
        });
   step(QStringLiteral("a clone of %1 finished").arg(q), [](World& world, const Captures& c, const Table&) {
     reportClone(world, c[0], {{QStringLiteral("phase"), QStringLiteral("done")},
