@@ -42,7 +42,8 @@ QQuickItem* part(World& world, const QString& objectName) {
 
 void click(World& world, QQuickItem* item) {
   Brick& brick = composerBrick(world);
-  expect(item->isVisible() && item->isEnabled(), QStringLiteral("%1 cannot be clicked").arg(item->objectName()));
+  expect(item->isVisible() && item->isEnabled(),
+         QStringLiteral("%1 cannot be clicked (visible %2, enabled %3); the header shows %4").arg(item->objectName()).arg(item->isVisible()).arg(item->isEnabled()).arg(show(workspace(world))));
   QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(item));
   world.sync();
 }
@@ -274,22 +275,6 @@ const Steps steps([] {
   });
 
   // The machine.
-  step(QStringLiteral("two environments are connected"), [](World& world, const Captures&, const Table&) {
-    // The second has a checkout of the same repository.
-    const QJsonObject identity{{QStringLiteral("canonicalKey"), QStringLiteral("github.com/acme/shop")}};
-    QJsonObject row = world.mc.projects.value(kProject);
-    row.insert(QStringLiteral("repositoryIdentity"), identity);
-    world.mc.projects.insert(kProject, row);
-    world.mc.sendRows(world.mc.name, {QJsonValue(QJsonArray{kProject, QStringLiteral("project"), row})});
-    world.mc.join(kPeer, kPeerEnvironment);
-    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.mc")}, {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
-                   {QStringLiteral("mc"), kPeer}, {QStringLiteral("online"), true}});
-    world.mc.sendRows(kPeer, {QJsonValue(QJsonArray{QStringLiteral("shop-copy"), QStringLiteral("project"),
-                                                    QJsonObject{{QStringLiteral("id"), QStringLiteral("shop-copy")}, {QStringLiteral("title"), kProject},
-                                                                {QStringLiteral("workspaceRoot"), QStringLiteral("/srv/shop")}, {QStringLiteral("scripts"), QJsonArray()},
-                                                                {QStringLiteral("repositoryIdentity"), identity}}})});
-    world.sync();
-  });
   step(QStringLiteral("the user starts a new thread on the second environment"), [](World& world, const Captures&, const Table&) {
     newThread(world);
     const QVariantList environments = workspace(world).value(QStringLiteral("environments")).toList();
@@ -399,6 +384,8 @@ const Steps steps([] {
 
   // The branch.
   step(QStringLiteral("the project has no branch %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // A started thread keeps the composer's branch control only with Composer context on.
+    world.native().controller<SettingsController>()->set(QStringLiteral("persistComposerContextStrip"), true);
     fakeGitRepo(world, kRoot, {QStringLiteral("main")}, QStringLiteral("main"), QStringLiteral("main"));
     world.waitFor([&] { return workspace(world).value(QStringLiteral("branch")) == QLatin1String("main"); },
                   [&] { return QStringLiteral("the thread on main; the header shows %1").arg(show(workspace(world))); });
@@ -415,3 +402,23 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+bool connectSecondComposerEnvironment(World& world) {
+  // The composer's scenarios: a thread of Stream.h's is open.
+  if (world.mc.part<FakeStreams>().thread.isEmpty()) return false;
+    // The second has a checkout of the same repository.
+    const QJsonObject identity{{QStringLiteral("canonicalKey"), QStringLiteral("github.com/acme/shop")}};
+    QJsonObject row = world.mc.projects.value(kProject);
+    row.insert(QStringLiteral("repositoryIdentity"), identity);
+    world.mc.projects.insert(kProject, row);
+    world.mc.sendRows(world.mc.name, {QJsonValue(QJsonArray{kProject, QStringLiteral("project"), row})});
+    world.mc.join(kPeer, kPeerEnvironment);
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.mc")}, {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
+                   {QStringLiteral("mc"), kPeer}, {QStringLiteral("online"), true}});
+    world.mc.sendRows(kPeer, {QJsonValue(QJsonArray{QStringLiteral("shop-copy"), QStringLiteral("project"),
+                                                    QJsonObject{{QStringLiteral("id"), QStringLiteral("shop-copy")}, {QStringLiteral("title"), kProject},
+                                                                {QStringLiteral("workspaceRoot"), QStringLiteral("/srv/shop")}, {QStringLiteral("scripts"), QJsonArray()},
+                                                                {QStringLiteral("repositoryIdentity"), identity}}})});
+    world.sync();
+  return true;
+}

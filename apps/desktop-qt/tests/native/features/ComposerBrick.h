@@ -40,3 +40,6 @@ bool modelPickerChooses(World& world, const QString& name);
 bool removeComposerAttachment(World& world, const QString& name);
 // "the agent receives X": the message the composer on screen just sent.
 bool composerMessageReceived(World& world, const QString& text);
+// "two environments are connected", for the composer's open thread: a second
+// machine with a checkout of its project. False when no such thread is open.
+bool connectSecondComposerEnvironment(World& world);
