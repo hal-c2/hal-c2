@@ -150,7 +150,7 @@ Feature: Colour, icons, mouse and images in the terminal
     When one click reaches the same control more than once
     Then the action runs once, after the click has been handled
 
-  @backlog @tui
+  @tui
   Scenario: The user turns mouse support off
     Given the user starts the terminal client with mouse support turned off
     Then clicks and wheel events go to the terminal emulator

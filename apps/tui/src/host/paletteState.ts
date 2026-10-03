@@ -29,6 +29,8 @@ export interface TuiPaletteState {
     readonly id: string;
     readonly title: string;
     readonly hint: string;
+    /** The host action the entry dispatches. */
+    readonly action: string;
   }>;
   readonly index: number;
   /**
@@ -224,6 +226,7 @@ export function createPalette(options: PaletteOptions): Palette {
         id: command.id,
         title: command.title,
         hint: command.hint ?? "",
+        action: command.action,
       })),
       index,
       rows: paletteRows(

@@ -176,7 +176,7 @@ An added project opens a new-thread draft for it (`thread.new {projectKey}`).
 
 Most of what the palette offers beyond the panes above lives in
 `features/`: one file per area (keys, archive, conversation, editor, plans,
-server, workspace, repository, appearance), each a `Feature` with palette
+server, workspace, repository, appearance, context, reach), each a `Feature` with palette
 commands and a `dispatch`. They own no brick. A feature talks to the user
 through three things the host hands it (`features/kit.ts`):
 
@@ -200,6 +200,11 @@ rewrite the one `THEME` object (and the icon registry) in place, and the host
 repaints every key it styled. A brick must read colours from `Theme.colors`,
 and host-styled text from the palette at build time, never from a captured
 constant, or it will not follow.
+
+A brick that handles the mouse needs a keyboard route as well: a chord, a
+palette entry, or (for rows whose action the host chose) an entry in
+`features/reach.ts`. The client runs with the mouse off (`HAL_C2_TUI_MOUSE=0`),
+and `slice-mouse.steps.ts` fails on a mouse handler that has no route.
 
 ## Keys and actions
 

@@ -29,7 +29,7 @@ import {
   ensureColorCapabilityEnv,
   prepareTerminalViewport,
   scheduleColorCapabilityLog,
-  TUI_RENDERER_CONFIG,
+  tuiRendererConfig,
 } from "./terminalStartup.ts";
 
 // oxlint-disable-next-line hal-c2/no-global-process-runtime -- @hal-c2/shared/hostProcess imports node:sea, which the Bun-run TUI lacks.
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
   // motion stays disabled so terminal drag-selection works, while clicks and wheel
   // reporting remain enabled explicitly in the shared renderer configuration.
   const inlineImages = detectInlineImageTransport();
-  const renderer = await createCliRenderer(TUI_RENDERER_CONFIG);
+  const renderer = await createCliRenderer(tuiRendererConfig());
 
   scheduleColorCapabilityLog({ log: appendLog, capabilities: () => renderer.capabilities });
   installKittyClipboardExtension(renderer, {
