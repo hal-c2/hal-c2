@@ -139,6 +139,31 @@ defmodule HalC2.Steps.Providers.Claude do
     Map.put(context, :gated, gated["slug"])
   end
 
+  # The picker leaves the model out; a thread already on it (or a default naming it)
+  # still picks it.
+  step "the user picks that model", context do
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "hello", %{"model" => context.gated})
+
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the user is told which Claude version the model needs", context do
+    model = Enum.find(claude_manifest()["models"], &(&1["slug"] == context.gated))
+    min = get_in(model, ["adapter", "claudeCode", "minVersion"])
+
+    assert [%{"lastError" => error}] =
+             StreamState.list(World.stream(context, @thread), "provider-session")
+
+    assert error ==
+             "Claude Code v2.1.0 is too old for #{model["name"]}. Upgrade to v#{min} or newer to access it."
+
+    # Claude was never started for the turn.
+    refute Enum.any?(World.provider_log(context, "claude"), &Map.has_key?(&1, "in"))
+    context
+  end
+
   step "that model is not offered", context do
     refute Enum.any?(context.models, &(&1["slug"] == context.gated))
     context

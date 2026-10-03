@@ -232,7 +232,18 @@ defmodule HalC2.Claude.ThreadRuntime do
     state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
     session = state.session
 
-    case open_session(state, turn) do
+    # A model the installed CLI is too old for is refused here, naming the version.
+    opened =
+      case Provider.too_old(turn.model) do
+        nil -> open_session(state, turn)
+        message -> {:error, {:too_old, message}}
+      end
+
+    case opened do
+      {:error, {:too_old, message}} ->
+        finish(state, "failed", message)
+        {:reply, :ok, %{state | turn: nil}}
+
       {:ok, state, turn} ->
         state = %{state | turn: turn}
         started(state)

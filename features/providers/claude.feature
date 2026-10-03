@@ -140,7 +140,6 @@ Feature: Claude
     When the model manifest lists a new Claude model
     Then the new model is offered after the next refresh
 
-  @backlog
   Scenario: A Claude model that needs a newer CLI is explained
     Given the installed Claude is older than a model requires
     When the user picks that model
