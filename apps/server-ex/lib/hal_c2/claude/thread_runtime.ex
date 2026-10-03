@@ -1209,9 +1209,11 @@ defmodule HalC2.Claude.ThreadRuntime do
        ) do
     input = block["input"] || %{}
 
-    # A background command's tool result only says it started; its task ends it.
+    # A background command's tool result only says it started; its task ends it. A
+    # monitor (the `Monitor` tool) always runs on: it is background work of its own
+    # kind, never a command.
     state =
-      if name == "Bash" and input["run_in_background"] == true,
+      if (name == "Bash" and input["run_in_background"] == true) or name == "Monitor",
         do: put_in(state.work[tool_id], %{sub: nil, item: nil, background: true}),
         else: state
 

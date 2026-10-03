@@ -514,6 +514,51 @@ defmodule HalC2.Steps.Providers.Claude do
     })
   end
 
+  step "Claude starts a monitor in the thread", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "start a monitor")
+
+    World.await_runs(context, @thread, ["completed"])
+    Map.put(context, :thread, @thread)
+  end
+
+  step "the thread lists the monitor as background work", context do
+    id = World.thread_id(context, @thread)
+
+    World.await_row(
+      id,
+      &match?(
+        [%{"taskId" => "mon-1", "taskType" => "dynamic_tool", "description" => "Monitor"}],
+        &1["pendingBackgroundTasks"]
+      )
+    )
+
+    context
+  end
+
+  step "the monitor is not shown as a command", context do
+    items = World.entities(context, @thread, "turn-item")
+    assert [] = Enum.filter(items, &(&1["type"] == "command_execution"))
+
+    assert [%{"type" => "dynamic_tool", "toolName" => "Monitor", "status" => "running"}] =
+             Enum.filter(items, &(get_in(&1, ["nativeItemRef", "nativeId"]) == "mon-1"))
+
+    # It stops being background work when Claude reports it ended.
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-mon-1",
+      "tool_use_id" => "mon-1",
+      "status" => "completed",
+      "summary" => "Monitor ended"
+    })
+
+    World.await_row(World.thread_id(context, @thread), &(&1["pendingBackgroundTasks"] == []))
+    context
+  end
+
   step "the thread is in plan mode on Claude", context do
     context |> World.fake_providers() |> Map.put(:interaction_mode, "plan")
   end

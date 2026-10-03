@@ -177,6 +177,19 @@ for line in sys.stdin:
         continue
     if "wait" in text:
         continue
+    # "start a monitor": the Monitor tool watches a command (task task-mon-N) and the
+    # turn ends while it runs.
+    if "start a monitor" in text:
+        mon = f"mon-{turn}"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": mon, "name": "Monitor", "input": {
+            "command": "tail -f log/dev.log", "description": "Watch the dev log", "persistent": False}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{mon}", "tool_use_id": mon,
+              "description": "Watch the dev log", "task_type": "monitor"})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": mon,
+              "content": f"Monitor started (task task-{mon})", "is_error": False}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Watching the log"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "Watching the log", "session_id": session})
+        continue
     if "in the background" in text:
         agent, bash = f"agent-{turn}", f"bash-{turn}"
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
