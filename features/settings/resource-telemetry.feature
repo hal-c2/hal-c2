@@ -40,7 +40,7 @@ Feature: Resource monitor
     When the user watches the resource monitor
     Then the monitor shows the host is on battery
 
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: Processes are grouped by what they are for
     When the user watches the resource monitor
     Then processes are grouped as server, provider and terminal

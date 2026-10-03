@@ -244,6 +244,16 @@ export const KEYMAP_LAYERS = {
     "down, pagedown": "settings.scrollDown",
     "escape, ctrl+p": "settings.close",
   },
+  /** A settings page: its rows, then its one-line field and its yes / no question. */
+  section: {
+    "up, k": "section.previous",
+    "down, j": "section.next",
+    return: "section.activate",
+    escape: "section.back",
+    "ctrl+p": "section.close",
+  },
+  sectionInput: { escape: "section.input.cancel" },
+  sectionConfirm: { y: "section.confirm.yes", "n, escape": "section.confirm.no" },
   panel: {
     up: "rightPanel.previous",
     down: "rightPanel.next",

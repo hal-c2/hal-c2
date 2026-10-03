@@ -19,6 +19,7 @@ import type {
   TuiThreadPage,
 } from "../../src/connection.ts";
 import { flattenModelOptions } from "../../src/models.ts";
+import { fakeSettingsMc, type FakeSettingsMc } from "./fakeSettingsMc.ts";
 
 // Fixtures and an in-memory TuiClient, shared by the component tests and the
 // Gherkin world. Feed it with `connect()` (the default shell snapshot),
@@ -157,6 +158,10 @@ const UNRECORDED = new Set([
   "listModels",
   "listTerminalIds",
   "clusterStatus",
+  // The settings pages' calls are kept by `settings` (fakeSettingsMc.ts).
+  "mcCall",
+  "subscribeScheduledTasks",
+  "subscribeResourceTelemetry",
 ]);
 
 export function fakeClient({
@@ -314,7 +319,10 @@ export function fakeClient({
   readonly emitConnection: (phase: TuiConnectionPhase) => void;
   /** The MC's cluster: its members, the invite it hands out, why it refuses a join. */
   readonly cluster: FakeCluster;
+  /** The MC behind the settings pages: its methods by wire name, and what was asked. */
+  readonly settings: FakeSettingsMc;
 } {
+  const settings = fakeSettingsMc();
   const cluster: FakeCluster = {
     members: [],
     invite: {
@@ -388,6 +396,7 @@ export function fakeClient({
     return Promise.resolve(value);
   };
   const client = {
+    ...settings.client,
     hostPlatform,
     subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => {
       connectionSubscribers.add(onPhase);
@@ -601,6 +610,7 @@ export function fakeClient({
     workspaceFiles,
     currentThread,
     cluster,
+    settings,
     emitConnection: (phase) => {
       connectionPhase = phase;
       for (const onPhase of connectionSubscribers) onPhase(phase);

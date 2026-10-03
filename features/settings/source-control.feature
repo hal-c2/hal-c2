@@ -84,7 +84,7 @@ Feature: Source Control settings
     When the user sets the automatic Git fetch interval to 0 seconds
     Then Git never fetches in the background
 
-  @backlog @tui
+  @tui
   Scenario: Seeing source control tools from the terminal client
     When the user opens source control settings in the terminal client
     Then each tool is shown as authenticated, unavailable or needing setup
