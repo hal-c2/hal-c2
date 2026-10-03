@@ -324,10 +324,6 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
-  step "the user answers it", context do
-    answer_async(context)
-  end
-
   step "the answer reaches the running turn as a new message", context do
     steer =
       World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/steer"))

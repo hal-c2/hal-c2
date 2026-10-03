@@ -322,14 +322,32 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     context
   end
 
+  # An approval is accepted; a question asked without waiting (Codex's async questions,
+  # `context.request`) gets its answer, which goes back as a message.
   step "the user answers it", context do
+    answer =
+      case context[:request] do
+        %{"id" => id, "responseCapability" => %{"type" => "message"}} ->
+          %{
+            "requestId" => id,
+            "commandId" => "cmd-answer-#{System.unique_integer([:positive])}",
+            "answers" => %{"0" => "Red"}
+          }
+
+        _ ->
+          %{"requestId" => context.request_id, "decision" => "accept"}
+      end
+
     assert {:ok, _} =
-             HalC2.Orchestration.dispatch(%{
-               "type" => "runtime-request.respond",
-               "threadId" => World.thread_id(context, World.current(context)),
-               "requestId" => context.request_id,
-               "decision" => "accept"
-             })
+             HalC2.Orchestration.dispatch(
+               Map.merge(
+                 %{
+                   "type" => "runtime-request.respond",
+                   "threadId" => World.thread_id(context, World.current(context))
+                 },
+                 answer
+               )
+             )
 
     context
   end
