@@ -14,44 +14,81 @@ defmodule HalC2.Vcs do
 
   # --- status ---------------------------------------------------------------------
 
-  @doc "`VcsStatusLocalResult` for a directory; a non-repository reports `isRepo: false`."
+  @doc """
+  `VcsStatusLocalResult` for a directory; a non-repository, and a checkout whose
+  status cannot be read, report `isRepo: false`.
+  """
   def local_status(cwd) do
-    with true <- File.dir?(cwd),
-         {:ok, %{status: 0, out: status}} <-
-           Git.run(cwd, ~w(status --porcelain=2 --branch -z --untracked-files=all)) do
-      branch = parse_branch(status)
-      changed = changed_paths(status)
-      stats = numstat(cwd)
-      default = default_branch(cwd)
-
-      # Untracked and binary files have no line counts but are still changes.
-      files =
-        (for(
-           {path, {ins, del}} <- stats,
-           do: %{"path" => path, "insertions" => ins, "deletions" => del}
-         ) ++
-           for(
-             path <- changed,
-             not Map.has_key?(stats, path),
-             do: %{"path" => path, "insertions" => 0, "deletions" => 0}
-           ))
-        |> Enum.sort_by(& &1["path"])
-
-      %{
-        "isRepo" => true,
-        "hasPrimaryRemote" => Git.primary_remote(cwd) == "origin",
-        "isDefaultRef" => default_ref?(branch.head, default),
-        "refName" => branch.head,
-        "hasWorkingTreeChanges" => changed != [],
-        "workingTree" => %{
-          "files" => files,
-          "insertions" => Enum.sum_by(files, & &1["insertions"]),
-          "deletions" => Enum.sum_by(files, & &1["deletions"])
-        }
-      }
-    else
-      _ -> not_a_repo()
+    case read_local_status(cwd) do
+      {:ok, status} -> status
+      {:error, _reason} -> not_a_repo()
     end
+  end
+
+  # `git status` gets the Node server's 30 seconds, and its output a bound: one cut
+  # short would be parsed as a different working tree.
+  @status_timeout 30_000
+  @status_max_bytes 50_000_000
+
+  # `{:ok, status}`, or `{:error, reason}` when git could not be started, ran past
+  # its time limit or printed more than the limit (`:vcs_status_limits` overrides them).
+  defp read_local_status(cwd) do
+    limits = Application.get_env(:hal_c2, :vcs_status_limits, [])
+    max = limits[:max_bytes] || @status_max_bytes
+
+    result =
+      File.dir?(cwd) &&
+        Git.run(cwd, ~w(status --porcelain=2 --branch -z --untracked-files=all),
+          timeout: limits[:timeout] || @status_timeout,
+          max_bytes: max
+        )
+
+    case result do
+      {:ok, %{truncated: true}} ->
+        {:error, "git status produced too much output (more than #{max} bytes)"}
+
+      {:ok, %{status: 0, out: status}} ->
+        {:ok, local_status(cwd, status)}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      _not_a_repository ->
+        {:ok, not_a_repo()}
+    end
+  end
+
+  defp local_status(cwd, status) do
+    branch = parse_branch(status)
+    changed = changed_paths(status)
+    stats = numstat(cwd)
+    default = default_branch(cwd)
+
+    # Untracked and binary files have no line counts but are still changes.
+    files =
+      (for(
+         {path, {ins, del}} <- stats,
+         do: %{"path" => path, "insertions" => ins, "deletions" => del}
+       ) ++
+         for(
+           path <- changed,
+           not Map.has_key?(stats, path),
+           do: %{"path" => path, "insertions" => 0, "deletions" => 0}
+         ))
+      |> Enum.sort_by(& &1["path"])
+
+    %{
+      "isRepo" => true,
+      "hasPrimaryRemote" => Git.primary_remote(cwd) == "origin",
+      "isDefaultRef" => default_ref?(branch.head, default),
+      "refName" => branch.head,
+      "hasWorkingTreeChanges" => changed != [],
+      "workingTree" => %{
+        "files" => files,
+        "insertions" => Enum.sum_by(files, & &1["insertions"]),
+        "deletions" => Enum.sum_by(files, & &1["deletions"])
+      }
+    }
   end
 
   # Without a known default branch, main and master count as the default.
@@ -106,12 +143,18 @@ defmodule HalC2.Vcs do
     end
   end
 
-  @doc "`vcs.refreshStatus`: both halves, fetched fresh; watchers are told too."
+  @doc """
+  `vcs.refreshStatus`: both halves, fetched fresh; watchers are told too. A status
+  git could not give (it would not start, ran too long, printed too much) is an error.
+  """
   def refresh_status(%{"cwd" => cwd}) do
-    local = local_status(cwd)
-    remote = remote_status(cwd, fetch: true, pr: true)
-    HalC2.Vcs.Watch.publish(cwd, local, remote)
-    {:ok, Map.merge(local, remote || empty_remote())}
+    with {:ok, local} <- read_local_status(cwd) do
+      remote = remote_status(cwd, fetch: true, pr: true)
+      HalC2.Vcs.Watch.publish(cwd, local, remote)
+      {:ok, Map.merge(local, remote || empty_remote())}
+    else
+      {:error, reason} -> {:error, git_error(cwd, "vcs.refreshStatus", reason)}
+    end
   end
 
   # The branch's latest GitHub pull request, through `gh`. On the default branch
