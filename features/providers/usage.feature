@@ -184,7 +184,7 @@ Feature: Usage
     When the user undoes the reset before saving
     Then the custom price of "claude-sonnet" is kept
 
-  @backlog @tui
+  @tui
   Scenario: The TUI shows usage totals
     When the user opens Usage in the TUI
     Then tokens and estimated cost per provider are shown

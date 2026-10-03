@@ -26,6 +26,7 @@ import {
   formatResetsIn,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
+  USAGE_LIMITS_COMMAND,
   withUsageLimitsCommands,
 } from "@hal-c2/shared/usageLimits";
 import { truncate } from "@hal-c2/shared/String";
@@ -442,6 +443,20 @@ export function createComposer(options: ComposerOptions): Composer {
   /** The provider behind the model the next turn runs on. */
   const activeProvider = () =>
     providers.find((candidate) => candidate.instanceId === activeModel()?.instanceId);
+  /** Answer "/usage-limits": the provider's windows above the prompt, and the command gone from it. */
+  const showLimits = (key: string, provider: ServerProvider) => {
+    closeLimits();
+    limitsShown = { key, driver: provider.driver };
+    setDraft(key, (current) => ({ ...current, text: "" }));
+    store.setStatus(`${provider.displayName ?? provider.driver} limits.`, "info");
+    // Followed while they show, so a window that moves is not left stale.
+    stopLimits = client.subscribeUsageLimits((snapshot) => {
+      providers = snapshot.providers;
+      usageSources = snapshot.sources;
+      publish();
+    });
+    publish();
+  };
   /** The limits of one driver's accounts (this machine's and its hubs'), a row each. */
   const limitRows = (driver: ServerProvider["driver"]): string[] => {
     const now = options.nowMs?.() ?? Date.now();
@@ -1674,17 +1689,7 @@ export function createComposer(options: ComposerOptions): Composer {
       provider &&
       hasProviderUsageLimits(provider.driver, providers, usageSources)
     ) {
-      closeLimits();
-      limitsShown = { key, driver: provider.driver };
-      setDraft(key, (current) => ({ ...current, text: "" }));
-      store.setStatus(`${provider.displayName ?? provider.driver} limits.`, "info");
-      // Followed while they show, so a window that moves is not left stale.
-      stopLimits = client.subscribeUsageLimits((snapshot) => {
-        providers = snapshot.providers;
-        usageSources = snapshot.sources;
-        publish();
-      });
-      publish();
+      showLimits(key, provider);
       return;
     }
     closeLimits();
@@ -1964,7 +1969,15 @@ export function createComposer(options: ComposerOptions): Composer {
           description: command.description ?? "",
           value: command.name,
         })),
-        onChoose: (name) => completeTrigger("/", `/${name}`),
+        onChoose: (name) => {
+          // Answered here and takes no arguments: picking it is running it.
+          const key = target();
+          if (name === USAGE_LIMITS_COMMAND.name && provider && key !== null && !newDraft) {
+            showLimits(key, provider);
+            return;
+          }
+          completeTrigger("/", `/${name}`);
+        },
       });
       return;
     }
