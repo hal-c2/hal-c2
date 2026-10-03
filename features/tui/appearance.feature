@@ -233,7 +233,7 @@ Feature: Colour, icons, mouse and images in the terminal
     When the user clicks the image
     Then the preview's top row shows "screenshot.png · 48 KB" on the left and "Esc / click to close" on the right in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: Sixel terminals show inline images
     Given the user's terminal supports sixel but not the Kitty graphics protocol
     When a message with an image attachment is shown

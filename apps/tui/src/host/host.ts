@@ -59,7 +59,7 @@ import { createThreadActions } from "./threadActions.ts";
 import { createTuiTheme, tuiThemeState, type TuiTheme } from "./theme.ts";
 import { createThreadView } from "./threadView.ts";
 import type { CellPixels } from "./timelineState.ts";
-import type { InlineImageTransport } from "../terminalGraphics.ts";
+import type { InlineImageProtocol, InlineImageTransport } from "../terminalGraphics.ts";
 
 /** Published under `status`: the one-line status message and its tone. */
 export interface TuiStatusState {
@@ -143,6 +143,8 @@ export interface HostOptions {
    * null or absent: the terminal draws none and attachments stay text lines.
    */
   readonly inlineImages?: InlineImageTransport | null;
+  /** The protocol those images are drawn with ("kitty" unless the terminal only has sixel). */
+  readonly imageProtocol?: InlineImageProtocol | null;
   /** Pixel size of a terminal cell, when the terminal reported it (sizes images). */
   readonly cellPixels?: () => CellPixels | null;
   /** Where this device keeps the threads whose alerts it muted (default: this run only). */
@@ -171,6 +173,8 @@ export interface HostOptions {
  */
 export interface TuiGraphicsState {
   readonly inlineImages: InlineImageTransport | null;
+  /** What the image bricks draw with: "kitty", or "sixel" on a terminal that only has that. */
+  readonly protocol: InlineImageProtocol;
 }
 
 /** Published under `clock`: when the sidebar's next time boundary (a snooze wake) is due. */
@@ -289,7 +293,10 @@ export function createHost(options: HostOptions): Host {
     plugins: { items: [] } satisfies TuiPluginsState,
     problems: { items: [] },
     connection: connectionState("connecting"),
-    graphics: { inlineImages: options.inlineImages ?? null } satisfies TuiGraphicsState,
+    graphics: {
+      inlineImages: options.inlineImages ?? null,
+      protocol: options.imageProtocol ?? "kitty",
+    } satisfies TuiGraphicsState,
     cluster: NO_CLUSTER_STATE,
     settingsSection: NO_SETTINGS_SECTION,
     updateNotice: null,

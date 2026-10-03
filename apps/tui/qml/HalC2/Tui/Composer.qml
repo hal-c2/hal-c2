@@ -217,7 +217,7 @@ Item {
                         width: 8
                         height: 3
                         fit: "fill"
-                        protocol: "kitty"
+                        protocol: Shell.state.graphics.protocol
                         source: modelData.image ? modelData.image.source : null
                     }
                 }

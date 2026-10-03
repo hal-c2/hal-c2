@@ -9,7 +9,7 @@ import { installKittyClipboardExtension } from "@hal-c2/opentui-image";
 import { runShell } from "opentui-qml";
 
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
-import { detectInlineImageTransport } from "./terminalGraphics.ts";
+import { detectInlineImageTransport, inlineImageProtocol } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
 import { fileMutedThreads, MUTED_THREADS_FILE } from "./host/mutedThreads.ts";
 import { enginePluginPort } from "./host/plugins.ts";
@@ -192,6 +192,7 @@ async function main(): Promise<void> {
       saveKeymap: (overrides) => saveKeymapOverrides(configDir, overrides),
     },
     inlineImages,
+    imageProtocol: inlineImageProtocol(process.env),
     // Cell pixels size image previews; unknown until the terminal reports them.
     cellPixels: () =>
       renderer.resolution && renderer.width > 0 && renderer.height > 0
