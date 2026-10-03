@@ -1,6 +1,7 @@
 #include "ThreadStore.h"
 
 #include <QJsonArray>
+#include <QTimeZone>
 
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -85,6 +86,8 @@ void ThreadStore::open(const QString& threadKey) {
       followed.model = new TimelineModel(threadKey, this);
       if (m_now) followed.model->setClock(m_now);
       configure(followed.model);
+      connect(followed.model, &TimelineModel::attachmentWanted, this,
+              [this, threadKey, model = followed.model.data()](const QString& id) { signAttachment(model, threadKey, id); });
       follow(threadKey);
     }
     evict();
@@ -114,6 +117,23 @@ void ThreadStore::reload(const QString& threadKey) {
   it->waitOnline = false;
   it->model->setStatus(QStringLiteral("loading"));
   follow(threadKey);
+}
+
+// A signed address stops working a little before the MC says, so an image
+// asked for at the last moment still loads.
+void ThreadStore::signAttachment(TimelineModel* model, const QString& threadKey, const QString& id) {
+  const QJsonObject resource{{QStringLiteral("_tag"), QStringLiteral("attachment")},
+                             {QStringLiteral("attachmentId"), id},
+                             {QStringLiteral("disposition"), QStringLiteral("inline")}};
+  m_client->call(model, threadKey.left(threadKey.indexOf(QLatin1Char(':'))), QStringLiteral("assets.createUrl"),
+                 QJsonObject{{QStringLiteral("resource"), resource}},
+                 [this, model, id](const QJsonValue& result, const std::optional<QString>& error) {
+                   const QString relative = result.toObject().value(QLatin1String("relativeUrl")).toString();
+                   if (error || relative.isEmpty()) return model->setAttachmentUrl(id, {}, {});
+                   const qint64 expiresAt = qint64(result.toObject().value(QLatin1String("expiresAt")).toDouble());
+                   model->setAttachmentUrl(id, m_client->origin().resolved(QUrl(relative)),
+                                           QDateTime::fromMSecsSinceEpoch(expiresAt - 60'000, QTimeZone::UTC));
+                 });
 }
 
 void ThreadStore::evict() {

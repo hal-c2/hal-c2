@@ -602,17 +602,60 @@ Rectangle {
                     Repeater {
                         model: composer.attachments
 
-                        delegate: ShellButton {
-                            required property var modelData
+                        // The image's thumbnail (model.preview), or an icon
+                        // for one Qt cannot read.
+                        delegate: Rectangle {
+                            id: attachment
 
-                            implicitHeight: 24
-                            iconName: "image"
-                            text: modelData.name
-                            font.pixelSize: 12
-                            Accessible.name: qsTr("Remove %1").arg(modelData.name)
-                            onClicked: Shell.dispatch("composer.attachment.remove", {
-                                id: modelData.id
-                            })
+                            required property var modelData
+                            readonly property bool pictured: thumbnail.status === Image.Ready
+
+                            objectName: "attachment-" + modelData.id
+                            width: 64
+                            height: 64
+                            radius: 2
+                            color: Qt.alpha(composer.foreground, 0.04)
+                            border.color: Qt.alpha(composer.foreground, 0.12)
+
+                            Image {
+                                id: thumbnail
+                                objectName: "attachmentThumbnail"
+                                anchors.fill: parent
+                                anchors.margins: 1
+                                source: attachment.modelData.preview ?? ""
+                                fillMode: Image.PreserveAspectCrop
+                                clip: true
+                            }
+                            ShellIcon {
+                                visible: !attachment.pictured
+                                anchors.centerIn: parent
+                                name: "image"
+                                size: 20
+                                color: composer.iconMuted
+                            }
+                            HoverHandler {
+                                id: attachmentHover
+                            }
+                            ToolTip.visible: attachmentHover.hovered
+                            ToolTip.delay: 500
+                            ToolTip.text: attachment.modelData.name
+                            ShellButton {
+                                anchors.top: parent.top
+                                anchors.right: parent.right
+                                anchors.margins: 2
+                                implicitWidth: 18
+                                implicitHeight: 18
+                                iconName: "x"
+                                iconSize: 12
+                                Accessible.name: qsTr("Remove %1").arg(attachment.modelData.name)
+                                background: Rectangle {
+                                    radius: 9
+                                    color: Qt.alpha(composer.canvas, 0.8)
+                                }
+                                onClicked: Shell.dispatch("composer.attachment.remove", {
+                                    id: attachment.modelData.id
+                                })
+                            }
                         }
                     }
 

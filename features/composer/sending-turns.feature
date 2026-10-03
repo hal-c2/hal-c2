@@ -147,6 +147,12 @@ Feature: Sending a thread's turns to its MC
       And the composer lists no attachments
 
     @desktop
+    Scenario: An attached image shows as a thumbnail in the composer
+      Given the composer shows "env-a:t1"
+      When the user attaches the image "cart.png"
+      Then the composer shows a thumbnail of "cart.png"
+
+    @desktop
     Scenario: An image alone can be sent
       Given the composer shows "env-a:t1"
       And the user attaches the image "cart.png"

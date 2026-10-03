@@ -1,6 +1,8 @@
 #include "ComposerController.h"
 
+#include <QBuffer>
 #include <QFile>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -770,6 +772,26 @@ void ComposerController::dispatchAll(const Send& send, qsizetype index,
                             });
 }
 
+// A draft image scaled down to what the composer shows of it, as a PNG data
+// URL: the full image would be compared and handed to QML on every
+// keystroke. Empty when Qt cannot read the image.
+QString ComposerController::thumbnail(const QString& dataUrl) {
+  constexpr int kSide = 128;
+  QByteArray bytes = QByteArray::fromBase64(QStringView(dataUrl).mid(dataUrl.indexOf(QLatin1Char(',')) + 1).toLatin1());
+  QBuffer source(&bytes);
+  QImageReader reader(&source);
+  reader.setAutoTransform(true);
+  const QSize size = reader.size();
+  if (size.width() > kSide && size.height() > kSide) {
+    reader.setScaledSize(size.scaled(kSide, kSide, Qt::KeepAspectRatioByExpanding));
+  }
+  const QImage image = reader.read();
+  QByteArray png;
+  QBuffer target(&png);
+  if (image.isNull() || !target.open(QIODevice::WriteOnly) || !image.save(&target, "PNG")) return {};
+  return QStringLiteral("data:image/png;base64,") + QString::fromLatin1(png.toBase64());
+}
+
 // Images the brick read from disk ({name, mimeType, base64}) join the route
 // thread's draft.
 bool ComposerController::attach(const QVariantList& files) {
@@ -1473,7 +1495,11 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
 
   QVariantList attachments;
   for (const Attachment& attachment : kept.attachments) {
-    attachments.append(QVariantMap{{QStringLiteral("id"), attachment.id}, {QStringLiteral("name"), attachment.name}});
+    auto preview = m_previews.constFind(attachment.id);
+    if (preview == m_previews.cend()) preview = m_previews.insert(attachment.id, thumbnail(attachment.dataUrl));
+    attachments.append(QVariantMap{{QStringLiteral("id"), attachment.id},
+                                   {QStringLiteral("name"), attachment.name},
+                                   {QStringLiteral("preview"), *preview}});
   }
   QVariantList terminalContexts;
   for (const TerminalContext& context : kept.terminalContexts) {
