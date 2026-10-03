@@ -4,6 +4,7 @@
 #   packages/contracts/src/rpc.ts (vcs.refreshStatus, subscribeVcsStatus, vcs.init)
 #   apps/server-ex/lib/hal_c2/vcs.ex (status, init)
 #   apps/server-ex/lib/hal_c2/vcs/watch.ex
+#   apps/server-ex/lib/hal_c2/source_control/change_requests.ex (GitLab, Forgejo, Azure DevOps, Bitbucket)
 #   apps/server-ex/lib/hal_c2/background_policy.ex (automaticGitFetchInterval)
 #   apps/web/src/components/GitActionsControl.tsx (Initialize Git)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Initialize Git, git pill)
@@ -76,7 +77,7 @@ Feature: Repository status and working tree changes
     When status is read on "main"
     Then the status carries no pull request
 
-  @backlog @mc
+  @mc
   Scenario Outline: Status names the open change request on other hosts
     Given "shop" has its primary remote on <host>
     And the current branch has an open change request there

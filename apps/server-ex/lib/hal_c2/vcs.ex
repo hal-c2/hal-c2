@@ -109,7 +109,7 @@ defmodule HalC2.Vcs do
   @doc """
   `VcsStatusRemoteResult`, or nil outside a repository. With `fetch: true` the
   upstream is fetched first so the behind count is current; with `pr: true` the
-  branch's GitHub pull request is looked up (otherwise `pr` is nil).
+  branch's change request is looked up on its host (otherwise `pr` is nil).
   """
   def remote_status(cwd, opts \\ []) do
     with true <- File.dir?(cwd),
@@ -157,31 +157,59 @@ defmodule HalC2.Vcs do
     end
   end
 
-  # The branch's latest GitHub pull request, through `gh`. On the default branch
-  # only an open one counts: merged or closed matches there are reverse merges.
+  # The branch's latest change request on its host: GitHub's through `gh`, the other
+  # hosts' through `HalC2.SourceControl.ChangeRequests`. On the default branch only an
+  # open one counts: merged or closed matches there are reverse merges.
   @doc "The newest pull request whose head is `branch`, in any state, or nil."
   def branch_pull_request(cwd, branch), do: pull_request(cwd, branch, false)
 
   defp pull_request(cwd, branch, default?) do
+    with {:ok, url} <- Git.ok(cwd, ~w(remote get-url origin)),
+         %{"state" => state} = pr <- host_pull_request(cwd, String.trim(url), branch),
+         true <- state == "open" or not default? do
+      pr
+    else
+      _ -> nil
+    end
+  end
+
+  defp host_pull_request(cwd, url, branch) do
+    if String.contains?(url, "github.com"),
+      do: github_pull_request(cwd, branch),
+      else: other_host_change_request(cwd, url, branch)
+  end
+
+  defp github_pull_request(cwd, branch) do
     with gh when is_binary(gh) <-
            System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")),
-         {:ok, url} <- Git.ok(cwd, ~w(remote get-url origin)),
-         true <- String.contains?(url, "github.com"),
-         [pr | _] <- gh_pr_list(gh, cwd, branch),
-         state = String.downcase(pr["state"] || "open"),
-         true <- state == "open" or not default? do
+         [pr | _] <- gh_pr_list(gh, cwd, branch) do
       %{
         "number" => pr["number"],
         "title" => pr["title"],
         "url" => pr["url"],
         "baseRef" => pr["baseRefName"],
         "headRef" => pr["headRefName"],
-        "state" => state,
+        "state" => String.downcase(pr["state"] || "open"),
         "isDraft" => pr["isDraft"] == true,
         "updatedAt" => pr["updatedAt"]
       }
     else
       _ -> nil
+    end
+  end
+
+  # A host that does not answer in ten seconds has no change request, as with `gh`.
+  defp other_host_change_request(cwd, url, branch) do
+    with %{} = remote <- HalC2.PullRequests.parse_remote(url) do
+      remote = Map.put(remote, :url, url)
+
+      task =
+        Task.async(fn -> HalC2.SourceControl.ChangeRequests.for_branch(cwd, remote, branch) end)
+
+      case Task.yield(task, 10_000) || Task.shutdown(task, :brutal_kill) do
+        {:ok, change_request} -> change_request
+        _ -> nil
+      end
     end
   end
 
