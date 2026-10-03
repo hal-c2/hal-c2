@@ -35,17 +35,20 @@ ShellWindow {
     // conversation's place (until the add-project box opens).
     readonly property bool inviting: Shell.state.addProject.invite && !Shell.state.addProject.open
 
+    // A settings page (scheduled tasks, diagnostics, …) is open in the conversation's place.
+    readonly property bool sectionOpen: Shell.state.settingsSection.open
+
     // The conversation (empty for a new-thread draft), or the settings page in its place.
     Conversation {
         id: conversationView
-        visible: !Shell.state.settings.active && !shell.inviting && !Shell.state.layout.rightPanel.asMain
+        visible: !Shell.state.settings.active && !shell.sectionOpen && !shell.inviting && !Shell.state.layout.rightPanel.asMain
         flexGrow: 1
         flexShrink: 1
     }
     // A panel too wide to share covers the pane (ShellWindow); nothing peeks out
     // under it when the prompt and popovers leave a row spare.
     Item {
-        visible: Shell.state.layout.rightPanel.asMain && !Shell.state.settings.active
+        visible: Shell.state.layout.rightPanel.asMain && !Shell.state.settings.active && !shell.sectionOpen
         flexGrow: 1
         flexShrink: 1
     }
@@ -55,8 +58,12 @@ ShellWindow {
         SettingsPage { flexGrow: 1 }
     }
     Loader {
+        active: shell.sectionOpen
+        SettingsSection { flexGrow: 1 }
+    }
+    Loader {
         objectName: "addProjectInviteLoader"
-        active: shell.inviting && !Shell.state.settings.active
+        active: shell.inviting && !Shell.state.settings.active && !shell.sectionOpen
         sourceComponent: AddProjectInvite { flexGrow: 1 }
     }
     // Popovers float above the prompt, which stays in place (ChatView).

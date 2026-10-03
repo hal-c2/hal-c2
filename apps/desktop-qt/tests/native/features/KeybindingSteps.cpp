@@ -20,6 +20,7 @@
 
 #include <algorithm>
 
+#include "Brick.h"
 #include "CommandPaletteController.h"
 #include "DraftController.h"
 #include "FakeConfig.h"
@@ -29,6 +30,8 @@
 #include "Keybindings.h"
 #include "NavigationController.h"
 #include "RightPanelController.h"
+#include "SettingsController.h"
+#include "ShellStore.h"
 #include "TerminalController.h"
 #include "World.h"
 
@@ -55,6 +58,8 @@ struct KeyState {
   QString condition;
   QString lastCommand;
   QString lastKey;
+  // The rules other environments were asked to store, by environment.
+  QHash<QString, QJsonArray> elsewhere;
 };
 
 KeyState& keys(World& world) {
@@ -97,6 +102,13 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     if (refused(rpc)) return;
     QJsonObject rule = rpc.payload;
     const QJsonObject replace = rule.take(QStringLiteral("replace")).toObject();
+    if (!rpc.environment.isEmpty() && rpc.environment != mc.environmentId) {
+      // Another environment's keybindings.json.
+      QJsonArray& rules = mc.part<KeyState>().elsewhere[rpc.environment];
+      rules.append(rule);
+      mc.reply(rpc, QJsonObject{{QStringLiteral("rules"), rules}});
+      return;
+    }
     QJsonArray rules;
     for (const QJsonValue& value : storedRules(mc)) {
       if (value.toObject() != rule && value.toObject() != replace) rules.append(value);
@@ -220,8 +232,12 @@ void pressSequence(World& world, const QString& sequence) {
     return;
   }
   const QVariantMap shortcut = entry->toMap();
-  const bool terminal = state.focus.value(QStringLiteral("terminal")).toBool();
-  const bool enabled = shortcut.value(terminal ? QStringLiteral("terminal") : QStringLiteral("chrome")).toBool();
+  // As ShellWindow enables its shortcuts.
+  const auto focused = [&state](const char* what) { return state.focus.value(QLatin1String(what)).toBool(); };
+  const bool enabled = shortcut.value(focused("terminal")   ? QStringLiteral("terminal")
+                                      : focused("composer") ? QStringLiteral("composer")
+                                      : focused("editable") ? QStringLiteral("editable")
+                                                            : QStringLiteral("chrome")).toBool();
   if (!enabled) {
     state.delivered = focusName(state.focus);
     return;
@@ -260,6 +276,12 @@ void press(World& world, const QString& key) {
     world.sync();
     return;
   }
+  // And mod+Enter, which adds the folder being browsed.
+  if (palette && palette->isOpen() && key.toLower() == QLatin1String("mod+enter") && palette->mode() == QLatin1String("browse")) {
+    palette->addBrowsedFolder();
+    world.sync();
+    return;
+  }
   if (palette && palette->isOpen() && key == QLatin1String("Backspace") && palette->query().isEmpty()) {
     palette->leaveSubmenu();
     world.sync();
@@ -271,6 +293,13 @@ void press(World& world, const QString& key) {
     world.bridge().dispatch(QStringLiteral("snapShot.record.key"),
                             QVariantMap{{QStringLiteral("key"), int(combination.key())},
                                         {QStringLiteral("modifiers"), int(combination.keyboardModifiers().toInt())}});
+    return;
+  }
+  // A brick on screen that takes the scenario's keys gets them as its window does.
+  if (world.brick && world.brick->takesKeys) {
+    keys(world).acted = true;
+    world.brick->press(key);
+    world.sync();
     return;
   }
   const auto shortcut = keybindings::parseShortcut(key.toLower());
@@ -776,9 +805,158 @@ const Steps steps([] {
   });
 });
 
+// Settings → Keybindings: the file, conditions typed in full, and saving to
+// every environment (navigation/keybinding-settings.feature,
+// keybinding-customisation.feature).
+const Steps fileSteps([] {
+  const QString q = kQuoted;
+  const QString path = QStringLiteral("/home/sam/.config/hal-c2/keybindings.json");
+
+  // The MC's config as it reports the file (apps/server-ex environment.ex:
+  // keybindingsConfigPath, issues).
+  const auto report = [path](World& world, const QJsonArray& issues, const QJsonArray& editors) {
+    FakeConfig& fake = fakeConfig(world.mc);
+    fake.config.insert(QStringLiteral("keybindingsConfigPath"), path);
+    fake.config.insert(QStringLiteral("issues"), issues);
+    fake.config.insert(QStringLiteral("availableEditors"), editors);
+    if (world.shellSubscriptions() == 0) return;
+    // Connected already: the MC sends its config again.
+    QJsonObject config = fake.config;
+    config.insert(QStringLiteral("settings"), fake.settings);
+    for (const int id : world.mc.subscribers(QStringLiteral("config"))) {
+      if (world.mc.shapeOf(id).value(QLatin1String("environment")) != world.mc.environmentId) continue;
+      world.mc.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), config}});
+    }
+    world.sync();
+  };
+  step(QStringLiteral("keybindings.json is not valid JSON"), [report, path](World& world, const Captures&, const Table&) {
+    // The MC keeps no rule of a file it cannot parse, and says why.
+    fakeConfig(world.mc).config.insert(QStringLiteral("keybindingRules"), QJsonArray());
+    report(world,
+           {QJsonObject{{QStringLiteral("kind"), QStringLiteral("keybindings.malformed-config")},
+                        {QStringLiteral("message"),
+                         QStringLiteral("Unable to parse keybindings config at %1: expected JSON array").arg(path)}}},
+           {QStringLiteral("zed")});
+  });
+  step(QStringLiteral("the default shortcuts apply"), [](World& world, const Captures&, const Table&) {
+    for (const keybindings::Rule& rule : keybindings::defaults()) {
+      const auto row = rowFor(world, rule.command, rule.key);
+      expect(row && row->value(QStringLiteral("source")) == QLatin1String("Default"),
+             QStringLiteral("%1: %2").arg(rule.command, describeRows(world, rule.command)));
+    }
+    expect(keymap(world)->resolve(keybindings::sequence(*keybindings::parseShortcut(QStringLiteral("mod+k")), keys(world).mac)) ==
+               QLatin1String("commandPalette.toggle"),
+           describeRows(world, QStringLiteral("commandPalette.toggle")));
+  });
+  step(QStringLiteral("the user is told %1 with the file path").arg(q), [path](World& world, const Captures& c, const Table&) {
+    const auto told = [&] {
+      for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+        const QString description = item.toMap().value(QStringLiteral("description")).toString();
+        if (description.startsWith(c[0]) && description.contains(path)) return true;
+      }
+      return false;
+    };
+    world.waitFor(told, [&] { return QStringLiteral("\"%1\" with %2; the toasts are %3").arg(c[0], path, show(world.state(QStringLiteral("toasts")))); });
+  });
+
+  step(QStringLiteral("no editor is available"), [report](World& world, const Captures&, const Table&) {
+    report(world, {}, {});
+    keys(world).condition = QStringLiteral("no editors");
+  });
+  step(QStringLiteral("the user opens keybindings.json from settings"), [report](World& world, const Captures&, const Table&) {
+    ensureShell(world);
+    if (keys(world).condition != QLatin1String("no editors")) report(world, {}, {QStringLiteral("cursor"), QStringLiteral("zed")});
+    keys(world).condition.clear();
+    world.waitFor([&] { return !keymap(world)->filePath().isEmpty(); }, QStringLiteral("the MC to say where keybindings.json is"));
+    // The editor the user opened last.
+    world.native().controller<SettingsController>()->writeDevice(QStringLiteral("lastEditor"), QStringLiteral("zed"));
+    world.bridge().dispatch(QStringLiteral("keybindings.open"));
+    keymap(world)->openFile();
+    world.sync();
+  });
+  step(QStringLiteral("keybindings.json opens in the user's preferred editor"), [path](World& world, const Captures&, const Table&) {
+    QList<QJsonObject> opened;
+    for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+      if (rpc.method == QLatin1String("shell.openInEditor")) opened.append(rpc.payload);
+    }
+    expect(opened.size() == 1 && opened.first().value(QLatin1String("cwd")) == path &&
+               opened.first().value(QLatin1String("editor")) == QLatin1String("zed"),
+           QStringLiteral("the MC was asked to open %1").arg(show(QVariant::fromValue(opened))));
+  });
+
+  step(QStringLiteral("the user adds the condition %1, negates it, and groups it with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureShell(world);
+    // The desktop's condition is one field: what the web's builder assembles, typed.
+    const QString condition = QStringLiteral("!%1 && %2").arg(c[0], c[1]);
+    expect(keymap(world)->whenError(condition).isEmpty() && keymap(world)->unknownVariables(condition).isEmpty(),
+           QStringLiteral("%1: %2 %3").arg(condition, keymap(world)->whenError(condition), show(keymap(world)->unknownVariables(condition))));
+    keys(world).acted = true;
+    keys(world).lastCommand = QStringLiteral("diff.toggle");
+    keys(world).lastKey = QStringLiteral("mod+shift+y");
+    keymap(world)->save(keys(world).lastCommand, keys(world).lastKey, condition);
+    settle(world);
+  });
+  step(QStringLiteral("the binding's condition is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto row = rowFor(world, keys(world).lastCommand, keys(world).lastKey);
+    expect(row && row->value(QStringLiteral("when")) == c[0], describeRows(world, keys(world).lastCommand));
+    // And the keymap honours it: the key runs the command only where it holds.
+    const QString sequence = keybindings::sequence(*keybindings::parseShortcut(keys(world).lastKey), keys(world).mac);
+    expect(keymap(world)->resolve(sequence, {{QStringLiteral("terminal"), true}}).isEmpty() && keymap(world)->resolve(sequence).isEmpty(),
+           QStringLiteral("the key runs %1 without the condition").arg(keymap(world)->resolve(sequence)));
+  });
+
+  step(QStringLiteral("two environments are connected"), [](World& world, const Captures&, const Table&) {
+    ensureShell(world);
+    world.mc.link(QStringLiteral("env-b"));
+    world.sync();
+    world.waitFor([&] { return world.native().store()->environmentOnline(QStringLiteral("env-b")); }, QStringLiteral("the second environment"));
+  });
+  step(QStringLiteral("the user rebinds %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto row = rowFor(world, c[0]);
+    expect(row.has_value(), describeRows(world, c[0]));
+    keys(world).acted = true;
+    keys(world).lastCommand = c[0];
+    keys(world).lastKey = QStringLiteral("mod+shift+y");
+    keymap(world)->save(c[0], keys(world).lastKey, row->value(QStringLiteral("when")).toString(), *row);
+    settle(world);
+  });
+  step(QStringLiteral("both environments store the new binding"), [](World& world, const Captures&, const Table&) {
+    const auto stores = [&](const QJsonArray& rules) {
+      for (const QJsonValue& value : rules) {
+        const QJsonObject rule = value.toObject();
+        if (rule.value(QLatin1String("command")) == keys(world).lastCommand && rule.value(QLatin1String("key")) == keys(world).lastKey) return true;
+      }
+      return false;
+    };
+    expect(stores(storedRules(world.mc)) && stores(keys(world).elsewhere.value(QStringLiteral("env-b"))),
+           QStringLiteral("this environment stores %1, the other %2")
+               .arg(show(storedRules(world.mc).toVariantList()), show(keys(world).elsewhere.value(QStringLiteral("env-b")).toVariantList())));
+  });
+});
+
 }  // namespace
 
 QString conditionProblem(World& world) {
   const QString typed = keys(world).condition;
   return typed.isEmpty() ? QString() : keymap(world)->whenError(typed);
+}
+
+void setKeyFocus(World& world, const QVariantMap& focus) {
+  setFocus(world, focus);
+}
+
+void pressKey(World& world, const QString& key) {
+  press(world, key);
+}
+
+bool keyRan(World& world, const QString& command) {
+  return ran(world, command);
+}
+
+QString describeKeyPress(World& world) {
+  return describePress(world);
+}
+
+QString keyDeliveredTo(World& world) {
+  return keys(world).delivered;
 }

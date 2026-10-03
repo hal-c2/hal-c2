@@ -106,7 +106,7 @@ Feature: Keybindings settings
       When the user clears every condition on a binding
       Then the binding's condition reads "Always"
 
-    @backlog @desktop
+    @desktop
     Scenario: Conditions are built from variables, negation and groups
       When the user adds the condition "terminalFocus", negates it, and groups it with "previewOpen"
       Then the binding's condition is "!terminalFocus && previewOpen"
@@ -159,7 +159,7 @@ Feature: Keybindings settings
 
   Rule: Saving and the file
 
-    @backlog @desktop
+    @desktop
     Scenario: A change is saved to every connected environment
       Given two environments are connected
       When the user rebinds "diff.toggle"
@@ -176,12 +176,12 @@ Feature: Keybindings settings
         | saves   | Unable to save keybinding  |
         | removes | Unable to remove keybinding|
 
-    @backlog @desktop
+    @desktop
     Scenario: The file opens in the preferred editor
       When the user opens keybindings.json from settings
       Then keybindings.json opens in the user's preferred editor
 
-    @backlog @desktop
+    @desktop
     Scenario: The file cannot be opened
       Given no editor is available
       When the user opens keybindings.json from settings

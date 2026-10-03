@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <QJsonObject>
 #include <QMap>
 #include <QObject>
@@ -72,8 +73,11 @@ public:
   QString message() const { return m_message; }
   bool ignoreWhitespace() const { return m_ignoreWhitespace; }
   void setIgnoreWhitespace(bool ignore);
-  bool wrap() const { return m_wrap; }
+  // Whether long lines wrap: what the user chose here, else the word wrap
+  // setting (setDefaultWrap).
+  bool wrap() const { return m_wrap.value_or(m_defaultWrap); }
   void setWrap(bool wrap);
+  void setDefaultWrap(bool wrap);
 
   // Loads the selection again.
   Q_INVOKABLE void reload();
@@ -116,7 +120,8 @@ private:
   int m_selection = -1;
   bool m_active = false;
   bool m_ignoreWhitespace = true;
-  bool m_wrap = false;
+  std::optional<bool> m_wrap;
+  bool m_defaultWrap = false;
   QString m_status = QStringLiteral("idle");
   QString m_message;
   // What `model` shows (or is loading), so a repeat asks nothing.

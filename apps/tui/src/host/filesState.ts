@@ -8,9 +8,11 @@ import type { TuiClient } from "../connection.ts";
 import { filetypeForPath } from "../diffSplit.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree, type FlatTreeRow } from "../fileTree.ts";
 import { clip } from "../format.ts";
-import { fileTypeColor } from "../icons.ts";
+import { fileGlyph, fileTypeColor } from "../icons.ts";
 import { ansi, type Palette, THEME } from "../theme.ts";
-import { chunk, plainText, styled, type StyledText } from "./styledText.ts";
+import { chunk, markdownLines, plainText, styled, type StyledText } from "./styledText.ts";
+
+const MARKDOWN_FILE = /\.(?:md|mdx|markdown)$/i;
 
 /** Rows the panel's border and header take. */
 export const FILES_CHROME_ROWS = 3;
@@ -36,11 +38,15 @@ export interface TuiFileViewerState {
   readonly text: string;
   readonly top: number;
   readonly lineCount: number;
+  /** A Markdown file as rendered lines (the visible ones, from `top`); null shows `text` as source. */
+  readonly rendered: ReadonlyArray<StyledText> | null;
 }
 
 /** Published under `files`. */
 export interface TuiFilesState {
   readonly open: boolean;
+  /** Opened to pick an image for the prompt: Enter on a file attaches it. */
+  readonly attach: boolean;
   /** The workspace the browser lists. */
   readonly cwd: string;
   /** The header: `files · <cwd>` (or `file · <path>`) in accent, then the keys, dimmed. */
@@ -64,6 +70,10 @@ export interface FilesControllerOptions {
   readonly palette?: Palette;
   readonly setOpen: (open: boolean) => void;
   readonly publish: (state: TuiFilesState) => void;
+  /** Attach the picked workspace image to the prompt. */
+  readonly attach?: (path: string) => void;
+  /** The prompt can take another attachment (offers "Attach image"). */
+  readonly canAttach?: () => boolean;
 }
 
 export interface FilesController {
@@ -79,6 +89,7 @@ export interface FilesController {
 
 const CLOSED: TuiFilesState = {
   open: false,
+  attach: false,
   cwd: "",
   title: "",
   hint: "",
@@ -115,7 +126,7 @@ function rowLine(row: FlatTreeRow, active: boolean, nameRoom: number, palette: P
   }
   const typeColor = fileTypeColor(row.path);
   return styled(
-    chunk(`${marker}${indent}◦ `, {
+    chunk(`${marker}${indent}${fileGlyph(row.path)} `, {
       fg: typeColor ? ansi(typeColor) : active ? palette.bg : palette.faint,
       ...bg,
     }),
@@ -127,6 +138,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
   const { client } = options;
   const palette = options.palette ?? THEME;
   let open = false;
+  let attach = false;
   let cwd = "";
   let status: TuiFilesState["status"] = "loading";
   let tree: ReturnType<typeof buildFileTree> = [];
@@ -137,6 +149,8 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     status: TuiFileViewerState["status"];
     lines: string[];
     top: number;
+    /** A Markdown file's rendered lines, at the pane's width. */
+    rendered: StyledText[] | null;
   } | null = null;
   // Answers to an earlier open (or file) are dropped.
   let generation = 0;
@@ -185,13 +199,17 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           : status === "empty"
             ? "no files"
             : "";
+    const shownLines = viewer?.rendered ?? viewer?.lines ?? [];
     options.publish({
       open,
+      attach,
       cwd,
       title: viewer ? `file · ${clip(viewer.path, 40)}` : `files · ${clip(cwd, 40)}`,
       hint: viewer
         ? "  ·  PgUp/PgDn scroll · Esc back"
-        : "  ·  ↑/↓ select · Enter open/expand · Esc close",
+        : attach
+          ? "  ·  ↑/↓ select · Enter attach · Esc close"
+          : "  ·  ↑/↓ select · Enter open/expand · Esc close",
       status,
       message,
       rows,
@@ -209,16 +227,18 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
         filetype: filetypeForPath(viewer.path) ?? "",
         text: viewer.lines.slice(viewer.top, viewer.top + height).join("\n"),
         top: viewer.top,
-        lineCount: viewer.lines.length,
+        lineCount: shownLines.length,
+        rendered: viewer.rendered?.slice(viewer.top, viewer.top + height) ?? null,
       },
     });
   };
 
-  const openBrowser = () => {
+  const openBrowser = (forAttach = false) => {
     const workspace = options.cwd();
     if (workspace === null) return;
     const token = ++generation;
     open = true;
+    attach = forAttach;
     cwd = workspace;
     status = "loading";
     tree = [];
@@ -251,6 +271,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     if (!open) return;
     generation += 1;
     open = false;
+    attach = false;
     viewer = null;
     options.setOpen(false);
     publish();
@@ -258,14 +279,23 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
 
   const openFile = (path: string) => {
     const token = ++generation;
-    viewer = { path, status: "loading", lines: [], top: 0 };
+    viewer = { path, status: "loading", lines: [], top: 0, rendered: null };
     publish();
     track(
       client.readFile(cwd, path).then(
         (content) => {
           if (token !== generation || !viewer) return;
           if (content === null) viewer = { ...viewer, status: "error" };
-          else viewer = { ...viewer, status: "ready", lines: content.split("\n") };
+          else {
+            viewer = {
+              ...viewer,
+              status: "ready",
+              lines: content.split("\n"),
+              rendered: MARKDOWN_FILE.test(path)
+                ? markdownLines(content, palette, Math.max(8, options.width() - 4))
+                : null,
+            };
+          }
           publish();
         },
         () => {
@@ -279,7 +309,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
 
   const scrollViewer = (delta: number) => {
     if (!viewer) return;
-    const maxTop = Math.max(0, viewer.lines.length - bodyRows());
+    const maxTop = Math.max(0, (viewer.rendered ?? viewer.lines).length - bodyRows());
     viewer = { ...viewer, top: Math.min(maxTop, Math.max(0, viewer.top + delta)) };
     publish();
   };
@@ -306,6 +336,9 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     if (row.kind === "dir") {
       toggleDir(row.path);
       publish();
+    } else if (attach) {
+      options.attach?.(row.path);
+      close();
     } else openFile(row.path);
   };
 
@@ -356,7 +389,14 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     dispatch: (action, payload) => {
       switch (action) {
         case "files.open":
-          openBrowser();
+          openBrowser(field(payload, "attach") === true);
+          return true;
+        case "files.attach":
+          openBrowser(true);
+          return true;
+        case "files.refresh":
+          // List the workspace again (a file was added since the browser opened).
+          if (open && !viewer) openBrowser(attach);
           return true;
         case "files.close":
           close();
@@ -401,7 +441,12 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
       if (open) publish();
     },
     commands: () =>
-      options.cwd() === null ? [] : [{ title: "Browse files", action: "files.open" }],
+      options.cwd() === null
+        ? []
+        : [
+            { title: "Browse files", action: "files.open" },
+            ...(options.canAttach?.() ? [{ title: "Attach image", action: "files.attach" }] : []),
+          ],
     settled: async () => {
       while (inFlight.size > 0) await Promise.all([...inFlight]);
     },

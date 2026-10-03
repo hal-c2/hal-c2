@@ -772,9 +772,10 @@ limit like the web's. The shell's settings navigation and search are its own
 
 `NavigationController` owns where the window is:
 `route` is `{kind, threadKey, draftId, projectKey, section, title,
-canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `settings`,
+canGoBack, target, targetSeq, search, searchSeq}` with `kind` one of `home`, `thread`, `draft`, `settings`,
 `pullRequests`, `usage` (the `ShellRoute` contract plus
-`title`, `canGoBack` and the settings search's target). `ShellWindow` titles the window from `title` and derives
+`title`, `canGoBack`, the settings search's target, and the query `settings.search {query}` puts in the
+settings navigation's search field). `ShellWindow` titles the window from `title` and derives
 `settingsActive` and `settingsSection` from it; the sidebar's active row and the
 composer's target thread come from it too. It keeps a back stack (home is
 passed through, and moving between settings sections is one step) and writes the last route to `shell-route.json` in the shell's state
@@ -833,7 +834,10 @@ theme.json win). The themed controls (`ShellButton` etc.) take radius, surfaces,
 borders and fonts from `Theme`.
 
 Settings → Appearance chooses and edits themes through `Themes` (`setMode`,
-`choose`, `chooseHalf`, `draft`, `saveCustom`, `duplicate`, `removeCustom`).
+`choose`, `chooseHalf`, `draft`, `saveCustom`, `duplicate`, `requestRemove`,
+`importFiles`, `importText`, `exportTheme`). The editor's draft is the
+controller's (`Themes.editing`), not the page's, so the one `ThemeEditor`
+`ShellWindow` holds keeps unsaved changes while the user moves about.
 The same choices are the actions `theme.mode {mode}`, `theme.choose {id}`,
 `theme.chooseHalf {appearance, id}` and `appearance.cycle`, which is
 `Themes.cycleAppearance()` (System → Light → Dark, with one toast however
@@ -841,8 +845,8 @@ fast it is pressed).
 
 ### `layout`
 
-The shell owns whether the thread list is hidden: `LayoutController`
-publishes `layout {sidebarCollapsed}`, remembers it in the device's
+The shell owns whether the thread list is hidden and how wide it is: `LayoutController`
+publishes `layout {sidebarCollapsed, sidebarWidth}`, remembers them in the device's
 `preferences.json`, and publishes it before the MC's first snapshot so a
 restart does not flash the list. `sidebar.toggle` (action and keybinding
 command, Mod+B by default) flips it. The `Workspace` brick shows a toggle when
@@ -852,6 +856,9 @@ brand band when `showBrand` is on. The right panel's toggle follows the same
 pattern: `Workspace.panelToggle` puts it in the header strip and `RightPanel
 { ownToggle: false }` then takes no width while closed; a rice that leaves
 `ownToggle` on gets the 36 px rail with the toggle instead.
+`sidebar.resize {width}` sets the list's width (no width resets it), and `ShellWindow` reports its
+own width as `layout.window {width}` so the published `sidebarWidth` shrinks when the thread would
+be left less than its minimum.
 
 It also owns the app's zoom, a device preference (`zoomLevel`, Chromium's
 steps: factor 1.2^level in half steps) that every window follows, published
@@ -923,7 +930,10 @@ Settings → Keybindings; they resolve only after every rule, so a user's rule
 for the same chord wins, as it does over Electron's menu.
 
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
-`Keybindings.press`. Who takes a key follows focus:
+`Keybindings.press`. Each entry of `Keybindings.shortcuts` says whether the key is the shell's with
+the chrome, the composer's field, another text field or a terminal focused, so a shortcut whose
+condition fails there is disabled and the key stays with the control (mod+z in a text field).
+Who takes a key follows focus:
 
 - A focused terminal keeps every key except the sequences that resolve, in
   that focus, to a native command or a project script.

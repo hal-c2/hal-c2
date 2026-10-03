@@ -357,6 +357,9 @@ step(
 // action.
 const PALETTE_COMMANDS = new Set(["Add project", "Open WSL folder"]);
 step("the user runs {string}", async (ctx: World, label: string) => {
+  // A scenario whose Given named its own runnable things (project scripts) runs those.
+  const named = (ctx as { runNamed?: (label: string) => Promise<boolean> }).runNamed;
+  if (named && (await named(label))) return;
   if (label.startsWith("hal-c2 ")) {
     if (label !== "hal-c2 tui")
       throw new Error(`the user runs "${label}": only "hal-c2 tui" launches here`);

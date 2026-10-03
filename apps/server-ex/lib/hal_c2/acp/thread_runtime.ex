@@ -598,6 +598,10 @@ defmodule HalC2.Acp.ThreadRuntime do
              },
              "clientInfo" => %{"name" => "hal-c2", "version" => "0.1.0"}
            }) do
+      # The thread now runs on the instance's sign-in, which a sign-out closes
+      # (`HalC2.Acp.Antigravity.stop_sessions/2`).
+      Registry.update_value(@registry, state.thread_id, fn _ -> instance end)
+
       {:ok,
        %{
          state
@@ -1787,14 +1791,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   # applies the mode for them: reads go ahead (OpenCode keeps asking about .env
   # files), edits go ahead in auto-accept-edits, and what the user allowed for the
   # session goes ahead again. Pi has no auto; its old auto threads ask as approval
-  # required does.
-  defp allowed?(%{turn: %{runtime_mode: "full-access"}}, _kind, _call, _prompt), do: true
-
+  # required does. Antigravity runs full access as its own mode (`yolo`), so what it
+  # still asks about there is its own question for the user.
   defp allowed?(state, kind, call, prompt) do
     driver = HalC2.Acp.driver(state.agent)
     mode = state.turn.runtime_mode
 
     cond do
+      mode == "full-access" and driver != "antigravity" -> true
       MapSet.member?(state.allowed, {kind, prompt}) -> true
       driver not in @gated -> false
       kind == "file-read" -> not (driver == "opencode" and env_file?(call))

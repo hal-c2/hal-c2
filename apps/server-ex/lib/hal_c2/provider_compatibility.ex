@@ -4,17 +4,18 @@ defmodule HalC2.ProviderCompatibility do
   `compatibilityAdvisory` on its `ServerConfig.providers` entry, which clients show
   as limited support, an unsupported version or a known broken one.
 
-  The policies are the bundled model manifest's `compatibility` list. A policy covers
+  The policies are the model manifest's `compatibility` list (`HalC2.ModelManifest.policies/0`:
+  a fetched policy over the bundled one for its provider). A policy covers
   one driver on the HAL-C2 releases in its `halC2Range`, and its `ranges` give
   provider versions a status. A range is comparators (`^`, `>=`, `>`, `<=`, `<`, `=`;
   none means `=`) separated by spaces, in groups joined by `||`; a missing minor or
   patch is 0. Only a stable `x.y.z` provider version is judged, anything else is
   `unknown`, as is a version no range names.
-  """
 
-  @manifest Path.expand("../../priv/model-manifest.json", __DIR__)
-  @external_resource @manifest
-  @policies @manifest |> File.read!() |> JSON.decode!() |> Map.get("compatibility", [])
+  The advisory also carries the status of the provider's latest release
+  (`latestVersionStatus`), so clients do not offer an update to a release that is
+  itself broken or unsupported here.
+  """
 
   @messages %{
     "broken" => "This provider version is known to be incompatible with this HAL-C2 release.",
@@ -25,11 +26,21 @@ defmodule HalC2.ProviderCompatibility do
 
   @doc "Adds the advisory to an enabled, installed provider entry a policy covers."
   def put(%{"driver" => driver} = entry) do
-    policies = Application.get_env(:hal_c2, :provider_compatibility, @policies)
+    policies =
+      Application.get_env(:hal_c2, :provider_compatibility) || HalC2.ModelManifest.policies()
+
     release = to_string(Application.spec(:hal_c2, :vsn))
 
     with true <- entry["enabled"] != false and entry["installed"] != false,
          %{} = advisory <- advisory(policies, driver, entry["version"], release) do
+      latest = get_in(entry, ["versionAdvisory", "latestVersion"])
+
+      advisory =
+        case is_binary(latest) && advisory(policies, driver, latest, release) do
+          %{"status" => status} -> Map.put(advisory, "latestVersionStatus", status)
+          _ -> advisory
+        end
+
       Map.put(entry, "compatibilityAdvisory", advisory)
     else
       _ -> entry

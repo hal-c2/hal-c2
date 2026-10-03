@@ -216,8 +216,12 @@ defmodule HalC2.Orchestration.Delegation do
           true -> "acknowledged"
         end
 
-      settle(parent_id, task, status, result, delivery)
-      if delivery == "delivered", do: wake(parent_id, task, status, result)
+      # A completion reported twice (a provider replaying its turn's end after a
+      # reconnect, or two reports racing) settles and wakes once: only the report
+      # that finds the task unsettled delivers it.
+      with :ok <- settle(parent_id, task, status, result, delivery, :once),
+           true <- delivery == "delivered",
+           do: wake(parent_id, task, status, result)
     end
 
     :ok
@@ -386,13 +390,16 @@ defmodule HalC2.Orchestration.Delegation do
     end)
   end
 
-  defp settle(parent_id, task, status, result, delivery) do
+  # Ends the task in its parent. With `:once`, a task that already ended is left as
+  # it is and `:already` is returned, decided inside the parent's transaction.
+  defp settle(parent_id, task, status, result, delivery, how \\ :always) do
     at = Entities.now()
     status = if status in @terminal, do: status, else: "completed"
     item_id = "turn-item:subagent:#{task["id"]}"
 
     HalC2.Streams.transact(parent_id, :thread, fn state ->
       finish = &Map.merge(&1, %{"status" => status, "completedAt" => at})
+      current = StreamState.get(state, "subagent")[task["id"]] || %{}
 
       changes =
         [
@@ -418,7 +425,9 @@ defmodule HalC2.Orchestration.Delegation do
         ]
         |> Enum.reject(&(&1 in [nil, false]))
 
-      {changes, :ok}
+      if how == :once and current["status"] in @terminal,
+        do: {[], :already},
+        else: {changes, :ok}
     end)
   end
 

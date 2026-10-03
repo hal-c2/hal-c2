@@ -250,6 +250,77 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context
   end
 
+  # --- a usage limit -------------------------------------------------------------------
+
+  # As the Codex app-server reports it: the error naming the limit, then the failed turn.
+  step "the provider stops {string} because its usage limit was reached",
+       %{args: [thread]} = context do
+    {_pid, state} = World.codex_runtime(context, thread)
+    turn = %{"threadId" => state.native_thread_id, "turnId" => state.turn.native_turn_id}
+    error = %{"message" => "You've hit your usage limit."}
+
+    context
+    |> World.codex_notify(
+      thread,
+      "error",
+      Map.merge(turn, %{
+        "willRetry" => false,
+        "error" => Map.put(error, "codexErrorInfo", "usageLimitExceeded")
+      })
+    )
+    |> World.codex_notify(thread, "turn/completed", %{
+      "turn" => %{"id" => state.turn.native_turn_id, "status" => "failed", "error" => error}
+    })
+    |> tap(fn context ->
+      World.await_state(context, thread, &(&1.entities["run"][context.running]["status"] == "failed"))
+    end)
+  end
+
+  step "{string} and {string} stay queued in their original order",
+       %{args: [first, second]} = context do
+    # The run failed as a usage limit, which is what holds the queue.
+    assert Enum.any?(
+             World.entities(context, context.thread, "turn-item"),
+             &(&1["runId"] == context.running and &1["failure"]["class"] == "usage_limit")
+           )
+
+    assert %{"status" => "queued", "queuePosition" => 1, "queueHeld" => true} =
+             run_for(context, first)
+
+    assert %{"status" => "queued", "queuePosition" => 2, "queueHeld" => true} =
+             run_for(context, second)
+
+    assert Enum.map(queued(context), & &1["id"]) == context.queued
+    context
+  end
+
+  step "neither is discarded or sent early", context do
+    # What follows a run's end (starting the next queued message) has run its course:
+    # the thread is idle, with both messages still waiting and only one turn ever sent.
+    HalC2.Orchestration.start_next(World.thread_id(context, context.thread))
+    runs = World.entities(context, context.thread, "run")
+    assert Enum.map(runs, & &1["status"]) |> Enum.sort() == ~w(failed queued queued)
+    assert [_only] = World.codex_requests(context, "turn/start")
+
+    for id <- context.queued do
+      run = run(context, id)
+      assert run["startedAt"] == nil and run["completedAt"] == nil
+      message = World.state(context, context.thread).entities["message"][run["userMessageId"]]
+      assert message["text"] in ["one", "two"]
+    end
+
+    # The way out: resuming the queue sends them, first one first.
+    context = queue_command(context, "queue.resume", %{})
+    assert {:ok, _} = context.reply
+    [first, _second] = context.queued
+
+    World.await_state(context, context.thread, fn state ->
+      state.entities["run"][first]["status"] in @started
+    end)
+
+    context
+  end
+
   # --- cancelling, editing and reordering --------------------------------------------
 
   step "the user cancels queued message {string}", %{args: [text]} = context do

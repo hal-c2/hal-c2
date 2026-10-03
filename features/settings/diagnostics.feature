@@ -6,6 +6,7 @@
 #   packages/contracts/src/rpc.ts (server.getProcessDiagnostics, server.getProcessResourceHistory, server.signalProcess, server.getTraceDiagnostics)
 #   apps/web/src/components/settings/DiagnosticsSettings.tsx
 #   apps/tui/src/features.backlog.test.ts (provider maintenance and server diagnostics)
+#   apps/tui/src/host/sections/diagnostics.ts (bounded lists, the force kill that asks first)
 
 Feature: Diagnostics
   Diagnostics lets the user see what the MC has started, how much it uses,
@@ -73,7 +74,7 @@ Feature: Diagnostics
     # With tracing on, the file holds what clients send beside the MC's own spans.
     Then the MC records them in its trace file
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Force killing a process asks first
     When the user force kills a process
     Then the user is asked to confirm because the process cannot handle it
@@ -85,7 +86,7 @@ Feature: Diagnostics
     Then it opens in the user's preferred editor
     But if no editor is available the user is told "No available editors found."
 
-  @backlog @tui
+  @tui
   Scenario: Diagnostics in the terminal client show bounded summaries
     When the user opens diagnostics in the terminal client
     Then long process lists and failures are summarised

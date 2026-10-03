@@ -15,6 +15,10 @@ config :hal_c2, provider_update_checks: false
 # Usage pricing never fetches the LiteLLM table; tests that price point this at a file.
 config :hal_c2, usage_rates_url: "hal-c2-test-no-usage-rates.json"
 
+# The model manifest is never fetched from GitHub; tests that refresh it point this
+# at a file.
+config :hal_c2, model_manifest_url: "hal-c2-test-no-model-manifest.json"
+
 # The background policy never reads this machine's power supplies; tests that do
 # point this at a directory of fake ones.
 config :hal_c2, power_supply_dir: nil

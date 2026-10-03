@@ -254,7 +254,7 @@ Feature: Reviewing a pull request
     When the user opens pull request 42 on the phone
     Then the conversation and checks are shown without the diff
 
-  @backlog @mc
+  @mc
   Scenario: Images in a private pull request are fetched by the MC
     Given the description of pull request 42 holds an image uploaded to GitHub
     When the user reads the description

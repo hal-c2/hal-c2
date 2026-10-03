@@ -55,6 +55,16 @@ export interface RpcSession {
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
   readonly closed: Effect.Effect<never, ConnectionAttemptError>;
+  /**
+   * Runs an MC method as it is named on the wire, on the MC serving `environmentId`
+   * (a cluster member or a linked environment); the result is the MC's JSON,
+   * undecoded. Only protocol-3 sessions have it.
+   */
+  readonly callEnvironment?: (
+    environmentId: string,
+    method: string,
+    payload: unknown,
+  ) => Effect.Effect<unknown, Error>;
 }
 
 export interface RpcSessionOptions {

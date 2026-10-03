@@ -228,6 +228,52 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     complete(context, "Done")
   end
 
+  # The child's run end is reported again, as a provider replaying the end of its turn
+  # after it reconnects does: twice at once, so the reports race each other too.
+  step "the same completion is delivered again after a reconnect", context do
+    child = World.thread_id(context, "subagent")
+    [%{"id" => run_id, "status" => "completed"}] = World.runs(context, "subagent")
+    message = await_result_message(context, context.task_parent)
+
+    repeats =
+      for _ <- 1..2 do
+        Task.async(fn -> HalC2.Orchestration.Delegation.finished(child, run_id, "completed") end)
+      end
+      |> Task.await_many()
+
+    Map.merge(context, %{repeats: repeats, result_message: message, settled: task(context)})
+  end
+
+  step "{string} receives one wake turn", %{args: [parent]} = context do
+    wakes =
+      Enum.filter(messages(context, parent), &(&1["delegatedCompletion"]["taskIds"] != nil))
+
+    assert [%{"id" => id, "runId" => run_id}] = wakes
+    assert id == context.result_message["id"]
+    assert [^run_id] = for(m <- wakes, do: m["runId"])
+
+    # The caller's own turn, and the one run that carries the result behind it.
+    assert [%{"status" => "running"}, %{"id" => ^run_id, "status" => "queued"}] =
+             World.runs(context, parent)
+
+    context
+  end
+
+  step "the repeat is acknowledged without another wake", context do
+    assert context.repeats == [:ok, :ok]
+    # The task is as the first report left it: same result, same delivery, same time.
+    assert task(context) == context.settled
+    assert %{"completionDelivery" => %{"state" => "delivered"}} = task(context)
+
+    assert [_one] =
+             Enum.filter(
+               World.events(context, context.task_parent),
+               &(&1.kind == "message" and &1.entity == context.result_message["id"])
+             )
+
+    context
+  end
+
   step "the subagent is still working after {int} second(s)", %{args: [_seconds]} = context do
     result = Task.await(context.wait)
     assert [%{"status" => "running"}] = World.runs(context, "subagent")

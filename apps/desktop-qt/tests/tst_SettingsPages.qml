@@ -24,6 +24,10 @@ Item {
         }
     }
     Component {
+        id: editorComponent
+        ThemeEditor {}
+    }
+    Component {
         id: appearanceComponent
         AppearanceSettings {
             width: 700
@@ -203,7 +207,9 @@ Item {
             const page = createTemporaryObject(appearanceComponent, root);
             verify(!!page);
             mouseClick(findChild(page, "newTheme"));
-            const editor = page.editor;
+            // The page hands the draft to the window's editor (ShellWindow's ThemeEditor).
+            compare(Themes.calls.filter(call => call.name === "edit").length, 1);
+            const editor = createTemporaryObject(editorComponent, root);
             tryVerify(() => editor.opened);
             compare(findChild(editor.contentItem, "name").text, "HAL-C2 copy");
             let accent = null;
@@ -219,6 +225,7 @@ Item {
             compare(saved[0].args[0].colors.accent, "#ff0000");
             compare(saved[0].args[0].colors.canvas, "#000000");
             tryVerify(() => !editor.visible);
+            compare(Themes.editorOpen, false);
         }
     }
 }

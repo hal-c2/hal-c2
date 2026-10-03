@@ -103,6 +103,61 @@ defmodule HalC2.Steps.Timeline.ApprovalsAndQuestions do
     context
   end
 
+  step "the user always allowed {string} for this session on Claude",
+       %{args: [command]} = context do
+    title = "Claude thread"
+    # Each start of the fake Claude is logged, for `World.claude_starts/1`.
+    System.put_env("FAKE_CLAUDE_ARGV_LOG", Path.join(context.mc.home, "claude-argv.jsonl"))
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_ARGV_LOG") end)
+
+    context
+    |> World.working_thread(title, "Claude")
+    |> Map.put(:current, title)
+    |> World.request_from_agent("approve run: #{command}")
+    |> respond("acceptForSession")
+    |> tap(&await_idle/1)
+    |> Map.put(:command, command)
+  end
+
+  # The allowance lives in the Claude process: releasing the idle session ends it, and
+  # the thread's next message starts another that resumes the conversation.
+  step "the Claude session is released and a new session starts", context do
+    id = World.thread_id(context, World.current(context))
+    assert [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, id)
+    ref = Process.monitor(runtime)
+    assert :ok = HalC2.Orchestration.release_session(id)
+    assert_receive {:DOWN, ^ref, :process, ^runtime, _}, 5_000
+    Map.put(context, :claude_starts, length(World.claude_starts(context)))
+  end
+
+  @doc """
+  The Claude half of "the user is asked again": a new Claude process, resuming the
+  conversation, asks about the command the released session had been allowed. The
+  step itself lives in `HalC2.Steps.Providers.PermissionModes`, which shares its text.
+  """
+  def asked_again_by_new_claude_session(context) do
+    state = World.stream(context, World.current(context))
+    request = StreamState.get(state, "runtime-request")[context.request_id]
+    assert %{"status" => "pending", "kind" => "command"} = request
+
+    assert Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(&1["requestId"] == context.request_id and &1["prompt"] == context.command)
+           )
+
+    # Asked by a new Claude process continuing the same conversation.
+    starts = World.claude_starts(context)
+    assert length(starts) == context.claude_starts + 1
+    assert "--resume" in List.last(starts)
+
+    refute Enum.any?(
+             StreamState.list(state, "message"),
+             &(&1["text"] == "ran #{context.command} without asking")
+           )
+
+    context
+  end
+
   step "the agent asks {string}", %{args: [question]} = context do
     context = World.request_from_agent(context, "ask: #{question}")
     state = World.stream(context, World.current(context))

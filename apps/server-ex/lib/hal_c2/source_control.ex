@@ -121,8 +121,8 @@ defmodule HalC2.SourceControl do
     }
   end
 
-  # A Bitbucket API GET's decoded JSON object, or nil.
-  defp bitbucket_get(path) do
+  @doc "A Bitbucket API GET's decoded JSON object (`path` under the API base), or nil."
+  def bitbucket_get(path) do
     %{base: base, authorization: authorization} = bitbucket_config()
     url = String.trim_trailing(base, "/") <> path
     headers = if authorization, do: [{~c"authorization", to_charlist(authorization)}], else: []

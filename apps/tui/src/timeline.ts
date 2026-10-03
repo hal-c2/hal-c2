@@ -203,15 +203,18 @@ function deriveTurnFolds(
     const lastEnd = last.message ? last.message.updatedAt : last.createdAt;
     const terminalUpdatedAt =
       group.items.find((item) => item.message?.id === group.terminalId)?.message?.updatedAt ?? null;
+    const interrupted = latestTurn?.turnId === turnId && latestTurn.state === "interrupted";
     const elapsedMs =
       latestTurn?.turnId === turnId && latestTurn.startedAt && latestTurn.completedAt
         ? computeElapsedMs(latestTurn.startedAt, latestTurn.completedAt)
-        : computeElapsedMs(
-            group.startBoundary ?? first.createdAt,
-            maxIso(terminalUpdatedAt, lastEnd),
-          );
+        : interrupted
+          ? // A turn stopped before it started has no duration.
+            null
+          : computeElapsedMs(
+              group.startBoundary ?? first.createdAt,
+              maxIso(terminalUpdatedAt, lastEnd),
+            );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
-    const interrupted = latestTurn?.turnId === turnId && latestTurn.state === "interrupted";
     const label = interrupted
       ? duration
         ? `You stopped after ${duration}`

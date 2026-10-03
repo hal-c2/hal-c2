@@ -585,8 +585,19 @@ defmodule HalC2.Orchestration.TurnWriter do
           %{"lastError" => failure_message(failure), "updatedAt" => at}
         ),
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
-    ]
+    ] ++ held_queue(stream, status, failure)
   end
+
+  # A run stopped by a usage limit leaves the queue as it is: the messages behind it
+  # would only hit the same limit, so they wait, in order, until the user resumes the
+  # queue (`queue.resume`), as they do after a restart.
+  defp held_queue(stream, "failed", %{"class" => "usage_limit"}) do
+    for %{"status" => "queued"} = run <- StreamState.list(stream, "run"),
+        run["queueHeld"] != true,
+        do: Orchestration.upsert(stream, "run", run["id"], &Map.put(&1, "queueHeld", true))
+  end
+
+  defp held_queue(_stream, _status, _failure), do: []
 
   # What follows a run ending, once it has.
   defp finished(state, status, failure) do

@@ -91,6 +91,29 @@ function navRows(state) {
     return available(state).filter(function (section) { return !section.under; });
 }
 
+// The settings a section's page holds, each {title, targetId (its objectName
+// on the page), keywords}: its rows this platform shows, then its others.
+function settingsOf(section, os) {
+    return Rows.visible(section.rows || [], os).filter(function (row) { return row.key !== undefined || row.link !== undefined; }).map(function (row) {
+        return { title: row.title, targetId: "settingsRow:" + (row.key ?? row.id), keywords: row.description || "" };
+    }).concat(section.settings || []);
+}
+
+// What the command palette offers (PaletteModel.setSettingsSections): every
+// section, and each setting on its page with its `targetId` and `detail` (its
+// section's label).
+function paletteEntries(os) {
+    var entries = [];
+    sections.forEach(function (section) {
+        entries.push({ to: section.to, label: section.label, keywords: section.keywords || "", requires: section.requires || "" });
+        settingsOf(section, os).forEach(function (setting) {
+            entries.push({ to: section.to, label: setting.title, keywords: setting.keywords || "", requires: section.requires || "",
+                           targetId: setting.targetId, detail: section.label });
+        });
+    });
+    return entries;
+}
+
 // How well a title matches `query`, as the web ranks settings: the whole
 // title, its start, anywhere in it, every word in it, the phrase in its other
 // words, or only the words scattered.
@@ -121,10 +144,7 @@ function searchRows(query, state, bindings) {
     available(state).forEach(function (section) {
         add(section, section.label, section.keywords || "", false);
         // Rows this platform does not show are not found.
-        var settings = Rows.visible(section.rows || [], Qt.platform.os).filter(function (row) { return row.key !== undefined || row.link !== undefined; }).map(function (row) {
-            return { title: row.title, targetId: "settingsRow:" + (row.key ?? row.id), keywords: row.description || "" };
-        }).concat(section.settings || []);
-        settings.forEach(function (setting) {
+        settingsOf(section, Qt.platform.os).forEach(function (setting) {
             add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title, setting.keywords, false);
         });
     });

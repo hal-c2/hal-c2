@@ -95,6 +95,13 @@ Feature: Keybindings
         | thread.jump.8                | mod+8               | anywhere                   | aligned |
         | thread.jump.9                | mod+9               | anywhere                   | aligned |
 
+      Examples: Run only where their condition holds
+        | command                   | key             | context                           | status  |
+        | thread.editQueuedMessage  | alt+arrowup     | in the composer                   | aligned |
+        | composer.sendAlternate    | mod+enter       | in the composer while a turn runs | aligned |
+        | composer.sendBackground   | mod+alt+enter   | in the composer of a new thread   | aligned |
+        | thread.undo               | mod+z           | outside text fields and terminals | aligned |
+
       # preview.refresh, focusUrl and the zoom keys act on the in-app browser, which the
       # desktop does not have yet.
       @backlog
@@ -106,10 +113,6 @@ Feature: Keybindings
         | preview.zoomIn            | mod++           | in the preview                    | backlog |
         | preview.zoomOut           | mod+-           | in the preview                    | backlog |
         | preview.resetZoom         | mod+0           | in the preview                    | backlog |
-        | thread.editQueuedMessage  | alt+arrowup     | in the composer                   | backlog |
-        | composer.sendAlternate    | mod+enter       | in the composer while a turn runs | backlog |
-        | composer.sendBackground   | mod+alt+enter   | in the composer of a new thread   | backlog |
-        | thread.undo               | mod+z           | outside text fields and terminals | backlog |
 
     @desktop
     Scenario Outline: A command with no default binding can still be bound
@@ -237,25 +240,25 @@ Feature: Keybindings
 
   Rule: What the commands do
 
-    @backlog @desktop
+    @desktop
     Scenario: Undo reverses the last sidebar action
       Given the user settled a thread from the sidebar
       When the user presses mod+z within 5 seconds
       Then the thread is no longer settled
 
-    @backlog @desktop
+    @desktop
     Scenario: Consecutive sidebar actions of the same kind undo together
       Given the user snoozed three threads one after another
       When the user presses mod+z
       Then all three threads are awake again
 
-    @backlog @desktop
+    @desktop
     Scenario: Undo expires after 5 seconds
       Given the user pinned a thread 6 seconds ago
       When the user presses mod+z
       Then the thread stays pinned
 
-    @backlog @desktop
+    @desktop
     Scenario: Undo leaves text fields alone
       Given the user settled a thread from the sidebar
       And the composer has keyboard focus
@@ -271,7 +274,7 @@ Feature: Keybindings
       When the user goes forward
       Then thread "B" is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: A new thread may ask which project to use
       Given the user has several projects and none is in scope
       When the user starts a new thread
@@ -283,7 +286,7 @@ Feature: Keybindings
       When the user starts a new local thread
       Then a new thread starts in the current project without asking
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Closing with mod+w closes the innermost thing first
       Given <open>
       When the user presses mod+w
@@ -295,7 +298,7 @@ Feature: Keybindings
         | an active right panel tab and no focused terminal | the active right panel tab closes |
         | nothing but the window                            | the window closes                 |
 
-    @backlog @desktop
+    @desktop
     Scenario: Steering the first queued message
       Given a turn is running and two messages are queued
       When the user presses mod+shift+enter
@@ -310,7 +313,7 @@ Feature: Keybindings
       When the user presses mod+j again
       Then the thread's terminal is hidden
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Terminal shortcuts open the terminal when it is hidden
       Given the thread's terminal is hidden
       When the user runs "<command>"

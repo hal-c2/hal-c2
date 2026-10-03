@@ -224,12 +224,12 @@ Feature: Source control from the terminal
     When the user presses "Esc"
     Then the panel closes and the conversation is shown
 
-  @backlog @tui
+  @tui
   Scenario: The user switches to or creates a ref
     When the user switches the workspace to the new branch "fix/login"
     Then the workspace is on "fix/login"
 
-  @backlog @tui
+  @tui
   Scenario: The user creates and removes a worktree
     When the user creates a worktree for "fix/login"
     Then the worktree is listed
@@ -240,7 +240,7 @@ Feature: Source control from the terminal
     Given "shop" is open on two environments
     Then worktrees on both are listed under the one project
 
-  @backlog @tui
+  @tui
   Scenario Outline: The user resolves a pull request from any reference
     When the user checks out the pull request <reference>
     Then the pull request is resolved and a local checkout or worktree is prepared
@@ -251,29 +251,29 @@ Feature: Source control from the terminal
       | "gh pr checkout 42"                            |
       | "#42"                                          |
 
-  @backlog @tui
+  @tui
   Scenario: The user initializes a repository
     Given the thread's workspace is not a git repository
     When the user initializes a repository
     Then the workspace becomes a git repository
 
-  @backlog @tui
+  @tui
   Scenario: The client discovers which source-control providers are available
     When the user opens source-control providers
     Then each provider is listed with whether it is installed and signed in
 
-  @backlog @tui
+  @tui
   Scenario: The user publishes a repository to a source provider
     Given the repository has no remote and a source provider is signed in
     When the user publishes the repository
     Then the repository is created on the provider and set as the remote
 
-  @backlog @tui
+  @tui
   Scenario: Git operations stream their phases and hooks
     When the user runs "Commit, push & PR"
     Then the panel shows each phase and hook output as it runs
 
-  @backlog @tui
+  @tui
   Scenario: A failed git operation keeps its error and refreshes status
     When a push fails because of a hook
     Then the error stays visible until dismissed

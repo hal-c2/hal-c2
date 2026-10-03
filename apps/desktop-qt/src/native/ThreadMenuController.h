@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 
 #include <functional>
@@ -22,6 +23,12 @@ class ToastController;
 // turns the ones that need it off. Each action toasts its failure, and the
 // ones that hide a thread (archive, unpin, settle, snooze) offer Undo.
 //
+// With several threads selected (SidebarController::selection), the menu of
+// one of them is the selection's: each action names how many threads it
+// touches, as the web app's sidebar ("Unpin (1)", "Settle (3)", "Delete (3)"),
+// and applies to all of them. Deleting keeps the threads that could not be
+// deleted selected.
+//
 // The route thread's keybinding commands (thread.pin, thread.settle,
 // thread.undo) run here too (KeybindingController), and it registers two of
 // its own the palette offers for the route thread: thread.copyReference
@@ -35,6 +42,8 @@ public:
 
   static inline const QString kCopyReference = QStringLiteral("thread.copyReference");
   static inline const QString kProjectSettingsCommand = QStringLiteral("projectSettings.open");
+  // "Move thread to another machine…": the palette's way to the move the menu offers.
+  static inline const QString kMoveCommand = QStringLiteral("thread.move");
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
@@ -55,6 +64,12 @@ public:
 
 private:
   void choose(const QString& key, const QString& id, double x, double y);
+  void openSelection(const QStringList& keys, double x, double y);
+  void chooseForSelection(const QStringList& keys, const QString& id);
+  // Sends each thread's command; `done` gets the keys that failed and the
+  // first failure's reason once every answer is in.
+  void commandEach(const QStringList& keys, const std::function<QJsonObject(const QString& threadId)>& make,
+                   std::function<void(const QStringList& failed, const QString& reason)> done);
   void command(const QString& key, QJsonObject command, const QString& failureTitle,
                std::function<void()> onSuccess = {});
   void archive(const QString& key);
@@ -64,6 +79,10 @@ private:
   void copy(const QString& value, const QString& successTitle, const QString& failureTitle);
   void fork(const QString& key);
   void chooseDestination(const QString& key, double x, double y);
+  // Whether another machine of the thread's cluster could take it.
+  bool movable(const QString& key) const;
+  // Interrupts the thread's turn, then moves it once the turn has ended.
+  void stopAndMove(const QString& key, const QString& machine, double x, double y);
   void move(const QString& key, const QString& machine, const QString& projectId, bool confirmed, double x,
             double y);
   void newThreadOnBranch(const QString& key);

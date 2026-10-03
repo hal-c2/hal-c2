@@ -9,6 +9,7 @@
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "LayoutController.h"
+#include "SettingsController.h"
 #include "World.h"
 
 namespace {
@@ -78,6 +79,48 @@ const Steps steps([] {
          const int count = world.mc.part<LayoutChanges>().count;
          expect(count == 1, QStringLiteral("the layout changed %1 times").arg(count));
        });
+  // The thread list's width: dragging its edge sends `sidebar.resize`, a
+  // double click resets it, and the window says how wide it is (ShellWindow).
+  const auto width = [](World& world) { return world.state(QStringLiteral("layout")).toMap().value(QStringLiteral("sidebarWidth")).toInt(); };
+  const auto drag = [](World& world, int to) {
+    world.waitFor([&world] { return world.state(QStringLiteral("layout")).isValid(); }, QStringLiteral("the shell publishes its layout"));
+    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 1280}});
+    world.bridge().dispatch(QStringLiteral("sidebar.resize"), QVariantMap{{QStringLiteral("width"), to}});
+  };
+  step(QStringLiteral("the user (?:drags the sidebar to a new width|resized the sidebar)"), [drag, width](World& world, const Captures&, const Table&) {
+    drag(world, 340);
+    expect(width(world) == 340, show(world.state(QStringLiteral("layout"))));
+  });
+  step(QStringLiteral("the sidebar has the width the user chose"), [width](World& world, const Captures&, const Table&) {
+    world.waitFor([&world] { return world.state(QStringLiteral("layout")).isValid(); }, QStringLiteral("the shell publishes its layout"));
+    expect(width(world) == 340 && layout(world)->sidebarWidth() == 340, show(world.state(QStringLiteral("layout"))));
+  });
+  step(QStringLiteral("the user drags the sidebar narrower than its minimum"), [drag](World& world, const Captures&, const Table&) {
+    drag(world, 90);
+  });
+  step(QStringLiteral("the sidebar stops at its minimum width"), [width](World& world, const Captures&, const Table&) {
+    expect(width(world) == LayoutController::kSidebarMinWidth, show(world.state(QStringLiteral("layout"))));
+  });
+  step(QStringLiteral("the window becomes narrower than the sidebar allows"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 640}});
+  });
+  step(QStringLiteral("the sidebar shrinks to fit"), [width](World& world, const Captures&, const Table&) {
+    // The thread keeps its room; the list gets what is left.
+    expect(width(world) == 640 - LayoutController::kContentMinWidth && width(world) < LayoutController::kSidebarMinWidth,
+           show(world.state(QStringLiteral("layout"))));
+    // And is its own width again in a window with room.
+    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 1280}});
+    expect(width(world) == LayoutController::kSidebarMinWidth, show(world.state(QStringLiteral("layout"))));
+  });
+  step(QStringLiteral("the user resets the sidebar width"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("sidebar.resize"), {});
+  });
+  step(QStringLiteral("the sidebar returns to its default width"), [width](World& world, const Captures&, const Table&) {
+    expect(width(world) == LayoutController::kSidebarWidth, show(world.state(QStringLiteral("layout"))));
+    // Nothing is left on the device to restore.
+    expect(!world.native().controller<SettingsController>()->deviceSettings().contains(QStringLiteral("sidebarWidth")),
+           QStringLiteral("the device still holds a width"));
+  });
   // The window is in settings; DefaultShell draws SettingsNav where the
   // thread list was (tst_ShellExamples).
   step(QStringLiteral("the (?:thread list is hidden|settings sections are shown in its place)"), [](World& world, const Captures&, const Table&) {

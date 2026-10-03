@@ -122,6 +122,42 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     Storage.start_checkout(context, context[:checkout_kind] || :worktree)
   end
 
+  # --- pairing with whichever server runs -------------------------------------------------
+
+  # An MC started as a release (the installed profile) or from a checkout (the
+  # development profile), with its runtime record in that profile's state directory.
+  step ~r/^(?<which>the installed|a development) server is running with no HAL-C2 home configured$/,
+       %{args: [which]} = context do
+    context = Storage.user(context)
+    for var <- ~w(HAL_C2_HOME HAL_C2_MC_HOME), do: World.put_os_env(var, nil)
+
+    {context, home} =
+      if which == "the installed",
+        do: {Storage.start(context), nil},
+        else: {Storage.start_checkout(context, :checkout), :dev}
+
+    assert Application.get_env(:hal_c2, :home) == home
+    assert File.exists?(HalC2.RuntimeRecord.path())
+    Map.put(context, :running_profile, home)
+  end
+
+  # `the user runs "hal-c2 pair"` is the shared step in common_steps.exs
+  # (`HalC2.Test.Storage.pair/1`).
+  step "it prints a pairing link for that server", context do
+    assert [link] = context.pair_output
+    base = "http://127.0.0.1:#{context.mc.port}/?token="
+    assert String.starts_with?(link, base), link
+    # The token is in the running server's store: it pairs a client with that server.
+    token = String.replace_prefix(link, base, "")
+    assert {200, %{"access_token" => access}} = Mc.exchange(context.mc, token)
+    assert is_binary(access)
+    # Nothing was made for the profile the command was run from.
+    other = if context.running_profile == nil, do: :dev, else: nil
+    dirs = Paths.mc_dirs(other, System.get_env(), Paths.user_home())
+    refute File.exists?(Path.join(dirs.data, "hal-c2.sqlite"))
+    context
+  end
+
   # --- where things are ----------------------------------------------------------------
 
   step ~r/^its (?<kind>config|data|state|cache|runtime) directory is (?<path>.+)$/,

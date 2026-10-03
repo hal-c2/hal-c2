@@ -11,6 +11,7 @@ desktop shell's contract names, extended for the terminal), `mode`, `status`,
 `newThread` (`composerState.ts`), `palette` (`paletteState.ts`), `statusRow`
 (`statusState.ts`), `clock`,
 `git`, `settings`, `paneScroll`, `terminal`, `files`, `addProject`,
+`settingsSection`, `updateNotice`,
 `keybindings` (`src/keymap.ts`: the chord layers per mode, the reference
 groups and the web parity table), `plugins`, `problems`, `connection` (see
 "Plugins, problems and connection"), `graphics`, and the open thread's keys
@@ -85,6 +86,32 @@ link), `git.commit {message}`, `git.commit.cancel`. `settings`
 (`settingsState.ts`) is the settings page in place of the conversation:
 `settings.open`, `settings.close` (`mode: "settings"`).
 
+`settingsSection` (`settingsSections.ts`, null-like when `open` is false) is a
+settings page the terminal can act on, in the conversation's place: scheduled
+tasks, storage, background activity, diagnostics, the resource monitor, source
+control tools, updates, usage limits and usage hubs (`sections/*.ts`, each
+opened by its palette entry, `section.open {id}`). A page is rows: `rows` is the
+window that fits, each painted and marked selected; `input` is the one-line
+field a row asks its value in, `confirm` the yes / no question before something
+that cannot be undone. Modes `section`, `sectionInput` and `sectionConfirm`;
+actions `section.previous/next/activate {id?}/back/close`,
+`section.input.submit {text}/cancel` and `section.confirm.yes/no`. A section
+only describes its page (`page()`); it never touches the selection or the keys.
+
+Settings reach machines other than the one the terminal is connected to
+(linked environments and cluster members, `sections/shared.ts` `readMachines`),
+so their calls go through `client.mcCall(method, payload, environmentId?)` by
+the MC's wire method names and read its JSON undecoded (`src/settingsClient.ts`).
+Projects and threads of other machines are not known here: the shell snapshot
+holds this machine's only.
+
+`updateNotice` (null when there is none) offers the update of a server that is
+behind this app (`HostOptions.appVersion`), over the conversation, until the
+user dismisses it for that version (`update.notice.dismiss`;
+`HostOptions.dismissedUpdates` keeps the dismissals). The host also tells the
+MC what is on screen (`clientActivity.ts`, `server.reportClientActivity` for
+the open thread and its checkout), renewed every 30 seconds.
+
 `cluster` (`clusterState.ts`) is this machine's cluster as the MC reports
 it (`cluster.status`, read again when settings or the palette open), the last
 invite, and `joining` while the one-line join prompt has the keys (`mode:
@@ -95,16 +122,16 @@ invite, and `joining` while the one-line join prompt has the keys (`mode:
 `threadView.ts` publishes the open thread's keys and handles their actions
 (the timeline wraps at `layout.contentWidth`):
 
-| Key                          | Actions                                                                                                                                                                                                                       |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `timeline`, `timelineScroll` | `timeline.showOlder`, `timeline.showNewer`, `timeline.scroll {by}`, `timeline.workGroup.toggle`, `timeline.fold.toggle`, `timeline.message.toggle`, `timeline.files.toggleDir`, `timeline.files.toggleAll`, `link.open {url}` |
-| `imageViewer`                | `image.open {id}`, `image.close` (`mode: "imagePreview"`)                                                                                                                                                                     |
-| `approvals`                  | `approval.approve`, `approval.decline`, `approval.next`, `approval.previous`                                                                                                                                                  |
-| `userInput`                  | `userInput.move`, `userInput.toggle`, `userInput.answer.set`, `userInput.submit`, `userInput.defer`, `userInput.reopen`                                                                                                       |
-| `threadHints`                | `plan.implement`                                                                                                                                                                                                              |
-| `revert`                     | `checkpoint.revert.open`, `checkpoint.revert.move`, `checkpoint.revert.confirm`, `checkpoint.revert.cancel`                                                                                                                   |
-| `diff`                       | `diff.open`, `diff.all`, `diff.toggleView`, `diff.next`, `diff.previous`, `diff.close`                                                                                                                                        |
-| `notifications`              | `notification.dismiss`, `notification.action` (thread alerts from `notificationsState.ts`)                                                                                                                                    |
+| Key                          | Actions                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `timeline`, `timelineScroll` | `timeline.showOlder`, `timeline.showNewer`, `timeline.scroll {by}`, `timeline.workGroup.toggle`, `timeline.fold.toggle`, `timeline.message.toggle`, `timeline.files.toggleDir`, `timeline.files.toggleAll`, `timeline.copy {key, text, label}`, `timeline.table.toggle {key}`, `timeline.reply.copy`, `link.open {url}` |
+| `imageViewer`                | `image.open {id}`, `image.close` (`mode: "imagePreview"`)                                                                                                                                                                                                                                                               |
+| `approvals`                  | `approval.approve`, `approval.approveSession`, `approval.decline`, `approval.cancel`, `approval.next`, `approval.previous`                                                                                                                                                                                              |
+| `userInput`                  | `userInput.move`, `userInput.toggle`, `userInput.answer.set`, `userInput.submit`, `userInput.defer`, `userInput.reopen`                                                                                                                                                                                                 |
+| `threadHints`                | `plan.implement`                                                                                                                                                                                                                                                                                                        |
+| `revert`                     | `checkpoint.revert.open`, `checkpoint.revert.move`, `checkpoint.revert.confirm`, `checkpoint.revert.cancel`                                                                                                                                                                                                             |
+| `diff`                       | `diff.open`, `diff.all`, `diff.toggleView`, `diff.next`, `diff.previous`, `diff.close`                                                                                                                                                                                                                                  |
+| `notifications`              | `notification.dismiss`, `notification.action`, `thread.alerts.toggleMute` (thread alerts from `notificationsState.ts`)                                                                                                                                                                                                  |
 
 A timeline line with `image` is an attachment preview (`columns` × `rows`
 cells, encoded `source`); its link line reads the URL, "resolving link…" or
@@ -144,6 +171,40 @@ local folder or a repository and its clone destination, with the folders
 under the typed path. `invite` is true while the environment has no
 projects. Actions are `project.add` and `project.add.*` (`mode: "project"`).
 An added project opens a new-thread draft for it (`thread.new {projectKey}`).
+
+## Feature areas
+
+Most of what the palette offers beyond the panes above lives in
+`features/`: one file per area (keys, archive, conversation, editor, plans,
+server, workspace, repository, appearance, context, reach), each a `Feature` with palette
+commands and a `dispatch`. They own no brick. A feature talks to the user
+through three things the host hands it (`features/kit.ts`):
+
+- `menu`: a list in the picker (`select`, kind `"menu"`), optionally with a
+  search field (`select.query.set`). Choosing closes it, then runs the choice.
+- `ask`: a one-line question in the prompt's place (`ask`, mode `"ask"`;
+  `ask.submit {text}`, `ask.cancel`).
+- `status`: the status line.
+
+Their requests are in `src/featureClient.ts`, next to the client's core in
+`connection.ts`. Actions a feature takes over from another controller
+(`link.open`) reach it first: `features.dispatch` runs ahead of the thread view.
+
+Keys they publish: `planStatus` (the agent's step list and the thread an
+implemented plan went to), `keybindings` (the live layers, which a rebind
+rewrites), and groups appended to `settings` (`settingsGroups`: provider
+instances, defaults, diagnostics; the host adds `Problems`).
+
+The palette is the theme too: `theme.set {id}` and `icons.nerdFont.set {on}`
+rewrite the one `THEME` object (and the icon registry) in place, and the host
+repaints every key it styled. A brick must read colours from `Theme.colors`,
+and host-styled text from the palette at build time, never from a captured
+constant, or it will not follow.
+
+A brick that handles the mouse needs a keyboard route as well: a chord, a
+palette entry, or (for rows whose action the host chose) an entry in
+`features/reach.ts`. The client runs with the mouse off (`HAL_C2_TUI_MOUSE=0`),
+and `slice-mouse.steps.ts` fails on a mouse handler that has no route.
 
 ## Keys and actions
 

@@ -109,6 +109,8 @@ export interface TerminalController {
   readonly clear: () => void;
   readonly restart: () => void;
   readonly copy: () => void;
+  /** The active terminal's screen as text (what `copy` copies), or null with none open. */
+  readonly viewportText: () => string | null;
   readonly input: (data: string) => void;
   readonly paste: (text: string) => void;
   readonly scroll: (action: TerminalScrollAction) => void;
@@ -641,6 +643,10 @@ export function createTerminalController(options: TerminalControllerOptions): Te
             (error) => store.setStatus(`Could not restart terminal: ${errorText(error)}`, "error"),
           ),
       );
+    },
+    viewportText: () => {
+      const pane = activePane();
+      return pane ? readTerminalViewport(pane.term, pane.offset) : null;
     },
     copy: () => {
       const pane = activePane();

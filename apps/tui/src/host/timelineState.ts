@@ -5,7 +5,7 @@ import { CHAT_CONTENT_MAX_WIDTH } from "../components/ChatView.layout.ts";
 import { deriveContextWindow, formatContextWindow } from "../contextWindow.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
-import { fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
+import { fileGlyph, fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { ansi, type Palette, relativeTime, sessionStatusColor } from "../theme.ts";
 import {
@@ -25,10 +25,13 @@ import {
   workLogLabel,
   workLogPreview,
   workLogStatusKind,
+  workLogStatusLabel,
   type WorkLogEntry,
 } from "../worklog.ts";
 import type { AttachmentPreview } from "./attachmentPreviews.ts";
-import { chunk, markdownLines, styled, type StyledText } from "./styledText.ts";
+import { tableToCsv, tableToMarkdown } from "../markdownTable.ts";
+import { threadKey } from "./sidebarState.ts";
+import { chunk, markdownBlockLines, markdownLines, styled, type StyledText } from "./styledText.ts";
 
 // The conversation as published under `timeline` (port of MessagesTimeline):
 // every row pre-styled, with the action a click dispatches, so the Timeline
@@ -51,15 +54,19 @@ export function resolveTimelineWindow(
 /** View state the host keeps per thread for the timeline. */
 export interface TimelineView {
   readonly expandedGroups: ReadonlySet<string>;
+  /** Turn folds the user flipped from how they start (folded, or open for `openTurns`). */
   readonly expandedFolds: ReadonlySet<string>;
   readonly expandedMessages: ReadonlySet<string>;
   /** Collapsed changed-files folders, keyed by checkpoint turn count. */
   readonly collapsedDirs: ReadonlyMap<number, ReadonlySet<string>>;
   /** End of the mounted window; null follows the latest row. */
   readonly windowEnd: number | null;
+  /** Tables whose cells are cut to one line, as `<message id>:table:<n>`. */
+  readonly collapsedTables: ReadonlySet<string>;
 }
 
 export const EMPTY_TIMELINE_VIEW: TimelineView = {
+  collapsedTables: new Set(),
   expandedGroups: new Set(),
   expandedFolds: new Set(),
   expandedMessages: new Set(),
@@ -80,6 +87,12 @@ export interface TimelineLine {
   } | null;
   /** An inline image drawn in place of the text (only when the terminal draws images). */
   readonly image: TimelineImage | null;
+  /** Further parts after the text, each with its own action (a table's copy and cell controls). */
+  readonly parts: ReadonlyArray<{
+    readonly text: StyledText;
+    readonly action: string;
+    readonly payload: unknown;
+  }> | null;
 }
 
 /** An image attachment's inline preview, `columns` × `rows` cells, aspect kept. */
@@ -102,7 +115,7 @@ export const FALLBACK_CELL_PIXELS: CellPixels = { width: 18, height: 35 };
 
 export interface TimelineItem {
   readonly key: string;
-  readonly kind: "pager" | "message" | "work" | "fold" | "files";
+  readonly kind: "pager" | "lineage" | "message" | "work" | "fold" | "files";
   readonly align: "left" | "right";
   readonly boxed: boolean;
   /** Width of the item's box (the column width unless boxed). */
@@ -144,6 +157,14 @@ export interface TimelineInput {
   readonly loadingOlderTurns: boolean;
   readonly approvalCount: number;
   readonly view: TimelineView;
+  /** Turns whose fold starts open: the ones the user stopped in this session. */
+  readonly openTurns?: ReadonlySet<string>;
+  /** The code block or table just copied (`<message id>:code:<n>`), which shows it. */
+  readonly copied?: string | null;
+  /** The title of another thread of this environment (a message's sender), when it is known. */
+  readonly threadTitle?: (threadId: string) => string | null;
+  /** The thread this one is a subagent of. */
+  readonly parent?: { readonly threadId: string; readonly title: string } | null;
   /** Width of the conversation pane (border and padding included). */
   readonly paneWidth: number;
   readonly nowMs: number;
@@ -160,7 +181,7 @@ const line = (
   action: string | null = null,
   payload: unknown = null,
   right: TimelineLine["right"] = null,
-): TimelineLine => ({ text, action, payload, right, image: null });
+): TimelineLine => ({ text, action, payload, right, image: null, parts: null });
 
 const item = (
   key: string,
@@ -215,12 +236,35 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     palette,
     width,
     view,
+    openTurns: input.openTurns ?? new Set(),
+    copied: input.copied ?? null,
+    threadTitle: input.threadTitle ?? (() => null),
     checkpointByMessage,
     attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
     cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
   };
 
   const items: TimelineItem[] = [];
+  if (input.parent) {
+    items.push(
+      item(
+        "lineage",
+        "lineage",
+        width,
+        [
+          line(
+            styled(
+              chunk("↳ Subagent of ", { fg: palette.dim }),
+              chunk(input.parent.title, { fg: palette.accent }),
+            ),
+            "thread.open",
+            { key: threadKey(input.parent.threadId) },
+          ),
+        ],
+        { marginBottom: 1 },
+      ),
+    );
+  }
   if (window.start > 0 || input.hasOlderTurns) {
     const label =
       window.start > 0
@@ -318,7 +362,12 @@ function headerLine(
     contentWidth >= 64 ? 32 : contentWidth >= 40 ? status.length + 10 : status.length + 2;
   const plan = detail.interactionMode === "plan";
   return line(
-    styled(chunk(clip(detail.title, Math.max(1, contentWidth - reserved)), { bold: true })),
+    styled(
+      chunk(clip(detail.title, Math.max(1, contentWidth - reserved)), {
+        fg: palette.text,
+        bold: true,
+      }),
+    ),
     null,
     null,
     {
@@ -343,6 +392,9 @@ interface RowContext {
   readonly palette: Palette;
   readonly width: number;
   readonly view: TimelineView;
+  readonly openTurns: ReadonlySet<string>;
+  readonly copied: string | null;
+  readonly threadTitle: (threadId: string) => string | null;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
   readonly attachments: (attachmentId: string) => AttachmentPreview;
   readonly cellPixels: CellPixels;
@@ -438,7 +490,7 @@ function pushRow(items: TimelineItem[], row: TimelineRow, ctx: RowContext): void
     pushFoldable(items, row, ctx);
     return;
   }
-  const expanded = ctx.view.expandedFolds.has(row.id);
+  const expanded = ctx.view.expandedFolds.has(row.id) !== ctx.openTurns.has(row.turnId);
   items.push(
     item(
       row.id,
@@ -494,13 +546,30 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
             ) + 4,
           )
         : 1;
-    const bubbleWidth = Math.max(attachmentMinWidth, Math.min(width, maxBubble, longest + 4));
+    // A message another agent sent says which thread it came from, and opens it.
+    const senderThreadId = (message as { senderThreadId?: string }).senderThreadId;
+    const sender = senderThreadId
+      ? `↩ from ${ctx.threadTitle(senderThreadId) ?? "another agent"}`
+      : null;
+    const bubbleWidth = Math.max(
+      attachmentMinWidth,
+      Math.min(width, maxBubble, Math.max(longest, sender ? Bun.stringWidth(sender) : 0) + 4),
+    );
     const innerWidth = Math.max(1, bubbleWidth - 4);
     const bodyLines = markdownLines(body, palette, innerWidth);
     const imageLines = images.flatMap((attachment) =>
       attachmentLines(attachment, Math.max(8, innerWidth), ctx),
     );
-    const head = imageLines.length > 0 ? [...imageLines, line(styled(chunk("")))] : [];
+    const head = [
+      ...(sender && senderThreadId
+        ? [
+            line(styled(chunk(sender, { fg: palette.dim })), "thread.open", {
+              key: threadKey(senderThreadId),
+            }),
+          ]
+        : []),
+      ...(imageLines.length > 0 ? [...imageLines, line(styled(chunk("")))] : []),
+    ];
     const canCollapse = shouldCollapseUserMessage(rawBody);
     const expanded = ctx.view.expandedMessages.has(message.id);
     const collapsed = canCollapse && !expanded;
@@ -551,7 +620,7 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
       "message",
       width,
       [
-        ...markdownLines(body, palette, width).map((text) => line(text)),
+        ...replyLines(message.id, body, ctx),
         ...(imageLines.length > 0 ? [line(styled(chunk(""))), ...imageLines] : []),
       ],
       { marginTop: 1, marginBottom: checkpoint ? 0 : 1 },
@@ -565,6 +634,64 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
       }),
     );
   }
+}
+
+/**
+ * A reply's Markdown as lines. A click on a code block copies its source; a
+ * table is followed by a row that copies it as Markdown or CSV and cuts its
+ * cells to one line or wraps them again. What was just copied shows it.
+ */
+function replyLines(messageId: string, body: string, ctx: RowContext): TimelineLine[] {
+  const { palette, width } = ctx;
+  const tableKey = (index: number) => `${messageId}:table:${index}`;
+  const blocks = markdownBlockLines(body, palette, width, (index) =>
+    ctx.view.collapsedTables.has(tableKey(index)),
+  );
+  const lines: TimelineLine[] = [];
+  blocks.forEach((block, position) => {
+    if (block.code) {
+      const key = `${messageId}:code:${block.code.index}`;
+      const text =
+        ctx.copied === key
+          ? { chunks: block.text.chunks.map((part) => ({ ...part, fg: palette.success })) }
+          : block.text;
+      lines.push(
+        line(text, "timeline.copy", { key, text: block.code.source, label: "Code block" }),
+      );
+      return;
+    }
+    lines.push(line(block.text));
+    const table = block.table;
+    if (!table || blocks[position + 1]?.table?.index === table.index) return;
+    const key = tableKey(table.index);
+    const collapsed = ctx.view.collapsedTables.has(key);
+    const part = (label: string, action: string, payload: unknown) => ({
+      text: styled(chunk(label, { fg: palette.dim })),
+      action,
+      payload,
+    });
+    const copyPart = (format: "Markdown" | "CSV", text: string) => {
+      const copyKey = `${key}:${format}`;
+      return ctx.copied === copyKey
+        ? {
+            text: styled(chunk(`✓ Copied ${format}`, { fg: palette.success })),
+            action: "timeline.copy",
+            payload: { key: copyKey, text, label: "Table" },
+          }
+        : part(`⧉ ${format}`, "timeline.copy", { key: copyKey, text, label: "Table" });
+    };
+    lines.push({
+      ...line(styled(chunk(""))),
+      parts: [
+        copyPart("Markdown", tableToMarkdown(table.table)),
+        part(" · ", "", null),
+        copyPart("CSV", tableToCsv(table.table)),
+        part(" · ", "", null),
+        part(collapsed ? "⇲ Expand cells" : "⇱ Collapse cells", "timeline.table.toggle", { key }),
+      ],
+    });
+  });
+  return lines;
 }
 
 /**
@@ -593,7 +720,12 @@ function workGroupLines(
   const expanded = ctx.view.expandedGroups.has(id);
   const visible = hasOverflow && !expanded ? entries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : entries;
   const hidden = entries.length - visible.length;
-  const lines = visible.map((entry) => line(toolRow(entry, ctx)));
+  // A subagent's row opens the thread it works in.
+  const lines = visible.map((entry) =>
+    entry.childThreadId
+      ? line(toolRow(entry, ctx), "thread.open", { key: threadKey(entry.childThreadId) })
+      : line(toolRow(entry, ctx)),
+  );
   if (hasOverflow) {
     lines.push(
       line(
@@ -619,14 +751,17 @@ function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
   const label = workLogLabel(entry);
   const preview = workLogPreview(entry);
   const status = workLogStatusKind(entry);
-  const glyph = status === "neutral" ? null : STATUS_ICONS[status].glyph;
+  const word = workLogStatusLabel(entry);
+  // A call that neither succeeded nor failed (declined, stopped) is the neutral dash.
+  const glyph = status !== "neutral" || word !== null ? STATUS_ICONS[status].glyph : null;
+  const mark = [glyph, word].filter((part) => part !== null).join(" ");
   return styled(
     chunk(`${workLogIcon(entry)} `, {
       fg: entry.tone === "error" ? palette.error : palette.accent,
     }),
-    chunk(label),
-    glyph !== null &&
-      chunk(` ${glyph}`, {
+    chunk(label, { fg: palette.text }),
+    mark.length > 0 &&
+      chunk(` ${mark}`, {
         fg:
           status === "success"
             ? palette.success
@@ -635,7 +770,9 @@ function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
               : palette.faint,
       }),
     preview !== null &&
-      chunk(`  ${clip(preview, Math.max(8, width - label.length - 8))}`, { fg: palette.dim }),
+      chunk(`  ${clip(preview, Math.max(8, width - label.length - mark.length - 8))}`, {
+        fg: palette.dim,
+      }),
   );
 }
 
@@ -682,7 +819,7 @@ function changedFilesLines(
         line(
           styled(
             chunk(`${indent}${row.collapsed ? "▸" : "▾"} `, { fg: palette.dim }),
-            chunk(clip(`${row.name}/`, nameRoom)),
+            chunk(clip(`${row.name}/`, nameRoom), { fg: palette.text }),
             ...stats(row.additions, row.deletions),
           ),
           "timeline.files.toggleDir",
@@ -695,8 +832,10 @@ function changedFilesLines(
     lines.push(
       line(
         styled(
-          chunk(`${indent}◦ `, { fg: typeColor ? ansi(typeColor) : palette.faint }),
-          chunk(clip(row.name, nameRoom)),
+          chunk(`${indent}${fileGlyph(row.path)} `, {
+            fg: typeColor ? ansi(typeColor) : palette.faint,
+          }),
+          chunk(clip(row.name, nameRoom), { fg: palette.text }),
           ...stats(row.additions, row.deletions),
         ),
         "diff.open",
