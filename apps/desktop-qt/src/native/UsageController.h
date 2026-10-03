@@ -41,7 +41,9 @@ class ShellStore;
 // cachedInputTokens, uncachedInputTokens, cacheCreationTokens, outputTokens,
 // providers [{id, label, costUsd, totalTokens, sessions}], models [{provider,
 // model, costUsd, totalTokens, unpriced}], periods [{key, label, costUsd,
-// totalTokens}] newest first} | null, limits {pools [{driver, label, windows
+// totalTokens}] newest first, chart [{key, label, heading, costUsd [one per
+// provider], totalTokens [one per provider]}] every period of the window,
+// oldest first} | null, limits {pools [{driver, label, windows
 // [{key, label, remainingPercent, resetsAt, accounts [{name, usedPercent,
 // resetsAt}]}], credits [{key, name, available, nextExpiresAt, busy,
 // status}]}], notices [text]}}.
@@ -63,6 +65,7 @@ private:
   struct Answer {
     QString status;  // scanning, ready, failed, offline
     QJsonObject summary;
+    QJsonObject window;  // what the summary was asked over
   };
   // Where an account's reset credit is spent: `provider.consumeResetCredit`'s input.
   struct Redeem {

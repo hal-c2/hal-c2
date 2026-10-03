@@ -75,6 +75,12 @@ double tokens(const QJsonObject& totals) {
          number(totals, "cacheCreationTokens") + number(totals, "outputTokens");
 }
 
+// The period a bucket falls in: its day, or its hour as the window's hours are written.
+QString periodOf(const QJsonObject& bucket, bool hourly) {
+  if (!hourly) return text(bucket, "day");
+  return QDateTime::fromString(text(bucket, "hourStart"), Qt::ISODateWithMs).toUTC().toString(Qt::ISODateWithMs);
+}
+
 int kindRank(const QString& kind) {
   const int rank = kWindowKinds.indexOf(kind);
   return rank < 0 ? kWindowKinds.size() : rank;
@@ -272,14 +278,14 @@ void UsageController::read(bool rescan) {
         return;
       }
       m_client->call(this, environmentId, QStringLiteral("server.getUsageSummary"), input,
-                     [this, generation, environmentId, rescan](const QJsonValue& result, const std::optional<QString>& error) {
+                     [this, generation, environmentId, input, rescan](const QJsonValue& result, const std::optional<QString>& error) {
                        if (rescan) --m_refreshing;
                        if (generation != m_generation || !m_answers.contains(environmentId)) {
                          publish();
                          return;
                        }
                        m_answers[environmentId] = error ? Answer{QStringLiteral("failed"), {}}
-                                                        : Answer{QStringLiteral("ready"), result.toObject()};
+                                                        : Answer{QStringLiteral("ready"), result.toObject(), input};
                        publish();
                      });
     };
@@ -368,6 +374,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
   struct Contribution {
     QString id;
     QJsonObject summary;
+    QJsonObject window;
   };
   QList<Contribution> current;
   QStringList ids = m_answers.keys();
@@ -385,7 +392,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
       notices.append(QStringLiteral("%1 runs an older server version and is excluded from totals.").arg(label(environmentId)));
       continue;
     }
-    current.append({environmentId, answer.summary});
+    current.append({environmentId, answer.summary, answer.window});
   }
   if (current.isEmpty()) return {};
 
@@ -430,6 +437,8 @@ QVariantMap UsageController::summary(QStringList& notices) const {
   QHash<QString, Sum> providers;
   std::map<QPair<QString, QString>, Sum> models;
   std::map<QString, Sum> periods;
+  // Each provider's part of each period, which the chart draws.
+  QHash<QString, QHash<QString, Sum>> parts;
   const bool hourly = m_windowDays == 1;
   for (const Contribution& contribution : current) {
     QSet<QString> owned;
@@ -452,8 +461,9 @@ QVariantMap UsageController::summary(QStringList& notices) const {
       const double used = tokens(totals);
       const double records = number(bucket, "records");
       const double unpriced = number(bucket, "unpricedRecords");
-      for (Sum* sum : {&total, &providers[provider], &models[{provider, text(bucket, "model")}],
-                       &periods[hourly ? text(bucket, "hourStart") : text(bucket, "day")]}) {
+      const QString period = periodOf(bucket, hourly);
+      for (Sum* sum : {&total, &providers[provider], &models[{provider, text(bucket, "model")}], &periods[period],
+                       &parts[period][provider]}) {
         sum->cost += cost;
         sum->tokens += used;
         sum->records += records;
@@ -468,9 +478,11 @@ QVariantMap UsageController::summary(QStringList& notices) const {
   }
 
   QVariantList providerRows;
+  QStringList listed;
   for (const auto& [id, name] : kUsageProviders) {
     const Sum sum = providers.value(id);
     if (sum.tokens <= 0 && sum.cost <= 0) continue;
+    listed.append(id);
     providerRows.append(QVariantMap{{QStringLiteral("id"), id},
                                     {QStringLiteral("label"), name},
                                     {QStringLiteral("costUsd"), sum.cost},
@@ -492,18 +504,60 @@ QVariantMap UsageController::summary(QStringList& notices) const {
                                  {QStringLiteral("totalTokens"), sum.tokens},
                                  {QStringLiteral("unpriced"), sum.records > 0 && sum.unpriced >= sum.records}});
   }
+  const auto name = [hourly](const QString& period) {
+    if (hourly) {
+      return english().toString(QDateTime::fromString(period, Qt::ISODateWithMs).toLocalTime().time(), QStringLiteral("h AP"));
+    }
+    return english().toString(QDate::fromString(period, Qt::ISODate), QStringLiteral("MMM d"));
+  };
   QVariantList periodRows;
   for (auto it = periods.crbegin(); it != periods.crend(); ++it) {
-    QString name;
-    if (hourly) {
-      name = english().toString(QDateTime::fromString(it->first, Qt::ISODateWithMs).toLocalTime().time(), QStringLiteral("h AP"));
-    } else {
-      name = english().toString(QDate::fromString(it->first, Qt::ISODate), QStringLiteral("MMM d"));
-    }
     periodRows.append(QVariantMap{{QStringLiteral("key"), it->first},
-                                  {QStringLiteral("label"), name},
+                                  {QStringLiteral("label"), name(it->first)},
                                   {QStringLiteral("costUsd"), it->second.cost},
                                   {QStringLiteral("totalTokens"), it->second.tokens}});
+  }
+
+  // The chart: every period of the window the newest read was asked over, the
+  // quiet ones too, with each listed provider's part of it.
+  const QJsonObject& window = current.first().window;
+  QStringList charted;
+  if (hourly) {
+    const QDateTime until = QDateTime::fromString(text(window, "untilTime"), Qt::ISODateWithMs);
+    for (QDateTime hour = QDateTime::fromString(text(window, "sinceTime"), Qt::ISODateWithMs); hour.isValid() && hour < until;
+         hour = hour.addSecs(60 * 60)) {
+      charted.append(hour.toUTC().toString(Qt::ISODateWithMs));
+    }
+  } else {
+    const QDate until = QDate::fromString(text(window, "untilDay"), Qt::ISODate);
+    for (QDate day = QDate::fromString(text(window, "sinceDay"), Qt::ISODate); day.isValid() && day <= until; day = day.addDays(1)) {
+      charted.append(day.toString(Qt::ISODate));
+    }
+  }
+  // An hour is read out against the day the window ends on (formatRelativeHourShort).
+  const QDate today = QDateTime::fromString(text(window, "untilTime"), Qt::ISODateWithMs).toLocalTime().date();
+  QVariantList chartRows;
+  for (const QString& period : std::as_const(charted)) {
+    const QHash<QString, Sum> part = parts.value(period);
+    QVariantList cost, used;
+    for (const QString& id : std::as_const(listed)) {
+      cost.append(part.value(id).cost);
+      used.append(part.value(id).tokens);
+    }
+    const QString label = name(period);
+    QString heading = label;
+    if (hourly) {
+      const QDateTime hour = QDateTime::fromString(period, Qt::ISODateWithMs).toLocalTime();
+      const qint64 daysAgo = hour.date().daysTo(today);
+      heading = daysAgo == 0   ? QStringLiteral("%1 today").arg(label)
+                : daysAgo == 1 ? QStringLiteral("%1 yesterday").arg(label)
+                               : english().toString(hour, QStringLiteral("MMM d, h AP"));
+    }
+    chartRows.append(QVariantMap{{QStringLiteral("key"), period},
+                                 {QStringLiteral("label"), label},
+                                 {QStringLiteral("heading"), heading},
+                                 {QStringLiteral("costUsd"), cost},
+                                 {QStringLiteral("totalTokens"), used}});
   }
   return {
       {QStringLiteral("costUsd"), total.cost},
@@ -518,6 +572,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
       {QStringLiteral("providers"), providerRows},
       {QStringLiteral("models"), modelRows},
       {QStringLiteral("periods"), periodRows},
+      {QStringLiteral("chart"), chartRows},
   };
 }
 
