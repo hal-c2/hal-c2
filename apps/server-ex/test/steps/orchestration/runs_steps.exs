@@ -4,6 +4,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
+  alias HalC2.Steps.Plugins.Fixtures
 
   # Provider output is delivered to the thread's Codex runtime as if the (fake)
   # app-server sent it (`test/support/fake_codex.py` keeps a "wait" turn running).
@@ -677,6 +678,206 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
     assert [%{"threadId" => "native-thread-1", "reason" => "It went wrong"}] =
              World.codex_requests(context, "feedback/upload")
+
+    context
+  end
+
+  # --- a removed worktree -------------------------------------------------------------
+
+  # A real worktree of the project on its own branch, whose folder is then deleted the
+  # way the storage sweep (or the user) removes one: git still lists it.
+  step "{string} is in worktree {string} and that folder no longer exists",
+       %{args: [thread, _path]} = context do
+    Mc.ensure(
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry},
+        id: HalC2.Vcs.Registry
+      )
+    )
+
+    root = World.project(context, "demo").root
+    branch = "hal-c2/#{thread}"
+
+    {:ok, %{"worktree" => %{"path" => path}}} =
+      HalC2.Vcs.create_worktree(%{"cwd" => root, "refName" => "main", "newRefName" => branch})
+
+    context = World.patch_thread(context, thread, %{"worktreePath" => path, "branch" => branch})
+    File.rm_rf!(path)
+    refute File.exists?(path)
+    Map.put(context, :removed_worktree, %{path: path, branch: branch, root: root})
+  end
+
+  step "the worktree is recreated from the branch of {string}", %{args: [thread]} = context do
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    %{path: path, branch: branch} = context.removed_worktree
+    assert File.dir?(path)
+    assert World.git!(path, ~w(rev-parse --abbrev-ref HEAD)) == branch
+    assert File.exists?(Path.join(path, "README.md"))
+    assert %{"worktreePath" => ^path, "branch" => ^branch} = World.thread(context, thread)
+    context
+  end
+
+  step "only then does the turn start", context do
+    %{path: path, root: root} = context.removed_worktree
+    World.await_latest_run(context, context.thread, "completed")
+    # The provider was started in the recreated folder, and the baseline the engine
+    # takes before starting a turn was captured from it.
+    assert [%{"cwd" => ^path}] = turn_starts(context)
+    ref = HalC2.Checkpoint.ref(HalC2.Checkpoint.scope_id(World.thread_id(context, "t1")), 0)
+    assert World.git!(root, ["rev-parse", "--verify", "--quiet", ref]) != ""
+    context
+  end
+
+  # --- a plugin's own retries ----------------------------------------------------------
+
+  # A provider plugin that tries to open its session twice before giving up. Each
+  # attempt tells the scenario and waits for it, so the run can be read in between.
+  @flaky_plugin """
+  defmodule HalC2PluginFixture.Flaky do
+    @behaviour HalC2.Plugins.ProviderAdapter
+    alias HalC2.Orchestration.TurnWriter
+
+    @attempts 2
+
+    def manifest do
+      %{
+        id: "flaky",
+        name: "Flaky",
+        version: "1.0.0",
+        api_version: 1,
+        settings: [],
+        provider: %{
+          driver: "flaky",
+          name: "Flaky",
+          capabilities: [],
+          models: [%{slug: "flaky-1", name: "Flaky One"}]
+        }
+      }
+    end
+
+    def start_turn(thread_id, turn) do
+      {:ok, _} =
+        DynamicSupervisor.start_child(HalC2.Plugins.sessions("flaky"), %{
+          id: :turn,
+          start: {Task, :start_link, [fn -> run(thread_id, turn) end]},
+          restart: :temporary
+        })
+
+      :ok
+    end
+
+    defp run(thread_id, turn) do
+      state = %{thread_id: thread_id, turn: turn, items: %{}, buffer: %{}, flush_timer: nil}
+
+      for attempt <- 1..@attempts do
+        send(Process.whereis(:hal_c2_plugin_probe), {:opening_session, attempt, self()})
+
+        receive do
+          :refused -> :ok
+        end
+      end
+
+      TurnWriter.finish(
+        state,
+        "failed",
+        "Flaky could not open its session after \#{@attempts} attempts."
+      )
+    end
+  end
+  """
+
+  step "a provider whose plugin retries opening its session", context do
+    Fixtures.probe()
+
+    context
+    |> World.providers()
+    |> Fixtures.install("flaky", @flaky_plugin)
+    |> Fixtures.enable("flaky")
+    |> World.patch_thread("t1", %{
+      "modelSelection" => %{"instanceId" => "flaky", "model" => "flaky-1"},
+      "providerInstanceId" => "flaky"
+    })
+  end
+
+  # Every attempt the plugin makes is refused, as the scenario hears of it.
+  step "opening the session fails the first time", context do
+    assert Fixtures.entry("flaky")["status"] == "running"
+    context
+  end
+
+  step "the plugin opens the session again", context do
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    assert_receive {:opening_session, 1, plugin}, 5_000
+    # The first failure is the plugin's to handle: the run is still starting.
+    assert %{"status" => "starting"} = World.latest_run(context, context.thread)
+    send(plugin, :refused)
+    assert_receive {:opening_session, 2, ^plugin}, 5_000
+    Map.put(context, :plugin_turn, plugin)
+  end
+
+  step "the run fails only once the plugin gives up", context do
+    # Still the one run, neither failed nor started again by the engine.
+    assert [%{"status" => "starting", "ordinal" => 1}] = World.runs(context, context.thread)
+    send(context.plugin_turn, :refused)
+    run = World.await_latest_run(context, context.thread, "failed")
+    assert [%{"id" => id}] = World.runs(context, context.thread)
+    assert id == run["id"]
+    refute_received {:opening_session, _, _}
+
+    assert session(context, context.thread, "flaky")["lastError"] ==
+             "Flaky could not open its session after 2 attempts."
+
+    context
+  end
+
+  # --- a failed turn's output ----------------------------------------------------------
+
+  step "the provider streamed part of its answer to {string} and then failed",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+
+    context
+    |> notify("item/started", item("agentMessage", "msg-partial"))
+    |> notify("item/agentMessage/delta", delta("msg-partial", "Half an ans"))
+    |> notify("turn/completed", %{
+      "turn" => %{
+        "id" => native_turn(context),
+        "status" => "failed",
+        "error" => %{"message" => "The model stopped responding."}
+      }
+    })
+  end
+
+  step "the failure is recorded", context do
+    await_status(context, context.running, "failed")
+    context
+  end
+
+  step "the partial answer stays in the failed run", context do
+    state = World.state(context, context.thread)
+    run = context.running
+
+    assert %{"text" => "Half an ans", "streaming" => false, "runId" => ^run, "status" => status} =
+             state.entities["turn-item"]["turn-item:codex:msg-partial"]
+
+    assert status != "running"
+
+    assert %{"text" => "Half an ans", "streaming" => false, "role" => "assistant", "runId" => ^run} =
+             state.entities["message"]["message:codex:msg-partial"]
+
+    # A client's transcript still shows it.
+    {items, context} = World.timeline(context, context.thread)
+    assert Enum.any?(items, &(&1["id"] == "turn-item:codex:msg-partial"))
+    context
+  end
+
+  step "the run is marked failed", context do
+    assert %{"status" => "failed", "completedAt" => at} =
+             World.state(context, context.thread).entities["run"][context.running]
+
+    assert is_binary(at)
+
+    assert session(context, context.thread, "codex")["lastError"] ==
+             "The model stopped responding."
 
     context
   end

@@ -27,6 +27,9 @@ public:
     QString label;
     std::function<void()> run;
     bool keepsToast = false;
+    // What kind of change it takes back ("Settled", "Snoozed"): consecutive
+    // toasts of one group are undone together, as the web's undo notice.
+    QString group;
   };
 
   ToastController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
@@ -54,7 +57,8 @@ public:
   bool replace(const QString& id, const QString& type, const QString& title, const QString& description,
                QList<Action> actions, int timeoutMs);
   // Runs the action of the newest toast offering `label` (the undo shortcut's
-  // "Undo"), as clicking it would; false when none does.
+  // "Undo"), as clicking it would; false when none does. The toasts next to
+  // it offering the same action for the same group run with it.
   bool runAction(const QString& label);
   // Drops the toasts whose time is up; the timer calls it at the next deadline.
   void expire();

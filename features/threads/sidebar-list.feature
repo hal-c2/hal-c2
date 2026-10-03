@@ -165,7 +165,7 @@ Feature: The thread list
     When the user holds the thread jump modifier
     Then the first nine threads show their jump numbers after a short delay
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The list catches up after a reconnect
     Given the client was disconnected while two threads were created
     When the client reconnects

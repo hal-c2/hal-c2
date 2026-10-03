@@ -1181,7 +1181,15 @@ defmodule HalC2.Orchestration do
   end
 
   defp builtin_driver("claudeAgent"), do: "claudeAgent"
-  defp builtin_driver(instance), do: if(HalC2.Acp.agent?(instance), do: instance, else: "codex")
+
+  # An instance the settings add for Claude runs on Claude, as the built-in one does.
+  defp builtin_driver(instance) do
+    cond do
+      HalC2.Acp.agent?(instance) -> instance
+      instance in HalC2.Settings.instances_of("claudeAgent") -> "claudeAgent"
+      true -> "codex"
+    end
+  end
 
   @doc "The runtime (a `HalC2.Plugins.ProviderAdapter`) for a provider instance."
   def runtime(instance) do
@@ -1199,6 +1207,7 @@ defmodule HalC2.Orchestration do
     cond do
       HalC2.Acp.driver(instance) == "pi" -> HalC2.Pi.ThreadRuntime
       HalC2.Acp.agent?(instance) -> HalC2.Acp.ThreadRuntime
+      instance in HalC2.Settings.instances_of("claudeAgent") -> HalC2.Claude.ThreadRuntime
       true -> HalC2.Codex.ThreadRuntime
     end
   end

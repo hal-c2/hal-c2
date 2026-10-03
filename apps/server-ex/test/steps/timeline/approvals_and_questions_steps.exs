@@ -130,7 +130,12 @@ defmodule HalC2.Steps.Timeline.ApprovalsAndQuestions do
     Map.put(context, :claude_starts, length(World.claude_starts(context)))
   end
 
-  step "the user is asked again", context do
+  @doc """
+  The Claude half of "the user is asked again": a new Claude process, resuming the
+  conversation, asks about the command the released session had been allowed. The
+  step itself lives in `HalC2.Steps.Providers.PermissionModes`, which shares its text.
+  """
+  def asked_again_by_new_claude_session(context) do
     state = World.stream(context, World.current(context))
     request = StreamState.get(state, "runtime-request")[context.request_id]
     assert %{"status" => "pending", "kind" => "command"} = request

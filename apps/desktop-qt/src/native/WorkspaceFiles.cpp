@@ -231,8 +231,15 @@ void WorkspaceFiles::closeFile() {
   if (had) emit fileChanged();
 }
 
+void WorkspaceFiles::setDefaultWrap(bool wrap) {
+  if (wrap == m_defaultWrap) return;
+  const bool before = this->wrap();
+  m_defaultWrap = wrap;
+  if (this->wrap() != before) emit wrapChanged();
+}
+
 void WorkspaceFiles::setWrap(bool wrap) {
-  if (wrap == m_wrap) return;
+  if (wrap == this->wrap()) return;
   m_wrap = wrap;
   emit wrapChanged();
 }

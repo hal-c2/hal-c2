@@ -207,7 +207,7 @@ Feature: Where HAL-C2 keeps its files
         | HAL_C2_HOME is "/srv/hal-c2"                  | "/srv/hal-c2/data"  |
         | the server is given --base-dir "/tmp/sandbox" | "/tmp/sandbox/data" |
 
-    @backlog @mc
+    @mc
     Scenario Outline: Pairing finds a running server in either profile
       Given <which> server is running with no HAL-C2 home configured
       When the user runs "hal-c2 pair"

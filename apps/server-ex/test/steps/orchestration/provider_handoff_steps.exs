@@ -94,6 +94,136 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  # --- context occupancy --------------------------------------------------------------
+
+  # Codex reports its token usage during a turn; the turn then ends.
+  step "{string} has used 80 percent of its provider context", %{args: [thread]} = context do
+    context = context |> World.running_turn(thread) |> report_usage(160_000)
+    usage = await_usage(context, thread, 160_000)
+    assert %{"usedTokens" => 160_000, "maxTokens" => 200_000} = usage
+    context |> end_turn(thread) |> Map.put(:usage_before, usage)
+  end
+
+  step "the user changes {string} to another model on the same provider",
+       %{args: [thread]} = context do
+    context =
+      World.command(context, %{
+        "type" => "thread.model-selection.set",
+        "threadId" => World.thread_id(context, thread),
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-b"}
+      })
+
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "the next run reports the context occupancy from before the change", context do
+    thread = context.thread
+    context = World.running_turn(context, thread)
+    run = World.state(context, thread).entities["run"][context.running]
+    assert run["modelSelection"]["model"] == "gpt-b"
+    assert %{"model" => "gpt-b"} = List.last(World.codex_requests(context, "turn/start"))
+    # The run is on the same provider thread, which still carries the earlier usage.
+    assert context.usage_before == provider_thread(context, thread, run)["contextUsage"]
+    context
+  end
+
+  step "the meter does not reset to zero until the provider reports new usage", context do
+    thread = context.thread
+    run = World.state(context, thread).entities["run"][context.running]
+
+    # Nothing in the model change or the new run's start touched it...
+    refute Enum.any?(World.events(context, thread), fn event ->
+             event.kind == "provider-thread" and
+               match?(%{"contextUsage" => usage} when usage != context.usage_before, event.patch["s"])
+           end)
+
+    # ...and it moves when Codex reports usage on the new model.
+    context = report_usage(context, 1_000)
+    assert %{"usedTokens" => 1_000, "maxTokens" => 200_000} = await_usage(context, thread, 1_000)
+    context = end_turn(context, thread)
+    assert %{"usedTokens" => 1_000} = provider_thread(context, thread, run)["contextUsage"]
+    context
+  end
+
+  # --- a failed turn -------------------------------------------------------------------
+
+  # A real Codex turn that ran a command, began its answer and then failed; Codex's
+  # own conversation is still there (its native thread).
+  step "{string} has a failed turn whose provider context is still usable",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread, "Run the migration, finishing the schema")
+    {_pid, runtime} = World.codex_runtime(context, thread)
+
+    command = %{
+      "type" => "commandExecution",
+      "id" => "cmd-failed",
+      "command" => "mix ecto.migrate"
+    }
+
+    context
+    |> World.codex_notify(thread, "item/started", %{"item" => command})
+    |> World.codex_notify(thread, "item/completed", %{
+      "item" =>
+        Map.merge(command, %{
+          "status" => "failed",
+          "aggregatedOutput" => "connection refused",
+          "exitCode" => 1
+        })
+    })
+    |> World.codex_notify(thread, "item/started", %{
+      "item" => %{"type" => "agentMessage", "id" => "msg-failed"}
+    })
+    |> World.codex_notify(thread, "item/agentMessage/delta", %{
+      "itemId" => "msg-failed",
+      "delta" => "The database is not"
+    })
+    |> World.codex_notify(thread, "turn/completed", %{
+      "turn" => %{
+        "id" => runtime.turn.native_turn_id,
+        "status" => "failed",
+        "error" => %{"message" => "The model stopped responding."}
+      }
+    })
+
+    World.await_state(context, thread, &(&1.entities["run"][context.running]["status"] == "failed"))
+    [provider_thread] = World.entities(context, thread, "provider-thread")
+    assert %{"nativeId" => "native-thread-1"} = provider_thread["nativeThreadRef"]
+    context |> Map.delete(:reply) |> Map.put(:failed_run, context.running)
+  end
+
+  step "the user switches {string} to {string} and sends a message",
+       %{args: [thread, provider]} = context do
+    context = switch(context, thread, provider, @models[provider])
+    assert {:ok, _} = context.reply
+    context = run(context, thread, "Carry on")
+    Map.put(context, :prompt, List.last(World.claude_prompts(context)))
+  end
+
+  step "the provider receives the context of the failed turn", context do
+    transcript = transcript(context.prompt)
+
+    assert transcript =~
+             "User: Run the migration, finishing the schema\n\n" <>
+               "Command: mix ecto.migrate\nExit code: 1\nconnection refused\n\n" <>
+               "Assistant: The database is not"
+
+    assert String.ends_with?(context.prompt, @history_end <> "\n\nCarry on")
+    context
+  end
+
+  step "the failed turn stays in the history of {string}", %{args: [thread]} = context do
+    state = World.state(context, thread)
+    assert %{"status" => "failed", "ordinal" => 3} = state.entities["run"][context.failed_run]
+    {items, context} = World.timeline(context, thread)
+    shown = for item <- items, item["runId"] == context.failed_run, do: item["id"]
+    assert "turn-item:codex:cmd-failed" in shown
+    assert "turn-item:codex:msg-failed" in shown
+    # The run on the new provider came after it, as run 4.
+    assert %{"ordinal" => 4, "providerInstanceId" => "claudeAgent"} = World.latest_run(context, thread)
+    context
+  end
+
   # --- acting -----------------------------------------------------------------------
 
   step "the user sets the model of {string} to {string} on {string}",
@@ -286,6 +416,54 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   end
 
   # --- helpers ----------------------------------------------------------------------
+
+  # Codex's `thread/tokenUsage/updated` for the running turn: `used` of 200,000 tokens.
+  defp report_usage(context, used) do
+    {_pid, runtime} = World.codex_runtime(context, context.thread)
+
+    World.codex_notify(context, context.thread, "thread/tokenUsage/updated", %{
+      "threadId" => runtime.native_thread_id,
+      "turnId" => runtime.turn.native_turn_id,
+      "tokenUsage" => %{
+        "last" => %{
+          "totalTokens" => used,
+          "inputTokens" => used - 100,
+          "cachedInputTokens" => 0,
+          "outputTokens" => 100,
+          "reasoningOutputTokens" => 0
+        },
+        "total" => %{"totalTokens" => used},
+        "modelContextWindow" => 200_000
+      }
+    })
+  end
+
+  defp await_usage(context, thread, used) do
+    state =
+      World.await_state(context, thread, fn state ->
+        Enum.any?(
+          HalC2.StreamState.list(state, "provider-thread"),
+          &(&1["contextUsage"]["usedTokens"] == used)
+        )
+      end)
+
+    state |> HalC2.StreamState.list("provider-thread") |> hd() |> Map.fetch!("contextUsage")
+  end
+
+  defp end_turn(context, thread) do
+    {_pid, runtime} = World.codex_runtime(context, thread)
+
+    context =
+      World.codex_notify(context, thread, "turn/completed", %{
+        "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+      })
+
+    World.await_state(context, thread, &(&1.entities["run"][context.running]["status"] == "completed"))
+    Map.delete(context, :reply)
+  end
+
+  defp provider_thread(context, thread, run),
+    do: World.state(context, thread).entities["provider-thread"][run["providerThreadId"]]
 
   defp switch(context, thread, provider, model) do
     context

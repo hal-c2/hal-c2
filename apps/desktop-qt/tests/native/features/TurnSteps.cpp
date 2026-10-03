@@ -11,6 +11,7 @@
 #include "CommandPaletteController.h"
 #include "ComposerBrick.h"
 #include "ComposerController.h"
+#include "Brick.h"
 #include "Harness.h"
 #include "Keymap.h"
 #include "NativeShell.h"
@@ -46,7 +47,12 @@ void openThread(World& world) {
                                         {QStringLiteral("title"), kProject},
                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
                                         {QStringLiteral("scripts"), QJsonArray()}});
-  world.connect();
+  if (world.shellSubscriptions() == 0) {
+    world.connect();
+  } else {
+    // Already connected: the project arrives as a row.
+    world.mc.sendRow(kProject, world.mc.projects.value(kProject), QStringLiteral("project"));
+  }
   world.sync();
   lookAtThread(world, kProject);
 }
@@ -323,6 +329,8 @@ const Steps steps([] {
       }
       // Or the welcome wizard's pairing, setup terminal or import error.
       if (onboardingTells(world, c[0])) return true;
+      // Or what a brick on screen says.
+      if (world.brick && world.brick->shows(c[0])) return true;
       return conditionProblem(world) == c[0];
     };
     world.waitFor(told, [&] {
@@ -624,4 +632,12 @@ void pickAnswer(World& world, const QString& label) {
 
 void openTurnThread(World& world) {
   openThread(world);
+}
+
+void startWorkingTurn(World& world) {
+  startWorking(world);
+}
+
+void queueTurnMessage(World& world, const QString& text) {
+  queueMessage(world, text);
 }

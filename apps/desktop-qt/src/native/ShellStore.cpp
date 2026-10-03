@@ -15,6 +15,11 @@ QHash<QString, QJsonObject>* rowsOf(auto& mc, const QString& kind) {
   return nullptr;
 }
 
+// A forwarding record: the thread moved to another machine, which lists it now.
+bool forwarded(const QJsonObject& row) {
+  return row.value(QLatin1String("movedTo")).isObject();
+}
+
 bool removed(const QJsonObject& row) {
   const QJsonValue deletedAt = row.value(QLatin1String("deletedAt"));
   return row.isEmpty() || (!deletedAt.isUndefined() && !deletedAt.isNull());
@@ -32,7 +37,9 @@ QList<sidebar::Thread> ShellStore::threads() const {
   for (const Mc& mc : m_mcs) {
     // An MC whose environment is not known yet has no key for its threads.
     if (mc.environmentId.isEmpty()) continue;
-    for (const QJsonObject& row : mc.threads) result.append(sidebar::threadFromRow(mc.environmentId, row));
+    for (const QJsonObject& row : mc.threads) {
+      if (!forwarded(row)) result.append(sidebar::threadFromRow(mc.environmentId, row));
+    }
   }
   return result;
 }
@@ -145,9 +152,16 @@ std::optional<sidebar::Thread> ShellStore::thread(const QString& key) const {
   for (const Mc& mc : m_mcs) {
     if (mc.environmentId != environmentId) continue;
     const auto row = mc.threads.constFind(threadId);
-    if (row != mc.threads.constEnd()) return sidebar::threadFromRow(environmentId, *row);
+    if (row != mc.threads.constEnd() && !forwarded(*row)) return sidebar::threadFromRow(environmentId, *row);
   }
   return std::nullopt;
+}
+
+std::optional<QString> ShellStore::movedTo(const QString& key) const {
+  const QJsonObject moved = threadRow(key).value(QLatin1String("movedTo")).toObject();
+  const QString environmentId = moved.value(QLatin1String("environmentId")).toString();
+  if (environmentId.isEmpty()) return std::nullopt;
+  return environmentId + key.mid(key.indexOf(QLatin1Char(':')));
 }
 
 QJsonObject ShellStore::threadRow(const QString& key) const {

@@ -72,7 +72,7 @@ Feature: Environment themes and the desktop shell theme
       When the server updates "nightfall"
       Then the app shows the updated colors
 
-    @backlog @desktop
+    @desktop
     Scenario: Duplicating a published theme makes an independent copy
       Given the server publishes "nightfall"
       When the user duplicates "nightfall"

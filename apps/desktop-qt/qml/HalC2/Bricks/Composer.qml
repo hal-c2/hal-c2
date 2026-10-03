@@ -104,6 +104,9 @@ Rectangle {
                 // The stash takes the text as typed, not as last debounced.
                 composer.flushText();
                 Shell.dispatch("composer.stash");
+            } else if (action === "composer.submit.key") {
+                // composer.sendAlternate or sendBackground bound to another key.
+                composer.submit(payload.intent);
             } else if (action === "composer.focus") {
                 // A dismissed command palette hands the keyboard back.
                 composer.focusInput();
@@ -697,6 +700,9 @@ Rectangle {
                         id: input
                         objectName: "input"
 
+                        // ShellWindow reads it for the keymap's composerFocus.
+                        readonly property bool composerInput: true
+
                         padding: 0
                         enabled: composer.ready && !composer.model.editorDisabled
                         placeholderText: composer.ready ? composer.model.placeholder : qsTr("Open a thread to start")
@@ -1007,7 +1013,7 @@ Rectangle {
             Layout.rightMargin: 22
             Layout.topMargin: -16
             implicitHeight: 16 + 4 + 24 + 4
-            visible: wsReady
+            visible: wsReady && (composer.model?.showContextStrip ?? true)
 
             Rectangle {
                 anchors.fill: parent

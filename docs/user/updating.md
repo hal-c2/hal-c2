@@ -18,6 +18,8 @@ different value, use **Apply to all** in Settings after it connects.
 HAL-C2 must start again on that machine;
 the setting does not enable automatic startup. Terminal commands may still be
 interrupted, and threads without saved provider resume state need a new message.
+An agent that had left a command running in the background is told the restart
+stopped it, so it can start the command again.
 If you previously enabled continuation for updates, enable this setting once
 to allow recovery without a connected client.
 

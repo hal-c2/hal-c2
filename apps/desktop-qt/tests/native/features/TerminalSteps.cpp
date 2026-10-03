@@ -748,4 +748,43 @@ const Steps steps([] {
   });
 });
 
+// Who gets the keyboard when a terminal appears (navigation/focus.feature):
+// TerminalDrawer focuses a terminal only when the controller asks
+// (focusRequested), which it does for what the user opens.
+struct TerminalFocus {
+  QStringList requested;
+  QString thread;
+};
+
+const Steps focusSteps([] {
+  step(QStringLiteral("the user is typing in the composer"), [](World& world, const Captures&, const Table&) {
+    ensureProject(world);
+    TerminalFocus& focus = world.mc.part<TerminalFocus>();
+    focus.thread = ensureThread(world);
+    auto* terminals = world.native().controller<TerminalController>();
+    world.waitFor([terminals] { return terminals->available(); }, QStringLiteral("the thread's terminal drawer"));
+    QObject::connect(terminals, &TerminalController::focusRequested, terminals, [&focus](const QString& id) { focus.requested.append(id); });
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), world.mc.environmentId + QLatin1Char(':') + focus.thread},
+                                        {QStringLiteral("text"), QStringLiteral("Add tax to")}, {QStringLiteral("cursor"), 10}});
+  });
+  step(QStringLiteral("a terminal starts on its own"), [](World& world, const Captures&, const Table&) {
+    // One the agent or a setup script started: the MC lists it.
+    addTerminal(world.mc, world.mc.part<TerminalFocus>().thread, QStringLiteral("term-agent"), QStringLiteral("bun dev"), true);
+    world.sync();
+  });
+  step(QStringLiteral("the composer keeps keyboard focus"), [](World& world, const Captures&, const Table&) {
+    const TerminalFocus& focus = world.mc.part<TerminalFocus>();
+    auto* terminals = world.native().controller<TerminalController>();
+    // The drawer stays as it was and nothing asks for the keyboard.
+    expect(focus.requested.isEmpty() && !terminals->isOpen(),
+           QStringLiteral("the terminal asked for the keyboard: %1 (drawer open: %2)").arg(focus.requested.join(QStringLiteral(", "))).arg(terminals->isOpen()));
+    // Unlike when the user opens the drawer, which shows that terminal and focuses it.
+    world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+    world.waitFor([terminals] { return terminals->isOpen() && terminals->tabs()->rowCount() == 1; },
+                  [&] { return QStringLiteral("the terminal to be listed; %1").arg(describeRows(world)); });
+    expect(focus.requested == QStringList{QStringLiteral("term-agent")}, QStringLiteral("opening it focused %1").arg(focus.requested.join(QStringLiteral(", "))));
+  });
+});
+
 }  // namespace

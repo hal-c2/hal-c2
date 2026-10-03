@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
 import "js/settingsRows.js" as Rows
@@ -15,8 +16,6 @@ SettingsPage {
     rows: Rows.appearance
 
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    // The theme editor, opened over the window.
-    readonly property alias editor: editor
     readonly property var modes: [
         { mode: "system", label: qsTr("System") },
         { mode: "light", label: qsTr("Light") },
@@ -135,7 +134,20 @@ SettingsPage {
                 Accessible.name: qsTr("Edit %1").arg(themeRow.modelData.label)
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Edit")
-                onClicked: editor.edit(Themes.draft(themeRow.modelData.id))
+                onClicked: Themes.edit(Themes.draft(themeRow.modelData.id))
+            }
+
+            ShellButton {
+                subtle: true
+                text: qsTr("Export")
+                Accessible.name: qsTr("Export %1").arg(themeRow.modelData.label)
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Export")
+                onClicked: {
+                    exporter.themeId = themeRow.modelData.id;
+                    exporter.currentFile = exporter.currentFolder + "/" + themeRow.modelData.id + ".json";
+                    exporter.open();
+                }
             }
 
             ShellButton {
@@ -145,10 +157,7 @@ SettingsPage {
                 Accessible.name: qsTr("Remove %1").arg(themeRow.modelData.label)
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Remove")
-                onClicked: {
-                    removal.theme = themeRow.modelData;
-                    removal.open();
-                }
+                onClicked: Themes.requestRemove(themeRow.modelData.id)
             }
         }
     }
@@ -162,7 +171,16 @@ SettingsPage {
             const draft = Themes.draft("");
             draft.id = "";
             draft.label = qsTr("%1 copy").arg(draft.label);
-            editor.edit(draft);
+            Themes.edit(draft);
+        }
+    }
+
+    ShellButton {
+        objectName: "importTheme"
+        text: qsTr("Import theme")
+        onClicked: {
+            Themes.clearImport();
+            importer.open();
         }
     }
 
@@ -211,38 +229,21 @@ SettingsPage {
         }
     }
 
-    ThemeEditor {
-        id: editor
+    ThemeImportDialog {
+        id: importer
 
         parent: Overlay.overlay
     }
 
-    Dialog {
-        id: removal
+    FileDialog {
+        id: exporter
 
-        property var theme: null
+        property string themeId: ""
 
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        scale: Shell.state.layout?.zoom ?? 1
-        transformOrigin: Item.TopLeft
-        modal: true
-        title: theme ? qsTr("Remove “%1”?").arg(theme.label) : ""
-        onAccepted: Themes.removeCustom(theme.id)
-
-        Label {
-            text: qsTr("This device will no longer offer it.")
-        }
-
-        footer: DialogButtonBox {
-            Button {
-                text: qsTr("Remove")
-                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
-            }
-            Button {
-                text: qsTr("Cancel")
-                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
-            }
-        }
+        title: qsTr("Export theme")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("Theme files (*.json)")]
+        defaultSuffix: "json"
+        onAccepted: Themes.exportTheme(themeId, selectedFile.toString().replace(/^file:\/\//, ""))
     }
 }

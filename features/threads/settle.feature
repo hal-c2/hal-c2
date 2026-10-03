@@ -40,7 +40,7 @@ Feature: Settling threads
     Then the status line reports that the settle failed and why
     And "Ship checkout" stays active
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Settling a pinned thread removes the pin
     Given "Ship checkout" is pinned
     When the user settles "Ship checkout"
@@ -52,7 +52,7 @@ Feature: Settling threads
     When the user settles "Ship checkout"
     Then the question is dismissed
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Settling a snoozed thread ends the snooze
     Given "Ship checkout" is snoozed until tomorrow
     When the user settles "Ship checkout"

@@ -155,6 +155,13 @@ void ComposerController::activate() {
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &ComposerController::follow);
   // A draft opened, renewed or promoted in any window.
   connect(shell->controller<DraftController>(), &DraftController::changed, this, &ComposerController::publish);
+  // A thread that moved to another machine takes what was written in it along.
+  connect(m_store, &ShellStore::changed, this, [this] {
+    for (const QString& key : m_drafts.keys()) {
+      const auto moved = m_store->movedTo(key);
+      if (moved && !m_drafts.contains(*moved)) m_drafts.insert(*moved, m_drafts.take(key));
+    }
+  });
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, &ComposerController::publish);
   // The route environment's providers are the picker's catalogue.
@@ -560,6 +567,13 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
     return true;
   }
   if (fromDraft && filesBlock(m_drafts.value(target).attachments, QStringLiteral("sending"))) return true;
+  // A thread on its way to another machine is read-only until it arrives.
+  if (thread->movingTo) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("%1 is moving to %2: message not sent").arg(thread->title, *thread->movingTo),
+        QStringLiteral("Your message is kept as a draft. Send it once the thread has arrived."));
+    return true;
+  }
   const QString trimmed = text.trimmed();
   QJsonObject plan;
   if (planFollowUp) {
@@ -2125,6 +2139,9 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   return QVariantMap{
       {QStringLiteral("target"), target},
       {QStringLiteral("routeKind"), isDraft ? QStringLiteral("draft") : QStringLiteral("server")},
+      // The branch and worktree controls under the composer: a new thread's,
+      // and kept once it has started only when the user asks (Composer context).
+      {QStringLiteral("showContextStrip"), isDraft || setting(QStringLiteral("persistComposerContextStrip")).toBool()},
       {QStringLiteral("edit"), kept.edit.isValid() ? kept.edit : QVariant::fromValue(nullptr)},
       {QStringLiteral("text"), text},
       {QStringLiteral("cursor"), cursor},
