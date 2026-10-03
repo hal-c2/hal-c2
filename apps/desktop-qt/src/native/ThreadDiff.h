@@ -64,6 +64,8 @@ public:
   DiffModel* model() { return &m_model; }
   QVariantList choices() const;
   int latestTurn() const { return m_turns.isEmpty() ? 0 : m_turns.lastKey(); }
+  // The latest finished turn's checkpoint (its `id` and the `files` it changed); empty when none.
+  QJsonObject latestCheckpoint() const { return m_turns.isEmpty() ? QJsonObject() : m_turns.last(); }
   int selection() const { return m_selection; }
   Q_INVOKABLE void select(int selection);
   // Selects the turn the run (a turn id) finished; unknown runs change nothing.
@@ -71,8 +73,11 @@ public:
   int shownTurn() const;
   QString status() const { return m_status; }
   QString message() const { return m_message; }
-  bool ignoreWhitespace() const { return m_ignoreWhitespace; }
+  // Whether whitespace-only edits are left out: what the user chose here, else
+  // the "Hide whitespace changes" setting (setDefaultIgnoreWhitespace).
+  bool ignoreWhitespace() const { return m_ignoreWhitespace.value_or(m_defaultIgnoreWhitespace); }
   void setIgnoreWhitespace(bool ignore);
+  void setDefaultIgnoreWhitespace(bool ignore);
   // Whether long lines wrap: what the user chose here, else the word wrap
   // setting (setDefaultWrap).
   bool wrap() const { return m_wrap.value_or(m_defaultWrap); }
@@ -119,7 +124,8 @@ private:
   QMap<int, QJsonObject> m_turns;
   int m_selection = -1;
   bool m_active = false;
-  bool m_ignoreWhitespace = true;
+  std::optional<bool> m_ignoreWhitespace;
+  bool m_defaultIgnoreWhitespace = true;
   std::optional<bool> m_wrap;
   bool m_defaultWrap = false;
   QString m_status = QStringLiteral("idle");

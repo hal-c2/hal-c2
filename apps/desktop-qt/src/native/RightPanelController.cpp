@@ -115,9 +115,27 @@ void RightPanelController::activate() {
       const bool wrap = settings->setting(QStringLiteral("wordWrap")).toBool();
       m_diff.setDefaultWrap(wrap);
       m_files.setDefaultWrap(wrap);
+      // Settings → General's diff defaults: how a diff opens.
+      m_diff.setDefaultIgnoreWhitespace(settings->setting(QStringLiteral("diffIgnoreWhitespace")).toBool());
+      const bool split = settings->setting(QStringLiteral("diffLayout")).toString() == QLatin1String("split");
+      const bool collapsed = settings->setting(QStringLiteral("diffFilesCollapsed")).toBool();
+      for (DiffModel* model : {m_diff.model(), m_review.model()}) {
+        model->setSplit(split);
+        model->setCollapsedByDefault(collapsed);
+      }
     };
     connect(settings, &SettingsController::deviceChanged, this, follow);
     follow();
+    connect(settings, &SettingsController::deviceChanged, this, &RightPanelController::openProactively);
+    connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::openProactively);
+    connect(&m_diff, &ThreadDiff::turnsChanged, this, &RightPanelController::openProactively);
+    // The layout toggle in a diff's toolbar changes the setting too.
+    for (DiffModel* model : {m_diff.model(), m_review.model()}) {
+      connect(model, &DiffModel::splitChanged, this, [settings, model] {
+        const QString layout = model->split() ? QStringLiteral("split") : QStringLiteral("stacked");
+        if (settings->setting(QStringLiteral("diffLayout")).toString() != layout) settings->set(QStringLiteral("diffLayout"), layout);
+      });
+    }
   }
   // Its panel groups come and go with their terminals.
   if (auto* terminals = shell->controller<TerminalController>()) {
@@ -218,9 +236,40 @@ void RightPanelController::retarget() {
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
     m_devices.setThread(environmentId, threadId, m_store->mcServing(environmentId));
+    openProactively();
   }
   presentCommands();
   update();
+}
+
+void RightPanelController::openProactively() {
+  if (!m_active || !m_onThread) return;
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  if (!settings || !settings->setting(QStringLiteral("proactivePanelsEnabled")).toBool()) return;
+  // Linked pull requests first: the one there is, else their list.
+  QStringList links;
+  for (int row = 0; row < m_pullRequests.rowCount(); ++row) links.append(m_pullRequests.value(row, ThreadPullRequests::KeyRole).toString());
+  QString target = links.join(QLatin1Char('\n'));
+  if (target.isEmpty()) {
+    // Otherwise the latest turn's diff, when it changed at least 3 files or 50 lines.
+    const QJsonObject checkpoint = m_diff.latestCheckpoint();
+    const QJsonArray files = checkpoint.value(QLatin1String("files")).toArray();
+    int lines = 0;
+    for (const QJsonValue& file : files) {
+      lines += file.toObject().value(QLatin1String("additions")).toInt() + file.toObject().value(QLatin1String("deletions")).toInt();
+    }
+    if (files.size() >= 3 || lines >= 50) target = QStringLiteral("diff:") + checkpoint.value(QLatin1String("id")).toString();
+  }
+  if (target.isEmpty() || m_proactive.value(m_thread) == target) return;
+  m_proactive.insert(m_thread, target);
+  if (target.startsWith(QLatin1String("diff:"))) {
+    // A pull request under review keeps the panel.
+    if (!(panel().open && kindOf(panel().active) == QLatin1String("pull-request"))) showTab(QStringLiteral("diff"));
+  } else if (links.size() == 1) {
+    reviewPullRequest(links.first());
+  } else {
+    showTab(QStringLiteral("pull-requests"));
+  }
 }
 
 // The palette offers linking where the thread's environment links pull

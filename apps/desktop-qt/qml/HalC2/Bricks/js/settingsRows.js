@@ -7,6 +7,8 @@
 // `step`, `unit`), text (`placeholder`).
 //
 // Rows that need logic beyond reading and writing the key:
+// A section with `folded` starts closed: its rows are listed once it is opened.
+//
 //   grouping   a switch over sidebarProjectGroupingMode ("separate" is off)
 //   settleDays a switch plus a number: null days is off
 
@@ -93,7 +95,7 @@ var general = [
       description: "Inspect processes, resource use, and logs on this environment." },
     { id: "open-source-licenses", link: "/settings/open-source-licenses", button: "View licenses", title: "Open source licenses",
       description: "Notices for dependencies, assets, and optional tools used by HAL-C2." },
-    { section: "Legacy features" },
+    { section: "Legacy features", folded: true },
     { key: "planModeEnabled", kind: "switch", title: "Plan mode",
       description: "Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode." },
     { key: "contextWindowMeterEnabled", kind: "switch", title: "Context window indicator",
@@ -153,6 +155,28 @@ function visible(rows, platform) {
     return rows.filter(function (row) {
         return !row.macOnly || platform === "osx";
     });
+}
+
+// The rows a page lists: a folded section's only once it is open (`open`, by
+// section title).
+function listed(rows, platform, open) {
+    var hidden = false;
+    return visible(rows, platform).filter(function (row) {
+        if (row.section === undefined) return !hidden;
+        hidden = row.folded === true && !open[row.section];
+        return true;
+    });
+}
+
+// The folded section holding the row named `target` ("settingsRow:<key>"), or "".
+function foldOf(rows, target) {
+    var fold = "";
+    for (var i = 0; i < rows.length; ++i) {
+        var row = rows[i];
+        if (row.section !== undefined) fold = row.folded === true ? row.section : "";
+        else if ("settingsRow:" + (row.key ?? row.id) === target) return fold;
+    }
+    return "";
 }
 
 // The General and Appearance rows restoring defaults resets: each one off its

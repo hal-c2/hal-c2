@@ -34,9 +34,26 @@ Rectangle {
     // that arrive with its state), until the user scrolls.
     property bool following: false
 
+    // The folded sections the user, or a search result inside one, opened.
+    property var openFolds: ({})
+
+    function setFold(section, open) {
+        if ((openFolds[section] === true) === open) return;
+        const next = Object.assign({}, openFolds);
+        next[section] = open;
+        openFolds = next;
+    }
+
     // Scrolls the route's target to the top of the page, when it is here.
     function reveal() {
         if (route === null || !route.target) return;
+        const fold = Rows.foldOf(rows, route.target);
+        if (fold.length > 0 && !openFolds[fold]) {
+            // Its rows are made once the fold is open.
+            setFold(fold, true);
+            Qt.callLater(reveal);
+            return;
+        }
         const target = descendant(column, route.target);
         if (target === null) return;
         following = true;
@@ -85,7 +102,7 @@ Rectangle {
             }
 
             Repeater {
-                model: Rows.visible(page.rows, Qt.platform.os)
+                model: Rows.listed(page.rows, Qt.platform.os, page.openFolds)
 
                 delegate: Loader {
                     id: entry
@@ -99,14 +116,31 @@ Rectangle {
                         id: heading
 
                         ColumnLayout {
+                            readonly property bool folded: entry.modelData.folded === true
+                            readonly property bool open: page.openFolds[entry.modelData.section] === true
+
+                            objectName: "settingsSection:" + entry.modelData.section
                             spacing: 6
 
-                            Label {
+                            RowLayout {
                                 Layout.topMargin: 12
-                                text: entry.modelData.section
-                                color: page.foreground
-                                font.pixelSize: 14
-                                font.weight: Font.DemiBold
+                                spacing: 6
+
+                                Label {
+                                    text: entry.modelData.section
+                                    color: page.foreground
+                                    font.pixelSize: 14
+                                    font.weight: Font.DemiBold
+                                }
+
+                                ShellButton {
+                                    objectName: "fold"
+                                    visible: parent.parent.folded
+                                    subtle: true
+                                    text: parent.parent.open ? qsTr("Hide") : qsTr("Show")
+                                    Accessible.name: parent.parent.open ? qsTr("Hide %1").arg(entry.modelData.section) : qsTr("Show %1").arg(entry.modelData.section)
+                                    onClicked: page.setFold(entry.modelData.section, !parent.parent.open)
+                                }
                             }
 
                             Rectangle {

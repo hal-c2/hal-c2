@@ -103,8 +103,17 @@ int ThreadDiff::shownTurn() const {
 }
 
 void ThreadDiff::setIgnoreWhitespace(bool ignore) {
-  if (ignore == m_ignoreWhitespace) return;
+  if (ignore == ignoreWhitespace()) return;
   m_ignoreWhitespace = ignore;
+  emit optionsChanged();
+  load();
+}
+
+void ThreadDiff::setDefaultIgnoreWhitespace(bool ignore) {
+  if (ignore == m_defaultIgnoreWhitespace) return;
+  const bool before = ignoreWhitespace();
+  m_defaultIgnoreWhitespace = ignore;
+  if (ignoreWhitespace() == before) return;
   emit optionsChanged();
   load();
 }
@@ -134,7 +143,7 @@ QString ThreadDiff::loadKey() const {
       .arg(m_environment, m_threadId)
       .arg(m_selection == 0 ? QStringLiteral("all") : QStringLiteral("turn"))
       .arg(m_selection == 0 ? latestTurn() : shownTurn())
-      .arg(m_ignoreWhitespace);
+      .arg(ignoreWhitespace());
 }
 
 void ThreadDiff::reload() {
@@ -160,7 +169,7 @@ void ThreadDiff::load() {
   m_loaded = key;
   const int request = ++m_request;
   const int turn = shownTurn();
-  QJsonObject payload{{QStringLiteral("threadId"), m_threadId}, {QStringLiteral("ignoreWhitespace"), m_ignoreWhitespace}};
+  QJsonObject payload{{QStringLiteral("threadId"), m_threadId}, {QStringLiteral("ignoreWhitespace"), ignoreWhitespace()}};
   QString method;
   if (m_selection == 0) {
     method = QStringLiteral("orchestration.getFullThreadDiff");

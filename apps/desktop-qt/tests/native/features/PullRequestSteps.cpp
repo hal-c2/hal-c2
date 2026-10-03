@@ -594,6 +594,8 @@ const Steps reviewSteps([] {
            show(world.state(QStringLiteral("panel"))));
   });
   step(QStringLiteral("a viewed file collapses and the viewed count goes up"), [](World& world, const Captures&, const Table&) {
+    // The Code tab opens with its files collapsed (Settings → General): the user opens this one to read it.
+    review(world).model()->setExpanded(review(world).model()->fileOf(QStringLiteral("src/cart.ts")), true);
     expect(expanded(world, QStringLiteral("src/cart.ts")) && review(world).viewedCount() == 0, describeReview(world));
     review(world).setViewed(QStringLiteral("src/cart.ts"), true);
     expect(!expanded(world, QStringLiteral("src/cart.ts")) && review(world).viewedCount() == 1, describeReview(world));

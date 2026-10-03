@@ -46,7 +46,7 @@ void DiffModel::setPatch(const QString& patch) {
     total += file.lineCount;
   }
   for (File& file : m_files) {
-    file.expanded = total <= autoExpandLines;
+    file.expanded = !m_collapsedByDefault && total <= autoExpandLines;
     if (file.expanded) {
       ensureLines(file);
     }

@@ -382,6 +382,8 @@ const Steps steps([] {
     diff(world).model()->setSplit(false);
   });
   step(QStringLiteral("the removed and added line of %1 are shown side by side").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Diffs open with their files collapsed (Settings → General): the user opens this one.
+    diff(world).model()->setExpanded(diff(world).model()->fileOf(c[0]), true);
     const QList<QVariantMap> rows = rowsOfFile(world, c[0]);
     const bool paired = std::any_of(rows.cbegin(), rows.cend(), [](const QVariantMap& row) {
       return row.value(QStringLiteral("sign")) == QLatin1String("-") && row.value(QStringLiteral("rightSign")) == QLatin1String("+");
@@ -790,3 +792,8 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void finishTurnWithPatch(World& world, int turn, const QString& patch, const QJsonArray& files) {
+  finishTurn(world, turn, patch);
+  if (!files.isEmpty()) set(world, QStringLiteral("checkpoint"), QStringLiteral("cp-%1").arg(turn), {{QStringLiteral("files"), files}});
+}
