@@ -97,6 +97,12 @@ Item {
         showStatus: false
         onLinkActivated: link => view.openLink(link)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
+        // Saving a queued message's edit sends its text alone, so no quote
+        // is taken while one is edited.
+        citable: (Shell.state.composer?.target ?? null) !== null && !Shell.state.composer.editingQueuedRunId
+        onCited: (messageId, selector) => Shell.dispatch("composer.citation.add", Object.assign({
+            messageId: messageId
+        }, selector))
         onRevertRequested: rowId => view.askRevert(rowId)
     }
 

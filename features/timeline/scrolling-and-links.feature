@@ -12,6 +12,7 @@
 #   apps/tui/src/timelineLinks.ts (bare URLs become terminal hyperlinks)
 #   apps/tui/src/components/MessagesTimeline.tsx (windowing, earlier and newer entries, sticks to the bottom)
 #   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (bare web addresses become links outside code)
+#   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml (Cite on a selection of a reply)
 #   apps/desktop-qt/tests/native/features/MarkdownSteps.cpp
 #   apps/server-ex/lib/hal_c2/web/socket.ex (thread stream subscriptions, merged bursts, resync from offset)
 
@@ -93,7 +94,7 @@ Feature: Moving through a thread and following links
       | copy its relative path | "src/cart.ts" is on the clipboard        |
       | copy its full path     | the absolute path is on the clipboard    |
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user cites part of a reply in the next message
     When the user selects a sentence in the agent's reply and cites it
     Then the composer holds a citation of that sentence

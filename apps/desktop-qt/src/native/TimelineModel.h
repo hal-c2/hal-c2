@@ -76,6 +76,8 @@ public:
     // turn's last reply does, commentary before it does not (the web's
     // showAssistantMeta).
     MetaRole,
+    // An assistant reply's message, which a quote of it names as its source.
+    MessageIdRole,
   };
 
   // Calls shown per collapsed work group.

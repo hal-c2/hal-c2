@@ -27,6 +27,8 @@ using namespace stream;
 const QString kSource = QStringLiteral("const total = cart.lines.reduce((sum, line) => sum + line.price, 0);\nreturn roundToCent(total * (1 + rate));");
 const QString kTable = QStringLiteral("| Region | Rate |\n|---|---:|\n| EU, north | 21% |\n| a\\|b | \"q\" |");
 
+const QString kSentence = QStringLiteral("Cache keys include the tenant.");
+
 // What a step saw, for a later step to compare with.
 struct Seen {
   QPointer<QQuickItem> item;
@@ -91,6 +93,9 @@ Brick& timelineBrick(World& world) {
     world.brick = std::make_unique<Brick>(world,
                                           "import QtQuick\nimport HalC2.Bricks\n"
                                           "Timeline { property var activated: []\n"
+                                          "  property var quotes: []\n"
+                                          "  citable: true\n"
+                                          "  onCited: (messageId, selector) => quotes = quotes.concat([Object.assign({ messageId: messageId }, selector)])\n"
                                           "  onLinkActivated: link => activated = activated.concat([link]) }\n",
                                           QSize(820, 1400));
     world.brick->root()->setProperty("model", QVariant::fromValue(static_cast<QObject*>(&timeline(world))));
@@ -194,6 +199,32 @@ const Steps steps([] {
   });
 
   // Code blocks.
+  // Citing: the selection's Cite, and the action ThreadView sends for it.
+  step(QStringLiteral("the user selects a sentence in the agent's reply and cites it"), [](World& world, const Captures&, const Table&) {
+    startRun(world, 30);
+    addItem(world, QStringLiteral("assistant_message"),
+            {{QStringLiteral("messageId"), QStringLiteral("message:caching")}, {QStringLiteral("text"), kSentence + QStringLiteral(" Refunds reuse the old rate.")}});
+    settleRun(world, QStringLiteral("completed"), 30);
+    QQuickItem* message = reply(world);
+    QQuickItem* prose = one(message, QStringLiteral("markdownProse"));
+    prose->forceActiveFocus();
+    QMetaObject::invokeMethod(prose, "select", Q_ARG(int, 0), Q_ARG(int, int(kSentence.size())));
+    QQuickItem* button = one(message, QStringLiteral("citeSelection"));
+    world.waitFor([&] { return button->isVisible(); }, [&] {
+      return QStringLiteral("Cite on the selection %1 (citable %2)").arg(show(prose->property("selectedText").toString())).arg(message->property("citable").toBool());
+    });
+    click(world, button);
+    const QVariantList quotes = timelineBrick(world).root()->property("quotes").toList();
+    expect(quotes.size() == 1 && quotes.constFirst().toMap().value(QStringLiteral("messageId")).toString() == QLatin1String("message:caching"),
+           QStringLiteral("the timeline cited %1").arg(show(quotes)));
+    world.bridge().dispatch(QStringLiteral("composer.citation.add"), quotes.constFirst().toMap());
+  });
+  step(QStringLiteral("the composer holds a citation of that sentence"), [](World& world, const Captures&, const Table&) {
+    const auto held = [&] { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("citations")).toList(); };
+    world.waitFor([&] { return held().size() == 1 && held().constFirst().toMap().value(QStringLiteral("text")).toString() == kSentence; },
+                  [&] { return QStringLiteral("a quote of the sentence; the composer shows %1").arg(show(held())); });
+  });
+
   step(QStringLiteral("the agent's reply has a code block"), [](World& world, const Captures&, const Table&) {
     answer(world, QStringLiteral("Here it is:\n\n```ts\n") + kSource + QStringLiteral("\n```"));
   });
