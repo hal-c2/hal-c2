@@ -164,7 +164,6 @@ Feature: Codex
     When a commit needs a message
     Then Codex writes it in a read-only sandbox
 
-  @backlog
   Scenario: Several Codex accounts share one Codex home
     Given a shared Codex home and a second Codex instance with its own shadow home
     When the user signs in to the second instance

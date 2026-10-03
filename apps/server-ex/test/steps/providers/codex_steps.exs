@@ -453,9 +453,14 @@ Red"} <- StreamState.get(state, "message")[message],
     request = World.await_request(context, @thread)
     assert request["kind"] == "mcp-elicitation"
 
-    assert [%{"appName" => ^app, "options" => options}] =
-             World.entities(context, @thread, "turn-item")
-             |> Enum.filter(&(&1["requestId"] == request["id"]))
+    # The approval names the app and the scopes once the runtime has described it.
+    %{"options" => options} =
+      World.await_value(context, @thread, fn state ->
+        Enum.find(
+          StreamState.list(state, "turn-item"),
+          &(&1["requestId"] == request["id"] and &1["appName"] == app)
+        )
+      end)
 
     assert Enum.map(options, & &1["decision"]) ==
              ~w(cancel decline acceptForSession acceptAlways accept)
@@ -575,6 +580,85 @@ Red"} <- StreamState.get(state, "message")[message],
       World.thread_id(context, @thread),
       &(&1["hasActionableProposedPlan"] == false)
     )
+
+    context
+  end
+
+  # --- accounts on one home --------------------------------------------------------------
+
+  @second "codex-work"
+
+  # The built-in Codex uses the shared home itself; the second instance is another
+  # account on it, with a shadow home for its own login.
+  step "a shared Codex home and a second Codex instance with its own shadow home", context do
+    context = World.fake_providers(context)
+    shared = HalC2.Test.Mc.tmp_dir(context.mc, "codex-home")
+    shadow = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "codex-shadows"), "work")
+    File.write!(Path.join(shared, "config.toml"), "model = \"gpt-6-luna\"\n")
+    File.write!(Path.join(shared, "auth.json"), ~s({"account":"home"}))
+    File.write!(Path.join(shared, "models_cache.json"), ~s({"models":["home"]}))
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    World.merge_settings(%{
+      "providers" => %{"codex" => %{"homePath" => shared}},
+      "providerInstances" => %{
+        @second => %{
+          "driver" => "codex",
+          "enabled" => true,
+          "config" => %{"homePath" => shared, "shadowHomePath" => shadow}
+        }
+      }
+    })
+
+    Map.merge(context, %{codex_shared: shared, codex_shadow: shadow})
+  end
+
+  # `codex login` in the instance's home: the shadow home, where the login stays.
+  step "the user signs in to the second instance", context do
+    assert {:ok, [{"CODEX_HOME", home}]} = HalC2.Codex.Home.env(@second)
+    assert home == context.codex_shadow
+    File.write!(Path.join(home, "auth.json"), ~s({"account":"work"}))
+    File.write!(Path.join(home, "models_cache.json"), ~s({"models":["work"]}))
+    context
+  end
+
+  step "both instances see the same Codex sessions and settings", context do
+    context = World.launch_on(context, "Home", "codex", "hello from home")
+    World.await_runs(context, "Home", ["completed"])
+    context = World.launch_on(context, "Work", @second, "hello from work")
+    World.await_runs(context, "Work", ["completed"])
+
+    # Each ran in its own home.
+    homes = for %{"argv" => _, "home" => home} <- World.provider_log(context, "codex"), do: home
+    assert context.codex_shared in homes and context.codex_shadow in homes
+
+    # Both conversations are in the shared home's sessions, which the shadow home links.
+    rollouts = fn home ->
+      Path.join(home, "sessions/*/*/*/rollout-*.jsonl")
+      |> Path.wildcard()
+      |> Enum.map(&Path.basename/1)
+    end
+
+    assert [_, _] = rollouts.(context.codex_shared)
+
+    assert Enum.sort(rollouts.(context.codex_shadow)) ==
+             Enum.sort(rollouts.(context.codex_shared))
+
+    assert File.read_link!(Path.join(context.codex_shadow, "sessions")) ==
+             Path.join(context.codex_shared, "sessions")
+
+    # One settings file: a change made through either home is the other's too.
+    File.write!(Path.join(context.codex_shadow, "config.toml"), "model = \"gpt-5.5\"\n")
+    assert File.read!(Path.join(context.codex_shared, "config.toml")) == "model = \"gpt-5.5\"\n"
+    context
+  end
+
+  step "each keeps its own login and model list", context do
+    for {home, account} <- [{context.codex_shared, "home"}, {context.codex_shadow, "work"}] do
+      assert %File.Stat{type: :regular} = File.lstat!(Path.join(home, "auth.json"))
+      assert File.read!(Path.join(home, "auth.json")) == ~s({"account":"#{account}"})
+      assert File.read!(Path.join(home, "models_cache.json")) == ~s({"models":["#{account}"]})
+    end
 
     context
   end

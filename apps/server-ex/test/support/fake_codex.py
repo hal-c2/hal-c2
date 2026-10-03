@@ -21,7 +21,7 @@ def trace(entry):
             f.write(json.dumps(entry) + "\n")
 
 # The arguments the app-server was started with, first in the trace.
-trace({"argv": sys.argv[1:]})
+trace({"argv": sys.argv[1:], "home": os.environ.get("CODEX_HOME")})
 
 def send(msg):
     sys.stdout.write(json.dumps(msg) + "\n")

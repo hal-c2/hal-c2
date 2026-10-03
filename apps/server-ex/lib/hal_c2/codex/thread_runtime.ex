@@ -565,10 +565,13 @@ defmodule HalC2.Codex.ThreadRuntime do
         Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
       )
 
-    # The instance's variables in settings (such as CODEX_HOME) reach Codex.
+    # The instance's variables in settings (such as CODEX_HOME) reach Codex, over the
+    # home its settings name (`HalC2.Codex.Home`).
     env = if instance, do: Enum.to_list(HalC2.Settings.instance_env(instance)), else: []
 
     with {:ok, args} <- launch_args(instance),
+         {:ok, home} <- HalC2.Codex.Home.env(instance),
+         env = home ++ env,
          {:ok, conn} <-
            Connection.start_link(
              cmd: cmd ++ args,
@@ -1219,8 +1222,10 @@ defmodule HalC2.Codex.ThreadRuntime do
     Task.start(fn ->
       stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
       thread = HalC2.StreamState.get(stream, "thread")[thread_id] || %{}
+
       latest =
-        stream |> HalC2.StreamState.list("run") |> Enum.max_by(&(&1["ordinal"]), fn -> %{} end)
+        stream |> HalC2.StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
+
       message_id = Entities.new_id("message")
 
       ended =
