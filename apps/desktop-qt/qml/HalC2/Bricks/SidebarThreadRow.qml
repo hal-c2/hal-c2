@@ -263,7 +263,7 @@ Item {
             anchors.centerIn: parent
             text: row.item.jumpLabel ?? ""
             color: row.textColor
-            font.pixelSize: 10
+            font.pixelSize: Math.round(10 * Theme.fontScale)
             font.weight: Font.Medium
         }
     }

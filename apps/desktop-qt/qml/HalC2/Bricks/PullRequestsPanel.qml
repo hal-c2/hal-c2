@@ -163,7 +163,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: root.source ? root.source.notice : ""
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Text {
