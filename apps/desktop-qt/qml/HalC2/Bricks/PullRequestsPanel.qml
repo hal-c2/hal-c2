@@ -156,6 +156,17 @@ Rectangle {
         }
 
         Text {
+            objectName: "pullRequestsNotice"
+            x: 12
+            width: parent.width - 24
+            visible: text.length > 0
+            wrapMode: Text.Wrap
+            text: root.source ? root.source.notice : ""
+            color: Theme.palette.color("textMuted", "#a1a1aa")
+            font.pixelSize: 12
+        }
+
+        Text {
             objectName: "pullRequestsProblem"
             x: 12
             width: parent.width - 24

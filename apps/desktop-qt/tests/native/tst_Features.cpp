@@ -451,6 +451,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/unread-and-status.feature:Pointing at a thread previews it"),
     QStringLiteral("threads/sidebar-list.feature:Jump hints appear while holding the modifier"),
     QStringLiteral("threads/migration-and-handoffs.feature:The user is told threads were migrated"),
+    QStringLiteral("threads/pull-request-links.feature"),
     QStringLiteral("files/adding-projects.feature"),
     QStringLiteral("navigation/palette-add-project.feature:A project can come from*"),
     QStringLiteral("navigation/palette-add-project.feature:A repository source that is not set up*"),

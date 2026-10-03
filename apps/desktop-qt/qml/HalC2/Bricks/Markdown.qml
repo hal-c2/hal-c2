@@ -165,6 +165,20 @@ Item {
         ToolTip.visible: hoveredLink.length > 0
         ToolTip.text: hoveredLink
         ToolTip.delay: 600
+        // The secondary button on a link offers what can be done with it.
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: eventPoint => {
+                const link = parent.linkAt(eventPoint.position.x, eventPoint.position.y);
+                if (link.length > 0) {
+                    Shell.dispatch("link.menu", {
+                        url: link,
+                        x: eventPoint.scenePosition.x,
+                        y: eventPoint.scenePosition.y
+                    });
+                }
+            }
+        }
         HoverHandler {
             cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
         }
