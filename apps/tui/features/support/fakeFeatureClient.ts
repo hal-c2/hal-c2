@@ -3,12 +3,15 @@
 // (or swap one method with `ctx.fake.override`).
 import {
   DEFAULT_SERVER_SETTINGS,
+  type GitActionProgressEvent,
+  type GitStackedAction,
   type PreviewSessionSnapshot,
   type ProviderInstanceMutation,
   type ServerProcessDiagnosticsResult,
   type ServerProvider,
   type ServerSettings,
   type ServerTraceDiagnosticsResult,
+  type VcsStatusResult,
 } from "@hal-c2/contracts";
 
 import type { OrchestrationShellSnapshot } from "../../src/connection.ts";
@@ -31,13 +34,67 @@ export interface FakeServer {
   traceDiagnostics: ServerTraceDiagnosticsResult | null;
   /** The open previews of every thread. */
   previews: PreviewSessionSnapshot[];
+  /** The repository's worktrees besides the main checkout. */
+  worktrees: Array<{ path: string; refName: string }>;
+  /** Pull requests on the provider, found by number from any reference. */
+  pullRequests: Array<{
+    number: number;
+    title: string;
+    url: string;
+    baseBranch: string;
+    headBranch: string;
+    state: "open" | "closed" | "merged";
+  }>;
 }
 
 /** The fake's shell, which project changes rewrite and push like the MC does. */
 export interface FakeShellPort {
   readonly get: () => OrchestrationShellSnapshot;
   readonly push: (snapshot: OrchestrationShellSnapshot) => void;
+  /** The checkout's status, as the status stream last delivered it. */
+  readonly vcs: () => VcsStatusResult | null;
+  readonly setVcs: (status: VcsStatusResult) => void;
 }
+
+const PHASES: Record<GitStackedAction, ReadonlyArray<"commit" | "push" | "pr">> = {
+  commit: ["commit"],
+  push: ["push"],
+  create_pr: ["push", "pr"],
+  commit_push: ["commit", "push"],
+  commit_push_pr: ["commit", "push", "pr"],
+};
+const PHASE_LABELS = { commit: "Committing", push: "Pushing", pr: "Creating pull request" };
+const HOOKS = {
+  commit: { name: "pre-commit", output: "lint-staged: 2 files checked" },
+  push: { name: "pre-push", output: "tests: 42 passed" },
+} as const;
+
+/** What the MC streams while a stacked action runs: each phase, and the hooks git fires in it. */
+export function fakeGitProgress(input: {
+  readonly cwd: string;
+  readonly action: GitStackedAction;
+}): GitActionProgressEvent[] {
+  const base = { actionId: "fake-action", cwd: input.cwd, action: input.action };
+  const phases = PHASES[input.action];
+  const events: unknown[] = [{ ...base, kind: "action_started", phases }];
+  for (const phase of phases) {
+    events.push({ ...base, kind: "phase_started", phase, label: PHASE_LABELS[phase] });
+    if (phase === "pr") continue;
+    const hook = HOOKS[phase];
+    events.push(
+      { ...base, kind: "hook_started", hookName: hook.name },
+      { ...base, kind: "hook_output", hookName: hook.name, stream: "stdout", text: hook.output },
+      { ...base, kind: "hook_finished", hookName: hook.name, exitCode: 0, durationMs: 12 },
+    );
+  }
+  return events as GitActionProgressEvent[];
+}
+
+/** `#42`, `gh pr checkout 42` and `https://…/pull/42` all name pull request 42. */
+const pullRequestNumber = (reference: string): number | null => {
+  const match = /(?:\/pull\/|#|checkout\s+)(\d+)\s*$/.exec(reference.trim());
+  return match ? Number(match[1]) : null;
+};
 
 export function fakeFeatureClient(shell: FakeShellPort): {
   client: TuiFeatureClient;
@@ -53,9 +110,77 @@ export function fakeFeatureClient(shell: FakeShellPort): {
     processDiagnostics: null,
     traceDiagnostics: null,
     previews: [],
+    worktrees: [],
+    pullRequests: [],
   };
   let previewCount = 0;
+  const status = () => {
+    const current = shell.vcs();
+    if (!current) throw new Error("not a repository");
+    return current;
+  };
+  const pullRequest = (reference: string) => {
+    const found = server.pullRequests.find(
+      (candidate) => candidate.number === pullRequestNumber(reference),
+    );
+    if (!found) throw new Error(`no pull request for "${reference}"`);
+    return found;
+  };
   const client: TuiFeatureClient = {
+    refreshVcsStatus: async () => status(),
+    createRef: async (_cwd, refName) => {
+      shell.setVcs({ ...status(), refName, isDefaultRef: false, hasUpstream: false } as never);
+      return refName;
+    },
+    createWorktree: async (cwd, _baseRef, newRef) => {
+      const worktree = { path: `${cwd}-worktrees/${newRef.replaceAll("/", "-")}`, refName: newRef };
+      server.worktrees = [...server.worktrees, worktree];
+      return worktree as never;
+    },
+    removeWorktree: async (_cwd, path) => {
+      server.worktrees = server.worktrees.filter((worktree) => worktree.path !== path);
+    },
+    initRepository: async () => {
+      shell.setVcs({
+        isRepo: true,
+        hasPrimaryRemote: false,
+        isDefaultRef: true,
+        refName: "main",
+        hasWorkingTreeChanges: false,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+        hasUpstream: false,
+        aheadCount: 0,
+        behindCount: 0,
+        pr: null,
+      } as never);
+    },
+    resolvePullRequest: async (_cwd, reference) => pullRequest(reference) as never,
+    preparePullRequest: async (input) => {
+      const found = pullRequest(input.reference);
+      return {
+        pullRequest: found,
+        branch: found.headBranch,
+        worktreePath:
+          input.mode === "worktree" ? `${input.cwd}-worktrees/pr-${found.number}` : null,
+        isOnPullRequestHead: true,
+      } as never;
+    },
+    publishRepository: async (input) => {
+      const remoteUrl = `git@github.com:${input.repository}.git`;
+      shell.setVcs({ ...status(), hasPrimaryRemote: true, hasUpstream: true } as never);
+      return {
+        repository: {
+          provider: input.provider,
+          nameWithOwner: input.repository,
+          url: `https://github.com/${input.repository}`,
+          sshUrl: remoteUrl,
+        },
+        remoteName: "origin",
+        remoteUrl,
+        branch: status().refName ?? "main",
+        status: "pushed",
+      } as never;
+    },
     writeFile: async (cwd, relativePath, contents) => {
       server.written.set(`${cwd}:${relativePath}`, contents);
     },

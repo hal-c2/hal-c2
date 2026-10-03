@@ -205,6 +205,7 @@ const MAX_PROBLEMS = 50;
  * recall, a chord for a panel that is not open): not unknown, not logged.
  */
 const DECLINABLE_ACTIONS = new Set([
+  "git.log.dismiss",
   "composer.history.previous",
   "composer.history.next",
   "approval.approve",

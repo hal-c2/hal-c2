@@ -19,7 +19,7 @@ import type {
   TuiThreadPage,
 } from "../../src/connection.ts";
 import { flattenModelOptions } from "../../src/models.ts";
-import { fakeFeatureClient, type FakeServer } from "./fakeFeatureClient.ts";
+import { fakeFeatureClient, fakeGitProgress, type FakeServer } from "./fakeFeatureClient.ts";
 
 // Fixtures and an in-memory TuiClient, shared by the component tests and the
 // Gherkin world. Feed it with `connect()` (the default shell snapshot),
@@ -396,6 +396,11 @@ export function fakeClient({
       latestShell = snapshot;
       shellSubscriber?.(snapshot);
     },
+    vcs: () => currentVcsStatus,
+    setVcs: (status) => {
+      currentVcsStatus = status;
+      for (const subscriber of vcsSubscribers) subscriber(status);
+    },
   });
   const client = {
     ...feature.client,
@@ -540,8 +545,14 @@ export function fakeClient({
           truncated: false,
         };
       }),
-    runGitStackedAction: () =>
-      settleGit(gitOutcome.kind === "succeed" ? (gitOutcome.result ?? null) : null),
+    // The server streams each phase and hook as it runs them, then the outcome.
+    runGitStackedAction: (
+      input: Parameters<TuiClient["runGitStackedAction"]>[0],
+      onProgress?: Parameters<TuiClient["runGitStackedAction"]>[1],
+    ) => {
+      for (const event of fakeGitProgress(input)) onProgress?.(event);
+      return settleGit(gitOutcome.kind === "succeed" ? (gitOutcome.result ?? null) : null);
+    },
     runGitPull: (cwd: string) => (runGitPull ? runGitPull(cwd) : settleGit(undefined)),
   } as unknown as TuiClient;
   const calls: FakeClientCall[] = [];

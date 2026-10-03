@@ -13,7 +13,13 @@ import {
   type ServerSettings,
   type ServerSettingsPatch,
   type ServerTraceDiagnosticsResult,
+  type GitPreparePullRequestThreadResult,
+  type GitResolvePullRequestResult,
+  type SourceControlPublishRepositoryInput,
+  type SourceControlPublishRepositoryResult,
   type ThreadId,
+  type VcsCreateWorktreeResult,
+  type VcsStatusResult,
 } from "@hal-c2/contracts";
 import { deleteProject, updateProject } from "@hal-c2/client-runtime/operations";
 import { request } from "@hal-c2/client-runtime/rpc";
@@ -49,7 +55,38 @@ export interface TuiFeatureClient {
   readonly openPreview: (threadId: ThreadId, url: string) => Promise<PreviewSessionSnapshot>;
   readonly refreshPreview: (threadId: ThreadId, tabId: string) => Promise<void>;
   readonly closePreview: (threadId: ThreadId, tabId: string) => Promise<void>;
+  /** Read a checkout's status again now (`vcs.refreshStatus`). */
+  readonly refreshVcsStatus: (cwd: string) => Promise<VcsStatusResult>;
+  /** Create a branch and, by default, switch the checkout to it (`vcs.createRef`). */
+  readonly createRef: (cwd: string, refName: string) => Promise<string>;
+  /** A new worktree on a new branch off `baseRef`; the server picks its path (`vcs.createWorktree`). */
+  readonly createWorktree: (
+    cwd: string,
+    baseRef: string,
+    newRef: string,
+  ) => Promise<VcsCreateWorktreeResult["worktree"]>;
+  /** Remove a worktree's folder; its branch stays (`vcs.removeWorktree`). */
+  readonly removeWorktree: (cwd: string, path: string) => Promise<void>;
+  readonly initRepository: (cwd: string) => Promise<void>;
+  /** A pull request from a URL, a `gh pr checkout` line or `#number` (`git.resolvePullRequest`). */
+  readonly resolvePullRequest: (
+    cwd: string,
+    reference: string,
+  ) => Promise<GitResolvePullRequestResult["pullRequest"]>;
+  /** Check the pull request out here or in a worktree (`git.preparePullRequestThread`). */
+  readonly preparePullRequest: (input: {
+    readonly cwd: string;
+    readonly reference: string;
+    readonly mode: "local" | "worktree";
+    readonly threadId?: ThreadId;
+  }) => Promise<GitPreparePullRequestThreadResult>;
+  /** Create the repository on a provider and make it the remote (`sourceControl.publishRepository`). */
+  readonly publishRepository: (
+    input: SourceControlPublishRepositoryInput,
+  ) => Promise<SourceControlPublishRepositoryResult>;
 }
+
+const text = (value: string) => TrimmedNonEmptyString.make(value);
 
 export function makeFeatureClient(runtime: TuiRuntime): TuiFeatureClient {
   return {
@@ -102,5 +139,50 @@ export function makeFeatureClient(runtime: TuiRuntime): TuiFeatureClient {
       runtime.runPromise(
         request(WS_METHODS.previewClose, { threadId, tabId: tabId as never }).pipe(Effect.asVoid),
       ),
+    refreshVcsStatus: (cwd) =>
+      runtime.runPromise(request(WS_METHODS.vcsRefreshStatus, { cwd: text(cwd) })),
+    createRef: (cwd, refName) =>
+      runtime.runPromise(
+        request(WS_METHODS.vcsCreateRef, {
+          cwd: text(cwd),
+          refName: text(refName),
+          switchRef: true,
+        }).pipe(Effect.map((result) => result.refName as string)),
+      ),
+    createWorktree: (cwd, baseRef, newRef) =>
+      runtime.runPromise(
+        request(WS_METHODS.vcsCreateWorktree, {
+          cwd: text(cwd),
+          refName: text(baseRef),
+          newRefName: text(newRef),
+          path: null,
+        }).pipe(Effect.map((result) => result.worktree)),
+      ),
+    removeWorktree: (cwd, path) =>
+      runtime.runPromise(
+        request(WS_METHODS.vcsRemoveWorktree, { cwd: text(cwd), path: text(path) }).pipe(
+          Effect.asVoid,
+        ),
+      ),
+    initRepository: (cwd) =>
+      runtime.runPromise(request(WS_METHODS.vcsInit, { cwd: text(cwd) }).pipe(Effect.asVoid)),
+    resolvePullRequest: (cwd, reference) =>
+      runtime.runPromise(
+        request(WS_METHODS.gitResolvePullRequest, {
+          cwd: text(cwd),
+          reference: text(reference),
+        }).pipe(Effect.map((result) => result.pullRequest)),
+      ),
+    preparePullRequest: (input) =>
+      runtime.runPromise(
+        request(WS_METHODS.gitPreparePullRequestThread, {
+          cwd: text(input.cwd),
+          reference: text(input.reference),
+          mode: input.mode,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+        }),
+      ),
+    publishRepository: (input) =>
+      runtime.runPromise(request(WS_METHODS.sourceControlPublishRepository, input)),
   };
 }

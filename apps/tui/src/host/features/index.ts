@@ -5,6 +5,7 @@ import { createConversationFeature } from "./conversation.ts";
 import { createEditorFeature, type EditorOptions } from "./editor.ts";
 import { createKeysFeature } from "./keys.ts";
 import { createPlansFeature } from "./plans.ts";
+import { createRepositoryFeature } from "./repository.ts";
 import { createServerFeature } from "./server.ts";
 import type { Feature, FeatureKit } from "./kit.ts";
 import { createWorkspaceFeature } from "./workspace.ts";
@@ -46,6 +47,7 @@ export function createFeatures(
     createPlansFeature(kit),
     createServerFeature(kit),
     createWorkspaceFeature(kit),
+    createRepositoryFeature(kit),
     createEditorFeature(kit, {
       env: options.env ?? {},
       runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),
