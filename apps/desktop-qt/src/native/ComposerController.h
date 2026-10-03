@@ -35,8 +35,10 @@ class TimelineModel;
 // the route environment's config (WorkspaceController::environmentConfig), so
 // a thread elsewhere lists its own machine's models. A new thread's first send
 // launches it (`orchestration.launchThread`) in the checkout WorkspaceController
-// picked, and the window moves to the thread in the draft's place; a
-// background send launches it and leaves the draft ready for another prompt.
+// picked, or in another machine's checkout of the repository when the MC
+// places it there (`hal-c2.placeThread`, load balancing), and the window moves
+// to the thread in the draft's place; a background send launches it and
+// leaves the draft ready for another prompt.
 //
 // Publishes `composer` (ShellComposerState in packages/contracts/src/shell.ts;
 // null with no thread or draft open), `modelPicker` (ShellModelPickerState)
@@ -192,6 +194,10 @@ private:
   bool submit(const QVariantMap& payload);
   // A new thread's first send: its images, then the thread with its message.
   bool submitDraft(const QString& draftId, const QVariantMap& payload);
+  // Where a new thread starts: the user's pick (`environmentId`, `projectId`),
+  // or the checkout the MC chooses in its place. `then` is called once.
+  void place(const QString& environmentId, const QString& projectId, bool tied, const QString& instanceId,
+             std::function<void(const QString& environmentId, const QString& projectId)> then);
   void launched(const QString& draftId, const QString& threadKey, const std::optional<QString>& error);
   // A background send's answer: a toast that opens the thread, or one that
   // gives the prompt back.

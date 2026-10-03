@@ -477,7 +477,13 @@ publishes the route thread's pending state as `turn` (see
 `ComposerController.h`), which the `Composer` brick stacks above its prompt
 (`TurnRequests`), so a shell that hosts the composer needs nothing more to answer them. A new thread's first send launches it
 (`orchestration.launchThread` with the draft's checkout, model and modes) and
-the window replaces the draft with the thread; a background send leaves the
+the window replaces the draft with the thread. In a cluster the launch first
+asks the connected MC where the thread starts (`hal-c2.placeThread`, see
+`ComposerController::place`) and goes to the machine and project it answers:
+the MC holds the load-balancing rules, so the shell has none. A draft tied to
+its machine (a "Run on" pick, a picked branch or worktree) is not asked about,
+and the user's pick stands when the MC fails or does not answer in time, so a
+send is never lost to placement. A background send leaves the
 draft for another prompt and toasts a way to open the thread, or to restore
 the prompt if the launch fails.
 
@@ -678,12 +684,14 @@ by a `link` row of its parent, and keeps the parent marked
 
 Search is the shell's too. `settingsPages.searchRows` matches sections by
 label and keywords, and a section's settings (its `settingsRows.js` rows and
-any `settings` entries) by title and description; every word of the query
+any `settings` entries, each left out while a state key it `requires` is
+missing) by title and description; every word of the query
 must match, and a result names the setting's `targetId`. Opening one is
 `settings.openResult {to, targetId}`: `NavigationController` opens the
 section and bumps `route.targetSeq` with `route.target` set, and
 `SettingsPage` scrolls the brick's child of that objectName to the top on
-each bump, so opening the same result twice scrolls back to it.
+each bump, so opening the same result twice scrolls back to it. A folded
+group that is a target opens itself on the same bump (`LoadBalancingGroup`).
 
 General and Appearance are rows over `Settings` (`js/settingsRows.js`: a key,
 a kind and the web's wording). Each key's store and default are
@@ -704,7 +712,10 @@ documents the shape and actions:
   session paired with standard scopes sees one explanation in place of the
   list. A created pairing link's secret lives only in `created` until the
   section closes. Other machines are the Cluster section's, which the page
-  leads to.
+  leads to. With more than one machine the page also has the load-balancing
+  group (`LoadBalancingController`, `loadBalancing`): its switch and each
+  machine's preference are in the connected MC's settings document, because
+  that MC is the one that places new threads.
 - **Providers** (`ProviderSettingsController`, `providerSettings`) shows one
   environment at a time: its `config` shape brings the providers, and each
   provider that signs in from HAL-C2 has its `providerAuth` shape followed.

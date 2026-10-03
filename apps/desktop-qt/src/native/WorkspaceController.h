@@ -94,12 +94,15 @@ public:
   // Where a draft's first message starts its thread: the environment and
   // project it runs in, and the MC's `workspaceStrategy` for
   // `orchestration.launchThread` ({type: "root" | "existing_worktree" |
-  // "worktree", ...}), or `problem` when it cannot start yet.
+  // "worktree", ...}), or `problem` when it cannot start yet. `tied` when the
+  // user chose where it runs (a machine, a branch or a worktree), so it is
+  // not placed on another machine (ComposerController::place).
   struct Launch {
     QString environmentId;
     QString projectId;
     QJsonObject strategy;
     QString problem;
+    bool tied = false;
   };
   Launch launch(const QString& draftId) const;
   // The draft is gone (sent or discarded).

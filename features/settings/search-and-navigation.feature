@@ -14,6 +14,7 @@
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/js/settingsPages.js (the native search)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsPage.qml (bringing a result into view)
+#   apps/desktop-qt/qml/HalC2/Bricks/LoadBalancingGroup.qml (the fold a result opens)
 #   apps/desktop-qt/tests/tst_SettingsPages.qml
 #   apps/desktop-qt/tests/tst_ProjectSettings.qml (the Default model result)
 #   apps/desktop-qt/src/native/ThemeController.cpp, SettingsController.cpp (restoring defaults)
@@ -170,8 +171,7 @@ Feature: Settings search and navigation
         | the machine is not running Windows         | wsl         | WSL backend       |
         | the user is editing all projects           | project     | Project overview  |
 
-    # Load balancing is not on the native Connections page yet (settings/load-balancing.feature).
-    @backlog @desktop
+    @desktop
     Scenario: A search result inside a folded section opens the fold
       Given the "Load balancing" group on the Connections page is folded
       When the user opens the search result "Load balancing"
