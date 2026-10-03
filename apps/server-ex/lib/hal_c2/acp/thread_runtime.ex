@@ -188,7 +188,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_call({:start_turn, turn}, _from, state) do
     driver = turn.ids.driver
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{driver}:#{turn.ids.run}")
-    turn = %{turn | ids: ids}
+    turn = carried(%{turn | ids: ids})
     # Subagents still working in the background carry over; the rest were this turn's.
     subagents = Map.filter(state.subagents, fn {_, e} -> background?(e) and not e.done end)
 
@@ -204,6 +204,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     with :ok <- Antigravity.check_turn(turn),
          :ok <- check_signed_in(state, driver),
          {:ok, state} <- ensure_session(state, turn),
+         {state, turn} = settle_carried(state, turn),
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn) do
@@ -629,6 +630,31 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp serve(state, plan),
     do: launch(state, plan.instance, state.mode || "approval-required", plan.cwd)
+
+  # A session carried from another machine (`HalC2.PortableSessions`) is the thread's
+  # session here: the agent loads the copy by its id, as it loads any session of its own.
+  defp carried(%{fork: %{carried: true, thread: id}} = turn) when is_binary(id),
+    do: %{turn | native_thread_id: id}
+
+  defp carried(turn), do: turn
+
+  # An agent that could not load the copy has started a new session instead, which
+  # gets the conversation as a transcript.
+  defp settle_carried(state, %{fork: %{carried: true, thread: id} = fork} = turn) do
+    if state.session_id == id do
+      record_session(state, id)
+      turn = %{turn | fork: nil}
+      {%{state | turn: turn}, turn}
+    else
+      text = HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
+      turn = %{turn | fork: nil, text: text}
+      {%{state | turn: turn}, turn}
+    end
+  end
+
+  defp settle_carried(state, turn), do: {state, turn}
+
+  defp fork_first(_state, %{fork: %{carried: true}} = turn), do: {:ok, turn}
 
   # A forked OpenCode thread's first turn opens a fork of the source's session, cut
   # before the source's turn after the fork point.

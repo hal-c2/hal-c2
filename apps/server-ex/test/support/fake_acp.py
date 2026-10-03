@@ -84,6 +84,36 @@ def save(sid, msgs):
         json.dump(msgs, f)
     os.replace(path + ".tmp", path)
 
+def directory_file(sid):
+    return os.path.join(SESSIONS, "%s.dir" % sid)
+
+def set_directory(sid, cwd):
+    os.makedirs(SESSIONS, exist_ok=True)
+    with open(directory_file(sid), "w") as f:
+        f.write(cwd)
+
+# `export <id>` and `import <file>` are OpenCode's own (`opencode export`, `opencode
+# import`), over the sessions in FAKE_ACP_SESSIONS: an export is the session's `info`
+# (its id, and the directory it belongs to) with its messages, and an import keeps
+# the id and belongs to the directory it is run in.
+if len(sys.argv) > 2 and sys.argv[1] in ("export", "import") and os.environ.get("FAKE_ACP_SESSIONS"):
+    if sys.argv[1] == "export":
+        sid = sys.argv[2]
+        if not os.path.exists(os.path.join(SESSIONS, "%s.json" % sid)):
+            sys.stderr.write("Session not found: %s\n" % sid)
+            sys.exit(1)
+        print(json.dumps({"info": {"id": sid, "directory": open(directory_file(sid)).read()},
+                          "messages": messages(sid)}))
+    else:
+        data = json.load(open(sys.argv[2]))
+        sid = data["info"]["id"]
+        save(sid, data["messages"])
+        set_directory(sid, os.getcwd())
+        with open(os.path.join(SESSIONS, "imports.jsonl"), "a") as f:
+            f.write(json.dumps({"id": sid, "directory": data["info"]["directory"], "cwd": os.getcwd()}) + "\n")
+        print("Imported session: %s" % sid)
+    sys.exit(0)
+
 def add_message(sid, role, text):
     if PORT:
         with LOCK:
@@ -254,6 +284,9 @@ for line in sys.stdin:
         result = {"configOptions": [{"id": "model", "currentValue": options[0]["value"], "options": options}]}
         if method == "session/new": result["sessionId"] = sid
         cwds[sid] = params.get("cwd") or os.getcwd()
+        # A session in the shared store belongs to the directory it was opened in.
+        if method == "session/new" and os.environ.get("FAKE_ACP_SESSIONS"):
+            set_directory(sid, cwds[sid])
         send({"id": mid, "result": result})
     elif method == "session/set_config_option":
         if params.get("configId") == "model": model = params["value"]
