@@ -302,14 +302,14 @@ Feature: General settings
       When the MC names a new thread
       Then the title is written by that model
 
-    @backlog @desktop
+    @desktop
     Scenario: A text generation model that cannot be saved is reported
       Given the settings scope covers an environment that does not offer the chosen model
       When the user chooses that text generation model
       Then the user is told "Text generation model not saved"
       And the previous model stays selected
 
-    @backlog @desktop
+    @desktop
     Scenario: Text generation is unavailable without a provider that can generate text
       Given no enabled provider in the scope can generate text
       Then the text generation model row explains why it cannot be chosen

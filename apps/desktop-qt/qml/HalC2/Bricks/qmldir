@@ -37,6 +37,7 @@ KeybindingsSettings 1.0 KeybindingsSettings.qml
 SettingsHost 1.0 SettingsHost.qml
 SettingsPage 1.0 SettingsPage.qml
 SettingsRow 1.0 SettingsRow.qml
+TextGenerationRow 1.0 TextGenerationRow.qml
 ProjectActionsSettings 1.0 ProjectActionsSettings.qml
 LoadBalancingSettings 1.0 LoadBalancingSettings.qml
 SettingsBreadcrumb 1.0 SettingsBreadcrumb.qml

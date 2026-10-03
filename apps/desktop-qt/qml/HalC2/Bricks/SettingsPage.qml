@@ -112,7 +112,7 @@ Rectangle {
                         Settings.document;
                         return !modelData.requires || Settings.supports(modelData.requires);
                     }
-                    sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : settingRow
+                    sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : modelData.component === "textGeneration" ? textGenerationRow : settingRow
 
                     Component {
                         id: heading
@@ -186,6 +186,14 @@ Rectangle {
                                 text: entry.modelData.button
                                 onClicked: Shell.dispatch("settings.navigate", { to: entry.modelData.link })
                             }
+                        }
+                    }
+
+                    Component {
+                        id: textGenerationRow
+
+                        TextGenerationRow {
+                            spec: entry.modelData
                         }
                     }
 

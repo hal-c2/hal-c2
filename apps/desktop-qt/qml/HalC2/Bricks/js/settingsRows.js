@@ -10,6 +10,7 @@
 // A section with `folded` starts closed: its rows are listed once it is opened.
 //
 // Rows of the MC's follow the settings scope (Settings.mixed, Settings.disabledReason):
+//   component         a row of its own drawing (`id` names it): textGeneration
 //   requires          a capability every selected environment must have for the row to be listed
 //   needs             one they must have for it to be changed; `unsupported` says so otherwise
 //   mixedDescription  the description while the selected environments disagree
@@ -96,6 +97,10 @@ var general = [
     { key: "confirmQuit", kind: "select", title: "Quit shortcut",
       description: "Hold mode also quits on two quick presses.",
       options: [option("direct", "Direct"), option("hold", "Hold"), option("double-click", "Double press")] },
+
+    { section: "Text generation" },
+    { id: "text-generation-model", component: "textGeneration", title: "Text generation model",
+      description: "Used for thread titles and other generated text on connected devices with this provider. Source control can override it." },
 
     { section: "Diagnostics" },
     { id: "diagnostics", link: "/settings/diagnostics", button: "View diagnostics", title: "Diagnostics",

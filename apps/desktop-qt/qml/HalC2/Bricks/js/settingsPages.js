@@ -98,7 +98,7 @@ function navRows(state) {
 // The settings a section's page holds, each {title, targetId (its objectName
 // on the page), keywords}: its rows this platform shows, then its others.
 function settingsOf(section, os) {
-    return Rows.visible(section.rows || [], os).filter(function (row) { return row.key !== undefined || row.link !== undefined; }).map(function (row) {
+    return Rows.visible(section.rows || [], os).filter(function (row) { return row.key !== undefined || row.link !== undefined || row.component !== undefined; }).map(function (row) {
         return { title: row.title, targetId: "settingsRow:" + (row.key ?? row.id), keywords: row.description || "" };
     }).concat(section.settings || []);
 }
