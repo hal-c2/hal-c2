@@ -22,6 +22,7 @@ PendingUserInput 1.0 PendingUserInput.qml
 RevertPicker 1.0 RevertPicker.qml
 DiffViewer 1.0 DiffViewer.qml
 Notifications 1.0 Notifications.qml
+UpdateNotice 1.0 UpdateNotice.qml
 RightPanel 1.0 RightPanel.qml
 GitActions 1.0 GitActions.qml
 SettingsPage 1.0 SettingsPage.qml

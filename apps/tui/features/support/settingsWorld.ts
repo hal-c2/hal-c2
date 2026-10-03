@@ -32,7 +32,12 @@ export interface SettingsFixture {
   readonly projects: string[];
   readonly links: FakeLink[];
   /** This machine as its descriptor names it. */
-  readonly local: { serverVersion: string; capabilities: Record<string, unknown>; host?: string };
+  readonly local: {
+    label: string;
+    serverVersion: string;
+    capabilities: Record<string, unknown>;
+    host?: string;
+  };
   /** Each machine's settings document; "" is the MC the terminal is connected to. */
   readonly documents: Map<string, FakeDocument>;
 }
@@ -68,7 +73,7 @@ export function fixture(ctx: SettingsWorld): SettingsFixture {
   const created: SettingsFixture = {
     projects: [],
     links: [],
-    local: { serverVersion: "1.4.0", capabilities: { ...CAPABILITIES } },
+    local: { label: "This machine", serverVersion: "1.4.0", capabilities: { ...CAPABILITIES } },
     documents: new Map(),
   };
   ctx.settingsFixture = created;
@@ -146,7 +151,7 @@ export async function connected(ctx: SettingsWorld): Promise<void> {
       settings: DEFAULT_SERVER_SETTINGS,
       environment: {
         environmentId: "env-local",
-        label: "This machine",
+        label: local.label,
         serverVersion: local.serverVersion,
         capabilities: local.capabilities,
         ...(local.host ? { host: local.host } : {}),

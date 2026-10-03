@@ -36,32 +36,32 @@ Feature: Updating the server, the desktop app and providers
       When the user starts another server update
       Then the second update is refused
 
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: A server behind the app offers an update in the conversation
       Given the app is newer than the server on "server"
       When the user opens a thread on "server"
       Then the user is offered to update "server"
 
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: A successful update names the version it reconnected on
       When the user updates "server" and it reconnects on "1.4.0"
       Then the user is told "server" was updated and reconnected on "1.4.0"
 
     # Owner of "Update all"; settings/connections.feature holds the Connections entry point
     # and version line, connections/ cross-references here.
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: Updating every machine confirms desktop hosts first
       Given "laptop" is hosted by the desktop app and "server" is a service
       When the user updates all machines
       Then the user is asked to confirm that the desktop app on "laptop" will relaunch
       And "server" updates independently of "laptop"
 
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: The user copies the update command instead
       When the user copies the update command for "server"
       Then the command for the matching version is on the clipboard
 
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: A dismissed update notice stays dismissed for that version
       Given the user dismissed the update notice for "1.4.0"
       When the user reconnects to the same server
@@ -185,7 +185,7 @@ Feature: Updating the server, the desktop app and providers
       And the user restarts the app
       Then the user sees no toast
 
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile
     Scenario: Provider updates on several machines report each machine
       Given Codex is behind on "laptop" and on its WSL environment
       When the user updates Codex on both

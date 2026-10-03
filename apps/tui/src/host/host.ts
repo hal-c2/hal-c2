@@ -21,7 +21,7 @@ import { createClientActivity } from "./clientActivity.ts";
 import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer, type ImageDecoder } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
-import type { MutedThreadsStore } from "./mutedThreads.ts";
+import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { createFilesController } from "./filesState.ts";
 import {
   buildTuiLayoutState,
@@ -33,6 +33,7 @@ import {
 import { createPalette, type PaletteCommand } from "./paletteState.ts";
 import type { PluginPort, TuiPluginsState } from "./plugins.ts";
 import { registerSettingsSections } from "./sections/index.ts";
+import { createUpdateNotice } from "./sections/updates.ts";
 import {
   createSettingsSections,
   NO_SETTINGS_SECTION,
@@ -139,6 +140,13 @@ export interface HostOptions {
   readonly cellPixels?: () => CellPixels | null;
   /** Where this device keeps the threads whose alerts it muted (default: this run only). */
   readonly mutedThreads?: MutedThreadsStore;
+  /**
+   * The HAL-C2 version this client shipped as. A server on an older one is
+   * offered its update; without it no server is known to be behind.
+   */
+  readonly appVersion?: string | null;
+  /** Where this device keeps the update notices it dismissed (default: this run only). */
+  readonly dismissedUpdates?: MutedThreadsStore;
   /** Sees every action dispatched, from QML, keymaps or the palette (tests, debugging). */
   readonly trace?: (action: string, payload: unknown) => void;
 }
@@ -270,6 +278,7 @@ export function createHost(options: HostOptions): Host {
     graphics: { inlineImages: options.inlineImages ?? null } satisfies TuiGraphicsState,
     cluster: NO_CLUSTER_STATE,
     settingsSection: NO_SETTINGS_SECTION,
+    updateNotice: null,
   });
 
   let pluginPort: PluginPort | null = null;
@@ -651,7 +660,20 @@ export function createHost(options: HostOptions): Host {
     publish: (next) => state.set("settingsSection", next),
     openChanged: () => publishLayout(),
   });
-  registerSettingsSections(sections);
+  // A server behind this app is offered its update over the conversation.
+  const updateNotice = createUpdateNotice({
+    client,
+    appVersion: options.appVersion ?? null,
+    dismissed: options.dismissedUpdates ?? memoryMutedThreads(),
+    publish: (notice) => {
+      state.set("updateNotice", notice);
+      palette.sync();
+    },
+  });
+  registerSettingsSections(sections, {
+    appVersion: options.appVersion ?? null,
+    serverUpdated: () => updateNotice.check(),
+  });
   /** The files, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
     [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
@@ -717,6 +739,7 @@ export function createHost(options: HostOptions): Host {
       ...areaCommands(),
       ...cluster.commands(),
       ...sections!.commands(),
+      ...updateNotice.commands(),
     ],
     run: (action, payload) => {
       dispatch(action, payload);
@@ -901,6 +924,9 @@ export function createHost(options: HostOptions): Host {
         return true;
       case "clock.tick":
         publishSidebar();
+        return true;
+      case "update.notice.dismiss":
+        updateNotice.dismiss();
         return true;
       case "clientActivity.renew":
         clientActivity.renew();
@@ -1118,7 +1144,11 @@ export function createHost(options: HostOptions): Host {
   const unsubscribeConnection = client.subscribeConnection((phase) => {
     state.set("connection", connectionState(phase));
     // A report belongs to the socket it was sent on: a new connection sends it again.
-    if (phase === "connected") clientActivity.renew();
+    if (phase === "connected") {
+      clientActivity.renew();
+      // And the server may have come back on another version.
+      updateNotice.check();
+    }
   });
   store.start();
 
@@ -1145,6 +1175,7 @@ export function createHost(options: HostOptions): Host {
       await threadView.settled();
       await cluster.settled();
       await sections!.settled();
+      await updateNotice.settled();
     },
     attachPlugins: (port) => {
       pluginPort = port;
