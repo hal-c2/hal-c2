@@ -426,6 +426,101 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  # --- access to another app -------------------------------------------------------------
+
+  @elicitation "elicit-1"
+
+  # A connector's request, as Codex's app-server forwards it while a turn runs.
+  step "a Codex tool asks for access to {string}", %{args: [app]} = context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+    {pid, runtime} = World.codex_runtime(context, @thread)
+
+    params = %{
+      "threadId" => runtime.native_thread_id,
+      "turnId" => runtime.turn.native_turn_id,
+      "serverName" => "codex_apps",
+      "mode" => "form",
+      "message" => "Allow ChatGPT to use #{app}?",
+      "_meta" => %{"persist" => ["session", "always"]},
+      "requestedSchema" => %{"type" => "object", "properties" => %{}}
+    }
+
+    send(
+      pid,
+      {:json_rpc, runtime.conn, {:request, @elicitation, "mcpServer/elicitation/request", params}}
+    )
+
+    request = World.await_request(context, @thread)
+    assert request["kind"] == "mcp-elicitation"
+
+    assert [%{"appName" => ^app, "options" => options}] =
+             World.entities(context, @thread, "turn-item")
+             |> Enum.filter(&(&1["requestId"] == request["id"]))
+
+    assert Enum.map(options, & &1["decision"]) ==
+             ~w(cancel decline acceptForSession acceptAlways accept)
+
+    Map.put(context, :request, request)
+  end
+
+  defp decide(context, decision) do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "decision" => decision
+      })
+
+    context
+  end
+
+  # What the fake app-server got back for the tool's request.
+  defp elicitation_answer(context) do
+    World.await_provider_log(
+      context,
+      "codex",
+      &(get_in(&1, ["in", "id"]) == @elicitation and get_in(&1, ["in", "method"]) == nil)
+    )["in"]["result"]
+  end
+
+  @scopes %{
+    "for this request" => {"accept", nil},
+    "for this session" => {"acceptForSession", "session"},
+    "permanently" => {"acceptAlways", "always"}
+  }
+
+  step ~r/^the user grants access (?<scope>for this request|for this session|permanently)$/,
+       %{args: [scope]} = context do
+    decide(context, elem(@scopes[scope], 0))
+  end
+
+  step ~r/^the tool gets access (?<scope>for this request|for this session|permanently)$/,
+       %{args: [scope]} = context do
+    {decision, persist} = @scopes[scope]
+    answer = elicitation_answer(context)
+    assert answer["action"] == "accept"
+    assert get_in(answer, ["_meta", "persist"]) == persist
+    assert %{"status" => "resolved", "decision" => ^decision} = request_now(context)
+    context
+  end
+
+  step "the user declines", context do
+    decide(context, "decline")
+  end
+
+  step "the tool is told access was declined", context do
+    assert elicitation_answer(context) == %{"action" => "decline"}
+    assert %{"status" => "resolved", "decision" => "decline"} = request_now(context)
+    # The turn goes on without the app.
+    assert %{"status" => "running"} = World.latest_run(context, @thread)
+    context
+  end
+
   step "the thread is in plan mode on Codex", context do
     World.fake_providers(context)
   end

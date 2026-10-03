@@ -201,7 +201,6 @@ Feature: Codex
     When the client reconnects to the MC
     Then the question is still waiting for an answer
 
-  @backlog
   Scenario Outline: Codex tools can ask for access to another app
     Given a Codex tool asks for access to "Linear"
     When the user grants access <scope>
@@ -213,7 +212,6 @@ Feature: Codex
       | for this session      |
       | permanently           |
 
-  @backlog
   Scenario: Declining an app access request lets the tool continue without it
     Given a Codex tool asks for access to "Linear"
     When the user declines

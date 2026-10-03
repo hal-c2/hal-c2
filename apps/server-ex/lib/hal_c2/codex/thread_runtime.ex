@@ -269,6 +269,13 @@ defmodule HalC2.Codex.ThreadRuntime do
         state = resolve_request(%{state | requests: requests}, request_id, response, status)
         {:reply, :ok, state}
 
+      {{:elicitation, rpc_id, params}, requests} ->
+        decision = response["decision"] || "decline"
+        answer = HalC2.Codex.Elicitation.response(params, decision)
+        Connection.respond(state.conn, rpc_id, {:ok, answer})
+        state = resolve_request(%{state | requests: requests}, request_id, decision)
+        {:reply, :ok, state}
+
       {rpc_id, requests} ->
         decision = response["decision"] || "decline"
         # Codex has no "always"; the closest is for the rest of the session.
@@ -332,6 +339,42 @@ defmodule HalC2.Codex.ThreadRuntime do
     {state, request_id} = open_question(flush(state), native, questions)
     ids = Enum.map(questions, & &1["id"])
     {:noreply, %{state | requests: Map.put(state.requests, request_id, {:question, id, ids})}}
+  end
+
+  # A tool asking for access to another app: an approval naming the app, with the
+  # scopes the request offers. One the user's decision could not answer is declined.
+  def handle_info(
+        {:json_rpc, conn, {:request, id, "mcpServer/elicitation/request", params}},
+        %{turn: turn} = state
+      ) do
+    if turn == nil or HalC2.Codex.Elicitation.response(params, "accept")["action"] != "accept" do
+      Connection.respond(conn, id, {:ok, %{"action" => "decline"}})
+      {:noreply, state}
+    else
+      native =
+        if params["mode"] == "url",
+          do: params["elicitationId"] || "request-#{id}",
+          else: "mcp-elicitation:#{params["serverName"]}"
+
+      %{app: app, options: options} = HalC2.Codex.Elicitation.describe(params)
+
+      {state, request_id} =
+        open_request(flush(state), native, "mcp-elicitation", params["message"])
+
+      commit(state, fn stream ->
+        [
+          Orchestration.upsert(
+            stream,
+            "turn-item",
+            "turn-item:approval:#{native}",
+            &Map.merge(&1, %{"appName" => app, "options" => options})
+          )
+        ]
+      end)
+
+      request = {:elicitation, id, params}
+      {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
+    end
   end
 
   # Other requests are not wired up yet; refuse rather than hang the turn.
