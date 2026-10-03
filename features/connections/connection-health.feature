@@ -26,40 +26,40 @@ Feature: Connection health
   Background:
     Given a client paired with an environment
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A dropped connection retries with growing delays
     Given the environment stops answering
     When the connection drops
     Then the client retries with delays that grow up to a cap
     And reconnects when the environment answers again
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: An offline device waits instead of retrying
     Given the device has no network
     When the connection drops
     Then the client waits for the network to return before trying again
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A refused credential waits for the user
     Given the environment refuses the client's credential
     When the client connects
     Then the client stops retrying
     And asks the user to pair again
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Only the environment with the bad credential stops
     Given two paired environments
     And one of them revoked this client
     When the client connects to both
     Then the other environment stays connected
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Foregrounding wakes a waiting retry
     Given the client is waiting to retry
     When the app comes to the foreground
     Then it tries again at once
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Foregrounding probes a healthy connection instead of replacing it
     Given an established connection
     When the app comes to the foreground after a moment
@@ -72,30 +72,30 @@ Feature: Connection health
     When it comes to the foreground
     Then the client opens a new connection without waiting for the old one to fail
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A connection is ready only after the environment describes itself
     When the socket opens
     Then the client reports connecting until the environment's configuration arrives
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A failed shell subscription is not shown as reconnecting
     Given a connected environment
     When its shell subscription fails
     Then the client reports the data problem
     And does not claim to be reconnecting
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The environment's status names why it is reconnecting
     Given the connection dropped because of a timeout
     Then the environment reads "Reconnecting: timeout"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The user copies a connection's trace id for a bug report
     Given a connection that failed
     When the user copies its trace id
     Then the trace id is on the clipboard
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Cached data stays readable offline without looking live
     Given threads were loaded before the connection dropped
     When the user opens one offline
@@ -108,25 +108,25 @@ Feature: Connection health
     When live data arrives first
     Then the older cached data is not applied over it
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A thread left for under five minutes resumes without a snapshot
     Given the user left a thread
     When the user returns within five minutes
     Then the client resumes the thread from where it stopped
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A thread left for longer loads a fresh snapshot
     Given the user left a thread more than five minutes ago
     When the user returns
     Then the client loads the thread again
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Subscriptions follow a replaced connection
     Given a client subscribed to a thread
     When the connection is replaced
     Then the subscription continues on the new connection
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Reconnecting does not repeat the user's actions
     Given the user sent a command just before the connection dropped
     When the client reconnects
@@ -145,7 +145,7 @@ Feature: Connection health
     Then only that request fails
     And the connection stays open
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Removing an environment clears everything the client kept for it
     Given a saved environment with cached threads and drafts
     When the user removes it
@@ -157,7 +157,7 @@ Feature: Connection health
     When the user signs out of HAL-C2 Connect
     Then the directly paired environment stays
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A protocol mismatch blocks the connection with advice
     Given an environment whose MC speaks <protocol>
     When the client connects
@@ -172,7 +172,7 @@ Feature: Connection health
   # A different app version does not block the connection; only a server behind the client
   # warns. settings/updates.feature holds updating the server from that warning and keeping
   # a dismissed notice dismissed for its version.
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario Outline: A server on another HAL-C2 version warns only when it is behind
     Given this client runs HAL-C2 <client>
     And the environment's MC runs HAL-C2 <server>
@@ -187,13 +187,13 @@ Feature: Connection health
       | 1.4.0                  | 1.4.0-nightly.20260901 | does not warn               |
       | 1.4.0-nightly.20260902 | 1.4.0-nightly.20260901 | warns of a version mismatch |
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: One connection serves every MC of a cluster
     Given a client connected to a cluster of three MCs
     Then the client keeps one connection for the cluster
     And streams from every MC arrive over it
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A cluster connection resumes each stream from where it stopped
     Given a client following threads on two cluster members
     When the cluster connection drops and returns

@@ -19,11 +19,30 @@ class QWebSocket;
 // The shell's own protocol-3 connection to its MC (apps/server-ex
 // lib/hal_c2/web/protocol.ex), the C++ twin of client-runtime's ClusterSocket.
 // Subscriptions are multiplexed by id, sent once the MC says hello, and
-// sent again after every reconnect or `resync`.
+// sent again after every reconnect or `resync`: a thread's stream from the
+// offset it had reached, everything else whole.
+//
+// One owner of retries. Before each socket it reads the MC's descriptor
+// (`/.well-known/hal-c2/environment`) and stays blocked on a protocol it does
+// not speak. A socket that drops is retried with growing delays; without a
+// network it waits for one, and a credential the MC refuses waits for the
+// user (phase()). wake() cuts a waiting retry short and checks a connection
+// that looks healthy.
 class McClient : public QObject {
   Q_OBJECT
 
 public:
+  // The protocol this client speaks (apps/server-ex HalC2.Web.Protocol).
+  static constexpr int kProtocol = 3;
+  enum class Phase {
+    Closed,      // never opened, or closed
+    Connecting,  // reading the descriptor, opening the socket, waiting for hello
+    Ready,       // the MC said hello
+    Retrying,    // dropped or unreachable: the next attempt is scheduled (retryDelay)
+    Offline,     // this device has no network: waits for it
+    Refused,     // the MC refuses the credential: waits for the user to pair again
+    Blocked,     // the MC speaks another protocol (blockedProtocol): one side must update
+  };
   using FrameHandler = std::function<void(const QJsonObject& frame)>;
   // `error` is set when the call failed: the MC's message, or "not connected"
   // / "disconnected" when the socket was not there to carry it.
@@ -43,6 +62,27 @@ public:
     open(origin, token);
   }
   bool isReady() const { return m_ready; }
+  Phase phase() const { return m_phase; }
+  // Why the last connection ended or could not be made ("timeout", "closed",
+  // or the socket's own words); empty while none has failed since it was ready.
+  QString failure() const { return m_failure; }
+  // The W3C trace id of the attempt that failed, sent as `traceparent` with
+  // its requests; empty when none failed.
+  QString failureTraceId() const { return m_failureTraceId; }
+  // The delay before the scheduled retry, in ms (Phase::Retrying).
+  int retryDelay() const { return m_retryDelay; }
+  // The protocol the MC's descriptor declares, when it blocks the connection.
+  int blockedProtocol() const { return m_blockedProtocol; }
+  // The MC's descriptor as last read (label, serverVersion, ...).
+  QJsonObject descriptor() const { return m_descriptor; }
+  // Whether this device has a network. Offline, a drop is not retried until
+  // the network is back.
+  void setOnline(bool online);
+  // The app came to the foreground: a waiting retry runs now, and a ready
+  // connection is checked (checked()) and replaced if it does not answer.
+  void wake();
+  // Tries again now, whatever it was waiting for.
+  void retryNow();
   // The http(s) origin the MC was opened at.
   QUrl origin() const { return m_origin; }
   QString mc() const { return m_mc; }
@@ -71,13 +111,25 @@ public:
   void dispatchCommand(QObject* context, const QString& environment, QJsonObject command, Reply reply);
 
   void setRetryDelays(const QList<int>& delaysMs) { m_retryDelaysMs = delaysMs; }
+  QList<int> retryDelays() const { return m_retryDelaysMs; }
   void setPingInterval(int ms) { m_pingTimer.setInterval(ms); }
+  // How long a ping may go unanswered before the connection counts as dead.
+  void setPongTimeout(int ms) { m_pongTimer.setInterval(ms); }
 
 signals:
   void readyChanged(bool ready);
+  void phaseChanged();
+  // A ping was answered (`alive`), or was not in time and the socket is replaced.
+  void checked(bool alive);
 
 private:
   void connectSocket();
+  void openSocket();
+  void ping();
+  void drop(const QString& reason);
+  void failed(const QString& reason, bool wasReady);
+  void scheduleRetry();
+  void setPhase(Phase phase);
   void onMessage(const QString& text);
   void onClosed(QWebSocket* socket);
   void sendSub(int id);
@@ -88,6 +140,8 @@ private:
     FrameHandler onFrame;
     // Ends the subscription when its context goes.
     QMetaObject::Connection contextGone;
+    // A stream's offset once its snapshot is whole: where a resubscription resumes.
+    QJsonValue offset = QJsonValue::Null;
   };
   struct Call {
     QPointer<QObject> context;
@@ -105,6 +159,19 @@ private:
   QList<int> m_retryDelaysMs{500, 1000, 2000, 4000, 8000};
   QTimer m_retryTimer;
   QTimer m_pingTimer;
+  QTimer m_pongTimer;
+  Phase m_phase = Phase::Closed;
+  QString m_failure;
+  QString m_traceId;
+  QString m_failureTraceId;
+  // Why the socket is being dropped from this side ("timeout").
+  QString m_dropReason;
+  QJsonObject m_descriptor;
+  int m_retryDelay = 0;
+  int m_blockedProtocol = 0;
+  // Bumped by every attempt: an answer to an older one is ignored.
+  quint64 m_generation = 0;
+  bool m_online = true;
   QString m_mc;
   QString m_environment;
   int m_nextId = 1;

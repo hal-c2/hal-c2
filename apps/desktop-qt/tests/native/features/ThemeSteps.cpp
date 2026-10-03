@@ -13,6 +13,7 @@
 #include "FakeConfig.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
+#include "SavedEnvironment.h"
 #include "Onboarding.h"
 #include "SettingsController.h"
 #include "ThemeController.h"
@@ -433,6 +434,7 @@ const Steps steps([] {
     blockDevice(world);
   });
   step(QStringLiteral("the user removes it"), [](World& world, const Captures&, const Table&) {
+    if (removeSavedEnvironment(world)) return;
     expect(!themes(world)->removeCustom(world.themeDraft.value(QStringLiteral("id")).toString()), QStringLiteral("the theme was removed"));
     expect(offered(world, QStringLiteral("My Theme")).has_value(), QStringLiteral("the theme is no longer offered"));
   });

@@ -131,6 +131,10 @@ Rectangle {
                 wrapMode: Text.Wrap
             }
 
+            ConnectionStatusRow {
+                Layout.fillWidth: true
+            }
+
             Heading {
                 text: qsTr("Other environments")
             }

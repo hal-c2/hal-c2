@@ -4,6 +4,7 @@
 #include <QGuiApplication>
 #include <QUrl>
 
+#include "DraftController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "McClient.h"
@@ -274,7 +275,17 @@ void ConnectionsController::link(const QString& pairingUrl, const QString& fallb
 void ConnectionsController::unlink(const QString& environmentId) {
   const QString label = labelOf(environmentId);
   change(QStringLiteral("hal-c2.unlinkEnvironment"), {{QStringLiteral("environmentId"), environmentId}},
-         [this, label](const QJsonObject&) { setNotice(QStringLiteral("success"), QStringLiteral("%1 was removed.").arg(label)); },
+         [this, label, environmentId](const QJsonObject&) {
+           // Nothing written for it is kept: its rows go with the link, its drafts here.
+           if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
+             QStringList ids;
+             for (const DraftController::Draft& draft : drafts->drafts()) {
+               if (draft.environmentId == environmentId) ids.append(draft.id);
+             }
+             for (const QString& id : std::as_const(ids)) drafts->remove(id);
+           }
+           setNotice(QStringLiteral("success"), QStringLiteral("%1 was removed.").arg(label));
+         },
          QStringLiteral("Could not remove %1").arg(label));
 }
 

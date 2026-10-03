@@ -25,6 +25,8 @@ qt_add_qml_module(hal_c2_bricks
     RightPanel.qml
     SettingsNav.qml
     ShellErrorOverlay.qml
+    ConnectionNotice.qml
+    ConnectionStatusRow.qml
     ShellButton.qml
     ShellCard.qml
     ShellChevron.qml
