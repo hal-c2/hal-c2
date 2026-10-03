@@ -110,7 +110,6 @@ Feature: Pi
     When the user reverts to the end of the first turn
     Then Pi continues from the first turn
 
-  @backlog
   Scenario: Reverting a Pi turn works past a turn the user stopped
     Given a Pi thread with a stopped turn followed by a finished turn
     When the user reverts to before the stopped turn

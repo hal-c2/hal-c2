@@ -202,6 +202,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     }
 
     with :ok <- Antigravity.check_turn(turn),
+         :ok <- check_signed_in(state, driver),
          {:ok, state} <- ensure_session(state, turn),
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
@@ -346,6 +347,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       state.replaying -> {:noreply, state}
       child_session?(params["sessionId"], state) -> {:noreply, child_update(params, state)}
       subagent_ended?(update) -> {:noreply, subagent_ended(state, update)}
+      commands = available_commands(update) -> {:noreply, offer(state, commands)}
       state.turn == nil -> {:noreply, state}
       true -> {:noreply, update(update, state)}
     end
@@ -414,7 +416,18 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:noreply, state}
   end
 
-  # This client offers no file system or terminal; say so rather than hang.
+  # The agent reads text files of the thread's workspace (and the files attached to
+  # its messages) through HAL-C2. A turn waiting on an approval still answers.
+  def handle_info(
+        {:json_rpc, conn, {:request, id, "fs/read_text_file", params}},
+        %{turn: turn} = state
+      )
+      when turn != nil do
+    Connection.respond(conn, id, read_text_file(turn.cwd, params || %{}))
+    {:noreply, state}
+  end
+
+  # This client writes no files and runs no terminal; say so rather than hang.
   def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state) do
     Connection.respond(
       conn,
@@ -524,6 +537,18 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # --- session -------------------------------------------------------------------
 
+  # A signed-out registry agent is not started for a thread: it could only refuse the
+  # session, and the thread says why instead.
+  defp check_signed_in(%{conn: conn}, _instance) when conn != nil, do: :ok
+
+  defp check_signed_in(_state, instance) do
+    if HalC2.Acp.signed_out?(instance),
+      do:
+        {:error,
+         "#{HalC2.Acp.label(instance)} is not signed in. Sign in to it in the provider's settings, then send the message again."},
+      else: :ok
+  end
+
   # The agent's permission mode is set when it starts, so a new mode means a new process.
   defp ensure_session(%{conn: conn, session_id: sid, agent: agent, mode: mode} = state, turn)
        when conn != nil and sid != nil and agent == turn.ids.driver and mode == turn.runtime_mode,
@@ -566,7 +591,7 @@ defmodule HalC2.Acp.ThreadRuntime do
            Connection.call(conn, "initialize", %{
              "protocolVersion" => 1,
              "clientCapabilities" => %{
-               "fs" => %{"readTextFile" => false, "writeTextFile" => false},
+               "fs" => %{"readTextFile" => true, "writeTextFile" => false},
                "terminal" => false,
                # A sign-in page the agent asks for shows on the provider (`HalC2.Acp.UrlAuth`).
                "elicitation" => %{"url" => %{}}
@@ -738,24 +763,68 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Any other agent with a mode of its own for planning (a mode option offering `plan`
   # or `architect`) runs in it while the thread is in plan mode. HAL-C2 owns only that
   # override: the next turn out of plan mode puts back what the options held before.
+  # What the options held is also kept on the thread's provider thread, since the
+  # agent keeps its mode with the session and this runtime may not live as long.
   defp set_options(%{plan_modes: plan_modes} = state, %{interaction_mode: "plan"}) do
-    Enum.reduce(plan_modes, state, fn {id, plan}, state ->
-      if state.config[id] == plan do
-        state
-      else
-        build_modes = Map.put_new(state.build_modes, id, state.config[id])
-        set_config(%{state | build_modes: build_modes}, id, plan)
-      end
-    end)
+    before = state.build_modes
+
+    state =
+      Enum.reduce(plan_modes, state, fn {id, plan}, state ->
+        if state.config[id] == plan do
+          state
+        else
+          build_modes = Map.put_new(state.build_modes, id, state.config[id])
+          set_config(%{state | build_modes: build_modes}, id, plan)
+        end
+      end)
+
+    if state.build_modes != before, do: save_build_modes(state, state.build_modes)
+    state
   end
 
-  defp set_options(%{build_modes: build_modes} = state, _turn),
-    do:
-      Enum.reduce(
-        build_modes,
-        %{state | build_modes: %{}},
-        &set_config(&2, elem(&1, 0), elem(&1, 1))
-      )
+  defp set_options(state, _turn) do
+    build_modes =
+      if state.build_modes == %{} and planning?(state),
+        do: saved_build_modes(state),
+        else: state.build_modes
+
+    if build_modes != %{}, do: save_build_modes(state, nil)
+
+    Enum.reduce(
+      build_modes,
+      %{state | build_modes: %{}},
+      &set_config(&2, elem(&1, 0), elem(&1, 1))
+    )
+  end
+
+  # The session is in one of the agent's planning modes.
+  defp planning?(state),
+    do: Enum.any?(state.plan_modes, fn {id, plan} -> state.config[id] == plan end)
+
+  defp saved_build_modes(state) do
+    HalC2.Streams.ensure(state.thread_id)
+    |> HalC2.Streams.Server.state()
+    |> HalC2.StreamState.get("provider-thread")
+    |> get_in([state.turn.ids.provider_thread, "buildModes"])
+    |> case do
+      %{} = modes -> modes
+      _ -> %{}
+    end
+  end
+
+  defp save_build_modes(state, modes) do
+    id = state.turn.ids.provider_thread
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "provider-thread", id, fn
+          nil -> nil
+          thread when modes == nil -> Map.delete(thread, "buildModes")
+          thread -> Map.put(thread, "buildModes", modes)
+        end)
+      ]
+    end)
+  end
 
   # The choice of a select option (flat or grouped) that plans, if it has one.
   defp plan_choice(option) do
@@ -971,7 +1040,75 @@ defmodule HalC2.Acp.ThreadRuntime do
     state
   end
 
+  @max_terminal_bytes 1024 * 1024
+
+  # ACP v2: a command the agent runs in a terminal of its own, told whole
+  # (`terminal_update`) or as output chunks. It is a command of the turn, never a
+  # terminal session, so nobody can type into it.
+  defp update(%{"sessionUpdate" => s, "terminalId" => terminal} = u, state)
+       when s in ["terminal_update", "terminal_output_chunk"] and is_binary(terminal) do
+    native = "acp-agent-terminal:#{terminal}"
+    fields = %{"input" => "Terminal", "output" => ""}
+    state = state |> flush() |> ensure_item(native, :command, fields)
+    item = state.items[native]
+
+    bytes =
+      case u do
+        %{"sessionUpdate" => "terminal_output_chunk", "data" => data} ->
+          Map.get(item, :bytes, "") <> terminal_bytes(data)
+
+        %{"output" => %{"data" => data}} ->
+          terminal_bytes(data)
+
+        _ ->
+          Map.get(item, :bytes, "")
+      end
+
+    bytes =
+      binary_part(
+        bytes,
+        max(byte_size(bytes) - @max_terminal_bytes, 0),
+        min(byte_size(bytes), @max_terminal_bytes)
+      )
+
+    command = if is_binary(u["command"]), do: u["command"], else: item[:command]
+    item = Map.merge(item, %{bytes: bytes, command: command})
+    state = %{state | items: Map.put(state.items, native, item)}
+
+    shown =
+      %{"output" => String.replace_invalid(bytes, "")}
+      |> then(&if(command, do: Map.put(&1, "input", command), else: &1))
+
+    cond do
+      Map.get(item, :exited) ->
+        state
+
+      is_map(u["exitStatus"]) ->
+        code = u["exitStatus"]["exitCode"]
+        status = if code == 0, do: "completed", else: "failed"
+        shown = if is_integer(code), do: Map.put(shown, "exitCode", code), else: shown
+        state = finish_item(state, native, status, &Map.merge(&1, shown))
+        %{state | items: Map.put(state.items, native, Map.put(item, :exited, true))}
+
+      true ->
+        commit(state, fn stream ->
+          [Orchestration.upsert(stream, "turn-item", item.id, &Map.merge(&1, shown))]
+        end)
+
+        state
+    end
+  end
+
   defp update(_update, state), do: state
+
+  defp terminal_bytes(data) when is_binary(data) do
+    case Base.decode64(data) do
+      {:ok, bytes} -> bytes
+      :error -> ""
+    end
+  end
+
+  defp terminal_bytes(_data), do: ""
 
   defp tool(state, id, call) do
     {kind, fields} = tool_shape(call)
@@ -1467,7 +1604,16 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp finish_tool(state, id, call) do
     %{kind: kind} = state.items[id]
-    status = if call["status"] == "failed", do: "failed", else: "completed"
+
+    status =
+      cond do
+        call["status"] == "failed" -> "failed"
+        # A command the user's stop cut off was stopped, though its agent reports it
+        # done like any other.
+        kind == :command and state.interrupted -> "interrupted"
+        true -> "completed"
+      end
+
     output = content_text(call["content"]) || raw_output(call["rawOutput"])
 
     finish_item(state, id, status, fn entity ->
@@ -1524,6 +1670,64 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp raw_output(%{"output" => output}) when is_binary(output), do: output
   defp raw_output(_), do: nil
+
+  # The commands and skills a session offers reach the composer as the agent
+  # advertises them, which it may do before or between turns.
+  defp available_commands(%{
+         "sessionUpdate" => "available_commands_update",
+         "availableCommands" => commands
+       })
+       when is_list(commands),
+       do: commands
+
+  defp available_commands(_update), do: nil
+
+  defp offer(state, commands) do
+    HalC2.Acp.put_commands(state.agent, commands)
+    state
+  end
+
+  # --- files ---------------------------------------------------------------------
+
+  # Larger files are not text an agent should take whole.
+  @max_read_bytes 10 * 1024 * 1024
+
+  # ACP's `fs/read_text_file`: an absolute path that stays, once symlinks resolve,
+  # in the workspace or among the uploads, from `line` (1-based) for `limit` lines.
+  defp read_text_file(cwd, %{"path" => path} = params) when is_binary(path) do
+    with true <- Path.type(path) == :absolute,
+         {:ok, real} <- HalC2.Paths.real(path),
+         true <- Enum.any?([cwd, HalC2.Attachments.dir()], &inside?(real, &1)),
+         {:ok, %File.Stat{type: :regular, size: size}} when size <= @max_read_bytes <-
+           File.stat(real),
+         {:ok, text} <- File.read(real),
+         true <- String.valid?(text) do
+      {:ok, %{"content" => lines(text, params["line"], params["limit"])}}
+    else
+      _ ->
+        {:error, %{"code" => -32002, "message" => "#{path} cannot be read from this workspace"}}
+    end
+  end
+
+  defp read_text_file(_cwd, _params),
+    do: {:error, %{"code" => -32602, "message" => "fs/read_text_file needs a path"}}
+
+  defp inside?(real, root) do
+    case HalC2.Paths.real(root) do
+      {:ok, root} -> real == root or String.starts_with?(real, root <> "/")
+      {:error, _} -> false
+    end
+  end
+
+  defp lines(text, line, limit) when is_integer(line) or is_integer(limit) do
+    text
+    |> String.split("\n")
+    |> Enum.drop(max((line || 1) - 1, 0))
+    |> then(&if(is_integer(limit) and limit >= 0, do: Enum.take(&1, limit), else: &1))
+    |> Enum.join("\n")
+  end
+
+  defp lines(text, _line, _limit), do: text
 
   # --- permissions ---------------------------------------------------------------
 

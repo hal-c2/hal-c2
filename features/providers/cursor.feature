@@ -152,7 +152,6 @@ Feature: Cursor
     When Cursor ends a turn with a command still running
     Then the command it left running ends with the turn
 
-  @backlog
   Scenario: A Cursor command the user stops shows as interrupted
     Given Cursor is running a command
     When the user stops the turn
@@ -185,7 +184,6 @@ Feature: Cursor
     When a Cursor turn starts in the project
     Then Cursor receives the project's skills and rules
 
-  @backlog
   Scenario: A Cursor shell command that fails to start does not stop the turn
     Given Cursor is running a turn
     When a shell command Cursor tries fails to start

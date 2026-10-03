@@ -197,7 +197,6 @@ Feature: OpenCode
     Then the descendant processes are asked to stop
     And the MC reports any that could not be stopped
 
-  @backlog
   Scenario: An OpenCode server whose owner crashed is stopped
     Given an OpenCode server was started for a thread
     When the provider process that owned it crashes

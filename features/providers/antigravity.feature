@@ -181,13 +181,11 @@ Feature: Antigravity
       | files totalling 60 MiB        | rejected |
       | an unsupported file format    | rejected |
 
-  @backlog
   Scenario: Antigravity reads a file of a kind it does not recognise by its path
     Given the project has a file whose kind Antigravity does not recognise
     When Antigravity asks for that file by its path
     Then Antigravity receives the file's contents
 
-  @backlog
   Scenario: Antigravity cannot leave the workspace
     Given an Antigravity thread works in the project's folder
     When Antigravity asks for a path outside that folder

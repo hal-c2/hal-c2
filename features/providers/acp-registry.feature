@@ -173,16 +173,13 @@ Feature: ACP registry agents
     When "acme" asks the client to read a file or run a terminal
     Then the request is refused rather than left waiting
 
-  # Changes the scenario above once it lands: reads inside the workspace are served and
-  # only terminals stay refused.
-  @backlog
+  # Reads inside the workspace are served; the scenario above is a read outside it.
   Scenario: An agent can read a workspace file while a write waits for approval
     Given "acme" is waiting for approval to write a file
     When "acme" asks the client to read a file in the workspace
     Then the read is answered
     And the write is still waiting for approval
 
-  @backlog
   Scenario: A signed-out agent cannot start a session
     Given "acme" requires sign-in and the user has not signed in
     When a thread tries to start a session with "acme"
@@ -208,7 +205,6 @@ Feature: ACP registry agents
     When the user saves model provider headers that are not a JSON object of strings
     Then the save is refused with a message about the header format
 
-  @backlog
   Scenario: Agent slash commands and skills appear in the composer
     Given a running "acme" session offers the command "/review" and the skill "$deploy"
     When the user types a slash
@@ -219,7 +215,6 @@ Feature: ACP registry agents
     When "acme" reports a plan and its context usage during a turn
     Then the task list and the context meter follow the agent's reports
 
-  @backlog
   Scenario: Agent-owned terminals are shown read-only
     When an ACP v2 agent runs a command in its own terminal
     Then the command, its output and exit status are shown
@@ -244,8 +239,7 @@ Feature: ACP registry agents
     When the user switches the thread to plan mode
     Then "acme" runs in its plan mode
 
-  # The mode to go back to is only held by the running agent's runtime.
-  @backlog
+  # The mode to go back to is kept with the thread, not only in the agent's runtime.
   Scenario: Leaving plan mode after the agent restarted returns it to its build mode
     Given "acme" has its own plan mode and the thread is in plan mode
     And the runtime of "acme" restarted

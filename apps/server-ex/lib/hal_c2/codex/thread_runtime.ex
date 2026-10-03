@@ -548,12 +548,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp connect(state, _turn), do: {:ok, state}
 
-  # The instance's launch arguments follow `app-server`, split as a shell would.
-  defp launch_args(instance) do
-    {:ok, OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")}
-  rescue
-    RuntimeError -> {:error, "the launch arguments in settings have a quote that is never closed"}
-  end
+  # The instance's launch arguments follow `app-server`.
+  defp launch_args(instance), do: HalC2.Codex.Provider.launch_args(instance)
 
   # A session carried from another machine that this Codex cannot open (a newer
   # Codex wrote it, say) starts a new thread with the handoff instead, and the user
