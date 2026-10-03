@@ -273,6 +273,29 @@ const Steps steps([] {
   step(QStringLiteral("the user imports one HAL-C2 theme file"), [](World& world, const Captures&, const Table&) {
     themes(world)->importFiles({writeFile(world, QStringLiteral("aurora.json"), themeFile(QStringLiteral("Aurora"), kImportedCanvas))});
   });
+  step(QStringLiteral("the user imports one VS Code theme file"), [](World& world, const Captures&, const Table&) {
+    // As an extension ships it: workbench colours, some translucent, most left out.
+    const QJsonObject file{{QStringLiteral("name"), QStringLiteral("aurora-theme")},
+                           {QStringLiteral("displayName"), QStringLiteral("Aurora")},
+                           {QStringLiteral("type"), QStringLiteral("dark")},
+                           {QStringLiteral("colors"), QJsonObject{{QStringLiteral("editor.background"), kImportedCanvas},
+                                                                  {QStringLiteral("editor.foreground"), QStringLiteral("#d8dee9")},
+                                                                  {QStringLiteral("focusBorder"), QStringLiteral("#88c0d0")},
+                                                                  {QStringLiteral("sideBar.background"), QStringLiteral("#0c1622")},
+                                                                  {QStringLiteral("list.hoverBackground"), QStringLiteral("#ffffff1a")}}},
+                           {QStringLiteral("tokenColors"), QJsonArray()}};
+    themes(world)->importFiles({writeFile(world, QStringLiteral("aurora-color-theme.json"), QJsonDocument(file).toJson())});
+    // Its own colours where it names them, the rest grown from its background.
+    const auto theme = savedNamed(world, QStringLiteral("Aurora"));
+    expect(theme.has_value(), describe(world));
+    const QJsonObject colors = theme->value(QLatin1String("colors")).toObject();
+    const auto color = [&colors](const char* role) { return QColor(colors.value(QLatin1String(role)).toString()); };
+    expect(theme->value(QLatin1String("appearance")) == QLatin1String("dark") && color("text") == QColor(QStringLiteral("#d8dee9")) &&
+               color("accent") == QColor(QStringLiteral("#88c0d0")) && color("sidebar") == QColor(QStringLiteral("#0c1622")) &&
+               color("sidebarRowHover").alpha() == 255 && color("sidebarRowHover") != color("sidebar") && color("border").isValid() &&
+               contrast(color("sidebarForeground"), color("sidebar")) >= 4.5,
+           show(colors.toVariantMap()));
+  });
   step(QStringLiteral("the user pastes a theme's JSON"), [](World& world, const Captures&, const Table&) {
     expect(themes(world)->importText(QString::fromUtf8(themeFile(QStringLiteral("Aurora"), kImportedCanvas))), describe(world));
   });

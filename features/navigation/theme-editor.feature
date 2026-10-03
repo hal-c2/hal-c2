@@ -113,14 +113,8 @@ Feature: Custom themes
       Examples:
         | files                        | result                          |
         | one HAL-C2 theme file       | the theme is added              |
-        | three theme files at once    | the user is told "3 themes added" |
-
-      # The desktop reads HAL-C2's own theme files; converting a VS Code theme
-      # (apps/web vscodeThemeImport.ts) is not ported, and it says so.
-      @backlog
-      Examples: Not converted on the desktop yet
-        | files                        | result                          |
         | one VS Code theme file       | the theme is added              |
+        | three theme files at once    | the user is told "3 themes added" |
 
     @desktop
     Scenario: Pasting theme JSON

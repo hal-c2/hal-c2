@@ -177,6 +177,8 @@ private:
   QJsonArray m_importConflicts;
   // Parses a theme file; `error` says why it is not one.
   std::optional<QJsonObject> parseFile(const QByteArray& text, QString* error) const;
+  // A VS Code colour theme as one of our theme files.
+  std::optional<QJsonObject> fromVsCodeTheme(const QJsonObject& file, QString* error) const;
   bool installed(const QString& id) const;
   // Adds or replaces saved themes in one save.
   bool install(const QJsonArray& themes, const QString& activate = {});

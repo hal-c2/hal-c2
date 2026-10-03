@@ -798,6 +798,162 @@ QStringList ThemeController::importConflicts() const {
   return labels;
 }
 
+// --- VS Code themes (apps/web vscodeThemeImport.ts) ----------------------------------
+
+namespace {
+
+struct VsColor {
+  double r = 0, g = 0, b = 0, a = 1;
+  bool valid = false;
+  QColor solid() const { return QColor::fromRgbF(r, g, b); }
+};
+
+// VS Code writes #RGB, #RGBA, #RRGGBB and #RRGGBBAA.
+VsColor vsColor(const QJsonValue& value) {
+  static const QRegularExpression hex(QStringLiteral("^#?([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"));
+  const auto match = hex.match(value.toString().trimmed());
+  if (!match.hasMatch()) return {};
+  QString digits = match.captured(1);
+  if (digits.size() <= 4) {
+    QString wide;
+    for (const QChar digit : std::as_const(digits)) wide += QString(2, digit);
+    digits = wide;
+  }
+  const auto channel = [&digits](int at) { return digits.mid(at, 2).toInt(nullptr, 16) / 255.0; };
+  return {channel(0), channel(2), channel(4), digits.size() == 8 ? channel(6) : 1.0, true};
+}
+
+// Overlays are translucent in VS Code and our roles are opaque: over the surface they sit on.
+QString flattened(const VsColor& color, const QColor& base) {
+  return QColor::fromRgbF(color.r * color.a + base.redF() * (1 - color.a), color.g * color.a + base.greenF() * (1 - color.a),
+                          color.b * color.a + base.blueF() * (1 - color.a))
+      .name(QColor::HexRgb);
+}
+
+// Extension names are often package slugs; read them as words.
+QString humanized(const QString& raw) {
+  static const QRegularExpression space(QStringLiteral("\\s")), separators(QStringLiteral("[-_.]+"));
+  const QString trimmed = raw.trimmed();
+  if (trimmed.contains(space) || !trimmed.contains(separators)) return trimmed;
+  QStringList words;
+  for (const QString& word : trimmed.split(separators, Qt::SkipEmptyParts)) words.append(word.left(1).toUpper() + word.mid(1));
+  return words.join(QLatin1Char(' '));
+}
+
+// Its workbench colours are dotted paths (`editor.background`), which our own files never use.
+bool isVsCodeTheme(const QJsonObject& file) {
+  if (file.value(QLatin1String("version")).toInt() == 1) return false;
+  if (file.value(QLatin1String("tokenColors")).isArray()) return true;
+  const QJsonObject colors = file.value(QLatin1String("colors")).toObject();
+  const QStringList keys = colors.keys();
+  return std::any_of(keys.cbegin(), keys.cend(), [](const QString& key) { return key.contains(QLatin1Char('.')); });
+}
+
+}  // namespace
+
+// A VS Code theme describes editor chrome, not an app palette: a whole palette
+// is grown from its editor background and a muted accent (derive), then the
+// workbench colours it does set go on top, foregrounds only where they stay
+// readable. The result is one of our theme files. Batches are not paired into
+// light and dark here, as the web's pairVsCodeThemes does.
+std::optional<QJsonObject> ThemeController::fromVsCodeTheme(const QJsonObject& file, QString* error) const {
+  const QJsonObject colors = file.value(QLatin1String("colors")).toObject();
+  const auto pick = [&colors](std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+      if (const VsColor color = vsColor(colors.value(QLatin1String(key))); color.valid) return color;
+    }
+    return VsColor();
+  };
+  const VsColor canvasColor = pick({"editor.background", "editorPane.background"});
+  if (!canvasColor.valid) {
+    *error = tr("That VS Code theme has no \"editor.background\" color, so there is nothing to build a palette from.");
+    return std::nullopt;
+  }
+  const QColor canvas = canvasColor.solid();
+  const QString type = file.value(QLatin1String("type")).toString().toLower();
+  const QString appearance = type == QLatin1String("light") || type == QLatin1String("hc-light")  ? kLight
+                             : type == QLatin1String("dark") || type == QLatin1String("hc-black") ? kDark
+                             : luminance(canvas) < 0.179                                          ? kDark
+                                                                                                  : kLight;
+  const VsColor accentColor = pick({"focusBorder", "button.background", "textLink.foreground", "activityBarBadge.background",
+                                    "progressBar.background", "badge.background"});
+  const QString canvasHex = canvas.name(QColor::HexRgb);
+  // The floor grows from a muted accent, so a neutral theme is not washed in its focus colour.
+  VsColor muted = accentColor;
+  muted.a = 0.2;
+  QJsonObject palette = QJsonObject::fromVariantMap(derive(canvasHex, accentColor.valid ? flattened(muted, canvas) : canvasHex));
+  const auto derived = [&palette](const char* role) { return palette.value(QLatin1String(role)).toString(); };
+  const auto solidOver = [&pick](const QColor& base, std::initializer_list<const char*> keys) {
+    const VsColor color = pick(keys);
+    return color.valid ? flattened(color, base) : QString();
+  };
+  const auto orDerived = [&derived](const QString& value, const char* role) { return value.isEmpty() ? derived(role) : value; };
+  const auto readable = [&](const QString& surface, const char* role, std::initializer_list<const char*> keys) {
+    const QColor on(surface);
+    const auto reads = [&on](const QString& candidate) { return contrast(QColor(candidate), on) >= 4.5; };
+    const QString named = solidOver(on, keys);
+    if (!named.isEmpty() && reads(named)) return named;
+    if (reads(derived(role))) return derived(role);
+    return luminance(on) < 0.179 ? QStringLiteral("#ffffff") : QStringLiteral("#000000");
+  };
+  const auto status = [&](const char* role, std::initializer_list<const char*> keys) {
+    const QString named = solidOver(canvas, keys);
+    return !named.isEmpty() && contrast(QColor(named), canvas) >= 4.5 ? named : derived(role);
+  };
+  const QString sidebarHex = orDerived(solidOver(canvas, {"sideBar.background", "activityBar.background"}), "sidebar");
+  const QColor sidebar(sidebarHex);
+  const QString terminalHex = orDerived(solidOver(canvas, {"terminal.background", "panel.background"}), "terminalBackground");
+  const QColor terminal(terminalHex);
+  const QList<std::pair<const char*, QString>> overrides{
+      {"canvas", canvasHex},
+      {"text", readable(canvasHex, "text", {"editor.foreground", "foreground"})},
+      {"textMuted", readable(canvasHex, "textMuted", {"descriptionForeground", "disabledForeground"})},
+      {"surface", orDerived(solidOver(canvas, {"editorWidget.background"}), "surface")},
+      {"surfaceRaised", orDerived(solidOver(canvas, {"editorWidget.background", "dropdown.background"}), "surfaceRaised")},
+      {"surfaceOverlay", orDerived(solidOver(canvas, {"menu.background", "quickInput.background", "dropdown.background"}), "surfaceOverlay")},
+      {"border", orDerived(solidOver(canvas, {"panel.border", "editorGroup.border", "contrastBorder"}), "border")},
+      {"input", orDerived(solidOver(canvas, {"input.border", "dropdown.border"}), "input")},
+      {"placeholder", readable(canvasHex, "placeholder", {"input.placeholderForeground"})},
+      // The status colours stay the standard ones unless the theme's own read here.
+      {"error", status("error", {"editorError.foreground", "errorForeground"})},
+      {"warning", status("warning", {"editorWarning.foreground"})},
+      {"accentSurface", orDerived(solidOver(canvas, {"list.activeSelectionBackground", "list.hoverBackground"}), "accentSurface")},
+      {"codeBackground", orDerived(solidOver(canvas, {"textCodeBlock.background"}), "codeBackground")},
+      {"sidebar", sidebarHex},
+      {"sidebarForeground", readable(sidebarHex, "sidebarForeground", {"sideBar.foreground"})},
+      {"sidebarBorder", orDerived(solidOver(sidebar, {"sideBar.border"}), "sidebarBorder")},
+      {"sidebarRowHover", orDerived(solidOver(sidebar, {"list.hoverBackground"}), "sidebarRowHover")},
+      {"sidebarRowActive", orDerived(solidOver(sidebar, {"list.inactiveSelectionBackground", "list.hoverBackground"}), "sidebarRowActive")},
+      {"sidebarRowSelected", orDerived(solidOver(sidebar, {"list.activeSelectionBackground"}), "sidebarRowSelected")},
+      {"terminalBackground", terminalHex},
+      {"terminalForeground", readable(terminalHex, "terminalForeground", {"terminal.foreground"})},
+      {"terminalCursor", orDerived(solidOver(terminal, {"terminalCursor.foreground", "editorCursor.foreground"}), "terminalCursor")},
+      {"terminalSelection", orDerived(solidOver(terminal, {"terminal.selectionBackground", "editor.selectionBackground"}), "terminalSelection")},
+      {"terminalScrollbar", orDerived(solidOver(terminal, {"scrollbarSlider.background"}), "terminalScrollbar")},
+  };
+  for (const auto& [role, value] : overrides) palette.insert(QLatin1String(role), value);
+  if (accentColor.valid) {
+    const QString accentHex = flattened(accentColor, canvas);
+    // The button pair is the closest thing VS Code has to our action colour.
+    const QString button = solidOver(canvas, {"button.background"});
+    const QString actionHex = button.isEmpty() ? accentHex : button;
+    palette.insert(QStringLiteral("accent"), accentHex);
+    palette.insert(QStringLiteral("focus"), accentHex);
+    palette.insert(QStringLiteral("messageAction"), actionHex);
+    palette.insert(QStringLiteral("messageActionForeground"), readable(actionHex, "messageActionForeground", {"button.foreground"}));
+    palette.insert(QStringLiteral("accentForeground"), readable(accentHex, "accentForeground", {"button.foreground"}));
+  }
+  QString name;
+  for (const char* key : {"displayName", "name"}) {
+    const QJsonValue candidate = file.value(QLatin1String(key));
+    if (!candidate.isString() || humanized(candidate.toString()).isEmpty()) continue;
+    name = humanized(candidate.toString()).left(48);
+    break;
+  }
+  if (name.isEmpty()) name = QStringLiteral("VS Code theme");
+  return QJsonObject{{QStringLiteral("version"), 1}, {QStringLiteral("name"), name}, {QStringLiteral("appearance"), appearance}, {QStringLiteral("colors"), palette}};
+}
+
 // apps/web parseThemeFile, with its messages.
 std::optional<QJsonObject> ThemeController::parseFile(const QByteArray& text, QString* error) const {
   const auto refuse = [error](const QString& why) {
@@ -808,10 +964,12 @@ std::optional<QJsonObject> ThemeController::parseFile(const QByteArray& text, QS
   const QJsonDocument document = QJsonDocument::fromJson(text, &parse);
   if (parse.error != QJsonParseError::NoError) return refuse(tr("That theme file is invalid."));
   if (!document.isObject()) return refuse(tr("Theme files must contain a JSON object."));
-  const QJsonObject file = document.object();
-  // A VS Code theme, which the web converts on the way in.
-  if (file.contains(QLatin1String("tokenColors")) || (!file.contains(QLatin1String("version")) && file.contains(QLatin1String("colors")))) {
-    return refuse(tr("VS Code themes are not converted on the desktop yet."));
+  QJsonObject file = document.object();
+  // A VS Code colour theme is converted on the way in.
+  if (isVsCodeTheme(file)) {
+    const auto converted = fromVsCodeTheme(file, error);
+    if (!converted) return std::nullopt;
+    file = *converted;
   }
   if (file.value(QLatin1String("version")).toInt() != 1) {
     return refuse(tr("This theme file uses an unsupported version. Expected 1."));
