@@ -71,7 +71,9 @@ void ProjectController::activate() {
       CommandPaletteController::BrowseOptions options;
       options.query = browseStart(environmentId);
       NativeShell::of(this)->controller<CommandPaletteController>()->browse(
-          environmentId, [this, environmentId](const QString& path) { addFolder(environmentId, path); }, options);
+          environmentId,
+          [this, environmentId](const QString& path) { addFolder(environmentId, path, QStringLiteral("Failed to add project")); },
+          options);
     };
     return QList<CommandRegistry::Choice>{folder} +
            NativeShell::of(this)->controller<ProjectCloneController>()->sources(environmentId);
@@ -151,7 +153,7 @@ void ProjectController::openFolder(const QString& path) {
   addFolder(own, folder.canonicalFilePath());
 }
 
-void ProjectController::addFolder(const QString& environmentId, const QString& root) {
+void ProjectController::addFolder(const QString& environmentId, const QString& root, const QString& failureTitle) {
   // The environment chosen went away while the folder was being picked.
   if (!m_store->environmentOnline(environmentId)) {
     const QString label = m_store->environment(environmentId).value(QLatin1String("label")).toString(environmentId);
@@ -173,10 +175,9 @@ void ProjectController::addFolder(const QString& environmentId, const QString& r
       {QStringLiteral("workspaceRoot"), root},
   };
   m_client->call(this, environmentId, QStringLiteral("projects.mutate"), command,
-                 [this, environmentId, projectId](const QJsonValue&, const std::optional<QString>& error) {
+                 [this, environmentId, projectId, failureTitle](const QJsonValue&, const std::optional<QString>& error) {
                    if (error) {
-                     NativeShell::of(this)->controller<ToastController>()->error(QStringLiteral("Could not open folder"),
-                                                                                 *error);
+                     NativeShell::of(this)->controller<ToastController>()->error(failureTitle, *error);
                      return;
                    }
                    // A draft for a project the shell has no row for would be dropped

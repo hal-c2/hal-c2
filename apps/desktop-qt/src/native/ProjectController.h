@@ -51,7 +51,12 @@ public:
   void askToRemove(const QStringList& keys, const QString& kind, const QString& title);
   // Adds the folder at `path` on `environmentId` as a project, or opens the
   // project already there.
-  void addFolder(const QString& environmentId, const QString& path);
+  // Adds the folder as a project of the environment, or opens the one it
+  // already is. A refusal is told under `failureTitle`: opening a folder
+  // from this machine says "Could not open folder", the palette's Add project
+  // "Failed to add project".
+  void addFolder(const QString& environmentId, const QString& path,
+                 const QString& failureTitle = QStringLiteral("Could not open folder"));
   // Where Add project browses on `environmentId` from, as a folder ("~/"
   // unless its settings name another, once they have arrived).
   QString browseStart(const QString& environmentId) const;
