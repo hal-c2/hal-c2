@@ -722,10 +722,23 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   if (scoped) scopedProjectKeys = QSet<QString>(scoped->memberKeys.begin(), scoped->memberKeys.end());
   const Partition sections = partition(threads, scopedProjectKeys, capabilitiesFor, nowMs);
 
+  QHash<QString, QString> projectNames;
+  for (const ProjectGroup& group : input.projects) projectNames.insert(group.key, group.summary.value(QStringLiteral("displayName")).toString());
+  // "5m ago", as the rows' own ages.
+  const auto ago = [nowMs](const QString& iso) {
+    const auto at = parseIso(iso);
+    if (!at) return QString();
+    const qint64 seconds = std::max<qint64>(0, nowMs - *at) / 1000;
+    if (seconds < 60) return QStringLiteral("just now");
+    if (seconds < 3600) return QStringLiteral("%1m ago").arg(seconds / 60);
+    if (seconds < 86400) return QStringLiteral("%1h ago").arg(seconds / 3600);
+    return QStringLiteral("%1d ago").arg(seconds / 86400);
+  };
   View view;
   const auto convert = [&](const QList<Thread>& section, bool snoozed, bool parked, qsizetype limit) {
     QVariantList rows;
     for (const Thread& thread : section) {
+      const qsizetype place = view.orderedKeys.size();
       view.orderedKeys.append(thread.key());
       if (parked) view.parkedKeys.insert(thread.key());
       if (rows.size() >= limit) continue;
@@ -756,6 +769,14 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
           {QStringLiteral("workingLabel"), workingLabel(thread, nowMs)},
           {QStringLiteral("movingTo"), nullable(thread.movingTo)},
           {QStringLiteral("selected"), input.selectedKeys.contains(thread.key())},
+          {QStringLiteral("jumpLabel"), input.showJumpHints && place < input.jumpLabels.size() ? QVariant(input.jumpLabels.at(place))
+                                                                                                : QVariant::fromValue(nullptr)},
+          // What resting the pointer on the row shows: its project, branch and latest activity.
+          {QStringLiteral("preview"),
+           QVariantMap{{QStringLiteral("project"), projectNames.value(logicalKeyByPhysicalKey.value(physical, physical))},
+                       {QStringLiteral("branch"), nullable(thread.branch)},
+                       {QStringLiteral("activity"), statusLabel(thread) ? *statusLabel(thread) + QStringLiteral(" · ") + ago(thread.updatedAt)
+                                                                        : QStringLiteral("Active ") + ago(thread.updatedAt)}}},
           {QStringLiteral("wokeAt"), nullable(visibleWokeAt(thread, nowMs))},
           {QStringLiteral("offline"), offline},
           {QStringLiteral("canSettle"), !offline && capabilities.settlement},

@@ -176,6 +176,7 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
     copy.children.append({QStringLiteral("copy-branch"), QStringLiteral("Branch"), QStringLiteral("git-branch")});
   }
   copy.children.append({QStringLiteral("copy-thread-id"), QStringLiteral("Thread ID"), QStringLiteral("hash")});
+  copy.children.append({QStringLiteral("copy-link"), QStringLiteral("Link"), QStringLiteral("link")});
   add(copy, false);
   if (projectKey) add({QStringLiteral("project-settings"), QStringLiteral("Project settings"), QStringLiteral("settings")}, false);
   add({QStringLiteral("fork"), QStringLiteral("Fork thread"), QStringLiteral("git-fork")});
@@ -436,6 +437,8 @@ void ThreadMenuController::choose(const QString& key, const QString& id, double 
     if (thread->branch) copy(*thread->branch, QStringLiteral("Branch copied"), QStringLiteral("Failed to copy branch"));
   } else if (id == QLatin1String("copy-thread-id")) {
     copy(thread->id, QStringLiteral("Thread ID copied"), QStringLiteral("Failed to copy thread ID"));
+  } else if (id == QLatin1String("copy-link")) {
+    copy(NavigationController::threadLink(key), QStringLiteral("Link copied"), QStringLiteral("Failed to copy link"));
   } else if (id == QLatin1String("project-settings")) {
     openProjectSettings(key);
   } else if (id == QLatin1String("fork")) {
@@ -507,12 +510,54 @@ void ThreadMenuController::archive(const QString& key) {
   });
 }
 
+QString ThreadMenuController::orphanedWorktree(const QString& key) const {
+  const QString worktree = text(m_store->threadRow(key), "worktreePath").trimmed();
+  if (worktree.isEmpty()) return {};
+  for (const sidebar::Thread& other : m_store->threads()) {
+    if (other.key() != key && text(m_store->threadRow(other.key()), "worktreePath").trimmed() == worktree) return {};
+  }
+  return worktree;
+}
+
 void ThreadMenuController::remove(const QString& key) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
+  const QString worktree = orphanedWorktree(key);
+  const QString root = text(m_store->projectRow(thread->environmentId, thread->projectId), "workspaceRoot");
+  if (worktree.isEmpty() || root.isEmpty()) return removeWith(key, {});
+  // The project's own rules, else the environment's.
+  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  const QJsonObject policy = QJsonValue::fromVariant(settings->value(QStringLiteral("projectSettingsOverrides.%1.worktreeCleanup").arg(thread->projectId))).toObject();
+  const QString mode = text(policy, "mode");
+  const bool automatic = mode == QLatin1String("custom") ? policy.value(QLatin1String("rules")).toObject().value(QLatin1String("worktreeOnDelete")).toBool()
+                         : mode == QLatin1String("off")  ? false
+                                                         : settings->value(QStringLiteral("storageCleanup.worktreeOnDelete")).toBool();
+  if (automatic) return removeWith(key, worktree);
+  NativeShell::of(this)->controller<MenuController>()->confirm(
+      QStringLiteral("Delete the worktree too?"),
+      QStringLiteral("This thread is the only one linked to this worktree: %1").arg(worktree.section(QLatin1Char('/'), -1)),
+      QStringLiteral("Delete worktree"), true, [this, key, worktree] { removeWith(key, worktree); }, [this, key] { removeWith(key, {}); });
+}
+
+void ThreadMenuController::removeWith(const QString& key, const QString& worktree) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  const QString root = text(m_store->projectRow(thread->environmentId, thread->projectId), "workspaceRoot");
+  std::function<void()> cleanUp;
+  if (!worktree.isEmpty()) {
+    cleanUp = [this, environmentId = thread->environmentId, root, worktree] {
+      m_client->call(this, environmentId, QStringLiteral("vcs.removeWorktree"),
+                     QJsonObject{{QStringLiteral("cwd"), root}, {QStringLiteral("path"), worktree}, {QStringLiteral("force"), true}},
+                     [this, worktree](const QJsonValue&, const std::optional<QString>& error) {
+                       if (!error) return;
+                       toasts()->error(QStringLiteral("Failed to delete worktree"),
+                                       QStringLiteral("Could not remove %1. %2").arg(worktree.section(QLatin1Char('/'), -1), *error));
+                     });
+    };
+  }
   NativeShell::of(this)->sidebar()->park(
       key, {{QStringLiteral("type"), QStringLiteral("thread.delete")}, {QStringLiteral("threadId"), thread->id}},
-      QStringLiteral("Failed to delete thread"), SidebarController::Leave::ProjectFallback);
+      QStringLiteral("Failed to delete thread"), SidebarController::Leave::ProjectFallback, std::move(cleanUp));
 }
 
 void ThreadMenuController::pin(const QString& key) {

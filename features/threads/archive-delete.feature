@@ -90,7 +90,7 @@ Feature: Archiving and deleting threads
     When the user archives "Old spike"
     Then a draft thread opens in "shop"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Archiving the open thread when the next thread cannot be opened
     Given the user is viewing "Old spike"
     And opening another thread fails
@@ -134,20 +134,20 @@ Feature: Archiving and deleting threads
     Then the agent session is stopped
     And "Old spike" is deleted
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Deleting the last thread in a worktree offers to remove the worktree
     Given "Old spike" is the only thread using its worktree
     When the user deletes "Old spike"
     Then the user is asked whether to delete the worktree too
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The worktree is removed without asking when the user chose automatic cleanup
     Given "Old spike" is the only thread using its worktree
     And the user chose to always remove orphaned worktrees
     When the user deletes "Old spike"
     Then the thread and its worktree are deleted without a question
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A worktree that cannot be removed is reported
     Given the worktree of "Old spike" cannot be removed
     When the user deletes "Old spike" and its worktree

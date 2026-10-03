@@ -51,6 +51,11 @@ void ShellBridge::publish(const QString& key, const QVariant& value) {
 
 void ShellBridge::openExternal(const QUrl& url) {
   const auto scheme = url.scheme();
+  // The app's own links open in the app.
+  if (scheme == QLatin1String("hal-c2")) {
+    dispatch(QStringLiteral("link.open"), QVariantMap{{QStringLiteral("url"), url.toString()}});
+    return;
+  }
   if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https") &&
       scheme != QStringLiteral("mailto")) {
     return;

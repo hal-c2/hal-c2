@@ -94,6 +94,11 @@ public:
   // un-settles or wakes the thread, and into the snoozed shelf does nothing.
   // The order is the environment's (sidebar::planReorder), which has to
   // support it (threadPinReorder, threadActiveReorder).
+  // While the thread jump modifier is held (KeybindingController), the first
+  // nine rows show the key that opens them (`jumpLabel`).
+  void setJumpHints(const QStringList& labels, bool shown);
+  // `thread.attachFiles {key, files}` (files dropped on a row, read by the
+  // brick as the composer reads its own): opens the thread and attaches them.
   // A wake time of the user's own: every snooze menu ends in "Custom…"
   // (kCustomSnooze), which asks through `customSnooze` ({keys, date, time,
   // error}, the CustomSnoozeDialog brick). `snooze.custom.submit {mode, date,
@@ -156,6 +161,8 @@ private:
   QTimeZone m_zone = QTimeZone::systemTimeZone();
   // The threads the custom snooze question is about.
   QStringList m_customSnoozeKeys;
+  QStringList m_jumpLabels;
+  bool m_showJumpHints = false;
   QString m_visited;  // "<thread key>:<updatedAt>" of the last visit sent
   QElapsedTimer m_sinceVisit;
   QTimer m_visitLater;

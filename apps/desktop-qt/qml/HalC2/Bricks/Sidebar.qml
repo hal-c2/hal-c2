@@ -698,6 +698,15 @@ Rectangle {
                                 });
                             }
                         }
+                        onFilesDropped: urls => {
+                            const files = Shell.readImageFiles(urls);
+                            if (files.length > 0) {
+                                Shell.dispatch("thread.attachFiles", {
+                                    key: entry.modelData.item.key,
+                                    files: files
+                                });
+                            }
+                        }
                         onDragMoved: windowY => list.trackDrop(entry.modelData.item.key, windowY)
                         onDragEnded: dropped => list.finishDrop(dropped)
                         onSelectionToggled: Shell.dispatch("thread.select.toggle", {

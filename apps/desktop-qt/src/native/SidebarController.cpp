@@ -114,6 +114,8 @@ void SidebarController::refresh() {
   // A thread that went away is not selected any more.
   m_selected.removeIf([this](const QString& key) { return !m_store->thread(key); });
   input.selectedKeys = m_selected;
+  input.jumpLabels = m_jumpLabels;
+  input.showJumpHints = m_showJumpHints;
   input.describeWake = [this, now](const QString& snoozedUntil) {
     return sidebar::wakeDescription(snoozedUntil, now, m_timestampFormat, m_locale);
   };
@@ -219,6 +221,13 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
       }
     }
     return false;
+  }
+  if (action == QLatin1String("thread.attachFiles")) {
+    const QString key = keyOf(map);
+    if (!m_store->thread(key)) return true;
+    NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(key));
+    m_bridge->dispatch(QStringLiteral("composer.attach"), QVariantMap{{QStringLiteral("files"), map.value(QStringLiteral("files"))}});
+    return true;
   }
   if (action == QLatin1String("snooze.custom.cancel")) {
     m_customSnoozeKeys.clear();
@@ -388,9 +397,16 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
         NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(next));
       };
     } else {
-      // Nothing left to show: a new thread in the same project.
-      navigate = [this, environmentId = thread->environmentId, projectId = thread->projectId] {
-        if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) drafts->start(environmentId, projectId);
+      // Nothing left to show: a new thread in the same project. The thread is
+      // parked either way; a draft that could not be started is said.
+      const QString type = parkCommand.value(QLatin1String("type")).toString();
+      navigate = [this, type, environmentId = thread->environmentId, projectId = thread->projectId] {
+        auto* drafts = NativeShell::of(this)->controller<DraftController>();
+        if (!drafts || !drafts->start(environmentId, projectId).isEmpty()) return;
+        const QString done = type == QLatin1String("thread.archive")  ? QStringLiteral("archived")
+                             : type == QLatin1String("thread.settle") ? QStringLiteral("settled")
+                                                                      : QStringLiteral("snoozed");
+        toasts()->error(QStringLiteral("Thread %1, but navigation failed").arg(done), QStringLiteral("A new thread could not be started."));
       };
     }
   }
@@ -549,6 +565,13 @@ void SidebarController::drop(const QString& key, const QString& section, const Q
   } else if (from == QLatin1String("snoozed")) {
     handle(QStringLiteral("thread.unsnooze"), keyed);
   }
+}
+
+void SidebarController::setJumpHints(const QStringList& labels, bool shown) {
+  if (m_jumpLabels == labels && m_showJumpHints == shown) return;
+  m_jumpLabels = labels;
+  m_showJumpHints = shown;
+  refresh();
 }
 
 QStringList SidebarController::selection() const {

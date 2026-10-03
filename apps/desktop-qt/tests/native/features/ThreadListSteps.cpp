@@ -393,6 +393,8 @@ const Steps steps([] {
            const auto finished = [&](const QString& visitedAt) {
              run(QStringLiteral("completed"));
              row.insert(QStringLiteral("latestRunCompletedAt"), iso(now.addSecs(-600)));
+             // The MC stamps the thread when its run ends.
+             row.insert(QStringLiteral("updatedAt"), iso(now.addSecs(-600)));
              row.insert(QStringLiteral("lastVisitedAt"), visitedAt);
            };
            if (state == QLatin1String("has an agent working")) {

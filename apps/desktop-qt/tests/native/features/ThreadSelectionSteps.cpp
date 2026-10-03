@@ -8,6 +8,10 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 
+#include <QDir>
+#include <QFile>
+
+#include "FakeConfig.h"
 #include "Harness.h"
 #include "ThreadList.h"
 #include "World.h"
@@ -144,6 +148,21 @@ void expectCounted(World& world, const QString& id, int count) {
          QStringLiteral("the menu is %1").arg(show(menuItems(world))));
 }
 
+// What the MC was asked to remove (`vcs.removeWorktree`), and why it refuses.
+struct Worktrees {
+  QList<QJsonObject> removed;
+  QString refusal;
+};
+
+const FakeMc::Extension worktrees([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("vcs.removeWorktree"), [&mc](const FakeMc::Rpc& rpc) {
+    Worktrees& fake = mc.part<Worktrees>();
+    if (!fake.refusal.isEmpty()) return mc.refuse(rpc, fake.refusal);
+    fake.removed.append(rpc.payload);
+    mc.reply(rpc, QJsonValue::Null);
+  });
+});
+
 const QStringList kThree{QStringLiteral("One"), QStringLiteral("Two"), QStringLiteral("Three")};
 
 bool gone(World& world, const QString& title) {
@@ -277,6 +296,55 @@ const Steps steps([] {
     for (const QString& title : kThree) {
       world.waitFor([&] { return gone(world, title); }, [&] { return QStringLiteral("%1 to be deleted").arg(title); });
     }
+  });
+
+  // The worktree a deleted thread leaves behind.
+  step(QStringLiteral("%1 is the only thread using its worktree").arg(q), [](World& world, const Captures& c, const Table&) {
+    updateThreadRow(world, idOf(threadKeyOf(world, c[0])), [](QJsonObject& row) {
+      row.insert(QStringLiteral("branch"), QStringLiteral("spike/old"));
+      row.insert(QStringLiteral("worktreePath"), QStringLiteral("/work/worktrees/old-spike"));
+    });
+  });
+  step(QStringLiteral("the worktree of %1 cannot be removed").arg(q), [](World& world, const Captures& c, const Table&) {
+    updateThreadRow(world, idOf(threadKeyOf(world, c[0])), [](QJsonObject& row) {
+      row.insert(QStringLiteral("branch"), QStringLiteral("spike/old"));
+      row.insert(QStringLiteral("worktreePath"), QStringLiteral("/work/worktrees/old-spike"));
+    });
+    world.mc.part<Worktrees>().refusal = QStringLiteral("The worktree has uncommitted changes");
+  });
+  step(QStringLiteral("the user chose to always remove orphaned worktrees"), [](World& world, const Captures&, const Table&) {
+    saveElsewhere(world.mc, QStringLiteral("storageCleanup"), QJsonObject{{QStringLiteral("worktreeOnDelete"), true}});
+    world.sync();
+  });
+  step(QStringLiteral("the user is asked whether to delete the worktree too"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariantMap question = world.state(QStringLiteral("confirmation")).toMap();
+    expect(question.value(QStringLiteral("title")) == QLatin1String("Delete the worktree too?") &&
+               question.value(QStringLiteral("description")).toString().endsWith(QLatin1String("old-spike")),
+           QStringLiteral("the question is %1").arg(show(question)));
+    // Nothing is deleted before the answer.
+    expect(world.mc.commands.isEmpty() && world.mc.part<Worktrees>().removed.isEmpty(), QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  step(QStringLiteral("the thread and its worktree are deleted without a question"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !world.mc.part<Worktrees>().removed.isEmpty(); }, QStringLiteral("the worktree to be removed"));
+    const QJsonObject removed = world.mc.part<Worktrees>().removed.first();
+    expect(removed.value(QLatin1String("path")) == QLatin1String("/work/worktrees/old-spike") && removed.value(QLatin1String("cwd")) == QLatin1String("/work/shop") &&
+               removed.value(QLatin1String("force")).toBool(),
+           QStringLiteral("the MC was asked %1").arg(show(removed.toVariantMap())));
+    expect(gone(world, QStringLiteral("Old spike")) && world.state(QStringLiteral("confirmation")).typeId() != QMetaType::QVariantMap,
+           QStringLiteral("the question is %1").arg(show(world.state(QStringLiteral("confirmation")))));
+  });
+  step(QStringLiteral("the user deletes %1 and its worktree").arg(q), [](World& world, const Captures& c, const Table&) {
+    openMenu(world, c[0]);
+    pick(world, QStringLiteral("delete"));
+    answer(world, true);  // delete the thread
+    answer(world, true);  // and its worktree
+  });
+  step(QStringLiteral("opening another thread fails"), [](World& world, const Captures&, const Table&) {
+    // Nothing else to show, and the desktop cannot keep the new thread it would start.
+    const QString drafts = QDir(world.homeDir()).filePath(QStringLiteral("data/shell-drafts.json"));
+    QFile::remove(drafts);
+    expect(QDir().mkpath(drafts), QStringLiteral("could not block %1").arg(drafts));
   });
 
   // Three threads, selected.

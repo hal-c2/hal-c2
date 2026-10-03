@@ -262,7 +262,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Finding a thread that moved
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: A link to a moved thread opens it where it lives now
       Given the user copied a link to "Alpha" while it lived on "laptop"
       And "Alpha" has since moved to "desktop"
