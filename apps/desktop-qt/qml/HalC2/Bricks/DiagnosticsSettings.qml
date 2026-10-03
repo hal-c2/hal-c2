@@ -36,7 +36,7 @@ SettingsPage {
                 id: label
                 Layout.fillWidth: true
                 color: diagnostics.foreground
-                font.pixelSize: 14
+                font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -72,14 +72,14 @@ SettingsPage {
                 Label {
                     text: modelData[0]
                     color: diagnostics.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
 
                 Label {
                     objectName: "stat:" + modelData[0]
                     text: modelData[1]
                     color: diagnostics.foreground
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
             }
@@ -93,7 +93,7 @@ SettingsPage {
         visible: message.length > 0
         text: message
         color: diagnostics.danger
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -119,7 +119,7 @@ SettingsPage {
                 text: modelData
                 elide: Text.ElideRight
                 color: row.header ? diagnostics.muted : diagnostics.foreground
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
         }
     }
@@ -169,7 +169,7 @@ SettingsPage {
                 text: process.modelData.name
                 elide: Text.ElideRight
                 color: diagnostics.foreground
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 ToolTip.visible: hover.hovered
                 ToolTip.text: process.modelData.command
 
@@ -186,7 +186,7 @@ SettingsPage {
                     Layout.preferredWidth: 80
                     text: modelData
                     color: diagnostics.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
             }
 

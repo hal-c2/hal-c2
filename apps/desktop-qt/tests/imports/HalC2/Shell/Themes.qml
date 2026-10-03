@@ -14,6 +14,8 @@ QtObject {
     property var families: [{ title: "Foundation", roles: ["canvas"] }, { title: "Brand & content", roles: ["accent"] }]
     // The editor's draft, and what an import waits on.
     property var editing: ({})
+    property bool inspecting: false
+    property var picked: ({})
     property string importError: ""
     property var importConflicts: []
     property var calls: []
@@ -50,6 +52,13 @@ QtObject {
     }
     function derive(canvas, accent) {
         return ({});
+    }
+    function pick(color) {
+        inspecting = false;
+        picked = { color: color, role: "", roles: [], count: 0 };
+    }
+    function requestRemoveMany(ids) {
+        return record("requestRemoveMany", [ids]);
     }
     function requestRemove(id) {
         return record("requestRemove", [id]);

@@ -64,7 +64,7 @@ Rectangle {
             text: root.source && root.source.count > 0 ? qsTr("%1 open · %2 linked").arg(root.source.openCount).arg(root.source.count) : qsTr("Pull requests")
             elide: Text.ElideRight
             color: root.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Row {
@@ -116,7 +116,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("This environment is unreachable. Pull requests show as last synced.")
             color: root.warningColor
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Item {
@@ -174,7 +174,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: root.source ? root.source.problem : ""
             color: root.errorColor
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
     }
 
@@ -190,7 +190,7 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
             text: qsTr("No linked pull requests")
             color: root.foreground
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             font.weight: Font.Medium
         }
         Text {
@@ -199,7 +199,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("Pull requests the agent opens from this thread land here. Link one yourself from a URL or a number.")
             color: root.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
     }
 
@@ -279,7 +279,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.weight: Font.Medium
             }
 
@@ -292,7 +292,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.muted
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
             }
 
             Row {
@@ -304,32 +304,32 @@ Rectangle {
                     objectName: "pullRequestState"
                     text: row.stateLabel
                     color: root.stateColor(row.state)
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {
                     objectName: "pullRequestChecks"
                     visible: text.length > 0
                     text: row.checksLabel
                     color: root.checksColor(row.checks)
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {
                     objectName: "pullRequestReview"
                     visible: text.length > 0
                     text: row.reviewLabel
                     color: root.reviewColor(row.review)
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {
                     visible: row.conflicting
                     text: qsTr("Conflicts")
                     color: root.errorColor
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {
                     text: row.sourceLabel
                     color: root.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
             }
 

@@ -44,7 +44,7 @@ Rectangle {
             wrapMode: Text.Wrap
             visible: home.failed || (home.sidebar !== null && !home.hasProjects)
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             text: home.failed ? qsTr("The project is still available. Try opening the draft again.")
                 : qsTr("Add a project to start your first thread.")
         }

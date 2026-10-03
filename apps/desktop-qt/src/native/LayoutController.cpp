@@ -23,7 +23,19 @@ constexpr double kZoomStep = 0.5;
 constexpr double kMinZoomLevel = -7.5;
 constexpr double kMaxZoomLevel = 8.5;
 
+bool g_systemReducedMotion = false;
+
 }  // namespace
+
+void LayoutController::setSystemReducedMotion(bool reduced) {
+  g_systemReducedMotion = reduced;
+}
+
+int LayoutController::panelAnimationMs() const {
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  if (!settings || g_systemReducedMotion || settings->setting(QStringLiteral("reduceMotion")).toBool()) return 0;
+  return std::clamp(settings->setting(QStringLiteral("panelAnimationDurationMs")).toInt(), 0, 400);
+}
 
 // The layout needs no MC, so it shows before the first snapshot: as soon
 // as main.cpp has given the settings their file.

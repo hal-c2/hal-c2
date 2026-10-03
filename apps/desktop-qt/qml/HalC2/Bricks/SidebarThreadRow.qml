@@ -376,7 +376,7 @@ Item {
             rightPadding: 6
             iconName: "alarm-clock"
             iconSize: 12
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             text: qsTr("Woke")
             tint: row.statusColor
             iconTint: row.statusColor
@@ -397,7 +397,7 @@ Item {
             visible: !row.showActions && !row.woke
             text: row.showStatus ? row.statusWord : row.ageLabel
             color: row.showStatus ? row.statusColor : row.secondaryColor
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             font.weight: Font.Medium
             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
         }
@@ -429,7 +429,7 @@ Item {
             Layout.fillWidth: true
             text: row.oneLineTitle
             color: Qt.alpha(row.secondaryColor, 0.7)
-            font.pixelSize: 14
+            font.pixelSize: Math.round(14 * Theme.fontScale)
             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
             elide: Text.ElideRight
         }
@@ -465,7 +465,7 @@ Item {
                 Layout.fillWidth: true
                 text: row.projectName
                 color: row.projectColor
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.weight: Font.Medium
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 elide: Text.ElideRight
@@ -482,7 +482,7 @@ Item {
             objectName: "cardTitle"
             text: row.oneLineTitle
             color: row.recedes ? Qt.alpha(row.textColor, 0.72) : row.textColor
-            font.pixelSize: 14
+            font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: Font.Medium
             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
             elide: Text.ElideRight
@@ -505,7 +505,7 @@ Item {
                 Layout.fillWidth: true
                 text: row.item.branch ?? ""
                 color: row.branchColor
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 elide: Text.ElideRight
             }

@@ -199,7 +199,7 @@ Feature: Writing a prompt in the terminal
     When the user asks for the previous prompt in an empty prompt
     Then the prompt contains "Run the tests"
 
-  @backlog @tui
+  @tui
   Scenario Outline: The user discovers context with a trigger character
     When the user types "<trigger>" in the prompt
     Then a list of <items> opens to pick from
@@ -210,13 +210,13 @@ Feature: Writing a prompt in the terminal
       | $       | skills         |
       | @       | files          |
 
-  @backlog @tui
+  @tui
   Scenario: Context references show as removable chips
     Given the user added a file reference to the prompt
     Then the reference shows as a chip
     And the user can remove it before sending
 
-  @backlog @tui
+  @tui
   Scenario: Sent context references stay readable in the timeline
     When the user sends a prompt with a file reference
     Then the sent message shows the reference inline

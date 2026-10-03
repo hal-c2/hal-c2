@@ -24,14 +24,14 @@ Rectangle {
         Layout.fillWidth: true
         Layout.topMargin: 12
         color: page.foreground
-        font.pixelSize: 14
+        font.pixelSize: Math.round(14 * Theme.fontScale)
         font.weight: Font.DemiBold
     }
 
     component Note: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -49,14 +49,14 @@ Rectangle {
             Layout.fillWidth: true
             text: memberRow.label
             color: page.foreground
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             elide: Text.ElideRight
         }
 
         Label {
             text: memberRow.detail
             color: page.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         ShellButton {
@@ -89,7 +89,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("Cluster")
                 color: page.foreground
-                font.pixelSize: 18
+                font.pixelSize: Math.round(18 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -104,7 +104,7 @@ Rectangle {
                 visible: page.notice !== null
                 text: page.notice ? page.notice.text : ""
                 color: page.notice && page.notice.kind === "error" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#22c55e")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 

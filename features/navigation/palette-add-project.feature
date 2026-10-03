@@ -93,11 +93,11 @@ Feature: Adding a project from the command palette
       | stage                 | message                    |
       | the clone             | Clone failed               |
       | the repository lookup | Repository lookup failed   |
+      | registration          | Failed to add project      |
 
     @backlog
     Examples:
       | stage                 | message                    |
-      | registration          | Failed to add project      |
       | opening the project   | Failed to open project     |
       | opening the folder    | Failed to open folder      |
       | a WSL folder          | Could not add WSL project  |

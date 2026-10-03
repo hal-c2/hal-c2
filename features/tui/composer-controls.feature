@@ -205,12 +205,12 @@ Feature: Composer controls and new-thread drafts in the terminal
     When the user adds "~/code/shop" again
     Then the status line says "Project already added. What should we build?"
 
-  @backlog @tui
+  @tui
   Scenario: A disabled or signed-out provider explains itself in the composer
     Given the thread's provider is signed out
     Then the composer says the provider needs sign-in and how to fix it
 
-  @backlog @tui
+  @tui
   Scenario: A model change that needs a new thread says so
     When the user picks a model from a provider the thread cannot switch to
     Then the client explains that a new thread is needed
@@ -220,13 +220,13 @@ Feature: Composer controls and new-thread drafts in the terminal
     When a provider's models change on the server
     Then the model picker lists the new models without restarting the client
 
-  @backlog @tui
+  @tui
   Scenario: The user sets select and boolean provider traits
     Given the model has a select trait and a boolean trait
     When the user changes both
     Then the next reply is sent with those trait values
 
-  @backlog @tui
+  @tui
   Scenario: Provider traits fold into a compact menu on a narrow terminal
     Given the terminal is narrow
     Then provider traits are reachable from one compact menu

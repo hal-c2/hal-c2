@@ -41,10 +41,13 @@ QList<void (*)()>& stepFiles() {
 // ---- Gherkin ---------------------------------------------------------------
 
 QStringList tableCells(const QString& line) {
-  QStringList cells = line.trimmed().split(QLatin1Char('|'));
+  // A cell's own bar is written `\|`.
+  static const QString escaped = QStringLiteral("\\|");
+  static const QChar placeholder(0xE000);
+  QStringList cells = line.trimmed().replace(escaped, placeholder).split(QLatin1Char('|'));
   cells.removeFirst();
   cells.removeLast();
-  for (QString& cell : cells) cell = cell.trimmed();
+  for (QString& cell : cells) cell = cell.trimmed().replace(placeholder, QLatin1Char('|'));
   return cells;
 }
 
@@ -234,6 +237,10 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/appearance.feature:Font smoothing*"),
     QStringLiteral("navigation/appearance.feature:Composer context*"),
     QStringLiteral("navigation/appearance.feature:Word wrap*"),
+    QStringLiteral("navigation/appearance.feature:Font preferences*"),
+    QStringLiteral("navigation/appearance.feature:The environment can be identified*"),
+    QStringLiteral("navigation/appearance.feature:Panel animations*"),
+    QStringLiteral("navigation/appearance.feature:Switching threads never*"),
     QStringLiteral("navigation/theme-editor.feature"),
     QStringLiteral("settings/general.feature"),
     QStringLiteral("settings/saving-settings.feature"),
@@ -279,6 +286,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/toasts.feature"),
     QStringLiteral("preview/devices.feature"),
     QStringLiteral("navigation/qt-shell-backlog.feature:A device tab streams a device screen"),
+    QStringLiteral("navigation/qt-shell-backlog.feature:Opening a folder*"),
     QStringLiteral("desktop/shell-host.feature:A screenshot taken without a display shows the app's window"),
     QStringLiteral("navigation/qt-shell-backlog.feature:The previous worktree shortcut works in the native composer"),
     QStringLiteral("navigation/qt-shell-backlog.feature:Thread number shortcuts work in the native desktop shell"),
@@ -535,6 +543,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/focus.feature:Escape clears the settings search"),
     QStringLiteral("navigation/focus.feature:The search follows a query set elsewhere"),
     QStringLiteral("navigation/focus.feature:Typing while a terminal starts*"),
+    QStringLiteral("navigation/focus.feature:Number shortcuts pick entries*"),
     QStringLiteral("source-control/checkpoint-diffs.feature"),
     QStringLiteral("timeline/checkpoints.feature"),
     QStringLiteral("files/file-explorer.feature"),

@@ -44,6 +44,7 @@ export function createSourceControl(deps: {
       selectedIndex: gitIndex,
       commitPrompt,
       width: deps.width(),
+      log: current().gitLog,
     });
   const publishGit = () => {
     const next = gitState();
@@ -151,13 +152,25 @@ export function createSourceControl(deps: {
       case "git.commit.cancel":
         endCommitPrompt();
         return true;
+      case "git.log.dismiss":
+        // Declined with nothing to dismiss, so the key reaches whatever is under it.
+        if (current().gitLog.length === 0) return false;
+        store.dismissGitLog();
+        return true;
       default:
         return false;
     }
   };
 
   const publish = (prev: StoreState | null, next: StoreState) => {
-    if (!prev || prev.vcsStatus !== next.vcsStatus || prev.gitBusy !== next.gitBusy) publishGit();
+    if (
+      !prev ||
+      prev.vcsStatus !== next.vcsStatus ||
+      prev.gitBusy !== next.gitBusy ||
+      prev.gitLog !== next.gitLog
+    ) {
+      publishGit();
+    }
   };
 
   let publishedWidth = -1;

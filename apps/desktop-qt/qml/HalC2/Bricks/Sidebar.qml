@@ -20,6 +20,8 @@ Rectangle {
     // shows above its sidebar; a rice with its own title bar leaves it off.
     // When frameless it doubles as the window's drag handle.
     property bool showBrand: false
+    // The build the MC is (StageController): {label, artwork, pill}.
+    readonly property var stage: Shell.state.stage ?? null
     property Window window: null
     readonly property var projects: model ? model.projects : []
     readonly property var projectNames: {
@@ -168,6 +170,35 @@ Rectangle {
             Layout.preferredHeight: 52
             visible: sidebar.showBrand
 
+            // A Nightly MC marks the band (StageController): a night sky, or
+            // a pill by the wordmark, as Environment identification says.
+            Rectangle {
+                objectName: "stageArtwork"
+                anchors.fill: parent
+                visible: sidebar.stage !== null && sidebar.stage.artwork === "nightly"
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0; color: "#121a33" }
+                    GradientStop { position: 0.5; color: "#1b1746" }
+                    GradientStop { position: 1; color: "#2a1a5e" }
+                }
+
+                Repeater {
+                    model: parent.visible ? [[14, 10, 0.85], [38, 22, 0.55], [58, 8, 0.7], [84, 16, 0.5], [104, 7, 0.8], [126, 20, 0.55], [148, 11, 0.7], [170, 24, 0.5], [192, 9, 0.8], [214, 18, 0.55], [236, 8, 0.7]] : []
+
+                    delegate: Rectangle {
+                        required property var modelData
+
+                        x: modelData[0]
+                        y: modelData[1] + 8
+                        width: 2
+                        height: 2
+                        radius: 1
+                        color: Qt.rgba(1, 1, 1, modelData[2])
+                    }
+                }
+            }
+
             DragHandler {
                 enabled: sidebar.window !== null && Theme.frameless
                 target: null
@@ -189,9 +220,33 @@ Rectangle {
             }
 
             HalC2Wordmark {
+                id: wordmark
+
                 x: 52
                 size: 11
                 anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Rectangle {
+                objectName: "stagePill"
+                visible: sidebar.stage !== null && !!sidebar.stage.pill
+                anchors.left: wordmark.right
+                anchors.leftMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                implicitWidth: pillText.implicitWidth + 12
+                implicitHeight: 18
+                radius: 9
+                color: Theme.palette.color("secondary", "#27272a")
+
+                Text {
+                    id: pillText
+
+                    anchors.centerIn: parent
+                    text: sidebar.stage !== null ? (sidebar.stage.pill ?? "") : ""
+                    color: Theme.palette.color("secondaryForeground", "#e4e4e7")
+                    font.pixelSize: Math.round(10 * Theme.fontScale)
+                    font.weight: Font.DemiBold
+                }
             }
         }
 
@@ -216,7 +271,7 @@ Rectangle {
                     tint: sidebar.foreground
                     objectName: "search"
                     text: qsTr("Search")
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     onClicked: PaletteModel.show()
 
                     background: Rectangle {
@@ -263,7 +318,7 @@ Rectangle {
                     iconTint: Qt.alpha(sidebar.muted, 0.8)
                     tint: Qt.alpha(sidebar.muted, 0.8)
                     text: sidebar.scopeLabel
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     Accessible.name: qsTr("Project scope")
                     onClicked: scopeMenu.open()
 
@@ -602,7 +657,7 @@ Rectangle {
                         Text {
                             text: entry.kind === "header" ? entry.modelData.label : ""
                             color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : Qt.alpha(sidebar.muted, headerHover.hovered ? 0.8 : 0.5)
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                         }
@@ -624,7 +679,7 @@ Rectangle {
                             visible: entry.kind === "header" && !entry.modelData.open
                             text: entry.kind === "header" ? entry.modelData.count : ""
                             color: Qt.alpha(sidebar.muted, 0.5)
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                         }
 
@@ -661,7 +716,7 @@ Rectangle {
                     visible: entry.kind === "note"
                     text: entry.kind === "note" ? entry.modelData.label : ""
                     color: Qt.alpha(sidebar.muted, 0.6)
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 }
 
@@ -758,7 +813,7 @@ Rectangle {
                 visible: list.count === 0
                 text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
                 color: Qt.alpha(sidebar.muted, 0.6)
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
             }
         }

@@ -143,7 +143,7 @@ Item {
                 iconName: "terminal"
                 iconSize: 13
                 text: tab.span > 1 ? qsTr("%1 +%2").arg(tab.label).arg(tab.span - 1) : tab.label
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 tint: tab.checked ? drawer.foreground : drawer.muted
                 focusPolicy: Qt.NoFocus
                 Layout.maximumWidth: 180

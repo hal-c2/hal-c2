@@ -40,6 +40,16 @@ export interface StoreState {
   readonly vcsStatus: VcsStatusResult | null;
   /** True while a git stacked action is running. */
   readonly gitBusy: boolean;
+  /**
+   * What the last git action reported as it ran: its phases, hooks and their
+   * output, and the error it failed with. Kept until the next run or `dismissGitLog`.
+   */
+  readonly gitLog: ReadonlyArray<GitLogLine>;
+}
+
+export interface GitLogLine {
+  readonly kind: "phase" | "hook" | "output" | "error";
+  readonly text: string;
 }
 
 export interface Store {
@@ -63,6 +73,8 @@ export interface Store {
   readonly runGitAction: (action: GitStackedAction, commitMessage?: string) => void;
   /** Pull the selected thread's worktree from upstream. */
   readonly pullGit: () => void;
+  /** Clear the last git action's log (its error with it). */
+  readonly dismissGitLog: () => void;
 }
 
 export interface StoreOptions {
@@ -85,6 +97,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     projectScopeId: null,
     vcsStatus: null,
     gitBusy: false,
+    gitLog: [],
   };
   const listeners = new Set<() => void>();
   let unsubShell: (() => void) | null = null;
@@ -288,9 +301,18 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
         set({ status: "No worktree for git actions.", statusKind: "error" });
         return;
       }
-      set({ gitBusy: true, status: `Running ${action}…`, statusKind: "busy" });
+      set({ gitBusy: true, gitLog: [], status: `Running ${action}…`, statusKind: "busy" });
+      const log = (line: GitLogLine) => set({ gitLog: [...state.gitLog, line] });
       void client
-        .runGitStackedAction({ cwd, action, ...(message ? { commitMessage: message } : {}) })
+        .runGitStackedAction(
+          { cwd, action, ...(message ? { commitMessage: message } : {}) },
+          (event) => {
+            if (event.kind === "phase_started") log({ kind: "phase", text: event.label });
+            else if (event.kind === "hook_started") {
+              log({ kind: "hook", text: `hook ${event.hookName}` });
+            } else if (event.kind === "hook_output") log({ kind: "output", text: event.text });
+          },
+        )
         .then((result) =>
           set({
             gitBusy: false,
@@ -299,9 +321,28 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
             statusKind: "success",
           }),
         )
-        .catch((error: unknown) =>
-          set({ gitBusy: false, status: `Git failed: ${String(error)}`, statusKind: "error" }),
-        );
+        .catch((error: unknown) => {
+          set({
+            gitBusy: false,
+            gitLog: [
+              ...state.gitLog,
+              { kind: "error", text: error instanceof Error ? error.message : String(error) },
+            ],
+            status: `Git failed: ${String(error)}`,
+            statusKind: "error",
+          });
+          // A failed action may have got part of the way (a commit made before the
+          // push was refused): read the checkout again rather than wait for the stream.
+          void client.refreshVcsStatus(cwd).then(
+            (status) => {
+              if (currentCwd() === cwd) set({ vcsStatus: status });
+            },
+            () => {},
+          );
+        });
+    },
+    dismissGitLog: () => {
+      if (state.gitLog.length > 0) set({ gitLog: [] });
     },
     pullGit: () => {
       if (state.gitBusy) return;

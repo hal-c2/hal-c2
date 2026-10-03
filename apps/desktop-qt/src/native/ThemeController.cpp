@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QQmlPropertyMap>
 #include <QRegularExpression>
 #include <QStyleHints>
 
@@ -235,7 +236,8 @@ QList<ThemeController::Definition> ThemeController::definitions() const {
     if (!seeded && overlay({}, colors, data.roles).isEmpty() && variants.isEmpty()) return std::nullopt;
     QString label = theme.value(QLatin1String("label")).toString();
     if (label.isEmpty()) label = theme.value(QLatin1String("name")).toString(id);
-    return Definition{id, label, appearance, overlay(base, colors, data.roles), variants, source};
+    return Definition{id, label, appearance, overlay(base, colors, data.roles), variants, source,
+                      theme.value(QLatin1String("collection")).toObject().value(QLatin1String("label")).toString()};
   };
   for (const QJsonValue& value : m_settings->deviceSettings().value(QLatin1String("customThemes")).toArray()) {
     if (auto definition = fromFile(value.toObject(), QStringLiteral("custom"))) result.append(*definition);
@@ -274,7 +276,8 @@ QVariantList ThemeController::available() const {
                               {QStringLiteral("label"), definition.label},
                               {QStringLiteral("appearance"), definition.appearance},
                               {QStringLiteral("appearances"), appearances},
-                              {QStringLiteral("source"), definition.source}});
+                              {QStringLiteral("source"), definition.source},
+                              {QStringLiteral("collection"), definition.collection}});
   }
   return result;
 }
@@ -357,9 +360,40 @@ void ThemeController::setEditorOpen(bool open) {
   // Opened by its toggle: on the theme drawn now. Closed: the draft goes.
   if (open && m_editing.isEmpty()) m_editing = draft();
   if (!open) m_editing.clear();
+  if (!open && (m_inspecting || !m_picked.isEmpty())) {
+    m_inspecting = false;
+    m_picked.clear();
+    emit inspectChanged();
+  }
   m_editorOpen = open;
   emit editingChanged();
   emit editorOpenChanged();
+}
+
+void ThemeController::setInspecting(bool inspecting) {
+  if (inspecting == m_inspecting) return;
+  m_inspecting = inspecting;
+  if (inspecting) m_picked.clear();
+  emit inspectChanged();
+}
+
+void ThemeController::pick(const QString& color) {
+  if (!m_inspecting) return;
+  const QColor wanted(canonicalColor(color));
+  QStringList roles;
+  if (wanted.isValid()) {
+    // The roles the window draws in that colour now.
+    const QVariantMap drawn = m_bridge->state()->value(QStringLiteral("theme")).toMap().value(QStringLiteral("colors")).toMap();
+    for (const QString& role : this->roles()) {
+      if (QColor(drawn.value(role).toString()).rgb() == wanted.rgb()) roles.append(role);
+    }
+  }
+  m_inspecting = false;
+  m_picked = {{QStringLiteral("color"), wanted.isValid() ? wanted.name(QColor::HexRgb) : QString()},
+              {QStringLiteral("role"), roles.value(0)},
+              {QStringLiteral("roles"), roles},
+              {QStringLiteral("count"), roles.size()}};
+  emit inspectChanged();
 }
 
 void ThemeController::edit(const QVariantMap& draft) {
@@ -488,20 +522,36 @@ QString ThemeController::duplicate(const QString& id) {
   return saveCustom(copy);
 }
 
+void ThemeController::requestRemoveMany(const QStringList& ids) {
+  QStringList own;
+  for (const QString& id : ids) {
+    if (const auto definition = find(id); definition && definition->source == QLatin1String("custom")) own.append(id);
+  }
+  if (own.isEmpty()) return;
+  if (own.size() == 1) return requestRemove(own.first());
+  NativeShell::of(this)->controller<MenuController>()->confirm(
+      tr("Remove %1 themes?").arg(own.size()), tr("This device will no longer offer them."), tr("Remove"), true,
+      [this, own] { removeCustomMany(own); });
+}
+
 bool ThemeController::removeCustom(const QString& id) {
+  return removeCustomMany({id});
+}
+
+bool ThemeController::removeCustomMany(const QStringList& ids) {
   QJsonObject device = m_settings->deviceSettings();
   QJsonArray saved = device.value(kCustomThemes).toArray();
   QJsonArray kept;
   for (const QJsonValue& value : saved) {
-    if (value.toObject().value(QLatin1String("id")).toString() != id) kept.append(value);
+    if (!ids.contains(value.toObject().value(QLatin1String("id")).toString())) kept.append(value);
   }
   if (kept.size() == saved.size()) return false;
   if (kept.isEmpty()) device.remove(kCustomThemes);
   else device.insert(kCustomThemes, kept);
-  if (device.value(QLatin1String("theme")).toString() == id) device.remove(QStringLiteral("theme"));
+  if (ids.contains(device.value(QLatin1String("theme")).toString())) device.remove(QStringLiteral("theme"));
   QJsonObject halves = device.value(QLatin1String("themeHalves")).toObject();
   for (const QString& appearance : {kLight, kDark}) {
-    if (halves.value(appearance).toString() == id) halves.remove(appearance);
+    if (ids.contains(halves.value(appearance).toString())) halves.remove(appearance);
   }
   if (halves.isEmpty()) device.remove(QStringLiteral("themeHalves"));
   else device.insert(QStringLiteral("themeHalves"), halves);
@@ -572,6 +622,16 @@ void ThemeController::resolve() {
                                                           QRegularExpression(QStringLiteral("^#(..)(......)$")), QStringLiteral("#\\2\\1")));
     }
   }
+  // The font rows of Settings → Appearance: a family the user named wins over
+  // the theme's, and each part of the app has its size.
+  const auto family = [this](const char* key, const QString& fallback) {
+    const QString chosen = m_settings->setting(QLatin1String(key)).toString().trimmed();
+    return chosen.isEmpty() ? fallback : chosen;
+  };
+  const auto size = [this](const char* key, int fallback) {
+    const int chosen = m_settings->setting(QLatin1String(key)).toInt();
+    return chosen > 0 ? chosen : fallback;
+  };
   m_appearance = appearance;
   m_resolvedId = id;
   m_bridge->publish(QStringLiteral("theme"), QVariantMap{
@@ -579,8 +639,16 @@ void ThemeController::resolve() {
                                                  {QStringLiteral("appearance"), appearance},
                                                  {QStringLiteral("colors"), colors.toVariantMap()},
                                                  {QStringLiteral("radius"), data.radius},
-                                                 {QStringLiteral("fontUi"), data.fontUi},
-                                                 {QStringLiteral("fontMono"), data.fontMono},
+                                                 {QStringLiteral("fontUi"), family("fontFamilySans", data.fontUi)},
+                                                 {QStringLiteral("fontMono"), family("fontFamilyCode", data.fontMono)},
+                                                 // Empty: the composer writes in the interface font, the terminal in the code font.
+                                                 {QStringLiteral("fontPrompt"), family("fontFamilyComposer", QString())},
+                                                 {QStringLiteral("fontTerminal"), family("fontFamilyTerminal", QString())},
+                                                 {QStringLiteral("fontSizes"),
+                                                  QVariantMap{{QStringLiteral("interface"), size("fontSizeInterface", 16)},
+                                                              {QStringLiteral("prompt"), size("fontSizePrompt", 14)},
+                                                              {QStringLiteral("code"), size("fontSizeCode", 13)},
+                                                              {QStringLiteral("terminal"), size("fontSizeTerminal", 12)}}},
                                              });
   // The choice and `available` move with the device and the MC as well.
   emit changed();
@@ -780,6 +848,162 @@ QStringList ThemeController::importConflicts() const {
   return labels;
 }
 
+// --- VS Code themes (apps/web vscodeThemeImport.ts) ----------------------------------
+
+namespace {
+
+struct VsColor {
+  double r = 0, g = 0, b = 0, a = 1;
+  bool valid = false;
+  QColor solid() const { return QColor::fromRgbF(r, g, b); }
+};
+
+// VS Code writes #RGB, #RGBA, #RRGGBB and #RRGGBBAA.
+VsColor vsColor(const QJsonValue& value) {
+  static const QRegularExpression hex(QStringLiteral("^#?([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"));
+  const auto match = hex.match(value.toString().trimmed());
+  if (!match.hasMatch()) return {};
+  QString digits = match.captured(1);
+  if (digits.size() <= 4) {
+    QString wide;
+    for (const QChar digit : std::as_const(digits)) wide += QString(2, digit);
+    digits = wide;
+  }
+  const auto channel = [&digits](int at) { return digits.mid(at, 2).toInt(nullptr, 16) / 255.0; };
+  return {channel(0), channel(2), channel(4), digits.size() == 8 ? channel(6) : 1.0, true};
+}
+
+// Overlays are translucent in VS Code and our roles are opaque: over the surface they sit on.
+QString flattened(const VsColor& color, const QColor& base) {
+  return QColor::fromRgbF(color.r * color.a + base.redF() * (1 - color.a), color.g * color.a + base.greenF() * (1 - color.a),
+                          color.b * color.a + base.blueF() * (1 - color.a))
+      .name(QColor::HexRgb);
+}
+
+// Extension names are often package slugs; read them as words.
+QString humanized(const QString& raw) {
+  static const QRegularExpression space(QStringLiteral("\\s")), separators(QStringLiteral("[-_.]+"));
+  const QString trimmed = raw.trimmed();
+  if (trimmed.contains(space) || !trimmed.contains(separators)) return trimmed;
+  QStringList words;
+  for (const QString& word : trimmed.split(separators, Qt::SkipEmptyParts)) words.append(word.left(1).toUpper() + word.mid(1));
+  return words.join(QLatin1Char(' '));
+}
+
+// Its workbench colours are dotted paths (`editor.background`), which our own files never use.
+bool isVsCodeTheme(const QJsonObject& file) {
+  if (file.value(QLatin1String("version")).toInt() == 1) return false;
+  if (file.value(QLatin1String("tokenColors")).isArray()) return true;
+  const QJsonObject colors = file.value(QLatin1String("colors")).toObject();
+  const QStringList keys = colors.keys();
+  return std::any_of(keys.cbegin(), keys.cend(), [](const QString& key) { return key.contains(QLatin1Char('.')); });
+}
+
+}  // namespace
+
+// A VS Code theme describes editor chrome, not an app palette: a whole palette
+// is grown from its editor background and a muted accent (derive), then the
+// workbench colours it does set go on top, foregrounds only where they stay
+// readable. The result is one of our theme files. Batches are not paired into
+// light and dark here, as the web's pairVsCodeThemes does.
+std::optional<QJsonObject> ThemeController::fromVsCodeTheme(const QJsonObject& file, QString* error) const {
+  const QJsonObject colors = file.value(QLatin1String("colors")).toObject();
+  const auto pick = [&colors](std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+      if (const VsColor color = vsColor(colors.value(QLatin1String(key))); color.valid) return color;
+    }
+    return VsColor();
+  };
+  const VsColor canvasColor = pick({"editor.background", "editorPane.background"});
+  if (!canvasColor.valid) {
+    *error = tr("That VS Code theme has no \"editor.background\" color, so there is nothing to build a palette from.");
+    return std::nullopt;
+  }
+  const QColor canvas = canvasColor.solid();
+  const QString type = file.value(QLatin1String("type")).toString().toLower();
+  const QString appearance = type == QLatin1String("light") || type == QLatin1String("hc-light")  ? kLight
+                             : type == QLatin1String("dark") || type == QLatin1String("hc-black") ? kDark
+                             : luminance(canvas) < 0.179                                          ? kDark
+                                                                                                  : kLight;
+  const VsColor accentColor = pick({"focusBorder", "button.background", "textLink.foreground", "activityBarBadge.background",
+                                    "progressBar.background", "badge.background"});
+  const QString canvasHex = canvas.name(QColor::HexRgb);
+  // The floor grows from a muted accent, so a neutral theme is not washed in its focus colour.
+  VsColor muted = accentColor;
+  muted.a = 0.2;
+  QJsonObject palette = QJsonObject::fromVariantMap(derive(canvasHex, accentColor.valid ? flattened(muted, canvas) : canvasHex));
+  const auto derived = [&palette](const char* role) { return palette.value(QLatin1String(role)).toString(); };
+  const auto solidOver = [&pick](const QColor& base, std::initializer_list<const char*> keys) {
+    const VsColor color = pick(keys);
+    return color.valid ? flattened(color, base) : QString();
+  };
+  const auto orDerived = [&derived](const QString& value, const char* role) { return value.isEmpty() ? derived(role) : value; };
+  const auto readable = [&](const QString& surface, const char* role, std::initializer_list<const char*> keys) {
+    const QColor on(surface);
+    const auto reads = [&on](const QString& candidate) { return contrast(QColor(candidate), on) >= 4.5; };
+    const QString named = solidOver(on, keys);
+    if (!named.isEmpty() && reads(named)) return named;
+    if (reads(derived(role))) return derived(role);
+    return luminance(on) < 0.179 ? QStringLiteral("#ffffff") : QStringLiteral("#000000");
+  };
+  const auto status = [&](const char* role, std::initializer_list<const char*> keys) {
+    const QString named = solidOver(canvas, keys);
+    return !named.isEmpty() && contrast(QColor(named), canvas) >= 4.5 ? named : derived(role);
+  };
+  const QString sidebarHex = orDerived(solidOver(canvas, {"sideBar.background", "activityBar.background"}), "sidebar");
+  const QColor sidebar(sidebarHex);
+  const QString terminalHex = orDerived(solidOver(canvas, {"terminal.background", "panel.background"}), "terminalBackground");
+  const QColor terminal(terminalHex);
+  const QList<std::pair<const char*, QString>> overrides{
+      {"canvas", canvasHex},
+      {"text", readable(canvasHex, "text", {"editor.foreground", "foreground"})},
+      {"textMuted", readable(canvasHex, "textMuted", {"descriptionForeground", "disabledForeground"})},
+      {"surface", orDerived(solidOver(canvas, {"editorWidget.background"}), "surface")},
+      {"surfaceRaised", orDerived(solidOver(canvas, {"editorWidget.background", "dropdown.background"}), "surfaceRaised")},
+      {"surfaceOverlay", orDerived(solidOver(canvas, {"menu.background", "quickInput.background", "dropdown.background"}), "surfaceOverlay")},
+      {"border", orDerived(solidOver(canvas, {"panel.border", "editorGroup.border", "contrastBorder"}), "border")},
+      {"input", orDerived(solidOver(canvas, {"input.border", "dropdown.border"}), "input")},
+      {"placeholder", readable(canvasHex, "placeholder", {"input.placeholderForeground"})},
+      // The status colours stay the standard ones unless the theme's own read here.
+      {"error", status("error", {"editorError.foreground", "errorForeground"})},
+      {"warning", status("warning", {"editorWarning.foreground"})},
+      {"accentSurface", orDerived(solidOver(canvas, {"list.activeSelectionBackground", "list.hoverBackground"}), "accentSurface")},
+      {"codeBackground", orDerived(solidOver(canvas, {"textCodeBlock.background"}), "codeBackground")},
+      {"sidebar", sidebarHex},
+      {"sidebarForeground", readable(sidebarHex, "sidebarForeground", {"sideBar.foreground"})},
+      {"sidebarBorder", orDerived(solidOver(sidebar, {"sideBar.border"}), "sidebarBorder")},
+      {"sidebarRowHover", orDerived(solidOver(sidebar, {"list.hoverBackground"}), "sidebarRowHover")},
+      {"sidebarRowActive", orDerived(solidOver(sidebar, {"list.inactiveSelectionBackground", "list.hoverBackground"}), "sidebarRowActive")},
+      {"sidebarRowSelected", orDerived(solidOver(sidebar, {"list.activeSelectionBackground"}), "sidebarRowSelected")},
+      {"terminalBackground", terminalHex},
+      {"terminalForeground", readable(terminalHex, "terminalForeground", {"terminal.foreground"})},
+      {"terminalCursor", orDerived(solidOver(terminal, {"terminalCursor.foreground", "editorCursor.foreground"}), "terminalCursor")},
+      {"terminalSelection", orDerived(solidOver(terminal, {"terminal.selectionBackground", "editor.selectionBackground"}), "terminalSelection")},
+      {"terminalScrollbar", orDerived(solidOver(terminal, {"scrollbarSlider.background"}), "terminalScrollbar")},
+  };
+  for (const auto& [role, value] : overrides) palette.insert(QLatin1String(role), value);
+  if (accentColor.valid) {
+    const QString accentHex = flattened(accentColor, canvas);
+    // The button pair is the closest thing VS Code has to our action colour.
+    const QString button = solidOver(canvas, {"button.background"});
+    const QString actionHex = button.isEmpty() ? accentHex : button;
+    palette.insert(QStringLiteral("accent"), accentHex);
+    palette.insert(QStringLiteral("focus"), accentHex);
+    palette.insert(QStringLiteral("messageAction"), actionHex);
+    palette.insert(QStringLiteral("messageActionForeground"), readable(actionHex, "messageActionForeground", {"button.foreground"}));
+    palette.insert(QStringLiteral("accentForeground"), readable(accentHex, "accentForeground", {"button.foreground"}));
+  }
+  QString name;
+  for (const char* key : {"displayName", "name"}) {
+    const QJsonValue candidate = file.value(QLatin1String(key));
+    if (!candidate.isString() || humanized(candidate.toString()).isEmpty()) continue;
+    name = humanized(candidate.toString()).left(48);
+    break;
+  }
+  if (name.isEmpty()) name = QStringLiteral("VS Code theme");
+  return QJsonObject{{QStringLiteral("version"), 1}, {QStringLiteral("name"), name}, {QStringLiteral("appearance"), appearance}, {QStringLiteral("colors"), palette}};
+}
+
 // apps/web parseThemeFile, with its messages.
 std::optional<QJsonObject> ThemeController::parseFile(const QByteArray& text, QString* error) const {
   const auto refuse = [error](const QString& why) {
@@ -790,10 +1014,12 @@ std::optional<QJsonObject> ThemeController::parseFile(const QByteArray& text, QS
   const QJsonDocument document = QJsonDocument::fromJson(text, &parse);
   if (parse.error != QJsonParseError::NoError) return refuse(tr("That theme file is invalid."));
   if (!document.isObject()) return refuse(tr("Theme files must contain a JSON object."));
-  const QJsonObject file = document.object();
-  // A VS Code theme, which the web converts on the way in.
-  if (file.contains(QLatin1String("tokenColors")) || (!file.contains(QLatin1String("version")) && file.contains(QLatin1String("colors")))) {
-    return refuse(tr("VS Code themes are not converted on the desktop yet."));
+  QJsonObject file = document.object();
+  // A VS Code colour theme is converted on the way in.
+  if (isVsCodeTheme(file)) {
+    const auto converted = fromVsCodeTheme(file, error);
+    if (!converted) return std::nullopt;
+    file = *converted;
   }
   if (file.value(QLatin1String("version")).toInt() != 1) {
     return refuse(tr("This theme file uses an unsupported version. Expected 1."));
@@ -824,6 +1050,16 @@ std::optional<QJsonObject> ThemeController::parseFile(const QByteArray& text, QS
     variants.insert(it.key(), overlay({}, it.value().toObject(), builtIns().roles));
   }
   if (!variants.isEmpty()) theme.insert(QStringLiteral("variants"), variants);
+  // The family it was installed with (an extension's themes).
+  if (file.contains(QLatin1String("collection"))) {
+    static const QRegularExpression collectionId(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9.:-]{0,127}$"));
+    const QJsonObject collection = file.value(QLatin1String("collection")).toObject();
+    const QString label = collection.value(QLatin1String("label")).toString().trimmed();
+    if (!collectionId.match(collection.value(QLatin1String("id")).toString()).hasMatch() || label.isEmpty() || label.size() > 48) {
+      return refuse(tr("Theme collections need a valid id and label."));
+    }
+    theme.insert(QStringLiteral("collection"), QJsonObject{{QStringLiteral("id"), collection.value(QLatin1String("id"))}, {QStringLiteral("label"), label}});
+  }
   return theme;
 }
 
@@ -1001,6 +1237,12 @@ bool ThemeController::exportTheme(const QString& id, const QString& path) {
                    {QStringLiteral("appearance"), definition->appearance},
                    {QStringLiteral("colors"), definition->colors}};
   if (!definition->variants.isEmpty()) file.insert(QStringLiteral("variants"), definition->variants);
+  for (const QJsonValue& value : m_settings->deviceSettings().value(kCustomThemes).toArray()) {
+    const QJsonObject saved = value.toObject();
+    if (saved.value(QLatin1String("id")).toString() == id && saved.contains(QLatin1String("collection"))) {
+      file.insert(QStringLiteral("collection"), saved.value(QLatin1String("collection")));
+    }
+  }
   QSaveFile out(path);
   if (!out.open(QIODevice::WriteOnly) || out.write(QJsonDocument(file).toJson()) < 0 || !out.commit()) {
     if (toasts) toasts->error(tr("Couldn’t export theme"), out.errorString());

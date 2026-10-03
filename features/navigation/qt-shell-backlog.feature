@@ -115,14 +115,14 @@ Feature: Desktop shell gaps
 
   Rule: Opening a folder from outside
 
-    @backlog @desktop
+    @desktop
     Scenario: Opening a folder while the app runs adds it to the running window
       Given the app is running
       When the user launches the app again with a folder path
       Then the running window adds the folder as a project and opens a new thread there
       And no second server starts
 
-    @backlog @desktop
+    @desktop
     Scenario: Opening a folder that is already a project reuses it
       Given "~/code/api" is already a project
       When the user launches the app again with "~/code/api"

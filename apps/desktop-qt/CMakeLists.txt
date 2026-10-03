@@ -58,6 +58,7 @@ qt_add_executable(hal-c2-qt
   src/ShellRuntime.cpp
   src/ShellRuntime.h
   src/ShellWindows.cpp
+  src/SingleInstance.cpp
   src/ShellWindows.h
   src/StoragePaths.cpp
   src/StoragePaths.h
