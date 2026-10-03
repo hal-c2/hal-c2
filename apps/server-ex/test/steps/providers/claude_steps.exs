@@ -696,6 +696,75 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- several accounts ------------------------------------------------------------------
+
+  @work "claude-work"
+
+  # The built-in instance keeps the MC's own Claude config directory; the second
+  # instance names another in its variables.
+  step "the user adds a second Claude instance with its own config directory", context do
+    context = World.fake_providers(context)
+    personal = Mc.tmp_dir(context.mc, "claude-personal")
+    work = Mc.tmp_dir(context.mc, "claude-work")
+    World.put_os_env("CLAUDE_CONFIG_DIR", personal)
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providerInstances", %{}), @work], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "displayName" => "Claude (work)",
+          "environment" => [
+            %{"name" => "CLAUDE_CONFIG_DIR", "value" => work, "sensitive" => false}
+          ]
+        })
+      end)
+
+    {providers, context} = World.provider_list(context)
+    assert %{"driver" => "claudeAgent"} = Enum.find(providers, &(&1["instanceId"] == @work))
+    assert claude(providers)
+    Map.merge(context, %{claude_dirs: %{"claudeAgent" => personal, @work => work}})
+  end
+
+  # `claude auth login` with that directory leaves the login in it.
+  step "the user signs in to the CLI with that config directory", context do
+    File.write!(
+      Path.join(context.claude_dirs[@work], ".claude.json"),
+      JSON.encode!(%{"oauthAccount" => %{"emailAddress" => "work@example.com"}})
+    )
+
+    context
+  end
+
+  step "each instance uses its own account and history", context do
+    context = World.launch_on(context, "Personal", "claudeAgent", "hello from home")
+    World.await_runs(context, "Personal", ["completed"])
+    context = World.launch_on(context, "Work", @work, "hello from work")
+    World.await_runs(context, "Work", ["completed"])
+
+    starts =
+      for %{"argv" => _, "account" => account, "env" => env} <-
+            World.provider_log(context, "claude"),
+          do: {env["CLAUDE_CONFIG_DIR"], account}
+
+    assert {context.claude_dirs["claudeAgent"], "me@example.com"} in starts
+    assert {context.claude_dirs[@work], "work@example.com"} in starts
+
+    # Each conversation is kept under its own instance's directory only.
+    history = fn instance ->
+      Path.join(context.claude_dirs[instance], "projects/*/*.jsonl")
+      |> Path.wildcard()
+      |> Enum.map_join(&File.read!/1)
+    end
+
+    assert history.("claudeAgent") =~ "hello from home"
+    refute history.("claudeAgent") =~ "hello from work"
+    assert history.(@work) =~ "hello from work"
+    refute history.(@work) =~ "hello from home"
+    context
+  end
+
   # --- the fetched manifest --------------------------------------------------------------
 
   @new_model "claude-nova-9"

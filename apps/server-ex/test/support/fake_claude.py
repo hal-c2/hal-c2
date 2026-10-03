@@ -90,8 +90,16 @@ resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
 # classifier approves the command "approve" would otherwise ask about.
 mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
-# The start also traces where it was pointed: its config directory and any router.
-trace({"argv": sys.argv[1:], "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k == "CLAUDE_CONFIG_DIR"}})
+# The login is the config directory's, as Claude Code keeps it (`.claude.json`'s
+# oauthAccount); without one the fake is signed in as me@example.com.
+ACCOUNT_EMAIL = "me@example.com"
+try:
+    with open(os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", ""), ".claude.json")) as f:
+        ACCOUNT_EMAIL = json.load(f)["oauthAccount"]["emailAddress"]
+except (OSError, ValueError, KeyError):
+    pass
+# The start also traces where it was pointed: its config directory, its account and any router.
+trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k == "CLAUDE_CONFIG_DIR"}})
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -141,7 +149,7 @@ for line in sys.stdin:
         if sub == "initialize":
             dialogs = msg["request"].get("supportedDialogKinds", [])
         # FAKE_CLAUDE_COMMANDS is a JSON list of the slash command names it reports.
-        reply = {"account": {"email": "me@example.com", "subscriptionType": "max", "tokenSource": "claude.ai"},
+        reply = {"account": {"email": ACCOUNT_EMAIL, "subscriptionType": "max", "tokenSource": "claude.ai"},
                  "commands": [{"name": n, "description": "", "argumentHint": ""} for n in json.loads(os.environ.get("FAKE_CLAUDE_COMMANDS", "[]"))]} if sub == "initialize" else {}
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
         if sub == "interrupt":

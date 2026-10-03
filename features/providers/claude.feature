@@ -129,7 +129,6 @@ Feature: Claude
     When Claude reports that a usage window is nearly used up during a turn
     Then the limits view shows the new usage for that window
 
-  @backlog
   Scenario: Several Claude accounts can run side by side
     Given the user adds a second Claude instance with its own config directory
     When the user signs in to the CLI with that config directory
