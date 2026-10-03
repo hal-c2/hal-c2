@@ -220,7 +220,14 @@ export function userKeymap(ctx: PluginWorld): Record<string, unknown> | undefine
   const text =
     typeof ctx.keymapFile === "string" ? ctx.keymapFile : JSON.stringify(ctx.keymapFile, null, 2);
   writeFile(ctx, "config/keymap.json", text);
-  return readUserConfig({ configDir: configDir(ctx), warn: () => {} }).keymap;
+  // What the file's reader warns about is told to the host at start, as the entry does.
+  const warnings: string[] = [];
+  const keymap = readUserConfig({
+    configDir: configDir(ctx),
+    warn: (message) => warnings.push(message),
+  }).keymap;
+  if (warnings.length > 0) ctx.hostOptions = { ...ctx.hostOptions, startupWarnings: warnings };
+  return keymap;
 }
 
 /** The screen line a slot is drawn on. */

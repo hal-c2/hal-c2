@@ -19,6 +19,8 @@ import {
   configDir,
   expectProblem,
   planShell,
+  problems,
+  problemText,
   start,
   writeFile,
   type KeymapHandle,
@@ -236,6 +238,25 @@ step("the TUI exits with a load error naming the keymap file", (ctx: KeymapWorld
 step("pressing {string} opens the command palette", async (ctx: KeymapWorld, key: string) => {
   expect(await press(ctx, key)).toContain("palette.open");
 });
+
+// The file is the user's keymap.json, read from the config directory as the entry reads it.
+step(
+  "it is loaded on the desktop app, the mobile app with a hardware keyboard, and the TUI",
+  async (ctx: KeymapWorld) => {
+    await startKeymaps(ctx);
+    expect(NodeFS.existsSync(NodePath.join(configDir(ctx), "keymap.json"))).toBe(true);
+    expect(ctx.qml!.keymap).toEqual(ctx.keymapFile as Record<string, unknown>);
+  },
+);
+
+step(
+  "pressing {string} opens the command palette on each",
+  async (ctx: KeymapWorld, key: string) => {
+    expect(await press(ctx, key)).toContain("palette.open");
+    expect((ctx.host!.state.get("palette") as { open: boolean }).open).toBe(true);
+    expect(problems(ctx).map(problemText)).toEqual([]);
+  },
+);
 
 step("pressing {string} does not start a new thread", async (ctx: KeymapWorld, key: string) => {
   expect(await press(ctx, key)).not.toContain("thread.new");
