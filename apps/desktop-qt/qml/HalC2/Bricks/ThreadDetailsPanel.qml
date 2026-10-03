@@ -140,6 +140,19 @@ Rectangle {
                 value: root.details?.branch ?? ""
             }
 
+            ShellButton {
+                id: openWorkspace
+
+                readonly property var editor: (Shell.state.workspace?.editors ?? []).find(candidate => candidate.id === Shell.state.workspace?.preferredEditorId) ?? null
+
+                objectName: "threadDetailsOpenEditor"
+                visible: root.details !== null && editor !== null
+                subtle: true
+                iconName: "external-link"
+                text: qsTr("Open in %1").arg(editor?.label ?? "")
+                onClicked: Shell.dispatch("workspace.openInEditor", {})
+            }
+
             Heading {
                 visible: root.actions !== null
                 text: qsTr("Actions")

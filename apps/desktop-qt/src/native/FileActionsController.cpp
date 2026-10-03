@@ -7,6 +7,7 @@
 #include "ComposerModel.h"
 #include "NativeShell.h"
 #include "RightPanelController.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ToastController.h"
 #include "WorkspaceController.h"
@@ -24,6 +25,24 @@ FileActionsController::FileActionsController(ShellBridge* bridge, McClient*, QOb
     clipboard->setText(text);
     return true;
   };
+}
+
+void FileActionsController::activate() {
+  if (m_active) return;
+  m_active = true;
+  auto* shell = NativeShell::of(this);
+  WorkspaceFiles* files = shell->controller<RightPanelController>()->files();
+  auto* settings = shell->controller<SettingsController>();
+  const QString key = QStringLiteral("fileSourceKinds");
+  const auto read = [files, settings, key] { files->setSourceKinds(settings->deviceValue(key).toStringList()); };
+  connect(settings, &SettingsController::deviceChanged, files, read);
+  read();
+  connect(files, &WorkspaceFiles::sourceKindsChanged, settings, [files, settings, key] {
+    settings->writeDevice(key, files->sourceKinds().isEmpty() ? QVariant() : QVariant(files->sourceKinds()));
+  });
+  connect(files, &WorkspaceFiles::saveFailed, this, [shell](const QString& path, const QString& problem) {
+    shell->controller<ToastController>()->error(tr("Could not save %1").arg(path), problem);
+  });
 }
 
 QString FileActionsController::absolute(const QString& path) const {

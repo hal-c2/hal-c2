@@ -51,6 +51,7 @@ ThreadView 1.0 ThreadView.qml
 DiffPanel 1.0 DiffPanel.qml
 FilesPanel 1.0 FilesPanel.qml
 FileEntryMenu 1.0 FileEntryMenu.qml
+FilePathTrail 1.0 FilePathTrail.qml
 ProjectActionEditor 1.0 ProjectActionEditor.qml
 ProjectIcon 1.0 ProjectIcon.qml
 ProjectIconPicker 1.0 ProjectIconPicker.qml

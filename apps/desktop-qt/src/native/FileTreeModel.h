@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QList>
 #include <QString>
+#include <QVariantList>
 
 #include <functional>
 #include <optional>
@@ -85,6 +86,9 @@ public:
   Q_INVOKABLE void select(const QString& path);
   // The row showing `path` (an entry, not a placeholder), or -1.
   Q_INVOKABLE int rowOf(const QString& path) const;
+  // A loaded folder's entries ("" the top) as {path, name, directory}, folders
+  // first: what the viewer's path trail offers beside a file.
+  Q_INVOKABLE QVariantList entriesIn(const QString& folder) const;
   // The visible paths, in order, for tests and keyboard walking.
   QStringList visiblePaths() const;
 

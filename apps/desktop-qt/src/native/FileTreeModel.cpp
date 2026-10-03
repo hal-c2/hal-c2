@@ -298,6 +298,16 @@ int FileTreeModel::rowOf(const QString& path) const {
   return -1;
 }
 
+QVariantList FileTreeModel::entriesIn(const QString& folder) const {
+  QVariantList entries;
+  const Folder listed = m_folders.value(folder);
+  if (listed.state != State::Loaded) return entries;
+  for (const Entry& child : listed.children) {
+    entries.append(QVariantMap{{QStringLiteral("path"), child.path}, {QStringLiteral("name"), nameOf(child.path)}, {QStringLiteral("directory"), child.directory}});
+  }
+  return entries;
+}
+
 QStringList FileTreeModel::visiblePaths() const {
   QStringList paths;
   for (const Row& row : m_rows) {

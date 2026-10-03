@@ -5,6 +5,9 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QQuickItem>
+
+#include "Brick.h"
 
 #include "FakeConfig.h"
 #include "FakeFiles.h"
@@ -97,5 +100,40 @@ inline QList<QJsonObject> editorCalls(World& world) {
 inline QString workspaceRoot(World& world) {
   return files(world).root();
 }
+
+// The Files tab as the right panel draws it.
+inline void showPanel(World& world) {
+  openFilesTab(world);
+  if (!world.brick || world.brick->root()->objectName() != QLatin1String("filesPanel")) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nFilesPanel { source: Panel.files }\n", QSize(540, 700));
+  }
+}
+
+// The entry named `entry` of the menu `menuName` the panel keeps.
+inline QQuickItem* menuEntry(World& world, const QString& menuName, const QString& entry) {
+  QObject* menu = world.brick->root()->findChild<QObject*>(menuName);
+  expect(menu != nullptr, QStringLiteral("the Files tab has no %1").arg(menuName));
+  for (int index = 0; index < menu->property("count").toInt(); ++index) {
+    QQuickItem* candidate = nullptr;
+    QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, candidate), Q_ARG(int, index));
+    if (candidate && candidate->objectName() == entry) return candidate;
+  }
+  return nullptr;
+}
+
+// Chooses `entry` from the menu of `path`'s row.
+inline void choose(World& world, const QString& path, const QString& entry) {
+  showPanel(world);
+  QObject* menu = world.brick->root()->findChild<QObject*>(QStringLiteral("fileEntryMenu"));
+  expect(menu != nullptr, QStringLiteral("the Files tab has no entry menu"));
+  menu->setProperty("path", path);
+  QQuickItem* item = menuEntry(world, QStringLiteral("fileEntryMenu"), entry);
+  expect(item != nullptr && item->property("enabled").toBool(), QStringLiteral("the menu does not offer %1").arg(entry));
+  QMetaObject::invokeMethod(item, "triggered");
+}
+
+// A file the viewer's scenarios name without saying what it holds: made, when
+// the project has none at `path`, with contents of its kind.
+void ensureViewerFile(World& world, const QString& path);
 
 }  // namespace filesteps

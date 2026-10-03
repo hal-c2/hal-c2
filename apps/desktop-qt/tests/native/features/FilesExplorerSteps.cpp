@@ -22,30 +22,6 @@ QString composerText(World& world) {
   return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("text")).toString();
 }
 
-// The Files tab as the right panel draws it.
-void showPanel(World& world) {
-  openFilesTab(world);
-  if (!world.brick) {
-    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nFilesPanel { source: Panel.files }\n", QSize(540, 700));
-  }
-}
-
-// Chooses `entry` from the menu of `path`'s row.
-void choose(World& world, const QString& path, const QString& entry) {
-  showPanel(world);
-  QObject* menu = world.brick->root()->findChild<QObject*>(QStringLiteral("fileEntryMenu"));
-  expect(menu != nullptr, QStringLiteral("the Files tab has no entry menu"));
-  menu->setProperty("path", path);
-  QQuickItem* item = nullptr;
-  for (int index = 0; index < menu->property("count").toInt() && !item; ++index) {
-    QQuickItem* candidate = nullptr;
-    QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, candidate), Q_ARG(int, index));
-    if (candidate && candidate->objectName() == entry) item = candidate;
-  }
-  expect(item != nullptr && item->property("enabled").toBool(), QStringLiteral("the menu does not offer %1").arg(entry));
-  QMetaObject::invokeMethod(item, "triggered");
-}
-
 const Steps steps([] {
   const QString q = kQuoted;
 

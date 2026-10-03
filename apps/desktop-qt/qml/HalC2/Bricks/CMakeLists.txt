@@ -58,6 +58,7 @@ qt_add_qml_module(hal_c2_bricks
     DiffPanel.qml
     FilesPanel.qml
     FileEntryMenu.qml
+    FilePathTrail.qml
     ProjectActionEditor.qml
     ProjectIcon.qml
     ProjectIconPicker.qml

@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "FilesViewer.h"
 #include "Harness.h"
 #include "MenuController.h"
 #include "NavigationController.h"
@@ -491,6 +492,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("%1 opens").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (fileOpened(world, c[0])) return;
     const QString key = keyOf(world, c[0]);
     world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },
                   [&] { return QStringLiteral("%1 to open; the route is %2").arg(key, show(world.state(QStringLiteral("route")))); });

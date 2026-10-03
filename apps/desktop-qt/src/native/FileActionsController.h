@@ -27,7 +27,9 @@ class FileActionsController : public QObject, public NativeController {
 public:
   FileActionsController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
 
-  void activate() override {}
+  // Follows what the viewer says: which kinds of file the user reads as
+  // source (kept on this device, `fileSourceKinds`) and a save the MC refused.
+  void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
 
   // Writes the clipboard, false when it could not; tests read what was written.
@@ -38,5 +40,6 @@ private:
   QString absolute(const QString& path) const;
 
   ShellBridge* m_bridge;
+  bool m_active = false;
   std::function<bool(const QString&)> m_writeClipboard;
 };
