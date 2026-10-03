@@ -136,8 +136,15 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     end
   end
 
-  # Opening the pipe read-write never blocks, whether or not brew is reading it.
+  # Opening the pipe read-write never blocks, whether or not brew is reading it. With
+  # nobody reading yet the line is lost, so this is only for cleaning up.
   defp release(hold), do: System.cmd("sh", ["-c", "echo go 1<>#{hold}"])
+
+  # Hands brew its line: opening the pipe to write waits until brew has opened it to
+  # read, however long brew takes to get there. Off the caller's process, which goes
+  # on reporting; a writer brew never meets is let go by `release/1` at the end.
+  defp release_to_reader(hold),
+    do: spawn(fn -> System.cmd("sh", ["-c", "echo go > #{hold}"]) end)
 
   # Reports Codex's and Claude's update states to `test`, releasing Claude's brew
   # once Codex's update waits for it.
@@ -147,7 +154,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
         for driver <- ["codex", "claudeAgent"],
             state = :persistent_term.get({HalC2.ProviderUpdates, driver, :state}, nil) do
           send(test, {:update_state, driver, state})
-          if driver == "codex" and state["status"] == "queued", do: release(hold)
+          if driver == "codex" and state["status"] == "queued", do: release_to_reader(hold)
         end
 
         watch_updates(test, hold)
