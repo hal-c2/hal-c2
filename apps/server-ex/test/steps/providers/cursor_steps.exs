@@ -368,6 +368,59 @@ defmodule HalC2.Steps.Providers.Cursor do
     Map.put(ctx, :thread, "Cursor")
   end
 
+  # --- an abandoned send -----------------------------------------------------------------
+
+  # The turn's runtime stops without ending it (as when its supervisor shuts it down):
+  # the run's record says running, and no Cursor session is left behind it.
+  step "a message was sent to Cursor but the MC kept only its local run record and no live Cursor session",
+       context do
+    Mc.ensure(HalC2.Orchestration.TurnWatch)
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", "wait")
+    thread = ctx.threads["Cursor"]
+
+    Acp.await_stream(thread, fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+    end)
+
+    [{runtime, _}] = Registry.lookup(HalC2.Acp.Registry, thread)
+    ref = Process.monitor(runtime)
+    :ok = GenServer.stop(runtime, :shutdown)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    assert [%{"status" => "running"}] = Acp.runs(thread)
+    assert Registry.lookup(HalC2.Acp.Registry, thread) == []
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "the MC checks its Cursor sessions", context do
+    Mc.ensure(HalC2.Orchestration.IdleSessions)
+    HalC2.Orchestration.IdleSessions.check()
+    context
+  end
+
+  step "the send is completed or failed explicitly", context do
+    assert [%{"status" => "failed", "completedAt" => at}] =
+             Acp.await_runs(context.threads["Cursor"], 1)
+
+    assert is_binary(at)
+
+    assert [%{"lastError" => "The provider's session ended unexpectedly."}] =
+             HalC2.StreamState.list(Acp.stream(context.threads["Cursor"]), "provider-session")
+
+    context
+  end
+
+  step "the user's next message starts a new Cursor run", context do
+    Acp.follow_up(context, "Cursor", "hello")
+
+    assert ["failed", "completed"] =
+             Enum.map(Acp.await_runs(context.threads["Cursor"], 2), & &1["status"])
+
+    assert Acp.assistant_text(context.threads["Cursor"]) =~ "Hello from Cursor"
+    context
+  end
+
   # --- usage ---------------------------------------------------------------------------
 
   @usage_path "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"

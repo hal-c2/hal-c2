@@ -51,9 +51,10 @@ const store = {
 };
 
 let agents = 0;
-const makeAgent = (options) => {
+// A resumed agent keeps its id, as the SDK's `Agent.resume` does.
+const makeAgent = (options, resumed) => {
   if (refused(options.apiKey)) throw authError();
-  const agentId = `cursor-agent-${process.pid}-${++agents}`;
+  const agentId = resumed ?? `cursor-agent-${process.pid}-${++agents}`;
   log({
     event: "agent",
     agentId,
@@ -158,7 +159,7 @@ const acp = makeCursorAcp({
     store,
     envApiKey: process.env.CURSOR_API_KEY?.trim() || undefined,
     createAgent: async (options) => makeAgent(options),
-    resumeAgent: async (_agentId, options) => makeAgent(options),
+    resumeAgent: async (agentId, options) => makeAgent(options, agentId),
     listModels: async (key) => {
       if (refused(key)) throw authError();
       return (

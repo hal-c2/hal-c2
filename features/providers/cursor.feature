@@ -189,7 +189,6 @@ Feature: Cursor
     Then the turn keeps going
     And the command is shown as failed
 
-  @backlog
   Scenario: A Cursor send whose run was abandoned is ended
     Given a message was sent to Cursor but the MC kept only its local run record and no live Cursor session
     When the MC checks its Cursor sessions
