@@ -34,7 +34,7 @@ ShellWindow {
                 id: navigation
                 Layout.fillHeight: true
                 Layout.fillWidth: false
-                Layout.preferredWidth: columns === 2 ? 256 + sidebarExtension.implicitWidth : sidebarExtension.active ? 300 : 256
+                Layout.preferredWidth: columns === 2 ? sidebarView.shownWidth + sidebarExtension.implicitWidth : sidebarExtension.active ? Math.max(300, sidebarView.shownWidth) : sidebarView.shownWidth
                 Layout.maximumWidth: Layout.preferredWidth
                 Layout.minimumWidth: 0
                 columns: sidebarExtension.active && root.width >= 1100 ? 2 : 1
@@ -45,12 +45,47 @@ ShellWindow {
                 Sidebar {
                     id: sidebarView
                     objectName: "threadSidebar"
+                    // The width while its edge is dragged, else the layout's.
+                    property int dragWidth: -1
+                    readonly property int shownWidth: dragWidth >= 0 ? dragWidth : root.sidebarWidth
+
                     Layout.fillHeight: true
                     Layout.fillWidth: true
-                    Layout.preferredWidth: 256
+                    Layout.preferredWidth: shownWidth
                     Layout.minimumWidth: 0
                     showBrand: true
                     window: root
+
+                    // The right edge: drag to resize, double click for the default width.
+                    MouseArea {
+                        objectName: "sidebarEdge"
+
+                        property real pressX: 0
+                        property int pressWidth: 0
+
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: 6
+                        cursorShape: Qt.SplitHCursor
+                        preventStealing: true
+                        onPressed: mouse => {
+                            pressX = mapToItem(navigation.parent, mouse.x, 0).x;
+                            pressWidth = sidebarView.shownWidth;
+                        }
+                        onPositionChanged: mouse => {
+                            if (pressed)
+                                sidebarView.dragWidth = Math.max(208, Math.round(pressWidth + mapToItem(navigation.parent, mouse.x, 0).x - pressX));
+                        }
+                        onReleased: {
+                            const width = sidebarView.dragWidth;
+                            sidebarView.dragWidth = -1;
+                            if (width >= 0 && width !== root.sidebarWidth)
+                                Shell.dispatch("sidebar.resize", { width: width });
+                        }
+                        onCanceled: sidebarView.dragWidth = -1
+                        onDoubleClicked: Shell.dispatch("sidebar.resize", {})
+                    }
                 }
 
                 Loader {

@@ -13,6 +13,9 @@ Window {
 
     // Whether the thread list is hidden (LayoutController, sidebar.toggle).
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
+    // How wide the thread list is drawn (LayoutController: the width the user
+    // dragged it to, less when the window leaves it no room).
+    readonly property int sidebarWidth: Shell.state.layout ? (Shell.state.layout.sidebarWidth ?? 256) : 256
     // The app's zoom (LayoutController, mod+= / mod+- / mod+0): the body
     // scales, and the menu hosts and overlays stay in window coordinates, so
     // a menu opened at a pointer's scenePosition lands under it.
@@ -41,6 +44,11 @@ Window {
 
     width: 1280
     height: 820
+    // The layout fits the thread list to the room the window leaves it.
+    onWidthChanged: Shell.dispatch("layout.window", { width: Math.round(width / zoom) })
+    // Again once the layout is there: the shell may start after the window.
+    onSidebarWidthChanged: Shell.dispatch("layout.window", { width: Math.round(width / zoom) })
+    Component.onCompleted: Shell.dispatch("layout.window", { width: Math.round(width / zoom) })
     minimumWidth: 640
     minimumHeight: 400
     visible: true

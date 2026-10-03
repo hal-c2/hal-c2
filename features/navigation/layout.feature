@@ -71,20 +71,20 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user toggles the sidebar
       Then the thread view is resized once, not on every frame
 
-    @backlog @desktop
+    @desktop
     Scenario: Resizing the sidebar is remembered
       When the user drags the sidebar to a new width
       And the user restarts the app
       Then the sidebar has the width the user chose
 
-    @backlog @desktop
+    @desktop
     Scenario: The sidebar cannot be narrower than its minimum or wider than the window allows
       When the user drags the sidebar narrower than its minimum
       Then the sidebar stops at its minimum width
       When the window becomes narrower than the sidebar allows
       Then the sidebar shrinks to fit
 
-    @backlog @desktop
+    @desktop
     Scenario: Resetting the sidebar width
       Given the user resized the sidebar
       When the user resets the sidebar width

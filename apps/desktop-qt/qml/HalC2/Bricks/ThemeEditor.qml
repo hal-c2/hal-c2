@@ -11,7 +11,7 @@ import HalC2.Shell
 Popup {
     id: editor
 
-    readonly property var draft: Themes.editing
+    readonly property var draft: Themes.editing ?? ({})
     // The colours being edited, by role.
     readonly property var colors: draft.colors ?? ({})
     property string filter: ""
