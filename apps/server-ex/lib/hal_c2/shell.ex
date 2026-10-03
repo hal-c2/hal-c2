@@ -45,6 +45,23 @@ defmodule HalC2.Shell do
   @spec environments() :: [{node, map}]
   def environments, do: :ets.tab2list(@mcs)
 
+  @doc """
+  The MC that serves a client's shape or RPC for `environment_id`: this one or the
+  cluster member with that environment, else `nil`.
+  """
+  @spec mc_for(String.t()) :: node | nil
+  def mc_for(environment_id) do
+    # Even if the MC became distributed (and changed its name) after the shell
+    # recorded it.
+    if environment_id == HalC2.Environment.id() do
+      node()
+    else
+      Enum.find_value(environments(), fn {mc, descriptor} ->
+        if descriptor["environmentId"] == environment_id, do: mc
+      end)
+    end
+  end
+
   @doc "MCs whose shell is currently reachable, this one included."
   @spec online_mcs() :: [node]
   def online_mcs, do: GenServer.call(__MODULE__, :online_mcs)

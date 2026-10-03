@@ -108,25 +108,6 @@ Members find each other at the addresses they report, then at those a discovery 
 lists: the tailnet (`HalC2.Cluster.Tailscale`) and `HAL_C2_PEERS=host[:port],...`
 (`HalC2.Cluster.Static`), or modules of your own in the `:cluster_strategies` config.
 
-## Link an MC you do not cluster with
-
-```sh
-mix hal_c2.link "https://beast.tailnet.ts.net/?token=..."  # from `mix hal_c2.pair --tailscale` on the other MC
-mix hal_c2.link                                      # list links and whether they are online
-mix hal_c2.link --remove ENVIRONMENT_ID
-```
-
-A link keeps the other MC's access token, and this MC forwards its clients'
-RPCs and the shapes named by environment (`HalC2.Web.Protocol.routed/0`) over one
-socket (`HalC2.Links`), for that environment and the other MCs of its cluster. The
-other MC checks the link's scopes as it would any client's. While a link is down,
-requests through it fail at once with an `EnvironmentUnreachableError`. A client that asks for the shell with `"links": true` also gets each
-linked environment's MCs and rows under its link, followed only while some client
-asks. The desktop shell reaches its terminals that way, since it only talks to its own
-MC, and pairs environments as links from its Connections settings
-(`hal-c2.linkEnvironment`). A link whose token the other MC stops accepting stops
-retrying and lists as refused until it is paired again.
-
 ## Test
 
 `mix test` runs the suite. `--include codex` / `--include claude` drive the real
