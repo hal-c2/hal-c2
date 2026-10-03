@@ -100,7 +100,6 @@ Feature: Cursor
     When the user opens the provider list
     Then Cursor says the sign-in expired and to sign in again
 
-  @backlog
   Scenario: Cursor model options come from the Cursor catalog
     When the user opens the options for a Cursor model
     Then the reasoning, context size, fast mode and thinking choices Cursor offers for that model are shown

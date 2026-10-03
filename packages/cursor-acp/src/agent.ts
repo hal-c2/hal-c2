@@ -1,7 +1,9 @@
 import type {
   AgentOptions,
   InteractionUpdate,
+  ModelParameterDefinition,
   ModelSelection,
+  ModelVariant,
   SdkCredentialStore,
   SendOptions,
   ToolCall,
@@ -23,9 +25,15 @@ export interface CursorSdk {
   readonly envApiKey: string | undefined;
   readonly createAgent: (options: AgentOptions) => Promise<CursorAgent>;
   readonly resumeAgent: (agentId: string, options: AgentOptions) => Promise<CursorAgent>;
-  readonly listModels: (
-    apiKey: string,
-  ) => Promise<ReadonlyArray<{ readonly id: string; readonly displayName: string }>>;
+  readonly listModels: (apiKey: string) => Promise<
+    ReadonlyArray<{
+      readonly id: string;
+      readonly displayName: string;
+      /** The model's own options (reasoning, context size, ...) and its default variant. */
+      readonly parameters?: ReadonlyArray<ModelParameterDefinition>;
+      readonly variants?: ReadonlyArray<ModelVariant>;
+    }>
+  >;
   readonly login: (options: {
     readonly store: SdkCredentialStore;
     readonly signal: AbortSignal;
@@ -139,7 +147,14 @@ export function makeCursorAcp(input: {
         currentValue: current,
         options: [
           { value: "default", name: "Auto" },
-          ...models.map((model) => ({ value: model.id, name: model.displayName })),
+          // Each model's parameters ride along, for the client's model options.
+          ...models.map((model) => ({
+            value: model.id,
+            name: model.displayName,
+            ...(model.parameters === undefined || model.parameters.length === 0
+              ? {}
+              : { _meta: { parameters: model.parameters, variants: model.variants ?? [] } }),
+          })),
         ],
       },
       // Cursor's own plan mode, which the client's plan toggle chooses.
@@ -279,7 +294,20 @@ export function makeCursorAcp(input: {
     "session/set_config_option": async (params) => {
       const current = session(params);
       if (params.configId === "model" && typeof params.value === "string") {
-        current.model = { id: params.value };
+        // The options picked for the model come with it (`_meta.params`).
+        const meta = params._meta as { readonly params?: unknown } | undefined;
+        const picked = Array.isArray(meta?.params)
+          ? meta.params.flatMap((entry) =>
+              typeof entry === "object" &&
+              entry !== null &&
+              typeof entry.id === "string" &&
+              typeof entry.value === "string"
+                ? [{ id: entry.id, value: entry.value }]
+                : [],
+            )
+          : [];
+        current.model =
+          picked.length === 0 ? { id: params.value } : { id: params.value, params: picked };
       }
       if (params.configId === "mode") {
         current.mode = params.value === "plan" ? "plan" : "agent";

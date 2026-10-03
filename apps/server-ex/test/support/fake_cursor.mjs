@@ -218,7 +218,13 @@ const acp = makeCursorAcp({
           ["composer-2", "Composer 2"],
           ["gpt-5", "GPT-5"],
         ]
-      ).map(([id, displayName]) => ({ id, displayName }));
+      ).map(([id, displayName]) => ({
+        id,
+        displayName,
+        // `parameters` / `variants` in the control give a model its own options.
+        ...(control.parameters?.[id] ? { parameters: control.parameters[id] } : {}),
+        ...(control.variants?.[id] ? { variants: control.variants[id] } : {}),
+      }));
     },
     login: async ({ store, signal, onLoginUrl }) => {
       log({ event: "login" });

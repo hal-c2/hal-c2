@@ -206,7 +206,8 @@ defmodule HalC2.Acp.ThreadRuntime do
          {:ok, state} <- ensure_session(state, turn),
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
-         state = set_options(state, turn) do
+         state = set_options(state, turn),
+         state = set_parameters(state, turn) do
       started(state)
       state = %{state | leaf: leaf(state)}
       conn = state.conn
@@ -828,6 +829,35 @@ defmodule HalC2.Acp.ThreadRuntime do
         end)
       ]
     end)
+  end
+
+  # Cursor takes the options picked for a model with the model, as its parameters, so
+  # each turn says both (none picked clears what an earlier turn chose).
+  defp set_parameters(%{agent: agent} = state, turn) do
+    if HalC2.Acp.driver(agent) == "cursor" do
+      params =
+        for {id, value} <- Map.get(turn, :options) || %{}, is_binary(id), value != nil do
+          %{"id" => HalC2.Acp.cursor_parameter(id), "value" => to_string(value)}
+        end
+
+      model = if turn.model in [nil, ""], do: state.model || "default", else: turn.model
+
+      case Connection.call(state.conn, "session/set_config_option", %{
+             "sessionId" => state.session_id,
+             "configId" => "model",
+             "value" => model,
+             "_meta" => %{"params" => Enum.sort_by(params, & &1["id"])}
+           }) do
+        {:ok, _} ->
+          %{state | model: model}
+
+        {:error, reason} ->
+          Logger.warning("could not set Cursor's model options: #{inspect(reason)}")
+          state
+      end
+    else
+      state
+    end
   end
 
   # The choice of a select option (flat or grouped) that plans, if it has one.

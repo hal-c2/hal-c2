@@ -423,6 +423,129 @@ defmodule HalC2.Steps.Providers.Cursor do
     context
   end
 
+  # --- model options ---------------------------------------------------------------------
+
+  # What Cursor's catalog says of GPT-5: its parameters, and the default variant.
+  @parameters [
+    %{"id" => "thinking", "values" => [%{"value" => "true"}, %{"value" => "false"}]},
+    %{
+      "id" => "fast",
+      "displayName" => "Fast",
+      "values" => [%{"value" => "false"}, %{"value" => "true"}]
+    },
+    %{
+      "id" => "context",
+      "values" => [%{"value" => "200k"}, %{"value" => "1m", "displayName" => "1M"}]
+    },
+    %{
+      "id" => "reasoning",
+      "displayName" => "Reasoning",
+      "values" => [
+        %{"value" => "low", "displayName" => "Low"},
+        %{"value" => "medium", "displayName" => "Medium"},
+        %{"value" => "high", "displayName" => "High"}
+      ]
+    }
+  ]
+  @variants [
+    %{
+      "isDefault" => true,
+      "params" => [
+        %{"id" => "reasoning", "value" => "medium"},
+        %{"id" => "context", "value" => "200k"},
+        %{"id" => "fast", "value" => "false"}
+      ]
+    }
+  ]
+
+  step "the user opens the options for a Cursor model", context do
+    sign_in("cursor")
+    ctx = ops(context)
+
+    Acp.control(ctx, "cursor-cursor", %{
+      "parameters" => %{"gpt-5" => @parameters},
+      "variants" => %{"gpt-5" => @variants}
+    })
+
+    {entry, ctx} = enabled(ctx)
+    Map.put(ctx, :cursor_models, entry["models"])
+  end
+
+  step "the reasoning, context size, fast mode and thinking choices Cursor offers for that model are shown",
+       context do
+    model = Enum.find(context.cursor_models, &(&1["slug"] == "gpt-5"))
+
+    assert [
+             %{
+               "id" => "reasoning",
+               "label" => "Reasoning",
+               "type" => "select",
+               "currentValue" => "medium",
+               "options" => [
+                 %{"id" => "low", "label" => "Low"},
+                 %{"id" => "medium", "label" => "Medium", "isDefault" => true},
+                 %{"id" => "high", "label" => "High"}
+               ]
+             },
+             %{
+               "id" => "contextWindow",
+               "label" => "Context Window",
+               "type" => "select",
+               "currentValue" => "200k",
+               "options" => [
+                 %{"id" => "200k", "label" => "200k", "isDefault" => true},
+                 %{"id" => "1m", "label" => "1M"}
+               ]
+             },
+             %{
+               "id" => "fastMode",
+               "label" => "Fast",
+               "type" => "boolean",
+               "currentValue" => false
+             },
+             %{"id" => "thinking", "label" => "Thinking", "type" => "boolean"} = thinking
+           ] = model["capabilities"]["optionDescriptors"]
+
+    refute Map.has_key?(thinking, "currentValue")
+
+    # A model Cursor lists no parameters for has no options.
+    assert Enum.find(context.cursor_models, &(&1["slug"] == "composer-2"))["capabilities"] == nil
+
+    # What the user picks reaches Cursor as the model's parameters.
+    ctx = Acp.launch(context, "Cursor", "cursor", "hello", model: "gpt-5")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+
+    Acp.follow_up(ctx, "Cursor", "hello again", %{
+      "modelSelection" => %{
+        "instanceId" => "cursor",
+        "model" => "gpt-5",
+        "options" => [
+          %{"id" => "reasoning", "value" => "high"},
+          %{"id" => "contextWindow", "value" => "1m"},
+          %{"id" => "fastMode", "value" => true}
+        ]
+      }
+    })
+
+    Acp.await_runs(ctx.threads["Cursor"], 2)
+
+    assert [%{"model" => %{"id" => "gpt-5"} = first}, %{"model" => second}] =
+             Enum.filter(log(ctx), &(&1["event"] == "send"))
+
+    refute Map.has_key?(first, "params")
+
+    assert second == %{
+             "id" => "gpt-5",
+             "params" => [
+               %{"id" => "context", "value" => "1m"},
+               %{"id" => "fast", "value" => "true"},
+               %{"id" => "reasoning", "value" => "high"}
+             ]
+           }
+
+    ctx
+  end
+
   # --- skills and rules ------------------------------------------------------------------
 
   defp cursor_skill(context, name) do

@@ -1183,6 +1183,111 @@ defmodule HalC2.Acp do
   @doc "The models a session's `model` config option lists, as provider models."
   def session_models(session), do: models(session)
 
+  @parameter_options %{"context" => "contextWindow", "fast" => "fastMode"}
+  @parameter_order %{
+    "effort" => 0,
+    "reasoning" => 0,
+    "context" => 1,
+    "fast" => 2,
+    "thinking" => 3
+  }
+
+  @doc "The Cursor parameter a model option of HAL-C2's is (`contextWindow` is `context`)."
+  def cursor_parameter(option) do
+    Enum.find_value(@parameter_options, option, fn {parameter, id} ->
+      if id == option, do: parameter
+    end)
+  end
+
+  # The options a model offers, from the parameters the Cursor agent lists for it
+  # (`buildCursorCapabilitiesFromSdkModel` in the Node server): reasoning first, then
+  # context size, fast mode and thinking; a true/false parameter is a switch. The
+  # default is the default variant's value.
+  defp parameter_capabilities(%{"parameters" => [_ | _] = parameters} = meta) do
+    defaults =
+      for variant <- meta["variants"] || [],
+          variant["isDefault"] == true,
+          %{"id" => id, "value" => value} <- variant["params"] || [],
+          into: %{},
+          do: {id, value}
+
+    descriptors =
+      parameters
+      |> Enum.with_index()
+      |> Enum.sort_by(fn {parameter, index} ->
+        {Map.get(@parameter_order, parameter["id"], 4), index}
+      end)
+      |> Enum.flat_map(fn {parameter, _index} -> parameter_descriptor(parameter, defaults) end)
+      |> Enum.uniq_by(& &1["id"])
+
+    if descriptors != [], do: %{"optionDescriptors" => descriptors}
+  end
+
+  defp parameter_capabilities(_meta), do: nil
+
+  defp parameter_descriptor(%{"id" => native, "values" => values} = parameter, defaults)
+       when is_binary(native) and is_list(values) do
+    native = String.trim(native)
+    id = Map.get(@parameter_options, native, native)
+
+    values =
+      for %{"value" => value} = entry when is_binary(value) <- values,
+          value = String.trim(value),
+          value != "",
+          do: {value, text(entry["displayName"]) || value}
+
+    label =
+      text(parameter["displayName"]) ||
+        id
+        |> String.replace(~r/([a-z])([A-Z])/, "\\1 \\2")
+        |> String.split(~r/[\s_-]+/, trim: true)
+        |> Enum.map_join(" ", &String.capitalize/1)
+
+    default = defaults[native]
+
+    cond do
+      native == "" or values == [] ->
+        []
+
+      values |> Enum.map(&String.downcase(elem(&1, 0))) |> Enum.sort() == ["false", "true"] ->
+        [
+          %{"id" => id, "label" => label, "type" => "boolean"}
+          |> then(
+            &if(default in ["true", "false"],
+              do: Map.put(&1, "currentValue", default == "true"),
+              else: &1
+            )
+          )
+        ]
+
+      true ->
+        [
+          %{
+            "id" => id,
+            "label" => label,
+            "type" => "select",
+            "options" =>
+              for {value, name} <- values do
+                %{"id" => value, "label" => name}
+                |> then(&if(value == default, do: Map.put(&1, "isDefault", true), else: &1))
+              end
+          }
+          |> then(&if(default, do: Map.put(&1, "currentValue", default), else: &1))
+        ]
+    end
+  end
+
+  defp parameter_descriptor(_parameter, _defaults), do: []
+
+  defp text(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      value -> value
+    end
+  end
+
+  defp text(_value), do: nil
+
   # "Hugging Face/DeepSeek V3" is the model "DeepSeek V3" of the provider "Hugging Face".
   defp models(session) do
     option = Enum.find(session["configOptions"] || [], &(&1["id"] == "model")) || %{}
@@ -1200,7 +1305,7 @@ defmodule HalC2.Acp do
         "name" => name,
         "isCustom" => false,
         "isDefault" => slug == current,
-        "capabilities" => nil
+        "capabilities" => parameter_capabilities(model["_meta"])
       }
       |> then(&if(sub, do: Map.put(&1, "subProvider", sub), else: &1))
     end
