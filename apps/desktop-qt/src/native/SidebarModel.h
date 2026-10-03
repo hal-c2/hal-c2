@@ -70,6 +70,8 @@ struct Thread {
   bool hasPendingUserInput = false;
   bool hasActionableProposedPlan = false;
   int pendingBackgroundTasks = 0;
+  // The machine the thread is on its way to, while a move is under way.
+  Nullable movingTo;
 
   QString key() const { return environmentId + QLatin1Char(':') + id; }
 };

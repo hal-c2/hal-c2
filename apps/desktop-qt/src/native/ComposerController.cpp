@@ -164,7 +164,10 @@ void ComposerController::activate() {
   // A draft opened, renewed or promoted in any window.
   connect(shell->controller<DraftController>(), &DraftController::changed, this, &ComposerController::publish);
   // The row says whether a turn runs, which decides follow-ups and the plan.
-  connect(m_store, &ShellStore::changed, this, &ComposerController::publish);
+  connect(m_store, &ShellStore::changed, this, [this] {
+    carryDrafts();
+    publish();
+  });
   // The route environment's providers are the picker's catalogue.
   connect(shell->controller<WorkspaceController>(), &WorkspaceController::configChanged, this, [this] {
     refreshCatalogue();
@@ -490,6 +493,13 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
     NativeShell::of(this)->controller<ToastController>()->show(
         QStringLiteral("warning"), QStringLiteral("Not connected: message not sent"),
         QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
+    return true;
+  }
+  // Nor while the thread is on its way to another machine, which would refuse it.
+  if (thread->movingTo) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("%1 is moving to %2").arg(thread->title, *thread->movingTo),
+        QStringLiteral("Send the message once it has arrived."));
     return true;
   }
   const QString trimmed = text.trimmed();
@@ -1334,6 +1344,25 @@ QString ComposerController::target() const {
     return NativeShell::of(this)->controller<DraftController>()->draft(m_draftId) ? m_draftId : QString();
   }
   return m_store->thread(m_thread) ? m_thread : QString();
+}
+
+// A thread that moved to another machine has a new key: what was written for
+// it, and the model and modes chosen, follow it there.
+void ComposerController::carryDrafts() {
+  QList<std::pair<QString, QString>> moved;
+  for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
+    const QString located = m_store->located(it.key());
+    if (located != it.key()) moved.append({it.key(), located});
+  }
+  if (moved.isEmpty()) return;
+  for (const auto& [from, to] : moved) {
+    Draft carried = m_drafts.take(from);
+    // The brick showing the thread there has made no edit yet.
+    carried.edit = QVariant();
+    const Draft there = m_drafts.value(to);
+    if (there.text.isEmpty() && there.attachments.isEmpty() && there.excerpts.isEmpty()) m_drafts.insert(to, carried);
+  }
+  save();
 }
 
 QString ComposerController::draft(const QString& target) const {

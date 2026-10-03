@@ -12,6 +12,7 @@
 #include "FakeConfig.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
+#include "Move.h"
 #include "Onboarding.h"
 #include "SettingsController.h"
 #include "ThemeController.h"
@@ -260,6 +261,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("%1 is not offered").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (machineNotOffered(world, c[0])) return;
     world.sync();
     for (const QVariant& theme : themes(world)->available()) {
       expect(theme.toMap().value(QStringLiteral("id")) != c[0], QStringLiteral("%1 is offered").arg(c[0]));

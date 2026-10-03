@@ -233,6 +233,7 @@ private:
   // The route's composer target: its draft id, or its thread when the shell
   // has the thread's row; empty otherwise.
   QString target() const;
+  void carryDrafts();
 
   // The draft's text and caret; `edit` is the brick's, kept when invalid.
   void setText(const QString& target, const QString& text, int cursor, const QVariant& edit = {});

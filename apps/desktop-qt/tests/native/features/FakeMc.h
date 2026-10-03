@@ -117,6 +117,8 @@ public:
   // Every `sub` frame, in order.
   QList<QJsonObject> subscriptions;
   QList<QJsonObject> commands;
+  // The environment each of `commands` was sent to ("" for the MC's own).
+  QStringList commandEnvironments;
   QHash<QString, QString> refusals;
   // What an accepted command does to the MC's rows (the real MC's
   // projection), run before it is answered.
