@@ -54,12 +54,15 @@ Item {
         Shell.dispatch("panel.open", options);
     }
 
-    // A reply's changed file opens on that reply's turn in the diff.
+    // A reply's changed file opens alone on that reply's turn in the diff;
+    // "Open diff" (no path) opens every file the turn changed.
     function openFile(path, tab, rowId) {
         const options = {
             tab: tab,
             path: path
         };
+        if (tab === "diff" && path.length > 0)
+            options.only = true;
         const turn = tab === "diff" && view.model ? view.model.checkpointOf(rowId).turn : undefined;
         if (turn !== undefined)
             options.turn = turn;

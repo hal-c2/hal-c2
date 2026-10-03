@@ -21,6 +21,8 @@ Rectangle {
     readonly property string status: source?.status ?? "idle"
     readonly property bool wrap: source?.wrap ?? false
     readonly property bool split: model?.split ?? false
+    // One file of the selection is shown alone (ThreadDiff.focusPath).
+    readonly property bool focused: (source?.focusPath ?? "").length > 0
     // Characters drawn of one line; the rest of a minified line is cut.
     readonly property int maxLineColumns: 2000
 
@@ -73,7 +75,7 @@ Rectangle {
             Text {
                 Layout.fillWidth: true
                 visible: root.status === "ready"
-                text: qsTr("%n file(s)", "", root.model?.fileCount ?? 0)
+                text: root.focused ? qsTr("1 of %n file(s)", "", root.source.fileTotal) : qsTr("%n file(s)", "", root.model?.fileCount ?? 0)
                 color: root.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 elide: Text.ElideRight
@@ -95,6 +97,15 @@ Rectangle {
                 color: root.removed
                 font.pixelSize: Theme.fontSizeCode
                 font.family: root.mono
+            }
+
+            ShellButton {
+                objectName: "diffShowAllFiles"
+                visible: root.focused && root.status === "ready"
+                subtle: true
+                implicitHeight: 28
+                text: qsTr("Show all files")
+                onClicked: root.source.showAllFiles()
             }
 
             ShellButton {

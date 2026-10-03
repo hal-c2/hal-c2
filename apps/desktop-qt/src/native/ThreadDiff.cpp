@@ -1,6 +1,7 @@
 #include "ThreadDiff.h"
 
 #include <QJsonArray>
+#include <QRegularExpression>
 
 #include "McClient.h"
 #include "TimelineModel.h"
@@ -17,6 +18,10 @@ void ThreadDiff::setThread(const QString& environmentId, const QString& threadId
     ++m_request;
     m_loaded.clear();
     m_pendingReveal.clear();
+    m_patch.clear();
+    m_focus.clear();
+    m_fileTotal = 0;
+    emit focusChanged();
     m_model.clear();
     m_revertTurn = 0;
     m_reverting = false;
@@ -84,7 +89,10 @@ void ThreadDiff::select(int selection) {
   if (selection < -1) selection = -1;
   if (selection == m_selection) return;
   m_selection = selection;
+  // Another selection is shown whole.
+  m_focus.clear();
   emit selectionChanged();
+  emit focusChanged();
   load();
 }
 
@@ -151,6 +159,7 @@ void ThreadDiff::load() {
   if (m_turns.isEmpty()) {
     ++m_request;
     m_loaded.clear();
+    m_patch.clear();
     m_model.clear();
     setStatus(QStringLiteral("empty"), QStringLiteral("No completed turns yet."));
     return;
@@ -176,11 +185,13 @@ void ThreadDiff::load() {
     if (error) {
       // Asking again (reload, another turn) tries once more.
       m_loaded.clear();
+      m_patch.clear();
       m_model.clear();
       setStatus(QStringLiteral("error"), error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error);
       return;
     }
-    m_model.setPatch(result.toObject().value(QLatin1String("diff")).toString());
+    m_patch = result.toObject().value(QLatin1String("diff")).toString();
+    present();
     if (m_model.fileCount() == 0) {
       setStatus(QStringLiteral("empty"), QStringLiteral("No net changes in this selection."));
     } else {
@@ -188,6 +199,37 @@ void ThreadDiff::load() {
     }
     if (!m_pendingReveal.isEmpty()) revealFile(std::exchange(m_pendingReveal, QString()));
   });
+}
+
+void ThreadDiff::present() {
+  m_model.setPatch(m_patch);
+  m_fileTotal = m_model.fileCount();
+  if (!m_focus.isEmpty()) {
+    // The focused file's part of the patch: from its header to the next one.
+    static const QRegularExpression header(QStringLiteral("^diff --git "), QRegularExpression::MultilineOption);
+    const int file = m_model.fileOf(m_focus);
+    QList<qsizetype> starts;
+    for (auto it = header.globalMatch(m_patch); it.hasNext();) starts.append(it.next().capturedStart());
+    if (file >= 0 && file < starts.size()) {
+      const qsizetype end = file + 1 < starts.size() ? starts.at(file + 1) : m_patch.size();
+      m_model.setPatch(m_patch.mid(starts.at(file), end - starts.at(file)));
+      m_model.setExpanded(0, true);
+    } else {
+      m_focus.clear();
+    }
+  }
+  emit focusChanged();
+}
+
+void ThreadDiff::focusFile(const QString& path) {
+  if (path == m_focus) return;
+  m_focus = path;
+  if (m_status == QLatin1String("ready")) present();
+  emit focusChanged();
+}
+
+void ThreadDiff::showAllFiles() {
+  focusFile({});
 }
 
 void ThreadDiff::revealFile(const QString& path) {

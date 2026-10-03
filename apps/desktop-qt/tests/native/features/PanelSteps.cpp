@@ -9,9 +9,14 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMap>
+#include <QQuickItem>
 #include <QSet>
+#include <QTest>
 #include <QTimer>
 
+#include <memory>
+
+#include "Brick.h"
 #include "DiffModel.h"
 #include "FakeFiles.h"
 #include "FileTreeModel.h"
@@ -91,6 +96,57 @@ void finishTurns(World& world, int count) {
     const QString path = QStringLiteral("src/turn%1.ts").arg(turn);
     finishTurn(world, turn, patchAdding(path, {QStringLiteral("export const turn = %1;").arg(turn), QStringLiteral("export const done = true;")}));
   }
+}
+
+// A finished turn that changed `paths`, as its reply lists them: the files'
+// changes, the reply, and the checkpoint the turn left.
+void finishTurnChanging(World& world, int turn, const QStringList& paths) {
+  const QString run = startRun(world, 60);
+  QJsonArray files;
+  QString patch;
+  for (const QString& path : paths) {
+    addItem(world, QStringLiteral("file_change"), {{QStringLiteral("fileName"), path}});
+    files.append(QJsonObject{{QStringLiteral("path"), path}, {QStringLiteral("kind"), QStringLiteral("modified")}, {QStringLiteral("additions"), 2}, {QStringLiteral("deletions"), 0}});
+    patch += patchAdding(path, {QStringLiteral("export const turn = %1;").arg(turn), QStringLiteral("export const done = true;")});
+  }
+  addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Answer %1").arg(turn)}});
+  addItem(world, QStringLiteral("checkpoint"), {{QStringLiteral("checkpointId"), QStringLiteral("cp-%1").arg(turn)}, {QStringLiteral("scopeId"), QStringLiteral("scope-1")}, {QStringLiteral("files"), files}});
+  settleRun(world, QStringLiteral("completed"), 60);
+  set(world, QStringLiteral("checkpoint"), QStringLiteral("cp-%1").arg(turn),
+      {{QStringLiteral("id"), QStringLiteral("cp-%1").arg(turn)}, {QStringLiteral("scopeId"), QStringLiteral("scope-1")},
+       {QStringLiteral("runId"), run}, {QStringLiteral("appRunOrdinal"), turn}, {QStringLiteral("status"), QStringLiteral("ready")}});
+  world.mc.part<FakeDiffs>().patches.insert(turn, patch);
+  world.mc.part<FakeDiffs>().runs.insert(turn, run);
+}
+
+// An earlier turn changed another file, so "only that turn" can be told apart.
+void twoTurns(World& world, const QStringList& paths) {
+  finishTurnChanging(world, 1, {QStringLiteral("src/tax.ts")});
+  finishTurnChanging(world, 2, paths);
+  world.mc.part<FakeDiffs>().asked.clear();
+}
+
+void collectNamed(QQuickItem* item, const QString& name, QList<QQuickItem*>& out) {
+  if (item->objectName() == name && item->isVisible()) out.append(item);
+  for (QQuickItem* child : item->childItems()) collectNamed(child, name, out);
+}
+
+// The open thread as the ThreadView brick draws it; clicks the newest item
+// named `name` that `matches`.
+void clickInThread(World& world, const QString& name, const std::function<bool(QQuickItem*)>& matches) {
+  if (!world.brick) world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nThreadView {}\n", QSize(820, 1200));
+  Brick& brick = *world.brick;
+  QQuickItem* found = nullptr;
+  world.waitFor([&] {
+    QList<QQuickItem*> items;
+    collectNamed(brick.window().contentItem(), name, items);
+    // The newest: the one drawn lowest.
+    for (QQuickItem* item : std::as_const(items)) {
+      if (matches(item) && (!found || item->mapToScene(QPointF()).y() > found->mapToScene(QPointF()).y())) found = item;
+    }
+    return found != nullptr;
+  }, QStringLiteral("the thread to draw %1").arg(name));
+  QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(found));
 }
 
 // checkpoint.rollback as the MC does it (lib/hal_c2/orchestration/rollback.ex):
@@ -318,6 +374,44 @@ const Steps steps([] {
     expectDiffOf(world, turnFiles(1, 3));
     expect(world.mc.part<FakeDiffs>().asked.last().value(QLatin1String("method")) == QLatin1String("orchestration.getFullThreadDiff"),
            QStringLiteral("all changes were not asked of the whole thread"));
+  });
+  // A turn's diff from its reply (timeline/tool-calls.feature).
+  step(QStringLiteral("a turn changed two files"), [](World& world, const Captures&, const Table&) {
+    twoTurns(world, {QStringLiteral("src/cart.ts"), QStringLiteral("src/checkout.ts")});
+  });
+  step(QStringLiteral("a turn changed %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) { twoTurns(world, {c[0], c[1]}); });
+  step(QStringLiteral("the user opens that turn's changes"), [](World& world, const Captures&, const Table&) {
+    clickInThread(world, QStringLiteral("openTurnDiff"), [](QQuickItem*) { return true; });
+    world.sync();
+    waitForDiff(world);
+  });
+  step(QStringLiteral("the diff shows only what that turn changed, split per file"), [](World& world, const Captures&, const Table&) {
+    expectDiffOf(world, {QStringLiteral("src/cart.ts"), QStringLiteral("src/checkout.ts")});
+    const QList<QJsonObject> asked = world.mc.part<FakeDiffs>().asked;
+    expect(asked.size() == 1 && asked.first().value(QLatin1String("method")) == QLatin1String("orchestration.getTurnDiff") &&
+               asked.first().value(QLatin1String("payload")).toObject().value(QLatin1String("fromTurnCount")).toInt() == 1 &&
+               asked.first().value(QLatin1String("payload")).toObject().value(QLatin1String("toTurnCount")).toInt() == 2,
+           QStringLiteral("the diff asked %1 times").arg(asked.size()));
+    expect(diff(world).shownTurn() == 2 && diff(world).focusPath().isEmpty(), QStringLiteral("the diff is of turn %1").arg(diff(world).shownTurn()));
+    // Each file has its own header and lines.
+    for (const QString& path : diff(world).model()->paths()) {
+      const QList<QVariantMap> rows = rowsOfFile(world, path);
+      expect(rows.size() == 4 && rows.first().value(QStringLiteral("kind")) == QLatin1String("file"), QStringLiteral("%1 has %2 rows").arg(path).arg(rows.size()));
+    }
+  });
+  step(QStringLiteral("the user opens %1 from the list of changed files").arg(q), [](World& world, const Captures& c, const Table&) {
+    clickInThread(world, QStringLiteral("changedFile"), [&](QQuickItem* item) { return item->property("modelData").toMap().value(QStringLiteral("path")) == c[0]; });
+    world.sync();
+    waitForDiff(world);
+  });
+  step(QStringLiteral("the diff shows only %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectDiffOf(world, {c[0]});
+    expect(diff(world).shownTurn() == 2 && diff(world).focusPath() == c[0] && diff(world).fileTotal() == 2,
+           QStringLiteral("the diff is of turn %1, on %2 of %3 files").arg(diff(world).shownTurn()).arg(diff(world).focusPath()).arg(diff(world).fileTotal()));
+    expect(rowsOfFile(world, c[0]).size() == 4, QStringLiteral("the file's lines are not shown"));
+    // The way back: every file the turn changed.
+    diff(world).showAllFiles();
+    expect(diff(world).model()->fileCount() == 2 && diff(world).focusPath().isEmpty(), describeDiff(world));
   });
   step(QStringLiteral("the MC cannot read the checkpoints of %1").arg(q), [](World& world, const Captures&, const Table&) {
     world.mc.part<FakeDiffs>().failing = true;

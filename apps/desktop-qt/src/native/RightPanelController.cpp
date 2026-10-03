@@ -309,7 +309,13 @@ void RightPanelController::open(const QString& tab, const QVariantMap& options) 
     } else if (!run.isEmpty()) {
       m_diff.selectRun(run);
     }
-    if (!path.isEmpty()) m_diff.revealFile(path);
+    // One file of the turn is shown alone; the turn's diff shows them all.
+    if (options.value(QStringLiteral("only")).toBool()) {
+      m_diff.focusFile(path);
+    } else {
+      m_diff.showAllFiles();
+      if (!path.isEmpty()) m_diff.revealFile(path);
+    }
   } else if (!path.isEmpty()) {
     m_files.openFile(path, options.value(QStringLiteral("line")).toInt());
   }

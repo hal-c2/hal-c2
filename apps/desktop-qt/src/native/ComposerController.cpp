@@ -390,6 +390,8 @@ bool ComposerController::interrupt() {
     runId = thread->latestRunId;
   }
   if (!runId) return true;
+  // The turn the user stops here stays open once it settles.
+  if (m_timeline) m_timeline->keepOpen(*runId);
   m_client->dispatchCommand(this, thread->environmentId,
                             {
                                 {QStringLiteral("type"), QStringLiteral("run.interrupt")},

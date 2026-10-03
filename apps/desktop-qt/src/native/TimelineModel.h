@@ -76,6 +76,13 @@ public:
     // turn's last reply does, commentary before it does not (the web's
     // showAssistantMeta).
     MetaRole,
+    // What a settled turn's group of calls did, in a sentence ("Ran 2 commands
+    // and sent messages to 3 threads", TimelineSummary.h): the group collapses
+    // into it and opens into its calls. Empty for a single call and while the
+    // turn runs, when the latest call shows instead.
+    SummaryRole,
+    // Whether a call the group's summary counts failed.
+    SummaryFailedRole,
   };
 
   // Calls shown per collapsed work group.
@@ -113,6 +120,10 @@ public:
 
   // Opens or closes a fold ("fold:<runId>") or a work group ("work:<itemId>").
   Q_INVOKABLE void toggle(const QString& rowId);
+  // The user stopped this run here: once it settles its work stays open, fold
+  // and calls, so they see where it stopped. A stop from elsewhere, or one a
+  // restart forgot, folds as any turn does; toggle() still closes it.
+  void keepOpen(const QString& runId);
   Q_INVOKABLE int indexOf(const QString& rowId) const;
   // The checkpoint an agent reply's settled turn left, to revert the thread
   // to: {checkpointId, scopeId, turn} (turn counts from 1), or empty.
@@ -154,6 +165,11 @@ private:
     QDateTime at;
     // A reply's: whether it is its settled turn's last.
     bool meta = false;
+    // A work group's: its turn settled and it has several calls, so it
+    // collapses into its summary.
+    bool summarized = false;
+    // A work group's: its run was stopped here, so it starts open.
+    bool startsOpen = false;
 
     bool operator==(const Row&) const = default;
   };
@@ -187,7 +203,10 @@ private:
   QList<Row> m_rows;
   QHash<QString, int> m_rowOfItem;
   QSet<QString> m_expandedFolds;   // run ids
-  QSet<QString> m_expandedGroups;  // row ids
+  // Work groups the user toggled, by row id: open ones, or closed ones of a
+  // run stopped here (Row::startsOpen).
+  QSet<QString> m_expandedGroups;
+  QSet<QString> m_keptOpen;  // run ids
   QDateTime m_workingSince;
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;

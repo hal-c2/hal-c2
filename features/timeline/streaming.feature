@@ -85,14 +85,14 @@ Feature: Streaming the agent's reply
       | after 40 seconds       | You stopped after 40s     |
       | before it did any work | You stopped this response |
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: A turn interrupted in this session stays open
     Given the user interrupted the running turn a moment ago
     When the turn settles
     Then its work stays expanded so the user can see where it stopped
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: A long message can be expanded and collapsed
     Given a message longer than the preview length
     When the user shows the full message

@@ -26,6 +26,10 @@ class TimelineModel;
 // 0 for all changes, or a turn number. Only a shown tab loads; a hidden one
 // notes that it is stale and loads when shown again.
 //
+// Opening one changed file from a reply shows that file alone (`focusPath`)
+// until the user asks for all of the selection's files again or picks
+// another selection.
+//
 // Reverting asks first: requestRevert(turn) sets `revertTurn` until
 // confirmRevert() dispatches `checkpoint.rollback` or cancelRevert() drops
 // it. The outcome is told as a toast.
@@ -43,6 +47,9 @@ class ThreadDiff : public QObject {
   // error (`message` is the MC's reason).
   Q_PROPERTY(QString status READ status NOTIFY statusChanged)
   Q_PROPERTY(QString message READ message NOTIFY statusChanged)
+  // The one file shown of the selection's `fileTotal`, or empty for all of them.
+  Q_PROPERTY(QString focusPath READ focusPath NOTIFY focusChanged)
+  Q_PROPERTY(int fileTotal READ fileTotal NOTIFY focusChanged)
   Q_PROPERTY(bool ignoreWhitespace READ ignoreWhitespace WRITE setIgnoreWhitespace NOTIFY optionsChanged)
   Q_PROPERTY(bool wrap READ wrap WRITE setWrap NOTIFY optionsChanged)
   // A turn can be reverted to: the thread is not working and has a checkpoint.
@@ -83,6 +90,12 @@ public:
   Q_INVOKABLE void reload();
   // Asks the view to scroll to `path`'s file, expanding it.
   Q_INVOKABLE void revealFile(const QString& path);
+  QString focusPath() const { return m_focus; }
+  int fileTotal() const { return m_fileTotal; }
+  // Shows only `path`'s file of the selection; one the selection did not
+  // change leaves every file shown.
+  Q_INVOKABLE void focusFile(const QString& path);
+  Q_INVOKABLE void showAllFiles();
 
   bool canRevert() const;
   int revertTurn() const { return m_revertTurn; }
@@ -97,6 +110,7 @@ signals:
   void selectionChanged();
   void statusChanged();
   void optionsChanged();
+  void focusChanged();
   void revertChanged();
   // The view should show `row` of the model at its top.
   void revealRow(int row);
@@ -105,6 +119,8 @@ private:
   void readCheckpoints();
   void load();
   void setStatus(const QString& status, const QString& message = {});
+  // Puts the loaded patch, or its focused file, in the model.
+  void present();
   QString loadKey() const;
 
   McClient* m_client;
@@ -128,6 +144,10 @@ private:
   QString m_loaded;
   int m_request = 0;
   QString m_pendingReveal;
+  // The selection's whole patch, and the one file of it shown.
+  QString m_patch;
+  QString m_focus;
+  int m_fileTotal = 0;
   int m_revertTurn = 0;
   bool m_reverting = false;
 };

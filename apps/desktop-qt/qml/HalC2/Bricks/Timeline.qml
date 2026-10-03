@@ -6,7 +6,7 @@ import HalC2.Shell
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
 // model with its roles (rowId, kind, author, text, streaming, title, status,
 // statusLabel, marker, entries, hiddenCount, expanded, files, time, icon,
-// intent, attribution, meta).
+// intent, attribution, meta, and optionally summary and summaryFailed).
 //
 //   Timeline { anchors.fill: parent; model: Threads.timeline }
 //
@@ -19,7 +19,9 @@ import HalC2.Shell
 // hidden, they keep their place and still take clicks. An agent reply whose
 // turn left a checkpoint offers Revert (revertRequested); files a reply
 // changed or a tool call touched ask to be opened (fileActivated). What those
-// do is the host's (ThreadView).
+// do is the host's (ThreadView). A settled turn's group of calls reads as its
+// summary and opens into the calls; a long message of the user's shows its
+// first lines until it is asked for in full.
 Item {
     id: root
 
@@ -50,6 +52,19 @@ Item {
     signal revertRequested(string rowId)
     // A message went to the clipboard.
     signal copied(string rowId)
+
+    // The user's long messages shown in full, by row id; kept here so a row
+    // scrolled away and back stays as the user left it.
+    property var fullMessages: ({})
+    // packages/shared/src/chatMessages.ts shouldCollapseUserMessage.
+    function collapsible(text) {
+        return text.trim().length > 0 && (text.length > 600 || text.split("\n").length > 8);
+    }
+    function showFull(rowId, full) {
+        const next = Object.assign({}, root.fullMessages);
+        next[rowId] = full;
+        root.fullMessages = next;
+    }
 
     // Whether the model can put a message on the clipboard (copy(rowId)).
     readonly property bool canCopy: root.model !== null && typeof root.model.copy === "function"
@@ -351,6 +366,8 @@ Item {
             required property var intent
             required property var attribution
             required property var meta
+            // Roles a model may leave out (summary, summaryFailed).
+            required property var model
             // The tool calls whose details are open, by id.
             property var openCalls: ({})
             // Whether the row's time and actions show: only this row's
@@ -444,11 +461,17 @@ Item {
                         }
                     }
                     Rectangle {
+                        id: bubble
+                        readonly property bool collapsible: root.collapsible(row.text ?? "")
+                        readonly property bool collapsed: collapsible && root.fullMessages[row.rowId] !== true
+                        objectName: "userMessageBody"
                         anchors.right: parent.right
                         width: Math.min(parent.width * 0.8, userText.implicitWidth + 24)
-                        height: userText.implicitHeight + 24
+                        // The web's max-h-44.
+                        height: (collapsed ? Math.min(176, userText.implicitHeight) : userText.implicitHeight) + 24
                         radius: 16
                         color: root.messageColor
+                        clip: collapsed
                         Markdown {
                             id: userText
                             x: 12
@@ -460,6 +483,16 @@ Item {
                             textColor: root.messageTextColor
                             onLinkActivated: link => root.linkActivated(link)
                         }
+                    }
+                    ActionLink {
+                        objectName: "messageExpand"
+                        visible: bubble.collapsible
+                        anchors.right: parent.right
+                        anchors.rightMargin: 4
+                        text: bubble.collapsed ? qsTr("Show full message") : qsTr("Show less")
+                        Accessible.role: Accessible.Button
+                        Accessible.name: text
+                        onClicked: root.showFull(row.rowId, bubble.collapsed)
                     }
                     // A message that did not reach the agent says why.
                     Pill {
@@ -554,10 +587,10 @@ Item {
                                             }
                                         }
                                     }
-                                    // The turn's diff, from its first file.
+                                    // The turn's whole diff.
                                     Rectangle {
                                         id: openDiff
-                                        readonly property var first: changedFiles.changed[0]
+                                        objectName: "openTurnDiff"
                                         anchors.right: parent.right
                                         anchors.rightMargin: 8
                                         anchors.verticalCenter: parent.verticalCenter
@@ -591,7 +624,7 @@ Item {
                                             cursorShape: Qt.PointingHandCursor
                                         }
                                         TapHandler {
-                                            onTapped: root.fileActivated(openDiff.first ? openDiff.first.path : "", "diff", row.rowId)
+                                            onTapped: root.fileActivated("", "diff", row.rowId)
                                         }
                                         ToolTip.visible: openDiffHover.hovered
                                         ToolTip.delay: 500
@@ -710,14 +743,32 @@ Item {
             Component {
                 id: work
                 Column {
-                    // "+N previous tool calls" (WorkGroupToggleTimelineRow).
+                    id: workGroup
+                    readonly property string summary: row.model.summary ?? ""
+                    // What a settled group did, or "+N previous tool calls"
+                    // while its turn runs (WorkGroupToggleTimelineRow).
                     WorkLine {
+                        objectName: "workGroupToggle"
                         visible: (row.hiddenCount ?? 0) > 0
                         width: parent.width
                         iconName: "hammer"
-                        label: row.expanded ? qsTr("Show fewer tool calls") : qsTr("+%1 previous tool calls").arg(row.hiddenCount)
+                        iconTint: row.model.summaryFailed === true ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
+                        label: workGroup.summary.length > 0 ? workGroup.summary : row.expanded ? qsTr("Show fewer tool calls") : qsTr("+%1 previous tool calls").arg(row.hiddenCount)
                         interactive: true
                         onClicked: root.toggle(row.rowId)
+                        Item {
+                            visible: workGroup.summary.length > 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 16
+                            height: 16
+                            ShellIcon {
+                                anchors.centerIn: parent
+                                name: "chevron-right"
+                                size: 12
+                                color: Qt.alpha(root.iconColor, 0.7)
+                                rotation: row.expanded ? 90 : 0
+                            }
+                        }
                     }
                     Repeater {
                         model: root.list(row.entries)
@@ -734,6 +785,7 @@ Item {
                             width: parent.width
                             WorkLine {
                                 id: callLine
+                                objectName: "workCall"
                                 width: parent.width
                                 iconName: call.modelData.icon || "hammer"
                                 iconTint: call.failed ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
