@@ -412,6 +412,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/sidebar-list.feature:Opening a *from the list"),
     QStringLiteral("threads/sidebar-list.feature:Scoping the list*"),
     QStringLiteral("threads/sidebar-list.feature:Hiding and showing the thread list"),
+    QStringLiteral("threads/sidebar-list.feature:The list catches up after a reconnect"),
     QStringLiteral("threads/snooze.feature"),
     QStringLiteral("threads/settle.feature"),
     QStringLiteral("threads/unread-and-status.feature:A thread row names its state"),
