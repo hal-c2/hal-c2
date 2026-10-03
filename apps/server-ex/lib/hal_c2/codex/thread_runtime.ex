@@ -818,8 +818,21 @@ defmodule HalC2.Codex.ThreadRuntime do
       params["willRetry"] == true ->
         retry_item(state, error)
 
+      # A structured `usage_limit` failure, as Claude's: the thread reads its error class
+      # and reset from it, and its queue waits (`TurnWriter.finish/3`).
       error_code(error["codexErrorInfo"]) in ["usageLimitExceeded", "rateLimitExceeded"] ->
-        %{state | failure: usage_limit_message(Map.get(state, :rate_limits), DateTime.utc_now())}
+        snapshot = Map.get(state, :rate_limits)
+        at = DateTime.utc_now()
+
+        failure = %{
+          "class" => "usage_limit",
+          "message" => usage_limit_message(snapshot, at),
+          "code" => error_code(error["codexErrorInfo"]),
+          "retryable" => nil,
+          "resetAt" => usage_limit_reset(snapshot, at)
+        }
+
+        %{state | failure: failure}
 
       true ->
         %{state | failure: error["message"] || "Codex reported an error"}
@@ -948,20 +961,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # that simply ran out): the used-up window resetting last, and what to do next.
   defp usage_limit_message(snapshot, at) do
     reset =
-      (snapshot || %{})
-      |> HalC2.ProviderUsageLimits.Codex.windows()
-      |> Enum.flat_map(fn window ->
-        with true <- window["usedPercent"] >= 100,
-             {:ok, resets, _} <- DateTime.from_iso8601(window["resetsAt"] || ""),
-             wait when wait > 0 <- DateTime.diff(resets, at, :millisecond),
-             do: [{wait, window["kind"]}],
-             else: (_ -> [])
-      end)
-      |> Enum.max_by(&elem(&1, 0), fn -> nil end)
-
-    reset =
-      case reset do
-        {wait, kind} -> " The #{kind} limit resets in #{wait_text(wait)}."
+      case used_up_window(snapshot, at) do
+        {wait, kind, _resets} -> " The #{kind} limit resets in #{wait_text(wait)}."
         nil -> ""
       end
 
@@ -985,6 +986,28 @@ defmodule HalC2.Codex.ThreadRuntime do
       end
 
     "Codex usage limit reached." <> reset <> next
+  end
+
+  # When the used-up window resetting last resets (ISO), or nil when Codex did not say.
+  defp usage_limit_reset(snapshot, at) do
+    case used_up_window(snapshot, at) do
+      {_wait, _kind, resets} -> resets
+      nil -> nil
+    end
+  end
+
+  # The used-up window that resets last: `{ms to wait, kind, resetsAt}`.
+  defp used_up_window(snapshot, at) do
+    (snapshot || %{})
+    |> HalC2.ProviderUsageLimits.Codex.windows()
+    |> Enum.flat_map(fn window ->
+      with true <- window["usedPercent"] >= 100,
+           {:ok, resets, _} <- DateTime.from_iso8601(window["resetsAt"] || ""),
+           wait when wait > 0 <- DateTime.diff(resets, at, :millisecond),
+           do: [{wait, window["kind"], window["resetsAt"]}],
+           else: (_ -> [])
+    end)
+    |> Enum.max_by(&elem(&1, 0), fn -> nil end)
   end
 
   # Coarse remaining wait, as the usage rows read: `5d 5h`, `3h 20m`, `12m`.

@@ -22,7 +22,8 @@ defmodule HalC2.Orchestration.Fork do
 
     with %{} <- thread || {:error, "Thread #{source_id} was not found."},
          {:ok, run} <- source_run(source, command["sourcePoint"]),
-         :ok <- completed(run, ["completed"]) do
+         # A run its provider finished ("waiting": not settled yet) is as good a point.
+         :ok <- completed(run, ["completed", "waiting"]) do
       at = command["createdAt"] || Entities.now()
 
       target =
@@ -55,7 +56,7 @@ defmodule HalC2.Orchestration.Fork do
 
       changes =
         [create("thread", target_id, target)] ++
-          history(source, run["ordinal"], target_id) ++
+          history(source, run["ordinal"], target_id, at) ++
           [create("context-transfer", transfer["id"], transfer)]
 
       HalC2.Streams.transact(target_id, :thread, fn state ->
@@ -219,13 +220,17 @@ defmodule HalC2.Orchestration.Fork do
   end
 
   # The source's runs through `ordinal` and everything they produced, in creation
-  # order, as the target's own.
-  defp history(state, ordinal, target_id) do
+  # order, as the target's own. A run the provider finished but the source has not
+  # settled is finished history in the copy: left "waiting" it would hold the fork's
+  # first message in the queue behind a run nothing there will ever settle.
+  defp history(state, ordinal, target_id, at) do
     runs =
       for run <- StreamState.list(state, "run"),
           run["ordinal"] <= ordinal,
           into: %{},
           do: {run["id"], run}
+
+    waiting = for {id, %{"status" => "waiting"}} <- runs, into: MapSet.new(), do: id
 
     scopes =
       for checkpoint <- StreamState.list(state, "checkpoint"),
@@ -238,9 +243,20 @@ defmodule HalC2.Orchestration.Fork do
           (kind in @history and Map.has_key?(runs, entity["runId"])) or
           (kind == "checkpoint-scope" and MapSet.member?(scopes, id)) do
       entity =
-        if kind == "run" and entity["status"] == "queued",
-          do: Map.merge(entity, %{"status" => "cancelled", "queuePosition" => nil}),
-          else: entity
+        cond do
+          kind == "run" and entity["status"] == "queued" ->
+            Map.merge(entity, %{"status" => "cancelled", "queuePosition" => nil})
+
+          kind in ~w(run run-attempt node) and entity["status"] == "waiting" and
+              (entity["runId"] || id) in waiting ->
+            Map.merge(entity, %{
+              "status" => "completed",
+              "completedAt" => entity["completedAt"] || at
+            })
+
+          true ->
+            entity
+        end
 
       create(kind, id, Map.put(entity, "threadId", target_id))
     end
