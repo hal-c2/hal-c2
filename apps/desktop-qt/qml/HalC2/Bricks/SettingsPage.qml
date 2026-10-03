@@ -86,12 +86,9 @@ Rectangle {
             width: Math.min(720, flick.width - 48)
             spacing: 14
 
-            Label {
+            SettingsBreadcrumb {
                 Layout.fillWidth: true
-                text: page.title
-                color: page.foreground
-                font.pixelSize: 18
-                font.weight: Font.DemiBold
+                section: page.title
             }
 
             ColumnLayout {

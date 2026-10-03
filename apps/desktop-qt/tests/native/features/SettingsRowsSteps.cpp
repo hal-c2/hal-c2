@@ -5,6 +5,7 @@
 #include <QTest>
 
 #include "Brick.h"
+#include "FakeConfig.h"
 #include "Harness.h"
 #include "SettingsController.h"
 #include "SettingsRows.h"
@@ -91,4 +92,20 @@ void chooseRow(World& world, const QString& key, const QString& label) {
 
 QString rowText(World& world, const QString& key) {
   return pageItem(world, rowName(key), QStringLiteral("control"))->property("currentText").toString();
+}
+
+void expectRowLocked(World& world, const QString& key) {
+  const QQuickItem* control = pageItem(world, rowName(key), QStringLiteral("control"));
+  expect(!control->isEnabled(), QStringLiteral("the %1 control can be used").arg(key));
+  const auto written = [&world] {
+    FakeConfig& fake = fakeConfig(world.mc);
+    int count = int(fake.writes.size());
+    for (const FakeConfig::Document& document : std::as_const(fake.documents)) count += document.version;
+    return count;
+  };
+  const int before = written();
+  const QVariant value = settings(world)->setting(key);
+  settings(world)->set(key, value.typeId() == QMetaType::Bool ? QVariant(!value.toBool()) : QVariant(QStringLiteral("changed")));
+  world.sync();
+  expect(written() == before && settings(world)->setting(key) == value, QStringLiteral("%1 was changed").arg(key));
 }

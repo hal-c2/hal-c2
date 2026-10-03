@@ -64,7 +64,7 @@ Feature: Settings search and navigation
       Then the window shows a new draft in "shop"
       And the user can not go back
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The page names where the user is
       When the user opens <page>
       Then the page is titled "Settings / <section>"
@@ -83,12 +83,12 @@ Feature: Settings search and navigation
       When the user chooses the project "hal-c2"
       Then the project section is listed first
 
-    @backlog @desktop
+    @desktop
     Scenario: Device-only sections do not ask where settings apply
       When the user opens the Appearance section
       Then the page does not offer a choice of project or environment
 
-    @backlog @desktop
+    @desktop
     Scenario: Moving between sections keeps the chosen scope
       Given the user is editing settings for the project "hal-c2"
       When the user opens the Integrations section

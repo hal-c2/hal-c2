@@ -23,3 +23,5 @@ void turnRow(World& world, const QString& key, bool on);
 void chooseRow(World& world, const QString& key, const QString& label);
 // What the row's list reads.
 QString rowText(World& world, const QString& key);
+// The row's control is disabled, and setting it anyway writes to no environment.
+void expectRowLocked(World& world, const QString& key);

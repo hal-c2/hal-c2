@@ -40,11 +40,9 @@ Rectangle {
             width: Math.min(720, list.width - 48)
             spacing: 10
 
-            Label {
-                text: qsTr("Open source licenses")
-                color: page.foreground
-                font.pixelSize: 18
-                font.weight: Font.DemiBold
+            SettingsBreadcrumb {
+                Layout.fillWidth: true
+                section: qsTr("Open source licenses")
             }
 
             RowLayout {

@@ -156,12 +156,9 @@ Rectangle {
             Layout.maximumWidth: 760
             spacing: 8
 
-            Label {
+            SettingsBreadcrumb {
                 Layout.fillWidth: true
-                text: qsTr("Keybindings")
-                color: page.foreground
-                font.pixelSize: 18
-                font.weight: Font.DemiBold
+                section: qsTr("Keybindings")
             }
 
             Label {

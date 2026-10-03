@@ -46,6 +46,7 @@ qt_add_qml_module(hal_c2_bricks
     SettingsHost.qml
     SettingsPage.qml
     SettingsRow.qml
+    SettingsBreadcrumb.qml
     GeneralSettings.qml
     AppearanceSettings.qml
     ThemeEditor.qml

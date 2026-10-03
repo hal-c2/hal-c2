@@ -71,7 +71,7 @@ Feature: Settings scopes and inheritance
 
   Rule: The user chooses where settings apply
 
-    @backlog @desktop
+    @desktop
     Scenario: The page states the project and environment being edited
       When the user opens settings
       Then the page says it is applying settings for all projects across all environments
@@ -122,14 +122,14 @@ Feature: Settings scopes and inheritance
       When the user changes an environment-wide setting
       Then the change is saved on "Laptop" and on "Build box"
 
-    @backlog @desktop
+    @desktop
     Scenario: A project change is saved as an override for that project
       Given the user is editing settings for the project "hal-c2"
       When the user changes the default model
       Then "hal-c2" overrides the default model on each environment with a checkout of it
       And other projects keep the environment's default model
 
-    @backlog @desktop
+    @desktop
     Scenario: A device preference is saved on this device only
       Given the user is editing settings for the project "hal-c2"
       When the user changes a preference that belongs to this device
@@ -151,7 +151,7 @@ Feature: Settings scopes and inheritance
       Then the setting cannot be changed
       And the user is told to reconnect the selected environment to change it
 
-    @backlog @desktop
+    @desktop
     Scenario: An environment-wide setting cannot be changed at project scope
       Given the user is editing settings for the project "hal-c2"
       When the user looks at an environment-wide setting
@@ -168,7 +168,7 @@ Feature: Settings scopes and inheritance
       Then the project, environment, repository file and built-in default layers are listed in that order
       And the environment layer is marked as the one in effect
 
-    @backlog @desktop
+    @desktop
     Scenario: Resetting a project override inherits the environment's value again
       Given "hal-c2" overrides the default model
       And the user is editing settings for the project "hal-c2"
@@ -185,7 +185,7 @@ Feature: Settings scopes and inheritance
       When the user resets the override for "hal-c2"
       Then "hal-c2" uses the value from "Laptop"
 
-    @backlog @desktop
+    @desktop
     Scenario: A value that differs between environments shows as mixed
       Given the default model differs between "Laptop" and "Build box"
       And the user is editing settings across all environments
@@ -194,7 +194,7 @@ Feature: Settings scopes and inheritance
       When the user chooses one model
       Then every environment uses that model
 
-    @backlog @desktop
+    @desktop
     Scenario: A model missing on one environment cannot be applied to all of them
       Given the model "opus" is only available on "Laptop"
       And the user is editing settings across all environments
