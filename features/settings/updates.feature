@@ -16,6 +16,7 @@
 #   apps/desktop/src/updates/updateChannels.ts
 #   apps/desktop-qt/parity/features.backlog.test.ts (app-updates)
 #   apps/tui/src/features.backlog.test.ts (provider maintenance)
+#   apps/tui/src/host/sections/updates.ts (the terminal client's notice and Updates page)
 
 Feature: Updating the server, the desktop app and providers
   The app and the MC can live on different machines and update separately.

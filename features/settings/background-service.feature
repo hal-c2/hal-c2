@@ -10,6 +10,8 @@
 #   apps/server/src/serviceLauncher.ts
 #   apps/server/src/cloud/bootService.ts (status problems, the lingering prerequisite, restart-pending)
 #   apps/server-ex/lib/hal_c2/service.ex
+#   apps/tui/src/host/clientActivity.ts (what the terminal client reports)
+#   apps/tui/src/host/sections/backgroundActivity.ts (custom intervals)
 
 Feature: Background activity and the background service
   The MC does periodic work such as fetching git and checking providers only

@@ -10,6 +10,7 @@
 #   apps/desktop-qt/src/native/UsageController.cpp
 #   apps/desktop-qt/src/native/ProviderSettingsController.cpp (adding and removing hubs)
 #   apps/desktop-qt/tests/tst_ProvidersSettings.qml (the add and remove dialogs)
+#   apps/tui/src/host/sections/usageHubs.ts, apps/tui/src/host/sections/usageLimits.ts
 
 Feature: Usage limit sources
   A CLIProxyAPI hub pools many provider accounts. Adding it as a usage source

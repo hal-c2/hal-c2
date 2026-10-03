@@ -2,6 +2,7 @@
 #   apps/server-ex/lib/hal_c2/storage_cleanup.ex (hourly sweep, worktree rules, browser artifacts)
 #   apps/web/src/components/settings/StorageSettings.tsx
 #   packages/contracts/src/settings.ts (storageCleanup, project worktree cleanup)
+#   apps/tui/src/host/sections/storage.ts
 
 Feature: Storage cleanup
   The MC can remove worktrees and old files it created so disk use does not

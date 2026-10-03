@@ -11,6 +11,7 @@
 #   apps/desktop-qt/src/native/ScheduledTasksController.cpp
 #   apps/desktop-qt/qml/HalC2/Bricks/ScheduledTaskEditor.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/js/scheduledTasks.js
+#   apps/tui/src/host/sections/scheduledTasks.ts (the terminal client's list and editor)
 
 Feature: Scheduled tasks
   A scheduled task sends a saved prompt to a project on a timer, either at

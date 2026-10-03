@@ -8,6 +8,7 @@
 #   packages/contracts/src/rpc.ts (subscribeResourceTelemetry, server.getResourceTelemetryHistory, server.retryResourceTelemetry)
 #   apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx
 #   apps/web/src/components/settings/ResourceTelemetryDiagnostics.logic.ts
+#   apps/tui/src/host/sections/resourceMonitor.ts (groups by purpose)
 
 Feature: Resource monitor
   The resource monitor shows live CPU and memory for everything the MC runs,

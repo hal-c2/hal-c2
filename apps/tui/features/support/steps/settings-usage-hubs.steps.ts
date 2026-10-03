@@ -270,7 +270,7 @@ step("usage says {string}", async (ctx: SettingsWorld, notice: string) => {
 });
 
 step("the user uses the reset credit and confirms", async (ctx: SettingsWorld) => {
-  ctx.fake ?? fixture(ctx);
+  fixture(ctx);
   ctx.fake!.settings.on("provider.consumeResetCredit", () => ({ outcome: "reset" }));
   await openLimits(ctx);
   await chooseRow(ctx, "Use a reset credit for Codex");

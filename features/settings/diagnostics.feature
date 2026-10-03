@@ -6,6 +6,7 @@
 #   packages/contracts/src/rpc.ts (server.getProcessDiagnostics, server.getProcessResourceHistory, server.signalProcess, server.getTraceDiagnostics)
 #   apps/web/src/components/settings/DiagnosticsSettings.tsx
 #   apps/tui/src/features.backlog.test.ts (provider maintenance and server diagnostics)
+#   apps/tui/src/host/sections/diagnostics.ts (bounded lists, the force kill that asks first)
 
 Feature: Diagnostics
   Diagnostics lets the user see what the MC has started, how much it uses,

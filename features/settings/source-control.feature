@@ -4,6 +4,7 @@
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl)
 #   apps/server-ex/lib/hal_c2/source_control.ex (discover)
 #   apps/server-ex/lib/hal_c2/background_policy.ex (automaticGitFetchInterval)
+#   apps/tui/src/host/sections/sourceControl.ts (the terminal client's tools page)
 
 Feature: Source Control settings
   The Source Control panel shows which version control and hosting tools the server

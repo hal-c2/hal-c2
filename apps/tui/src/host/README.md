@@ -11,6 +11,7 @@ desktop shell's contract names, extended for the terminal), `mode`, `status`,
 `newThread` (`composerState.ts`), `palette` (`paletteState.ts`), `statusRow`
 (`statusState.ts`), `clock`,
 `git`, `settings`, `paneScroll`, `terminal`, `files`, `addProject`,
+`settingsSection`, `updateNotice`,
 `keybindings` (`src/keymap.ts`: the chord layers per mode, the reference
 groups and the web parity table), `plugins`, `problems`, `connection` (see
 "Plugins, problems and connection"), `graphics`, and the open thread's keys
@@ -84,6 +85,32 @@ for): `git.next`, `git.previous`, `git.select {index}`, `git.activate
 link), `git.commit {message}`, `git.commit.cancel`. `settings`
 (`settingsState.ts`) is the settings page in place of the conversation:
 `settings.open`, `settings.close` (`mode: "settings"`).
+
+`settingsSection` (`settingsSections.ts`, null-like when `open` is false) is a
+settings page the terminal can act on, in the conversation's place: scheduled
+tasks, storage, background activity, diagnostics, the resource monitor, source
+control tools, updates, usage limits and usage hubs (`sections/*.ts`, each
+opened by its palette entry, `section.open {id}`). A page is rows: `rows` is the
+window that fits, each painted and marked selected; `input` is the one-line
+field a row asks its value in, `confirm` the yes / no question before something
+that cannot be undone. Modes `section`, `sectionInput` and `sectionConfirm`;
+actions `section.previous/next/activate {id?}/back/close`,
+`section.input.submit {text}/cancel` and `section.confirm.yes/no`. A section
+only describes its page (`page()`); it never touches the selection or the keys.
+
+Settings reach machines other than the one the terminal is connected to
+(linked environments and cluster members, `sections/shared.ts` `readMachines`),
+so their calls go through `client.mcCall(method, payload, environmentId?)` by
+the MC's wire method names and read its JSON undecoded (`src/settingsClient.ts`).
+Projects and threads of other machines are not known here: the shell snapshot
+holds this machine's only.
+
+`updateNotice` (null when there is none) offers the update of a server that is
+behind this app (`HostOptions.appVersion`), over the conversation, until the
+user dismisses it for that version (`update.notice.dismiss`;
+`HostOptions.dismissedUpdates` keeps the dismissals). The host also tells the
+MC what is on screen (`clientActivity.ts`, `server.reportClientActivity` for
+the open thread and its checkout), renewed every 30 seconds.
 
 `cluster` (`clusterState.ts`) is this machine's cluster as the MC reports
 it (`cluster.status`, read again when settings or the palette open), the last
