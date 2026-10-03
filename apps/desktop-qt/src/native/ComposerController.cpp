@@ -1496,7 +1496,18 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   QVariantList attachments;
   for (const Attachment& attachment : kept.attachments) {
     auto preview = m_previews.constFind(attachment.id);
-    if (preview == m_previews.cend()) preview = m_previews.insert(attachment.id, thumbnail(attachment.dataUrl));
+    if (preview == m_previews.cend()) {
+      // A new image is when the ones that left the drafts and the stash are forgotten.
+      QSet<QString> held;
+      for (const Draft& draft : std::as_const(m_drafts)) {
+        for (const Attachment& image : draft.attachments) held.insert(image.id);
+      }
+      for (const StashEntry& entry : std::as_const(m_kept.stash)) {
+        for (const Attachment& image : entry.attachments) held.insert(image.id);
+      }
+      m_previews.removeIf([&](const auto& known) { return !held.contains(known.key()); });
+      preview = m_previews.insert(attachment.id, thumbnail(attachment.dataUrl));
+    }
     attachments.append(QVariantMap{{QStringLiteral("id"), attachment.id},
                                    {QStringLiteral("name"), attachment.name},
                                    {QStringLiteral("preview"), *preview}});

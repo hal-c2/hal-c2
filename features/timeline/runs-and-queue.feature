@@ -103,6 +103,12 @@ Feature: Runs, interruptions and the queue
     When more than an hour passes
     Then the message shows the image "cart.png" from a new address
 
+  @shared @backlog-mobile @backlog-tui
+  Scenario: An image sent in a linked environment is loaded from that environment
+    Given the user is looking at a thread on an environment the MC is linked to
+    When the user sent the image "cart.png" with a message
+    Then the message shows the image "cart.png" from the linked environment
+
   @mc
   Scenario: After a restart the queue waits for the user
     Given two messages were queued when the MC restarted

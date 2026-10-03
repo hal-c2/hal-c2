@@ -462,6 +462,8 @@ Item {
                                 readonly property bool pictured: picture.status === Image.Ready
 
                                 objectName: "attachment-" + modelData.id
+                                Accessible.role: Accessible.Graphic
+                                Accessible.name: modelData.name ?? ""
                                 // As wide as the picture is at this height; a square until it loads.
                                 width: pictured ? Math.min(images.width, Math.round(height * picture.implicitWidth / picture.implicitHeight)) : height
                                 height: 200
