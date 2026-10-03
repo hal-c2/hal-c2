@@ -78,7 +78,8 @@ QJsonObject summary(FakeMc& mc, const QString& environment, const QJsonObject& i
   };
   return {
       {QStringLiteral("contractVersion"), mc.part<FakeUsage>().versions.value(environment, 5)},
-      {QStringLiteral("readAt"), QStringLiteral("2026-09-23T10:00:00.000Z")},
+      // An hourly read is as new as the window it was asked over.
+      {QStringLiteral("readAt"), input.value(QLatin1String("untilTime")).toString(QStringLiteral("2026-09-23T10:00:00.000Z"))},
       {QStringLiteral("timeZone"), input.value(QLatin1String("timeZone"))},
       {QStringLiteral("sinceDay"), input.value(QLatin1String("sinceDay"))},
       {QStringLiteral("untilDay"), input.value(QLatin1String("untilDay"))},
@@ -300,7 +301,7 @@ const Steps steps([] {
   });
   // The chart. Drawing it and following the pointer are UsageChart.qml's
   // (tst_UsagePage.qml); these read what the page is given to draw.
-  step(QStringLiteral("Codex and Claude both have usage in the past 7 days"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("Codex and Claude both have usage in the past (?:7 days|24 hours)"), [](World& world, const Captures&, const Table&) {
     // This environment's history is Codex's; another brings Claude's.
     link(world, QStringLiteral("laptop"), QStringLiteral("claude"));
   });
@@ -314,6 +315,28 @@ const Steps steps([] {
         return day.toMap().value(QStringLiteral("costUsd")).toList().size() == 2;
       });
     }, [&] { return QStringLiteral("a chart of %1 days ending %2 for Codex and Claude; the page is %3").arg(c[0], today, show(usage(world))); });
+  });
+  step(QStringLiteral("(\\d+) minutes pass and %1 is slow to answer").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, world.mc.environmentId);
+    expectShown(world, c[1]);
+    world.setTime(world.now().addSecs(c[0].toInt() * 60));
+    fake(world).scanning.insert(c[1]);
+  });
+  step(QStringLiteral("the chart still draws Codex and Claude"), [](World& world, const Captures&, const Table&) {
+    // This environment's new read has landed: the chart starts where its window does.
+    QDateTime until = world.now().toUTC();
+    until.setTime(QTime(until.time().hour(), until.time().minute()));
+    const QString since = until.addSecs(-24 * 60 * 60).toString(Qt::ISODateWithMs);
+    const auto chart = [&] { return at(usage(world), QStringLiteral("summary.chart")).toList(); };
+    world.waitFor([&] { return !chart().isEmpty() && chart().first().toMap().value(QStringLiteral("key")) == since; },
+                  [&] { return QStringLiteral("a chart from %1; the page is %2").arg(since, show(usage(world))); });
+    double codex = 0, claude = 0;
+    for (const QVariant& hour : chart()) {
+      const QVariantList cost = hour.toMap().value(QStringLiteral("costUsd")).toList();
+      codex += cost.value(0).toDouble();
+      claude += cost.value(1).toDouble();
+    }
+    expect(codex > 0 && claude > 0, QStringLiteral("both providers on the chart; the page is %1").arg(show(usage(world))));
   });
   step(QStringLiteral("the user hovers a day"), [](World& world, const Captures&, const Table&) {
     fake(world).hoveredDay = world.now().toLocalTime().date().toString(Qt::ISODate);

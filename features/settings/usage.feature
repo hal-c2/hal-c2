@@ -216,6 +216,15 @@ Feature: Usage and limits
       When the user hovers a day
       Then that day's cost for each provider is read out
 
+    # "laptop" still shows its last answer, asked over a window ten minutes older.
+    @desktop
+    Scenario: A refresh still under way keeps every provider on the chart
+      Given Codex and Claude both have usage in the past 24 hours
+      And the user views cost for the past 24 hours
+      When 10 minutes pass and "laptop" is slow to answer
+      And the user refreshes usage
+      Then the chart still draws Codex and Claude
+
     @desktop @backlog-desktop
     Scenario: Each model shows its share of the cost
       Given the user views cost for the past 7 days

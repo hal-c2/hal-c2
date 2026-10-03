@@ -75,10 +75,30 @@ double tokens(const QJsonObject& totals) {
          number(totals, "cacheCreationTokens") + number(totals, "outputTokens");
 }
 
-// The period a bucket falls in: its day, or its hour as the window's hours are written.
-QString periodOf(const QJsonObject& bucket, bool hourly) {
-  if (!hourly) return text(bucket, "day");
-  return QDateTime::fromString(text(bucket, "hourStart"), Qt::ISODateWithMs).toUTC().toString(Qt::ISODateWithMs);
+// Which period of `window` a bucket falls in, counted from its first; -1 for none.
+int placeOf(const QJsonObject& bucket, const QJsonObject& window, bool hourly) {
+  if (hourly) {
+    const QDateTime since = QDateTime::fromString(text(window, "sinceTime"), Qt::ISODateWithMs);
+    const QDateTime hour = QDateTime::fromString(text(bucket, "hourStart"), Qt::ISODateWithMs);
+    return since.isValid() && hour.isValid() && hour >= since ? int(since.secsTo(hour) / (60 * 60)) : -1;
+  }
+  const QDate since = QDate::fromString(text(window, "sinceDay"), Qt::ISODate);
+  const QDate day = QDate::fromString(text(bucket, "day"), Qt::ISODate);
+  return since.isValid() && day.isValid() && day >= since ? int(since.daysTo(day)) : -1;
+}
+
+// `2 PM` in local time. An hour the clocks repeat when they fall back says its
+// zone too, as the web's formatHourShort.
+QString hourName(const QDateTime& instant) {
+  const QDateTime local = instant.toLocalTime();
+  const QString name = english().toString(local.time(), QStringLiteral("h AP"));
+  for (const int away : {-60 * 60, 60 * 60}) {
+    const QDateTime other = instant.addSecs(away).toLocalTime();
+    if (other.date() == local.date() && other.time().hour() == local.time().hour()) {
+      return QStringLiteral("%1 %2").arg(name, local.timeZoneAbbreviation());
+    }
+  }
+  return name;
 }
 
 int kindRank(const QString& kind) {
@@ -437,8 +457,11 @@ QVariantMap UsageController::summary(QStringList& notices) const {
   QHash<QString, Sum> providers;
   std::map<QPair<QString, QString>, Sum> models;
   std::map<QString, Sum> periods;
-  // Each provider's part of each period, which the chart draws.
-  QHash<QString, QHash<QString, Sum>> parts;
+  // Each provider's part of each period, which the chart draws. A period is
+  // counted from the start of the window its summary was asked over: while a
+  // read is in flight that environment still shows its last answer, asked over
+  // an earlier window, and keeps its place on the chart.
+  QHash<int, QHash<QString, Sum>> parts;
   const bool hourly = m_windowDays == 1;
   for (const Contribution& contribution : current) {
     QSet<QString> owned;
@@ -461,9 +484,9 @@ QVariantMap UsageController::summary(QStringList& notices) const {
       const double used = tokens(totals);
       const double records = number(bucket, "records");
       const double unpriced = number(bucket, "unpricedRecords");
-      const QString period = periodOf(bucket, hourly);
-      for (Sum* sum : {&total, &providers[provider], &models[{provider, text(bucket, "model")}], &periods[period],
-                       &parts[period][provider]}) {
+      for (Sum* sum : {&total, &providers[provider], &models[{provider, text(bucket, "model")}],
+                       &periods[hourly ? text(bucket, "hourStart") : text(bucket, "day")],
+                       &parts[placeOf(bucket, contribution.window, hourly)][provider]}) {
         sum->cost += cost;
         sum->tokens += used;
         sum->records += records;
@@ -505,9 +528,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
                                  {QStringLiteral("unpriced"), sum.records > 0 && sum.unpriced >= sum.records}});
   }
   const auto name = [hourly](const QString& period) {
-    if (hourly) {
-      return english().toString(QDateTime::fromString(period, Qt::ISODateWithMs).toLocalTime().time(), QStringLiteral("h AP"));
-    }
+    if (hourly) return hourName(QDateTime::fromString(period, Qt::ISODateWithMs));
     return english().toString(QDate::fromString(period, Qt::ISODate), QStringLiteral("MMM d"));
   };
   QVariantList periodRows;
@@ -537,8 +558,9 @@ QVariantMap UsageController::summary(QStringList& notices) const {
   // An hour is read out against the day the window ends on (formatRelativeHourShort).
   const QDate today = QDateTime::fromString(text(window, "untilTime"), Qt::ISODateWithMs).toLocalTime().date();
   QVariantList chartRows;
-  for (const QString& period : std::as_const(charted)) {
-    const QHash<QString, Sum> part = parts.value(period);
+  for (qsizetype place = 0; place < charted.size(); ++place) {
+    const QString& period = charted[place];
+    const QHash<QString, Sum> part = parts.value(place);
     QVariantList cost, used;
     for (const QString& id : std::as_const(listed)) {
       cost.append(part.value(id).cost);
