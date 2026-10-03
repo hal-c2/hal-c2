@@ -96,7 +96,7 @@ Rectangle {
                     text: root.detail.title ?? qsTr("Pull request #%1").arg(root.source?.number ?? 0)
                     elide: Text.ElideRight
                     color: root.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
                 Text {
@@ -104,7 +104,7 @@ Rectangle {
                     text: ["#" + (root.source?.number ?? 0), root.detail.stateLabel ?? "", root.detail.author ?? "", root.detail.branches ?? ""].filter(part => part.length > 0).join(" · ")
                     elide: Text.ElideRight
                     color: root.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
             }
             ShellButton {
@@ -185,7 +185,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("This environment is unreachable. The pull request shows as last read.")
             color: root.warningColor
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Rectangle {
@@ -211,7 +211,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: root.source?.status === "error" ? root.source.message : root.source?.status === "loading" ? qsTr("Loading the pull request…") : ""
                     color: root.source?.status === "error" ? root.errorColor : root.muted
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                 }
                 ShellButton {
                     Layout.alignment: Qt.AlignHCenter
@@ -244,14 +244,14 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: qsTr("This branch is %n commit(s) behind its base.", "", root.detail.behindBy ?? 0)
                         color: root.warningColor
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Text {
                         Layout.fillWidth: true
                         visible: root.detail.mergeability === "conflicting"
                         text: qsTr("This branch has conflicts with its base.")
                         color: root.errorColor
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Text {
                         objectName: "reviewDescription"
@@ -260,7 +260,7 @@ Rectangle {
                         textFormat: Text.MarkdownText
                         text: (root.detail.body ?? "").length > 0 ? root.detail.body : qsTr("No description provided.")
                         color: (root.detail.body ?? "").length > 0 ? root.foreground : root.muted
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         linkColor: Theme.link
                         onLinkActivated: link => Qt.openUrlExternally(link)
                     }
@@ -270,7 +270,7 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: qsTr("Labels: %1").arg((root.detail.labels ?? []).join(", "))
                         color: root.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Text {
                         Layout.fillWidth: true
@@ -278,20 +278,20 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: qsTr("Reviewers: %1").arg((root.detail.reviewers ?? []).join(", "))
                         color: root.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Text {
                         Layout.topMargin: 6
                         text: qsTr("Checks")
                         color: root.foreground
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
                     Text {
                         visible: (root.detail.checks ?? []).length === 0
                         text: qsTr("No checks reported.")
                         color: root.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Repeater {
                         model: root.detail.checks ?? []
@@ -314,12 +314,12 @@ Rectangle {
                                 text: parent.modelData.name
                                 elide: Text.ElideRight
                                 color: root.foreground
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
                             Text {
                                 text: parent.modelData.status
                                 color: root.checkColor(parent.modelData.status)
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
                         }
                     }
@@ -378,7 +378,7 @@ Rectangle {
                                             text: modelData.path + (modelData.line > 0 ? ":" + modelData.line : "") + (modelData.outdated ? qsTr(" · outdated") : "") + (modelData.resolved ? qsTr(" · resolved") : "")
                                             elide: Text.ElideMiddle
                                             color: root.muted
-                                            font.pixelSize: 11
+                                            font.pixelSize: Math.round(11 * Theme.fontScale)
                                         }
                                         ShellButton {
                                             objectName: "reviewThreadResolve"
@@ -399,7 +399,7 @@ Rectangle {
                                             text: "<b>" + modelData.author + "</b> " + modelData.body
                                             textFormat: Text.StyledText
                                             color: root.foreground
-                                            font.pixelSize: 12
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
                                         }
                                     }
                                 }
@@ -419,7 +419,7 @@ Rectangle {
                             text: [modelData.author, modelData.reviewState.length > 0 ? modelData.reviewState.toLowerCase().replace("_", " ") : "", modelData.path].filter(part => part.length > 0).join(" · ")
                             elide: Text.ElideRight
                             color: root.muted
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                         }
                         Text {
                             Layout.fillWidth: true
@@ -428,7 +428,7 @@ Rectangle {
                             textFormat: Text.MarkdownText
                             text: modelData.body
                             color: root.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             linkColor: Theme.link
                             onLinkActivated: link => Qt.openUrlExternally(link)
                         }
@@ -457,7 +457,7 @@ Rectangle {
                         placeholderText: qsTr("Leave a comment")
                         placeholderTextColor: root.muted
                         color: root.foreground
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         background: Rectangle {
                             radius: 6
                             color: "transparent"
@@ -471,7 +471,7 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: root.source?.problem ?? ""
                         color: root.errorColor
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     RowLayout {
                         Layout.fillWidth: true

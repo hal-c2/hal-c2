@@ -28,7 +28,7 @@ ColumnLayout {
             verticalAlignment: Text.AlignVCenter
             text: qsTr("Applying settings for")
             color: sentence.muted
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
         }
 
         ShellComboBox {
@@ -53,7 +53,7 @@ ColumnLayout {
             verticalAlignment: Text.AlignVCenter
             text: sentence.scope?.connective === "on" ? qsTr("on") : qsTr("across")
             color: sentence.muted
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
         }
 
         ShellComboBox {
@@ -78,7 +78,7 @@ ColumnLayout {
         visible: text.length > 0
         text: sentence.scope?.disabledReason ?? ""
         color: sentence.warning
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 }

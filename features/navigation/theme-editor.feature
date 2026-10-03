@@ -56,13 +56,13 @@ Feature: Custom themes
       When the user presses the theme editor shortcut
       Then the theme editor is closed
 
-    @backlog @desktop
+    @desktop
     Scenario: Picking a color from the app
       Given the theme editor is open
       When the user inspects the app and picks the sidebar
       Then the editor shows the color used there and how many places use it
 
-    @backlog @desktop
+    @desktop
     Scenario: Escape cancels picking a color
       Given the user is inspecting the app for a color
       When the user presses Escape
@@ -113,14 +113,8 @@ Feature: Custom themes
       Examples:
         | files                        | result                          |
         | one HAL-C2 theme file       | the theme is added              |
-        | three theme files at once    | the user is told "3 themes added" |
-
-      # The desktop reads HAL-C2's own theme files; converting a VS Code theme
-      # (apps/web vscodeThemeImport.ts) is not ported, and it says so.
-      @backlog
-      Examples: Not converted on the desktop yet
-        | files                        | result                          |
         | one VS Code theme file       | the theme is added              |
+        | three theme files at once    | the user is told "3 themes added" |
 
     @desktop
     Scenario: Pasting theme JSON
@@ -163,7 +157,7 @@ Feature: Custom themes
       When the user confirms
       Then "My Theme" is gone
 
-    @backlog @desktop
+    @desktop
     Scenario: Removing some variants of a theme collection
       Given an installed collection with four variants
       When the user removes two selected variants

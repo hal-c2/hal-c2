@@ -182,7 +182,7 @@ AbstractButton {
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : 0.64
     font.family: fontFamily
-    font.pixelSize: 14
+    font.pixelSize: Math.round(14 * Theme.fontScale)
     font.weight: Font.Medium
     Accessible.role: Accessible.ComboBox
     Accessible.name: triggerLabel
@@ -275,6 +275,8 @@ AbstractButton {
             } : {};
             control.view = Picker.initialView(control.instances, control.selectedInstanceId, control.locked);
         }
+        // The keymap's modelPickerOpen.
+        onVisibleChanged: Keybindings.modelPickerOpen = visible
         onOpened: {
             const selected = control.rows.findIndex(row => row.kind === "model" && row.instance.instanceId === control.selectedInstanceId && row.model.slug === control.selectedModel);
             control.highlightedIndex = selected >= 0 ? selected : control.firstSelectableRow(0, 1);
@@ -494,7 +496,7 @@ AbstractButton {
                             placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
                             color: control.foreground
                             font.family: control.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                             selectionColor: Theme.palette.color("accent", "#2563eb")
                             selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
                             text: control.query
@@ -578,7 +580,7 @@ AbstractButton {
                             text: qsTr("No models found")
                             color: control.muted
                             font.family: control.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                         }
                     }
                 }
@@ -645,7 +647,7 @@ AbstractButton {
                             text: row.model ? Picker.displayName(row.model, !control.locked) : ""
                             color: control.foreground
                             font.family: control.fontFamily
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                             elide: Text.ElideRight
                         }
@@ -665,7 +667,7 @@ AbstractButton {
                                 text: qsTr("NEW")
                                 color: Theme.palette.color("updateForeground", "#60a5fa")
                                 font.family: control.fontFamily
-                                font.pixelSize: 10
+                                font.pixelSize: Math.round(10 * Theme.fontScale)
                                 font.bold: true
                                 font.letterSpacing: 0.4
                             }
@@ -697,7 +699,7 @@ AbstractButton {
                             text: row.model && row.instance ? Picker.providerLabel(row.model, row.instance) : ""
                             color: control.fade(control.muted, 0.7)
                             font.family: control.fontFamily
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             elide: Text.ElideRight
                         }
                     }
@@ -718,7 +720,7 @@ AbstractButton {
                         text: row.jumpText
                         color: control.muted
                         font.family: control.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
                 }
@@ -797,7 +799,7 @@ AbstractButton {
                         text: qsTr("Legacy models")
                         color: control.foreground
                         font.family: control.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
 
@@ -805,7 +807,7 @@ AbstractButton {
                         text: legacy.entry ? qsTr("%1 models").arg(legacy.entry.count) : ""
                         color: control.fade(control.muted, 0.7)
                         font.family: control.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                 }
 
@@ -919,7 +921,7 @@ AbstractButton {
             anchors.centerIn: parent
             color: control.muted
             font.family: control.fontFamily
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             font.weight: Font.Medium
         }
     }

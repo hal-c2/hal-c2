@@ -78,8 +78,8 @@ FocusScope {
                 objectName: "HalC2Terminal"
                 focus: true
                 padding: 6
-                font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                font.pixelSize: 12
+                font.family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace"
+                font.pixelSize: Theme.fontSizeTerminal
                 backgroundColor: splits.background
                 foregroundColor: splits.foreground
                 cursorColor: splits.foreground

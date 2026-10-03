@@ -43,7 +43,8 @@ public:
   bool takesKeys = false;
   // Presses a key as keybindings.json spells it ("escape", "mod+enter",
   // "shift+tab", "arrowup"): mod is the platform's primary modifier.
-  void press(const QString& key);
+  // False when nothing in the window took it.
+  bool press(const QString& key);
 
 private:
   QQmlEngine m_engine;

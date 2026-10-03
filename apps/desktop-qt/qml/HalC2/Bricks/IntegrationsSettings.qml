@@ -26,7 +26,7 @@ SettingsPage {
     component Caption: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -55,7 +55,7 @@ SettingsPage {
                 Label {
                     text: toggle.title
                     color: page.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -64,7 +64,7 @@ SettingsPage {
                     visible: toggle.entry?.mixed ?? false
                     text: qsTr("Mixed across selected machines")
                     color: page.warning
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 Caption {
@@ -76,7 +76,7 @@ SettingsPage {
                 objectName: "version"
                 text: toggle.entry?.version ?? ""
                 color: page.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.family: "monospace"
             }
 
@@ -85,7 +85,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: toggle.entry?.status ?? ""
                 color: page.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             Switch {
@@ -127,7 +127,7 @@ SettingsPage {
             Layout.fillWidth: true
             text: page.state?.updateError?.message ?? ""
             color: page.danger
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
     }
@@ -137,7 +137,7 @@ SettingsPage {
     Label {
         text: qsTr("Devices")
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         font.weight: Font.DemiBold
     }
 
@@ -187,7 +187,7 @@ SettingsPage {
                 Label {
                     text: modelData.platform
                     color: page.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -221,7 +221,7 @@ SettingsPage {
                 Label {
                     text: modelData.label
                     color: page.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 

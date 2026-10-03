@@ -26,7 +26,7 @@ ColumnLayout {
     component Hint: Label {
         Layout.fillWidth: true
         color: models.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -64,7 +64,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 text: qsTr("Options shown in the composer")
                 color: models.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             ShellComboBox {
@@ -260,7 +260,7 @@ ColumnLayout {
     Label {
         text: qsTr("Custom models")
         color: models.foreground
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         font.weight: Font.Medium
     }
 
@@ -285,7 +285,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                     text: modelItem.modelData.name.length > 0 ? qsTr("%1 (%2)").arg(modelItem.modelData.name).arg(modelItem.modelData.slug) : modelItem.modelData.slug
                     color: models.foreground
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     elide: Text.ElideRight
                 }
 
@@ -293,7 +293,7 @@ ColumnLayout {
                     visible: modelItem.modelData.options.length > 0
                     text: qsTr("%n option(s)", "", modelItem.modelData.options.length)
                     color: models.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
 
                 ShellButton {

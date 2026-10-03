@@ -40,7 +40,7 @@ Rectangle {
         visible: text.length > 0
         wrapMode: Text.Wrap
         color: root.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
     }
 
     // The hub is off or was never set up: that happens in Settings.
@@ -57,7 +57,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("Device support is off for this environment. Turn it on in Settings to stream simulators and emulators here.")
             color: root.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         ShellButton {
@@ -91,7 +91,7 @@ Rectangle {
                 text: root.screen ? root.screen.description : qsTr("Choose a device")
                 elide: Text.ElideRight
                 color: root.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             Row {
@@ -180,7 +180,7 @@ Rectangle {
                 wrapMode: Text.Wrap
                 text: root.view ? root.view.error : ""
                 color: root.errorColor
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             ShellButton {
@@ -305,7 +305,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: !root.stream ? "" : root.stream.status === "error" ? root.stream.detail : qsTr("Connecting to the device…")
                     color: root.stream && root.stream.status === "error" ? root.errorColor : root.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 ShellButton {
@@ -329,7 +329,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: root.view ? root.view.loading : ""
             color: root.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         // --- The picker ------------------------------------------------------------
@@ -360,7 +360,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: root.view ? root.view.empty : ""
                     color: root.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 Repeater {
@@ -386,7 +386,7 @@ Rectangle {
                             Text {
                                 text: group.modelData.title
                                 color: root.muted
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                 font.weight: Font.Medium
                             }
                         }
@@ -421,7 +421,7 @@ Rectangle {
                                     text: row.modelData.name
                                     elide: Text.ElideRight
                                     color: root.foreground
-                                    font.pixelSize: 13
+                                    font.pixelSize: Math.round(13 * Theme.fontScale)
                                 }
                                 Text {
                                     x: 12
@@ -430,7 +430,7 @@ Rectangle {
                                     text: row.modelData.detail
                                     elide: Text.ElideRight
                                     color: root.muted
-                                    font.pixelSize: 11
+                                    font.pixelSize: Math.round(11 * Theme.fontScale)
                                 }
                                 Text {
                                     anchors.right: parent.right
@@ -438,7 +438,7 @@ Rectangle {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: row.pending ? qsTr("…") : row.modelData.action
                                     color: root.muted
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                 }
                             }
                         }
@@ -451,7 +451,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: qsTr("No Android virtual devices found. Create one in Android Studio's Device Manager, then refresh.")
                     color: root.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
 
                 ShellButton {
