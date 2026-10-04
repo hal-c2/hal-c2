@@ -57,6 +57,16 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   cluster). The scenarios are `features/desktop/native-*.feature` and the
   `@desktop` and `@shared` ones in the files `tests/native/tst_Features.cpp`
   lists, run by the native `tst_Features`.
+- **One owner of retries.** `McClient` is the only thing that reconnects. Before
+  each socket it reads the MC's descriptor and stays blocked on a protocol it
+  does not speak; a drop is retried with growing delays, waits for the network
+  when a remote MC's device is offline, and stops on a credential the MC
+  refuses (it asks `/api/auth/session`, since a failed handshake does not say
+  why) until the user pairs again. A thread's stream resubscribes from the
+  offset its last whole snapshot or event reached; every other shape is sent
+  whole. `ConnectionHealthController` turns the phases into `connection`, which
+  is not `connected` until the shell snapshot lands on that socket. Controllers
+  must not add timers of their own to recover a connection.
 - The UI-owned parts of `desktopBridge` (open external, window commands,
   colour scheme, dialogs/context menus) are served by the shell itself; the
   TypeScript-owned parts stay on the Node side.
