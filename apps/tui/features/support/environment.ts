@@ -392,10 +392,15 @@ function installClient(ctx: World): void {
     environment.settingsVersion += 1;
     return true;
   });
-  fake.override("moveThread", async ({ threadId, machine }) => {
+  fake.override("moveThread", async ({ threadId, machine: to }) => {
     const thread = environment.threads.find((candidate) => candidate.id === threadId);
-    const destination = environment.machines.find((candidate) => candidate.label === machine);
+    // By environment id, or by a label only one machine has (HalC2.ThreadMove's destination).
+    const named = environment.machines.filter((candidate) => candidate.id === to);
+    const [destination, ...others] =
+      named.length > 0 ? named : environment.machines.filter(({ label }) => label === to);
     if (!thread || !destination) throw new Error(`Thread ${threadId} not found`);
+    if (others.length > 0) throw new Error(`Several machines are called ${to}.`);
+    const machine = destination.label;
     const { title } = thread;
     if (thread.session?.status === "running") {
       throw new Error(`${title} is running. Stop it or wait for it to finish before moving it.`);

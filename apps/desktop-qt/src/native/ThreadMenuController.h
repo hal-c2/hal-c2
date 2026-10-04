@@ -80,10 +80,16 @@ private:
     double y = 0;
     bool palette = false;
   };
+  // Where a thread moves to. Labels are the user's own and may repeat, so the
+  // environment id is what is sent and the label what is shown.
+  struct Machine {
+    QString id;
+    QString label;
+  };
   void chooseDestination(const QString& key, double x, double y);
   // The move the user chose: sent as it is, or after stopping the thread's turn.
-  void startMove(const QString& key, const QString& machine, const Asking& asking);
-  void move(const QString& key, const QString& machine, const QString& projectId, bool confirmed,
+  void startMove(const QString& key, const Machine& machine, const Asking& asking);
+  void move(const QString& key, const Machine& machine, const QString& projectId, bool confirmed,
             const Asking& asking);
   // Sends the moves that waited for their thread's turn to stop.
   void moveStopped();
@@ -102,7 +108,7 @@ private:
   std::function<bool(const QString&)> m_writeClipboard;
   // Moves waiting for their thread's turn to stop, by thread key.
   struct Stopping {
-    QString machine;
+    Machine machine;
     Asking asking;
     QString toast;
   };

@@ -6,6 +6,11 @@ import { shellSummary, type Store } from "../store.ts";
 import type { Composer, PickRequest } from "./composerState.ts";
 
 type MoveThread = Pick<TuiThreadShell, "id" | "title">;
+/** Where a thread moves to: labels are the user's own and may repeat, so the id is what is sent. */
+interface MoveMachine {
+  readonly id: string;
+  readonly label: string;
+}
 type MoveOption = PickRequest["options"][number];
 
 const CANCEL = "cancel";
@@ -49,7 +54,10 @@ export function createMoveController(ctx: {
     promise.then(done, done);
   };
   /** Threads whose turn is being stopped so they can move, by where they go. */
-  const stopping = new Map<string, { readonly thread: MoveThread; readonly machine: string }>();
+  const stopping = new Map<
+    string,
+    { readonly thread: MoveThread; readonly machine: MoveMachine }
+  >();
   /** How the last move ended, kept on the status row over the snapshots the move itself causes. */
   let told: string | null = null;
 
@@ -59,17 +67,17 @@ export function createMoveController(ctx: {
 
   const move = (
     thread: MoveThread,
-    machine: string,
+    machine: MoveMachine,
     extra: Pick<ThreadMoveInput, "projectId" | "confirmed"> = {},
   ) => {
     told = null;
-    store.setStatus(`Moving "${thread.title}" to ${machine}…`, "busy");
+    store.setStatus(`Moving "${thread.title}" to ${machine.label}…`, "busy");
     track(
-      client.moveThread({ threadId: thread.id, machine, ...extra }).then(
+      client.moveThread({ threadId: thread.id, machine: machine.id, ...extra }).then(
         (result) => {
           switch (result.status) {
             case "moved":
-              told = result.message || `${thread.title} moved to ${machine}.`;
+              told = result.message || `${thread.title} moved to ${machine.label}.`;
               // The user follows the thread: a list scoped to the project it left would hide it.
               if (store.getState().projectScopeId !== null) store.setProjectScope(result.projectId);
               store.select({ kind: "thread", id: thread.id });
@@ -78,7 +86,7 @@ export function createMoveController(ctx: {
             case "confirm":
               store.setStatus(result.message);
               ctx.pick({
-                title: `Move "${thread.title}" to ${machine}?`,
+                title: `Move "${thread.title}" to ${machine.label}?`,
                 status: "ready",
                 options: [
                   ...result.notes.flatMap((note) => noteRows(note, Math.max(16, ctx.width() - 6))),
@@ -94,7 +102,7 @@ export function createMoveController(ctx: {
             case "choose_project":
               store.setStatus(result.message);
               ctx.pick({
-                title: `Move "${thread.title}" into which project on ${machine}?`,
+                title: `Move "${thread.title}" into which project on ${machine.label}?`,
                 status: "ready",
                 options: result.projects.map((project) => ({
                   label: project.title,
@@ -112,9 +120,9 @@ export function createMoveController(ctx: {
   };
 
   /** The MC refuses to move a running thread: offer to stop its turn first. */
-  const stopAndMove = (thread: MoveThread, machine: string) => {
+  const stopAndMove = (thread: MoveThread, machine: MoveMachine) => {
     ctx.pick({
-      title: `Stop "${thread.title}" and move it to ${machine}?`,
+      title: `Stop "${thread.title}" and move it to ${machine.label}?`,
       status: "ready",
       options: [
         { label: "Stop and move", description: "Interrupts the running turn.", value: "stop" },
@@ -157,11 +165,13 @@ export function createMoveController(ctx: {
     available: () => (store.getState().shell?.machines?.length ?? 0) > 1,
     /** Ask which machine `thread` moves to, then move it. */
     start: (thread: MoveThread) => {
+      let labels = new Map<string, string>();
       const update = ctx.pick({
         title: `Move "${thread.title}" to`,
         status: "loading",
         options: [],
-        onChoose: (machine) => {
+        onChoose: (id) => {
+          const machine = { id, label: labels.get(id) ?? id };
           if (running(thread.id)) stopAndMove(thread, machine);
           else move(thread, machine);
         },
@@ -169,6 +179,9 @@ export function createMoveController(ctx: {
       track(
         client.moveDestinations(thread.id).then(
           (destinations) => {
+            labels = new Map(
+              destinations.map(({ environmentId, machine }) => [environmentId, machine]),
+            );
             update({
               status: "ready",
               options: destinations
@@ -180,7 +193,7 @@ export function createMoveController(ctx: {
                   description:
                     destination.projects.find((project) => project.sameRepository)?.workspaceRoot ??
                     "",
-                  value: destination.machine,
+                  value: destination.environmentId,
                   ...(destination.online ? {} : { disabled: true }),
                 })),
             });

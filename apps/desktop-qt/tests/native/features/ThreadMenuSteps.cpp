@@ -95,12 +95,14 @@ const FakeMc::Extension threadMenu([](FakeMc& mc) {
                                          {QStringLiteral("notes"), QJsonArray{fake.confirmNote}}});
     }
     const QString id = rpc.payload.value(QLatin1String("threadId")).toString();
-    const QString machine = rpc.payload.value(QLatin1String("machine")).toString();
+    // A move names its destination by environment id; the MC answers with the machine's label.
+    const QString environment = rpc.payload.value(QLatin1String("machine")).toString();
+    const QString machine = mc.peers.value(environment, environment);
     const QString title = mc.threads.value(id).value(QLatin1String("title")).toString();
     mc.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("moved")},
                                 {QStringLiteral("threadId"), id},
                                 {QStringLiteral("machine"), machine},
-                                {QStringLiteral("environmentId"), mc.peers.key(machine)},
+                                {QStringLiteral("environmentId"), environment},
                                 {QStringLiteral("message"), QStringLiteral("%1 moved to %2.").arg(title, machine)}});
   });
 });
@@ -607,7 +609,7 @@ const Steps steps([] {
   step(QStringLiteral("the MC is asked to move %1 to %1( confirmed)?").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
       for (const QJsonObject& move : std::as_const(fake(world).moves)) {
-        if (move.value(QLatin1String("threadId")) == c[0] && move.value(QLatin1String("machine")) == c[1] &&
+        if (move.value(QLatin1String("threadId")) == c[0] && move.value(QLatin1String("machine")) == world.mc.peers.key(c[1]) &&
             move.value(QLatin1String("confirmed")).toBool() == !c.value(2).isEmpty()) {
           return true;
         }

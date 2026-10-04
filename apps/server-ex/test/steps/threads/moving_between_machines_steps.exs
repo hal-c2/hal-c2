@@ -471,6 +471,26 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     Map.update(context, :offline, [machine], &[machine | &1])
   end
 
+  # As the machine itself would report it, had it been started with that label.
+  step "{string} is also called {string}", %{args: [machine, label]} = context do
+    peer = Machines.mc_of(context, machine)
+    {^peer, descriptor} = List.keyfind(HalC2.Shell.environments(), peer, 0)
+    GenServer.cast(HalC2.Shell, {:peer_environment, peer, %{descriptor | "label" => label}})
+    :sys.get_state(HalC2.Shell)
+    context
+  end
+
+  step "the user is told several machines are called {string} and to name one by its environment id",
+       %{args: [label]} = context do
+    assert [message] = context.told
+    assert message =~ "Several machines are called #{label}."
+
+    for {_mc, %{"environmentId" => id}} <- HalC2.Shell.environments(),
+        do: assert(message =~ id)
+
+    context
+  end
+
   step "{string} does not have the agent {string} runs on",
        %{args: [machine, title]} = context do
     context = on_claude(context, title)

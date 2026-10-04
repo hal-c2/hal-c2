@@ -396,7 +396,7 @@ void ThreadMenuController::activate() {
       choice.enabled = m_store->environmentOnline(environmentId);
       if (!choice.enabled) choice.description = tr("Offline");
       choice.terms = {environmentId};
-      choice.run = [this, key, machine] { startMove(key, machine, {0, 0, true}); };
+      choice.run = [this, key, environmentId, machine] { startMove(key, {environmentId, machine}, {0, 0, true}); };
       machines.append(choice);
     }
     std::sort(machines.begin(), machines.end(),
@@ -517,26 +517,30 @@ void ThreadMenuController::chooseDestination(const QString& key, double x, doubl
           return;
         }
         QList<Item> items;
+        QHash<QString, QString> labels;
         for (const QJsonValue& value : result.toArray()) {
           const QJsonObject destination = value.toObject();
+          const QString id = text(destination, "environmentId");
           const QString machine = text(destination, "machine");
           const bool online = destination.value(QLatin1String("online")).toBool();
-          Item item{QStringLiteral("machine:") + machine, online ? machine : machine + QStringLiteral(" (offline)"),
+          Item item{QStringLiteral("machine:") + id, online ? machine : machine + QStringLiteral(" (offline)"),
                     QStringLiteral("monitor")};
           item.enabled = online;
           items.append(item);
+          labels.insert(id, machine);
         }
         if (items.isEmpty()) {
           toasts()->show(QStringLiteral("info"), QStringLiteral("No other machine can take this thread"));
           return;
         }
-        NativeShell::of(this)->controller<MenuController>()->open(x, y, items, [this, key, x, y](const QString& id) {
-          startMove(key, id.mid(QStringLiteral("machine:").size()), {x, y});
+        NativeShell::of(this)->controller<MenuController>()->open(x, y, items, [this, key, x, y, labels](const QString& item) {
+          const QString id = item.mid(QStringLiteral("machine:").size());
+          startMove(key, {id, labels.value(id, id)}, {x, y});
         });
       });
 }
 
-void ThreadMenuController::startMove(const QString& key, const QString& machine, const Asking& asking) {
+void ThreadMenuController::startMove(const QString& key, const Machine& machine, const Asking& asking) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
   const sidebar::Nullable runId = thread->activeRunId ? thread->activeRunId : thread->latestRunId;
@@ -545,7 +549,7 @@ void ThreadMenuController::startMove(const QString& key, const QString& machine,
     return;
   }
   NativeShell::of(this)->controller<MenuController>()->confirm(
-      QStringLiteral("Stop \"%1\" and move it to %2?").arg(thread->title, machine),
+      QStringLiteral("Stop \"%1\" and move it to %2?").arg(thread->title, machine.label),
       QStringLiteral("The agent is working in this thread. Its turn is stopped before the thread moves."),
       QStringLiteral("Stop and move"), false, [this, key, machine, asking, runId = *runId] {
         const auto thread = m_store->thread(key);
@@ -577,15 +581,15 @@ void ThreadMenuController::moveStopped() {
 
 // `hal-c2.moveThread` answers moved, or asks to confirm what stays behind, or
 // which project to move into; each question is asked and the move sent again.
-void ThreadMenuController::move(const QString& key, const QString& machine, const QString& projectId, bool confirmed,
+void ThreadMenuController::move(const QString& key, const Machine& machine, const QString& projectId, bool confirmed,
                                 const Asking& asking) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
-  QJsonObject input{{QStringLiteral("threadId"), thread->id}, {QStringLiteral("machine"), machine}};
+  QJsonObject input{{QStringLiteral("threadId"), thread->id}, {QStringLiteral("machine"), machine.id}};
   if (!projectId.isEmpty()) input.insert(QStringLiteral("projectId"), projectId);
   if (confirmed) input.insert(QStringLiteral("confirmed"), true);
   const QString progress = toasts()->show(QStringLiteral("loading"),
-                                          QStringLiteral("Moving \"%1\" to %2…").arg(thread->title, machine), QString(), {}, 0);
+                                          QStringLiteral("Moving \"%1\" to %2…").arg(thread->title, machine.label), QString(), {}, 0);
   m_client->call(this, 
       thread->environmentId, QStringLiteral("hal-c2.moveThread"), input,
       [this, key, machine, projectId, confirmed, asking, progress, title = thread->title](
@@ -604,7 +608,7 @@ void ThreadMenuController::move(const QString& key, const QString& machine, cons
             notes.append(note.isObject() ? text(note.toObject(), "message") : note.toString());
           }
           notes.removeAll(QString());
-          menus->confirm(QStringLiteral("Move \"%1\" to %2?").arg(title, machine),
+          menus->confirm(QStringLiteral("Move \"%1\" to %2?").arg(title, machine.label),
                          notes.isEmpty() ? text(answer, "message") : notes.join(QLatin1Char('\n')), QStringLiteral("Move"),
                          false, [this, key, machine, projectId, asking] { move(key, machine, projectId, true, asking); });
         } else if (status == QLatin1String("choose_project")) {
@@ -627,7 +631,7 @@ void ThreadMenuController::move(const QString& key, const QString& machine, cons
           });
         } else if (status == QLatin1String("moved")) {
           toasts()->show(QStringLiteral("success"), text(answer, "message").isEmpty()
-                                                        ? QStringLiteral("Moved to ") + machine
+                                                        ? QStringLiteral("Moved to ") + machine.label
                                                         : text(answer, "message"));
           // The user who moved the thread is shown it where it lives now.
           const QString environmentId = text(answer, "environmentId");

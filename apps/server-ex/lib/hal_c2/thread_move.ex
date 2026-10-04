@@ -45,8 +45,8 @@ defmodule HalC2.ThreadMove do
   # --- source --------------------------------------------------------------------
 
   @doc """
-  Moves the thread `ref` (id or title) to the machine `to` (a label or environment
-  id). `opts`: `project:` the destination project (id or title), `confirmed:` true
+  Moves the thread `ref` (id or title) to the machine `to` (its environment id, or its
+  label when no other machine has the same one). `opts`: `project:` the destination project (id or title), `confirmed:` true
   once the user accepted what does not come along.
   """
   def move(ref, to, opts \\ []) do
@@ -181,18 +181,36 @@ defmodule HalC2.ThreadMove do
     end
   end
 
+  # A machine is named by what only it has (its environment id or MC name), or by its
+  # label, which the user gave it and another machine may share.
   defp destination(to, thread) do
-    case Enum.find(Shell.environments(), fn {mc, d} ->
-           to in [d["label"], d["environmentId"], Atom.to_string(mc)]
-         end) do
-      nil ->
+    environments = Shell.environments()
+
+    named =
+      case Enum.filter(environments, fn {mc, d} ->
+             to in [d["environmentId"], Atom.to_string(mc)]
+           end) do
+        [] -> Enum.filter(environments, fn {_, d} -> d["label"] == to end)
+        named -> named
+      end
+
+    case named do
+      [] ->
         error(:invalid_request, "There is no machine #{to} in the cluster.")
 
-      {mc, _} when mc == node() ->
-        error(:invalid_request, "#{thread["title"]} is already on #{to}.")
+      [{mc, descriptor}] when mc == node() ->
+        error(:invalid_request, "#{thread["title"]} is already on #{descriptor["label"]}.")
 
-      {mc, descriptor} ->
+      [{mc, descriptor}] ->
         {:ok, %{mc: mc, label: descriptor["label"], environment: descriptor["environmentId"]}}
+
+      several ->
+        ids = Enum.map_join(several, ", ", fn {_, d} -> d["environmentId"] end)
+
+        error(
+          :invalid_request,
+          "Several machines are called #{to}. Name the one meant by its environment id: #{ids}."
+        )
     end
   end
 

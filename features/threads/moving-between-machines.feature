@@ -392,6 +392,15 @@ Feature: Moving a thread and its agent to another machine
         | the directory of the chosen project on "desktop" is gone | The project folder on desktop no longer exists. Alpha was not moved.      |
         | "desktop" has too little free disk space for "Alpha"     | desktop does not have enough free space for Alpha. Alpha was not moved.   |
 
+    # A label is the user's own name for a machine, so two may share one: clients name the
+    # destination by its environment id, and a label two machines share is not guessed at.
+    @mc
+    Scenario: A move to a name two machines share is refused
+      Given "desktop" is also called "laptop"
+      When the user moves "Alpha" to "laptop"
+      Then the user is told several machines are called "laptop" and to name one by its environment id
+      And "Alpha" stays on "laptop" as it was
+
     @backlog @shared
     Scenario: A thread whose agent is missing on the destination can move onto another agent
       Given "desktop" does not have the agent "Alpha" runs on

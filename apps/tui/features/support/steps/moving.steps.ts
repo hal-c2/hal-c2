@@ -54,6 +54,12 @@ const callsTo = (ctx: World, method: string) =>
   ctx.fake!.calls.filter((call) => call.method === method);
 const moves = (ctx: World) =>
   callsTo(ctx, "moveThread").map((call) => call.args[0] as { threadId: string; machine: string });
+/** What a move names its destination by: labels are the user's own and may repeat. */
+const machineId = (ctx: World, label: string) => {
+  const machine = env(ctx).machines.find((candidate) => candidate.label === label);
+  if (!machine) throw new Error(`no machine is called ${label}`);
+  return machine.id;
+};
 
 /** Choose in the open picker as the user does: arrow to the option, Enter. */
 async function choose(ctx: World, label: string): Promise<void> {
@@ -218,7 +224,9 @@ step("the running turn of {string} is interrupted", (ctx: World, title: string) 
 });
 
 step("{string} moves to {string}", async (ctx: World, title: string, machine: string) => {
-  expect(moves(ctx)).toEqual([{ threadId: threadNamed(ctx, title).id, machine }]);
+  expect(moves(ctx)).toEqual([
+    { threadId: threadNamed(ctx, title).id, machine: machineId(ctx, machine) },
+  ]);
   await expectListedUnder(ctx, title, machine);
 });
 
@@ -252,7 +260,7 @@ step(
 step(
   "the agent on {string} continues the session as it was on {string}",
   (ctx: World, machine: string, _from: string) => {
-    expect(moves(ctx).map((move) => move.machine)).toEqual([machine]);
+    expect(moves(ctx).map((move) => move.machine)).toEqual([machineId(ctx, machine)]);
     expect(statusText(ctx)).toMatch(
       new RegExp(` moved to ${machine}\\. The agent continues its own session there\\.$`),
     );

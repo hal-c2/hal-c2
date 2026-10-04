@@ -84,7 +84,10 @@ export type ThreadMoveDestination = typeof ThreadMoveDestination.Type;
 
 export const ThreadMoveInput = Schema.Struct({
   threadId: Schema.String,
-  /** The destination's label, environment id or MC name. */
+  /**
+   * The destination's environment id. A label is taken too when only one machine has
+   * it (labels are the user's own, and may repeat), for a destination named by hand.
+   */
   machine: Schema.String,
   /** The project to land in, when the destination has several that fit. */
   projectId: Schema.optional(Schema.String),
