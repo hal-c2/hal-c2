@@ -180,7 +180,7 @@ Feature: Worktrees and setup scripts
     When the MC restarts
     Then no setup progress is shown for that thread
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The setup card shows the base, branch and path
     When the user sends the first message of a thread in a new worktree
     Then the thread shows the worktree's base, branch and path with the stages
