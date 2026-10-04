@@ -86,7 +86,13 @@ Item {
         return all;
     }
 
+    // A quote's text is tracked by the reply it sits in, whose Cite and
+    // `selection` are the ones the timeline sees.
     function track(edit) {
+        if (host) {
+            host.track(edit);
+            return;
+        }
         if (edit.selectedText.length > 0)
             selection = edit;
         else if (selection === edit)
@@ -704,7 +710,6 @@ Item {
                                 item.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
                                 item.linkActivated.connect(root.linkActivated);
                                 item.host = root;
-                                item.citable = Qt.binding(() => root.citable);
                             }
                         }
 

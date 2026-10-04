@@ -237,6 +237,23 @@ Item {
             verify(button.y >= edit.height, "under the line: " + button.y);
         }
 
+        // A quote's text is cited through the reply it sits in.
+        function test_citeQuotesASelectionInsideABlockQuote() {
+            const md = make("Before.\n\n> Refunds reuse the old rate.", { citable: true });
+            citeSpy.target = md;
+            citeSpy.clear();
+            const edit = findChild(findChild(md, "markdownQuote"), "markdownProse");
+            edit.forceActiveFocus();
+            edit.select(0, 7);
+            compare(md.selection, edit, "the reply holds the selection");
+            const button = findChild(md, "citeSelection");
+            verify(button.visible);
+            mouseClick(button);
+            compare(citeSpy.count, 1);
+            compare(citeSpy.signalArguments[0][0].text, "Refunds");
+            compare(md.selection, null);
+        }
+
         function test_plainRepliesOfferNoCite() {
             const md = make("Refunds reuse the old rate.");
             const edit = prose(segmentsOf(md)[0]);
@@ -258,7 +275,7 @@ Item {
 
         // What the MC does not read as a quote is not shown as one.
         function test_malformedCitationLinkStaysALink() {
-            const links = ["hal-c2-citation://v1/env/thread?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=1&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=1&prefix=&suffix=&extra=1", "hal-c2-citation://v1/env/thread/msg?text=a", "hal-c2-citation://v1/%ZZ/thread/msg?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/%20?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=%FF&start=0&end=1&prefix=&suffix="];
+            const links = ["hal-c2-citation://v1/env/thread?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=1&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=1&prefix=&suffix=&extra=1", "hal-c2-citation://v1/env/thread/msg?text=a", "hal-c2-citation://v1/%ZZ/thread/msg?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/%20?text=a&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=%FF&start=0&end=1&prefix=&suffix=", "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=9007199254740992&prefix=&suffix="];
             for (const link of links) {
                 const md = make("See [Assistant quote](" + link + ")");
                 compare(segmentsOf(md).map(s => s.kind), ["prose"], link);

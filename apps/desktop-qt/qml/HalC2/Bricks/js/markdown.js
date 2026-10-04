@@ -894,7 +894,7 @@ function citation(href) {
     var digits = /^\d{1,16}$/;
     if (fields.text === undefined || fields.prefix === undefined || fields.suffix === undefined || !digits.test(fields.start ?? "") || !digits.test(fields.end ?? ""))
         return null;
-    if (Number(fields.end) <= Number(fields.start) || fields.text.trim().length === 0 || fields.text.length > CITATION_MAX || (fields.comment ?? "").length > CITATION_MAX || fields.prefix.length > CITATION_CONTEXT || fields.suffix.length > CITATION_CONTEXT)
+    if (!Number.isSafeInteger(Number(fields.end)) || Number(fields.end) <= Number(fields.start) || fields.text.trim().length === 0 || fields.text.length > CITATION_MAX || (fields.comment ?? "").length > CITATION_MAX || fields.prefix.length > CITATION_CONTEXT || fields.suffix.length > CITATION_CONTEXT)
         return null;
     return fields;
 }

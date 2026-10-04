@@ -252,6 +252,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/context-references.feature:A send the MC rejects gives its terminal excerpt back"),
     QStringLiteral("composer/context-references.feature:Part of an assistant response can be quoted*"),
     QStringLiteral("composer/context-references.feature:A quoted response is sent*"),
+    QStringLiteral("composer/context-references.feature:A stashed quote*"),
     QStringLiteral("terminal/composer-context.feature:The user adds selected terminal output*"),
     QStringLiteral("terminal/composer-context.feature:A one-line selection*"),
     QStringLiteral("terminal/composer-context.feature:Selecting only blank lines*"),

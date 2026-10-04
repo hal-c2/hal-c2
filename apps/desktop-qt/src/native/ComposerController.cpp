@@ -399,7 +399,16 @@ QVariantMap ComposerController::stashState() const {
   static const QRegularExpression space(QStringLiteral("\\s+"));
   QVariantList entries;
   for (const StashEntry& entry : m_kept.stash) {
-    QString snippet = entry.text.trimmed().replace(space, QStringLiteral(" "));
+    QString snippet = entry.text;
+    // A quote reads as its text and comment (assistantCitationsToPlainText).
+    for (const Excerpt& excerpt : entry.excerpts) {
+      if (excerpt.citation.isEmpty()) continue;
+      snippet += QLatin1Char(' ') + excerpt.citation.value(QStringLiteral("text")).toString();
+      if (const QString comment = excerpt.citation.value(QStringLiteral("comment")).toString(); !comment.isEmpty()) {
+        snippet += QStringLiteral(" Comment: ") + comment;
+      }
+    }
+    snippet = snippet.trimmed().replace(space, QStringLiteral(" "));
     if (snippet.size() > 90) {
       snippet = snippet.left(90) + QStringLiteral("…");
     } else if (snippet.isEmpty()) {

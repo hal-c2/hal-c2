@@ -227,6 +227,12 @@ const Steps steps([] {
                query.queryItemValue(QStringLiteral("comment"), QUrl::FullyDecoded) == c[0],
            QStringLiteral("the message cites %1").arg(show(link.toString())));
   });
+  step(QStringLiteral("the stash lists the prompt by the quoted paragraph and its comment"), [](World& world, const Captures&, const Table&) {
+    const QVariantList entries = world.state(QStringLiteral("composerStash")).toMap().value(QStringLiteral("entries")).toList();
+    const QString expected = (kParagraph + QStringLiteral(" Comment: Too slow?")).left(90) + QStringLiteral("…");
+    expect(entries.size() == 1 && entries.constFirst().toMap().value(QStringLiteral("snippet")).toString() == expected,
+           QStringLiteral("the stash holds %1").arg(show(entries)));
+  });
   step(QStringLiteral("the draft no longer quotes it"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return quotes(world).isEmpty(); },
                   [&] { return QStringLiteral("no quote; the composer shows %1").arg(show(quotes(world))); });

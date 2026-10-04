@@ -22,6 +22,8 @@ defmodule HalC2.ComposerContext do
   @citation ~r/\[Assistant quote\]\(((?:hal-c2|t3)-citation:\/\/v1\/[^\s)]+)\)/
   @citation_max 8000
   @citation_context_max 32
+  # JavaScript's Number.MAX_SAFE_INTEGER, the contract's limit on an offset.
+  @citation_offset_max 9_007_199_254_740_991
 
   @doc "The text a provider reads for a message with `context` (or nil)."
   def for_provider(text, context) do
@@ -136,7 +138,8 @@ defmodule HalC2.ComposerContext do
          {from, to} = {String.to_integer(from), String.to_integer(to)},
          comment = params["comment"],
          true <-
-           to > from and String.trim(quoted) != "" and String.length(quoted) <= @citation_max and
+           to > from and to <= @citation_offset_max and String.trim(quoted) != "" and
+             String.length(quoted) <= @citation_max and
              String.length(comment || "") <= @citation_max and
              String.length(prefix) <= @citation_context_max and
              String.length(suffix) <= @citation_context_max do

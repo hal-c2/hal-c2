@@ -118,6 +118,12 @@ Feature: Referencing files, skills, commands and context
     And the message cites the paragraph with the comment "Too slow?"
     And the draft no longer quotes it
 
+  @desktop
+  Scenario: A stashed quote is listed by its text
+    Given the draft quotes the assistant's paragraph about caching with the comment "Too slow?"
+    When the user stashes the prompt
+    Then the stash lists the prompt by the quoted paragraph and its comment
+
   @mc
   Scenario: The provider reads a quoted response as reference material
     Given a message quotes an earlier assistant response with the comment "Too slow?"
