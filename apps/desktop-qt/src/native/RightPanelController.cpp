@@ -390,12 +390,20 @@ void RightPanelController::closeTab(const QString& id) {
   if (!m_onThread) return;
   Panel& state = panel();
   const QString closing = id.isEmpty() ? (state.open ? state.active : QString()) : id;
-  if (closing.isEmpty() || !removeTab(state, closing)) return;
-  if (kindOf(closing) == QLatin1String("terminal")) {
-    // Its terminals go too, as the web's closeTerminalSurface.
-    if (auto* terminals = NativeShell::of(this)->controller<TerminalController>()) terminals->closeGroup(closing.mid(kTerminalTab.size()));
+  if (closing.isEmpty() || !state.tabs.contains(closing)) return;
+  auto* terminals = kindOf(closing) == QLatin1String("terminal") ? NativeShell::of(this)->controller<TerminalController>() : nullptr;
+  if (!terminals) {
+    if (removeTab(state, closing)) update();
+    return;
   }
-  update();
+  // Its terminals go too, as the web's closeTerminalSurface: asked once for all of them.
+  const QString group = closing.mid(kTerminalTab.size());
+  const QString thread = m_thread;
+  terminals->confirmClose(terminals->groupTerminals(group), [this, terminals, thread, closing, group] {
+    if (!m_onThread || thread != m_thread || !removeTab(panel(), closing)) return;
+    terminals->closeGroup(group);
+    update();
+  });
 }
 
 void RightPanelController::addTab(const QString& kind) {

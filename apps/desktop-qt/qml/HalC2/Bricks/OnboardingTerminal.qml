@@ -48,6 +48,18 @@ Rectangle {
                 root.session.resize(screen.columns, screen.rows);
         }
 
+        // No draft here to add a selection to: copy and paste only.
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: eventPoint => menu.popup(eventPoint.position.x, eventPoint.position.y)
+        }
+
+        TerminalMenu {
+            id: menu
+
+            terminal: screen
+        }
+
         Connections {
             target: root.session
             function onOutput(data) {

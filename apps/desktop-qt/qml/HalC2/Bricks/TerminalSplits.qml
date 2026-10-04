@@ -130,8 +130,7 @@ FocusScope {
                     };
                 }
 
-                // Right-click: the web's terminal menu's selection actions. Adding to chat needs a
-                // composer to add to.
+                // Right-click: the terminal's menu (TerminalMenu).
                 // A handler, not a MouseArea, so wheel and left-button
                 // selection still reach the Terminal.
                 TapHandler {
@@ -139,25 +138,14 @@ FocusScope {
                     onTapped: eventPoint => menu.popup(eventPoint.position.x, eventPoint.position.y)
                 }
 
-                ShellMenu {
+                TerminalMenu {
                     id: menu
 
-                    ShellMenuItem {
-                        objectName: "terminalAddToChat"
-                        text: qsTr("Add to chat")
-                        visible: (Shell.state.composer?.target ?? null) !== null
-                        height: visible ? implicitHeight : 0
-                        enabled: terminal.hasSelection
-                        onTriggered: {
-                            Shell.dispatch("composer.terminalContext.add", terminal.selectionContext());
-                            terminal.clearSelection();
-                            terminal.forceActiveFocus();
-                        }
-                    }
-                    ShellMenuItem {
-                        text: qsTr("Copy")
-                        enabled: terminal.hasSelection
-                        onTriggered: terminal.copy()
+                    terminal: terminal
+                    addToChat: (Shell.state.composer?.target ?? null) === null ? null : () => {
+                        Shell.dispatch("composer.terminalContext.add", terminal.selectionContext());
+                        terminal.clearSelection();
+                        terminal.forceActiveFocus();
                     }
                 }
 

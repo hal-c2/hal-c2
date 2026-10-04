@@ -109,7 +109,7 @@ Feature: Terminal failures
       When the user closes terminal 2
       Then terminal 2 disappears without an error
 
-    @backlog @desktop
+    @desktop
     Scenario: A terminal that fails to open tells the user why
       When the user opens a terminal in a folder that no longer exists
       Then the terminal says the folder does not exist

@@ -108,13 +108,13 @@ Feature: Links and rendering inside terminals
 
   Rule: The web terminal renders like a native terminal
 
-    @backlog @desktop
+    @desktop
     Scenario: The web terminal follows the app's theme and font
       Given the user switches the app to a dark theme
       Then the terminal's colours and selection follow the dark theme
       And the terminal uses the app's terminal font
 
-    @backlog @desktop
+    @desktop
     Scenario: Programs that ask for enhanced keyboard reporting receive it
       Given a program turns on the Kitty keyboard protocol
       When the user presses a key with modifiers

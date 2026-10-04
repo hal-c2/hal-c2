@@ -8,6 +8,7 @@
 
 #include "NativeShell.h"
 #include "McClient.h"
+#include "MenuController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -126,6 +127,7 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
     replace(QString());
   } else if (kind == QLatin1String("exited")) {
     note(QStringLiteral("process exited"));
+    emit exited();
   } else if (kind == QLatin1String("error")) {
     note(event.value(QLatin1String("message")).toString());
   } else if (kind == QLatin1String("closed")) {
@@ -424,7 +426,11 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
     const QStringList ids = terminalIds();
     const QString fallback = ids.contains(m_focused) ? m_focused : activeTerminalId();
     const QString terminalId = args.value(QStringLiteral("terminalId"), fallback).toString();
-    if (ids.contains(terminalId)) closeTerminal(terminalId);
+    if (!ids.contains(terminalId)) return true;
+    const QString threadKey = m_threadKey;
+    confirmClose({terminalId}, [this, threadKey, terminalId] {
+      if (threadKey == m_threadKey && terminalIds().contains(terminalId)) closeTerminal(terminalId);
+    });
     return true;
   }
   return false;
@@ -536,6 +542,11 @@ void TerminalController::syncTabs() {
         syncTabs();
         emit changed();
       }
+    });
+    // A shell that ended on its own takes its terminal with it, unasked
+    // (the web's auto-exit cleanup).
+    connect(session, &TerminalSession::exited, this, [this, threadKey, id] {
+      if (threadKey == m_threadKey && terminalIds().contains(id)) closeTerminal(id);
     });
     row.session = session;
     m_tabs.insert(i, row);
@@ -690,6 +701,33 @@ void TerminalController::closeGroup(const QString& group) {
   }
 }
 
+QStringList TerminalController::groupTerminals(const QString& group) const {
+  for (const Group& each : m_ui.value(m_threadKey).groups) {
+    if (each.id == group) return each.terminals;
+  }
+  return {};
+}
+
+void TerminalController::confirmClose(const QStringList& ids, std::function<void()> accepted) {
+  auto* menu = NativeShell::of(this)->controller<MenuController>();
+  if (ids.isEmpty() || !menu) {
+    accepted();
+    return;
+  }
+  const auto known = m_known.value(m_threadKey);
+  QStringList labels;
+  for (const QString& id : ids) labels.append(QStringLiteral("\"%1\"").arg(terminalLabel(id, known.value(id).label)));
+  if (ids.size() == 1) {
+    menu->confirm(QStringLiteral("Close terminal %1?").arg(labels.constFirst()),
+                  QStringLiteral("This stops the running process and clears its history."), QStringLiteral("Close terminal"), true,
+                  std::move(accepted));
+    return;
+  }
+  menu->confirm(QStringLiteral("Close %1 terminals?").arg(ids.size()),
+                QStringLiteral("This stops their running processes and clears their histories: %1.").arg(labels.join(QStringLiteral(", "))),
+                QStringLiteral("Close terminals"), true, std::move(accepted));
+}
+
 void TerminalController::closeTerminal(const QString& terminalId) {
   const QString threadKey = m_threadKey;
   ThreadUi& ui = m_ui[threadKey];
@@ -710,18 +748,26 @@ void TerminalController::closeTerminal(const QString& terminalId) {
     ui.active.clear();
   }
   if (drawerIds(ui, terminalIds()).isEmpty()) ui.open = false;
-  m_client->call(this, m_place->environmentId, QStringLiteral("terminal.close"),
+  const TerminalPlace place = *m_place;
+  m_client->call(this, place.environmentId, QStringLiteral("terminal.close"),
                  QJsonObject{
-                     {QStringLiteral("threadId"), m_place->threadId},
+                     {QStringLiteral("threadId"), place.threadId},
                      {QStringLiteral("terminalId"), terminalId},
                      {QStringLiteral("deleteHistory"), true},
                  },
-                 [this, threadKey, terminalId](const QJsonValue&, const std::optional<QString>& error) {
+                 [this, threadKey, place, terminalId](const QJsonValue&, const std::optional<QString>& error) {
                    m_ui[threadKey].closing.remove(terminalId);
+                   m_known[threadKey].remove(terminalId);
                    if (error) {
-                     toast(QStringLiteral("Failed to close the terminal."), *error);
-                   } else {
-                     m_known[threadKey].remove(terminalId);
+                     // The MC no longer has the session to close: ask the
+                     // shell itself to leave, as the web's closeTerminal does.
+                     m_client->call(this, place.environmentId, QStringLiteral("terminal.write"),
+                                    QJsonObject{
+                                        {QStringLiteral("threadId"), place.threadId},
+                                        {QStringLiteral("terminalId"), terminalId},
+                                        {QStringLiteral("data"), QStringLiteral("exit\n")},
+                                    },
+                                    [](const QJsonValue&, const std::optional<QString>&) {});
                    }
                    if (threadKey == m_threadKey) {
                      syncTabs();

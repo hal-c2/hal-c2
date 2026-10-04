@@ -74,6 +74,7 @@ qt_add_qml_module(hal_c2_bricks
     js/scheduledTasks.js
     RevertDialog.qml
     TerminalSplits.qml
+    TerminalMenu.qml
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml

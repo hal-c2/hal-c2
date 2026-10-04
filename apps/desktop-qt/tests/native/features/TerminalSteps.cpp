@@ -124,7 +124,10 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     const QJsonObject input = shape.value(QLatin1String("input")).toObject();
     if (!ensureTerminal(mc, input)) {
       mc.forget(id);
-      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("Unknown terminal")}});
+      // The reason the MC could not open it, or that it has no such terminal.
+      const QString refusal = mc.part<FakeTerminals>().refuseOpen;
+      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id},
+               {QStringLiteral("reason"), refusal.isEmpty() || !input.contains(QLatin1String("cwd")) ? QStringLiteral("Unknown terminal") : refusal}});
       return;
     }
     const FakeTerminals::Terminal& terminal = mc.part<FakeTerminals>().terminals[terminalKey(input)];
@@ -154,6 +157,12 @@ const FakeMc::Extension extension([](FakeMc& mc) {
                       rpc.payload.value(QLatin1String("terminalId")).toString());
       }
       mc.reply(rpc, QJsonValue::Null);
+      if (rpc.method == QLatin1String("terminal.write")) {
+        const QString reply = mc.part<FakeTerminals>().replies.value(rpc.payload.value(QLatin1String("data")).toString());
+        if (!reply.isEmpty()) {
+          print(mc, rpc.payload.value(QLatin1String("threadId")).toString(), rpc.payload.value(QLatin1String("terminalId")).toString(), reply);
+        }
+      }
     };
     if (mc.holding(QStringLiteral("answers"))) {
       mc.defer(answer);
@@ -324,6 +333,15 @@ bool toastShown(World& world, const QString& title) {
   return false;
 }
 
+// Closing a terminal asks first (terminal/tabs.feature): the user says yes.
+void confirmTerminalClose(World& world) {
+  const QVariant question = world.state(QStringLiteral("confirmation"));
+  expect(question.typeId() == QMetaType::QVariantMap && at(question, QStringLiteral("title")).toString().startsWith(QLatin1String("Close ")),
+         QStringLiteral("closing the terminal asked %1").arg(show(question)));
+  world.bridge().dispatch(QStringLiteral("confirmation.answer"),
+                          QVariantMap{{QStringLiteral("requestId"), at(question, QStringLiteral("requestId"))}, {QStringLiteral("accepted"), true}});
+}
+
 // The MC's project "p1" at /work/p1, connected, unless a Background set one up.
 void ensureProject(World& world) {
   if (world.mc.projects.isEmpty()) {
@@ -377,6 +395,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user closes the active terminal"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("terminal.close"));
+    confirmTerminalClose(world);
     world.sync();  // what it asked of the MC has been answered
   });
   step(QStringLiteral("the user runs the script %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -638,6 +657,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user closes the terminal tab"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("rightPanel.close"), QVariantMap{{QStringLiteral("id"), at(world.state(QStringLiteral("panel")), QStringLiteral("activeId"))}});
+    confirmTerminalClose(world);
     world.sync();
   });
   step(QStringLiteral("the tab's terminal stops and its history is deleted"), [](World& world, const Captures&, const Table&) {

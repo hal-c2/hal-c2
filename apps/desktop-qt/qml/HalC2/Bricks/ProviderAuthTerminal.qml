@@ -42,6 +42,7 @@ Rectangle {
     Terminal {
         id: screen
 
+        objectName: "HalC2Terminal"
         anchors.fill: parent
         anchors.margins: 1
         padding: 6
@@ -66,5 +67,17 @@ Rectangle {
                 });
         }
         Component.onCompleted: root.draw()
+
+        // No draft here to add a selection to: copy and paste only.
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: eventPoint => menu.popup(eventPoint.position.x, eventPoint.position.y)
+        }
+
+        TerminalMenu {
+            id: menu
+
+            terminal: screen
+        }
     }
 }

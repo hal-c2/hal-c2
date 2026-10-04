@@ -12,6 +12,7 @@
 #include <QStringList>
 #include <QVariant>
 
+#include <functional>
 #include <optional>
 
 #include "NativeController.h"
@@ -66,6 +67,8 @@ signals:
   void resized(QSize size);
   // The MC closed the terminal (from this or another client).
   void closed();
+  // Its shell ended on its own.
+  void exited();
   // The first snapshot arrived: the shell is running.
   void attached();
   // The MC refused to open the terminal.
@@ -217,6 +220,12 @@ public:
   QStringList panelGroups(const QString& threadKey) const;
   // Closes every terminal of the group (deleting their history).
   void closeGroup(const QString& group);
+  // Asks before the user's own close of `ids`, as the web's
+  // confirmTerminalClose: one question naming every terminal. `accepted` runs
+  // on yes; with nothing to close it runs at once.
+  void confirmClose(const QStringList& ids, std::function<void()> accepted);
+  // The terminals of a split or panel group.
+  QStringList groupTerminals(const QString& group) const;
   // As the web app's runProjectScript: in the active terminal, or a new one when
   // that one is busy. False without a place or such a script.
   bool runScript(const QString& scriptId);

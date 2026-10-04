@@ -57,6 +57,7 @@ FilesPanel 1.0 FilesPanel.qml
 AgentsPanel 1.0 AgentsPanel.qml
 RevertDialog 1.0 RevertDialog.qml
 TerminalSplits 1.0 TerminalSplits.qml
+TerminalMenu 1.0 TerminalMenu.qml
 TerminalPanel 1.0 TerminalPanel.qml
 PullRequestsPanel 1.0 PullRequestsPanel.qml
 PullRequestReviewPanel 1.0 PullRequestReviewPanel.qml

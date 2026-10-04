@@ -577,6 +577,10 @@ const Steps steps([] {
     expect(!ran(world, QStringLiteral("diff.toggle")), describePress(world));
   });
   step(QStringLiteral("the focused terminal closes"), [](World& world, const Captures&, const Table&) {
+    // The chord asks first, as every close of a terminal the user makes (terminal/tabs.feature).
+    world.waitFor([&world] { return world.state(QStringLiteral("confirmation")).typeId() == QMetaType::QVariantMap; }, [&world] { return describePress(world); });
+    world.bridge().dispatch(QStringLiteral("confirmation.answer"),
+                            QVariantMap{{QStringLiteral("requestId"), at(world.state(QStringLiteral("confirmation")), QStringLiteral("requestId"))}, {QStringLiteral("accepted"), true}});
     world.waitFor([&world] { return terminals(world)->tabs()->rowCount() == 0 || !terminals(world)->isOpen(); },
                   [&world] { return describePress(world); });
   });

@@ -31,13 +31,13 @@ Feature: Adding terminal output to a message
     When the user selects blank lines in the terminal and adds them to the chat
     Then the draft gains no excerpt
 
-  @backlog @desktop
+  @desktop
   Scenario: Adding to chat is not offered where there is no draft to add to
     Given the terminal is shown somewhere without a message draft
     When the user selects terminal output
     Then the user is offered to copy it but not to add it to the chat
 
-  @backlog @desktop
+  @desktop
   Scenario: The terminal's menu offers selection actions only once something is selected
     Given nothing is selected in the terminal
     When the user opens the terminal's menu

@@ -2,6 +2,7 @@
 // What the other terminal steps files need from TerminalSteps.cpp: the MC's
 // terminal manager and the thread the drawer is on.
 
+#include <QHash>
 #include <QJsonObject>
 #include <QList>
 #include <QMap>
@@ -33,6 +34,8 @@ struct FakeTerminals {
   QString refuseOpen;
   // Why terminal.close fails, when it does.
   QString refuseClose;
+  // What the shell prints back when it is written exactly this.
+  QHash<QString, QString> replies;
   // The terminal the steps' right panel tab runs.
   QString panelTerminal;
 };
@@ -62,6 +65,8 @@ QString ensureThread(World& world);
 QList<TerminalTabs::Row> rowsIn(World& world, bool panel);
 QString describeRows(World& world);
 bool toastShown(World& world, const QString& title);
+// Closing a terminal asks first (terminal/tabs.feature): the user says yes.
+void confirmTerminalClose(World& world);
 // The MC's project "p1" at /work/p1, connected, unless a Background set one up.
 void ensureProject(World& world);
 
