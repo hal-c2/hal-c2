@@ -96,6 +96,24 @@ void DraftController::activate() {
     }
     return choices;
   });
+  commands->addMenu(QStringLiteral("draft.moveTo"), tr("Move draft to..."), [this] {
+    QList<CommandRegistry::Choice> choices;
+    const NavigationController::Route& route = NativeShell::of(this)->controller<NavigationController>()->route();
+    const auto shown = shownProject();
+    SidebarController* sidebar = NativeShell::of(this)->sidebar();
+    const auto current = shown ? sidebar->logicalProjectKey(shown->first, shown->second) : std::nullopt;
+    for (const sidebar::ProjectGroup& group : sidebar->groups()) {
+      CommandRegistry::Choice choice;
+      choice.id = group.key;
+      choice.title = group.summary.value(QStringLiteral("displayName")).toString();
+      choice.description = group.summary.value(QStringLiteral("workspaceRoot")).toString();
+      choice.current = current == group.key;
+      choice.run = [this, draftId = route.draftId, key = group.key] { moveTo(draftId, key); };
+      choices.append(choice);
+    }
+    return choices;
+  });
+  commands->setTerms(QStringLiteral("draft.moveTo"), {QStringLiteral("move draft"), QStringLiteral("project"), QStringLiteral("change project")});
   commands->setTerms(QStringLiteral("thread.newIn"), {QStringLiteral("new thread"), QStringLiteral("project"), QStringLiteral("pick"),
                                     QStringLiteral("choose"), QStringLiteral("select")});
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, [this] {
@@ -126,6 +144,8 @@ void DraftController::present() {
   commands->setTitle(newThread, group ? tr("New thread in %1").arg(group->summary.value(QStringLiteral("displayName")).toString())
                                       : keybindings::commandLabel(newThread));
   commands->setListed(newThread, group != nullptr);
+  commands->setListed(QStringLiteral("draft.moveTo"),
+                      shell->controller<NavigationController>()->route().kind == QLatin1String("draft") && shell->sidebar()->groups().size() > 1);
 }
 
 std::optional<std::pair<QString, QString>> DraftController::shownProject() const {
@@ -156,6 +176,10 @@ bool DraftController::handle(const QString& action, const QVariant& payload) {
   }
   if (action == QLatin1String("draft.delete")) {
     remove(map.value(QStringLiteral("draftId")).toString());
+    return true;
+  }
+  if (action == QLatin1String("draft.project")) {
+    moveTo(map.value(QStringLiteral("draftId")).toString(), map.value(QStringLiteral("projectKey")).toString());
     return true;
   }
   if (action == QLatin1String("draft.menu")) {
@@ -296,6 +320,30 @@ void DraftController::setText(const QString& id, const QString& text) {
 
 // A background send took the draft's thread id: the draft stays for the next
 // prompt under a fresh one, so the launched thread's row does not end it.
+void DraftController::moveTo(const QString& id, const QString& projectKey) {
+  const sidebar::ProjectGroup* group = NativeShell::of(this)->sidebar()->group(projectKey);
+  const auto moving = draft(id);
+  if (!group || !moving || group->members.isEmpty()) return;
+  const sidebar::Project* target = &group->members.constFirst();
+  for (const sidebar::Project& member : group->members) {
+    if (member.environmentId == moving->environmentId) target = &member;
+  }
+  if (target->environmentId == moving->environmentId && target->id == moving->projectId) return;
+  for (const Draft& other : std::as_const(m_drafts)) {
+    if (other.id != id && other.environmentId == target->environmentId && other.projectId == target->id) {
+      NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::draft(other.id));
+      return;
+    }
+  }
+  for (Draft& kept : m_drafts) {
+    if (kept.id != id) continue;
+    kept.environmentId = target->environmentId;
+    kept.projectId = target->id;
+    save();
+    changedEverywhere();
+  }
+}
+
 void DraftController::renew(const QString& id) {
   for (Draft& draft : m_drafts) {
     if (draft.id != id) continue;

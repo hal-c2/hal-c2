@@ -88,10 +88,10 @@ Item {
         id: timeline
         objectName: "threadTimeline"
 
-        anchors.top: problemBar.visible ? problemBar.bottom : parent.top
+        anchors.top: lineageBar.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
         visible: !view.draft
         model: view.model
         showStatus: false
@@ -132,6 +132,39 @@ Item {
                 onClicked: Threads.reload(Threads.activeThread)
             }
         }
+    }
+
+    // Where the thread came from and the forks made of it.
+    ThreadLineage {
+        id: lineageBar
+
+        anchors.top: setupCard.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? implicitHeight : 0
+        visible: lineage !== null && !view.draft
+    }
+
+    // The agent stopped on a usage limit: when it resets and what to do until then.
+    LimitRecoveryBanner {
+        id: limitBanner
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: implicitHeight
+        visible: recovery !== null && !view.draft
+    }
+
+    // How the thread's new worktree is being prepared.
+    WorktreeSetupCard {
+        id: setupCard
+
+        anchors.top: problemBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? implicitHeight : 0
+        visible: setup !== null && !view.draft
     }
 
     // Loading, an empty thread, or a draft's opening line. Static: nothing

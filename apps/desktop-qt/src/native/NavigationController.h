@@ -3,6 +3,7 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QUrl>
 #include <QVariantMap>
 
 #include <optional>
@@ -71,6 +72,11 @@ public:
   // Moves to `route` in place of the current one (a draft that became a
   // thread, or went away).
   void replace(const Route& route) { go(route, true); }
+  // A thread's link, `hal-c2://thread/<environmentId>/<threadId>`, and opening
+  // one (`link.open {url}`, or a link of that scheme followed in the app): the
+  // thread where it lives now, false for anything else.
+  static QString threadLink(const QString& key);
+  bool openLink(const QUrl& url);
   // Back to where the user was before, or home.
   void back();
   // To where back() left, if nothing was opened since.

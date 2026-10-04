@@ -119,11 +119,25 @@ FakeThreadMenu& fake(World& world) {
   return world.mc.part<FakeThreadMenu>();
 }
 
+QHash<QString, std::function<void(World&)>>& provided() {
+  static QHash<QString, std::function<void(World&)>> makers;
+  return makers;
+}
+
+std::optional<QString> titled(World& world, const QString& title) {
+  for (auto row = world.mc.threads.cbegin(); row != world.mc.threads.cend(); ++row) {
+    if (row.value().value(QLatin1String("title")).toString() == title) return world.mc.environmentId + QLatin1Char(':') + row.key();
+  }
+  return std::nullopt;
+}
+
 // A thread by key (`env-a:t1`) or by title.
 QString keyOf(World& world, const QString& thread) {
   if (thread.contains(QLatin1Char(':'))) return thread;
-  for (auto row = world.mc.threads.cbegin(); row != world.mc.threads.cend(); ++row) {
-    if (row.value().value(QLatin1String("title")).toString() == thread) return world.mc.environmentId + QLatin1Char(':') + row.key();
+  if (const auto key = titled(world, thread)) return *key;
+  if (provided().contains(thread)) {
+    provided().value(thread)(world);
+    if (const auto key = titled(world, thread)) return *key;
   }
   fail(QStringLiteral("no thread is titled \"%1\"").arg(thread));
 }
@@ -491,6 +505,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("%1 opens").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();  // a thread the MC just made is listed by now
     const QString key = keyOf(world, c[0]);
     world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },
                   [&] { return QStringLiteral("%1 to open; the route is %2").arg(key, show(world.state(QStringLiteral("route")))); });
@@ -649,6 +664,10 @@ void updateThreadRow(World& world, const QString& id, const std::function<void(Q
 
 void projectThreadCommands(World& world) {
   fake(world).project = true;
+}
+
+void provideThread(const QString& title, std::function<void(World& world)> make) {
+  provided().insert(title, std::move(make));
 }
 
 void offerMoveDestinations(World& world, const QJsonArray& destinations) {

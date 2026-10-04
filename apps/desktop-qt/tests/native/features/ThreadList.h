@@ -10,6 +10,9 @@
 
 class World;
 
+// A thread a feature's scenarios take for granted (a fork its Background does
+// not spell out): made the first time a step names it by title.
+void provideThread(const QString& title, std::function<void(World& world)> make);
 // A thread by key (`env-a:t1`) or by title.
 QString threadKeyOf(World& world, const QString& thread);
 // The sidebar section listing the thread `key` (pinned, active, snoozed,

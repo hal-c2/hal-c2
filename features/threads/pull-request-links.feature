@@ -63,13 +63,13 @@ Feature: Linking pull requests to threads
     When the agent links pull request 43 to its thread
     Then "Cart totals" is linked to pull request 43
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Choosing a different pull request from a pull request link
     Given "Cart totals" shows a link to pull request 41
     When the user links pull request 41 to the thread from that link
     Then "Cart totals" is linked to pull request 41
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Unlinking returns the thread to its branch pull request
     Given "Cart totals" was linked by hand to pull request 41
     When the user unlinks pull request 41 from the thread
@@ -81,7 +81,7 @@ Feature: Linking pull requests to threads
     When a new pull request is opened for "feature/cart"
     Then "Cart totals" stays linked to pull request 42
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: An environment that cannot find pull requests says it needs an update
     Given the environment does not look for branch pull requests
     When the user looks at "Cart totals"
