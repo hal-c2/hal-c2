@@ -148,10 +148,9 @@ describe("makeClusterClient", () => {
     // The offline server gets no client; it is still a machine of the cluster.
     expect(connected).toEqual(["env-desktop"]);
     expect(rows(last())).toEqual(["alpha@laptop", "beta@desktop"]);
-    expect(last().projects.map((project) => `${project.id}@${project.machine}`)).toEqual([
-      "p-laptop@laptop",
-      "p-desktop@desktop",
-    ]);
+    expect(
+      last().projects.map((project) => `${project.id}@${project.machine}@${project.machineId}`),
+    ).toEqual(["p-laptop@laptop@env-laptop", "p-desktop@desktop@env-desktop"]);
     expect(last().machines).toEqual([
       { id: "env-laptop", label: "laptop", online: true },
       { id: "env-desktop", label: "desktop", online: true },

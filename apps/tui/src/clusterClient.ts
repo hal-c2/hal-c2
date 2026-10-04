@@ -6,6 +6,7 @@ type Shell = OrchestrationShellSnapshot;
 type ThreadId = Parameters<TuiClient["interrupt"]>[0];
 
 interface Machine {
+  readonly id: string;
   readonly label: string;
   readonly client: TuiClient;
   shell: Shell | null;
@@ -79,9 +80,9 @@ export function makeClusterClient(
     if (homeShell === null) return null;
     if (status === null || status.members.length === 0) return homeShell;
     const parts = [
-      { label: status.label, shell: homeShell },
+      { id: status.id, label: status.label, shell: homeShell },
       ...[...members.values()].flatMap((machine) =>
-        machine.shell ? [{ label: machine.label, shell: machine.shell }] : [],
+        machine.shell ? [{ id: machine.id, label: machine.label, shell: machine.shell }] : [],
       ),
     ];
     const threads = new Map<string, Shell["threads"][number]>();
@@ -96,8 +97,8 @@ export function makeClusterClient(
     }
     return {
       ...homeShell,
-      projects: parts.flatMap(({ label, shell }) =>
-        shell.projects.map((project) => ({ ...project, machine: label })),
+      projects: parts.flatMap(({ id, label, shell }) =>
+        shell.projects.map((project) => ({ ...project, machine: label, machineId: id })),
       ),
       threads: [...threads.values()],
       machines: [
@@ -134,6 +135,7 @@ export function makeClusterClient(
       if (members.has(member.id) || !member.connected) continue;
       const client = connect(member.id);
       const machine: Machine = {
+        id: member.id,
         label: member.label,
         client,
         shell: null,

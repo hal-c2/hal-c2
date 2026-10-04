@@ -211,7 +211,10 @@ export function projectNamed(ctx: World, title: string): EnvProject {
 function snapshotOf(environment: Environment): OrchestrationShellSnapshot {
   return {
     snapshotSequence: environment.created,
-    projects: environment.projects.map((project) => ({ ...project })),
+    projects: environment.projects.map((project) => {
+      const machine = environment.machines.find(({ label }) => label === project.machine);
+      return { ...project, ...(machine ? { machineId: machine.id } : {}) };
+    }),
     threads: environment.threads.map((thread) => ({ ...thread })),
     ...(environment.machines.length > 0
       ? { machines: environment.machines.map((machine) => ({ ...machine })) }

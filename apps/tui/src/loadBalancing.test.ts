@@ -67,8 +67,8 @@ describe("placeNewThread", () => {
     { id: "env-laptop", label: "laptop", online: true },
     { id: "env-server", label: "server", online: true },
   ];
-  const picked = { id: ProjectId.make("p-laptop"), machine: "laptop" };
-  const projects = [picked, { id: ProjectId.make("p-server"), machine: "server" }];
+  const picked = { id: ProjectId.make("p-laptop"), machineId: "env-laptop" };
+  const projects = [picked, { id: ProjectId.make("p-server"), machineId: "env-server" }];
   const start = (
     place: (input: ThreadPlacementInput) => Promise<ThreadPlacement>,
     overrides: { machines?: typeof machines; waitMs?: number } = {},
@@ -92,6 +92,28 @@ describe("placeNewThread", () => {
       { environmentId: "env-laptop", projectId: "p-laptop", instanceId: "codex" },
     ]);
     expect(placed).toBe(projects[1]!);
+  });
+
+  it("tells two machines with the same name apart by their environment ids", async () => {
+    const twins = [
+      { id: "env-a", label: "laptop", online: true },
+      { id: "env-b", label: "laptop", online: true },
+    ];
+    const first = { id: ProjectId.make("p-a"), machineId: "env-a" };
+    const second = { id: ProjectId.make("p-b"), machineId: "env-b" };
+    const asked: ThreadPlacementInput[] = [];
+    const placed = await placeNewThread({
+      projects: [first, second],
+      machines: twins,
+      project: second,
+      instanceId: "codex",
+      place: async (input) => {
+        asked.push(input);
+        return { environmentId: "env-a", projectId: "p-a" };
+      },
+    });
+    expect(asked).toEqual([{ environmentId: "env-b", projectId: "p-b", instanceId: "codex" }]);
+    expect(placed).toBe(first);
   });
 
   it("does not ask while this machine is alone", async () => {

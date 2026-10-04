@@ -48,6 +48,8 @@ export type TuiThreadShell = Omit<OrchestrationThreadShell, "snoozedUntil" | "sn
 export type TuiProjectShell = OrchestrationShellSnapshot["projects"][number] & {
   /** The label of the machine it is on, when the shell spans several. */
   readonly machine?: string;
+  /** That machine's environment id: labels are the user's own and may repeat. */
+  readonly machineId?: string;
 };
 /** A project as lists name it: with its machine when the shell spans several. */
 export const projectLabel = (project: Pick<TuiProjectShell, "title" | "machine">): string =>

@@ -66,7 +66,7 @@ export const withLoadPreference = (
 // The MC waits up to a second for the picked machine and a second for the others.
 const PLACEMENT_WAIT_MS = 3_000;
 
-type PlacedProject = Pick<TuiProjectShell, "id" | "machine">;
+type PlacedProject = Pick<TuiProjectShell, "id" | "machineId">;
 
 /**
  * The project a new thread starts in: the one the home MC answers
@@ -88,7 +88,8 @@ export async function placeNewThread<Project extends PlacedProject>(input: {
 }): Promise<Project> {
   const { project } = input;
   const machines = input.machines ?? [];
-  const picked = machines.find((machine) => machine.label === project.machine);
+  // By environment id: two machines may carry the same label.
+  const picked = machines.find((machine) => machine.id === project.machineId);
   if (machines.length < 2 || !picked) return project;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<null>((resolve) => {
@@ -104,10 +105,10 @@ export async function placeNewThread<Project extends PlacedProject>(input: {
       late,
     ]);
     if (placement === null) return project;
-    const chosen = machines.find((machine) => machine.id === placement.environmentId);
     return (
       input.projects.find(
-        (candidate) => candidate.id === placement.projectId && candidate.machine === chosen?.label,
+        (candidate) =>
+          candidate.id === placement.projectId && candidate.machineId === placement.environmentId,
       ) ?? project
     );
   } catch {
