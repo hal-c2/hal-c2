@@ -8,6 +8,6 @@ SettingsPage {
     title: qsTr("General")
     rows: Rows.general
 
-    // The auto-settle rules are each environment's own.
+    // Its rows of the MC apply to the environments chosen here.
     SettingsScopeSentence {}
 }

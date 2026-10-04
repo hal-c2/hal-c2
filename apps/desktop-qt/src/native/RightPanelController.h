@@ -161,6 +161,9 @@ private:
   // The shown thread's terminal groups in the panel.
   QStringList terminalGroups() const;
   void retarget();
+  // Proactive panels (Settings → General): the thread's linked pull requests,
+  // else a large latest turn's diff, open with it.
+  void openProactively();
   // What the palette shows of the thread's pull request commands.
   void presentCommands();
   void update();
@@ -189,6 +192,9 @@ private:
   QString m_thread;
   bool m_onThread = false;
   QHash<QString, Panel> m_panels;
+  // What was last opened proactively for each thread, so a panel the user
+  // closed stays closed until there is something new to show.
+  QHash<QString, QString> m_proactive;
   // Threads by when their panel was last shown, the latest last: the store
   // keeps the latest kStoredThreads.
   QStringList m_recent;

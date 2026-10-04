@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
 #include <QJsonObject>
 #include <QList>
 #include <QQmlPropertyMap>
@@ -54,6 +55,13 @@ public:
   // A brick the scenario keeps on screen (DeviceSteps' DevicePanel): it goes
   // before the shell it draws, on restart too.
   std::unique_ptr<Brick> brick;
+  // A question a brick asks in a dialog of its own: "the user confirms" and "the user cancels" answer it.
+  std::function<void(bool accepted)> answerQuestion;
+  // What else a page tells the user in place (an inline error), for "the user is told".
+  std::function<QStringList()> toldInPlace;
+  // Steps two pages share the words of: what they check on the settings page, by a name the two files agree on
+  // ("hasAction", "invalidProjectFile", "isShown", "openResult", "inView"), set while a scenario is on that page.
+  QHash<QString, std::function<void(const QStringList& captures)>> onSettingsPage;
 
   ShellBridge& bridge() { return *m_bridge; }
   NativeShell& native() { return *m_native; }

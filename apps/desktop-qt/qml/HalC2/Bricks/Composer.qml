@@ -47,6 +47,20 @@ Rectangle {
         return Settings.setting("composerRichTextEnabled") !== false;
     }
 
+    // Collapse on scroll (Settings → General): while the user scrolls an
+    // existing thread's conversation (the layout says so), a one-line prompt
+    // rests as a single line without its context strip; focusing the editor or
+    // typing brings it back.
+    property bool conversationScrolled: false
+    readonly property bool collapseOnScroll: {
+        Settings.device;
+        return Settings.setting("composerCollapseOnScroll") !== false;
+    }
+    property bool scrollCollapsed: false
+    readonly property bool resting: scrollCollapsed && collapseOnScroll && ready && model.routeKind !== "draft" && !/[\r\n]/.test(input.text)
+
+    onConversationScrolledChanged: scrollCollapsed = conversationScrolled
+
     // Opt-in input plugins share the same draft synchronization as typing.
     property alias editor: input
     property alias editorActions: editorActions.data
@@ -836,7 +850,7 @@ Rectangle {
                     Layout.rightMargin: 16
                     Layout.topMargin: 16
                     Layout.bottomMargin: 8
-                    Layout.preferredHeight: Math.min(Math.max(input.implicitHeight, 54), 184)
+                    Layout.preferredHeight: composer.resting ? Math.min(input.implicitHeight, 24) : Math.min(Math.max(input.implicitHeight, 54), 184)
                     clip: true
 
                     TextArea {
@@ -845,6 +859,10 @@ Rectangle {
 
                         // ShellWindow reads it for the keymap's composerFocus.
                         readonly property bool composerInput: true
+
+                        // A resting composer comes back when the user turns to it.
+                        onActiveFocusChanged: if (activeFocus) composer.scrollCollapsed = false
+                        onPressed: composer.scrollCollapsed = false
 
                         padding: 0
                         enabled: composer.ready && !composer.model.editorDisabled
@@ -870,6 +888,7 @@ Rectangle {
                                 && composer.enterIntent(event.modifiers) !== "";
                         }
                         Keys.onPressed: event => {
+                            composer.scrollCollapsed = false;
                             event.accepted = false;
                             composer.editorKeyPressed(event);
                             if (event.accepted) return;
@@ -1167,7 +1186,7 @@ Rectangle {
             Layout.rightMargin: 22
             Layout.topMargin: -16
             implicitHeight: 16 + 4 + 24 + 4
-            visible: wsReady && (composer.model?.showContextStrip ?? true)
+            visible: wsReady && (composer.model?.showContextStrip ?? true) && !composer.resting
 
             Rectangle {
                 anchors.fill: parent

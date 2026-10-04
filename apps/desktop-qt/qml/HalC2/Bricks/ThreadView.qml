@@ -19,6 +19,8 @@ Item {
     property real radius: 0
     readonly property var route: Shell.state.route ?? null
     readonly property bool draft: route !== null && route.kind === "draft"
+    // The user scrolled a thread's conversation away from its latest output (the composer rests then).
+    readonly property bool scrolledAway: !draft && model !== null && model.count > 0 && !timeline.following
     readonly property var model: draft ? null : Threads.timeline
     readonly property var workspace: Shell.state.workspace ?? null
     readonly property string status: model ? model.status : "loading"

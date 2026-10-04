@@ -148,6 +148,7 @@ double contrast(const QColor& a, const QColor& b) {
 }
 
 void answer(World& world, bool accepted) {
+  if (world.answerQuestion) return std::exchange(world.answerQuestion, {})(accepted);
   const QVariant question = world.state(QStringLiteral("confirmation"));
   expect(question.typeId() == QMetaType::QVariantMap, QStringLiteral("no question is asked"));
   world.bridge().dispatch(QStringLiteral("confirmation.answer"),

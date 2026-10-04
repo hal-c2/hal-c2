@@ -76,6 +76,7 @@ AlertController& alerts(World& world) {
           state.shown.clear();
         },
         [&state](const QString& kind) { state.sounds.append(kind); },
+        [&state] { return state.allowed; },
         [&state](int count) { state.badge = count; },
   });
   controller->setFocused(state.focused);
@@ -361,6 +362,7 @@ const Steps steps([] {
            QStringLiteral("the alert is still shown: %1").arg(describe(world)));
   });
   step(QStringLiteral("%1 is shown").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("isShown"))) return world.onSettingsPage.value(QStringLiteral("isShown"))(c);
     const QString key = keyOf(world, tracked(world, c[0]));
     const QString shown = world.native().controller<NavigationController>()->threadKey();
     expect(shown == key, QStringLiteral("the window shows \"%1\", not \"%2\"").arg(shown, key));
@@ -499,6 +501,31 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void setAlertFocus(World& world, bool focused) {
+  fake(world).focused = focused;
+  alerts(world);
+}
+
+void setAlertsAllowed(World& world, bool allowed) {
+  fake(world).allowed = allowed;
+  alerts(world);
+}
+
+AlertsSeen alertsSeen(World& world) {
+  alerts(world);
+  const FakeAlerts& state = fake(world);
+  return {state.shown, state.closed, state.sounds, state.badge};
+}
+
+bool clickNotification(World& world, const QString& key, QStringList* raised) {
+  for (const auto& window : world.native().windows()) {
+    QObject::connect(window->bridge(), &ShellBridge::windowCommandRequested, window.get(), [raised, id = window->id()](const QString& command) {
+      if (raised && command == QLatin1String("raise")) raised->append(id);
+    });
+  }
+  return alerts(world).openThread(key);
+}
 
 void awaitSystemNotifications(World& world) {
   auto* settings = world.native().controller<SettingsController>();

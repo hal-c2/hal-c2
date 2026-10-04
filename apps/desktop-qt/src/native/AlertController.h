@@ -50,6 +50,10 @@ public:
     std::function<void(bool enabled)> setEnabled;
     // `kind` is "completion" or "input".
     std::function<void(const QString& kind)> play;
+    // Whether the system lets the app notify; unset where it never refuses.
+    // Choosing system notifications while it does not is undone, with a
+    // toast saying how to allow them.
+    std::function<bool()> permitted;
     // The dock or taskbar badge: how many turns finished since the window
     // last had focus (0 clears it).
     std::function<void(int count)> badge;
@@ -107,4 +111,5 @@ private:
   int m_unseen = 0;
   QHash<QString, Seen> m_seen;
   QSet<QString> m_muted;
+  bool m_settingsRead = false;
 };

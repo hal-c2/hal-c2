@@ -7,7 +7,8 @@
 //
 // Publishes `diagnostics`: {
 //   processes: {loading, error, serverPid, count, cpu, memory,
-//     rows: [{pid, name, command, cpu, memory, type, depth, signaling}]},
+//     rows: [{pid, name, command, cpu, memory, type, depth, signaling}],
+//     groups: [{id (server | provider | terminal), label, count, collapsed, rows}]},
 //   history: {loading, error, windowMs, windows: [{label, windowMs}],
 //     cpuTime, samples, interval, count,
 //     rows: [{pid, name, command, avgCpu, maxCpu, maxMemory, cpuTime}]},
@@ -18,11 +19,14 @@
 // with numbers formatted as the web formats them.
 //
 // Actions: `diagnostics.refresh`, `diagnostics.window {windowMs}`,
+// `diagnostics.group {id}` (folds a group of processes, or opens it again),
 // `diagnostics.signal {pid, signal}` (SIGINT, or SIGKILL once the user
 // confirms), `diagnostics.openLogs` (the logs folder in the preferred
 // editor).
 
+#include <QHash>
 #include <QJsonArray>
+#include <QSet>
 #include <QJsonObject>
 #include <QLocale>
 #include <QRegularExpression>
@@ -101,6 +105,22 @@ QString processType(const QJsonObject& process) {
                                                                                     : QStringLiteral("Process");
 }
 
+// What a process the MC started is for, as HalC2.Diagnostics categorises its
+// telemetry (the row's own `category` when it has one): a provider's agent, a
+// terminal's shell, or the server's own; a child is its parent's.
+QString processGroup(const QJsonObject& process) {
+  const QString category = process.value(QLatin1String("category")).toString();
+  if (category == QLatin1String("provider-root")) return QStringLiteral("provider");
+  if (category == QLatin1String("terminal-root")) return QStringLiteral("terminal");
+  if (!category.isEmpty()) return QStringLiteral("server");
+  const QString command = process.value(QLatin1String("command")).toString();
+  const QString name = command.section(QLatin1Char(' '), 0, 0).section(QLatin1Char('/'), -1);
+  static const QStringList shells{QStringLiteral("sh"), QStringLiteral("bash"), QStringLiteral("zsh"), QStringLiteral("fish"), QStringLiteral("nu"), QStringLiteral("pwsh")};
+  static const QRegularExpression agent(QStringLiteral("^(codex|claude|opencode|cursor|grok|gemini)(-|$)"), QRegularExpression::CaseInsensitiveOption);
+  if (shells.contains(name)) return QStringLiteral("terminal");
+  return agent.match(name).hasMatch() ? QStringLiteral("provider") : QStringLiteral("server");
+}
+
 // An Option's value (`{_tag: "Some", value}`), or null.
 QJsonValue option(const QJsonValue& value) {
   const QJsonObject object = value.toObject();
@@ -146,6 +166,11 @@ public:
         m_windowMs = windowMs;
         readHistory();
       }
+    } else if (action == QLatin1String("diagnostics.group")) {
+      // Folds a group of processes, or opens it again.
+      const QString id = input.value(QStringLiteral("id")).toString();
+      if (!m_collapsed.remove(id)) m_collapsed.insert(id);
+      publish();
     } else if (action == QLatin1String("diagnostics.signal")) {
       signal(input.value(QStringLiteral("pid")).toInt(), input.value(QStringLiteral("signal")).toString());
     } else if (action == QLatin1String("diagnostics.openLogs")) {
@@ -281,10 +306,16 @@ private:
     const QJsonObject& data = m_processes.data;
     const bool read = !data.isEmpty();
     QVariantList rows;
+    // By what each is for; a child goes with the process it runs under.
+    QHash<int, QString> groupOf;
+    QHash<QString, QVariantList> grouped;
     for (const QJsonValue& value : data.value(QLatin1String("processes")).toArray()) {
       const QJsonObject process = value.toObject();
       const int pid = process.value(QLatin1String("pid")).toInt();
-      rows.append(QVariantMap{
+      const int parent = process.value(QLatin1String("ppid")).toInt();
+      const QString group = process.value(QLatin1String("depth")).toInt() > 0 && groupOf.contains(parent) ? groupOf.value(parent) : processGroup(process);
+      groupOf.insert(pid, group);
+      const QVariantMap row{
           {QStringLiteral("pid"), pid},
           {QStringLiteral("name"), processName(process.value(QLatin1String("command")).toString())},
           {QStringLiteral("command"), process.value(QLatin1String("command")).toString()},
@@ -293,7 +324,9 @@ private:
           {QStringLiteral("type"), processType(process)},
           {QStringLiteral("depth"), process.value(QLatin1String("depth")).toInt()},
           {QStringLiteral("signaling"), m_signaling == pid},
-      });
+      };
+      rows.append(row);
+      grouped[group].append(row);
     }
     const QString failure = option(data.value(QLatin1String("error"))).toObject().value(QLatin1String("message")).toString();
     const QString dots = QStringLiteral("...");
@@ -305,7 +338,22 @@ private:
         {QStringLiteral("cpu"), read ? percent(data.value(QLatin1String("totalCpuPercent")).toDouble()) : dots},
         {QStringLiteral("memory"), read ? bytes(data.value(QLatin1String("totalRssBytes")).toDouble()) : dots},
         {QStringLiteral("rows"), rows},
+        {QStringLiteral("groups"), groups(grouped)},
     };
+  }
+
+  // The groups there are processes of, each open until the user folds it.
+  QVariantList groups(const QHash<QString, QVariantList>& grouped) const {
+    static const QList<std::pair<QString, QString>> order{{QStringLiteral("server"), QStringLiteral("Server")},
+                                                         {QStringLiteral("provider"), QStringLiteral("Provider")},
+                                                         {QStringLiteral("terminal"), QStringLiteral("Terminal")}};
+    QVariantList result;
+    for (const auto& [id, label] : order) {
+      if (!grouped.contains(id)) continue;
+      result.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("label"), label}, {QStringLiteral("count"), int(grouped.value(id).size())},
+                                {QStringLiteral("collapsed"), m_collapsed.contains(id)}, {QStringLiteral("rows"), grouped.value(id)}});
+    }
+    return result;
   }
 
   QVariantMap history() const {
@@ -398,6 +446,8 @@ private:
   bool m_open = false;
   int m_windowMs = 15 * 60'000;
   int m_signaling = 0;
+  // The process groups the user folded.
+  QSet<QString> m_collapsed;
   QString m_logsError;
   Read m_processes;
   Read m_history;

@@ -128,10 +128,28 @@ void AlertController::readSettings() {
     m_muted = std::move(next);
     present();
   }
-  if (mode == m_mode) return;
+  const bool chosen = std::exchange(m_settingsRead, true);
+  if (mode == m_mode) {
+    // In-app alerts just turned on follow the threads as they are now.
+    if (m_seen.isEmpty()) evaluate();
+    return;
+  }
+  // Chosen now (not what this device already held) while the system refuses:
+  // the choice is undone, and the user told how to allow it.
+  if (chosen && hasSystemNotifications(mode) && !hasSystemNotifications(m_mode) && m_presenter.permitted && !m_presenter.permitted()) {
+    auto* shell = NativeShell::of(this);
+    shell->controller<SettingsController>()->set(QStringLiteral("notificationMode"), m_mode);
+    if (auto* toasts = shell->controller<ToastController>()) {
+      toasts->show(QStringLiteral("warning"), tr("Notifications are not allowed"),
+                   tr("Allow notifications for HAL-C2 in your system settings, then choose this option again. Sound only is still available."));
+    }
+    return;
+  }
   m_mode = mode;
   if (m_presenter.clear) m_presenter.clear();
   if (m_presenter.setEnabled) m_presenter.setEnabled(hasSystemNotifications(m_mode));
+  // Alerts just turned on follow the threads as they are now.
+  if (m_seen.isEmpty()) evaluate();
 }
 
 void AlertController::evaluate() {

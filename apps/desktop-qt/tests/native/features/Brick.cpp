@@ -131,7 +131,9 @@ bool Brick::press(const QString& key) {
   };
   Qt::KeyboardModifiers modifiers;
   int code = 0;
-  for (const QString& token : key.toLower().split(QLatin1Char('+'))) {
+  // A key the scenario quotes ("/") is the key itself.
+  const bool quoted = key.size() == 3 && key.startsWith(QLatin1Char('"')) && key.endsWith(QLatin1Char('"'));
+  for (const QString& token : quoted ? QStringList{key.mid(1, 1)} : key.toLower().split(QLatin1Char('+'))) {
     if (token == QLatin1String("mod")) {
       modifiers |= Qt::ControlModifier;
     } else if (token == QLatin1String("ctrl")) {

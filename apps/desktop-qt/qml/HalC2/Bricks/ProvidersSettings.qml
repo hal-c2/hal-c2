@@ -375,6 +375,14 @@ Rectangle {
                         }
 
                         ShellButton {
+                            objectName: "registryAbout"
+                            visible: agentRow.modelData.website.length > 0
+                            subtle: true
+                            text: qsTr("About %1").arg(agentRow.modelData.name)
+                            onClicked: registryPane.send("About", { agentId: agentRow.modelData.id })
+                        }
+
+                        ShellButton {
                             objectName: "registryAdd"
                             primary: !agentRow.modelData.added
                             subtle: agentRow.modelData.added
@@ -1156,13 +1164,6 @@ Rectangle {
                         onClicked: page.act("reset", card.provider)
                     }
                 }
-            }
-
-            Note {
-                visible: card.provider.models.length > 0
-                text: qsTr("Models: %1").arg(card.provider.models.map(model => model.name || model.slug).join(", "))
-                elide: Text.ElideRight
-                maximumLineCount: 2
             }
         }
     }

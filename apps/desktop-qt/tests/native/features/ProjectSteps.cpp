@@ -358,6 +358,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user cancels"), [](World& world, const Captures&, const Table&) {
+    if (world.answerQuestion) return std::exchange(world.answerQuestion, {})(false);
     if (cancelRewindQuestion(world)) return;  // CheckpointEditSteps.cpp: "Edit from here?"
     world.bridge().dispatch(QStringLiteral("project.remove.cancel"), QVariantMap());
   });

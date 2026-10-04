@@ -6,6 +6,7 @@
 #include <QSet>
 #include <QVariant>
 
+#include <functional>
 #include <optional>
 
 #include "NativeController.h"
@@ -39,6 +40,22 @@ class ShellStore;
 // first (MenuController's confirmation), and `projectActions.import {name?}`
 // (every offered one without a name).
 // Palette command `projectActions.add` ("Add project action").
+//
+// In Settings → Project the same list is the settings scope's instead (the
+// web's ProjectActionsSettings): with no project picked the selected
+// environments' `defaultProjectScripts`, which every project without a list of
+// its own offers (ProjectScripts.h), else the picked project's own list, kept
+// as its `defaultProjectScripts` override on each environment with a checkout
+// (an environment too old for overrides is left out). The state then also has
+// {settings: true, project (one is picked), available, mixed (the
+// environments' lists differ), own (the project has its own list)}, a script
+// also says `preview`, and the actions are `projectActions.add {name,
+// command, ...}` (added at once), `projectActions.delete {scriptId}`,
+// `projectActions.reset` (a project inherits again) and
+// `projectActions.import {name?}`.
+//
+// A project's own list is written where it is kept: its override once it has
+// one, else its row's `scripts` (`projects.mutate`).
 //
 // It also gives a new thread's draft the project's default workspace: the
 // project's or environment's `defaultThreadEnvMode` setting, else what
@@ -90,11 +107,26 @@ private:
   QList<projectfile::Script> importable() const;
   void applyDefaultWorkspace();
 
+  // Settings → Project: the scope's targets and their lists.
+  struct Target {
+    QString environmentId;
+    QString projectId;  // empty for the environment's defaults
+    QJsonObject settings;
+  };
+  QList<Target> settingsTargets() const;
+  QJsonArray scriptsOn(const Target& target) const;
+  bool handleSettings(const QString& action, const QVariantMap& input);
+  // Applies `transform` to each target's list; undefined drops a project's own list.
+  void writeSettings(const std::function<QJsonValue(QJsonArray)>& transform, const QString& failureTitle);
+  QVariantMap settingsState() const;
+
   ShellBridge* m_bridge;
   McClient* m_client;
   ShellStore* m_store;
   EnvironmentSettings* m_settings;
   bool m_active = false;
+  // The route is Settings → Project.
+  bool m_settingsOpen = false;
   // The project shown: its environment, id and scripts, and its checkout.
   QString m_environment;
   QString m_project;

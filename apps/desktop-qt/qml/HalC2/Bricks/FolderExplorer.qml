@@ -100,7 +100,7 @@ Pane {
             text: qsTr("Remove from HAL-C2…")
             visible: explorer.selectedProject !== null
             onTriggered: {
-                Shell.dispatch("project.remove", {projectKey: explorer.selectedProject.key});
+                Shell.dispatch("project.remove", {projectKey: explorer.selectedProject.key, inSettings: true});
             }
         }
     }

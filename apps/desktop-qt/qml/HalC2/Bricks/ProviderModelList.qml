@@ -5,7 +5,8 @@ import HalC2.Shell
 
 // A provider instance's models as this device's model picker offers them, on
 // the Providers settings section: hiding one, showing it again, and moving it
-// up or down (`providerSettings.modelHidden`, `.modelMove`).
+// up or down (`providerSettings.modelHidden`, `.modelMove`), with what each
+// can do, how many there are and a filter (`.filterModels`).
 ColumnLayout {
     id: list
 
@@ -16,7 +17,7 @@ ColumnLayout {
     }
 
     objectName: "modelList"
-    visible: (provider.models ?? []).length > 0
+    visible: (provider.modelCount ?? (provider.models ?? []).length) > 0
     spacing: 2
 
     Label {
@@ -24,6 +25,31 @@ ColumnLayout {
         text: qsTr("Models in the picker on this device")
         color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(12 * Theme.fontScale)
+    }
+
+    // How many there are, and a filter once the list is long.
+    RowLayout {
+        Layout.fillWidth: true
+        visible: (list.provider.modelSummary ?? "").length > 0
+        spacing: 8
+
+        Label {
+            objectName: "modelSummary"
+            Layout.fillWidth: true
+            text: list.provider.modelSummary ?? ""
+            color: Theme.palette.color("textMuted", "#a1a1aa")
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        ShellTextField {
+            objectName: "modelFilter"
+            visible: (list.provider.modelCount ?? 0) > 6
+            implicitWidth: 160
+            placeholderText: qsTr("Filter models")
+            text: list.provider.modelFilter ?? ""
+            Accessible.name: qsTr("Filter %1 models").arg(list.provider.name ?? "")
+            onTextEdited: list.act("filterModels", { query: text })
+        }
     }
 
     Repeater {
@@ -40,7 +66,8 @@ ColumnLayout {
 
             Label {
                 Layout.fillWidth: true
-                text: row.modelData.name.length > 0 ? row.modelData.name : row.modelData.slug
+                // Its name, a star when it is a favourite, and what it can do.
+                text: (row.modelData.favorite ? "★ " : "") + (row.modelData.name.length > 0 ? row.modelData.name : row.modelData.slug) + ((row.modelData.labels ?? []).length > 0 ? " · " + row.modelData.labels.join(" · ") : "")
                 color: Theme.palette.color(row.modelData.hidden ? "textMuted" : "text", row.modelData.hidden ? "#a1a1aa" : "#e4e4e7")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.strikeout: row.modelData.hidden

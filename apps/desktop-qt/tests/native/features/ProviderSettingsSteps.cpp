@@ -17,6 +17,10 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "Stream.h"
+#include "SettingsController.h"
+#include <QTest>
+#include "Brick.h"
+#include <QQuickItem>
 #include "World.h"
 
 namespace {
@@ -70,8 +74,13 @@ QJsonArray registryAgents() {
                        {QStringLiteral("distribution"), QStringLiteral("npx")},
                        {QStringLiteral("icon"), QStringLiteral("https://cdn.agentclientprotocol.com/%1.svg").arg(id)}};
   };
-  return {agent(QStringLiteral("gemini-cli"), QStringLiteral("Gemini CLI"), QStringLiteral("Google's Gemini agent")),
-          agent(QStringLiteral("gemini-lite"), QStringLiteral("Gemini Lite"), QStringLiteral("A smaller Gemini")),
+  // One with a website, one with only a repository, one with neither.
+  QJsonObject cli = agent(QStringLiteral("gemini-cli"), QStringLiteral("Gemini CLI"), QStringLiteral("Google's Gemini agent"));
+  cli.insert(QStringLiteral("website"), QStringLiteral("https://geminicli.com"));
+  cli.insert(QStringLiteral("repository"), QStringLiteral("https://github.com/google-gemini/gemini-cli"));
+  QJsonObject lite = agent(QStringLiteral("gemini-lite"), QStringLiteral("Gemini Lite"), QStringLiteral("A smaller Gemini"));
+  lite.insert(QStringLiteral("repository"), QStringLiteral("https://github.com/example/gemini-lite"));
+  return {cli, lite,
           agent(QStringLiteral("goose"), QStringLiteral("Goose"), QStringLiteral("An open agent"))};
 }
 
@@ -1926,6 +1935,193 @@ const Steps customModelSteps([] {
     const QStringList choices = reasoningChoices(world);
     expect(choices == QStringList{QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high")},
            QStringLiteral("the composer offers Codex's reasoning for my-model; it offers %1").arg(choices.join(QStringLiteral(", "))));
+  });
+});
+
+// A custom model's id, checked as it is added (ProviderCustomModels::refusal).
+const Steps customModelIdSteps([] {
+  const QString q = kQuoted;
+
+  step(QStringLiteral("Claude already has the custom model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject listing = provider(QStringLiteral("claudeAgent"), QStringLiteral("claudeAgent"), QStringLiteral("Claude"),
+                                         {{QStringLiteral("models"),
+                                           QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("claude-fable-5-1")}, {QStringLiteral("name"), QStringLiteral("Claude Fable 5.1")}}}}});
+    seedInstance(world, QStringLiteral("claudeAgent"),
+                 {{QStringLiteral("driver"), QStringLiteral("claudeAgent")}, {QStringLiteral("enabled"), true},
+                  {QStringLiteral("config"), QJsonObject{{QStringLiteral("customModels"), QJsonArray{c[0]}}}}},
+                 listing);
+    waitForEntry(world, QStringLiteral("Claude"), [&](const QVariantMap& found) {
+      const QVariantList models = found.value(QStringLiteral("customModels")).toList();
+      return models.size() == 1 && models.first().toMap().value(QStringLiteral("slug")) == c[0];
+    }, QStringLiteral("to list its custom model"));
+  });
+  step(QStringLiteral("the user adds the custom model %1 to Claude").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world).writesBefore = fakeConfig(world.mc).writes.size();
+    // What the page says beside the field.
+    world.toldInPlace = [&world] { return QStringList{entry(world, QStringLiteral("Claude")).value(QStringLiteral("modelError")).toString()}; };
+    act(world, QStringLiteral("addModel"), {{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("slug"), c[0]}});
+    world.sync();
+  });
+  step(QStringLiteral("nothing is saved"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QJsonArray saved = savedInstance(world, QStringLiteral("claudeAgent")).value(QLatin1String("config")).toObject().value(QLatin1String("customModels")).toArray();
+    expect(fakeConfig(world.mc).writes.size() == fake(world).writesBefore && saved == QJsonArray{QStringLiteral("my-model")},
+           QStringLiteral("Claude holds %1 after %2 writes").arg(show(saved.toVariantList())).arg(fakeConfig(world.mc).writes.size() - fake(world).writesBefore));
+  });
+});
+
+// The signed-in account's email on a provider's card, as ProvidersSettings.qml draws it.
+const Steps accountEmailSteps([] {
+  const QString q = kQuoted;
+  const auto email = [](World& world) {
+    if (!world.brick) {
+      world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nProvidersSettings {}\n", QSize(900, 900));
+    }
+    world.brick->grab();
+    return world.brick->item(QStringLiteral("email"));
+  };
+  step(QStringLiteral("%1 is signed in as %1").arg(q), [email](World& world, const Captures& c, const Table&) {
+    seedInstance(world, QStringLiteral("claudeAgent_work"),
+                 {{QStringLiteral("driver"), QStringLiteral("claudeAgent")}, {QStringLiteral("displayName"), c[0]}, {QStringLiteral("enabled"), true}},
+                 provider(QStringLiteral("claudeAgent_work"), QStringLiteral("claudeAgent"), c[0],
+                          {{QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), QStringLiteral("authenticated")}, {QStringLiteral("email"), c[1]}}}}));
+    waitForEntry(world, c[0], [&](const QVariantMap& found) { return found.value(QStringLiteral("email")) == c[1]; }, QStringLiteral("to be signed in"));
+    // AlertSteps' "<text> is shown", on this page.
+    world.onSettingsPage.insert(QStringLiteral("isShown"), [&world, email](const QStringList& shown) {
+      const QString text = email(world)->property("text").toString();
+      expect(text == shown.value(0), QStringLiteral("the card shows \"%1\"").arg(text));
+    });
+  });
+  const auto scrambled = [email](World& world) {
+    const QQuickItem* shown = email(world);
+    const QString text = shown->property("text").toString();
+    expect(shown->isVisible() && !text.isEmpty() && !text.contains(QLatin1String("ada")) && !text.contains(QLatin1String("example.com")),
+           QStringLiteral("the card shows \"%1\"").arg(text));
+  };
+  step(QStringLiteral("the account email is shown scrambled"), [scrambled](World& world, const Captures&, const Table&) { scrambled(world); });
+  step(QStringLiteral("the user reveals the email"), [email](World& world, const Captures&, const Table&) {
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(email(world)));
+  });
+  step(QStringLiteral("the user hides it again"), [email](World& world, const Captures&, const Table&) {
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(email(world)));
+  });
+  step(QStringLiteral("it is scrambled again"), [scrambled](World& world, const Captures&, const Table&) { scrambled(world); });
+});
+
+// A registry agent's row in the wizard, as ProvidersSettings.qml draws it.
+const Steps registryDetailSteps([] {
+  const QString q = kQuoted;
+  const auto pane = [](World& world) -> Brick& {
+    if (!world.brick) world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nProvidersSettings {}\n", QSize(900, 1200));
+    world.brick->grab();
+    return *world.brick;
+  };
+  const auto part = [](QQuickItem* row, const char* type) -> QQuickItem* {
+    std::function<QQuickItem*(QQuickItem*)> find = [&](QQuickItem* item) -> QQuickItem* {
+      if (QString::fromLatin1(item->metaObject()->className()).contains(QLatin1String(type))) return item;
+      for (QQuickItem* child : item->childItems()) {
+        if (QQuickItem* found = find(child)) return found;
+      }
+      return nullptr;
+    };
+    return find(row);
+  };
+  step(QStringLiteral("each agent shows its icon and description"), [pane, part](World& world, const Captures&, const Table&) {
+    const QVariantList agents = registry(world).value(QStringLiteral("agents")).toList();
+    expect(agents.size() == 2, QStringLiteral("the registry is %1").arg(show(registry(world))));
+    for (const QVariant& agent : agents) {
+      const QString id = at(agent, QStringLiteral("id")).toString();
+      QQuickItem* row = pane(world).item(QStringLiteral("registryAgent_") + id);
+      const QQuickItem* icon = part(row, "QQuickImage");
+      expect(icon && icon->isVisible() && icon->property("source").toUrl() == QUrl(QStringLiteral("https://cdn.agentclientprotocol.com/%1.svg").arg(id)),
+             QStringLiteral("%1 shows no icon").arg(id));
+      expect(pane(world).shows(at(agent, QStringLiteral("description")).toString()), QStringLiteral("%1 shows no description").arg(id));
+    }
+  });
+  step(QStringLiteral("an agent with a website or repository links to it as \"About <agent>\""), [pane](World& world, const Captures&, const Table&) {
+    const QHash<QString, QString> links{{QStringLiteral("gemini-cli"), QStringLiteral("https://geminicli.com")},
+                                        {QStringLiteral("gemini-lite"), QStringLiteral("https://github.com/example/gemini-lite")}};
+    const QHash<QString, QString> names{{QStringLiteral("gemini-cli"), QStringLiteral("Gemini CLI")}, {QStringLiteral("gemini-lite"), QStringLiteral("Gemini Lite")}};
+    for (auto it = links.cbegin(); it != links.cend(); ++it) {
+      QQuickItem* row = pane(world).item(QStringLiteral("registryAgent_") + it.key());
+      QQuickItem* about = row->findChild<QQuickItem*>(QStringLiteral("registryAbout"));
+      expect(about && about->isVisible() && about->property("text") == QStringLiteral("About ") + names.value(it.key()),
+             QStringLiteral("%1 has no About link").arg(it.key()));
+      world.openedUrls.clear();
+      QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(about));
+      expect(world.openedUrls == QList<QUrl>{QUrl(it.value())}, QStringLiteral("%1 opened %2").arg(it.key()).arg(world.openedUrls.size()));
+    }
+    // One with neither offers no link.
+    searchRegistry(world, QStringLiteral("goose"));
+    const QQuickItem* about = pane(world).item(QStringLiteral("registryAgent_goose"))->findChild<QQuickItem*>(QStringLiteral("registryAbout"));
+    expect(about && !about->isVisible(), QStringLiteral("Goose links somewhere"));
+  });
+});
+
+// The models list of a provider's card.
+const Steps modelListSteps([] {
+  const QString q = kQuoted;
+  const auto boolean = [](const QString& id, const QString& label) {
+    return QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("label"), label}, {QStringLiteral("type"), QStringLiteral("boolean")}};
+  };
+
+  step(QStringLiteral("Claude reports a model with fast mode, thinking and reasoning options"), [boolean](World& world, const Captures&, const Table&) {
+    QJsonObject effort = reasoning();
+    effort.insert(QStringLiteral("id"), QStringLiteral("effort"));
+    const QJsonArray models{
+        QJsonObject{{QStringLiteral("slug"), QStringLiteral("claude-opus")}, {QStringLiteral("name"), QStringLiteral("Claude Opus")},
+                    {QStringLiteral("capabilities"),
+                     QJsonObject{{QStringLiteral("optionDescriptors"),
+                                  QJsonArray{boolean(QStringLiteral("fastMode"), QStringLiteral("Fast Mode")), boolean(QStringLiteral("thinking"), QStringLiteral("Thinking")), effort}}}}},
+        // One that can do none of it, to tell them apart.
+        QJsonObject{{QStringLiteral("slug"), QStringLiteral("claude-haiku")}, {QStringLiteral("name"), QStringLiteral("Claude Haiku")}}};
+    seedInstance(world, QStringLiteral("claudeAgent"), {{QStringLiteral("driver"), QStringLiteral("claudeAgent")}, {QStringLiteral("enabled"), true}},
+                 provider(QStringLiteral("claudeAgent"), QStringLiteral("claudeAgent"), QStringLiteral("Claude"), {{QStringLiteral("models"), models}}));
+  });
+  step(QStringLiteral("the user opens (Claude|Codex)'s models"), [](World& world, const Captures& c, const Table&) {
+    waitForEntry(world, c[0], [](const QVariantMap& found) { return !found.value(QStringLiteral("models")).toList().isEmpty(); }, QStringLiteral("to list its models"));
+  });
+  step(QStringLiteral("that model is labelled %1, %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList models = entry(world, QStringLiteral("Claude")).value(QStringLiteral("models")).toList();
+    expect(models.size() == 2 && models.at(0).toMap().value(QStringLiteral("labels")).toStringList() == QStringList{c[0], c[1], c[2]} &&
+               models.at(1).toMap().value(QStringLiteral("labels")).toStringList().isEmpty(),
+           QStringLiteral("Claude lists %1").arg(show(models)));
+  });
+  step(QStringLiteral("Codex reports twelve models, two of them favourites and one hidden"), [](World& world, const Captures&, const Table&) {
+    QJsonArray models;
+    for (int index = 1; index <= 12; ++index) {
+      // Three minis: two by name, one by id alone.
+      const QString slug = index <= 2 ? QStringLiteral("gpt-5-mini-%1").arg(index) : index == 3 ? QStringLiteral("o4-mini") : QStringLiteral("gpt-5-%1").arg(index);
+      models.append(QJsonObject{{QStringLiteral("slug"), slug}, {QStringLiteral("name"), index == 3 ? QStringLiteral("O4 Small") : slug.toUpper()}});
+    }
+    auto* device = world.native().controller<SettingsController>();
+    device->writeDevice(QStringLiteral("favorites"),
+                        QVariantList{QVariantMap{{QStringLiteral("provider"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5-4")}},
+                                     QVariantMap{{QStringLiteral("provider"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5-5")}},
+                                     // Another instance's favourite is not counted here.
+                                     QVariantMap{{QStringLiteral("provider"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), QStringLiteral("gpt-5-6")}}});
+    device->writeDevice(QStringLiteral("providerModelPreferences"),
+                        QVariantMap{{QStringLiteral("codex"), QVariantMap{{QStringLiteral("hiddenModels"), QStringList{QStringLiteral("gpt-5-12")}}}}});
+    seedInstance(world, QStringLiteral("codex"), {{QStringLiteral("driver"), QStringLiteral("codex")}, {QStringLiteral("enabled"), true}},
+                 provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"), {{QStringLiteral("models"), models}}));
+  });
+  step(QStringLiteral("the list says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap found = entry(world, QStringLiteral("Codex"));
+    expect(found.value(QStringLiteral("modelSummary")) == c[0] && found.value(QStringLiteral("models")).toList().size() == 12,
+           QStringLiteral("the list says \"%1\" over %2 models").arg(found.value(QStringLiteral("modelSummary")).toString()).arg(found.value(QStringLiteral("models")).toList().size()));
+  });
+  step(QStringLiteral("the user filters the models by %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    act(world, QStringLiteral("filterModels"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("query"), c[0]}});
+  });
+  step(QStringLiteral("only models whose name or id has %1 are listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap found = entry(world, QStringLiteral("Codex"));
+    QStringList slugs;
+    for (const QVariant& model : found.value(QStringLiteral("models")).toList()) slugs.append(model.toMap().value(QStringLiteral("slug")).toString());
+    expect(slugs == QStringList{QStringLiteral("gpt-5-mini-1"), QStringLiteral("gpt-5-mini-2"), QStringLiteral("o4-mini")} && c[0] == QLatin1String("mini"),
+           QStringLiteral("Codex lists %1").arg(slugs.join(QStringLiteral(", "))));
+    // The count is still of every model.
+    expect(found.value(QStringLiteral("modelSummary")).toString().startsWith(QLatin1String("12 models")),
+           QStringLiteral("the list says \"%1\"").arg(found.value(QStringLiteral("modelSummary")).toString()));
   });
 });
 

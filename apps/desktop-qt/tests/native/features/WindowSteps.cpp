@@ -482,3 +482,19 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void pressQuitShortcut(World& world, qint64 heldMs, bool releaseMod) {
+  pressQuit(world, heldMs, releaseMod);
+}
+
+void advanceQuitClock(World& world, qint64 ms) {
+  quitting(world).now += ms;
+}
+
+int quitRequests(World& world) {
+  return quitting(world).quits;
+}
+
+QString quitShortcutHint(World& world) {
+  return quitHint(world);
+}

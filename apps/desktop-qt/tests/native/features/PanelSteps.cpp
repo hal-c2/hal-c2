@@ -890,3 +890,8 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void finishTurnWithPatch(World& world, int turn, const QString& patch, const QJsonArray& files) {
+  finishTurn(world, turn, patch);
+  if (!files.isEmpty()) set(world, QStringLiteral("checkpoint"), QStringLiteral("cp-%1").arg(turn), {{QStringLiteral("files"), files}});
+}

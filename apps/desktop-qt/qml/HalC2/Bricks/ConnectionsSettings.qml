@@ -217,6 +217,12 @@ SettingsPage {
                     readOnly: true
                     selectByMouse: true
                     text: page.created ? page.created.url : ""
+                    // The clipboard refused it: selected, ready to copy by hand.
+                    readonly property bool revealed: page.model !== null && page.model.revealed === true
+                    onRevealedChanged: if (revealed) {
+                        forceActiveFocus();
+                        selectAll();
+                    }
                 }
 
                 ShellButton {

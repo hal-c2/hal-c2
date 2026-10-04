@@ -23,7 +23,8 @@ var sections = [
       keywords: "appearance theme themes light dark system color scheme contrast glass opacity environment identification diff colors composer context panel animations font size family smoothing word wrap custom editor" },
     { to: "/settings/projects", label: "Project", brick: "ProjectSettings", requires: "projectSettings",
       detail: "Name, icon, checkouts and how new threads start",
-      settings: [{ title: "Default model", targetId: "model", keywords: "model provider new threads automatic" }],
+      settings: [{ title: "Default model", targetId: "model", keywords: "model provider new threads automatic" },
+                 { title: "Actions", targetId: "projectActions", keywords: "actions scripts commands setup dev test run hal-c2.json import" }],
       keywords: "project projects name rename title icon emoji favicon checkout checkouts remove delete default model permissions runtime mode workspace worktree submodules new threads" },
     { to: "/settings/keybindings", label: "Keybindings", brick: "KeybindingsSettings", action: "keybindings.open",
       detail: "Shortcuts and when they apply", keywords: "keybindings shortcuts keys hotkeys conditions when recorder" },
@@ -100,7 +101,7 @@ function navRows(state) {
 // The settings a section's page holds, each {title, targetId (its objectName
 // on the page), keywords}: its rows this platform shows, then its others.
 function settingsOf(section, os) {
-    return Rows.visible(section.rows || [], os).filter(function (row) { return row.key !== undefined || row.link !== undefined; }).map(function (row) {
+    return Rows.visible(section.rows || [], os).filter(function (row) { return row.key !== undefined || row.link !== undefined || row.component !== undefined; }).map(function (row) {
         return { title: row.title, targetId: "settingsRow:" + (row.key ?? row.id), keywords: row.description || "" };
     }).concat(section.settings || []);
 }
@@ -122,7 +123,8 @@ function paletteEntries(os) {
 
 // How well a title matches `query`, as the web ranks settings: the whole
 // title, its start, anywhere in it, every word in it, the phrase in its other
-// words, or only the words scattered.
+// words, or only the words scattered. Titles that hold the query alike go
+// shortest first.
 function rank(title, query, words, others) {
     if (title === query) return 5;
     if (title.indexOf(query) === 0) return 4;
@@ -145,7 +147,7 @@ function searchRows(query, state, bindings) {
         others = others.toLowerCase();
         var text = title + "\n" + others;
         if (!words.every(function (word) { return text.indexOf(word) >= 0; })) return;
-        found.push({ row: row, rank: rank(title, query, words, others), secondary: secondary, index: found.length });
+        found.push({ row: row, rank: rank(title, query, words, others), secondary: secondary, length: title.length, index: found.length });
     };
     available(state).forEach(function (section) {
         add(section, section.label, section.keywords || "", false);
@@ -172,6 +174,8 @@ function searchRows(query, state, bindings) {
         add({ label: commands[id].label, detail: "Keybindings", to: "/settings/keybindings" }, commands[id].label, commands[id].terms.join(" "), true);
     });
     return found.sort(function (left, right) {
-        return (left.secondary - right.secondary) || (right.rank - left.rank) || (left.index - right.index);
+        // Of two titles matching alike, the one the query covers more of.
+        const closer = left.rank >= 3 && right.rank >= 3 ? left.length - right.length : 0;
+        return (left.secondary - right.secondary) || (right.rank - left.rank) || closer || (left.index - right.index);
     }).map(function (entry) { return entry.row; });
 }

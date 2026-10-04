@@ -126,7 +126,17 @@ bool ProjectController::handle(const QString& action, const QVariant& payload) {
     return true;
   }
   if (action == QLatin1String("project.remove")) {
-    askToRemove(map.value(QStringLiteral("projectKey")).toString());
+    const QString key = map.value(QStringLiteral("projectKey")).toString();
+    // From the folder explorer the removal is confirmed in Settings → Project, on that project.
+    if (map.value(QStringLiteral("inSettings")).toBool()) {
+      const auto project = m_store->project(key);
+      const auto logical = project ? NativeShell::of(this)->sidebar()->logicalProjectKey(project->environmentId, project->id) : std::nullopt;
+      if (logical) {
+        m_bridge->dispatch(QStringLiteral("settingsScope.project"), QVariantMap{{QStringLiteral("key"), *logical}});
+        m_bridge->dispatch(QStringLiteral("settings.navigate"), QVariantMap{{QStringLiteral("to"), QStringLiteral("/settings/projects")}});
+      }
+    }
+    askToRemove(key);
     return true;
   }
   if (action == QLatin1String("project.remove.confirm")) {

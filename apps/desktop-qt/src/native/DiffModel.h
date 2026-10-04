@@ -61,8 +61,12 @@ public:
 
   explicit DiffModel(QObject* parent = nullptr);
 
-  // Replaces the patch; files start expanded when the whole patch is small.
+  // Replaces the patch; files start expanded when the whole patch is small,
+  // unless diffs open collapsed (setCollapsedByDefault).
   void setPatch(const QString& patch);
+  // The "Default diff file state" setting: the next patch opens with every
+  // file collapsed.
+  void setCollapsedByDefault(bool collapsed) { m_collapsedByDefault = collapsed; }
   void clear() { setPatch({}); }
 
   int fileCount() const { return int(m_files.size()); }
@@ -152,4 +156,5 @@ private:
   int m_deletions = 0;
   int m_maxColumns = 0;
   bool m_split = false;
+  bool m_collapsedByDefault = false;
 };

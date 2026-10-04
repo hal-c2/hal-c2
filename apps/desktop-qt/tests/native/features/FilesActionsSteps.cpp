@@ -253,6 +253,7 @@ const Steps steps([] {
          saved(world);
        });
   step(QStringLiteral("%1 has the action %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("hasAction"))) return world.onSettingsPage.value(QStringLiteral("hasAction"))(c);
     world.waitFor([&] { return scriptNamed(world, c[0], c[1]).has_value(); }, [&] { return describeScripts(world, c[0]); });
     world.sync();
     // And the header offers it.
@@ -470,6 +471,7 @@ const Steps steps([] {
     expect(actions(world).value(QStringLiteral("imports")).toList().isEmpty(), QStringLiteral("more is offered: %1").arg(show(actions(world))));
   });
   step(QStringLiteral("the user is warned that hal-c2.json is invalid"), [](World& world, const Captures&, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("invalidProjectFile"))) return world.onSettingsPage.value(QStringLiteral("invalidProjectFile"))(Captures());
     const QQuickItem* warning = world.brick->item(QStringLiteral("threadDetailsProjectFileProblem"));
     expect(warning->isVisible() && warning->property("text").toString().startsWith(QStringLiteral("hal-c2.json is invalid")),
            QStringLiteral("the details say nothing of the file: %1").arg(show(actions(world))));

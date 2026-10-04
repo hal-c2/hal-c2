@@ -33,8 +33,10 @@ class ShellStore;
 // `projectRemoval` {projectKey, title, kind (project | checkout), count (the
 // entries removed), threadCount, workspaceRoot and environment (one entry's,
 // else "")} until `project.remove.confirm` deletes the projects with their
-// threads and drafts or `project.remove.cancel` keeps them. Settings asks
-// about several of a logical project's checkouts at once (askToRemove).
+// threads and drafts or `project.remove.cancel` keeps them. With `inSettings`
+// (the folder explorer's) Settings → Project opens on that project first.
+// Settings asks about several of a logical project's checkouts at once
+// (askToRemove).
 class ProjectController : public QObject, public NativeController {
   Q_OBJECT
 
