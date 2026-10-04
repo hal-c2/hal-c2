@@ -207,7 +207,8 @@ defmodule HalC2.Acp.ThreadRuntime do
          {state, turn} = settle_carried(state, turn),
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
-         state = set_options(state, turn) do
+         state = set_options(state, turn),
+         state = set_parameters(state, turn) do
       started(state)
       state = %{state | leaf: leaf(state)}
       conn = state.conn
@@ -856,6 +857,35 @@ defmodule HalC2.Acp.ThreadRuntime do
     end)
   end
 
+  # Cursor takes the options picked for a model with the model, as its parameters, so
+  # each turn says both (none picked clears what an earlier turn chose).
+  defp set_parameters(%{agent: agent} = state, turn) do
+    if HalC2.Acp.driver(agent) == "cursor" do
+      params =
+        for {id, value} <- Map.get(turn, :options) || %{}, is_binary(id), value != nil do
+          %{"id" => HalC2.Acp.cursor_parameter(id), "value" => to_string(value)}
+        end
+
+      model = if turn.model in [nil, ""], do: state.model || "default", else: turn.model
+
+      case Connection.call(state.conn, "session/set_config_option", %{
+             "sessionId" => state.session_id,
+             "configId" => "model",
+             "value" => model,
+             "_meta" => %{"params" => Enum.sort_by(params, & &1["id"])}
+           }) do
+        {:ok, _} ->
+          %{state | model: model}
+
+        {:error, reason} ->
+          Logger.warning("could not set Cursor's model options: #{inspect(reason)}")
+          state
+      end
+    else
+      state
+    end
+  end
+
   # The choice of a select option (flat or grouped) that plans, if it has one.
   defp plan_choice(option) do
     option["options"]
@@ -1040,6 +1070,27 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
 
     state |> flush() |> write_todo("acp-plan:#{state.turn.ids.run}", steps)
+  end
+
+  # A plan the agent proposes (HAL-C2's own update, which the Cursor agent sends for
+  # Cursor's plan tool): a proposed plan the user can implement once it is whole.
+  defp update(%{"sessionUpdate" => "proposed_plan", "planId" => id} = u, state)
+       when is_binary(id) do
+    native = "plan:#{id}"
+    state = state |> flush() |> ensure_item(native, :plan)
+    markdown = if is_binary(u["markdown"]) and u["markdown"] != "", do: u["markdown"]
+
+    cond do
+      Map.get(state.items[native], :proposed) ->
+        state
+
+      u["status"] == "completed" and markdown != nil ->
+        state = finish_plan(state, native, markdown)
+        %{state | items: Map.update!(state.items, native, &Map.put(&1, :proposed, true))}
+
+      true ->
+        state
+    end
   end
 
   # Models the agent adds or drops mid-session reach the picker without a provider refresh.
@@ -1933,10 +1984,18 @@ defmodule HalC2.Acp.ThreadRuntime do
     %{state | turn: nil, items: %{}}
   end
 
+  @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
+
   # The message, with where its files are; images inline when the agent takes them.
   defp acp_prompt(turn, capabilities, announce) do
     attachments = Map.get(turn, :attachments, [])
     message = HalC2.Attachments.prompt_text(turn.text, attachments)
+
+    # Cursor invokes a skill by its slash name; HAL-C2's composer mentions one as `$name`.
+    message =
+      if turn.ids.driver == "cursor" and message =~ @skill_mention,
+        do: HalC2.Acp.cursor_skill_mentions(message, turn.cwd),
+        else: message
 
     message =
       if announce,

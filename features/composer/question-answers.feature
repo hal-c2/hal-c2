@@ -50,7 +50,7 @@ Feature: Answering the agent's questions from the composer
     When the user dismisses the question without answering
     Then the agent is told the question was dismissed
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Files can be attached to a typed answer and stay with that question
     Given the user has a separate draft "unrelated"
     When the user types "use this schema" and attaches "schema.sql"
@@ -58,13 +58,13 @@ Feature: Answering the agent's questions from the composer
     Then the agent receives "use this schema" with "schema.sql"
     And the normal draft still reads "unrelated"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A question with only fixed choices takes no attachments
     Given the question only allows its listed options
     When the user tries to attach a file
     Then the user is told this question cannot accept attachments
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A failed answer keeps what the user wrote
     Given the user typed "MySQL"
     When submitting the answer fails

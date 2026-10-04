@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
 
@@ -49,6 +50,17 @@ Item {
         answering = id;
         picks = {};
         typed = {};
+    }
+
+    // Files for the answer to one question go to the MC with it.
+    function attachTo(questionId, urls) {
+        const files = Shell.readAttachmentFiles(urls);
+        if (files.length === 0 || question === null) return;
+        Shell.dispatch("composer.question.attach", {
+            requestId: question.requestId,
+            questionId: questionId,
+            files: files
+        });
     }
 
     function pick(item, label) {
@@ -278,13 +290,57 @@ Item {
                             }
                         }
 
-                        ShellTextField {
-                            objectName: "questionAnswer-" + questionItem.modelData.id
+                        RowLayout {
                             Layout.fillWidth: true
                             visible: questionItem.modelData.allowCustomAnswer !== false
-                            placeholderText: qsTr("Or type your own answer")
-                            text: requests.typed[questionItem.modelData.id] ?? ""
-                            onTextEdited: requests.type(questionItem.modelData, text)
+                            spacing: 6
+
+                            ShellTextField {
+                                objectName: "questionAnswer-" + questionItem.modelData.id
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("Or type your own answer")
+                                text: requests.typed[questionItem.modelData.id] ?? ""
+                                onTextEdited: requests.type(questionItem.modelData, text)
+                            }
+
+                            ShellButton {
+                                objectName: "questionAttach-" + questionItem.modelData.id
+                                implicitHeight: 28
+                                subtle: true
+                                iconName: "paperclip"
+                                Accessible.name: qsTr("Attach files")
+                                onClicked: answerFiles.open()
+
+                                FileDialog {
+                                    id: answerFiles
+
+                                    title: qsTr("Attach files")
+                                    fileMode: FileDialog.OpenFiles
+                                    onAccepted: requests.attachTo(questionItem.modelData.id, selectedFiles)
+                                }
+                            }
+                        }
+
+                        Flow {
+                            Layout.fillWidth: true
+                            visible: (questionItem.modelData.attachments ?? []).length > 0
+                            spacing: 6
+
+                            Repeater {
+                                model: questionItem.modelData.attachments ?? []
+
+                                delegate: ComposerAttachment {
+                                    required property var modelData
+
+                                    attachment: modelData
+                                    onRemoveRequested: Shell.dispatch("composer.question.attachment.remove", {
+                                        id: modelData.id
+                                    })
+                                    onRetryRequested: Shell.dispatch("composer.attachment.retry", {
+                                        id: modelData.id
+                                    })
+                                }
+                            }
                         }
                     }
                 }

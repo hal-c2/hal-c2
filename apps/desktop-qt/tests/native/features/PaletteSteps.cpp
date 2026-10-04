@@ -10,6 +10,7 @@
 
 #include <memory>
 
+#include "ComposerBrick.h"
 #include "CommandPaletteController.h"
 #include "DraftController.h"
 #include "FakeFiles.h"
@@ -456,6 +457,7 @@ const Steps steps([] {
            describe(world));
   });
   step(QStringLiteral("%1 is not listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (modelPickerLists(world, c[0], false)) return;
     expect(indexOf(world, c[0]) < 0, describe(world));
   });
   step(QStringLiteral("%1 is described with the project %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
