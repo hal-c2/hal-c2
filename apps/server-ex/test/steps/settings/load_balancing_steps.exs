@@ -17,6 +17,7 @@ defmodule HalC2.Steps.Settings.LoadBalancing do
 
   # The agent the new thread runs on.
   @instance "claudeAgent"
+  @fake_claude Path.expand("../../support/fake_claude.py", __DIR__)
   @memory 16_000_000_000
 
   step "a client asks the MC for its host resources", context do
@@ -92,6 +93,10 @@ defmodule HalC2.Steps.Settings.LoadBalancing do
 
   step "the user starts a new thread in {string} on {string}",
        %{args: [project, machine]} = context do
+    # This machine has the agent as its peers do (`Machines` starts them with a stand-in),
+    # whatever is installed where the scenarios run.
+    World.put_app_env(:claude_command, ["python3", "-u", @fake_claude])
+
     picked = %{
       "environmentId" => environment(context, machine),
       "projectId" => context.checkouts[machine][project].id
