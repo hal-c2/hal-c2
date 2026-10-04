@@ -298,6 +298,50 @@ const Steps steps([] {
            QStringLiteral("the window does not ask for a pairing link"));
   });
 
+  // Pairing again (connections/pairing.feature).
+  step(QStringLiteral("a device whose session was revoked"), [](World& world, const Captures&, const Table&) {
+    ensureConnected(world);
+    followThread(world);
+    const QString token = QStringLiteral("mc-token");
+    fake(world).revoked.insert(token);
+    world.mc.onRaw(QStringLiteral("/ws?token=") + token, [](QTcpSocket* socket, const QByteArray&) { answer(socket, 401, "unauthorized", "text/plain"); });
+    world.mc.drop();
+    waitForPhase(world, {QStringLiteral("refused")});
+  });
+  step(QStringLiteral("the user pairs it again with a fresh link"), [](World& world, const Captures&, const Table&) {
+    // The MC sells a new session for the link's token (`/oauth/token`), once.
+    world.mc.onRaw(QStringLiteral("/oauth/token"), [&world](QTcpSocket* socket, const QByteArray&) {
+      const auto exchange = [&world, socket] {
+        const QByteArray request = socket->peek(socket->bytesAvailable());
+        if (!request.contains("subject_token=")) return false;
+        const bool fresh = request.contains("subject_token=fresh-1&") && fake(world).pairingTokens.isEmpty();
+        if (fresh) fake(world).pairingTokens.insert(QStringLiteral("fresh-1"), QStringLiteral("session-2"));
+        answer(socket, fresh ? 200 : 400, fresh ? json({{QStringLiteral("access_token"), QStringLiteral("session-2")}})
+                                                : json({{QStringLiteral("error"), QStringLiteral("invalid_grant")}}));
+        return true;
+      };
+      if (!exchange()) QObject::connect(socket, &QTcpSocket::readyRead, socket, exchange);
+    });
+    fake(world).connectionsBefore = world.mc.connections.size();
+    Brick& shown = notice(world);
+    shown.item(QStringLiteral("connectionPairingLink"))->setProperty("text", world.mc.origin().toString() + QStringLiteral("/pair#token=fresh-1"));
+    shown.click(QStringLiteral("connectionPair"));
+  });
+  step(QStringLiteral("it reconnects with a new session"), [](World& world, const Captures&, const Table&) {
+    waitForReconnect(world, fake(world).connectionsBefore + 1);
+    const QString token = QUrlQuery(world.mc.connections.last()).queryItemValue(QStringLiteral("token"));
+    expect(token == QLatin1String("session-2") && !connection(world).value(QStringLiteral("needsPairing")).toBool(),
+           QStringLiteral("it connected with \"%1\"; the connection is %2").arg(token, show(connection(world))));
+  });
+  step(QStringLiteral("keeps its local view of the environment"), [](World& world, const Captures&, const Table&) {
+    // The thread it showed is still the one it shows, with what it held, and live again.
+    world.waitFor([&] { return timeline(world).status() == QLatin1String("live"); }, [&] { return describe(timeline(world)); });
+    expect(store(world)->activeThread() == fake(world).thread && timeline(world).rowCount() == fake(world).rowsBefore &&
+               shows(timeline(world), QStringLiteral("The cart total includes tax now.")) &&
+               world.native().store()->thread(fake(world).thread).has_value(),
+           QStringLiteral("the window shows %1: %2").arg(store(world)->activeThread(), describe(timeline(world))));
+  });
+
   // Two environments.
   step(QStringLiteral("two paired environments"), [](World& world, const Captures&, const Table&) {
     world.mc.link(QStringLiteral("Build box"));

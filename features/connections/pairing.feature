@@ -107,7 +107,7 @@ Feature: Pairing a client with an environment
     Then the link is listed without its secret
     And the user must create another link to share
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: Pairing again with a fresh link replaces a lost session
     Given a device whose session was revoked
     When the user pairs it again with a fresh link

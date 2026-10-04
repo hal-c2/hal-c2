@@ -252,6 +252,10 @@ Rectangle {
                 }
             }
 
+            LoadBalancingSettings {
+                Layout.fillWidth: true
+            }
+
             Heading {
                 text: qsTr("Authorized clients")
             }
