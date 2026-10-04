@@ -175,7 +175,7 @@ void ThreadDiff::setStatus(const QString& status, const QString& message) {
 
 QString ThreadDiff::loadKey() const {
   if (reviewing()) {
-    return QStringLiteral("%1:%2 review %3 %4 %5 %6").arg(m_environment, m_threadId).arg(effectiveSelection()).arg(m_cwd, m_baseRef).arg(m_ignoreWhitespace);
+    return QStringLiteral("%1:%2 review %3 %4 %5 %6").arg(m_environment, m_threadId).arg(effectiveSelection()).arg(m_cwd, m_baseRef).arg(ignoreWhitespace());
   }
   return QStringLiteral("%1:%2 %3 %4 %5")
       .arg(m_environment, m_threadId)
@@ -250,7 +250,7 @@ void ThreadDiff::loadReview(int selection) {
   if (key == m_loaded) return;
   m_loaded = key;
   const int request = ++m_request;
-  QJsonObject payload{{QStringLiteral("cwd"), m_cwd}, {QStringLiteral("ignoreWhitespace"), m_ignoreWhitespace}};
+  QJsonObject payload{{QStringLiteral("cwd"), m_cwd}, {QStringLiteral("ignoreWhitespace"), ignoreWhitespace()}};
   if (selection == Branch && !m_baseRef.isEmpty()) payload.insert(QStringLiteral("baseRef"), m_baseRef);
   setStatus(QStringLiteral("loading"), QStringLiteral("Loading changes..."));
   m_client->call(this, m_environment, QStringLiteral("review.getDiffPreview"), payload,
