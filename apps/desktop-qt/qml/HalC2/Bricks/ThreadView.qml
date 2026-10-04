@@ -87,53 +87,14 @@ Item {
         color: Theme.palette.color("canvas", "#0b0b0d")
     }
 
-    // Where the thread came from: its parent opens.
-    Rectangle {
-        id: lineageBar
-        objectName: "threadLineage"
-
-        readonly property var parentThread: !view.draft && (Shell.state.panel?.threadKey ?? "") === Threads.activeThread ? Shell.state.panel?.parent ?? null : null
-
-        anchors.top: problemBar.visible ? problemBar.bottom : parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: visible ? 28 : 0
-        visible: parentThread !== null
-        color: lineageHover.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
-        Accessible.role: Accessible.Link
-        Accessible.name: lineageLabel.text
-
-        Label {
-            id: lineageLabel
-            anchors.fill: parent
-            anchors.leftMargin: 16
-            anchors.rightMargin: 16
-            verticalAlignment: Text.AlignVCenter
-            text: lineageBar.parentThread ? qsTr("↳ %1 %2").arg(lineageBar.parentThread.relation).arg(lineageBar.parentThread.title) : ""
-            color: view.mutedColor
-            font.family: view.uiFamily
-            font.pixelSize: Math.round(12 * Theme.fontScale)
-            elide: Text.ElideRight
-        }
-        HoverHandler {
-            id: lineageHover
-            cursorShape: Qt.PointingHandCursor
-        }
-        TapHandler {
-            onTapped: Shell.dispatch("rightPanel.openThread", {
-                threadKey: lineageBar.parentThread.threadKey
-            })
-        }
-    }
-
     Timeline {
         id: timeline
         objectName: "threadTimeline"
 
-        anchors.top: lineageBar.visible ? lineageBar.bottom : problemBar.visible ? problemBar.bottom : parent.top
+        anchors.top: lineageBar.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
         visible: !view.draft
         model: view.model
         showStatus: false
@@ -181,6 +142,39 @@ Item {
                 onClicked: Threads.reload(Threads.activeThread)
             }
         }
+    }
+
+    // Where the thread came from and the forks made of it.
+    ThreadLineage {
+        id: lineageBar
+
+        anchors.top: setupCard.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? implicitHeight : 0
+        visible: lineage !== null && !view.draft
+    }
+
+    // The agent stopped on a usage limit: when it resets and what to do until then.
+    LimitRecoveryBanner {
+        id: limitBanner
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: implicitHeight
+        visible: recovery !== null && !view.draft
+    }
+
+    // How the thread's new worktree is being prepared.
+    WorktreeSetupCard {
+        id: setupCard
+
+        anchors.top: problemBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? implicitHeight : 0
+        visible: setup !== null && !view.draft
     }
 
     // Loading, an empty thread, or a draft's opening line. Static: nothing

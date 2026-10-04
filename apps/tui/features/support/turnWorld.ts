@@ -22,6 +22,8 @@ interface Fixture {
   readonly requests: Fields[];
   readonly checkpoints: Fields[];
   readonly subagents: Fields[];
+  /** The provider's own threads: the context they used, the work they still run. */
+  providerThreads?: Fields[];
   /** Fields of the thread itself (interaction mode, model). */
   thread: Fields;
   created: number;
@@ -94,7 +96,7 @@ function projection(ctx: TurnWorld): OrchestrationV2ThreadProjection {
     nodes: [],
     subagents: fixture.subagents,
     providerSessions: [],
-    providerThreads: [],
+    providerThreads: fixture.providerThreads ?? [],
     providerTurns: [],
     runtimeRequests: fixture.requests,
     messages: fixture.messages,

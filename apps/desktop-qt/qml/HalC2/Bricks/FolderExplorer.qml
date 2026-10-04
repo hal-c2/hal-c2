@@ -14,13 +14,24 @@ Pane {
     readonly property var localProjects: Shell.state.sidebar?.localProjects ?? []
     readonly property bool localAccess: Shell.localFolderImportEnabled && (Shell.state.sidebar?.localEnvironmentId ?? null) !== null
     readonly property string actionPath: selectedPath.length > 0 ? selectedPath : rootPath
-    readonly property bool directorySelected: localAccess && folders.isDirectory(actionPath)
+    readonly property bool directorySelected: {
+        folders.enabled;
+        folders.rootIndex;
+        return localAccess && folders.isDirectory(actionPath);
+    }
     readonly property var selectedProject: localProjects.find(project => project.workspaceRoot === actionPath) ?? null
     readonly property bool canModifySelection: {
         // Native method calls do not establish dependencies on model properties.
         folders.protectedPaths;
         folders.enabled;
+        folders.rootIndex;
         return localAccess && folders.canModifyFolder(actionPath);
+    }
+    readonly property bool holdsProject: {
+        folders.protectedPaths;
+        folders.enabled;
+        folders.rootIndex;
+        return selectedProject === null && localAccess && folders.holdsProject(actionPath);
     }
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
 
@@ -77,7 +88,7 @@ Pane {
         id: contextMenu
         objectName: "folderContextMenu"
         implicitWidth: 230
-        ShellMenuItem { text: qsTr("Open as project"); enabled: explorer.directorySelected; onTriggered: Shell.dispatch("project.folder.open", {path: explorer.actionPath}) }
+        ShellMenuItem { objectName: "openFolderProjectMenuItem"; text: qsTr("Open as project"); enabled: explorer.directorySelected; onTriggered: Shell.dispatch("project.folder.open", {path: explorer.actionPath}) }
         ShellMenuItem { text: qsTr("New folder…"); enabled: explorer.directorySelected; onTriggered: explorer.beginOperation("create") }
         MenuSeparator {}
         ShellMenuItem { objectName: "renameFolderMenuItem"; text: qsTr("Rename folder…"); enabled: explorer.canModifySelection; onTriggered: explorer.beginOperation("rename") }
@@ -102,6 +113,7 @@ Pane {
             ShellButton { text: qsTr("Browse…"); enabled: explorer.localAccess; onClicked: browse.open() }
         }
         Label {
+            objectName: "folderExplorerUnavailable"
             Layout.fillWidth: true
             visible: !explorer.localAccess
             text: qsTr("Folder management is available only for a connected local environment. Attached servers must explicitly allow local folder access.")
@@ -198,6 +210,7 @@ Pane {
             }
         }
         Label {
+            objectName: "folderExplorerStatus"
             Layout.fillWidth: true
             visible: folders.error.length > 0 || explorer.statusText.length > 0
             text: folders.error.length > 0 ? folders.error : explorer.statusText
@@ -206,8 +219,9 @@ Pane {
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
         Label {
+            objectName: "folderExplorerHint"
             Layout.fillWidth: true
-            text: explorer.selectedProject !== null ? qsTr("Registered project roots stay in place to protect thread paths. Remove from HAL-C2 deletes its conversation history, not its files.") : !explorer.directorySelected && explorer.selectedPath.length > 0 ? qsTr("Files are shown read-only. Right-click a folder to manage it.") : qsTr("Right-click a folder to rename, move or trash it. Disk changes affect every app using these files.")
+            text: explorer.holdsProject ? qsTr("This folder contains a registered project. Its location is protected because threads may still use that path.") : explorer.selectedProject !== null ? qsTr("This folder is a registered project. Its location is protected because threads may still use that path. Remove from HAL-C2 deletes its conversation history, not its files.") : !explorer.directorySelected && explorer.selectedPath.length > 0 ? qsTr("Files are shown read-only. Right-click a folder to manage it.") : qsTr("Right-click a folder to rename, move or trash it. Disk changes affect every app using these files.")
             color: Theme.palette.color("textMuted", "#a1a1aa")
             wrapMode: Text.Wrap
             font.pixelSize: Math.round(11 * Theme.fontScale)

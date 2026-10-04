@@ -108,13 +108,13 @@ Feature: Preparing a new thread's worktree
       | the setup script cannot be started | Could not start the setup script. |
       | the agent cannot be started        | The agent could not start:        |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The user reads the setup details from the conversation
     Given the setup of "Cart totals" failed
     When the user opens the setup details
     Then the user sees why the setup failed and the steps that ran
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: The conversation shows how the setup is going
     Given the setup of "Cart totals" <state>
     When the user looks at "Cart totals"

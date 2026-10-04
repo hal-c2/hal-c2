@@ -35,6 +35,8 @@ export interface WorkLogEntry {
   readonly statusLabel?: string;
   /** The thread a subagent works in; its row opens it. */
   readonly childThreadId?: string;
+  /** A file change's own diff; its row opens it in the diff viewer. */
+  readonly diff?: string;
   // Internal lifecycle bookkeeping kept for collapsing consecutive updates.
   readonly activityKind: string;
   readonly collapseKey?: string;
@@ -261,6 +263,7 @@ function toEntry(activity: OrchestrationThreadActivity): MutableEntry {
 
   const detail = extractToolDetail(payload, title ?? activity.summary);
   if (detail) entry.detail = detail;
+  if (typeof payload?.diff === "string" && payload.diff.length > 0) entry.diff = payload.diff;
   if (command) entry.command = command;
   if (changedFiles.length > 0) entry.changedFiles = changedFiles;
   if (title) entry.toolTitle = title;

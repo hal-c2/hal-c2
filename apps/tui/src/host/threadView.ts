@@ -1082,6 +1082,18 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         );
         return true;
       }
+      // One file change of the turn, as the provider reported it.
+      case "diff.item": {
+        const id = field(payload, "id");
+        const activity = detail?.activities.find((entry) => entry.id === id);
+        const change = activity?.payload as
+          | { diff?: string; data?: { item?: { path?: string } } }
+          | undefined;
+        const text = change?.diff;
+        if (typeof text !== "string") return true;
+        showReview({ label: change?.data?.item?.path ?? "change", load: async () => text });
+        return true;
+      }
       case "diff.all":
         openDiff(null, null);
         return true;

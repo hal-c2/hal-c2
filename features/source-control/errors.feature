@@ -90,7 +90,7 @@ Feature: When source control goes wrong
     When the user pushes from the terminal client
     Then the status line reads the failure starting "Git failed:"
 
-  @backlog @tui
+  @tui
   Scenario: The terminal client keeps the failed phase and hook output
     Given the pre-commit hook fails with "lint failed"
     When the user commits from the terminal client

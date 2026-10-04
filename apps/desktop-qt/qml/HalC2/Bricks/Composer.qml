@@ -665,6 +665,9 @@ Rectangle {
                             onRetryRequested: Shell.dispatch("composer.attachment.retry", {
                                 id: modelData.id
                             })
+                            onOpenRequested: Shell.dispatch("attachment.view", {
+                                id: modelData.id
+                            })
                         }
                     }
 

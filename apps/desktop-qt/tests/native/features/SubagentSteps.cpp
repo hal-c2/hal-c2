@@ -126,17 +126,20 @@ const Steps steps([] {
                   [&] { return QStringLiteral("the subagent's thread to open; the window shows %1").arg(shownThread(world)); });
   });
   step(QStringLiteral("the thread says it is a subagent of the parent"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return at(world.state(QStringLiteral("panel")), QStringLiteral("parent.threadKey")) == key(world, kThread); },
-                  [&] { return QStringLiteral("the thread's parent; the panel is %1").arg(show(world.state(QStringLiteral("panel")))); });
-    world.waitFor([&] { return view(world).shows(QStringLiteral("↳ Subagent of Tax line")); }, QStringLiteral("the thread to say where it came from"));
+    world.waitFor([&] {
+      return at(world.state(QStringLiteral("lineage")), QStringLiteral("parent.key")) == key(world, kThread) &&
+             at(world.state(QStringLiteral("lineage")), QStringLiteral("parent.subagent")).toBool();
+    }, [&] { return QStringLiteral("the thread's parent; its lineage is %1").arg(show(world.state(QStringLiteral("lineage")))); });
+    world.waitFor([&] { return view(world).shows(QStringLiteral("Subagent of Tax line")); }, QStringLiteral("the thread to say where it came from"));
   });
-  step(QStringLiteral("the user opens the parent thread"), [](World& world, const Captures&, const Table&) { click(world, QStringLiteral("threadLineage")); });
+  step(QStringLiteral("the user opens the parent thread"), [](World& world, const Captures&, const Table&) { click(world, QStringLiteral("lineageParent")); });
   step(QStringLiteral("the parent thread is shown"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return shownThread(world) == key(world, kThread) && store(world)->activeThread() == key(world, kThread); },
                   [&] { return QStringLiteral("the parent thread; the window shows %1").arg(shownThread(world)); });
     // Its own timeline, with the subagent's row and no line saying where it came from.
     expect(role(timeline(world), rowOf(world, QStringLiteral("subagent")), TimelineModel::TitleRole) == kChildTitle, describe(timeline(world)));
-    world.waitFor([&] { return !view(world).shows(QStringLiteral("↳ Subagent of Tax line")); }, QStringLiteral("the parent to say nothing of a parent"));
+    world.waitFor([&] { return at(world.state(QStringLiteral("lineage")), QStringLiteral("parent")).isNull() && !view(world).shows(QStringLiteral("Subagent of Tax line")); },
+                  QStringLiteral("the parent to say nothing of a parent"));
   });
 
   // A message from another agent.

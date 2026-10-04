@@ -15,6 +15,7 @@
 #include "Brick.h"
 #include "DiffModel.h"
 #include "FakeConfig.h"
+#include "FilesWorkspace.h"
 #include "Harness.h"
 #include "RightPanelController.h"
 #include "ThreadDiff.h"
@@ -138,19 +139,12 @@ void setEditors(World& world, const QJsonArray& editors) {
 }
 
 // The user's editor, unless the scenario says there is none.
-void haveEditor(World& world) {
+void haveEditor(World& world, const QString& path) {
+  world.mc.part<OpenedInEditor>() = {path, QStringLiteral("zed")};
   if (fake(world).noEditor) return;
   setEditors(world, QJsonArray{QStringLiteral("zed")});
   world.waitFor([&] { return !world.state(QStringLiteral("workspace")).toMap().value(QStringLiteral("editors")).toList().isEmpty(); },
                 QStringLiteral("the environment's editors to be known"));
-}
-
-QList<QJsonObject> editorCalls(World& world) {
-  QList<QJsonObject> calls;
-  for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
-    if (rpc.method == QLatin1String("shell.openInEditor")) calls.append(rpc.payload);
-  }
-  return calls;
 }
 
 const Steps steps([] {
@@ -296,7 +290,7 @@ const Steps steps([] {
     setEditors(world, QJsonArray());
   });
   step(QStringLiteral("the user opens %1 from the diff").arg(q), [](World& world, const Captures& c, const Table&) {
-    haveEditor(world);
+    haveEditor(world, c[0]);
     Brick& brick = panel(world);
     QQuickItem* header = brick.item(QStringLiteral("diffFile-") + c[0]);
     QQuickItem* button = nullptr;
@@ -310,7 +304,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user opens %1 from the commit review").arg(q), [](World& world, const Captures& c, const Table&) {
-    haveEditor(world);
+    haveEditor(world, c[0]);
     world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nGitActions {}\n", QSize(900, 700));
     Brick& brick = *world.brick;
     // The review of what will be committed: the git menu's Commit.
@@ -321,13 +315,6 @@ const Steps steps([] {
     world.waitFor([&] { return dialog->property("opened").toBool(); }, QStringLiteral("the commit review to open"));
     brick.click(name);
     world.sync();
-  });
-  step(QStringLiteral("the file opens in the user's editor"), [](World& world, const Captures&, const Table&) {
-    const QList<QJsonObject> calls = editorCalls(world);
-    expect(calls.size() == 1 && calls.first().value(QLatin1String("cwd")) == QLatin1String("/work/shop/src/cart.ts") &&
-               calls.first().value(QLatin1String("editor")) == QLatin1String("zed"),
-           QStringLiteral("the MC was asked to open %1; the bricks sent %2; the toasts are %3")
-               .arg(calls.isEmpty() ? QStringLiteral("nothing") : show(calls.last().toVariantMap()), world.describeBrickActions(), show(world.state(QStringLiteral("toasts")))));
   });
 });
 

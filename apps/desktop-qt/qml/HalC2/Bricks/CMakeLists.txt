@@ -56,8 +56,18 @@ qt_add_qml_module(hal_c2_bricks
     ProjectRemovalDialog.qml
     ConfirmDialog.qml
     CustomSnoozeDialog.qml
+    WorktreeSetupCard.qml
+    LimitRecoveryBanner.qml
+    ThreadLineage.qml
     DiffPanel.qml
     FilesPanel.qml
+    FileEntryMenu.qml
+    AttachmentViewer.qml
+    FilePathTrail.qml
+    ProjectActionEditor.qml
+    ProjectIcon.qml
+    ProjectIconPicker.qml
+    EnvironmentIconPicker.qml
     AgentsPanel.qml
     js/lucide.js
     js/modelPicker.js

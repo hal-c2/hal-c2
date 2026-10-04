@@ -33,6 +33,8 @@ class ThreadPullRequests : public QAbstractListModel {
   Q_PROPERTY(bool online READ online NOTIFY stateChanged)
   // Why the text given to link() cannot be linked, or why linking failed.
   Q_PROPERTY(QString problem READ problem NOTIFY stateChanged)
+  // What an environment too old to find a branch's pull request says instead.
+  Q_PROPERTY(QString notice READ notice NOTIFY stateChanged)
   Q_PROPERTY(bool linking READ linking NOTIFY stateChanged)
   Q_PROPERTY(bool refreshing READ refreshing NOTIFY stateChanged)
   // The link field shows: the tab's Link button, or "Link pull request to
@@ -88,6 +90,7 @@ public:
   int openCount() const;
   bool online() const { return m_online; }
   QString problem() const { return m_problem; }
+  QString notice() const;
   bool linking() const { return m_linking; }
   bool refreshing() const { return m_refreshing > 0; }
   bool linkOpen() const { return m_linkOpen; }

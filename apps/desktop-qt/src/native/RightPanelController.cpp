@@ -1,4 +1,8 @@
 #include "RightPanelController.h"
+#include "MenuController.h"
+
+#include <QClipboard>
+#include <QGuiApplication>
 
 #include <QDir>
 #include <QFile>
@@ -164,6 +168,29 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
   const QVariantMap map = payload.toMap();
   if (action == QLatin1String("rightPanel.toggle")) {
     toggle();
+  } else if (action == QLatin1String("link.menu")) {
+    // A link in the conversation: opening and copying it, and linking the
+    // pull request it names to the thread.
+    const QString url = map.value(QStringLiteral("url")).toString();
+    QList<MenuController::Item> items{{QStringLiteral("open"), tr("Open link"), QStringLiteral("external-link")},
+                                      {QStringLiteral("copy"), tr("Copy link"), QStringLiteral("copy")}};
+    const QString environmentId = m_thread.left(m_thread.indexOf(QLatin1Char(':')));
+    if (m_onThread && ThreadPullRequests::parseUrl(url) &&
+        (m_store->supports(environmentId, QStringLiteral("threadPullRequests")) ||
+         m_store->supports(environmentId, QStringLiteral("threadPullRequestLinking")))) {
+      items.append({QStringLiteral("link-pull-request"), tr("Link pull request to thread"), QStringLiteral("git-pull-request")});
+    }
+    NativeShell::of(this)->controller<MenuController>()->open(
+        map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items, [this, url](const QString& id) {
+          if (id == QLatin1String("open")) {
+            m_bridge->openExternal(QUrl(url));
+          } else if (id == QLatin1String("copy")) {
+            if (QClipboard* clipboard = QGuiApplication::clipboard()) clipboard->setText(url);
+          } else {
+            showTab(QStringLiteral("pull-requests"));
+            m_pullRequests.link(url);
+          }
+        });
   } else if (action == QLatin1String("rightPanel.activate")) {
     showTab(map.value(QStringLiteral("id")).toString());
   } else if (action == QLatin1String("rightPanel.close")) {
@@ -223,6 +250,7 @@ void RightPanelController::retarget() {
     m_diff.setCheckout(root);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root);
+    m_files.setTimeline(timeline);
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
     m_devices.setThread(environmentId, threadId, m_store->mcServing(environmentId));
@@ -554,7 +582,7 @@ void RightPanelController::publish() {
                         {QStringLiteral("maximized"), state.open && state.maximized},
                         {QStringLiteral("detailsOpen"), state.details},
                         {QStringLiteral("details"), state.details ? QVariant(threadDetails()) : QVariant()},
-                        {QStringLiteral("parent"), parentThread()},
+
                         {QStringLiteral("canAdd"),
                          QVariantMap{{QStringLiteral("diff"), true},
                                      {QStringLiteral("files"), !m_files.root().isEmpty()},
@@ -570,21 +598,6 @@ void RightPanelController::publish() {
 // What the thread details column shows of the thread, from the rows the
 // store holds: where it runs, its checkout, and the threads it came from or
 // started (its lineage's parent, and every thread whose parent it is).
-// The thread this one was started from, for the line over its timeline:
-// {threadKey, title, relation: "Subagent of" | "Forked from"}, or null.
-QVariant RightPanelController::parentThread() const {
-  const QString environment = m_thread.left(m_thread.indexOf(QLatin1Char(':')) + 1);
-  const QJsonObject lineage = m_store->threadRow(m_thread).value(QLatin1String("lineage")).toObject();
-  const QString parent = text(lineage, QLatin1String("parentThreadId"));
-  if (parent.isEmpty()) return QVariant::fromValue(nullptr);
-  const QString title = text(m_store->threadRow(environment + parent), QLatin1String("title"));
-  return QVariantMap{{QStringLiteral("threadKey"), environment + parent},
-                     {QStringLiteral("title"), title.isEmpty() ? QStringLiteral("Unavailable thread") : title},
-                     {QStringLiteral("relation"), text(lineage, QLatin1String("relationshipToParent")) == QLatin1String("subagent")
-                                                      ? QStringLiteral("Subagent of")
-                                                      : QStringLiteral("Forked from")}};
-}
-
 QVariantMap RightPanelController::threadDetails() const {
   const qsizetype colon = m_thread.indexOf(QLatin1Char(':'));
   const QString environmentId = m_thread.left(colon);

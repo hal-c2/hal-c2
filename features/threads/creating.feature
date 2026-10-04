@@ -127,33 +127,33 @@ Feature: Creating threads
     Then the first message is sent in the existing thread
     And no second thread is created
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Starting a thread in the background opens a fresh draft
     Given the user has written a first message in a draft
     When the user starts the thread in the background
     Then the thread starts working without being opened
     And a new draft opens with the same workspace mode and base branch
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Each background start into a new worktree gets its own worktree
     Given the draft is set to use a new worktree
     When the user starts two threads in the background
     Then each thread works in its own new worktree
 
-  @backlog @desktop
+  @desktop
   Scenario: Fanning one request out to several models
     Given "shop" is a Git project
     When the user sends the first message to the models "Opus", "GPT-5" and "Gemini"
     Then three threads are created, one per model
     And each thread works in its own new worktree
 
-  @backlog @desktop
+  @desktop
   Scenario: Several models cannot be chosen outside a Git project
     Given "notes" is not a Git project
     When the user tries to pick more than one model for the first message
     Then only one model can be chosen
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Changing a draft's project picks an environment that has it
     Given the project "api" exists only on the environment "server"
     When the user moves the draft to "api"

@@ -165,7 +165,6 @@ private:
   void update();
   void publish();
   QVariantMap threadDetails() const;
-  QVariant parentThread() const;
   void save();
   // A device's tab, in place of the picker (ThreadDevices::opened).
   void openDevice(const QString& id, bool automatic);

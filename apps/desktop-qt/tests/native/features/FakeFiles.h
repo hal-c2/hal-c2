@@ -17,6 +17,9 @@ class FakeMc;
 struct FakeFiles {
   QMap<QString, QString> files;
   QSet<QString> ignored;
+  // Files of the host outside every workspace, by their full path: read
+  // (readFile takes a full path), never listed.
+  QMap<QString, QString> outside;
   // Folders ("" the top) whose next listing fails.
   QSet<QString> failOnce;
   bool cannotList = false;

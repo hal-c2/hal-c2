@@ -793,6 +793,16 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
   if (m_draftId.isEmpty() || target != m_draftId) return false;
   const composer::Instance* instance = composer::find(m_catalogue, instanceId);
   if (!instance || !instance->ready() || composer::findModel(*instance, model).isEmpty()) return false;
+  // Each model needs a worktree of its own: a folder that is not a Git
+  // repository runs one model, the one just chosen.
+  const auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
+  if (workspace && workspace->git() && !workspace->git()->local.value(QLatin1String("isRepo")).toBool(true)) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("Only one model can be chosen"),
+        QStringLiteral("Multiple models need a new thread in a Git project. Each gets its own worktree."));
+    m_drafts[target].multipleModels.reset();
+    return selectModel(target, instanceId, model);
+  }
   Draft& kept = m_drafts[target];
   QList<QJsonObject> models = kept.multipleModels.value_or(QList<QJsonObject>{selection(target)});
   const auto same = [&](const QJsonObject& chosen) {
@@ -1795,6 +1805,34 @@ QString ComposerController::draft(const QString& target) const {
 QVariant ComposerController::setting(const QString& key) const {
   const auto* settings = NativeShell::of(this)->controller<SettingsController>();
   return settings ? settings->setting(key) : QVariant();
+}
+
+QVariantMap ComposerController::attachmentPreview(const QString& id) {
+  const Attachment* found = findAttachment(id);
+  if (!found) return {};
+  QVariantMap preview{{QStringLiteral("id"), found->id}, {QStringLiteral("name"), found->name}, {QStringLiteral("mimeType"), found->mimeType}};
+  if (!found->file) {
+    preview.insert(QStringLiteral("url"), found->dataUrl);
+    return preview;
+  }
+  // What was pasted, or the file where it was picked from, up to the megabyte the viewer shows.
+  QByteArray bytes = found->content;
+  if (bytes.isEmpty() && !found->path.isEmpty()) {
+    QFile file(found->path);
+    if (file.open(QIODevice::ReadOnly)) bytes = file.read(1024 * 1024);
+  }
+  if (!bytes.contains('\0')) preview.insert(QStringLiteral("text"), QString::fromUtf8(bytes));
+  return preview;
+}
+
+bool ComposerController::insertAtEnd(const QString& text) {
+  const QString where = target();
+  if (where.isEmpty()) return false;
+  QString next = draft(where);
+  if (!next.isEmpty() && !next.back().isSpace()) next += u' ';
+  next += text;
+  setText(where, next, int(next.size()));
+  return true;
 }
 
 void ComposerController::setText(const QString& target, const QString& text, int cursor, const QVariant& edit) {

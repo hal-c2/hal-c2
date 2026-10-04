@@ -34,7 +34,7 @@ Feature: Committing with written or generated messages
     Then the writer model writes the commit message from the staged diff
     And the commit is made with that message
 
-  @backlog @tui
+  @tui
   Scenario: A blank message is written for the user in the terminal client
     When the user commits from the terminal client without writing a message
     Then the writer model writes the commit message
@@ -136,7 +136,7 @@ Feature: Committing with written or generated messages
     When the user commits
     Then the action reports the hook starting, its output "lint ok" and the hook finishing
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario: The running action shows its stage, elapsed time and last hook line
     Given the repository has a slow pre-commit hook
     When the user commits without writing a message

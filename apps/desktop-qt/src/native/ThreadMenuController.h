@@ -75,7 +75,13 @@ private:
   void command(const QString& key, QJsonObject command, const QString& failureTitle,
                std::function<void()> onSuccess = {});
   void archive(const QString& key);
+  // Deleting the last thread of a worktree offers to remove the worktree too
+  // (`vcs.removeWorktree`), or removes it unasked when the environment's
+  // cleanup rules say so (storageCleanup.worktreeOnDelete, or the project's own).
   void remove(const QString& key);
+  void removeWith(const QString& key, const QString& worktree);
+  // The thread's worktree when no other thread uses it, else empty.
+  QString orphanedWorktree(const QString& key) const;
   void pin(const QString& key);
   void unpin(const QString& key);
   void fork(const QString& key);

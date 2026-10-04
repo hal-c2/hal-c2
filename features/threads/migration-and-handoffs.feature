@@ -70,7 +70,7 @@ Feature: Carrying threads and context across servers and agents
     Then a new agent session starts
     And the agent receives a trimmed account of the earlier conversation
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The user is told threads were migrated
     Given threads were migrated from the first version
     When the user opens the app

@@ -24,7 +24,7 @@ Feature: Changing model and provider mid-thread
     And a thread-model-selection-updated event is recorded
     And the next run continues the same provider conversation
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: Context occupancy survives a model change
     Given "t1" has used 80 percent of its provider context
     When the user changes "t1" to another model on the same provider

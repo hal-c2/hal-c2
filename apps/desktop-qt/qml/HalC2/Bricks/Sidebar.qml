@@ -354,6 +354,7 @@ Rectangle {
 
                                 text: statusWord.length > 0 ? qsTr("%1 · %2").arg(modelData.displayName).arg(statusWord) : modelData.displayName
                                 iconName: "folder"
+                                badge: Shell.state.projectIcons?.[modelData.environmentId + ":" + modelData.projectId] ?? null
                                 current: sidebar.model !== null && sidebar.model.scopeProjectKey === modelData.key
                                 onTriggered: Shell.dispatch("sidebar.scope", {
                                     projectKey: modelData.key
@@ -750,6 +751,15 @@ Rectangle {
                             } else {
                                 Shell.dispatch("thread.open", {
                                     key: entry.modelData.item.key
+                                });
+                            }
+                        }
+                        onFilesDropped: urls => {
+                            const files = Shell.readImageFiles(urls);
+                            if (files.length > 0) {
+                                Shell.dispatch("thread.attachFiles", {
+                                    key: entry.modelData.item.key,
+                                    files: files
                                 });
                             }
                         }

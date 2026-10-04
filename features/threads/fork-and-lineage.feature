@@ -101,54 +101,54 @@ Feature: Forking threads and merging work back
     Then Codex resumes its own conversation
     And receives only what happened while Claude was working
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Forking from a response in the conversation
     When the user forks "Plan billing" from the agent's latest response
     Then "Plan billing fork" opens
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A failed fork is reported
     Given the environment rejects the fork
     When the user forks "Plan billing" from a response
     Then the user is told "Failed to fork this response."
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A fork that has not reached this client yet
     Given the fork was created but its thread has not reached this client
     When the user forks "Plan billing" from a response
     Then the user is told to reconnect and open the fork from the thread list
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Seeing a thread's relatives
     Given "Try Stripe" and "Try Paddle" are forks of "Plan billing"
     When the user looks at the relatives of "Plan billing"
     Then both forks are listed with how many are running
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Opening the parent of a fork
     Given the user is viewing "Try Stripe"
     When the user opens its parent thread
     Then "Plan billing" opens
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A relative that is no longer available
     Given the parent of "Try Stripe" was deleted
     When the user looks at the relatives of "Try Stripe"
     Then the parent is shown as unavailable
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Merging back needs finished work
     Given "Try Stripe" has no finished run
     When the user looks at merging "Try Stripe" back
     Then merging is unavailable until a run in the fork completes
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Merging back from the fork opens the parent
     Given "Try Stripe" has a finished run
     When the user merges "Try Stripe" back into "Plan billing"
     Then "Plan billing" opens
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The conversation shows where a fork came from
     Given the user is viewing "Try Stripe"
     When the user reads the start of the conversation

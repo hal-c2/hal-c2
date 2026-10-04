@@ -28,6 +28,8 @@ SidebarController::SidebarController(ShellBridge* bridge, McClient* client, Shel
   // Snoozes wake and "2h" labels tick over on the minute, as the web app's nowMinute.
   connect(&m_minute, &QTimer::timeout, this, &SidebarController::refresh);
   connect(store, &ShellStore::changed, this, &SidebarController::refresh);
+  m_visitLater.setSingleShot(true);
+  connect(&m_visitLater, &QTimer::timeout, this, &SidebarController::visitOpenThread);
 }
 
 void SidebarController::activate() {
@@ -112,6 +114,8 @@ void SidebarController::refresh() {
   // A thread that went away is not selected any more.
   m_selected.removeIf([this](const QString& key) { return !m_store->thread(key); });
   input.selectedKeys = m_selected;
+  input.jumpLabels = m_jumpLabels;
+  input.showJumpHints = m_showJumpHints;
   input.describeWake = [this, now](const QString& snoozedUntil) {
     return sidebar::wakeDescription(snoozedUntil, now, m_timestampFormat, m_locale);
   };
@@ -122,6 +126,53 @@ void SidebarController::refresh() {
   const QTime time = now.time();
   m_minute.start(std::max(1000, 60000 - time.second() * 1000 - time.msec()));
   if (regrouped) emit grouped();
+  announceMigratedThreads();
+  visitOpenThread();
+}
+
+void SidebarController::announceMigratedThreads() {
+  static const QString kAnnounced = QStringLiteral("migratedThreadsAnnounced");
+  if (!m_store->synchronized()) return;
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  if (!settings || settings->deviceSettings().value(kAnnounced).toBool()) return;
+  qsizetype migrated = 0;
+  for (const sidebar::Thread& thread : m_store->threads()) {
+    if (m_store->threadRow(thread.key()).value(QLatin1String("historyOrigin")) == QLatin1String("v1_import")) ++migrated;
+  }
+  if (migrated == 0 || !settings->writeDevice(kAnnounced, true)) return;
+  toasts()->show(QStringLiteral("info"), QStringLiteral("Your threads were brought over"),
+                 migrated == 1 ? QStringLiteral("1 thread from the previous version is in the list, with its conversation.")
+                               : QStringLiteral("%1 threads from the previous version are in the list, with their conversations.").arg(migrated));
+}
+
+void SidebarController::visitOpenThread() {
+  constexpr qint64 kVisitEveryMs = 5000;
+  const QString key = activeThreadKey();
+  const auto thread = key.isEmpty() ? std::nullopt : m_store->thread(key);
+  if (!thread || !m_client->isReady() || !m_store->threadOnline(key)) return;
+  if (!m_store->capabilities(thread->environmentId).visitedTracking) return;
+  if (!m_store->threadRow(key).contains(QLatin1String("lastVisitedAt"))) return;
+  const auto updatedAt = sidebar::parseIso(thread->updatedAt);
+  if (!updatedAt) return;
+  const auto visitedAt = sidebar::parseIso(thread->lastVisitedAt);
+  if (visitedAt && *visitedAt >= *updatedAt) return;
+  // Once per change: the answer's row comes after this runs again, and a
+  // thread marked unread while open stays unread until something new happens.
+  const QString visit = key + QLatin1Char(':') + thread->updatedAt;
+  if (visit == m_visited) return;
+  const auto completedAt = thread->latestRun ? sidebar::parseIso(thread->latestRun->completedAt) : std::nullopt;
+  const bool unseenCompletion = completedAt && (!visitedAt || *completedAt > *visitedAt);
+  if (!unseenCompletion && m_sinceVisit.isValid() && m_sinceVisit.elapsed() < kVisitEveryMs) {
+    m_visitLater.start(int(kVisitEveryMs - m_sinceVisit.elapsed()));
+    return;
+  }
+  m_visited = visit;
+  m_sinceVisit.start();
+  command(thread->environmentId,
+          {{QStringLiteral("type"), QStringLiteral("thread.visit")},
+           {QStringLiteral("threadId"), thread->id},
+           {QStringLiteral("visitedAt"), thread->updatedAt}},
+          QString());
 }
 
 void SidebarController::draftEdited(const QString& id) {
@@ -186,6 +237,13 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
       }
     }
     return false;
+  }
+  if (action == QLatin1String("thread.attachFiles")) {
+    const QString key = keyOf(map);
+    if (!m_store->thread(key)) return true;
+    NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(key));
+    m_bridge->dispatch(QStringLiteral("composer.attach"), QVariantMap{{QStringLiteral("files"), map.value(QStringLiteral("files"))}});
+    return true;
   }
   if (action == QLatin1String("snooze.custom.cancel")) {
     m_customSnoozeKeys.clear();
@@ -286,6 +344,21 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
                   {QStringLiteral("reason"), QStringLiteral("user")}}),
             QStringLiteral("Failed to un-settle thread"));
   } else if (action == QLatin1String("thread.unsnooze")) {
+    // A snooze the limit recovery made is ended there, so the MC does not
+    // snooze the thread again for the same reset (the web's handleUnsnooze).
+    const QJsonObject recovery = m_store->threadRow(key).value(QLatin1String("limitRecovery")).toObject();
+    const auto until = sidebar::parseIso(thread->snoozedUntil);
+    const auto reset = sidebar::parseIso(sidebar::Nullable(recovery.value(QLatin1String("resetAt")).toString()));
+    if (recovery.value(QLatin1String("snooze")).toBool() && thread->latestRun &&
+        recovery.value(QLatin1String("runId")).toString() == thread->latestRun->runId && until && reset && *until == *reset) {
+      command(thread->environmentId,
+              with({{QStringLiteral("type"), QStringLiteral("thread.metadata.update")},
+                    {QStringLiteral("limitRecovery"), QJsonObject{{QStringLiteral("runId"), recovery.value(QLatin1String("runId"))},
+                                                                  {QStringLiteral("resetAt"), recovery.value(QLatin1String("resetAt"))},
+                                                                  {QStringLiteral("snooze"), false}}}}),
+              QStringLiteral("Failed to wake thread"));
+      return true;
+    }
     command(thread->environmentId,
             with({{QStringLiteral("type"), QStringLiteral("thread.unsnooze")},
                   {QStringLiteral("reason"), QStringLiteral("user")}}),
@@ -355,9 +428,16 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
         NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(next));
       };
     } else {
-      // Nothing left to show: a new thread in the same project.
-      navigate = [this, environmentId = thread->environmentId, projectId = thread->projectId] {
-        if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) drafts->start(environmentId, projectId);
+      // Nothing left to show: a new thread in the same project. The thread is
+      // parked either way; a draft that could not be started is said.
+      const QString type = parkCommand.value(QLatin1String("type")).toString();
+      navigate = [this, type, environmentId = thread->environmentId, projectId = thread->projectId] {
+        auto* drafts = NativeShell::of(this)->controller<DraftController>();
+        if (!drafts || !drafts->start(environmentId, projectId).isEmpty()) return;
+        const QString done = type == QLatin1String("thread.archive")  ? QStringLiteral("archived")
+                             : type == QLatin1String("thread.settle") ? QStringLiteral("settled")
+                                                                      : QStringLiteral("snoozed");
+        toasts()->error(QStringLiteral("Thread %1, but navigation failed").arg(done), QStringLiteral("A new thread could not be started."));
       };
     }
   }
@@ -516,6 +596,13 @@ void SidebarController::drop(const QString& key, const QString& section, const Q
   } else if (from == QLatin1String("snoozed")) {
     handle(QStringLiteral("thread.unsnooze"), keyed);
   }
+}
+
+void SidebarController::setJumpHints(const QStringList& labels, bool shown) {
+  if (m_jumpLabels == labels && m_showJumpHints == shown) return;
+  m_jumpLabels = labels;
+  m_showJumpHints = shown;
+  refresh();
 }
 
 QStringList SidebarController::selection() const {

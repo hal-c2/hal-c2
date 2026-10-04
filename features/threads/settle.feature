@@ -160,7 +160,7 @@ Feature: Settling threads
     When "Ship checkout" has had no activity for 3 days
     Then "Ship checkout" stays active and pinned
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: Choosing auto-settle rules for an environment
     When the user sets auto-settle to <rule> for <scope>
     Then threads on <affected> follow the new rule
@@ -171,13 +171,13 @@ Feature: Settling threads
       | never on inactivity | all environments       | every environment |
       | when the PR merges  | all environments       | every environment |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Different rules across environments are shown as mixed
     Given "home" settles after 3 days and "work" settles after 7 days
     When the user looks at the auto-settle rules for all environments
     Then the quiet spell is shown as mixed
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: An offline environment keeps its auto-settle rules
     Given the environment "work" is offline
     When the user changes the auto-settle rules for all environments

@@ -114,7 +114,7 @@ Feature: Picking, switching and creating branches
     When the user copies the thread's branch name
     Then "feature/tax" is on the clipboard
 
-  @backlog @tui
+  @tui
   Scenario: Switching and creating branches from the terminal client
     When the user switches the thread to "main" from the terminal client
     Then the checkout is on "main" and the thread's branch reads "main"

@@ -10,6 +10,8 @@
 #   packages/contracts/src/shell.ts (thread.markUnread)
 #   packages/contracts/src/orchestrationV2.ts (thread.visit, thread.mark-unread, thread.visited, thread.marked-unread)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (visit, mark-unread)
+#   apps/web/src/components/ChatView.tsx (a visit for the open thread, once per change)
+#   apps/desktop-qt/src/native/SidebarController.cpp (visitOpenThread)
 
 Feature: Unread and status in the thread list
   Each thread says whether it needs the user, is busy, or has finished work the user has
@@ -113,6 +115,12 @@ Feature: Unread and status in the thread list
     When the user opens "Build search" on the desktop
     Then "Build search" is read on the phone too
 
+  @desktop
+  Scenario: Reading a thread tells the environment it was seen
+    Given "Build search" finished work the user has not seen
+    When the user opens "Build search"
+    Then the environment is told "Build search" was seen up to its latest work
+
   @mc
   Scenario: A late visit from another device does not make a thread unread again
     Given "Build search" was visited at 10:05 on the desktop
@@ -143,7 +151,7 @@ Feature: Unread and status in the thread list
     When the user connects to an environment that tracks reads itself
     Then the remembered reads are sent to the environment once
 
-  @backlog @desktop
+  @desktop
   Scenario: Pointing at a thread previews it
     When the user rests the pointer on "Build search"
     Then a preview shows the thread's project, branch and latest activity

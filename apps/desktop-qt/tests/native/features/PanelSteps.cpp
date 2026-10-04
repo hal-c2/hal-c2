@@ -20,6 +20,7 @@
 #include "DiffModel.h"
 #include "FakeFiles.h"
 #include "FileTreeModel.h"
+#include "FilesWorkspace.h"
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "RightPanelController.h"
@@ -668,7 +669,10 @@ const Steps steps([] {
     fake.truncated.insert(c[0], 3 * 1024 * 1024);
   });
   // A path has a dot or a slash; a bare name is a thread (ThreadListSteps).
-  step(QStringLiteral("the user opens \"([^\"]*[./][^\"]*)\""), [](World& world, const Captures& c, const Table&) { openFile(world, c[0]); });
+  step(QStringLiteral("the user opens \"([^\"]*[./][^\"]*)\""), [](World& world, const Captures& c, const Table&) {
+    filesteps::ensureViewerFile(world, c[0]);
+    openFile(world, c[0]);
+  });
   step(QStringLiteral("the user opens %1 at line (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
     openFile(world, c[0], c[1].toInt());
   });

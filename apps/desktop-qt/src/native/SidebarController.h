@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonObject>
 #include <QLocale>
@@ -93,6 +94,11 @@ public:
   // un-settles or wakes the thread, and into the snoozed shelf does nothing.
   // The order is the environment's (sidebar::planReorder), which has to
   // support it (threadPinReorder, threadActiveReorder).
+  // While the thread jump modifier is held (KeybindingController), the first
+  // nine rows show the key that opens them (`jumpLabel`).
+  void setJumpHints(const QStringList& labels, bool shown);
+  // `thread.attachFiles {key, files}` (files dropped on a row, read by the
+  // brick as the composer reads its own): opens the thread and attaches them.
   // A wake time of the user's own: every snooze menu ends in "Custom…"
   // (kCustomSnooze), which asks through `customSnooze` ({keys, date, time,
   // error}, the CustomSnoozeDialog brick). `snooze.custom.submit {mode, date,
@@ -128,6 +134,16 @@ private:
   // The client settings grouping, ordering and time labels read, from this
   // device's preferences (SettingsController), else their defaults.
   void readSettings();
+  // Reading a thread is a visit: while the window shows one, the MC is told
+  // the thread was seen up to its newest change (`thread.visit`, visitedAt
+  // its updatedAt), which clears "Done" on every device. As the web app's
+  // ChatView: once per change, an unseen completion at once and other
+  // activity at most every few seconds; an MC that does not keep the
+  // watermark (no `lastVisitedAt` on its rows) is not told.
+  void visitOpenThread();
+  // Threads the MC brought over from the first version (`historyOrigin`
+  // "v1_import") are announced once per device, the first time they are listed.
+  void announceMigratedThreads();
   // The open thread, from the shell's route.
   QString activeThreadKey() const;
 
@@ -148,6 +164,11 @@ private:
   QTimeZone m_zone = QTimeZone::systemTimeZone();
   // The threads the custom snooze question is about.
   QStringList m_customSnoozeKeys;
+  QStringList m_jumpLabels;
+  bool m_showJumpHints = false;
+  QString m_visited;  // "<thread key>:<updatedAt>" of the last visit sent
+  QElapsedTimer m_sinceVisit;
+  QTimer m_visitLater;
   QSet<QString> m_selected;
   QString m_anchor;
   // The listed drafts' labels, and the open draft's row as it was when the

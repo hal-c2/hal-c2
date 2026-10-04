@@ -739,6 +739,15 @@ Item {
                             }
                         }
                         IconButton {
+                            objectName: "forkFromResponse"
+                            icon: "git-fork"
+                            tip: qsTr("Fork from this response")
+                            visible: row.showMeta && root.model !== null && typeof root.model.finishedRunOf === "function" && root.model.finishedRunOf(row.rowId).length > 0
+                            onClicked: Shell.dispatch("thread.forkFromRun", {
+                                runId: root.model.finishedRunOf(row.rowId)
+                            })
+                        }
+                        IconButton {
                             objectName: "revertToTurn"
                             icon: "undo-2"
                             tip: qsTr("Revert to here")

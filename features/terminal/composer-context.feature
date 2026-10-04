@@ -69,7 +69,7 @@ Feature: Adding terminal output to a message
     Then each excerpt appears where its placeholder was
     And leftover placeholders disappear
 
-  @backlog @tui
+  @tui
   Scenario: The user adds terminal output to the prompt in the terminal client
     Given the terminal client shows a thread's terminal with output
     When the user adds the selected output to the prompt
