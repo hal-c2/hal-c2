@@ -135,6 +135,10 @@ Rectangle {
                 text: qsTr("This machine")
             }
 
+            ConnectionStatusRow {
+                Layout.fillWidth: true
+            }
+
             EnvironmentIconPicker {
                 Layout.fillWidth: true
                 environmentId: Shell.state.sidebar?.localEnvironmentId ?? ""
@@ -260,6 +264,10 @@ Rectangle {
                         code.clear();
                     }
                 }
+            }
+
+            LoadBalancingSettings {
+                Layout.fillWidth: true
             }
 
             Heading {

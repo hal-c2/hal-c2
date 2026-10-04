@@ -145,6 +145,49 @@ Rectangle {
             }
 
             Heading {
+                visible: candidates.count > 0
+                text: qsTr("Paired machines")
+            }
+
+            Note {
+                visible: candidates.count > 0
+                text: qsTr("Machines this one is paired with that are not in its cluster. Adding one makes an invite here and has that machine join with it.")
+            }
+
+            Repeater {
+                id: candidates
+
+                model: page.model ? page.model.candidates : []
+
+                delegate: RowLayout {
+                    id: candidate
+
+                    required property var modelData
+
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: candidate.modelData.label
+                        color: page.foreground
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        elide: Text.ElideRight
+                    }
+
+                    ShellButton {
+                        objectName: "clusterAdd"
+                        enabled: !page.busy && candidate.modelData.online
+                        text: qsTr("Add to this cluster")
+                        Accessible.name: qsTr("Add %1 to this cluster").arg(candidate.modelData.label)
+                        onClicked: Shell.dispatch("cluster.add", {
+                            environmentId: candidate.modelData.environmentId
+                        })
+                    }
+                }
+            }
+
+            Heading {
                 text: qsTr("Invite a machine")
             }
 

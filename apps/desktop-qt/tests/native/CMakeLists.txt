@@ -42,7 +42,7 @@ add_test(NAME BackendProcess COMMAND tst_BackendProcess)
 # MC, and one steps file per domain (features/*.cpp, picked up on the next build).
 file(GLOB _feature_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/features/*.h")
 # Windows are closed as the user closes them, through their ShellRuntime.
-add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp ../../src/ShellRuntime.cpp ../../src/ShellWindows.cpp ../../src/SingleInstance.cpp ../../src/LocalFolderModel.cpp)
+add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp ../../src/ShellRuntime.cpp ../../src/ShellWindows.cpp ../../src/SingleInstance.cpp ../../src/StoragePaths.cpp ../../src/LocalFolderModel.cpp)
 target_compile_definitions(tst_Features PRIVATE
   HAL_C2_APP_VERSION="test"
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"

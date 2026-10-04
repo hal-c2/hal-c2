@@ -15,6 +15,7 @@
 #include "FilesIdentity.h"
 #include "FilesViewer.h"
 #include "Harness.h"
+#include "SharedSteps.h"
 #include "Onboarding.h"
 #include "SettingsController.h"
 #include "ThemeController.h"
@@ -265,6 +266,7 @@ const Steps steps([] {
   step(QStringLiteral("%1 is not offered").arg(q), [](World& world, const Captures& c, const Table&) {
     if (checkIconImageOffered(world, c[0], false)) return;
     world.sync();
+    expectCommandNotOffered(world, c[0]);
     for (const QVariant& theme : themes(world)->available()) {
       expect(theme.toMap().value(QStringLiteral("id")) != c[0], QStringLiteral("%1 is offered").arg(c[0]));
     }
@@ -436,6 +438,7 @@ const Steps steps([] {
     blockDevice(world);
   });
   step(QStringLiteral("the user removes it"), [](World& world, const Captures&, const Table&) {
+    if (removeSavedEnvironment(world)) return;
     if (removeViewedAttachment(world)) return;
     expect(!themes(world)->removeCustom(world.themeDraft.value(QStringLiteral("id")).toString()), QStringLiteral("the theme was removed"));
     expect(offered(world, QStringLiteral("My Theme")).has_value(), QStringLiteral("the theme is no longer offered"));

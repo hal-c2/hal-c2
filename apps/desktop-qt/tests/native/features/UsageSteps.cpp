@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QSet>
 
+#include "Brick.h"
 #include "FakeConfig.h"
 #include "Harness.h"
 #include "NativeShell.h"
@@ -27,6 +28,7 @@ struct FakeUsage {
   qsizetype readsAtRefresh = 0;
   int limitChecks = 0;
   int followedBefore = 0;
+  int priceWrites = 0;
   // provider.consumeResetCredit: what the MC says, and what it was asked.
   QString creditOutcome = QStringLiteral("reset");
   QList<QJsonObject> redeemed;
@@ -249,8 +251,204 @@ QVariantList codexAccounts(World& world) {
   return {};
 }
 
+QVariantMap prices(World& world) {
+  return world.state(QStringLiteral("usagePrices")).toMap();
+}
+
+QVariantMap priceTarget(World& world, const QString& id) {
+  for (const QVariant& target : prices(world).value(QStringLiteral("targets")).toList()) {
+    if (target.toMap().value(QStringLiteral("id")) == id) return target.toMap();
+  }
+  return {};
+}
+
+QVariantMap priceRow(World& world, const QString& model) {
+  for (const QVariant& row : prices(world).value(QStringLiteral("rows")).toList()) {
+    if (row.toMap().value(QStringLiteral("model")) == model) return row.toMap();
+  }
+  return {};
+}
+
+QJsonObject price(double input, double output) {
+  return {{QStringLiteral("inputCostPerMillionTokens"), input}, {QStringLiteral("outputCostPerMillionTokens"), output}};
+}
+
+// From the usage page, with `count` environments chosen.
+void openPrices(World& world, int count) {
+  showUsage(world, QStringLiteral("cost"));
+  world.bridge().dispatch(QStringLiteral("usagePrices.open"), {});
+  world.waitFor([&] { return prices(world).value(QStringLiteral("open")).toBool() && prices(world).value(QStringLiteral("targets")).toList().size() == count; },
+                [&] { return QStringLiteral("Model prices for %1 environments; the dialog is %2").arg(count).arg(show(prices(world))); });
+}
+
+void editPrice(World& world, const QString& model, const QString& field, const QString& value) {
+  world.bridge().dispatch(QStringLiteral("usagePrices.edit"),
+                          QVariantMap{{QStringLiteral("model"), model}, {QStringLiteral("field"), field}, {QStringLiteral("value"), value}});
+}
+
+// What the environment's settings hold as my-model's input price; negative when none.
+double savedPrice(World& world, const QString& environment) {
+  const QJsonObject settings = environment == world.mc.environmentId ? fakeConfig(world.mc).settings : documentOf(world.mc, environment).settings;
+  const QJsonObject saved = settings.value(QLatin1String("usagePriceOverrides")).toObject();
+  return saved.contains(QStringLiteral("my-model")) ? saved.value(QStringLiteral("my-model")).toObject().value(QLatin1String("inputCostPerMillionTokens")).toDouble() : -1;
+}
+
+int priceWrites(World& world, const QString& environment) {
+  int count = 0;
+  for (const FakeMc::Rpc& rpc : world.mc.calls) {
+    if (rpc.method == QLatin1String("hal-c2.writeSettings") && environmentOf(world.mc, rpc) == environment) ++count;
+  }
+  return count;
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
+
+  // providers/usage.feature: this machine's history is Codex's, and the other
+  // environment, "Studio", has Claude's.
+  step(QStringLiteral("a connected environment with Codex, Claude and Grok history"), [](World& world, const Captures&, const Table&) {
+    ensureConnected(world);
+  });
+  step(QStringLiteral("two connected environments(, one slow to scan)?"), [](World& world, const Captures& c, const Table&) {
+    const QDateTime now = world.now();
+    const QJsonObject limits{{QStringLiteral("checkedAt"), now.toUTC().toString(Qt::ISODateWithMs)},
+                             {QStringLiteral("windows"), QJsonArray{limitsWindow(QStringLiteral("5-hour"), 40, now.addSecs(3600))}}};
+    QJsonObject claude = codex(QStringLiteral("claudeAgent"), QStringLiteral("Claude"), QStringLiteral("sam@example.com"), limits);
+    claude.insert(QStringLiteral("driver"), QStringLiteral("claudeAgent"));
+    setProviders(world, {codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits)});
+    fakeConfig(world.mc).elsewhere.insert(QStringLiteral("Studio"), QJsonObject{{QStringLiteral("providers"), QJsonArray{claude}}});
+    documentOf(world.mc, QStringLiteral("Studio"));
+    link(world, QStringLiteral("Studio"), QStringLiteral("claude"));
+    if (!c.value(0).isEmpty()) fake(world).scanning.insert(QStringLiteral("Studio"));
+  });
+  step(QStringLiteral("the user selects only one environment in Usage"), [](World& world, const Captures&, const Table&) {
+    showUsage(world, QStringLiteral("cost"));
+    world.waitFor([&] { return !environmentRow(world, QStringLiteral("Studio")).isEmpty(); },
+                  [&] { return QStringLiteral("Studio to be offered; the page is %1").arg(show(usage(world))); });
+    world.bridge().dispatch(QStringLiteral("usage.environment"), QVariantMap{{QStringLiteral("id"), QStringLiteral("Studio")}});
+  });
+  step(QStringLiteral("costs, tokens and limits are shown for that environment only"), [](World& world, const Captures&, const Table&) {
+    // One environment's history is one provider's: 1.5 dollars and 1700 tokens.
+    const auto only = [&](const QString& metric) {
+      showUsage(world, metric);
+      world.waitFor([&] {
+        const QVariantList providers = at(usage(world), QStringLiteral("summary.providers")).toList();
+        return usage(world).value(QStringLiteral("environmentId")) == QLatin1String("Studio") && providers.size() == 1 &&
+               providers[0].toMap().value(QStringLiteral("id")) == QLatin1String("claude") &&
+               at(usage(world), QStringLiteral("summary.costUsd")).toDouble() == 1.5 &&
+               at(usage(world), QStringLiteral("summary.totalTokens")).toDouble() == 1700;
+      }, [&] { return QStringLiteral("only Studio's %1; the page is %2").arg(metric, show(usage(world))); });
+    };
+    only(QStringLiteral("cost"));
+    only(QStringLiteral("tokens"));
+    showUsage(world, QStringLiteral("limits"));
+    world.waitFor([&] {
+      const QVariantList pools = at(usage(world), QStringLiteral("limits.pools")).toList();
+      return pools.size() == 1 && pools[0].toMap().value(QStringLiteral("driver")) == QLatin1String("claudeAgent");
+    }, [&] { return QStringLiteral("only Studio's limits; the page is %1").arg(show(usage(world))); });
+  });
+  step(QStringLiteral("the user opens Usage"), [](World& world, const Captures&, const Table&) {
+    showUsage(world, QStringLiteral("cost"));
+  });
+  step(QStringLiteral("the fast environment's results appear first"), [](World& world, const Captures&, const Table&) {
+    expectShown(world, world.mc.environmentId);
+    expect(!counted(world, QStringLiteral("claude")), QStringLiteral("Studio's usage is counted already: %1").arg(show(usage(world))));
+  });
+  step(QStringLiteral("the slow environment is shown as still scanning until it responds"), [](World& world, const Captures&, const Table&) {
+    const QString slow = QStringLiteral("Studio");
+    world.waitFor([&] { return environmentRow(world, slow).value(QStringLiteral("status")) == QLatin1String("scanning") &&
+                               usage(world).value(QStringLiteral("scanning")).toBool(); },
+                  [&] { return QStringLiteral("Studio to be scanning; the page is %1").arg(show(usage(world))); });
+    const QList<FakeMc::Rpc> asked = summariesFor(world, slow);
+    expect(!asked.isEmpty(), QStringLiteral("Studio was not asked for its usage"));
+    fake(world).scanning.remove(slow);
+    world.mc.reply(asked.last(), summary(world.mc, slow, asked.last().payload));
+    expectShown(world, slow);
+    expect(!usage(world).value(QStringLiteral("scanning")).toBool() && counted(world, QStringLiteral("codex")),
+           QStringLiteral("both environments to be shown; the page is %1").arg(show(usage(world))));
+  });
+
+  // Model prices (UsagePricesController), for this machine and "Studio".
+  step(QStringLiteral("one of two selected environments is offline"), [](World& world, const Captures&, const Table&) {
+    documentOf(world.mc, QStringLiteral("Studio"));
+    link(world, QStringLiteral("Studio"), QStringLiteral("claude"));
+    world.mc.setLinkProblem(QStringLiteral("Studio"), QStringLiteral("unreachable"));
+    world.sync();
+  });
+  step(QStringLiteral("the user saves a custom price(?: for %1)? to both").arg(q), [](World& world, const Captures&, const Table&) {
+    openPrices(world, 2);
+    world.bridge().dispatch(QStringLiteral("usagePrices.add"), QVariantMap{{QStringLiteral("model"), QStringLiteral("my-model")}});
+    editPrice(world, QStringLiteral("my-model"), QStringLiteral("inputCostPerMillionTokens"), QStringLiteral("3"));
+    editPrice(world, QStringLiteral("my-model"), QStringLiteral("outputCostPerMillionTokens"), QStringLiteral("15"));
+    world.bridge().dispatch(QStringLiteral("usagePrices.save"), {});
+    world.waitFor([&] { return !prices(world).value(QStringLiteral("saving")).toBool() && !priceTarget(world, world.mc.environmentId).value(QStringLiteral("status")).toString().isEmpty(); },
+                  [&] { return QStringLiteral("the save to settle; the dialog is %1").arg(show(prices(world))); });
+  });
+  step(QStringLiteral("each environment reports that the price saved"), [](World& world, const Captures&, const Table&) {
+    for (const QString& id : {world.mc.environmentId, QStringLiteral("Studio")}) {
+      expect(priceTarget(world, id).value(QStringLiteral("status")) == QLatin1String("Saved") && savedPrice(world, id) == 3,
+             QStringLiteral("%1 holds %2; the dialog is %3").arg(id).arg(savedPrice(world, id)).arg(show(prices(world))));
+    }
+  });
+  step(QStringLiteral("the offline environment is marked %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(priceTarget(world, QStringLiteral("Studio")).value(QStringLiteral("status")) == c[0] &&
+               priceTarget(world, world.mc.environmentId).value(QStringLiteral("status")) == QLatin1String("Saved") &&
+               savedPrice(world, world.mc.environmentId) == 3 && savedPrice(world, QStringLiteral("Studio")) < 0,
+           QStringLiteral("the dialog is %1").arg(show(prices(world))));
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nUsageModelPrices { width: 900; height: 500 }\n", QSize(900, 500));
+    expect(world.brick->shows(c[0]) && world.brick->shows(QStringLiteral("Retry failed saves")), QStringLiteral("the dialog does not say \"%1\"").arg(c[0]));
+  });
+  step(QStringLiteral("the environment reconnects and the user chooses %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world).priceWrites = priceWrites(world, world.mc.environmentId);
+    world.mc.setLinkProblem(QStringLiteral("Studio"), QString());
+    world.sync();
+    expect(world.brick->shows(c[0]), QStringLiteral("the dialog does not offer \"%1\"").arg(c[0]));
+    world.brick->click(QStringLiteral("pricesRetry"));
+  });
+  step(QStringLiteral("the price is saved there without writing again to the other environment"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return priceTarget(world, QStringLiteral("Studio")).value(QStringLiteral("status")) == QLatin1String("Saved"); },
+                  [&] { return QStringLiteral("Studio to save; the dialog is %1").arg(show(prices(world))); });
+    expect(savedPrice(world, QStringLiteral("Studio")) == 3 && priceWrites(world, world.mc.environmentId) == fake(world).priceWrites,
+           QStringLiteral("Studio holds %1; this machine was written %2 times, %3 before").arg(savedPrice(world, QStringLiteral("Studio")))
+               .arg(priceWrites(world, world.mc.environmentId)).arg(fake(world).priceWrites));
+  });
+  step(QStringLiteral("two environments with different prices for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    documentOf(world.mc, QStringLiteral("Studio"));
+    link(world, QStringLiteral("Studio"), QStringLiteral("claude"));
+    saveElsewhere(world.mc, QStringLiteral("usagePriceOverrides"), QJsonObject{{c[0], price(3, 15)}});
+    saveOn(world.mc, QStringLiteral("Studio"), QStringLiteral("usagePriceOverrides"), QJsonObject{{c[0], price(5, 15)}});
+  });
+  step(QStringLiteral("the user opens Model prices with both selected"), [](World& world, const Captures&, const Table&) { openPrices(world, 2); });
+  step(QStringLiteral("the price of %1 is shown as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto cell = [&](const QString& field) { return at(priceRow(world, c[0]), QStringLiteral("cells.") + field).toMap(); };
+    world.waitFor([&] { return cell(QStringLiteral("inputCostPerMillionTokens")).value(QStringLiteral("placeholder")) == c[1]; },
+                  [&] { return QStringLiteral("%1 to read %2; the dialog is %3").arg(c[0], c[1], show(prices(world))); });
+    // Only the rate that differs: both charge the same for output.
+    expect(cell(QStringLiteral("inputCostPerMillionTokens")).value(QStringLiteral("value")).toString().isEmpty() &&
+               cell(QStringLiteral("outputCostPerMillionTokens")).value(QStringLiteral("value")) == QLatin1String("15"),
+           QStringLiteral("the row is %1").arg(show(priceRow(world, c[0]))));
+  });
+  step(QStringLiteral("the user marked %1 to reset to automatic").arg(q), [](World& world, const Captures& c, const Table&) {
+    saveElsewhere(world.mc, QStringLiteral("usagePriceOverrides"), QJsonObject{{c[0], price(3, 15)}});
+    openPrices(world, 1);
+    world.waitFor([&] { return !priceRow(world, c[0]).isEmpty(); }, [&] { return QStringLiteral("%1 to be listed; the dialog is %2").arg(c[0], show(prices(world))); });
+    world.bridge().dispatch(QStringLiteral("usagePrices.remove"), QVariantMap{{QStringLiteral("model"), c[0]}});
+    expect(priceRow(world, c[0]).value(QStringLiteral("removed")).toBool(), QStringLiteral("the row is %1").arg(show(priceRow(world, c[0]))));
+  });
+  step(QStringLiteral("the user undoes the reset before saving"), [](World& world, const Captures&, const Table&) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nUsageModelPrices { width: 900; height: 500 }\n", QSize(900, 500));
+    expect(world.brick->shows(QStringLiteral("Undo")), QStringLiteral("the dialog does not offer to undo the reset"));
+    world.brick->click(QStringLiteral("priceReset-claude-sonnet"));
+    world.bridge().dispatch(QStringLiteral("usagePrices.save"), {});
+    world.waitFor([&] { return priceTarget(world, world.mc.environmentId).value(QStringLiteral("status")) == QLatin1String("Saved"); },
+                  [&] { return QStringLiteral("the save to settle; the dialog is %1").arg(show(prices(world))); });
+  });
+  step(QStringLiteral("the custom price of %1 is kept").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject saved = fakeConfig(world.mc).settings.value(QLatin1String("usagePriceOverrides")).toObject().value(c[0]).toObject();
+    expect(saved == price(3, 15) && !priceRow(world, c[0]).value(QStringLiteral("removed")).toBool() &&
+               at(priceRow(world, c[0]), QStringLiteral("cells.inputCostPerMillionTokens.value")) == QLatin1String("3"),
+           QStringLiteral("the environment holds %1; the row is %2").arg(show(saved.toVariantMap()), show(priceRow(world, c[0]))));
+  });
 
   // Reading usage.
   step(QStringLiteral("the user views (cost|tokens) for the past (24 hours|7 days|30 days|90 days)"),
@@ -429,7 +627,7 @@ const Steps steps([] {
     expect(accounts.value(0).toMap().value(QStringLiteral("name")) == QLatin1String("Codex Work"),
            QStringLiteral("Codex Work, which resets in an hour, to come first; the accounts are %1").arg(show(accounts)));
   });
-  step(QStringLiteral("limits were checked two minutes ago"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("(?:limits were checked|the user opened Limits) two minutes ago"), [](World& world, const Captures&, const Table&) {
     showUsage(world, QStringLiteral("limits"));
     world.waitFor([&] { return fake(world).limitChecks == 1; }, QStringLiteral("limits to be checked"));
     world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("home")));
@@ -438,7 +636,7 @@ const Steps steps([] {
   step(QStringLiteral("the user opens limits"), [](World& world, const Captures&, const Table&) {
     showUsage(world, QStringLiteral("limits"));
   });
-  step(QStringLiteral("the limits are not checked again"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the (?:limits are not checked again|environment is not checked again yet)"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(fake(world).limitChecks == 1,
            QStringLiteral("limits to be checked once; they were checked %1 times").arg(fake(world).limitChecks));
@@ -526,7 +724,7 @@ const Steps steps([] {
     account.insert(QStringLiteral("usageLimits"), read);
     setHub(world, QStringLiteral("Team hub"), {account});
   });
-  step(QStringLiteral("the user opens Limits"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user opens Limits(?: again)?"), [](World& world, const Captures&, const Table&) {
     showUsage(world, QStringLiteral("limits"));
   });
   step(QStringLiteral("that account is counted once in each window"), [](World& world, const Captures&, const Table&) {

@@ -19,6 +19,7 @@
 #include "NavigationController.h"
 #include "McClient.h"
 #include "ProviderDrivers.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -258,6 +259,11 @@ void ProviderSettingsController::activate() {
   connect(m_store, &ShellStore::changed, this, [this] {
     if (m_open) update();
   });
+  if (auto* device = NativeShell::of(this)->controller<SettingsController>()) {
+    connect(device, &SettingsController::deviceChanged, this, [this] {
+      if (m_open) publish();
+    });
+  }
   setOpen(navigation->route() == section);
   publish();
 }
@@ -268,6 +274,36 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
   const QString instanceId = input.value(QStringLiteral("instanceId")).toString();
   const QJsonObject entry = provider(instanceId);
   const QJsonObject auth = m_authState.value(instanceId);
+  // Which models this device's picker offers, and in what order: its own
+  // preference (providerModelPreferences), whoever may change the environment.
+  if (action == QLatin1String("providerSettings.modelHidden") || action == QLatin1String("providerSettings.modelMove")) {
+    auto* device = NativeShell::of(this)->controller<SettingsController>();
+    const QString slug = input.value(QStringLiteral("slug")).toString();
+    if (!device || instanceId.isEmpty() || slug.isEmpty()) return true;
+    QJsonObject preferences = device->deviceSettings().value(QLatin1String("providerModelPreferences")).toObject();
+    QJsonObject preference = preferences.value(instanceId).toObject();
+    if (action == QLatin1String("providerSettings.modelHidden")) {
+      QJsonArray hidden = preference.value(QLatin1String("hiddenModels")).toArray();
+      for (qsizetype i = hidden.size() - 1; i >= 0; --i) {
+        if (hidden.at(i).toString() == slug) hidden.removeAt(i);
+      }
+      if (input.value(QStringLiteral("hidden")).toBool()) hidden.append(slug);
+      preference.insert(QStringLiteral("hiddenModels"), hidden);
+    } else {
+      // The whole order as the page shows it, with this model moved `by` places.
+      QStringList order;
+      for (const QVariant& model : this->entry(entry).value(QStringLiteral("models")).toList()) order.append(model.toMap().value(QStringLiteral("slug")).toString());
+      const qsizetype from = order.indexOf(slug);
+      const qsizetype to = std::clamp<qsizetype>(from + input.value(QStringLiteral("by")).toInt(), 0, order.size() - 1);
+      if (from < 0 || to == from) return true;
+      order.move(from, to);
+      preference.insert(QStringLiteral("modelOrder"), QJsonArray::fromStringList(order));
+    }
+    preferences.insert(instanceId, preference);
+    device->writeDevice(QStringLiteral("providerModelPreferences"), preferences.toVariantMap());
+    publish();
+    return true;
+  }
   // An environment this session may only view takes no changes, only a
   // different environment, docs and copying its update command.
   static const QSet<QString> viewing{QStringLiteral("providerSettings.environment"), QStringLiteral("providerSettings.openDocs"),
@@ -701,11 +737,26 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   const QString driver = provider.value(QLatin1String("driver")).toString();
   const QJsonObject auth = provider.value(QLatin1String("auth")).toObject();
   const auto [headline, detail] = summary(provider);
+  // In this device's order (providerModelPreferences), the ones it hides marked.
+  const auto* device = NativeShell::of(this)->controller<SettingsController>();
+  const QJsonObject preference = device ? device->deviceSettings().value(QLatin1String("providerModelPreferences")).toObject()
+                                              .value(instanceId).toObject()
+                                        : QJsonObject();
+  const QJsonArray hidden = preference.value(QLatin1String("hiddenModels")).toArray();
+  const QJsonArray order = preference.value(QLatin1String("modelOrder")).toArray();
   QVariantList models;
   for (const QJsonValue& model : provider.value(QLatin1String("models")).toArray()) {
-    models.append(QVariantMap{{QStringLiteral("slug"), model.toObject().value(QLatin1String("slug")).toString()},
-                              {QStringLiteral("name"), model.toObject().value(QLatin1String("name")).toString()}});
+    const QString slug = model.toObject().value(QLatin1String("slug")).toString();
+    models.append(QVariantMap{{QStringLiteral("slug"), slug},
+                              {QStringLiteral("name"), model.toObject().value(QLatin1String("name")).toString()},
+                              {QStringLiteral("hidden"), hidden.contains(slug)}});
   }
+  const QVariantList ordered = order.toVariantList();
+  const auto rank = [&ordered](const QVariant& model) {
+    const qsizetype at = ordered.indexOf(model.toMap().value(QStringLiteral("slug")));
+    return at < 0 ? std::numeric_limits<qsizetype>::max() : at;
+  };
+  std::stable_sort(models.begin(), models.end(), [&rank](const QVariant& a, const QVariant& b) { return rank(a) < rank(b); });
   const QVariant advice = advisory(provider);
   const QString updateStatus = provider.value(QLatin1String("updateState")).toObject().value(QLatin1String("status")).toString();
   const bool updating = m_updating.contains(instanceId) || updateStatus == QLatin1String("queued") ||

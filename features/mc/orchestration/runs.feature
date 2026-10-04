@@ -183,14 +183,14 @@ Feature: Runs and turns
     Then the plugin opens the session again
     And the run fails only once the plugin gives up
 
-  @mc @shared @backlog-desktop @backlog-mobile
+  @mc @shared @backlog-mobile
   Scenario: A failed turn keeps the output it had already produced
     Given the provider streamed part of its answer to "t1" and then failed
     When the failure is recorded
     Then the partial answer stays in the failed run
     And the run is marked failed
 
-  @mc @shared @backlog-desktop @backlog-mobile
+  @mc @shared @backlog-mobile
   Scenario: A provider retry is recorded as a retry
     Given the provider retries a failed request during a turn of "t1"
     When the retry is recorded

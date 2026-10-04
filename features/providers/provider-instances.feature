@@ -52,18 +52,18 @@ Feature: Provider instances
     When the user enables Grok on one client
     Then the other client lists Grok as enabled
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: Adding an instance derives its id from its label
     When the user adds a Claude instance labelled "Work"
     Then its instance id is "claudeAgent_work"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: A clashing instance id gets a number
     Given the instance "claudeAgent_work" exists
     When the user adds another Claude instance labelled "Work"
     Then its instance id is "claudeAgent_work_2"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario Outline: Instance ids are validated
     When the user sets the instance id to "<id>"
     Then the user is told "<message>"
@@ -123,20 +123,20 @@ Feature: Provider instances
     When the user removes that variable
     Then Grok no longer runs with it
 
-  @desktop @mobile @backlog-desktop @backlog-mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A client with view-only access cannot change providers
     Given the client has view-only access to the environment
     When the user opens provider settings
     Then the providers are shown but every change is unavailable
     And the user is told this session can only view them
 
-  @backlog @desktop
+  @desktop @backlog-mc
   Scenario: Provider settings follow the chosen device
     Given the user is connected to the environments "workstation" and "laptop"
     When the user picks "laptop" in provider settings
     Then the providers of "laptop" are shown
 
-  @backlog @desktop
+  @desktop @backlog-mc
   Scenario: Provider settings for a disconnected device ask the user to reconnect
     Given "laptop" is disconnected
     When the user picks "laptop" in provider settings
@@ -150,7 +150,7 @@ Feature: Provider instances
     When the user resets the interval
     Then providers are checked on the default interval again
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario Outline: Provider status headlines
     Given a provider that is <state>
     When the user opens the provider list

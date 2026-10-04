@@ -200,7 +200,7 @@ Feature: Permission modes
     When the user switches the thread to supervised
     Then the next turn asks before commands and file changes
 
-  @desktop @mobile @backlog-desktop @backlog-mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The permission mode can be changed from the desktop and mobile composers
     Given a supervised thread
     When the user switches the thread to auto-accept edits on desktop or mobile

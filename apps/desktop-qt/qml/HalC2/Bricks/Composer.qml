@@ -446,6 +446,12 @@ Rectangle {
             }
         }
 
+        ComposerUsageLimits {
+            Layout.fillWidth: true
+            Layout.leftMargin: 22
+            Layout.rightMargin: 22
+        }
+
         // The stash (composer.stash), on the card's top edge like the
         // suggestions: a row restores its prompt, its cross deletes it.
         Rectangle {
