@@ -29,7 +29,7 @@ Feature: Project actions
       Then a terminal in the worktree runs "bun dev"
       And the command knows the project folder and the worktree folder
 
-    @backlog @desktop
+    @desktop
     Scenario: The project's actions can be run from the thread's details
       Given the user is looking at the details of a thread in "shop"
       When the user runs "Dev" from the thread's details
@@ -48,7 +48,7 @@ Feature: Project actions
       When the user runs the action "Test"
       Then "Test" is offered first the next time the user runs an action in "shop"
 
-    @desktop @tui @backlog-desktop
+    @desktop @tui
     Scenario: An action runs from its keyboard shortcut
       Given "Dev" has the shortcut "mod+shift+d"
       When the user presses "mod+shift+d" in a thread of "shop"
@@ -96,13 +96,13 @@ Feature: Project actions
 
   Rule: Adding, editing and removing actions
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile
+    @desktop @mobile @tui @backlog-mobile
     Scenario: Adding an action
       When the user adds an action named "Test" running "bun test" with the test icon
       Then "shop" has the action "Test"
       And "Test" can be run
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile
+    @desktop @mobile @tui @backlog-mobile
     Scenario Outline: An action needs a name and a command
       When the user adds an action with <missing>
       Then the user is told "<message>"
@@ -113,38 +113,38 @@ Feature: Project actions
         | no name        | Name is required.     |
         | no command     | Command is required.  |
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile
+    @desktop @mobile @tui @backlog-mobile
     Scenario: Editing an action
       When the user changes the command of "Dev" to "bun run dev --host"
       Then "Dev" runs "bun run dev --host"
 
-    @desktop @mobile @tui @backlog-desktop @backlog-mobile
+    @desktop @mobile @tui @backlog-mobile
     Scenario: Deleting an action asks first and cannot be undone
       When the user deletes the action "Dev"
       Then the user is asked to confirm deleting "Dev" because it cannot be undone
       When the user confirms
       Then "shop" no longer has the action "Dev"
 
-    @backlog @desktop
+    @desktop
     Scenario: Only one action can be the setup script
       Given "Install" is the setup script of "shop"
       When the user makes "Dev" run automatically on worktree creation
       Then "Dev" is the setup script
       And "Install" no longer runs on worktree creation
 
-    @backlog @desktop
+    @desktop
     Scenario: Clearing a shortcut removes it
       Given "Dev" has the shortcut "mod+shift+d"
       When the user clears the shortcut of "Dev"
       Then "mod+shift+d" no longer runs "Dev"
 
-    @backlog @desktop
+    @desktop
     Scenario: A shortcut still used by another project's action is kept
       Given the project "docs" also has an action "Dev" with the shortcut "mod+shift+d"
       When the user deletes the action "Dev" from "shop"
       Then "mod+shift+d" still runs "Dev" in "docs"
 
-    @backlog @desktop
+    @desktop
     Scenario: A preview address opens automatically only when one is set
       When the user edits "Dev" without a preview address
       Then opening the preview automatically cannot be turned on

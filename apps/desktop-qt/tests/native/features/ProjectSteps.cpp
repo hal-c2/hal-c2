@@ -278,6 +278,10 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap());
   });
   step(QStringLiteral("the desktop app is connected to its own local environment"), [](World& world, const Captures&, const Table&) {
+    if (world.shellSubscriptions() == 0) {
+      world.connect();
+      world.sync();
+    }
     expect(world.bridge().localFolderImportEnabled() && world.native().client()->isReady(),
            QStringLiteral("the shell is not connected to its own environment"));
   });

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QFileSystemModel>
+#include <QFileSystemWatcher>
+
+#include <functional>
 
 // Local, trusted QML only.
 class LocalFolderModel : public QFileSystemModel {
@@ -28,10 +31,15 @@ public:
   Q_INVOKABLE QString pathForIndex(const QModelIndex& index) const;
   Q_INVOKABLE bool isDirectory(const QString& path) const;
   Q_INVOKABLE bool canModifyFolder(const QString& path) const;
+  // Whether a folder inside the root is, or holds, a registered project.
+  Q_INVOKABLE bool holdsProject(const QString& path) const;
   Q_INVOKABLE QString createFolder(const QString& parentPath, const QString& name);
   Q_INVOKABLE QString renameFolder(const QString& path, const QString& newName);
   Q_INVOKABLE QString moveFolder(const QString& path, const QString& destinationDirectory);
   Q_INVOKABLE bool trashFolder(const QString& path, const QString& confirmationPath);
+  // What moves a folder to the system Trash (QFile::moveToTrash unless a test
+  // replaces it); false leaves the folder where it is.
+  static void setTrash(std::function<bool(const QString& path)> trash);
 
   int rowCount(const QModelIndex& parent = {}) const override;
   bool hasChildren(const QModelIndex& parent = {}) const override;
@@ -51,6 +59,10 @@ signals:
 
 private:
   void activateRoot();
+  // Watches the folder the root is in: a root replaced by a link or removed
+  // is given up.
+  void watchRoot();
+  void checkRoot();
   void setError(const QString& error);
   QString checkedDirectory(const QString& path, bool allowRoot);
   bool validName(const QString& name);
@@ -62,4 +74,5 @@ private:
   QString m_rootPath;
   QStringList m_protectedPaths;
   QString m_error;
+  QFileSystemWatcher m_rootWatcher;
 };

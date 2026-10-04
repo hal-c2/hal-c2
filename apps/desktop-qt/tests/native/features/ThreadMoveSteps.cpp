@@ -14,6 +14,7 @@
 #include "AlertController.h"
 #include "CommandPaletteController.h"
 #include "ComposerController.h"
+#include "FilesIdentity.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
@@ -281,6 +282,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user chooses where to move %1").arg(q), [](World& world, const Captures& c, const Table&) { chooseWhere(world, c[0]); });
   step(QStringLiteral("%1 is offered").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (checkIconImageOffered(world, c[0], true)) return;
     const auto item = menuItem(world, QStringLiteral("machine:") + c[0]);
     expect(item && item->value(QStringLiteral("enabled")).toBool(), QStringLiteral("the menu is %1").arg(show(menuItems(world))));
   });

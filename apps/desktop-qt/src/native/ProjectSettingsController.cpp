@@ -17,8 +17,8 @@
 // the model's also {automatic, none (no providers), models: [{key, label}]},
 // and the others' {options: [{value, label, description}]}}.
 //
-// Actions (`projectSettings.`): `rename {title}`, `icon {emoji}` (without an
-// emoji, back to automatic), `remove {key}` (one checkout, else every
+// Actions (`projectSettings.`): `rename {title}`, `icon {emoji | icon |
+// faviconPath}` (without one, back to automatic), `remove {key}` (one checkout, else every
 // checkout in the scope), `model {key}` ("" for automatic), `permissions
 // {value}`, `workspace {value}`, `submodules {value}`, `reset {key}` (model |
 // permissions | workspace | submodules).
@@ -169,11 +169,16 @@ public:
     if (name == QLatin1String("rename")) {
       rename(input.value(QStringLiteral("title")).toString().trimmed());
     } else if (name == QLatin1String("icon")) {
+      // An emoji typed here, an icon as the picker made it (IdentityController),
+      // or an image file of the project; none of them is back to automatic.
       const QString emoji = input.value(QStringLiteral("emoji")).toString().trimmed();
-      update({{QStringLiteral("projectIcon"), emoji.isEmpty() ? QJsonValue(QJsonValue::Null)
-                                                              : QJsonValue(QJsonObject{{QStringLiteral("kind"), QStringLiteral("emoji")},
-                                                                                       {QStringLiteral("emoji"), emoji}})},
-              {QStringLiteral("faviconPath"), QJsonValue::Null}},
+      const QJsonObject picked = QJsonObject::fromVariantMap(input.value(QStringLiteral("icon")).toMap());
+      const QString image = input.value(QStringLiteral("faviconPath")).toString().trimmed();
+      update({{QStringLiteral("projectIcon"), !picked.isEmpty() ? QJsonValue(picked)
+                                              : emoji.isEmpty() ? QJsonValue(QJsonValue::Null)
+                                                                : QJsonValue(QJsonObject{{QStringLiteral("kind"), QStringLiteral("emoji")},
+                                                                                         {QStringLiteral("emoji"), emoji}})},
+              {QStringLiteral("faviconPath"), image.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(image)}},
              QStringLiteral("Failed to update project icon"));
     } else if (name == QLatin1String("remove")) {
       remove(input.value(QStringLiteral("key")).toString());

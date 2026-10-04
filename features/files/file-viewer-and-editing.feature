@@ -117,7 +117,7 @@ Feature: Viewing and editing files
       When the user retries
       Then the audio plays
 
-    @desktop @tui @backlog-desktop
+    @desktop @tui
     Scenario Outline: Rendered files can be switched to their source and back
       When the user opens "<path>"
       Then the file is shown rendered
@@ -132,7 +132,7 @@ Feature: Viewing and editing files
         | data/orders.csv |
         | public/index.html |
 
-    @backlog @desktop
+    @desktop
     Scenario: The rendered or source choice is remembered on this device
       Given the user chose to see Markdown source
       When the user opens "docs/guide.md"
@@ -145,7 +145,7 @@ Feature: Viewing and editing files
       When the user turns word wrap off
       Then long lines scroll sideways
 
-    @backlog @desktop
+    @desktop
     Scenario: The path trail lets the user jump to a sibling file
       Given the user is looking at "src/lib/cart.ts"
       When the user picks "app.ts" from the files in "src"
@@ -171,13 +171,13 @@ Feature: Viewing and editing files
       And the user closes the file
       Then no file is open and the tree is shown
 
-    @desktop @tui @backlog-desktop
+    @desktop @tui
     Scenario: A file opens in the user's editor on the environment
       Given the environment has the editor "VS Code"
       When the user opens "src/app.ts" in "VS Code"
       Then "VS Code" opens "src/app.ts" on the environment
 
-    @backlog @desktop
+    @desktop
     Scenario: The thread's workspace opens in the preferred editor from the thread's details
       Given the user has picked "VS Code" as their preferred editor
       When the user opens the thread's workspace in an editor from the thread's details
@@ -203,19 +203,19 @@ Feature: Viewing and editing files
       When a client writes "src/new/deep.ts" in "shop"
       Then "src/new/deep.ts" exists with the written contents
 
-    @desktop @tui @backlog-desktop
+    @desktop @tui
     Scenario: Edits save themselves shortly after the user stops typing
       Given the user is editing "src/app.ts"
       When the user types a change and pauses
       Then the change is written to "src/app.ts"
 
-    @backlog @desktop
+    @desktop
     Scenario: Closing the file saves pending edits first
       Given the user typed a change in "src/app.ts" that is not saved yet
       When the user closes the file
       Then the change is written to "src/app.ts"
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Some files open read-only
       When the user opens <file>
       Then the file cannot be edited
@@ -225,7 +225,7 @@ Feature: Viewing and editing files
         | a file larger than one megabyte         |
         | a file outside the project on the host  |
 
-    @backlog @desktop
+    @desktop
     Scenario: Ticking a Markdown task writes the file
       Given "TODO.md" has the unticked task "Ship cart"
       When the user ticks "Ship cart" in the rendered view
@@ -233,7 +233,7 @@ Feature: Viewing and editing files
       When the user unticks "Ship cart"
       Then "TODO.md" records "Ship cart" as open
 
-    @desktop @tui @backlog-desktop
+    @desktop @tui
     Scenario: A failed save is reported and the edit is kept
       Given writing "src/app.ts" fails
       When the user edits "src/app.ts"
@@ -294,7 +294,7 @@ Feature: Viewing and editing files
       When the user opens the attachment
       Then the captured contents are shown
 
-    @backlog @desktop
+    @desktop
     Scenario: An attachment can be removed from the draft while it is open
       Given the user is viewing an attachment of a draft
       When the user removes it

@@ -243,6 +243,7 @@ void RightPanelController::retarget() {
     m_diff.setThread(environmentId, threadId, timeline);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root);
+    m_files.setTimeline(timeline);
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
     m_devices.setThread(environmentId, threadId, m_store->mcServing(environmentId));

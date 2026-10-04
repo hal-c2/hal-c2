@@ -34,7 +34,7 @@ Feature: Project and environment identity
       When a client asks for the icon of "shop"
       Then the MC answers that there is no icon
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario Outline: A project without an icon shows a two-character monogram
       Given the project "<name>" has no icon
       When the user looks at the project list
@@ -46,7 +46,7 @@ Feature: Project and environment identity
         | Silver Orchard | SO       |
         | M7 Forge       | M7       |
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario Outline: The user picks a project icon
       When the user sets the icon of "shop" to <icon>
       Then "shop" shows <icon> everywhere it is listed
@@ -58,13 +58,13 @@ Feature: Project and environment identity
         | the monogram "SH" in rose       |
         | the image file "assets/logo.png" |
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Resetting the icon returns to the automatic icon
       Given the user set the icon of "shop" to the emoji "🛒"
       When the user resets the icon of "shop"
       Then "shop" shows its automatic icon
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Monograms take one or two letters or numbers
       When the user types "<text>" as the monogram of "shop"
       Then the monogram <result>
@@ -76,13 +76,13 @@ Feature: Project and environment identity
         | abc  | cannot be saved         |
         | #!   | cannot be saved         |
 
-    @backlog @desktop
+    @desktop
     Scenario: A picked icon still shows on environments that do not know monograms
       Given "laptop" runs an older server that only knows symbol icons
       When the user sets the monogram "SH" on "shop"
       Then "laptop" keeps a folder symbol with the letters "SH"
 
-    @backlog @desktop
+    @desktop
     Scenario: Choosing an image searches only image files in the project
       When the user searches the project for an icon image named "logo"
       Then "assets/logo.png" is offered
@@ -90,19 +90,19 @@ Feature: Project and environment identity
 
   Rule: Environment icons
 
-    @backlog @desktop
+    @desktop
     Scenario: The user chooses the kind of machine an environment runs on
       Given "laptop" is detected as a laptop
       When the user marks "laptop" as a server
       Then "laptop" shows a server icon
 
-    @backlog @desktop
+    @desktop
     Scenario: Choosing the detected kind clears the choice
       Given the user marked "laptop" as a server
       When the user marks "laptop" as a laptop, its detected kind
       Then "laptop" follows its detected kind again
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: An environment icon cannot always be changed
       Given <situation>
       When the user tries to change the icon of "laptop"
@@ -162,7 +162,7 @@ Feature: Project and environment identity
         | 40 valid theme files               | at most 32 themes are offered                       |
         | valid theme files totalling 300 KB | only the themes within the first 192 KB are offered |
 
-    @backlog @desktop @mobile @tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The user applies an environment theme
       Given "laptop" offers the theme "dusk"
       When the user picks the theme "dusk"
