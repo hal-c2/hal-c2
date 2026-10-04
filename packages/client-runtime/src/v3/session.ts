@@ -182,6 +182,17 @@ function settingsError(operation: "read-file" | "write-file", cause: unknown) {
   return new ServerSettingsError({ settingsPath: "settings.json", operation, cause });
 }
 
+/**
+ * What the MC's settings document holds that `ServerSettings` does not name: the keys of
+ * the MC and of other clients (load balancing, for one), which a write leaves as they are.
+ */
+function unknownSettings(document: unknown): Record<string, unknown> {
+  if (typeof document !== "object" || document === null) return {};
+  return Object.fromEntries(
+    Object.entries(document).filter(([key]) => !(key in ServerSettings.fields)),
+  );
+}
+
 function isStaleSettings(cause: unknown): boolean {
   return (
     cause instanceof ClusterRpcError &&
@@ -1082,7 +1093,7 @@ export function makeV3Session(input: {
         const patched = applyServerSettingsPatch(settings, request.patch);
         const next = mutation === undefined ? patched : withProviderInstance(patched, mutation);
         yield* mcCall("hal-c2.writeSettings", {
-          settings: yield* encodeSettings(next),
+          settings: Object.assign(unknownSettings(current.settings), yield* encodeSettings(next)),
           version: current.version,
         });
         return next;

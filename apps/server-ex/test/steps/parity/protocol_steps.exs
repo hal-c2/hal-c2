@@ -459,6 +459,37 @@ defmodule HalC2.Steps.Parity.Protocol do
     context
   end
 
+  @settings_script Path.expand("../../support/v3_update_settings.ts", __DIR__)
+  @balancing %{
+    "loadBalancingEnabled" => true,
+    "loadBalancingWeights" => %{"env-server" => 2}
+  }
+
+  step "the MC's settings have load balancing on and a machine preferred", context do
+    World.update_settings(context, @balancing)
+  end
+
+  step "a client changes another setting through the protocol 3 adapter", context do
+    {:ok, ticket, _} = ticket()
+    url = "ws://127.0.0.1:#{context.mc.port}/ws?wsTicket=#{ticket}"
+    patch = JSON.encode!(%{"enableProviderUpdateChecks" => false})
+    args = [@settings_script, url, context.mc.environment, patch]
+    {out, status} = System.cmd("bun", args, stderr_to_stdout: true)
+    assert status == 0, out
+    context
+  end
+
+  step "the other setting is changed", context do
+    assert {%{"enableProviderUpdateChecks" => false}, _version} = HalC2.Settings.get()
+    context
+  end
+
+  step "load balancing is still on with the machine preferred", context do
+    {settings, _version} = HalC2.Settings.get()
+    assert Map.take(settings, Map.keys(@balancing)) == @balancing
+    context
+  end
+
   defp ticket do
     {:ok, %{"credential" => credential}} =
       HalC2.Auth.create_pairing_link(%{

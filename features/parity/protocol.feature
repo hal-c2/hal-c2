@@ -4,7 +4,8 @@
 #   apps/server-ex/lib/hal_c2/web/router.ex (GET /ws)
 #   apps/server-ex/lib/hal_c2/web/wire.ex (snapshot rows and event patches on the wire)
 #   packages/client-runtime/src/v3/clusterSocket.ts (19 of the shape types, hello, resync, end)
-#   packages/client-runtime/src/v3/session.ts (methods a protocol 3 environment does not serve yet)
+#   packages/client-runtime/src/v3/session.ts (methods a protocol 3 environment does not serve yet;
+#     updateSettings writes the whole settings document back)
 #   packages/client-runtime/src/connection/compatibility.ts (SHAPE_PROTOCOL_VERSION, negotiation)
 #   packages/contracts/src/rpc.ts (the subscription methods each shape replaces)
 #   Counts: 4 client frames, 21 shape types (31 rows: the 10 routed shapes have an MC and an
@@ -192,6 +193,15 @@ Feature: Protocol 3 wire parity
     When a client calls a method the protocol 3 adapter does not carry
     Then the call fails in the client saying the method is not served by protocol-3 environments yet
     And no frame is sent to the MC
+
+  # The adapter writes the whole settings document back (session.ts updateSettings); load
+  # balancing is a setting it does not name (settings/load-balancing.feature).
+  @mc
+  Scenario: The client adapter leaves settings it does not know as they were
+    Given the MC's settings have load balancing on and a machine preferred
+    When a client changes another setting through the protocol 3 adapter
+    Then the other setting is changed
+    And load balancing is still on with the machine preferred
 
   # The MC speaks only protocol 3. Clients negotiate from the environment descriptor
   # (compatibility.ts) and use the protocol 3 adapter, so the MC does not also serve the
