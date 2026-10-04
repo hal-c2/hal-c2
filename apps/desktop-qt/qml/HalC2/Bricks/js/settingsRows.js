@@ -10,7 +10,7 @@
 // A section with `folded` starts closed: its rows are listed once it is opened.
 //
 // Rows of the MC's follow the settings scope (Settings.mixed, Settings.disabledReason):
-//   component         a row of its own drawing (`id` names it): textGeneration
+//   component         a row of its own drawing (`id` names it): textGeneration, backgroundActivity
 //   requires          a capability every selected environment must have for the row to be listed
 //   needs             one they must have for it to be changed; `unsupported` says so otherwise
 //   mixedDescription  the description while the selected environments disagree
@@ -82,6 +82,9 @@ var general = [
     { key: "continueThreadsAfterServerUpdate", kind: "switch", title: "Continue threads after restarts",
       needs: "threadRestartContinuation", unsupported: "All selected connected environments must support restart continuation.",
       description: "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments. Update older servers first." },
+
+    { id: "background-activity", component: "backgroundActivity", title: "Background activity",
+      description: "Gates background work such as Git refreshes and provider health probes on the selected environments. Advanced sets its own intervals." },
 
     { section: "Projects & threads" },
     { key: "newWorktreesStartFromOrigin", kind: "switch", title: "Start from origin",

@@ -47,6 +47,7 @@ qt_add_qml_module(hal_c2_bricks
     SettingsHost.qml
     SettingsPage.qml
     SettingsRow.qml
+    BackgroundActivityRow.qml
     TextGenerationRow.qml
     ProjectActionsSettings.qml
     LoadBalancingSettings.qml

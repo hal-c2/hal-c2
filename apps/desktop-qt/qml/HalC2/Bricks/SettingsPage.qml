@@ -112,7 +112,7 @@ Rectangle {
                         Settings.document;
                         return !modelData.requires || Settings.supports(modelData.requires);
                     }
-                    sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : modelData.component === "textGeneration" ? textGenerationRow : settingRow
+                    sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : modelData.component === "textGeneration" ? textGenerationRow : modelData.component === "backgroundActivity" ? backgroundActivityRow : settingRow
 
                     Component {
                         id: heading
@@ -193,6 +193,14 @@ Rectangle {
                         id: textGenerationRow
 
                         TextGenerationRow {
+                            spec: entry.modelData
+                        }
+                    }
+
+                    Component {
+                        id: backgroundActivityRow
+
+                        BackgroundActivityRow {
                             spec: entry.modelData
                         }
                     }
