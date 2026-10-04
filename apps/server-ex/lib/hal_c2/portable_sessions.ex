@@ -35,7 +35,7 @@ defmodule HalC2.PortableSessions do
 
   @doc """
   The session a thread carries: `%{driver, instanceId, providerThreadId, nativeId,
-  cwd, files}` with each file as `%{fileName, sha256, dataBase64}`, or nil when the
+  cwd, files}` with each file as `{name, path on this machine}`, or nil when the
   thread's agent has no session this machine can carry.
   """
   def export(state, thread, cwd) do
@@ -45,22 +45,13 @@ defmodule HalC2.PortableSessions do
          {native_id, [{_, main} | _] = found} <-
            session_files(driver, instance, provider_thread, cwd),
          true <- File.regular?(main) do
-      files =
-        for {name, path} <- found,
-            {:ok, data} <- [File.read(path)],
-            do: %{
-              "fileName" => name,
-              "sha256" => :crypto.hash(:sha256, data) |> Base.encode16(case: :lower),
-              "dataBase64" => Base.encode64(data)
-            }
-
       %{
         "driver" => driver,
         "instanceId" => instance,
         "providerThreadId" => provider_thread["id"],
         "nativeId" => native_id,
         "cwd" => recorded_cwd(provider_thread, cwd),
-        "files" => files
+        "files" => Enum.filter(found, fn {_name, path} -> File.regular?(path) end)
       }
     else
       _ -> nil
@@ -68,8 +59,9 @@ defmodule HalC2.PortableSessions do
   end
 
   @doc """
-  Places a carried session (decoded, each file's bytes under `"data"`) for the
-  project at `root`: `{%{providerThreadId, carriedSession} | nil, notes}`.
+  Places a carried session (decoded: each file's bytes under `"data"`, or the file at
+  `"path"` on this machine) for the project at `root`:
+  `{%{providerThreadId, carriedSession} | nil, notes}`.
   """
   def place(%{"driver" => driver, "files" => [_ | _]} = session, root, archive) do
     cond do
@@ -87,13 +79,13 @@ defmodule HalC2.PortableSessions do
     {base, main_name} = target(driver, instance, root, session)
 
     written =
-      for %{"fileName" => name, "data" => data} <- files, safe?(name) do
+      for %{"fileName" => name} = file <- files, safe?(name) do
         path = Path.join(base, name)
 
         # The machine keeps a copy it already has: moving back never overwrites it.
         unless File.exists?(path) do
           File.mkdir_p!(Path.dirname(path))
-          File.write!(path, rewrite(driver, name, data, from, root))
+          copy(file, path, driver, from, root)
           File.chmod(path, 0o600)
         end
 
@@ -122,10 +114,14 @@ defmodule HalC2.PortableSessions do
 
   # The plugin places the copy itself; the next run continues from the id it answers.
   defp place_plugin(module, %{"driver" => driver} = session, root, archive) do
-    files =
-      for %{"fileName" => name, "data" => data} <- session["files"], safe?(name), do: {name, data}
+    files = for %{"fileName" => name} = file <- session["files"], safe?(name), do: file
 
-    case plugin_call(fn -> module.place_session(files, session["cwd"], root) end) do
+    placed =
+      plugin_call(fn ->
+        HalC2.ThreadArchive.files_on_disk(files, &module.place_session(&1, session["cwd"], root))
+      end)
+
+    case placed do
       {:ok, native_id} when is_binary(native_id) ->
         {%{
            "providerThreadId" => session["providerThreadId"],
@@ -266,25 +262,39 @@ defmodule HalC2.PortableSessions do
   defp safe?(name),
     do: Path.type(name) == :relative and ".." not in Path.split(name) and name != ""
 
-  # Every recorded working directory under `from` now points under `to`.
-  defp rewrite(_driver, _name, data, from, to) when not is_binary(from) or from == to, do: data
+  # Writes a carried file to `path`, every recorded working directory under `from`
+  # now pointing under `to`. A file on disk is copied a line at a time.
+  defp copy(%{"fileName" => name} = file, path, driver, from, to) do
+    lines? = String.ends_with?(name, ".jsonl") and is_binary(from) and from != to
 
-  defp rewrite(driver, name, data, from, to) do
-    if String.ends_with?(name, ".jsonl") do
-      data
-      |> String.split("\n")
-      |> Enum.map(&rewrite_line(driver, &1, from, to))
-      |> Enum.join("\n")
-    else
-      data
+    case file do
+      %{"data" => data} when lines? ->
+        File.write!(
+          path,
+          data |> String.split("\n") |> Enum.map_join("\n", &rewrite_line(driver, &1, from, to))
+        )
+
+      %{"data" => data} ->
+        File.write!(path, data)
+
+      %{"path" => source} when lines? ->
+        source
+        |> File.stream!()
+        |> Stream.map(&rewrite_line(driver, &1, from, to))
+        |> Stream.into(File.stream!(path))
+        |> Stream.run()
+
+      %{"path" => source} ->
+        File.cp!(source, path)
     end
   end
 
+  # A line keeps the newline it ended with.
   defp rewrite_line(driver, line, from, to) do
     with true <- String.contains?(line, from),
          {:ok, %{} = record} <- JSON.decode(line),
          changed when changed != record <- rewrite_record(driver, record, from, to) do
-      JSON.encode!(changed)
+      JSON.encode!(changed) <> if(String.ends_with?(line, "\n"), do: "\n", else: "")
     else
       _ -> line
     end

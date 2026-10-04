@@ -11,6 +11,7 @@
 #   apps/web/src/components/settings/EnvironmentRow.tsx (This machine, HAL-C2 Connect, Remote link, SSH)
 #   apps/web/src/components/settings/EnvironmentIconPicker.tsx
 #   apps/web/src/components/settings/LoadBalancingSettings.tsx
+#   apps/desktop-qt/src/native/LoadBalancingController.cpp, qml/HalC2/Bricks/LoadBalancingGroup.qml
 #   apps/web/src/components/settings/LocalEnvironmentSetting.tsx
 #   apps/mobile/src/features/connection/ConnectionsRouteScreen.tsx, LocalEnvironmentList.tsx,
 #     ConnectionEnvironmentRow.tsx, environmentSections.ts, CloudEnvironmentRows.tsx
@@ -95,20 +96,21 @@ Feature: Managing environments on a client
       | the environment's server predates icons          | the server is too old to keep an icon and should update  |
       | the user's session cannot change settings        | this session cannot change the environment's settings    |
 
-  @backlog @desktop
+  @desktop
   Scenario: A preference saved by an older build snaps to the nearest choice
     Given an environment's saved load weight is 80
     When the user opens load balancing
     Then the environment shows "Prefer"
 
-  @backlog @desktop
+  @desktop
   Scenario: Turning load balancing off keeps the preferences
     Given load balancing is on with preferences set
     When the user turns load balancing off
     And turns it on again
     Then the earlier preferences are back
 
-  @backlog @desktop
+  # The MC holds the preferences it places threads by (settings/load-balancing.feature), so its clients share them.
+  @dropped @desktop
   Scenario: Load preferences belong to each client
     Given two desktop clients paired with the same environments
     When the user sets a preference on one client

@@ -138,6 +138,47 @@ export const getInitialServerConfig = Effect.fn("EnvironmentRpc.getInitialServer
   },
 );
 
+/**
+ * Calls a method only an MC serves (`hal-c2.*`); the caller decodes the answer.
+ * Fails with the MC's message, or saying the environment is not an MC.
+ */
+export const mcRequest = Effect.fn("EnvironmentRpc.mcRequest")(function* (
+  method: string,
+  payload: unknown,
+) {
+  const supervisor = yield* EnvironmentSupervisor;
+  yield* Effect.annotateCurrentSpan({
+    "environment.id": supervisor.target.environmentId,
+    "rpc.method": method,
+  });
+  const session = yield* currentSession();
+  if (session.mcCall === undefined) {
+    return yield* new EnvironmentRpcUnavailableError({
+      environmentId: supervisor.target.environmentId,
+      message: `${supervisor.target.label} is not a HAL-C2 MC.`,
+    });
+  }
+  return yield* session.mcCall(method, payload);
+});
+
+/**
+ * Emits when the cluster of the MC the environment is changes: a machine joined, left,
+ * went offline or came back. Never on a server that is not an MC.
+ */
+export const mcMembers: Stream.Stream<void, never, EnvironmentSupervisor> = Stream.unwrap(
+  Effect.gen(function* () {
+    const supervisor = yield* EnvironmentSupervisor;
+    return SubscriptionRef.changes(supervisor.session).pipe(
+      Stream.switchMap(
+        Option.match({
+          onNone: () => Stream.empty,
+          onSome: (session) => session.mcMembers ?? Stream.empty,
+        }),
+      ),
+    );
+  }),
+);
+
 export const request = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
 >(tag: TTag, input: EnvironmentRpcInput<TTag>) {

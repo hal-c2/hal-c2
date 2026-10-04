@@ -32,7 +32,7 @@ class TerminalSession;
 // Publishes `onboarding`:
 //   {gate: "pending" | "wizard" | "app", recovery: null | "connection" | "settings",
 //    step: "connection" | "agents" | "import", stage, importing, finishing,
-//    computers: [{environmentId, label, url, connected, selected}], canContinue,
+//    computers: [{environmentId, label, connected, selected}], canContinue,
 //    pairing, pairingError, pairingDetail,
 //    agents: [{environmentId, label, cards: [{driver, name, state, headline, detail,
 //              terminalOpen, terminalAvailable}]}],
@@ -117,7 +117,6 @@ private:
   QVariantMap agents() const;
   QVariantMap importState() const;
   QString label(const QString& environmentId) const;
-  bool connected(const QString& environmentId) const;
   void publish();
 
   ShellBridge* m_bridge;

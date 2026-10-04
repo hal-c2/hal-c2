@@ -151,6 +151,7 @@ WorkspaceController::Launch WorkspaceController::launch(const QString& draftId) 
   const bool moved = !checkout.environmentId.isEmpty();
   launch.environmentId = moved ? checkout.environmentId : draft->environmentId;
   launch.projectId = moved ? checkout.projectId : draft->projectId;
+  launch.tied = moved || checkout.branch || checkout.worktreePath;
   // The checkout's status is known only for the draft the window shows.
   const bool shown = m_place && m_place->draftId == draftId;
   const bool repo = !(shown && m_git && !m_git->local.value(QLatin1String("isRepo")).toBool(true));
@@ -186,7 +187,7 @@ std::optional<WorkspaceController::Place> WorkspaceController::resolve() const {
   Place place;
   if (route.kind == QLatin1String("thread")) {
     const QJsonObject row = m_store->threadRow(route.threadKey);
-    // A thread the shell does not list (yet: a link's rows come after its snapshot).
+    // A thread the shell does not list (yet: a member's rows come once it joins).
     if (row.isEmpty()) return std::nullopt;
     place.environmentId = route.threadKey.left(route.threadKey.indexOf(QLatin1Char(':')));
     place.threadId = text(row, "id");
@@ -234,8 +235,8 @@ void WorkspaceController::refresh() {
     ++m_renameRequestId;
   }
   follow(m_place ? m_place->cwd() : QString());
-  // Another machine's editors, through its cluster member or its link; a link
-  // that is down ends the watch at once, so it waits for the machine to be back.
+  // Another machine's editors; one that is unreachable ends the watch at once,
+  // so it waits for the machine to be back.
   if (m_place && m_place->environmentId != m_client->environment() && m_store->environmentOnline(m_place->environmentId)) {
     watchConfig(m_place->environmentId);
   } else {
@@ -255,10 +256,10 @@ QJsonObject WorkspaceController::threadRow() const {
   return m_store->threadRow(m_place->threadKey());
 }
 
-// The checkout's status, from wherever the MC reaches the thread's
-// environment: a cluster member or a link. It is followed again when the
-// environment comes back online, since a link that is down ends it at once
-// with its reason (gitError()).
+// The checkout's status, from the cluster member serving the thread's
+// environment. It is followed again when the environment comes back online,
+// since a member that is unreachable ends it at once with its reason
+// (gitError()).
 void WorkspaceController::follow(const QString& cwd) {
   const QString environment = m_place ? m_place->environmentId : QString();
   const bool online = !environment.isEmpty() && m_store->environmentOnline(environment);
@@ -348,7 +349,7 @@ void WorkspaceController::watchConfig(const QString& environmentId) {
 }
 
 QJsonObject WorkspaceController::environmentConfig() const {
-  // A linked environment that is down has none until it is back.
+  // Another machine that is down has none until it is back.
   if (m_place && m_place->environmentId != m_client->environment()) {
     return m_place->environmentId == m_configEnvironment ? m_configElsewhere : QJsonObject();
   }
@@ -586,7 +587,7 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("preferredScriptId"), known ? QVariant(lastScript) : QVariant::fromValue(nullptr)},
       {QStringLiteral("environments"), environmentChoices()},
       {QStringLiteral("activeEnvironmentId"), place.environmentId},
-      // The MC serving it is out of reach (a cluster member asleep, a link down).
+      // The MC serving it is out of reach (a cluster member asleep).
       {QStringLiteral("offline"), !m_store->environmentOnline(place.environmentId)},
       {QStringLiteral("environmentChangeable"), draft},
       {QStringLiteral("renameRequestId"), m_renameRequestId},

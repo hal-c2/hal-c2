@@ -122,13 +122,11 @@ void ArchivedThreadsController::setOpen(bool open) {
   }
 }
 
-// The environments whose archive can be asked for: reachable and online.
+// The environments whose archive can be asked for: the online ones.
 QStringList ArchivedThreadsController::online() const {
   QStringList ids;
   for (const QString& id : m_store->environments()) {
-    if ((id == m_client->environment() || m_store->reaches(id)) && m_store->environmentOnline(id) && !ids.contains(id)) {
-      ids.append(id);
-    }
+    if (m_store->environmentOnline(id) && !ids.contains(id)) ids.append(id);
   }
   return ids;
 }

@@ -35,12 +35,14 @@ import {
 } from "../components/ChatView.layout.ts";
 import type { TuiClient } from "../connection.ts";
 import { clip } from "../format.ts";
+import { projectLabel } from "../orchestrationV2Adapter.ts";
 import {
   interactionModeLabel,
   RUNTIME_MODE_META,
   RUNTIME_MODES,
   runtimeModeLabel,
 } from "../controls.ts";
+import { placeNewThread } from "../loadBalancing.ts";
 import {
   currentModelIndex,
   modelOptionStates,
@@ -216,7 +218,9 @@ export type TuiSelectKind =
   | "runtime"
   | "workspace"
   | "branch"
-  | "project-scope";
+  | "project-scope"
+  /** A choice another controller asks for (`Composer.pick`). */
+  | "choice";
 
 /** Published under `select`: the one open picker (or `{ open: false }`). */
 export interface TuiSelectState {
@@ -224,7 +228,12 @@ export interface TuiSelectState {
   readonly kind: TuiSelectKind | null;
   readonly title: string;
   readonly status: "loading" | "ready" | "empty" | "error";
-  readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
+  readonly options: ReadonlyArray<{
+    readonly label: string;
+    readonly description: string;
+    /** Listed but not choosable. */
+    readonly disabled?: boolean;
+  }>;
   readonly index: number;
   /**
    * The options in view, as SelectOverlay draws them: a window around the
@@ -258,12 +267,18 @@ interface NewDraft {
   readonly contextWorktreePath: string | null;
   readonly refs: ReadonlyArray<VcsRef>;
   readonly refsStatus: TuiNewThreadState["refsStatus"];
+  /**
+   * The user chose its workspace or branch among this machine's: the thread
+   * starts here, not on whichever machine has the most room.
+   */
+  readonly tied: boolean;
 }
 
 interface SelectOption {
   readonly label: string;
   readonly description: string;
   readonly value: string;
+  readonly disabled?: boolean;
 }
 
 interface Picker {
@@ -272,6 +287,16 @@ interface Picker {
   readonly status: TuiSelectState["status"];
   readonly options: ReadonlyArray<SelectOption>;
   readonly index: number;
+  /** A "choice" picker's asker: gets the chosen option's value. */
+  readonly onChoose?: (value: string) => void;
+}
+
+/** A choice another controller puts in the picker (`Composer.pick`). */
+export interface PickRequest {
+  readonly title: string;
+  readonly status: TuiSelectState["status"];
+  readonly options: ReadonlyArray<SelectOption>;
+  readonly onChoose: (value: string) => void;
 }
 
 const EMPTY_DRAFT: Draft = { text: "", images: [] };
@@ -314,6 +339,11 @@ export interface Composer {
   }) => number;
   /** The rows an open picker asks for above the prompt (ChatView's pickerWanted). */
   readonly pickerRows: () => number;
+  /**
+   * Ask the user to choose in the picker. The returned function replaces the
+   * status and options (a list that was loading) while that picker is still open.
+   */
+  readonly pick: (request: PickRequest) => (next: Pick<PickRequest, "status" | "options">) => void;
   /** Resolves when every request the composer started has settled. */
   readonly idle: () => Promise<void>;
   /** For the palette: what the composer can offer right now. */
@@ -673,7 +703,9 @@ export function createComposer(options: ComposerOptions): Composer {
         active,
         name: styled(
           chunk(active ? "▸ " : "  ", { fg: active ? palette.accent : palette.dim }),
-          chunk(clip(option.label, labelRoom), { fg: active ? palette.text : palette.dim }),
+          chunk(clip(option.label, labelRoom), {
+            fg: active && !option.disabled ? palette.text : palette.dim,
+          }),
         ),
         description: description
           ? styled(
@@ -693,7 +725,11 @@ export function createComposer(options: ComposerOptions): Composer {
           kind: picker.kind,
           title: picker.title,
           status: picker.status,
-          options: picker.options.map(({ label, description }) => ({ label, description })),
+          options: picker.options.map(({ label, description, disabled }) => ({
+            label,
+            description,
+            ...(disabled ? { disabled } : {}),
+          })),
           index: picker.index,
           rows: selectRows(picker),
         }
@@ -771,6 +807,29 @@ export function createComposer(options: ComposerOptions): Composer {
     if (picker?.kind !== kind) return;
     picker = update(picker);
     publish();
+  };
+  /** The first option that can be chosen (0 when none can). */
+  const firstChoosable = (list: ReadonlyArray<SelectOption>) =>
+    Math.max(
+      0,
+      list.findIndex((option) => !option.disabled),
+    );
+  const pick: Composer["pick"] = (request) => {
+    const { onChoose } = request;
+    openPicker({
+      kind: "choice",
+      title: request.title,
+      status: request.status,
+      options: request.options,
+      index: firstChoosable(request.options),
+      onChoose,
+    });
+    return (next) => {
+      // Closed, or another choice took its place: nothing to update.
+      if (picker?.onChoose !== onChoose) return;
+      picker = { ...picker, ...next, index: firstChoosable(next.options) };
+      publish();
+    };
   };
 
   const loadModels = () =>
@@ -935,7 +994,7 @@ export function createComposer(options: ComposerOptions): Composer {
         value: ALL_PROJECTS,
       },
       ...(current.shell?.projects ?? []).map((project) => ({
-        label: project.title,
+        label: projectLabel(project),
         description: project.workspaceRoot,
         value: project.id as string,
       })),
@@ -1066,7 +1125,7 @@ export function createComposer(options: ComposerOptions): Composer {
           );
       if (currentRef) branch = currentRef.name;
     }
-    newDraft = { ...newDraft, workspaceMode: mode, branch, worktreePath };
+    newDraft = { ...newDraft, workspaceMode: mode, branch, worktreePath, tied: true };
     store.setStatus(
       mode === "new-worktree" ? "Workspace → New worktree" : "Workspace → Current checkout",
       "success",
@@ -1087,13 +1146,18 @@ export function createComposer(options: ComposerOptions): Composer {
       ref,
     });
     if (selection.kind === "select-base") {
-      newDraft = { ...draft, branch: selection.branch };
+      newDraft = { ...draft, branch: selection.branch, tied: true };
       store.setStatus(`Worktree base → ${selection.branch}`, "success");
       publish();
       return;
     }
     if (selection.kind === "reuse-worktree") {
-      newDraft = { ...draft, branch: selection.branch, worktreePath: selection.worktreePath };
+      newDraft = {
+        ...draft,
+        branch: selection.branch,
+        worktreePath: selection.worktreePath,
+        tied: true,
+      };
       store.setStatus(`Workspace → ${selection.branch}`, "success");
       publish();
       return;
@@ -1109,7 +1173,7 @@ export function createComposer(options: ComposerOptions): Composer {
           (result) => {
             if (switchToken !== token || !newDraft) return;
             const branch = result.refName ?? selection.branch;
-            newDraft = { ...newDraft, branch, worktreePath: selection.worktreePath };
+            newDraft = { ...newDraft, branch, worktreePath: selection.worktreePath, tied: true };
             store.setStatus(`Branch → ${branch}`, "success");
           },
           (error) => {
@@ -1196,18 +1260,22 @@ export function createComposer(options: ComposerOptions): Composer {
       contextWorktreePath: context.worktreePath,
       refs: [],
       refsStatus: project ? "loading" : "empty",
+      tied: false,
     };
     drafts.delete(NEW_TARGET);
     closePicker();
     options.setMode("newThread");
     publish();
     options.onDraftChange?.();
+    // Its branches and files are this project's machine's, whatever thread was open before.
+    client.viewProject(project?.id ?? null);
     if (project) void loadRefs(newDraft.draftId, project.workspaceRoot);
   };
 
   const closeNewThread = () => {
     if (!newDraft) return;
     newDraft = null;
+    client.viewProject(null);
     switchToken += 1;
     switchPending = false;
     drafts.delete(NEW_TARGET);
@@ -1245,30 +1313,54 @@ export function createComposer(options: ComposerOptions): Composer {
     store.setStatus("Creating thread and starting its first turn…", "busy");
     publish();
     const createWorktree = draft.workspaceMode === "new-worktree";
+    // A draft the user tied to this machine, or that inherited a worktree here, starts here.
+    const placing =
+      draft.tied || draft.worktreePath !== null
+        ? Promise.resolve(project)
+        : placeNewThread({
+            projects: projects(),
+            machines: store.getState().shell?.machines,
+            project,
+            instanceId: modelSelection.instanceId,
+            place: client.placeThread,
+          });
     void track(
-      client
-        .createThread({
-          projectId: project.id,
-          projectCwd: project.workspaceRoot,
-          title: typed.length > 0 ? truncate(typed) : "Image attachment",
-          modelSelection,
-          firstMessage: message,
-          attachments: images.map((image) => image.upload),
-          runtimeMode: draft.runtimeMode,
-          interactionMode: draft.interactionMode,
-          branch: draft.branch,
-          worktreePath: createWorktree ? null : draft.worktreePath,
-          createWorktree,
-          startFromOrigin: createWorktree && settings.newWorktreesStartFromOrigin,
+      placing
+        .then((placed) => {
+          const elsewhere = placed.id !== project.id;
+          return client
+            .createThread({
+              projectId: placed.id,
+              projectCwd: placed.workspaceRoot,
+              title: typed.length > 0 ? truncate(typed) : "Image attachment",
+              modelSelection,
+              firstMessage: message,
+              attachments: images.map((image) => image.upload),
+              runtimeMode: draft.runtimeMode,
+              interactionMode: draft.interactionMode,
+              // The branch this machine's checkout is on says nothing of another's;
+              // a new worktree's base branch is the repository's on either.
+              branch: elsewhere && !createWorktree ? null : draft.branch,
+              worktreePath: createWorktree ? null : draft.worktreePath,
+              createWorktree,
+              startFromOrigin: createWorktree && settings.newWorktreesStartFromOrigin,
+            })
+            .then((threadId) => ({ threadId, placed, elsewhere }));
         })
         .then(
-          (threadId) => {
+          ({ threadId, placed, elsewhere }) => {
             createPending = false;
             closeNewThread();
+            // The user follows the thread: a list scoped to another project would hide it.
             const scope = store.getState().projectScopeId;
-            if (scope !== null && scope !== project.id) store.setProjectScope(project.id);
+            if (scope !== null && scope !== placed.id) store.setProjectScope(placed.id);
             store.select({ kind: "thread", id: threadId });
-            store.setStatus("Thread created.", "success");
+            store.setStatus(
+              elsewhere && placed.machine
+                ? `Thread created on ${placed.machine}.`
+                : "Thread created.",
+              "success",
+            );
             publish();
           },
           (error) => {
@@ -1291,6 +1383,17 @@ export function createComposer(options: ComposerOptions): Composer {
     if (typed.length === 0 && draft.images.length === 0) return;
     if (!detail || !key) {
       store.setStatus("Select a thread (Alt+↑/↓ or click) to send a message.");
+      return;
+    }
+    // The machine it is leaving would refuse the message: the draft waits for the thread.
+    const moving = store
+      .getState()
+      .shell?.threads.find((thread) => thread.id === detail.id)?.moving;
+    if (moving) {
+      store.setStatus(
+        `${detail.title} is moving to ${moving.label}. Send the message once it has arrived.`,
+        "error",
+      );
       return;
     }
     const text = typed.length > 0 ? typed : IMAGE_ONLY_PROMPT;
@@ -1554,8 +1657,9 @@ export function createComposer(options: ComposerOptions): Composer {
   const choose = (index: number) => {
     const current = picker;
     if (!current) return;
-    const value = current.options[index]?.value;
-    if (value === undefined) return;
+    const option = current.options[index];
+    if (option === undefined || option.disabled) return;
+    const { value } = option;
     if (current.kind === "branch") {
       closePicker();
       selectBranch(value);
@@ -1582,13 +1686,22 @@ export function createComposer(options: ComposerOptions): Composer {
       case "project-scope":
         setProjectScope(value);
         return;
+      case "choice":
+        current.onChoose?.(value);
+        return;
     }
   };
 
   const move = (delta: number) => {
     if (!picker || picker.options.length === 0) return;
     const count = picker.options.length;
-    picker = { ...picker, index: (picker.index + delta + count) % count };
+    // Step over what cannot be chosen; a list with nothing to choose stays put.
+    let index = picker.index;
+    for (let step = 0; step < count; step += 1) {
+      index = (index + delta + count) % count;
+      if (!picker.options[index]?.disabled) break;
+    }
+    picker = { ...picker, index };
     publish();
   };
 
@@ -1788,6 +1901,7 @@ export function createComposer(options: ComposerOptions): Composer {
       (overlay.oneLine ? 0 : chromeParts.compact) +
       chromeParts.context,
     pickerRows,
+    pick,
     idle: async () => {
       while (inflight.size > 0) await Promise.allSettled([...inflight]);
     },

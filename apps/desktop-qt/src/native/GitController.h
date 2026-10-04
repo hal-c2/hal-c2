@@ -27,8 +27,8 @@ class WorkspaceController;
 // loading toast; anything that would land on the default branch waits for
 // `git.defaultBranch`. Pull is `vcs.pull`, Initialize Git `vcs.init`, and
 // Publish repository `sourceControl.publishRepository` from the brick's own
-// dialog (`git.publish` opens it). Actions on a linked environment run
-// through the link; a link that is down says why.
+// dialog (`git.publish` opens it). Actions on another machine of the
+// cluster run there; one that is unreachable says why.
 class GitController : public QObject, public NativeController {
   Q_OBJECT
 

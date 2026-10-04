@@ -208,7 +208,14 @@ Feature: Connections settings
 
   Rule: Other environments
 
+    # MCs join only by clustering, so the page pairs no environment itself: it leads to
+    # the Cluster settings (connections/cluster.feature), which add and remove machines.
     @desktop
+    Scenario: Other machines are added from the Cluster settings
+      When the user goes on to this machine's cluster
+      Then the window shows the settings section "/settings/cluster"
+
+    @dropped @desktop
     Scenario: Adding an environment from a pairing link
       When the user adds an environment with a host and pairing code
       Then the environment is connected and listed
@@ -220,27 +227,27 @@ Feature: Connections settings
       When the user adds an environment over SSH to "devbox"
       Then HAL-C2 starts on "devbox" and it is listed as an environment
 
-    @desktop
+    @dropped @desktop
     Scenario: An environment that cannot be added is reported
       Given the host does not answer
       When the user adds an environment with that host
       Then the user is told the backend could not be added
 
-    @desktop
+    @dropped @desktop
     Scenario: A pairing link that was already used cannot add an environment
       Given a pairing link from "Build box" that was already used
       When the user adds an environment with that link
       Then the user is told to ask for a fresh pairing link
       And no environment is added
 
-    @desktop
+    @dropped @desktop
     Scenario: An environment that revoked this machine asks to be paired again
       Given "Build box" is linked and has revoked this machine's access
       Then its row reads "Access refused: pair it again"
       When the user adds "Build box" again from a fresh pairing link
       Then its row reads "Connected"
 
-    @desktop
+    @dropped @desktop
     Scenario: An environment that stops answering is shown offline
       Given "Build box" is linked and stops answering
       Then its row reads "Offline"
@@ -280,13 +287,13 @@ Feature: Connections settings
       When the user switches it back on
       Then this device connects to "Build box" again
 
-    @desktop
+    @dropped @desktop
     Scenario: Removing an environment forgets it on this device
       When the user removes "Build box" from this device and confirms
       Then its pairing, credentials and cached threads are forgotten here
       And "Build box" is no longer listed
 
-    @desktop
+    @dropped @desktop
     Scenario: Cancelling removal keeps the environment
       When the user starts removing "Build box" and cancels
       Then "Build box" is still listed

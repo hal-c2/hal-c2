@@ -11,13 +11,18 @@ export type ThreadContextMenuAction =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | "move"
   | "archive"
   | "delete";
+
+export const MOVE_THREAD_LABEL = "Move to another machine…";
 
 export function buildThreadContextMenuItems(input: {
   readonly row: Pick<Extract<Row, { kind: "thread" }>, "section" | "thread">;
   readonly settlementSupported: boolean;
   readonly hasWorkspacePath: boolean;
+  /** The cluster has another machine the thread could move to. */
+  readonly canMove?: boolean;
 }): ReadonlyArray<ContextMenuItem<ThreadContextMenuAction>> {
   const { row } = input;
   const settled = row.section === "settled";
@@ -43,11 +48,14 @@ export function buildThreadContextMenuItems(input: {
     },
     ...(row.thread.branch ? [{ id: "copy-branch" as const, label: "Copy branch" }] : []),
     { id: "copy-thread-id", label: "Copy thread ID" },
+    ...(input.canMove
+      ? [{ id: "move" as const, label: MOVE_THREAD_LABEL, separatorBefore: true }]
+      : []),
     {
       id: "archive",
       label: "Archive thread",
       disabled: row.thread.session?.status === "running",
-      separatorBefore: true,
+      separatorBefore: !input.canMove,
     },
     { id: "delete", label: "Delete", destructive: true },
   ];

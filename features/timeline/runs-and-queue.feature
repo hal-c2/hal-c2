@@ -103,7 +103,8 @@ Feature: Runs, interruptions and the queue
     When more than an hour passes
     Then the message shows the image "cart.png" from a new address
 
-  @shared @backlog-mobile @backlog-tui
+  # MCs join only by clustering, and a cluster hands the address to the member that signed it.
+  @dropped @shared
   Scenario: An image sent in a linked environment is loaded from that environment
     Given the user is looking at a thread on an environment the MC is linked to
     When the user sent the image "cart.png" with a message

@@ -9,6 +9,7 @@ import {
   type ServerProvider,
   type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
+  type ThreadPlacementInput,
   type VcsStatusResult,
 } from "@hal-c2/contracts";
 
@@ -147,6 +148,8 @@ export interface FakeClientCall {
 // Streams and cache reads are plumbing, not commands a step asserts on.
 const UNRECORDED = new Set([
   "subscribeConnection",
+  "subscribeCluster",
+  "viewProject",
   "subscribeShell",
   "subscribeThread",
   "peekThread",
@@ -157,6 +160,7 @@ const UNRECORDED = new Set([
   "listModels",
   "listTerminalIds",
   "clusterStatus",
+  "readSettings",
 ]);
 
 export function fakeClient({
@@ -314,6 +318,8 @@ export function fakeClient({
   readonly emitConnection: (phase: TuiConnectionPhase) => void;
   /** The MC's cluster: its members, the invite it hands out, why it refuses a join. */
   readonly cluster: FakeCluster;
+  /** The MC says a machine of its cluster came, went or changed. */
+  readonly emitCluster: () => void;
 } {
   const cluster: FakeCluster = {
     members: [],
@@ -335,6 +341,7 @@ export function fakeClient({
   let connectionPhase: TuiConnectionPhase = "connecting";
   let latestShell = shellSnapshot;
   const connectionSubscribers = new Set<(phase: TuiConnectionPhase) => void>();
+  const clusterSubscribers = new Set<() => void>();
   const terminals = new Map<string, FakeTerminal>();
   const terminalFor = (threadId: string, terminalId: string): FakeTerminal => {
     const key = `${threadId}:${terminalId}`;
@@ -396,6 +403,13 @@ export function fakeClient({
         connectionSubscribers.delete(onPhase);
       };
     },
+    subscribeCluster: (onChange: () => void) => {
+      clusterSubscribers.add(onChange);
+      return () => {
+        clusterSubscribers.delete(onChange);
+      };
+    },
+    viewProject: () => {},
     browseFilesystem,
     discoverSourceControl,
     clusterStatus: async () => clusterStatus(),
@@ -414,6 +428,18 @@ export function fakeClient({
       cluster.members = cluster.members.filter((member) => member.id !== id);
       return clusterStatus();
     },
+    // A machine on its own: the environment (environment.ts) plays a cluster's moves.
+    moveDestinations: async () => [],
+    moveThread: async () => {
+      throw new Error("This machine is not in a cluster.");
+    },
+    // Alone, a thread starts where the user picked; the environment plays the MC's choosing.
+    placeThread: async ({ environmentId, projectId }: ThreadPlacementInput) => ({
+      environmentId,
+      projectId,
+    }),
+    readSettings: async () => ({ settings: {}, version: 0 }),
+    writeSettings: async () => true,
     lookupRepository,
     cloneRepository,
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {
@@ -601,6 +627,9 @@ export function fakeClient({
     workspaceFiles,
     currentThread,
     cluster,
+    emitCluster: () => {
+      for (const subscriber of clusterSubscribers) subscriber();
+    },
     emitConnection: (phase) => {
       connectionPhase = phase;
       for (const onPhase of connectionSubscribers) onPhase(phase);

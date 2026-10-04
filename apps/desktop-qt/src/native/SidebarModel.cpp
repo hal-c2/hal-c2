@@ -186,6 +186,7 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   thread.activityRunStatus = stringField(row, "activityRunStatus");
   thread.hasActionableProposedPlan = row.value(QLatin1String("hasActionableProposedPlan")).toBool();
   thread.pendingBackgroundTasks = row.value(QLatin1String("pendingBackgroundTasks")).toArray().size();
+  thread.movingTo = stringField(row.value(QLatin1String("moving")).toObject(), "label");
 
   const QString status = row.value(QLatin1String("status")).toString(QStringLiteral("idle"));
   if (thread.latestRunId) {
@@ -729,6 +730,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
                                           : QVariant::fromValue(nullptr)},
           {QStringLiteral("wokeAt"), nullable(visibleWokeAt(thread, nowMs))},
           {QStringLiteral("offline"), offline},
+          {QStringLiteral("movingTo"), nullable(thread.movingTo)},
           {QStringLiteral("canSettle"), !offline && capabilities.settlement},
           {QStringLiteral("canSnooze"), !offline && capabilities.snooze && canSnooze(thread, nowMs)},
       });

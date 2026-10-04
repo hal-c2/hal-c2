@@ -365,8 +365,7 @@ const Steps steps([] {
     // A server whose style differs, so the instructions are one for both.
     FakeConfig::Document& server = documentOf(world.mc, QStringLiteral("server"));
     server.settings.insert(QStringLiteral("sourceControlWritingStyle"), QJsonObject{{QStringLiteral("mode"), QStringLiteral("conventional_commits")}});
-    world.mc.linkLabels.insert(QStringLiteral("server"), QStringLiteral("server"));
-    world.mc.link(QStringLiteral("server"));
+    world.mc.join(QStringLiteral("server"));
     world.waitFor([&] { return world.state(QStringLiteral("settingsScope")).toMap().value(QStringLiteral("environments")).toList().size() == 2; },
                   [&] { return QStringLiteral("two environments; the scope is %1").arg(show(world.state(QStringLiteral("settingsScope")))); });
     world.bridge().dispatch(QStringLiteral("settingsScope.environment"), QVariantMap{{QStringLiteral("id"), QString()}});

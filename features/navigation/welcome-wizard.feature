@@ -69,13 +69,13 @@ Feature: Welcome wizard
       But "laptop" stays connected
 
     @desktop
-    Scenario: Adding a computer with a pairing link
-      When the user adds a computer by pasting a pairing link
+    Scenario: Adding a computer with an invite link
+      When the user adds a computer by pasting an invite link
       Then the computer connects and is selected
 
     @desktop
-    Scenario: A bad pairing link is reported
-      When the user adds a computer with a pairing link that fails
+    Scenario: A bad invite link is reported
+      When the user adds a computer with an invite link that fails
       Then the user is told "Pairing failed."
 
     @desktop

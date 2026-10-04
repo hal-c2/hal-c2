@@ -5,6 +5,7 @@ import {
   type OrchestrationThreadShell,
   type OrchestrationV2Run,
   type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadMoveTarget,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
@@ -24,14 +25,41 @@ const iso = (value: DateTime.Utc): string => DateTime.formatIso(value);
 const nullableIso = (value: DateTime.Utc | null): string | null =>
   value === null ? null : iso(value);
 
+/** A machine of the cluster the shell spans. */
+export interface TuiMachine {
+  /** Its environment id. */
+  readonly id: string;
+  readonly label: string;
+  readonly online: boolean;
+}
+
 export type TuiThreadShell = Omit<OrchestrationThreadShell, "snoozedUntil" | "snoozedAt"> &
   Pick<OrchestrationV2ThreadShell, "lineage"> & {
     // Always present (null when unset) so client-runtime's snooze helpers accept it.
     readonly snoozedUntil: string | null;
     readonly snoozedAt: string | null;
+    /** The machine an MC is moving the thread to, until it arrives. */
+    readonly moving?: OrchestrationV2ThreadMoveTarget | null;
+    /** Set on the row a machine keeps for a thread that moved away (clusterClient.ts drops it). */
+    readonly movedTo?: OrchestrationV2ThreadMoveTarget | null;
+    /** The label of the machine it lives on, when the shell spans several. */
+    readonly machine?: string;
   };
-export type TuiShellSnapshot = Omit<OrchestrationShellSnapshot, "threads"> & {
+export type TuiProjectShell = OrchestrationShellSnapshot["projects"][number] & {
+  /** The label of the machine it is on, when the shell spans several. */
+  readonly machine?: string;
+  /** That machine's environment id: labels are the user's own and may repeat. */
+  readonly machineId?: string;
+};
+/** A project as lists name it: with its machine when the shell spans several. */
+export const projectLabel = (project: Pick<TuiProjectShell, "title" | "machine">): string =>
+  project.machine ? `${project.title} · ${project.machine}` : project.title;
+
+export type TuiShellSnapshot = Omit<OrchestrationShellSnapshot, "threads" | "projects"> & {
+  readonly projects: ReadonlyArray<TuiProjectShell>;
   readonly threads: ReadonlyArray<TuiThreadShell>;
+  /** The cluster's machines, this one first; absent while this machine is alone. */
+  readonly machines?: ReadonlyArray<TuiMachine>;
 };
 
 function legacyRunState(
@@ -156,6 +184,8 @@ export function presentTuiThreadShell(thread: OrchestrationV2ThreadShell): TuiTh
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     backgroundLiveness: (thread.pendingBackgroundTasks?.length ?? 0) > 0 ? "working" : null,
+    ...(thread.moving ? { moving: thread.moving } : {}),
+    ...(thread.movedTo ? { movedTo: thread.movedTo } : {}),
   };
 }
 

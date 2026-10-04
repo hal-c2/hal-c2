@@ -4,11 +4,12 @@
 #   apps/server-ex/lib/hal_c2/web/router.ex (GET /ws)
 #   apps/server-ex/lib/hal_c2/web/wire.ex (snapshot rows and event patches on the wire)
 #   packages/client-runtime/src/v3/clusterSocket.ts (19 of the shape types, hello, resync, end)
-#   packages/client-runtime/src/v3/session.ts (methods a protocol 3 environment does not serve yet)
+#   packages/client-runtime/src/v3/session.ts (methods a protocol 3 environment does not serve yet;
+#     updateSettings writes the whole settings document back)
 #   packages/client-runtime/src/connection/compatibility.ts (SHAPE_PROTOCOL_VERSION, negotiation)
 #   packages/contracts/src/rpc.ts (the subscription methods each shape replaces)
-#   Counts: 4 client frames, 21 shape types (32 rows: the 10 routed shapes have an MC and an
-#   environment form, shell a form with its links' rows), 42 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
+#   Counts: 4 client frames, 21 shape types (31 rows: the 10 routed shapes have an MC and an
+#   environment form), 39 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
 #   carries neither providerInstall nor relayClientInstall.
 #   Behaviour of a single subscription (resume, merge, resync timing) lives in
 #   mc/platform/websocket-protocol.feature. This file is the frame-by-frame ledger.
@@ -49,8 +50,8 @@ Feature: Protocol 3 wire parity
     # Routed by environment (HalC2.Web.Protocol.routed/0): stream, terminal, terminals, config,
     # vcs, gitAction, worktreeSetup, providerAuth and pullRequestRefreshes, which a client
     # needs for a thread on any machine, and projectClones, for a clone it started on any
-    # machine; the environment form goes to this MC, the cluster
-    # member, or through a link (connections/links.feature). Every rpc is routed the same way,
+    # machine; the environment form goes to this MC or the cluster member with that
+    # environment (connections/cluster.feature). Every rpc is routed the same way,
     # but the paired-clients methods, which answer for the caller's own session. Not routed:
     # shell and authAccess are about the MC the client talks to; scheduledTasks,
     # preview, previewAutomation, resourceTelemetry, localServers, devices,
@@ -58,10 +59,9 @@ Feature: Protocol 3 wire parity
     # a client reaches by pairing with it.
     # previewAutomation: the MC's broker and the TypeScript PreviewAutomationBroker both
     # send the host a connected event as it subscribes, before any agent request.
-    Examples: 32 shape forms
+    Examples: 31 shape forms
       | shape                | fields                  | first frame                                                     | later frames                                                                                                           | replaces                                                          |
-      | shell                | none                    | a shell frame with every MC and every row                       | shell.rows, shell.environment, shell.mc and shell.links frames                                                         | orchestration.subscribeShell                                      |
-      | shell                | links                   | a shell frame whose links carry their MCs and rows              | shell.linkRows, shell.linkEnvironment and shell.linkMc frames                                                          | orchestration.subscribeShell                                      |
+      | shell                | none                    | a shell frame with every MC and every row                       | shell.rows, shell.environment and shell.mc frames                                                                      | orchestration.subscribeShell                                      |
       | stream               | mc, stream              | snapshot parts, the first with part 0                           | events frames after a live frame, or a resync                                                                          | orchestration.subscribeThread                                     |
       | stream               | environment, stream     | the same frames as the MC form for the environment's MC         | the same frames as the MC form                                                                                         | orchestration.subscribeThread                                     |
       | config               | mc                      | a config frame, then config.themes and config.usageLimitSources | config.settings, config.providers, config.keybindings, config.themes, config.usageLimitSources and config.ready frames | server.getConfig, subscribeServerConfig, subscribeServerLifecycle |
@@ -114,21 +114,17 @@ Feature: Protocol 3 wire parity
     When <when>
     Then the client receives a <frame> frame carrying <fields>
 
-    Examples: 35 socket, stream, config and MC frames
+    Examples: 31 socket, stream, config and MC frames
       | frame                    | when                                                   | fields                                                        |
       | hello                    | the socket opens                                       | protocol, mc, environment                                     |
       | pong                     | the client pings                                       | nothing else                                                  |
       | error                    | a frame or subscription is refused                     | reason, and the id when there is one                          |
       | rpc.result               | a method succeeds                                      | id, result                                                    |
       | rpc.error                | a method fails                                         | id, error, and the contract error as detail when there is one |
-      | shell                    | the shell subscription opens                           | id, MCs with online and environment, rows, links              |
-      | shell.links              | the environments the MC links to change                | id, links                                                     |
+      | shell                    | the shell subscription opens                           | id, MCs with online and environment, rows                     |
       | shell.rows               | projects or threads on one MC change                   | id, mc, rows                                                  |
       | shell.environment        | an MC's environment descriptor changes                 | id, mc, environment                                           |
-      | shell.mc                 | an MC joins or leaves the cluster                      | id, mc, online                                                |
-      | shell.linkRows           | a linked environment's projects or threads change      | id, link, mc, rows                                            |
-      | shell.linkEnvironment    | a linked environment's MC descriptor changes           | id, link, mc, environment                                     |
-      | shell.linkMc             | a linked environment's MC comes online or goes offline | id, link, mc, online                                          |
+      | shell.mc                 | an MC joins or leaves the cluster                      | id, mc, online, and removed once it is no longer a member     |
       | snapshot                 | a stream subscription starts or falls too far behind   | id, offset, at, part, rows in creation order, done            |
       | events                   | stream entities change                                 | id, offset, events as seq, kind, id, patch and unix ms at     |
       | live                     | a stream has caught up                                 | id, offset                                                    |
@@ -197,6 +193,15 @@ Feature: Protocol 3 wire parity
     When a client calls a method the protocol 3 adapter does not carry
     Then the call fails in the client saying the method is not served by protocol-3 environments yet
     And no frame is sent to the MC
+
+  # The adapter writes the whole settings document back (session.ts updateSettings); load
+  # balancing is a setting it does not name (settings/load-balancing.feature).
+  @mc
+  Scenario: The client adapter leaves settings it does not know as they were
+    Given the MC's settings have load balancing on and a machine preferred
+    When a client changes another setting through the protocol 3 adapter
+    Then the other setting is changed
+    And load balancing is still on with the machine preferred
 
   # The MC speaks only protocol 3. Clients negotiate from the environment descriptor
   # (compatibility.ts) and use the protocol 3 adapter, so the MC does not also serve the

@@ -10,6 +10,7 @@ qt_add_qml_module(hal_c2_bricks
   QML_FILES
     ClusterSettings.qml
     ConnectionsSettings.qml
+    LoadBalancingGroup.qml
     Composer.qml
     ModelPicker.qml
     ProviderIcon.qml

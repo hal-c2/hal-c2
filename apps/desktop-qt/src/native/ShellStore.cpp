@@ -20,11 +20,14 @@ bool removed(const QJsonObject& row) {
   return row.isEmpty() || (!deletedAt.isUndefined() && !deletedAt.isNull());
 }
 
+QString threadKey(const QString& environmentId, const QString& threadId) {
+  return environmentId + QLatin1Char(':') + threadId;
+}
+
 }  // namespace
 
 ShellStore::ShellStore(McClient* client, QObject* parent) : QObject(parent) {
-  client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("shell")}, {QStringLiteral("links"), true}},
-                    [this](const QJsonObject& frame) { onFrame(frame); });
+  client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("shell")}}, [this](const QJsonObject& frame) { onFrame(frame); });
 }
 
 QList<sidebar::Thread> ShellStore::threads() const {
@@ -32,9 +35,39 @@ QList<sidebar::Thread> ShellStore::threads() const {
   for (const Mc& mc : m_mcs) {
     // An MC whose environment is not known yet has no key for its threads.
     if (mc.environmentId.isEmpty()) continue;
-    for (const QJsonObject& row : mc.threads) result.append(sidebar::threadFromRow(mc.environmentId, row));
+    for (const QJsonObject& row : mc.threads) {
+      if (lives(row)) result.append(sidebar::threadFromRow(mc.environmentId, row));
+    }
   }
   return result;
+}
+
+bool ShellStore::lives(const QJsonObject& row) const {
+  if (row.value(QLatin1String("movedTo")).isObject()) return false;
+  const QJsonObject moving = row.value(QLatin1String("moving")).toObject();
+  if (moving.isEmpty()) return true;
+  const QString destination = moving.value(QLatin1String("environmentId")).toString();
+  const QString id = row.value(QLatin1String("id")).toString();
+  for (const Mc& mc : m_mcs) {
+    if (mc.environmentId != destination) continue;
+    const auto arrived = mc.threads.constFind(id);
+    return arrived == mc.threads.constEnd() || arrived->value(QLatin1String("movedTo")).isObject();
+  }
+  return true;
+}
+
+QString ShellStore::located(const QString& key) const {
+  const QJsonObject row = threadRow(key);
+  if (row.isEmpty() || lives(row)) return key;
+  const QString id = key.mid(key.indexOf(QLatin1Char(':')) + 1);
+  for (const Mc& mc : m_mcs) {
+    if (mc.environmentId.isEmpty()) continue;
+    const auto found = mc.threads.constFind(id);
+    if (found != mc.threads.constEnd() && lives(*found)) return threadKey(mc.environmentId, id);
+  }
+  // Its new machine's rows have not arrived yet: where the record points.
+  const QString environmentId = row.value(QLatin1String("movedTo")).toObject().value(QLatin1String("environmentId")).toString();
+  return environmentId.isEmpty() ? key : threadKey(environmentId, id);
 }
 
 QList<sidebar::Project> ShellStore::projects() const {
@@ -65,66 +98,9 @@ std::optional<sidebar::Project> ShellStore::project(const QString& key) const {
 
 bool ShellStore::servesEnvironment(const QString& environmentId) const {
   for (const Mc& mc : m_mcs) {
-    if (mc.link.isEmpty() && mc.environmentId == environmentId) return true;
+    if (mc.environmentId == environmentId) return true;
   }
   return false;
-}
-
-bool ShellStore::reaches(const QString& environmentId) const {
-  return m_linked.contains(environmentId) || servesEnvironment(environmentId);
-}
-
-// The link to the environment, or to the cluster it is a member of.
-QJsonObject ShellStore::linkTo(const QString& environmentId) const {
-  QString via = m_linked.contains(environmentId) ? environmentId : QString();
-  for (const Mc& mc : m_mcs) {
-    if (via.isEmpty() && mc.environmentId == environmentId) via = mc.link;
-  }
-  for (const QJsonValue& value : m_links) {
-    const QJsonObject link = value.toObject();
-    if (link.value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString() == via) return link;
-  }
-  return {};
-}
-
-bool ShellStore::mayOperate(const QString& environmentId) const {
-  if (servesEnvironment(environmentId)) return true;
-  // A link paired before the MC kept scopes lists none; the other side still checks.
-  const QJsonValue scopes = linkTo(environmentId).value(QLatin1String("scopes"));
-  return !scopes.isArray() || scopes.toArray().contains(QStringLiteral("orchestration:operate"));
-}
-
-QUrl ShellStore::linkOrigin(const QString& environmentId) const {
-  if (servesEnvironment(environmentId)) return {};
-  return QUrl(linkTo(environmentId).value(QLatin1String("origin")).toString());
-}
-
-// The whole list of links: a link that left takes its MCs and rows with it.
-// A snapshot's links carry their MCs and rows; `shell.links` does not, and
-// leaves the rows of the links it keeps as they are.
-void ShellStore::setLinks(const QJsonArray& links) {
-  m_links = links;
-  m_linked.clear();
-  for (const QJsonValue& value : links) {
-    const QJsonObject link = value.toObject();
-    const QString id = link.value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString();
-    m_linked.insert(id);
-    for (const QJsonValue& entry : link.value(QLatin1String("mcs")).toArray()) {
-      const QJsonObject mc = entry.toObject();
-      const QString key = linkedKey(id, mc.value(QLatin1String("mc")).toString());
-      setEnvironment(key, mc.value(QLatin1String("environment")).toObject());
-      m_mcs[key].link = id;
-      m_mcs[key].online = mc.value(QLatin1String("online")).toBool();
-    }
-    for (const QJsonValue& entry : link.value(QLatin1String("rows")).toArray()) {
-      const QJsonArray row = entry.toArray();
-      const QString key = linkedKey(id, row.at(0).toString());
-      m_mcs[key].link = id;
-      putRow(key, row.at(1).toString(), row.at(2).toString(), row.at(3).toObject());
-    }
-  }
-  m_mcs.removeIf(
-      [this](QHash<QString, Mc>::iterator mc) { return !mc->link.isEmpty() && !m_linked.contains(mc->link); });
 }
 
 // Rows as `shell.rows` carries them: each [id, kind, fields].
@@ -153,7 +129,7 @@ std::optional<sidebar::Thread> ShellStore::thread(const QString& key) const {
   for (const Mc& mc : m_mcs) {
     if (mc.environmentId != environmentId) continue;
     const auto row = mc.threads.constFind(threadId);
-    if (row != mc.threads.constEnd()) return sidebar::threadFromRow(environmentId, *row);
+    if (row != mc.threads.constEnd() && lives(*row)) return sidebar::threadFromRow(environmentId, *row);
   }
   return std::nullopt;
 }
@@ -199,7 +175,7 @@ QJsonObject ShellStore::environment(const QString& environmentId) const {
 
 QString ShellStore::mcServing(const QString& environmentId) const {
   for (auto it = m_mcs.cbegin(); it != m_mcs.cend(); ++it) {
-    if (it->link.isEmpty() && it->environmentId == environmentId) return it.key();
+    if (it->environmentId == environmentId) return it.key();
   }
   return {};
 }
@@ -250,12 +226,8 @@ void ShellStore::setEnvironment(const QString& mc, const QJsonObject& environmen
 
 void ShellStore::onFrame(const QJsonObject& frame) {
   const QString type = frame.value(QLatin1String("t")).toString();
-  // A linked environment's change names its MC as that environment does.
-  const auto linked = [&frame] {
-    return linkedKey(frame.value(QLatin1String("link")).toString(), frame.value(QLatin1String("mc")).toString());
-  };
   if (type == QLatin1String("shell")) {
-    // The whole cluster and its links, sent on every (re)subscription.
+    // The whole cluster, sent on every (re)subscription.
     m_mcs.clear();
     for (const QJsonValue& value : frame.value(QLatin1String("mcs")).toArray()) {
       const QJsonObject mc = value.toObject();
@@ -267,31 +239,20 @@ void ShellStore::onFrame(const QJsonObject& frame) {
       const QJsonArray row = value.toArray();
       putRow(row.at(0).toString(), row.at(1).toString(), row.at(2).toString(), row.at(3).toObject());
     }
-    setLinks(frame.value(QLatin1String("links")).toArray());
     m_synchronized = true;
   } else if (type == QLatin1String("shell.environment")) {
     setEnvironment(frame.value(QLatin1String("mc")).toString(),
                    frame.value(QLatin1String("environment")).toObject());
   } else if (type == QLatin1String("shell.mc")) {
-    m_mcs[frame.value(QLatin1String("mc")).toString()].online =
-        frame.value(QLatin1String("online")).toBool();
-  } else if (type == QLatin1String("shell.links")) {
-    setLinks(frame.value(QLatin1String("links")).toArray());
+    const QString mc = frame.value(QLatin1String("mc")).toString();
+    // A machine removed from the cluster takes its rows with it; an offline one keeps them.
+    if (frame.value(QLatin1String("removed")).toBool()) {
+      m_mcs.remove(mc);
+    } else {
+      m_mcs[mc].online = frame.value(QLatin1String("online")).toBool();
+    }
   } else if (type == QLatin1String("shell.rows")) {
     putRows(frame.value(QLatin1String("mc")).toString(), frame.value(QLatin1String("rows")).toArray());
-  } else if (type == QLatin1String("shell.linkEnvironment")) {
-    // An MC that appears is offline until shell.linkMc says otherwise.
-    const QString key = linked();
-    setEnvironment(key, frame.value(QLatin1String("environment")).toObject());
-    m_mcs[key].link = frame.value(QLatin1String("link")).toString();
-  } else if (type == QLatin1String("shell.linkMc")) {
-    Mc& mc = m_mcs[linked()];
-    mc.link = frame.value(QLatin1String("link")).toString();
-    mc.online = frame.value(QLatin1String("online")).toBool();
-  } else if (type == QLatin1String("shell.linkRows")) {
-    const QString key = linked();
-    m_mcs[key].link = frame.value(QLatin1String("link")).toString();
-    putRows(key, frame.value(QLatin1String("rows")).toArray());
   } else {
     return;
   }

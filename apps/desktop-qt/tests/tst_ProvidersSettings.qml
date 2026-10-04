@@ -267,17 +267,6 @@ Item {
             compare(Shell.dispatchedActions[0].payload.values.GEMINI_API_KEY, "sk");
         }
     
-        function test_an_environment_only_viewed_takes_no_changes() {
-            Shell.state = { providerSettings: root.settings({ providers: [root.provider()], readOnly: true,
-                                                               readOnlyDescription: "This session can view Build box's providers but can't change their settings." }) };
-            const page = createTemporaryObject(settingsComponent, root);
-            verify(findChild(page, "readOnly").visible);
-            verify(!findChild(page, "provider_claudeAgent_work").enabled);
-            verify(!findChild(page, "addInstance").enabled);
-            mouseClick(findChild(findChild(page, "provider_claudeAgent_work"), "enabled"));
-            compare(Shell.dispatchedActions.length, 0);
-        }
-
         // A custom model's options are edited in the controller's draft and
         // saved with Save; a preset adds an option with its usual choices.
         function test_a_custom_model_is_added_and_its_options_edited() {
@@ -353,14 +342,6 @@ Item {
             mouseClick(findChild(dialog, "confirm"));
             compare(Shell.dispatchedActions[0].action, "providerSettings.removeHub");
             compare(Shell.dispatchedActions[0].payload.id, "cliproxy-hub.example");
-        }
-
-        function test_a_read_only_connection_cannot_add_or_remove_hubs() {
-            Shell.state = { providerSettings: root.settings({ readOnly: true, hubs: [{ id: "h", label: "Team hub", description: "CLI Proxy" }] }) };
-            const page = createTemporaryObject(settingsComponent, root);
-            verify(findChild(page, "hubs").visible);
-            verify(!findChild(page, "addHub").visible);
-            verify(!findChild(findChild(page, "hub_h"), "remove").visible);
         }
     }
 }

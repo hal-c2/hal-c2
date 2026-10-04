@@ -92,6 +92,14 @@ invite, and `joining` while the one-line join prompt has the keys (`mode:
 (copies the link), `cluster.join.open`, `cluster.join {link}`,
 `cluster.join.cancel` and `cluster.remove {id}`.
 
+Load balancing (`loadBalancingState.ts`) is offered once the shell spans more
+than one machine: settings list whether it is on and each machine's
+preference, and the palette runs `loadBalancing.set {enabled}` and
+`loadBalancing.preference {id}` (a picker). Both write the home MC's settings
+document. A new thread's first message asks that MC where to start
+(`placeNewThread` in `../loadBalancing.ts`) unless the draft's branch or
+workspace was chosen by hand.
+
 `threadView.ts` publishes the open thread's keys and handles their actions
 (the timeline wraps at `layout.contentWidth`):
 

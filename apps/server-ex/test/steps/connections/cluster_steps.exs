@@ -16,6 +16,8 @@ defmodule HalC2.Steps.Connections.Cluster do
   alias HalC2.Test.{Mc, WsClient}
   alias HalC2.Test.Mc.World
 
+  @other_version "999.0.0"
+
   @simulator %{
     "id" => "SIM-1",
     "name" => "iPhone 16",
@@ -103,11 +105,96 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
-  step "the user joins the second with a standard pairing link from the first", context do
+  step "the user joins the second with a standard pairing link from the first that names the first's certificate",
+       context do
     %{a: a, b: b} = context.machines
     store = :peer.call(a.peer, HalC2.Store, :home_path, [])
     token = :peer.call(a.peer, HalC2.Auth, :create_pairing_token, [store])
+    link = "#{origin(a)}/?token=#{token}#fingerprint=#{fingerprint(a)}"
+    Map.put(context, :joined, command(b, ["join", link]))
+  end
+
+  step "the user joins the second with an admin pairing link from the first that names no certificate",
+       context do
+    %{a: a, b: b} = context.machines
+
+    {:ok, %{"credential" => token}} =
+      auth(a, :create_pairing_link, [%{"scopes" => ["access:write"], "label" => "Admin"}])
+
     Map.put(context, :joined, command(b, ["join", "#{origin(a)}/?token=#{token}"]))
+  end
+
+  step "the join is refused because the link is not a cluster invite", context do
+    %{a: a, b: b} = context.machines
+    assert {:error, message} = context.joined
+    assert message =~ "not a cluster invite"
+    assert status(a)["members"] == []
+    assert status(b)["members"] == []
+    context
+  end
+
+  step "the first makes a cluster invite", context do
+    Map.put(context, :invite, invite(context.machines.a))
+  end
+
+  step "the invite carries the fingerprint of the first's certificate", context do
+    assert pin(context.invite) == fingerprint(context.machines.a)
+    context
+  end
+
+  step "the user joins the second with an invite from the first that names another certificate",
+       context do
+    %{a: a, b: b} = context.machines
+    link = String.replace(invite(a), fingerprint(a), fingerprint(b))
+    Map.put(context, :joined, command(b, ["join", link]))
+  end
+
+  step "the join is refused because the machine that answered is not the one the invite is from",
+       context do
+    assert {:error, message} = context.joined
+    assert message =~ "not the one the invite is from"
+    context
+  end
+
+  step "the second lists no other member", context do
+    b = context.machines.b
+    assert status(b)["members"] == []
+    assert :peer.call(b.peer, Elixir.Node, :list, []) == []
+    context
+  end
+
+  # The first really admits the second; a stand-in for the first's HTTP origin then
+  # answers the second with a machine of its own added to the members.
+  step "the second joins with an invite from the first whose answer was changed on the way to add a machine",
+       context do
+    %{a: a, b: b} = context.machines
+    {:ok, entry} = :peer.call(b.peer, GenServer, :call, [HalC2.Cluster, :entry])
+    {:ok, answer} = :peer.call(a.peer, HalC2.Cluster, :admit, [entry])
+    added = %{answer["members"][a.id] | "fingerprint" => fingerprint(b), "label" => "added"}
+    answer = put_in(answer["members"]["added"], added)
+
+    {base, _log} =
+      HalC2.Test.FakeHttp.start(%{
+        "/oauth/token" => {200, %{"access_token" => "access"}},
+        "/api/cluster/members" => {200, answer}
+      })
+
+    link = "#{base}/?token=invite#fingerprint=#{fingerprint(a)}"
+    Map.put(context, :joined, command(b, ["join", link]))
+  end
+
+  step "the second connects to the first", context do
+    %{a: a, b: b} = context.machines
+    assert {:ok, _} = context.joined
+    assert await_connected(b, a)
+    context
+  end
+
+  step "the second does not list the added machine", context do
+    %{a: a, b: b} = context.machines
+    assert [%{"id" => id}] = status(b)["members"]
+    assert id == a.id
+    context
   end
 
   step "the join is refused because the link does not grant access:write", context do
@@ -219,6 +306,54 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
+  # --- versions -----------------------------------------------------------------------
+
+  step "the second restarts on another HAL-C2 version", context do
+    context |> stop(:b) |> boot(:b, version: @other_version)
+  end
+
+  step "the second cannot connect to the first", context do
+    %{a: a, b: b} = context.machines
+    refute connect(context, b, a)
+    assert :peer.call(a.peer, Elixir.Node, :list, []) == []
+    context
+  end
+
+  step "the second lists the first as not connected, with the version the first runs", context do
+    %{a: a, b: b} = context.machines
+    version = :peer.call(a.peer, HalC2.Upgrade, :version, [])
+    assert status(b)["version"] == @other_version
+    assert [%{"id" => id, "connected" => false, "version" => ^version}] = status(b)["members"]
+    assert id == a.id
+    context
+  end
+
+  # As `HalC2.Upgrade` does once it has loaded a version in place.
+  step "the first moves to that version in place", context do
+    a = context.machines.a
+    :peer.call(a.peer, :persistent_term, :put, [{HalC2.Upgrade, :version}, @other_version])
+    :ok = :peer.call(a.peer, HalC2.Cluster, :version_changed, [])
+    context
+  end
+
+  step "the two are connected again", context do
+    %{a: a, b: b} = context.machines
+    assert await_connected(a, b)
+    assert await_connected(b, a)
+    assert [%{"connected" => true, "version" => @other_version}] = status(b)["members"]
+    context
+  end
+
+  step "two MCs that are not clustered, the second on another HAL-C2 version", context do
+    context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b, version: @other_version)
+  end
+
+  step "the join is refused because the machines run different versions", context do
+    assert {:error, message} = context.joined
+    assert message =~ "different HAL-C2 versions"
+    context
+  end
+
   # --- strangers ----------------------------------------------------------------------
 
   step "a member of a cluster and an MC that never joined it", context do
@@ -227,11 +362,7 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   step "the MC tries to connect to the member", context do
     %{a: a, stranger: stranger} = context.machines
-    {:ok, ip} = :inet.parse_address(to_charlist(a.address))
-    host = HalC2.Cluster.host(a.id)
-    :peer.call(stranger.peer, HalC2.Cluster.Epmd, :put, [host, ip, context.cluster_port])
-    connected = :peer.call(stranger.peer, Elixir.Node, :connect, [HalC2.Cluster.mc_name(a.id)])
-    Map.put(context, :connected, connected)
+    Map.put(context, :connected, connect(context, stranger, a))
   end
 
   step "the TLS handshake fails", context do
@@ -332,6 +463,35 @@ defmodule HalC2.Steps.Connections.Cluster do
     assert :peer.call(a.peer, Elixir.Node, :list, []) == [HalC2.Cluster.mc_name(b.id)]
     assert :peer.call(b.peer, Elixir.Node, :list, []) == [HalC2.Cluster.mc_name(a.id)]
     assert :peer.call(c.peer, Elixir.Node, :list, []) == []
+    context
+  end
+
+  step "the first two list a project of the third", context do
+    %{a: a, b: b, c: c} = context.machines
+
+    project = %{
+      "type" => "project.create",
+      "projectId" => "garden",
+      "title" => "Garden",
+      "workspaceRoot" => Mc.tmp_dir(context.mc, "garden")
+    }
+
+    assert {:ok, _} = :peer.call(c.peer, HalC2.Projects, :mutate, [project])
+    for m <- [a, b], do: assert(await_sidebar(m, c, true))
+    context
+  end
+
+  step "the first two no longer list the third or its project", context do
+    %{a: a, b: b, c: c} = context.machines
+
+    for m <- [a, b] do
+      assert await_sidebar(m, c, false)
+
+      refute Enum.any?(:peer.call(m.peer, HalC2.Shell, :environments, []), fn {_mc, environment} ->
+               environment["environmentId"] == c.id
+             end)
+    end
+
     context
   end
 
@@ -634,8 +794,16 @@ defmodule HalC2.Steps.Connections.Cluster do
     port
   end
 
+  # Whether `machine` reaches `other` when told where it listens.
+  defp connect(context, machine, other) do
+    {:ok, ip} = :inet.parse_address(to_charlist(other.address))
+    host = HalC2.Cluster.host(other.id)
+    :peer.call(machine.peer, HalC2.Cluster.Epmd, :put, [host, ip, context.cluster_port])
+    :peer.call(machine.peer, Elixir.Node, :connect, [HalC2.Cluster.mc_name(other.id)])
+  end
+
   # Boots a machine's VM as a release does (`flags: false` leaves out the cluster boot
-  # flags) and starts the whole MC in it.
+  # flags) and starts the whole MC in it, as `version:` when given.
   defp boot(context, name, opts \\ []) do
     machine = context.machines[name]
     optfile = Path.join(Mc.tmp_dir(context.mc, "dist"), "ssl_dist.conf")
@@ -667,6 +835,9 @@ defmodule HalC2.Steps.Connections.Cluster do
 
     for {key, value} <- settings,
         do: :ok = :peer.call(peer, Application, :put_env, [:hal_c2, key, value])
+
+    with version when version != nil <- opts[:version],
+         do: :peer.call(peer, :persistent_term, :put, [{HalC2.Upgrade, :version}, version])
 
     {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:hal_c2], 30_000)
     id = :peer.call(peer, HalC2.Environment, :id, [])
@@ -733,6 +904,15 @@ defmodule HalC2.Steps.Connections.Cluster do
     link
   end
 
+  # The fingerprint an invite names.
+  defp pin(link), do: URI.decode_query(URI.parse(link).fragment)["fingerprint"]
+
+  defp fingerprint(machine) do
+    dir = HalC2.Cluster.dir(:peer.call(machine.peer, HalC2.Paths, :data_dir, []))
+    cert = X509.Certificate.from_pem!(File.read!(Path.join(dir, "mc.pem")))
+    HalC2.Cluster.fingerprint(cert)
+  end
+
   defp origin(machine) do
     path = :peer.call(machine.peer, HalC2.RuntimeRecord, :path, [])
     JSON.decode!(File.read!(path))["origin"]
@@ -745,6 +925,28 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   defp await_disconnected(machine, other) do
     await_mc(machine, :nodedown, HalC2.Cluster.mc_name(other.id), 15_000)
+  end
+
+  # Waits until `machine`'s sidebar has rows of `other` (`listed`) or has none.
+  defp await_sidebar(machine, other, listed) do
+    code = """
+    :ok = HalC2.Shell.subscribe(self())
+
+    wait = fn wait ->
+      Enum.any?(HalC2.Shell.rows(), &match?({{^mc, _}, _}, &1)) == listed or
+        receive do
+          {:hal_c2_shell, _} -> wait.(wait)
+        after
+          15_000 -> false
+        end
+    end
+
+    wait.(wait)
+    """
+
+    binding = [mc: HalC2.Cluster.mc_name(other.id), listed: listed]
+    {result, _} = :peer.call(machine.peer, Code, :eval_string, [code, binding], 20_000)
+    result
   end
 
   defp await_mc(machine, event, mc, timeout) do

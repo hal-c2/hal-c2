@@ -71,6 +71,32 @@ defmodule HalC2.PortableSessionsTest do
     assert untouched == List.last(lines)
   end
 
+  test "a session file that is on this machine's disk is placed as one held in memory is",
+       %{tmp_dir: dir, from: from, to: to} do
+    name = "sessions/2026/09/26/rollout-2026-09-26T10-00-00-abc.jsonl"
+
+    lines = [
+      %{"type" => "session_meta", "payload" => %{"id" => "abc", "cwd" => from}},
+      %{"type" => "response_item", "payload" => %{"text" => from}}
+    ]
+
+    in_memory = session("codex", "abc", [{name, lines}], from)
+    PortableSessions.place(in_memory, to, %{"thread" => %{"machine" => "laptop"}})
+    placed = Path.join([dir, "codex", name])
+    expected = File.read!(placed)
+    File.rm!(placed)
+
+    # As it arrives in a move: no newline after its last line.
+    arrived = Path.join(dir, "arrived")
+    File.write!(arrived, String.trim_trailing(jsonl(lines)))
+    on_disk = %{in_memory | "files" => [%{"fileName" => name, "path" => arrived}]}
+    PortableSessions.place(on_disk, to, %{"thread" => %{"machine" => "laptop"}})
+
+    assert File.read!(placed) == String.trim_trailing(expected)
+    assert [%{"payload" => %{"cwd" => ^to}}, untouched] = read(placed)
+    assert untouched == List.last(lines)
+  end
+
   test "a Claude transcript goes under the destination's project folder with its sub-agents",
        %{tmp_dir: dir, from: from, to: to} do
     files = [

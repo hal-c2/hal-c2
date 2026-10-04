@@ -265,15 +265,10 @@ bool OnboardingController::handle(const QString& action, const QVariant& payload
 
 // ---- Connect ----------------------------------------------------------------
 
-// The computers the MC reaches, its own first; each is selected the first
-// time it is offered.
+// The computers of the cluster, the MC's own first; each is selected the
+// first time it is offered.
 void OnboardingController::updateComputers() {
-  // The MCs the shell sees, and the saved links whose MCs have not shown yet.
   QStringList computers = m_store->environments();
-  for (const QJsonValue& link : m_store->links()) {
-    const QString id = link.toObject().value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString();
-    if (!id.isEmpty() && !computers.contains(id)) computers.append(id);
-  }
   const QString own = m_client->environment();
   computers.removeAll(own);
   std::sort(computers.begin(), computers.end(), [this](const QString& left, const QString& right) {
@@ -289,45 +284,23 @@ void OnboardingController::updateComputers() {
 }
 
 QString OnboardingController::label(const QString& environmentId) const {
-  QString label = m_store->environment(environmentId).value(QLatin1String("label")).toString();
-  for (const QJsonValue& link : m_store->links()) {
-    const QJsonObject environment = link.toObject().value(QLatin1String("environment")).toObject();
-    if (label.isEmpty() && environment.value(QLatin1String("environmentId")) == environmentId) {
-      label = environment.value(QLatin1String("label")).toString();
-    }
-  }
+  const QString label = m_store->environment(environmentId).value(QLatin1String("label")).toString();
   return label.isEmpty() ? QStringLiteral("Computer") : label;
 }
 
-// Its MC is online, or, before the MC shows, its link is.
-bool OnboardingController::connected(const QString& environmentId) const {
-  if (m_store->environments().contains(environmentId)) return m_store->environmentOnline(environmentId);
-  for (const QJsonValue& link : m_store->links()) {
-    const QJsonObject entry = link.toObject();
-    if (entry.value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")) == environmentId) {
-      return entry.value(QLatin1String("online")).toBool();
-    }
-  }
-  return false;
-}
-
+// Joins the cluster of the computer the link is from (`cluster.join`); its
+// machines are offered as the shell lists them.
 void OnboardingController::pair(const QString& url) {
   if (m_pairing || url.isEmpty()) return;
   m_pairing = true;
   m_pairingError.clear();
   m_pairingDetail.clear();
-  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.linkEnvironment"),
-                 QJsonObject{{QStringLiteral("pairingUrl"), url}},
-                 [this](const QJsonValue& result, const std::optional<QString>& error) {
+  m_client->call(this, m_client->environment(), QStringLiteral("cluster.join"), QJsonObject{{QStringLiteral("link"), url}},
+                 [this](const QJsonValue&, const std::optional<QString>& error) {
                    m_pairing = false;
                    if (error) {
                      m_pairingError = QStringLiteral("Pairing failed.");
                      m_pairingDetail = *error;
-                   } else {
-                     const QString id = result.toObject().value(QLatin1String("environmentId")).toString();
-                     m_offered.insert(id);
-                     m_selected.insert(id);
-                     updateComputers();
                    }
                    publish();
                  });
@@ -340,7 +313,7 @@ void OnboardingController::startSetup() {
   }
   if (ids.isEmpty() || m_pairing) return;
   for (const QString& id : ids) {
-    if (!connected(id)) return;
+    if (!m_store->environmentOnline(id)) return;
   }
   m_setupIds = ids;
   m_step = QStringLiteral("agents");
@@ -914,22 +887,14 @@ void OnboardingController::publish() {
   bool ready = false;
   for (const QString& id : std::as_const(m_computers)) {
     const bool selected = m_selected.contains(id);
-    const bool online = connected(id);
     if (selected) ready = true;
-    QString url;
-    for (const QJsonValue& link : m_store->links()) {
-      if (link.toObject().value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")) == id) {
-        url = link.toObject().value(QLatin1String("origin")).toString();
-      }
-    }
     computers.append(QVariantMap{{QStringLiteral("environmentId"), id},
                                  {QStringLiteral("label"), label(id)},
-                                 {QStringLiteral("url"), url},
-                                 {QStringLiteral("connected"), online},
+                                 {QStringLiteral("connected"), m_store->environmentOnline(id)},
                                  {QStringLiteral("selected"), selected}});
   }
   for (const QString& id : std::as_const(m_selected)) {
-    if (m_computers.contains(id) && !connected(id)) ready = false;
+    if (m_computers.contains(id) && !m_store->environmentOnline(id)) ready = false;
   }
   QVariant terminal = null();
   if (m_setup) {

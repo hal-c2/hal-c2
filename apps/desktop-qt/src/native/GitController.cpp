@@ -265,7 +265,7 @@ QString GitController::menuReason(const QString& id) const {
 void GitController::publish() {
   if (!m_active) return;
   const auto& place = workspace()->place();
-  // A link that is down says why when the checkout's status is followed.
+  // An unreachable machine says why when the checkout's status is followed.
   const QString unreachable = workspace()->gitError();
   if (place && (!m_store->environmentOnline(place->environmentId) || !unreachable.isEmpty())) {
     QVariantMap git{{QStringLiteral("available"), false}};

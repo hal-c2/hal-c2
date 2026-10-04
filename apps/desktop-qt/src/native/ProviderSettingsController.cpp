@@ -268,11 +268,6 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
   const QString instanceId = input.value(QStringLiteral("instanceId")).toString();
   const QJsonObject entry = provider(instanceId);
   const QJsonObject auth = m_authState.value(instanceId);
-  // An environment this session may only view takes no changes, only a
-  // different environment, docs and copying its update command.
-  static const QSet<QString> viewing{QStringLiteral("providerSettings.environment"), QStringLiteral("providerSettings.openDocs"),
-                                     QStringLiteral("providerSettings.copyUpdateCommand")};
-  if (!viewing.contains(action) && !m_followed.isEmpty() && !m_store->mayOperate(m_followed)) return true;
   if (action == QLatin1String("providerSettings.environment")) {
     m_environment = input.value(QStringLiteral("id")).toString();
     update();
@@ -565,8 +560,8 @@ void ProviderSettingsController::unfollow() {
   m_acp.clear();
 }
 
-// Follows the sign-in of each provider that signs in from HAL-C2; the shape
-// is MC-addressed, so only where a cluster MC serves the environment.
+// Follows the sign-in of each provider that signs in from HAL-C2, on the MC
+// serving the environment (the shape is MC-addressed).
 void ProviderSettingsController::followAuth() {
   const QString mc = m_store->mcServing(m_followed);
   QSet<QString> wanted;
@@ -601,7 +596,7 @@ void ProviderSettingsController::followAuth() {
 // this machine until it comes back.
 QString ProviderSettingsController::chosen() const {
   const QStringList environments = m_store->environments();
-  if (!m_environment.isEmpty() && environments.contains(m_environment) && m_store->reaches(m_environment)) return m_environment;
+  if (!m_environment.isEmpty() && environments.contains(m_environment)) return m_environment;
   const QString local = m_client->environment();
   return environments.contains(local) ? local : QString();
 }
@@ -741,7 +736,6 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                                                                       {QStringLiteral("url"), urlAuth.value(QLatin1String("url")).toString()}}));
   if (!signsIn(provider)) return result;
   // ProviderAuthenticationSection.
-  const bool served = !m_store->mcServing(m_followed).isEmpty();
   const bool known = m_authState.contains(instanceId);
   const QJsonObject state = m_authState.value(instanceId);
   const QString phase = state.value(QLatin1String("phase")).toString();
@@ -765,9 +759,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
            secret.toMap().value(QStringLiteral("stored")).toBool();
   });
   QString description;
-  if (!served) {
-    description = QStringLiteral("Sign in from a client paired with %1.").arg(label(m_followed));
-  } else if (apiKey && !active) {
+  if (apiKey && !active) {
     description = QStringLiteral("Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.");
   } else if (active) {
     description = phase == QLatin1String("starting")    ? QStringLiteral("Starting sign-in…")
@@ -793,7 +785,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   // The methods to choose from, when there is a choice.
   QVariantList methods;
   const QJsonArray offered = state.value(QLatin1String("methods")).toArray();
-  if (served && !active && offered.size() > 1) {
+  if (!active && offered.size() > 1) {
     for (const QJsonValue& method : offered) {
       methods.append(QVariantMap{{QStringLiteral("id"), method.toObject().value(QLatin1String("id")).toString()},
                                  {QStringLiteral("name"), method.toObject().value(QLatin1String("name")).toString()}});
@@ -801,7 +793,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   }
   // The agent's login terminal: its latest output and how far it has come.
   QVariant terminal = null();
-  if (served && active && interactionType == QLatin1String("terminal")) {
+  if (active && interactionType == QLatin1String("terminal")) {
     terminal = QVariantMap{{QStringLiteral("key"), state.value(QLatin1String("flowId")).toString() + QLatin1Char(':') +
                                                       interaction.value(QLatin1String("id")).toString()},
                            {QStringLiteral("output"), interaction.value(QLatin1String("output")).toString()},
@@ -809,7 +801,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                                                           double(interaction.value(QLatin1String("output")).toString().size()))}};
   }
   QVariantList credentials;
-  if (served && active && interactionType == QLatin1String("credentials")) {
+  if (active && interactionType == QLatin1String("credentials")) {
     for (const QJsonValue& field : interaction.value(QLatin1String("fields")).toArray()) {
       credentials.append(QVariantMap{{QStringLiteral("name"), field.toObject().value(QLatin1String("name")).toString()},
                                      {QStringLiteral("label"), field.toObject().value(QLatin1String("label")).toString()},
@@ -821,7 +813,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   result.insert(QStringLiteral("account"),
                 QVariantMap{
                     {QStringLiteral("description"), description},
-                    {QStringLiteral("canSignIn"), served && known && !busy && !active && !discovering && !externalSetup && !apiKey &&
+                    {QStringLiteral("canSignIn"), known && !busy && !active && !discovering && !externalSetup && !apiKey &&
                                                       setup.value(QLatin1String("canAuthenticate")).toBool(true) &&
                                                       provider.value(QLatin1String("enabled")).toBool() &&
                                                       provider.value(QLatin1String("installed")).toBool()},
@@ -829,8 +821,8 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                                                     : phase == QLatin1String("failed") || phase == QLatin1String("cancelled")
                                                         ? QStringLiteral("Retry sign-in")
                                                         : QStringLiteral("Sign in")},
-                    {QStringLiteral("canCancel"), served && !busy && active && !state.value(QLatin1String("flowId")).toString().isEmpty()},
-                    {QStringLiteral("canSignOut"), served && known && !busy && !active && signedIn && canLogout},
+                    {QStringLiteral("canCancel"), !busy && active && !state.value(QLatin1String("flowId")).toString().isEmpty()},
+                    {QStringLiteral("canSignOut"), known && !busy && !active && signedIn && canLogout},
                     {QStringLiteral("url"), active ? url : QString()},
                     {QStringLiteral("userCode"), interactionType == QLatin1String("deviceCode")
                                                      ? interaction.value(QLatin1String("userCode")).toString()
@@ -839,7 +831,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                     {QStringLiteral("methods"), methods},
                     {QStringLiteral("terminal"), terminal},
                     {QStringLiteral("credentials"), credentials},
-                    {QStringLiteral("acceptsCallback"), served && active && !url.isEmpty() &&
+                    {QStringLiteral("acceptsCallback"), active && !url.isEmpty() &&
                                                             (interactionType == QLatin1String("browser")
                                                                  ? interaction.value(QLatin1String("acceptsCallback")).toBool()
                                                                  : interaction.isEmpty())},
@@ -883,10 +875,7 @@ QVariant ProviderSettingsController::hubs() const {
 void ProviderSettingsController::publish() {
   if (!m_active) return;
   const QString local = m_client->environment();
-  QStringList ids;
-  for (const QString& environmentId : m_store->environments()) {
-    if (environmentId == local || m_store->reaches(environmentId)) ids.append(environmentId);
-  }
+  QStringList ids = m_store->environments();
   ids.removeDuplicates();  // an environment several cluster MCs serve
   // This machine first, the others by name.
   std::sort(ids.begin(), ids.end(), [this, &local](const QString& a, const QString& b) {
@@ -920,7 +909,6 @@ void ProviderSettingsController::publish() {
     title = QStringLiteral("No providers");
     description = QStringLiteral("%1 reports no providers.").arg(label(environmentId));
   }
-  const bool readOnly = !environmentId.isEmpty() && !m_store->mayOperate(environmentId);
   QVariantList providers;
   if (m_open && m_providers && status == QLatin1String("ready")) {
     for (const QJsonValue& value : *m_providers) providers.append(entry(value.toObject()));
@@ -943,11 +931,6 @@ void ProviderSettingsController::publish() {
                               {QStringLiteral("description"), description},
                               {QStringLiteral("refreshing"), m_refreshing > 0},
                               {QStringLiteral("checkedAt"), checked.isValid() ? checked.toUTC().toString(Qt::ISODateWithMs) : QString()},
-                              {QStringLiteral("readOnly"), readOnly},
-                              {QStringLiteral("readOnlyDescription"),
-                               readOnly ? QStringLiteral("This session can view %1's providers but can't change their settings.")
-                                              .arg(label(environmentId))
-                                        : QString()},
                               {QStringLiteral("providers"), providers},
                               {QStringLiteral("health"), health()},
                               {QStringLiteral("hubs"), hubs()},

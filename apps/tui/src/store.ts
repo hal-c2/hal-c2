@@ -70,6 +70,10 @@ export interface StoreOptions {
   readonly now?: () => string;
 }
 
+/** What the status row says after a shell snapshot, until something else is said. */
+export const shellSummary = (shell: OrchestrationShellSnapshot): string =>
+  `${shell.projects.length} project(s) · ${shell.threads.length} thread(s)`;
+
 export function createStore(client: TuiClient, options: StoreOptions = {}): Store {
   const now = options.now ?? (() => new Date().toISOString());
   let state: StoreState = {
@@ -209,7 +213,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
           ...state,
           shell: nextShell,
           projectScopeId: validProjectScope,
-          status: `${nextShell.projects.length} project(s) · ${nextShell.threads.length} thread(s)`,
+          status: shellSummary(nextShell),
           statusKind: "info",
         };
         ensureValidSelection(rowsNow());

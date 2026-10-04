@@ -14,6 +14,9 @@ QList<void (*)(FakeMc&)>& extensions() {
   return list;
 }
 
+// What the MC answers a request for a member it cannot reach (socket.ex).
+const QString kUnavailable = QStringLiteral("MC unavailable: noconnection");
+
 }  // namespace
 
 FakeMc::Extension::Extension(void (*extend)(FakeMc& mc)) {
@@ -30,7 +33,6 @@ FakeMc::FakeMc() : m_server(QStringLiteral("fake-mc"), QWebSocketServer::NonSecu
 
   onShape(QStringLiteral("shell"), [this](int id, const QJsonObject& shape) {
     m_shellSubscription = id;
-    shellLinks = shape.value(QLatin1String("links")).toBool();
     if (!holdSnapshot) sendSnapshot();
   });
   onRpc(QStringLiteral("orchestration.dispatchCommand"), [this](const Rpc& rpc) { dispatchCommand(rpc); });
@@ -90,138 +92,87 @@ void FakeMc::sendSnapshot() {
   for (auto it = projects.cbegin(); it != projects.cend(); ++it) {
     rows.append(QJsonArray{name, it.key(), QStringLiteral("project"), *it});
   }
-  QJsonObject snapshot{
+  QJsonArray mcs{QJsonObject{
+      {QStringLiteral("mc"), name},
+      {QStringLiteral("online"), true},
+      {QStringLiteral("environment"),
+       label.isEmpty() ? QJsonObject{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}}
+                       : QJsonObject{{QStringLiteral("environmentId"), environmentId},
+                                     {QStringLiteral("label"), label},
+                                     {QStringLiteral("capabilities"), capabilities}}},
+  }};
+  for (const QString& environment : std::as_const(members)) {
+    const QString peer = peers.value(environment);
+    mcs.append(QJsonObject{{QStringLiteral("mc"), peer},
+                           {QStringLiteral("online"), !offline.contains(environment)},
+                           {QStringLiteral("environment"), peerEnvironment(environment)}});
+    for (const QJsonArray& row : peerRows.value(environment)) rows.append(QJsonArray{peer, row.at(0), row.at(1), row.at(2)});
+  }
+  send({
       {QStringLiteral("t"), QStringLiteral("shell")},
       {QStringLiteral("id"), m_shellSubscription},
-      {QStringLiteral("mcs"),
-       QJsonArray{QJsonObject{
-           {QStringLiteral("mc"), name},
-           {QStringLiteral("online"), true},
-           {QStringLiteral("environment"),
-            label.isEmpty() ? QJsonObject{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}}
-                            : QJsonObject{{QStringLiteral("environmentId"), environmentId},
-                                          {QStringLiteral("label"), label},
-                                          {QStringLiteral("capabilities"), capabilities}}},
-       }}},
+      {QStringLiteral("mcs"), mcs},
       {QStringLiteral("rows"), rows},
-      {QStringLiteral("links"), links()},
-  };
-  if (shellLinks) {
-    // Each link carries its MCs and rows as the MC holds them.
-    QJsonArray withRows;
-    for (const QJsonValue& value : snapshot.value(QLatin1String("links")).toArray()) {
-      QJsonObject link = value.toObject();
-      const QString environment = link.value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString();
-      QJsonArray linkRows;
-      for (const QJsonArray& row : linkedRows.value(environment)) linkRows.append(QJsonArray{name, row.at(0), row.at(1), row.at(2)});
-      link.insert(QStringLiteral("mcs"), QJsonArray{QJsonObject{
-                                               {QStringLiteral("mc"), name},
-                                               {QStringLiteral("online"), !linkProblems.contains(environment)},
-                                               {QStringLiteral("environment"), linkedEnvironment(environment)},
-                                           }});
-      link.insert(QStringLiteral("rows"), linkRows);
-      withRows.append(link);
-    }
-    snapshot.insert(QStringLiteral("links"), withRows);
-  }
-  send(snapshot);
+  });
 }
 
-void FakeMc::link(const QString& environment) {
-  if (!linked.contains(environment)) linked.append(environment);
-  sendLinks();
-  if (!shellLinks) return;
-  sendLinkFrame(QStringLiteral("shell.linkEnvironment"), environment,
-                {{QStringLiteral("environment"), linkedEnvironment(environment)}});
-  sendLinkFrame(QStringLiteral("shell.linkMc"), environment,
-                {{QStringLiteral("online"), !linkProblems.contains(environment)}});
-  QJsonArray rows;
-  for (const QJsonArray& row : linkedRows.value(environment)) rows.append(row);
-  if (!rows.isEmpty()) sendLinkFrame(QStringLiteral("shell.linkRows"), environment, {{QStringLiteral("rows"), rows}});
-}
-
-void FakeMc::sendLinkRow(const QString& environment, const QString& id, const QJsonObject& row, const QString& kind) {
-  const QJsonArray entry{id, kind, row};
-  linkedRows[environment].insert(id, entry);
-  if (shellLinks && linked.contains(environment)) {
-    QJsonArray rows;
-    rows.append(entry);
-    sendLinkFrame(QStringLiteral("shell.linkRows"), environment, {{QStringLiteral("rows"), rows}});
-  }
-}
-
-void FakeMc::setLinkProblem(const QString& environment, const QString& problem) {
-  if (problem.isEmpty()) {
-    linkProblems.remove(environment);
-  } else {
-    linkProblems.insert(environment, problem);
-  }
-  sendLinks();
-  if (shellLinks) sendLinkFrame(QStringLiteral("shell.linkMc"), environment, {{QStringLiteral("online"), problem.isEmpty()}});
-}
-
-// What the MC answers a request for a linked environment while its link is
-// down (HalC2.Links.unreachable/3).
-QJsonObject FakeMc::unreachable(const QString& environment) const {
-  return {{QStringLiteral("_tag"), QStringLiteral("EnvironmentUnreachableError")},
-          {QStringLiteral("environmentId"), environment},
-          {QStringLiteral("reason"), linkProblems.value(environment)},
-          {QStringLiteral("message"), QStringLiteral("%1 cannot be reached.").arg(environment)}};
-}
-
-QJsonObject FakeMc::linkedEnvironment(const QString& environment) const {
-  return {{QStringLiteral("environmentId"), environment},
-          {QStringLiteral("label"), linkLabels.value(environment, environment)},
-          {QStringLiteral("capabilities"), capabilities}};
-}
-
-void FakeMc::sendLinkFrame(const QString& type, const QString& environment, QJsonObject frame) {
-  if (!m_socket || m_shellSubscription < 0) return;
-  frame.insert(QStringLiteral("t"), type);
-  frame.insert(QStringLiteral("id"), m_shellSubscription);
-  frame.insert(QStringLiteral("link"), environment);
-  frame.insert(QStringLiteral("mc"), name);
-  send(frame);
-}
-
-void FakeMc::unlink(const QString& environment) {
-  linked.removeAll(environment);
-  linkProblems.remove(environment);
-  sendLinks();
-}
-
-void FakeMc::sendLinks() {
-  if (!m_socket || m_shellSubscription < 0) return;
-  send({{QStringLiteral("t"), QStringLiteral("shell.links")}, {QStringLiteral("id"), m_shellSubscription}, {QStringLiteral("links"), links()}});
-}
-
-QJsonArray FakeMc::links() const {
-  QJsonArray result;
-  for (const QString& environment : linked) {
-    result.append(QJsonObject{
-        {QStringLiteral("environment"),
-         QJsonObject{{QStringLiteral("environmentId"), environment},
-                     {QStringLiteral("label"), linkLabels.value(environment, environment)}}},
-        {QStringLiteral("origin"), QStringLiteral("http://") + environment + QStringLiteral(":3780")},
-        {QStringLiteral("online"), !linkProblems.contains(environment)},
-    });
-    QJsonObject link = result.last().toObject();
-    if (linkProblems.contains(environment)) link.insert(QStringLiteral("problem"), linkProblems.value(environment));
-    if (linkScopes.contains(environment)) link.insert(QStringLiteral("scopes"), QJsonArray::fromStringList(linkScopes.value(environment)));
-    result.replace(result.size() - 1, link);
-  }
-  return result;
+QJsonObject FakeMc::peerEnvironment(const QString& environment) const {
+  QJsonObject descriptor{{QStringLiteral("environmentId"), environment}, {QStringLiteral("capabilities"), capabilities}};
+  if (peerLabels.contains(environment)) descriptor.insert(QStringLiteral("label"), peerLabels.value(environment));
+  return descriptor;
 }
 
 void FakeMc::join(const QString& peer, const QString& peerEnvironment) {
+  if (!members.contains(peerEnvironment)) members.append(peerEnvironment);
   peers.insert(peerEnvironment, peer);
+  if (!m_socket || m_shellSubscription < 0) return;
   send({
       {QStringLiteral("t"), QStringLiteral("shell.environment")},
       {QStringLiteral("id"), m_shellSubscription},
       {QStringLiteral("mc"), peer},
-      {QStringLiteral("environment"),
-       QJsonObject{{QStringLiteral("environmentId"), peerEnvironment}, {QStringLiteral("capabilities"), capabilities}}},
+      {QStringLiteral("environment"), this->peerEnvironment(peerEnvironment)},
   });
+  QJsonArray rows;
+  for (const QJsonArray& row : peerRows.value(peerEnvironment)) rows.append(row);
+  if (!rows.isEmpty()) sendRows(peer, rows);
+  setOnline(peerEnvironment, !offline.contains(peerEnvironment));
+}
+
+void FakeMc::sendPeerRow(const QString& environment, const QString& id, const QJsonObject& row, const QString& kind) {
+  const QJsonArray entry{id, kind, row};
+  peerRows[environment].insert(id, entry);
+  if (peers.contains(environment)) sendRows(peers.value(environment), QJsonArray{QJsonValue(entry)});
+}
+
+void FakeMc::setOnline(const QString& environment, bool online) {
+  if (online) {
+    offline.remove(environment);
+  } else {
+    offline.insert(environment);
+  }
+  if (!m_socket || m_shellSubscription < 0) return;
+  send({{QStringLiteral("t"), QStringLiteral("shell.mc")},
+        {QStringLiteral("id"), m_shellSubscription},
+        {QStringLiteral("mc"), peers.value(environment)},
+        {QStringLiteral("online"), online}});
+}
+
+void FakeMc::remove(const QString& environment) {
+  const QString peer = peers.take(environment);
+  members.removeAll(environment);
+  offline.remove(environment);
+  peerRows.remove(environment);
+  if (!m_socket || m_shellSubscription < 0) return;
+  send({{QStringLiteral("t"), QStringLiteral("shell.mc")},
+        {QStringLiteral("id"), m_shellSubscription},
+        {QStringLiteral("mc"), peer},
+        {QStringLiteral("online"), false},
+        {QStringLiteral("removed"), true}});
+}
+
+// A request for a member whose MC is down, by its environment or its MC.
+bool FakeMc::down(const QString& environment, const QString& mc) const {
+  return offline.contains(environment) || (!mc.isEmpty() && offline.contains(peers.key(mc)));
 }
 
 void FakeMc::sendRow(const QString& id, const QJsonObject& row, const QString& kind) {
@@ -327,10 +278,8 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
   if (type == QLatin1String("sub")) {
     subscriptions.append(message);
     const QJsonObject shape = message.value(QLatin1String("shape")).toObject();
-    const QString down = shape.value(QLatin1String("environment")).toString();
-    if (linkProblems.contains(down)) {
-      const QJsonObject detail = unreachable(down);
-      send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), detail.value(QLatin1String("message"))}, {QStringLiteral("detail"), detail}});
+    if (down(shape.value(QLatin1String("environment")).toString(), shape.value(QLatin1String("mc")).toString())) {
+      send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), kUnavailable}});
       return;
     }
     const auto handler = m_shapes.constFind(shape.value(QLatin1String("type")).toString());
@@ -342,11 +291,10 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
   } else if (type == QLatin1String("ping")) {
     send({{QStringLiteral("t"), QStringLiteral("pong")}});
   } else if (type == QLatin1String("rpc")) {
-    const QString down = message.value(QLatin1String("environment")).toString();
-    const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket, down};
-    if (linkProblems.contains(down)) {
-      const QJsonObject detail = unreachable(down);
-      refuse(rpc, detail.value(QLatin1String("message")).toString(), detail);
+    const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket,
+                  message.value(QLatin1String("environment")).toString()};
+    if (down(rpc.environment, {})) {
+      refuse(rpc, kUnavailable);
       return;
     }
     auto handler = m_rpc.constFind(rpc.method);
@@ -364,6 +312,7 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
 
 void FakeMc::dispatchCommand(const Rpc& rpc) {
   commands.append(rpc.payload);
+  commandEnvironments.append(rpc.environment);
   const QString type = rpc.payload.value(QLatin1String("type")).toString();
   auto answer = [this, rpc, known = refusals.contains(type), refusal = refusals.value(type)] {
     if (known) {

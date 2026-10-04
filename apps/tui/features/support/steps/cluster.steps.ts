@@ -4,10 +4,12 @@
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
+import { makeClusterClient } from "../../../src/clusterClient.ts";
+import type { OrchestrationShellSnapshot, TuiClient } from "../../../src/connection.ts";
 import { LOCAL_ONLY_HINT } from "../../../src/host/clusterState.ts";
 import type { TuiClusterState } from "../../../src/host/clusterState.ts";
 import type { TuiSettingsState } from "../../../src/host/settingsState.ts";
-import type { FakeCluster } from "../fakeClient.ts";
+import { fakeClient, project, shell, type FakeCluster } from "../fakeClient.ts";
 import { runPaletteCommand } from "./controls.steps.ts";
 import {
   boot,
@@ -187,9 +189,88 @@ step("the MC answers", async (ctx: World) => {
   await settle(ctx);
 });
 
+step("{string} joins the cluster", async (ctx: World, label: string) => {
+  ctx.fake!.cluster.members = [...ctx.fake!.cluster.members, member(label, true)];
+  ctx.fake!.emitCluster();
+  await settle(ctx);
+});
+
+step("the terminal's cluster lists {string} as connected", async (ctx: World, label: string) => {
+  await settle(ctx);
+  const cluster = ctx.host!.state.get("cluster") as TuiClusterState;
+  const members = cluster.status?.clustered ? cluster.status.members : [];
+  expect(members.find((member) => member.label === label)?.connected).toBe(true);
+});
+
 step("the terminal's cluster no longer lists {string}", async (ctx: World, label: string) => {
   await settle(ctx);
   const cluster = ctx.host!.state.get("cluster") as TuiClusterState;
   const members = cluster.status?.clustered ? cluster.status.members : [];
   expect(members.map((member) => member.label)).not.toContain(label);
 });
+
+/** The terminal's one client over this machine and another (clusterClient.ts), each a fake MC of its own. */
+interface MergedWorld extends World {
+  merged?: {
+    readonly client: TuiClient;
+    /** Each machine's fake MC, by the label the cluster gives it. */
+    readonly machines: Map<string, ReturnType<typeof fakeClient>>;
+    readonly projectId: string;
+    shell: OrchestrationShellSnapshot | null;
+  };
+}
+
+step(
+  "this machine and {string} of its cluster each have a project with the id {string}",
+  (ctx: MergedWorld, label: string, projectId: string) => {
+    const machine = () =>
+      fakeClient({ shellSnapshot: shell([], [{ ...project, id: projectId }] as never) });
+    const here = machine();
+    const there = machine();
+    here.cluster.members = [member(label, true)];
+    ctx.merged = {
+      client: makeClusterClient(here.client, () => there.client),
+      machines: new Map([
+        ["This machine", here],
+        [label, there],
+      ]),
+      projectId,
+      shell: null,
+    };
+  },
+);
+
+step("the terminal follows the cluster's projects", async (ctx: MergedWorld) => {
+  const merged = ctx.merged!;
+  merged.client.subscribeShell((snapshot) => {
+    merged.shell = snapshot;
+  });
+  for (const machine of merged.machines.values()) machine.connect();
+  await merged.client.clusterStatus();
+});
+
+step("the project is listed once for each machine", (ctx: MergedWorld) => {
+  const { machines, shell: listed } = ctx.merged!;
+  expect(listed!.projects.map((listing) => listing.machine)).toEqual([...machines.keys()]);
+  expect(new Set(listed!.projects.map((listing) => listing.id)).size).toBe(machines.size);
+});
+
+step(
+  "a thread started in the project on {string} is started on {string}",
+  async (ctx: MergedWorld, of: string, on: string) => {
+    const { client, machines, projectId, shell: listed } = ctx.merged!;
+    const started = () =>
+      [...machines].flatMap(([label, machine]) =>
+        machine.calls
+          .filter((call) => call.method === "createThread")
+          .map((call) => `${label} ${(call.args[0] as { projectId: string }).projectId}`),
+      );
+    const before = started();
+    const listing = listed!.projects.find((candidate) => candidate.machine === of)!;
+    await client.createThread({ projectId: listing.id } as Parameters<
+      TuiClient["createThread"]
+    >[0]);
+    // The machine is asked by the id it knows the project by.
+    expect(started().toSorted()).toEqual([...before, `${on} ${projectId}`].toSorted());
+  },
+);
