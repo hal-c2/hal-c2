@@ -55,6 +55,10 @@ Item {
     // A thread to open: a subagent's own, or the one a message came from
     // (the model's `thread` role, an id in this thread's environment).
     signal threadActivated(string threadId)
+    // The user asked to edit from their message: the thread rewinds to before it.
+    signal editRequested(string rowId)
+    // Whether a user message's row can be edited from (rewindPointOf).
+    property var editable: rowId => root.model !== null && typeof root.model.rewindPointOf === "function" && root.model.rewindPointOf(rowId).turn !== undefined
     // The pull request a message mentions is to be linked to the thread.
     signal pullRequestLinkRequested(string url)
 
@@ -549,6 +553,14 @@ Item {
                         }
                         LinkPullRequestButton {
                             url: row.model.pullRequestUrl ?? ""
+                        }
+                        IconButton {
+                            objectName: "editFromHere"
+                            icon: "pencil"
+                            tip: qsTr("Edit from here")
+                            // Asked when the pointer comes over the message.
+                            visible: row.showMeta && root.editable(row.rowId)
+                            onClicked: root.editRequested(row.rowId)
                         }
                         CopyButton {
                             rowId: row.rowId

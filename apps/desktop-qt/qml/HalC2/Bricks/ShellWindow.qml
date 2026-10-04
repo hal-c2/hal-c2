@@ -80,6 +80,8 @@ Window {
 
     PullRequestThreadDialog {}
 
+    EditFromHereDialog {}
+
     ProjectActionEditor {}
 
     ProjectIconPicker {}

@@ -785,6 +785,40 @@ QString TimelineModel::finishedRunOf(const QString& rowId) const {
   return text(entity(QStringLiteral("run"), runId), QLatin1String("status")) == QLatin1String("completed") ? runId : QString();
 }
 
+QVariantMap TimelineModel::rewindPointOf(const QString& rowId) const {
+  const int at = indexOf(rowId);
+  if (at < 0) return {};
+  const Row& row = m_rows.at(at);
+  if (row.kind != QLatin1String("message") || row.items.isEmpty()) return {};
+  const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.constFirst());
+  if (text(item, QLatin1String("type")) != QLatin1String("user_message")) return {};
+  const QString runId = text(item, QLatin1String("runId"));
+  const auto runs = m_entities.value(QStringLiteral("run"));
+  const auto checkpoints = m_entities.value(QStringLiteral("checkpoint"));
+  // The turn's number: its checkpoint's, else its place among the runs still shown.
+  int turn = 0;
+  for (const QJsonObject& checkpoint : checkpoints) {
+    if (text(checkpoint, QLatin1String("runId")) == runId) turn = checkpoint.value(QLatin1String("appRunOrdinal")).toInt();
+  }
+  if (turn <= 0) {
+    const double ordinal = runs.value(runId).value(QLatin1String("ordinal")).toDouble();
+    for (const QJsonObject& other : runs) {
+      if (other.value(QLatin1String("ordinal")).toDouble() <= ordinal && text(other, QLatin1String("status")) != QLatin1String("rolled_back")) ++turn;
+    }
+  }
+  QVariantMap point{{QStringLiteral("turn"), turn},
+                    {QStringLiteral("text"), text(item, QLatin1String("text"))},
+                    {QStringLiteral("attachments"), item.value(QLatin1String("attachments")).toArray().toVariantList()}};
+  for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
+    if (text(*it, QLatin1String("status")) != QLatin1String("ready") || it->value(QLatin1String("appRunOrdinal")).toInt() != turn - 1) continue;
+    // Before the first turn it is the thread's baseline, which has no turn.
+    if (turn == 1 && (it->value(QLatin1String("appRunOrdinal")).isDouble() || text(*it, QLatin1String("runId")) != runId)) continue;
+    point.insert(QStringLiteral("checkpointId"), it.key());
+    point.insert(QStringLiteral("scopeId"), text(*it, QLatin1String("scopeId")));
+  }
+  return point;
+}
+
 QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   const int at = indexOf(rowId);
   if (at < 0) return {};

@@ -101,6 +101,9 @@ Item {
         onLinkActivated: link => view.openLink(link)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
         onRevertRequested: rowId => view.askRevert(rowId)
+        onEditRequested: rowId => Shell.dispatch("rewind.request", {
+                rowId: rowId
+            })
         onPullRequestLinkRequested: url => Shell.dispatch("rightPanel.linkPullRequest", {
                 url: url
             })

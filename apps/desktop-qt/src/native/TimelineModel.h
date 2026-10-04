@@ -143,6 +143,12 @@ public:
   // The run an assistant reply's row belongs to once it has finished (a fork
   // can start from it), else empty.
   Q_INVOKABLE QString finishedRunOf(const QString& rowId) const;
+  // Where the thread rewinds to when the user edits from their message
+  // `rowId`: {turn (the message's, from 1), checkpointId and scopeId (the
+  // checkpoint the turn before it left), text, attachments (the message's:
+  // [{type, id, name, mimeType, sizeBytes}])}. Empty for any other row, and
+  // without `checkpointId` when no checkpoint precedes the message.
+  Q_INVOKABLE QVariantMap rewindPointOf(const QString& rowId) const;
   // Puts a message's markdown on the clipboard; false for any other row.
   Q_INVOKABLE bool copy(const QString& rowId) const;
 

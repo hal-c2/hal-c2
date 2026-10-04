@@ -148,6 +148,27 @@ void McClient::upload(QObject* context, const QString& relativeUrl, const QByteA
   });
 }
 
+void McClient::download(QObject* context, const QString& relativeUrl, Bytes reply) {
+  if (m_closed || !m_origin.isValid()) {
+    QTimer::singleShot(0, context, [reply = std::move(reply)] { reply({}, QStringLiteral("not connected")); });
+    return;
+  }
+  if (!m_http) m_http = new QNetworkAccessManager(this);
+  // The URL carries its own query (the signature).
+  const QUrl url = m_origin.resolved(QUrl(relativeUrl));
+  QNetworkReply* answer = m_http->get(QNetworkRequest(url));
+  connect(answer, &QNetworkReply::finished, this, [answer, context = QPointer<QObject>(context), reply = std::move(reply)] {
+    answer->deleteLater();
+    if (!context) return;
+    const int status = answer->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (status >= 200 && status < 300) {
+      reply(answer->readAll(), std::nullopt);
+      return;
+    }
+    reply({}, status > 0 ? QStringLiteral("HTTP %1").arg(status) : answer->errorString());
+  });
+}
+
 QNetworkRequest McClient::request(const QString& path, const QString& query, bool socket) const {
   QUrl url = m_origin;
   if (socket) url.setScheme(m_origin.scheme() == QLatin1String("https") ? QStringLiteral("wss") : QStringLiteral("ws"));

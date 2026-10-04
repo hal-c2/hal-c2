@@ -48,6 +48,7 @@ ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
 CustomSnoozeDialog 1.0 CustomSnoozeDialog.qml
 PullRequestThreadDialog 1.0 PullRequestThreadDialog.qml
+EditFromHereDialog 1.0 EditFromHereDialog.qml
 WorktreeSetupCard 1.0 WorktreeSetupCard.qml
 LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
 ThreadLineage 1.0 ThreadLineage.qml

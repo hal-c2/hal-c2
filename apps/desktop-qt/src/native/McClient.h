@@ -63,6 +63,10 @@ public:
   // POSTs `bytes` to a signed URL the MC handed out (`relativeUrl`, as
   // `attachments.createUploadUrl`'s): the URL is its own authorization.
   void upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply);
+  // GETs a signed URL the MC handed out (`assets.createUrl`'s `relativeUrl`)
+  // and gives its bytes, or why it could not be read.
+  using Bytes = std::function<void(const QByteArray& bytes, const std::optional<QString>& error)>;
+  void download(QObject* context, const QString& relativeUrl, Bytes reply);
   // A request for `path` (and `query`), both percent-encoded, on the MC's
   // origin carrying the access token, for streams the socket does not carry (a device's screen
   // through /api/device-hub). `socket`: its ws(s) twin, for a QWebSocket.

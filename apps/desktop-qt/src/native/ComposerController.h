@@ -138,6 +138,9 @@ public:
                    const QJsonObject& source = {});
   // The draft's images: {id, name, mimeType, sizeBytes, source}.
   QVariantList attachments(const QString& target) const;
+  // Whether `target`'s draft has files still on their way to the MC, or a
+  // send in flight that carries the draft's attachments.
+  bool attachmentsPending(const QString& target) const;
   // Adds `text` after the route's draft, a space apart from what is there
   // (the Files tab's Add to chat); false with no thread or draft open.
   bool insertAtEnd(const QString& text);

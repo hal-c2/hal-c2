@@ -1416,6 +1416,16 @@ bool ComposerController::addReviewComment(const QVariantMap& comment) {
   return true;
 }
 
+bool ComposerController::attachmentsPending(const QString& target) const {
+  for (const Attachment& attachment : m_drafts.value(target).attachments) {
+    if (attachment.upload == QLatin1String("uploading")) return true;
+  }
+  for (const Send& send : m_queues.value(target)) {
+    if (!send.attachments.isEmpty()) return true;
+  }
+  return false;
+}
+
 QVariantList ComposerController::terminalContexts(const QString& target) const {
   QVariantList contexts;
   for (const TerminalContext& context : m_drafts.value(target).terminalContexts) {
