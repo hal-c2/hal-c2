@@ -94,6 +94,15 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
           client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
           [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this),
       m_devices(client, this) {
+  // The pages this device opened from a browser tab, kept with its preferences.
+  m_previews.setRecents(
+      [this] {
+        const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+        return settings ? settings->deviceValue(QStringLiteral("previewRecentPages")).toStringList() : QStringList();
+      },
+      [this](const QStringList& urls) {
+        if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) settings->writeDevice(QStringLiteral("previewRecentPages"), urls);
+      });
   connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
   connect(&m_devices, &ThreadDevices::closed, this, &RightPanelController::closeTabIn);
   connect(&m_devices, &ThreadDevices::namesChanged, this, &RightPanelController::publish);
@@ -245,6 +254,14 @@ void RightPanelController::retarget() {
     m_files.setTarget(environmentId, root);
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
+    // The project's own preview addresses (its scripts' previewUrl).
+    QStringList configured;
+    const QJsonObject project = m_store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString());
+    for (const QJsonValue& script : project.value(QLatin1String("scripts")).toArray()) {
+      const QString url = script.toObject().value(QLatin1String("previewUrl")).toString();
+      if (!url.isEmpty()) configured.append(url);
+    }
+    m_previews.setConfigured(configured);
     m_devices.setThread(environmentId, threadId, m_store->mcServing(environmentId));
   }
   presentCommands();
@@ -413,6 +430,12 @@ void RightPanelController::addTab(const QString& kind) {
     auto* terminals = NativeShell::of(this)->controller<TerminalController>();
     const QString group = terminals && terminals->threadKey() == m_thread ? terminals->addPanelGroup() : QString();
     if (!group.isEmpty()) showTab(kTerminalTab + group);
+    return;
+  }
+  if (kind == QLatin1String("browser")) {
+    // A new browser tab: an empty one on the MC, filled from the Previews tab.
+    showTab(QStringLiteral("previews"));
+    m_previews.newTab();
     return;
   }
   if (kind == QLatin1String("pull-request")) {

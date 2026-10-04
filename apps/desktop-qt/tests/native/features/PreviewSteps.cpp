@@ -6,10 +6,12 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "Brick.h"
 #include "ComposerBrick.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
 #include "RightPanelController.h"
+#include "SettingsController.h"
 #include "Stream.h"
 #include "ThreadPreviews.h"
 #include "World.h"
@@ -28,6 +30,11 @@ struct FakePreviews {
   bool holdClose = false;
   bool holdList = false;
   int lists = 0;
+  // The web servers listening on the MC's machine (DiscoveredLocalServer).
+  QJsonArray servers;
+  // Every preview.open and preview.navigate payload.
+  QList<QJsonObject> opens;
+  QList<QJsonObject> navigations;
   bool looking = false;
 };
 
@@ -78,6 +85,36 @@ const FakeMc::Extension previews([](FakeMc& mc) {
       return;
     }
     mc.reply(rpc, list);
+  });
+  // The MC's machine's web servers, to whoever watches (local_servers.ex).
+  mc.onShape(QStringLiteral("localServers"), [&mc](int id, const QJsonObject&) {
+    mc.send({{QStringLiteral("t"), QStringLiteral("localServers")}, {QStringLiteral("id"), id},
+             {QStringLiteral("list"), QJsonObject{{QStringLiteral("servers"), mc.part<FakePreviews>().servers}, {QStringLiteral("scannedAt"), QStringLiteral("2026-09-23T10:00:00Z")}}}});
+  });
+  // preview.ex open/2 and navigate/2: the tab's snapshot, and its event.
+  mc.onRpc(QStringLiteral("preview.open"), [&mc](const FakeMc::Rpc& rpc) {
+    FakePreviews& fake = mc.part<FakePreviews>();
+    fake.opens.append(rpc.payload);
+    QJsonObject tab = tabAt(rpc.payload.value(QLatin1String("url")).toString(), int(fake.tabs.size()) + 1);
+    tab.insert(QStringLiteral("threadId"), rpc.payload.value(QLatin1String("threadId")));
+    tab.insert(QStringLiteral("navStatus"), rpc.payload.contains(QLatin1String("url"))
+                                                ? QJsonObject{{QStringLiteral("_tag"), QStringLiteral("Loading")}, {QStringLiteral("url"), rpc.payload.value(QLatin1String("url"))}, {QStringLiteral("title"), QString()}}
+                                                : QJsonObject{{QStringLiteral("_tag"), QStringLiteral("Idle")}});
+    fake.tabs.append(tab);
+    emitEvent(mc, tab, QStringLiteral("opened"), {{QStringLiteral("snapshot"), tab}});
+    mc.reply(rpc, tab);
+  });
+  mc.onRpc(QStringLiteral("preview.navigate"), [&mc](const FakeMc::Rpc& rpc) {
+    FakePreviews& fake = mc.part<FakePreviews>();
+    fake.navigations.append(rpc.payload);
+    const int at = indexOfTab(fake.tabs, rpc.payload.value(QLatin1String("tabId")).toString());
+    if (at < 0) {
+      mc.refuse(rpc, QStringLiteral("Unknown preview session"));
+      return;
+    }
+    fake.tabs[at].insert(QStringLiteral("navStatus"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("Success")}, {QStringLiteral("url"), rpc.payload.value(QLatin1String("url"))}, {QStringLiteral("title"), QString()}});
+    emitEvent(mc, fake.tabs.at(at), QStringLiteral("navigated"), {{QStringLiteral("snapshot"), fake.tabs.at(at)}});
+    mc.reply(rpc, fake.tabs.at(at));
   });
   mc.onRpc(QStringLiteral("preview.close"), [&mc](const FakeMc::Rpc& rpc) {
     auto answer = [&mc, rpc] {
@@ -161,6 +198,7 @@ void showPreviews(World& world) {
 }
 
 const Steps steps([] {
+  Brick::registerSingletons();
   const QString q = kQuoted;
 
   step(QStringLiteral("the thread has browser tabs at %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -272,6 +310,115 @@ const Steps steps([] {
     FakePreviews& fake = world.mc.part<FakePreviews>();
     emitEvent(world.mc, fake.tabs.takeAt(0), QStringLiteral("closed"));
     waitForUrls(world, {QStringLiteral("http://localhost:6006")});
+  });
+
+  // A new browser tab, and what it offers (preview/surfaces.feature, remote.feature).
+  const auto server = [](const QString& url, const QString& process) {
+    return QJsonObject{{QStringLiteral("host"), QStringLiteral("localhost")}, {QStringLiteral("port"), QUrl(url).port()}, {QStringLiteral("url"), url},
+                       {QStringLiteral("processName"), process}, {QStringLiteral("pid"), 4242}, {QStringLiteral("terminal"), QJsonValue::Null}};
+  };
+  const auto suggested = [](World& world, const QString& kind) {
+    QStringList found;
+    for (const QVariant& suggestion : model(world).suggestions()) {
+      if (suggestion.toMap().value(QStringLiteral("kind")) == kind) found.append(suggestion.toMap().value(QStringLiteral("url")).toString());
+    }
+    return found;
+  };
+  step(QStringLiteral("the side panel is open"), [](World& world, const Captures&, const Table&) {
+    showPreviews(world);
+    expect(world.native().controller<RightPanelController>()->isOpen(), show(world.state(QStringLiteral("panel"))));
+  });
+  step(QStringLiteral("the user opens the side panel's add menu"), [](World& world, const Captures&, const Table&) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nItem { RightPanel { anchors.fill: parent } }\n", QSize(700, 600));
+    world.brick->click(QStringLiteral("panelAdd"));
+    world.waitFor([&] { return world.brick->shows(QStringLiteral("Browser tab")); }, QStringLiteral("the add menu to open"));
+  });
+  step(QStringLiteral("it offers a browser tab next to diff, files, terminal and pull request"), [](World& world, const Captures&, const Table&) {
+    for (const QString& entry : {QStringLiteral("Diff"), QStringLiteral("Files"), QStringLiteral("Terminal"), QStringLiteral("Pull requests"), QStringLiteral("Browser tab")}) {
+      expect(world.brick->shows(entry), QStringLiteral("the add menu has no \"%1\"").arg(entry));
+    }
+    // Choosing it opens an empty tab on the MC, shown with the thread's others.
+    QQuickItem* entry = world.brick->item(QStringLiteral("panelAddBrowser"));
+    expect(entry->isEnabled(), QStringLiteral("the browser tab entry is off"));
+    world.brick->click(QStringLiteral("panelAddBrowser"));
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    world.waitFor([&] { return fake.opens.size() == 1 && model(world).rowCount() == 1; }, [&] { return describe(world); });
+    expect(fake.opens.first().value(QLatin1String("threadId")) == kThread && !fake.opens.first().contains(QLatin1String("url")) &&
+               at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == QLatin1String("previews") &&
+               model(world).index(0).data(ThreadPreviews::StatusRole) == QLatin1String("idle"),
+           describe(world));
+  });
+  step(QStringLiteral("the thread's project has a dev server running and recently visited pages"), [server](World& world, const Captures&, const Table&) {
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    fake.servers = QJsonArray{server(QStringLiteral("http://localhost:5173"), QStringLiteral("vite"))};
+    // The project's script names its own preview address.
+    world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + kProject},
+                                          {QStringLiteral("scripts"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("dev")}, {QStringLiteral("name"), QStringLiteral("Dev")},
+                                                                                             {QStringLiteral("command"), QStringLiteral("bun dev")}, {QStringLiteral("icon"), QStringLiteral("play")},
+                                                                                             {QStringLiteral("runOnWorktreeCreate"), false},
+                                                                                             {QStringLiteral("previewUrl"), QStringLiteral("http://localhost:3000")}}}}});
+    fake.looking = true;
+    world.connect();
+    world.sync();
+    lookAtThread(world, kProject);
+    // Twelve pages opened from browser tabs on this device, the newest first.
+    QStringList pages;
+    for (int n = 12; n >= 1; --n) pages.append(QStringLiteral("https://docs.example.com/page-%1").arg(n));
+    auto* settings = world.native().controller<SettingsController>();
+    expect(settings->writeDevice(QStringLiteral("previewRecentPages"), pages), settings->deviceError());
+  });
+  step(QStringLiteral("the user opens a new browser tab"), [](World& world, const Captures&, const Table&) {
+    showPreviews(world);
+    world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("browser")}});
+    world.waitFor([&] { return model(world).rowCount() == 1 && model(world).index(0).data(ThreadPreviews::StatusRole) == QLatin1String("idle"); },
+                  [&] { return describe(world); });
+    world.sync();
+  });
+  step(QStringLiteral("the tab suggests the running servers, configured preview addresses and up to 10 recent pages"), [suggested](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return suggested(world, QStringLiteral("server")) == QStringList{QStringLiteral("http://localhost:5173")}; },
+                  [&] { return QStringLiteral("the MC's server to be suggested; the tab suggests %1").arg(show(model(world).suggestions())); });
+    expect(suggested(world, QStringLiteral("configured")) == QStringList{QStringLiteral("http://localhost:3000")}, show(model(world).suggestions()));
+    const QStringList recent = suggested(world, QStringLiteral("recent"));
+    expect(recent.size() == 10 && recent.first() == QLatin1String("https://docs.example.com/page-12") && recent.last() == QLatin1String("https://docs.example.com/page-3"),
+           show(model(world).suggestions()));
+    // The empty tab draws them, and one click opens the page.
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nPreviewsPanel { source: Panel.previews }\n", QSize(420, 900));
+    for (const QString& url : {QStringLiteral("http://localhost:5173"), QStringLiteral("http://localhost:3000"), QStringLiteral("https://docs.example.com/page-12")}) {
+      expect(world.brick->shows(url), QStringLiteral("the tab does not draw %1").arg(url));
+    }
+    expect(!world.brick->shows(QStringLiteral("https://docs.example.com/page-2")), QStringLiteral("an eleventh recent page is drawn"));
+    world.brick->click(QStringLiteral("previewSuggestion-0"));
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    world.waitFor([&] { return fake.navigations.size() == 1 && world.openedUrls == QList<QUrl>{QUrl(QStringLiteral("http://localhost:5173"))}; },
+                  [&] { return describe(world); });
+    expect(fake.navigations.first().value(QLatin1String("url")) == QLatin1String("http://localhost:5173"), describe(world));
+    waitForUrls(world, {QStringLiteral("http://localhost:5173")});
+    // And it is the newest recent page from now on.
+    world.waitFor([&] { return suggested(world, QStringLiteral("server")).size() == 1 &&
+                               world.native().controller<SettingsController>()->deviceValue(QStringLiteral("previewRecentPages")).toStringList().value(0) == QLatin1String("http://localhost:5173"); },
+                  QStringLiteral("the page to be remembered"));
+  });
+  step(QStringLiteral("the desktop is connected to an MC on another machine"), [server](World& world, const Captures&, const Table&) {
+    // The MC's machine runs these; nothing is scanned on the desktop's.
+    world.mc.part<FakePreviews>().servers = QJsonArray{server(QStringLiteral("http://localhost:4321"), QStringLiteral("astro")),
+                                                        server(QStringLiteral("http://localhost:8080"), QStringLiteral("caddy"))};
+    world.bridge().setLocalFolderImportEnabled(false);
+  });
+  step(QStringLiteral("the suggestions are the dev servers running on the MC's machine"), [suggested](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return suggested(world, QStringLiteral("server")) == QStringList{QStringLiteral("http://localhost:4321"), QStringLiteral("http://localhost:8080")}; },
+                  [&] { return QStringLiteral("the MC's servers; the tab suggests %1").arg(show(model(world).suggestions())); });
+    expect(model(world).suggestions().size() == 2, show(model(world).suggestions()));
+    // Asked of the MC that serves the thread, by name.
+    const QList<int> watchers = world.mc.subscribers(QStringLiteral("localServers"));
+    expect(watchers.size() == 1 && world.mc.shapeOf(watchers.first()).value(QLatin1String("mc")) == world.mc.name,
+           QStringLiteral("%1 watch the MC's servers").arg(watchers.size()));
+    // And the MC's list is followed as it changes.
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    fake.servers.removeLast();
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("localServers")}, {QStringLiteral("id"), watchers.first()},
+                   {QStringLiteral("list"), QJsonObject{{QStringLiteral("servers"), fake.servers}, {QStringLiteral("scannedAt"), QStringLiteral("2026-09-23T10:00:05Z")}}}});
+    world.waitFor([&] { return suggested(world, QStringLiteral("server")) == QStringList{QStringLiteral("http://localhost:4321")}; },
+                  [&] { return show(model(world).suggestions()); });
   });
 
   // Closing.

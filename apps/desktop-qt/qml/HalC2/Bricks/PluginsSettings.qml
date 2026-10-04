@@ -64,7 +64,7 @@ SettingsPage {
         ShellButton {
             objectName: "pluginRemove"
             subtle: true
-            iconName: "trash-2"
+            iconName: "trash"
             Accessible.name: qsTr("Remove %1").arg(row.pluginId)
             onClicked: Shell.dispatch("plugins.remove", { id: row.pluginId })
         }

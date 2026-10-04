@@ -83,7 +83,7 @@ Feature: Preview across MCs and devices
     When an older tab list arrives
     Then the client keeps the newer tab state
 
-  @backlog @desktop
+  @desktop
   Scenario: A remote client suggests the MC's dev servers, not its own
     Given the desktop is connected to an MC on another machine
     When the user opens a new browser tab

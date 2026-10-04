@@ -193,13 +193,13 @@ Feature: In-app preview browser
       When the user opens the preview
       Then the page opens in a browser tab beside the thread instead of a desktop-only notice
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The user adds a browser tab from the side panel
       Given the side panel is open
       When the user opens the side panel's add menu
       Then it offers a browser tab next to diff, files, terminal and pull request
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A new browser tab offers local servers and recent pages
       Given the thread's project has a dev server running and recently visited pages
       When the user opens a new browser tab

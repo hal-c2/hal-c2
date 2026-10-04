@@ -1,6 +1,7 @@
 #include "ThreadPreviews.h"
 
 #include <QJsonArray>
+#include <QSet>
 
 #include "McClient.h"
 
@@ -13,7 +14,20 @@ QJsonObject navOf(const QJsonObject& snapshot) {
 }  // namespace
 
 ThreadPreviews::ThreadPreviews(McClient* client, Notify notify, Open open, QObject* parent)
-    : QAbstractListModel(parent), m_client(client), m_notify(std::move(notify)), m_open(std::move(open)) {}
+    : QAbstractListModel(parent), m_client(client), m_notify(std::move(notify)), m_open(std::move(open)) {
+  for (const auto changed : {&QAbstractItemModel::rowsInserted, &QAbstractItemModel::rowsRemoved}) {
+    connect(this, changed, this, &ThreadPreviews::emptyTabChanged);
+  }
+  connect(this, &QAbstractItemModel::modelReset, this, &ThreadPreviews::emptyTabChanged);
+  connect(this, &QAbstractItemModel::dataChanged, this, &ThreadPreviews::emptyTabChanged);
+}
+
+QString ThreadPreviews::emptyTab() const {
+  for (const QJsonObject& snapshot : m_rows) {
+    if (navOf(snapshot).value(QLatin1String("url")).toString().isEmpty()) return snapshot.value(QLatin1String("tabId")).toString();
+  }
+  return {};
+}
 
 ThreadPreviews::~ThreadPreviews() {
   unfollow();
@@ -27,6 +41,10 @@ void ThreadPreviews::setThread(const QString& environmentId, const QString& thre
   if (mc != m_mc) {
     unfollow();
     m_mc = mc;
+    if (!m_serverList.isEmpty()) {
+      m_serverList.clear();
+      emit suggestionsChanged();
+    }
   }
   if (threadMoved) {
     ++m_generation;
@@ -58,6 +76,18 @@ void ThreadPreviews::setActive(bool active) {
 
 void ThreadPreviews::follow() {
   if (m_subscription >= 0 || m_mc.isEmpty()) return;
+  // The servers on the MC's machine, not this one's: the MC scans while someone watches.
+  m_servers = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("localServers")}, {QStringLiteral("mc"), m_mc}},
+                                  [this](const QJsonObject& frame) {
+                                    if (frame.value(QLatin1String("t")) != QLatin1String("localServers")) return;
+                                    QList<QJsonObject> servers;
+                                    for (const QJsonValue& server : frame.value(QLatin1String("list")).toObject().value(QLatin1String("servers")).toArray()) {
+                                      servers.append(server.toObject());
+                                    }
+                                    if (servers == m_serverList) return;
+                                    m_serverList = servers;
+                                    emit suggestionsChanged();
+                                  });
   m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("preview")}, {QStringLiteral("mc"), m_mc}},
                                        [this](const QJsonObject& frame) {
                                          onEvent(frame.value(QLatin1String("event")).toObject());
@@ -65,9 +95,86 @@ void ThreadPreviews::follow() {
 }
 
 void ThreadPreviews::unfollow() {
+  if (m_servers >= 0) {
+    m_client->unsubscribe(m_servers);
+    m_servers = -1;
+  }
   if (m_subscription < 0) return;
   m_client->unsubscribe(m_subscription);
   m_subscription = -1;
+}
+
+void ThreadPreviews::setConfigured(const QStringList& urls) {
+  if (urls == m_configured) return;
+  m_configured = urls;
+  emit suggestionsChanged();
+}
+
+void ThreadPreviews::setRecents(Recents read, Remember write) {
+  m_readRecents = std::move(read);
+  m_writeRecents = std::move(write);
+}
+
+QVariantList ThreadPreviews::suggestions() const {
+  QVariantList list;
+  QSet<QString> seen;
+  const auto add = [&](const QString& url, const QString& label, const QString& kind) {
+    if (url.isEmpty() || seen.contains(url)) return;
+    seen.insert(url);
+    list.append(QVariantMap{{QStringLiteral("url"), url}, {QStringLiteral("label"), label}, {QStringLiteral("kind"), kind}});
+  };
+  for (const QJsonObject& server : m_serverList) {
+    add(server.value(QLatin1String("url")).toString(), server.value(QLatin1String("processName")).toString(), QStringLiteral("server"));
+  }
+  for (const QString& url : m_configured) add(url, QString(), QStringLiteral("configured"));
+  int recents = 0;
+  for (const QString& url : m_readRecents ? m_readRecents() : QStringList()) {
+    if (recents++ == maxRecents) break;
+    add(url, QString(), QStringLiteral("recent"));
+  }
+  return list;
+}
+
+void ThreadPreviews::newTab() {
+  if (m_thread.isEmpty()) return;
+  const int generation = m_generation;
+  m_client->call(this, m_environment, QStringLiteral("preview.open"), QJsonObject{{QStringLiteral("threadId"), m_thread}},
+                 [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (generation != m_generation) return;
+                   if (error) {
+                     m_notify(QStringLiteral("error"), QStringLiteral("Could not open a browser tab"), *error);
+                     return;
+                   }
+                   // Its `opened` event may be behind the answer.
+                   if (result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                 });
+}
+
+void ThreadPreviews::navigate(const QString& tabId, const QString& address) {
+  const QUrl url = QUrl::fromUserInput(address.trimmed());
+  if (rowOf(tabId) < 0 || m_thread.isEmpty() || !url.isValid() || (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https"))) {
+    m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), QStringLiteral("\"%1\" is not a web address.").arg(address.trimmed()));
+    return;
+  }
+  const QString target = url.toString();
+  const int generation = m_generation;
+  m_client->call(this, m_environment, QStringLiteral("preview.navigate"),
+                 QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("tabId"), tabId}, {QStringLiteral("url"), target}},
+                 [this, generation, url, target](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (error) {
+                     m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), *error);
+                     return;
+                   }
+                   if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                   if (m_writeRecents) {
+                     QStringList recents = m_readRecents ? m_readRecents() : QStringList();
+                     recents.removeAll(target);
+                     recents.prepend(target);
+                     m_writeRecents(recents.mid(0, maxRecents));
+                     emit suggestionsChanged();
+                   }
+                   m_open(url);
+                 });
 }
 
 void ThreadPreviews::reload() {

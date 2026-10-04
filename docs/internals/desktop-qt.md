@@ -595,7 +595,11 @@ host a project reads, as the web dialog does. Offline its rows stay as last
 synced and nothing is sent. The Previews tab (`PreviewsPanel` over
 `ThreadPreviews`) lists the thread's browser tabs from `preview.list` and the
 `preview` shape, subscribed only while it shows, and opens each in the user's
-browser. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
+browser. The add menu's "Browser tab" (`rightPanel.add {kind: "browser"}`) is
+`preview.open` with no address: an empty tab the Previews tab fills from the
+MC's `localServers` shape (the MC's machine's servers, never this one's), the
+project scripts' `previewUrl`s and this device's last ten pages
+(`previewRecentPages`), with `preview.navigate`. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
 in `RightPanelController::nativeKinds`.
 
 The desktop embeds no browser. QtWebView is WebEngine underneath on Linux,
