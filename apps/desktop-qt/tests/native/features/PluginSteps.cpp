@@ -55,7 +55,7 @@ const FakeMc::Extension site([](FakeMc& mc) {
 // A plugin as the terminal client's fixtures write one: "[id]" in its slot.
 QByteArray pluginSource(const QString& id, const QString& slot, const QString& label = {}) {
   return QStringLiteral("import OpenTUI\nPlugin {\n  pluginId: \"%1\"\n  order: 0\n  Contribution { slot: \"%2\"\n"
-                        "    Text { objectName: \"plugin-%1\"; text: \"%3\"; color: \"#9ece6a\" } }\n}\n")
+                        "    Text { objectName: \"plugin-%1\"; text: \"%3\" } }\n}\n")
       .arg(id, slot, label.isEmpty() ? QStringLiteral("[%1]").arg(id) : label)
       .toUtf8();
 }
@@ -171,10 +171,24 @@ void loadPlugin(World& world, const QString& id, const QString& slot) {
   waitLoaded(world, id);
 }
 
+// The plugin's own Text, wherever it is drawn.
+const QQuickItem* drawn(const QQuickItem* item, const QString& text) {
+  if (!item->isVisible()) return nullptr;
+  if (item->property("text").toString() == text) return item;
+  for (const QQuickItem* child : item->childItems()) {
+    if (const QQuickItem* found = drawn(child, text)) return found;
+  }
+  return nullptr;
+}
+
 void waitShown(World& world, const QString& slot, const QString& id, const QString& label = {}) {
   const QString text = label.isEmpty() ? QStringLiteral("[%1]").arg(id) : label;
   world.waitFor([&] { return shownIn(world, slot).contains(id) && slotDraws(world, slot, text) && item(world, slotObject(slot))->isVisible(); },
                 [&] { return QStringLiteral("%1 to show \"%2\"; it shows %3; %4").arg(slot, text, shownIn(world, slot).join(QStringLiteral(", ")), describe(world)); });
+  // A plugin that names no colour is drawn in the theme's text colour, readable on it.
+  const QColor colour = drawn(item(world, slotObject(slot)), text)->property("color").value<QColor>();
+  expect(colour == world.theme().color(QStringLiteral("text"), QColor()) && colour != QColor(Qt::black),
+         QStringLiteral("the plugin's text is %1; the theme's is %2").arg(colour.name(), world.theme().color(QStringLiteral("text"), QColor()).name()));
 }
 
 void disable(World& world, const QString& id) {

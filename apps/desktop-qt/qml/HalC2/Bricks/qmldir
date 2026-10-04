@@ -16,6 +16,12 @@ Notifications 1.0 Notifications.qml
 RightPanel 1.0 RightPanel.qml
 SettingsNav 1.0 SettingsNav.qml
 ShellErrorOverlay 1.0 ShellErrorOverlay.qml
+ConnectionNotice 1.0 ConnectionNotice.qml
+UsageModelPrices 1.0 UsageModelPrices.qml
+ProviderModelList 1.0 ProviderModelList.qml
+ComposerUsageLimits 1.0 ComposerUsageLimits.qml
+LoadBalancingSettings 1.0 LoadBalancingSettings.qml
+ConnectionStatusRow 1.0 ConnectionStatusRow.qml
 ShellTextField 1.0 ShellTextField.qml
 ShellWindow 1.0 ShellWindow.qml
 ShellMenuItem 1.0 ShellMenuItem.qml
@@ -47,6 +53,8 @@ TurnRequests 1.0 TurnRequests.qml
 ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
 CustomSnoozeDialog 1.0 CustomSnoozeDialog.qml
+PullRequestThreadDialog 1.0 PullRequestThreadDialog.qml
+EditFromHereDialog 1.0 EditFromHereDialog.qml
 WorktreeSetupCard 1.0 WorktreeSetupCard.qml
 LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
 ThreadLineage 1.0 ThreadLineage.qml
@@ -54,6 +62,13 @@ CentreHost 1.0 CentreHost.qml
 ThreadView 1.0 ThreadView.qml
 DiffPanel 1.0 DiffPanel.qml
 FilesPanel 1.0 FilesPanel.qml
+FileEntryMenu 1.0 FileEntryMenu.qml
+AttachmentViewer 1.0 AttachmentViewer.qml
+FilePathTrail 1.0 FilePathTrail.qml
+ProjectActionEditor 1.0 ProjectActionEditor.qml
+ProjectIcon 1.0 ProjectIcon.qml
+ProjectIconPicker 1.0 ProjectIconPicker.qml
+EnvironmentIconPicker 1.0 EnvironmentIconPicker.qml
 AgentsPanel 1.0 AgentsPanel.qml
 RevertDialog 1.0 RevertDialog.qml
 TerminalSplits 1.0 TerminalSplits.qml

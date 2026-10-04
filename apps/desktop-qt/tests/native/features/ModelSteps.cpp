@@ -197,6 +197,27 @@ const Steps steps([] {
                   QStringLiteral("the picker to lock the provider"));
   });
 
+  // providers/permission-modes.feature: the composer's own permission picker.
+  step(QStringLiteral("a supervised thread"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<Catalogue>().providers = codexAndClaude();
+    publishProviders(world.mc, codexAndClaude());
+    lookAtThread(world, kProject);
+    updateThread(world, {{QStringLiteral("modelSelection"),
+                          QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}}},
+                         {QStringLiteral("runtimeMode"), QStringLiteral("approval-required")}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("runtimeMode")) == QLatin1String("approval-required"); },
+                  [&] { return QStringLiteral("a supervised composer; it shows %1").arg(show(composer(world))); });
+  });
+  step(QStringLiteral("the user switches the thread to auto-accept edits on desktop or mobile"), [](World& world, const Captures&, const Table&) {
+    for (const QVariant& mode : composer(world).value(QStringLiteral("runtimeModes")).toList()) {
+      if (mode.toMap().value(QStringLiteral("value")) == QLatin1String("auto-accept-edits")) {
+        world.bridge().dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("auto-accept-edits")}});
+        return;
+      }
+    }
+    fail(QStringLiteral("the composer does not offer auto-accept edits: %1").arg(show(composer(world).value(QStringLiteral("runtimeModes")))));
+  });
+
   // What the user does.
   step(QStringLiteral("the user looks through the models"), [](World& world, const Captures&, const Table&) { world.sync(); });
   step(QStringLiteral("the user chooses the model %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -293,7 +314,7 @@ const Steps steps([] {
   step(QStringLiteral("the next turn runs in (.+)"), [](World& world, const Captures& c, const Table&) {
     QString mode;
     for (const QVariant& entry : composer(world).value(QStringLiteral("runtimeModes")).toList()) {
-      if (entry.toMap().value(QStringLiteral("label")) == c[0]) mode = entry.toMap().value(QStringLiteral("value")).toString();
+      if (entry.toMap().value(QStringLiteral("label")).toString().compare(c[0], Qt::CaseInsensitive) == 0) mode = entry.toMap().value(QStringLiteral("value")).toString();
     }
     const QString before = world.mc.threads.value(kThread).value(QLatin1String("runtimeMode")).toString();
     // The mode is set before the message, unless the thread already runs in it.

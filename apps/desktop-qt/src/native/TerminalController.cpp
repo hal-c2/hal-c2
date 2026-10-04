@@ -930,7 +930,7 @@ void TerminalController::followLink(const QString& kind, const QString& text, co
     path = QDir::cleanPath(cwd + QLatin1Char('/') + path);
   }
   auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
-  if (!workspace || !workspace->openPath(path + match.captured(2))) {
+  if (!workspace || !workspace->openInEditor({}, path + match.captured(2))) {
     toast(QStringLiteral("Unable to open path"), QStringLiteral("This environment has no editor to open %1 in.").arg(path));
   }
 }

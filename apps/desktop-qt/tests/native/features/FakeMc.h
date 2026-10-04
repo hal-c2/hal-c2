@@ -141,6 +141,7 @@ public:
       {QStringLiteral("threadPullRequestLinking"), true},
   };
   bool holdSnapshot = false;
+  bool answerPings = true;  // false: the MC has stopped answering, its socket still open
   // Environments outside the cluster the MC is linked to (HalC2.Links), and
   // why a link is down ("unreachable", "refused"; absent while it is online).
   QStringList linked;
@@ -184,6 +185,7 @@ public:
     if (m_socket) m_socket->close();
   }
   void stopAccepting() { m_tcp.close(); }
+  void startAccepting() { m_tcp.listen(QHostAddress::LocalHost, m_port); }
 
 private:
   void accept();

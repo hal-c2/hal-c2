@@ -20,7 +20,16 @@ class ShellStore;
 // Publishes `connections`:
 //   {links: [{environmentId, label, origin, online, problem, status}],
 //    access: {pairingLinks, clients} | null, accessError, busy, notice,
-//    created: {id, label, url, code, expiresAt} | null, removing}
+//    created: {id, label, url, code, expiresAt} | null, removing,
+//    balancing: null | {enabled, environments: [{environmentId, label, weight,
+//    preference}]}}
+// `balancing` is this device's load balancing (the web's LoadBalancingSettings),
+// there once two machines can be balanced: whether new threads pick their
+// machine, and how often each should get them (weight 100 "Prefer", 50
+// "Normal", 25 "Less often", 0 "Manual only"; a weight an older build saved
+// snaps to the nearest). `connections.balancing.enabled {enabled}` and
+// `connections.balancing.preference {environmentId, weight}` change it; the
+// preferences stay while it is off.
 // The page shows while the route is the settings section
 // "/settings/connections" (NavigationController takes connections.open and
 // connections.close). Managing access needs an administrative session; the
@@ -40,6 +49,7 @@ private:
   void onAccess(const QJsonObject& frame);
   void publishAccess();
   void updateLinks();
+  void updateBalancing();
   void link(const QString& pairingUrl, const QString& fallbackUrl);
   void unlink(const QString& environmentId);
   void createPairingLink(const QVariantMap& input);

@@ -98,6 +98,16 @@ ShellWindow {
                 }
             }
 
+            // The folder explorer (folders.toggle), beside the thread list.
+            Loader {
+                objectName: "folderExplorerHost"
+                Layout.fillHeight: true
+                Layout.preferredWidth: active ? 340 : 0
+                active: (Shell.state.folders?.open ?? false) && !root.settingsActive
+                visible: active
+                sourceComponent: FolderExplorer {}
+            }
+
             SettingsNav {
                 objectName: "settingsNav"
                 Layout.fillHeight: true
@@ -201,6 +211,10 @@ ShellWindow {
             Layout.topMargin: 4
             Layout.bottomMargin: 4
         }
+    }
+
+    ProjectFolderDrop {
+        anchors.fill: parent
     }
 
     Notifications {

@@ -78,6 +78,16 @@ Window {
 
     CustomSnoozeDialog {}
 
+    PullRequestThreadDialog {}
+
+    EditFromHereDialog {}
+
+    ProjectActionEditor {}
+
+    ProjectIconPicker {}
+
+    AttachmentViewer {}
+
     CommandPalette {}
 
     // The theme editor (Themes.editorOpen): the palette's "Toggle theme
@@ -121,6 +131,8 @@ Window {
     ShellErrorOverlay {
         anchors.fill: parent
     }
+
+    ConnectionNotice {}
 
     // One window shortcut per sequence the keymap (Keybindings) binds. A key
     // with no command in the current focus stands down and stays with the

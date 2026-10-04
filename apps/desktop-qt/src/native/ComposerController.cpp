@@ -205,7 +205,8 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("composer.terminalContext.add")) return addTerminalContext(map);
-  if (action == QLatin1String("composer.terminalContext.remove")) {
+  if (action == QLatin1String("composer.reviewComment.add")) return addReviewComment(map);
+  if (action == QLatin1String("composer.terminalContext.remove") || action == QLatin1String("composer.reviewComment.remove")) {
     if (target.isEmpty()) return true;
     const QString id = map.value(QStringLiteral("id")).toString();
     if (m_drafts[target].terminalContexts.removeIf([&](const TerminalContext& context) { return context.id == id; }) > 0) {
@@ -230,6 +231,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
         composer::toggleFavorite(QJsonValue::fromVariant(settings->deviceValue(QStringLiteral("favorites"))),
                                  map.value(QStringLiteral("instanceId")).toString(), map.value(QStringLiteral("model")).toString());
     settings->writeDevice(QStringLiteral("favorites"), favorites.toVariantList());
+    return true;
+  }
+  if (action == QLatin1String("composer.usageLimits.dismiss")) {
+    if (m_usageLimits.remove(target) > 0) publish();
     return true;
   }
   if (action == QLatin1String("composer.option.set")) {
@@ -506,6 +511,8 @@ bool ComposerController::interrupt() {
     runId = thread->latestRunId;
   }
   if (!runId) return true;
+  // The turn the user stops here stays open once it settles.
+  if (m_timeline) m_timeline->keepOpen(*runId);
   m_client->dispatchCommand(this, thread->environmentId,
                             {
                                 {QStringLiteral("type"), QStringLiteral("run.interrupt")},
@@ -540,6 +547,9 @@ bool ComposerController::submit(const QVariantMap& payload) {
   }
   if (m_queuedEdit && m_queuedEdit->thread == target) return saveQueuedEdit(target, text);
   if (slashMode(target, text)) return true;
+  if (slashUsageLimits(target, text)) return true;
+  // The next message closes the limits "/usage-limits" opened.
+  if (!text.trimmed().isEmpty()) m_usageLimits.remove(target);
   if (!m_draftId.isEmpty()) return submitDraft(target, payload);
   const Draft& kept = m_drafts.value(target);
   const bool hasExtras = !kept.attachments.isEmpty() || !kept.terminalContexts.isEmpty();
@@ -1384,9 +1394,49 @@ bool ComposerController::addTerminalContext(const QVariantMap& selection) {
   return true;
 }
 
+// The chip's and the record's name for a note: "src/cart.ts L10-12".
+static QString reviewLabel(const QString& filePath, int first, int last) {
+  return first == last ? QStringLiteral("%1 L%2").arg(filePath).arg(first) : QStringLiteral("%1 L%2-%3").arg(filePath).arg(first).arg(last);
+}
+
+bool ComposerController::addReviewComment(const QVariantMap& comment) {
+  const QString target = this->target();
+  if (target.isEmpty()) return true;
+  const QString filePath = comment.value(QStringLiteral("filePath")).toString().trimmed();
+  // COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS and _DIFF_MAX_CHARS.
+  const QString note = comment.value(QStringLiteral("text")).toString().trimmed().left(16000);
+  if (filePath.isEmpty() || note.isEmpty()) return true;
+  const int first = std::max(1, comment.value(QStringLiteral("lineStart")).toInt());
+  const int last = std::max(first, comment.value(QStringLiteral("lineEnd")).toInt());
+  TerminalContext context{newId(), {}, {}, first, last, note, {}};
+  context.review = QJsonObject{{QStringLiteral("filePath"), filePath},
+                               {QStringLiteral("sectionId"), comment.value(QStringLiteral("sectionId"), QStringLiteral("diff")).toString()},
+                               {QStringLiteral("sectionTitle"), comment.value(QStringLiteral("sectionTitle"), QStringLiteral("Diff")).toString()},
+                               {QStringLiteral("startIndex"), comment.value(QStringLiteral("startIndex")).toInt()},
+                               {QStringLiteral("endIndex"), comment.value(QStringLiteral("endIndex")).toInt()},
+                               {QStringLiteral("rangeLabel"), comment.value(QStringLiteral("rangeLabel")).toString()},
+                               {QStringLiteral("diff"), comment.value(QStringLiteral("diff")).toString().left(32000)}};
+  m_drafts[target].terminalContexts.append(context);
+  publish();
+  NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("success"), QStringLiteral("Comment added to the prompt"),
+                                                             reviewLabel(filePath, first, last));
+  return true;
+}
+
+bool ComposerController::attachmentsPending(const QString& target) const {
+  for (const Attachment& attachment : m_drafts.value(target).attachments) {
+    if (attachment.upload == QLatin1String("uploading")) return true;
+  }
+  for (const Send& send : m_queues.value(target)) {
+    if (!send.attachments.isEmpty()) return true;
+  }
+  return false;
+}
+
 QVariantList ComposerController::terminalContexts(const QString& target) const {
   QVariantList contexts;
   for (const TerminalContext& context : m_drafts.value(target).terminalContexts) {
+    if (!context.review.isEmpty()) continue;
     contexts.append(QVariantMap{{QStringLiteral("id"), context.id},
                                 {QStringLiteral("terminalId"), context.terminalId},
                                 {QStringLiteral("terminalLabel"), context.terminalLabel},
@@ -1417,6 +1467,22 @@ void ComposerController::withTerminalContexts(QJsonObject& message, const QList<
   QStringList links;
   QJsonArray records;
   for (const TerminalContext& context : contexts) {
+    if (!context.review.isEmpty()) {
+      // reviewCommentRecord: the note with the file, the lines and their text.
+      const QString filePath = context.review.value(QLatin1String("filePath")).toString();
+      QString label = reviewLabel(filePath, context.lineStart, context.lineEnd).replace(unsafe, QStringLiteral(" "));
+      label = label.replace(spaces, QStringLiteral(" ")).trimmed().left(200);
+      const QString contextId = QStringLiteral("review_") + context.id;
+      links.append(QStringLiteral("[%1](hal-c2-context://v1/review-comment/%2)").arg(label, contextId));
+      QJsonObject record = context.review;
+      record.insert(QStringLiteral("version"), 1);
+      record.insert(QStringLiteral("contextId"), contextId);
+      record.insert(QStringLiteral("kind"), QStringLiteral("review-comment"));
+      record.insert(QStringLiteral("label"), label);
+      record.insert(QStringLiteral("text"), context.text);
+      records.append(record);
+      continue;
+    }
     // An excerpt whose text is gone (the web's expired context) has nothing to send.
     if (context.text.trimmed().isEmpty()) continue;
     const QString range = context.lineStart == context.lineEnd
@@ -1808,6 +1874,34 @@ QVariant ComposerController::setting(const QString& key) const {
   return settings ? settings->setting(key) : QVariant();
 }
 
+QVariantMap ComposerController::attachmentPreview(const QString& id) {
+  const Attachment* found = findAttachment(id);
+  if (!found) return {};
+  QVariantMap preview{{QStringLiteral("id"), found->id}, {QStringLiteral("name"), found->name}, {QStringLiteral("mimeType"), found->mimeType}};
+  if (!found->file) {
+    preview.insert(QStringLiteral("url"), found->dataUrl);
+    return preview;
+  }
+  // What was pasted, or the file where it was picked from, up to the megabyte the viewer shows.
+  QByteArray bytes = found->content;
+  if (bytes.isEmpty() && !found->path.isEmpty()) {
+    QFile file(found->path);
+    if (file.open(QIODevice::ReadOnly)) bytes = file.read(1024 * 1024);
+  }
+  if (!bytes.contains('\0')) preview.insert(QStringLiteral("text"), QString::fromUtf8(bytes));
+  return preview;
+}
+
+bool ComposerController::insertAtEnd(const QString& text) {
+  const QString where = target();
+  if (where.isEmpty()) return false;
+  QString next = draft(where);
+  if (!next.isEmpty() && !next.back().isSpace()) next += u' ';
+  next += text;
+  setText(where, next, int(next.size()));
+  return true;
+}
+
 void ComposerController::setText(const QString& target, const QString& text, int cursor, const QVariant& edit) {
   Draft& kept = m_drafts[target];
   if (edit.isValid() && !edit.isNull()) kept.edit = edit;
@@ -1838,6 +1932,34 @@ bool ComposerController::slashMode(const QString& target, const QString& text) {
   }
   setInteractionMode(target, match.captured(1).toLower());
   setText(target, QString(), 0);
+  return true;
+}
+
+bool ComposerController::slashUsageLimits(const QString& target, const QString& text) {
+  static const QRegularExpression command(QStringLiteral("^/usage-limits\\s*$"), QRegularExpression::CaseInsensitiveOption);
+  if (!command.match(text.trimmed()).hasMatch()) return false;
+  const composer::Instance* instance = instanceOf(selection(target));
+  // Offered by the environment only where there are limits to show.
+  const bool offered = instance && std::any_of(instance->slashCommands.begin(), instance->slashCommands.end(), [](const QJsonValue& value) {
+    return value.toObject().value(QLatin1String("name")) == QLatin1String("usage-limits");
+  });
+  if (!offered) return false;
+  QVariantList windows;
+  for (const QJsonValue& value : instance->usageLimits.value(QLatin1String("windows")).toArray()) {
+    const QJsonObject window = value.toObject();
+    const double used = window.value(QLatin1String("usedPercent")).toDouble();
+    windows.append(QVariantMap{{QStringLiteral("label"), window.value(QLatin1String("label")).toString()},
+                               {QStringLiteral("usedPercent"), used},
+                               {QStringLiteral("remainingPercent"), std::clamp(100.0 - used, 0.0, 100.0)},
+                               {QStringLiteral("resetsAt"), window.value(QLatin1String("resetsAt")).toString()}});
+  }
+  m_usageLimits.insert(target, QVariantMap{{QStringLiteral("provider"), instance->displayName},
+                                           {QStringLiteral("checkedAt"), instance->usageLimits.value(QLatin1String("checkedAt")).toString()},
+                                           {QStringLiteral("windows"), windows},
+                                           {QStringLiteral("message"), windows.isEmpty() ? tr("%1 has not reported its limits yet.").arg(instance->displayName)
+                                                                                          : QString()}});
+  setText(target, QString(), 0);
+  publish();
   return true;
 }
 
@@ -2085,7 +2207,18 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
 
   const QVariantList attachments = shownAttachments(kept.attachments);
   QVariantList terminalContexts;
+  QVariantList reviewComments;
   for (const TerminalContext& context : kept.terminalContexts) {
+    if (!context.review.isEmpty()) {
+      const QString filePath = context.review.value(QLatin1String("filePath")).toString();
+      reviewComments.append(QVariantMap{{QStringLiteral("id"), context.id},
+                                        {QStringLiteral("label"), reviewLabel(filePath, context.lineStart, context.lineEnd)},
+                                        {QStringLiteral("filePath"), filePath},
+                                        {QStringLiteral("lineStart"), context.lineStart},
+                                        {QStringLiteral("lineEnd"), context.lineEnd},
+                                        {QStringLiteral("text"), context.text}});
+      continue;
+    }
     terminalContexts.append(QVariantMap{{QStringLiteral("id"), context.id},
                                         {QStringLiteral("label"), context.terminalLabel},
                                         {QStringLiteral("lineStart"), context.lineStart},
@@ -2163,6 +2296,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("suggestionsEmptyText"), emptyText},
       {QStringLiteral("attachments"), attachments},
       {QStringLiteral("terminalContexts"), terminalContexts},
+      {QStringLiteral("reviewComments"), reviewComments},
       {QStringLiteral("placeholder"), placeholder},
       {QStringLiteral("editorDisabled"), !approvals.isEmpty() || choiceOnly},
       {QStringLiteral("canSend"), !(busy || offline || noProvider) && (hasContent || showPlanFollowUp)},
@@ -2186,6 +2320,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},
       {QStringLiteral("interactionMode"), interactionModeOf(target)},
       {QStringLiteral("showInteractionModeToggle"), planOn},
+      {QStringLiteral("usageLimits"), m_usageLimits.contains(target) ? QVariant(m_usageLimits.value(target)) : QVariant::fromValue(nullptr)},
       {QStringLiteral("editingQueuedRunId"), m_queuedEdit && m_queuedEdit->thread == target
                                                  ? QVariant(m_queuedEdit->runId)
                                                  : QVariant::fromValue(nullptr)},
@@ -2302,7 +2437,8 @@ void ComposerController::setStorePath(const QString& path) {
       const QJsonObject t = context.toObject();
       kept.terminalContexts.append({str(t, QLatin1String("id")), str(t, QLatin1String("terminalId")),
                                     str(t, QLatin1String("terminalLabel")), t.value(QLatin1String("lineStart")).toInt(1),
-                                    t.value(QLatin1String("lineEnd")).toInt(1), str(t, QLatin1String("text"))});
+                                    t.value(QLatin1String("lineEnd")).toInt(1), str(t, QLatin1String("text")),
+                                    t.value(QLatin1String("review")).toObject()});
     }
     if (!kept.id.isEmpty()) m_kept.stash.append(kept);
   }
@@ -2373,7 +2509,8 @@ void ComposerController::save() const {
     for (const TerminalContext& t : entry.terminalContexts) {
       contexts.append(QJsonObject{{QStringLiteral("id"), t.id}, {QStringLiteral("terminalId"), t.terminalId},
                                   {QStringLiteral("terminalLabel"), t.terminalLabel}, {QStringLiteral("lineStart"), t.lineStart},
-                                  {QStringLiteral("lineEnd"), t.lineEnd}, {QStringLiteral("text"), t.text}});
+                                  {QStringLiteral("lineEnd"), t.lineEnd}, {QStringLiteral("text"), t.text},
+                                  {QStringLiteral("review"), t.review}});
     }
     stash.append(QJsonObject{{QStringLiteral("id"), entry.id},
                              {QStringLiteral("createdAt"), entry.createdAt.toString(Qt::ISODateWithMs)},

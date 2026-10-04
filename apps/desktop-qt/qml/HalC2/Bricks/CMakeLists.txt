@@ -25,6 +25,12 @@ qt_add_qml_module(hal_c2_bricks
     RightPanel.qml
     SettingsNav.qml
     ShellErrorOverlay.qml
+    ConnectionNotice.qml
+    UsageModelPrices.qml
+    ProviderModelList.qml
+    ComposerUsageLimits.qml
+    LoadBalancingSettings.qml
+    ConnectionStatusRow.qml
     ShellButton.qml
     ShellCard.qml
     ShellChevron.qml
@@ -56,11 +62,20 @@ qt_add_qml_module(hal_c2_bricks
     ProjectRemovalDialog.qml
     ConfirmDialog.qml
     CustomSnoozeDialog.qml
+    PullRequestThreadDialog.qml
+    EditFromHereDialog.qml
     WorktreeSetupCard.qml
     LimitRecoveryBanner.qml
     ThreadLineage.qml
     DiffPanel.qml
     FilesPanel.qml
+    FileEntryMenu.qml
+    AttachmentViewer.qml
+    FilePathTrail.qml
+    ProjectActionEditor.qml
+    ProjectIcon.qml
+    ProjectIconPicker.qml
+    EnvironmentIconPicker.qml
     AgentsPanel.qml
     js/lucide.js
     js/modelPicker.js
@@ -110,5 +125,6 @@ qt_add_qml_module(hal_c2_bricks
     js/markdown.js
   RESOURCES
     qmldir
+    plugin/Text.qml
     icons/antigravity.png
 )

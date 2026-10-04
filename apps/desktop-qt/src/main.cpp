@@ -217,6 +217,8 @@ int main(int argc, char* argv[]) {
         const QString event = kind == QLatin1String("completion") ? QStringLiteral("complete") : QStringLiteral("dialog-question");
         QProcess::startDetached(player, {QStringLiteral("-i"), event});
       },
+      // The dock's badge, and the taskbar's where the desktop has one.
+      [&app](int count) { app.setBadgeNumber(count); },
   });
   QObject::connect(&notifications, &NativeNotifications::activated, alerts, &AlertController::openThread);
 

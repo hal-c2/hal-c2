@@ -25,6 +25,7 @@ class McClient;
 // Changes go to the same environment and read the pull request again once
 // they land: comment(body) (`pullRequests.comment`), submitReview(verdict,
 // body) (`pullRequests.submitReview`: comment, approve or request-changes),
+// merge(method) (`pullRequests.runAction`; no method is the default one),
 // setThreadResolved(id, resolved) (`pullRequests.setThreadResolution`), and
 // setViewed(path, viewed) (`pullRequests.setFilesViewed`; a viewed file
 // collapses, and the mark is taken back when the host refuses it). While the
@@ -41,12 +42,24 @@ class PullRequestReview : public QObject {
   Q_PROPERTY(QString message READ message NOTIFY stateChanged)
   // {title, body, url, author, state, stateLabel, branches, labels [name],
   //  reviewers [login], mergeability, behindBy, checks [{name, status,
-  //  description, url}]}, empty until read.
+  //  description, url}], canMerge, mergeMethods [merge|squash|rebase]}, empty
+  //  until read. `canMerge` is an open, ready pull request on a host that
+  //  merges, for a viewer who may; `mergeMethods` are the ones the host and
+  //  the repository both allow, the default first.
   Q_PROPERTY(QVariantMap detail READ detail NOTIFY detailChanged)
   // [{id, kind, author, body, createdAt, reviewState, path}], oldest first.
   Q_PROPERTY(QVariantList conversation READ conversation NOTIFY detailChanged)
   // [{id, path, line, resolved, outdated, comments [{author, body}]}].
   Q_PROPERTY(QVariantList reviewThreads READ reviewThreads NOTIFY detailChanged)
+  // The host's stack the pull request is a layer of (`pullRequests.stack`),
+  // empty outside one: {number, base, position, size, layers [{number, title,
+  // state, current}], mergeCount (this layer and the unmerged ones below),
+  // canMerge, canRebase, stale, notice}. A read that fails keeps what was
+  // read before, `stale` with a `notice`; retryStack() reads it again.
+  Q_PROPERTY(QVariantMap stack READ stack NOTIFY stackChanged)
+  // The stack action waiting to be confirmed, or empty: {action ("merge" or
+  // "rebase"), title, description, confirmLabel}.
+  Q_PROPERTY(QVariantMap stackConfirmation READ stackConfirmation NOTIFY stackChanged)
   // The code: idle, loading, ready or error (`codeMessage`).
   Q_PROPERTY(QString codeStatus READ codeStatus NOTIFY codeChanged)
   Q_PROPERTY(QString codeMessage READ codeMessage NOTIFY codeChanged)
@@ -83,6 +96,8 @@ public:
   QVariantMap detail() const { return m_detail; }
   QVariantList conversation() const { return m_conversation; }
   QVariantList reviewThreads() const { return m_threads; }
+  QVariantMap stack() const;
+  QVariantMap stackConfirmation() const { return m_stackConfirmation; }
   QString codeStatus() const { return m_codeStatus; }
   QString codeMessage() const { return m_codeMessage; }
   QStringList viewedPaths() const;
@@ -95,6 +110,18 @@ public:
   // False (with `problem`) when there is nothing to send or nowhere to send it.
   Q_INVOKABLE bool comment(const QString& body);
   Q_INVOKABLE bool submitReview(const QString& verdict, const QString& body);
+  // Merges it with `method`, or with the first of `mergeMethods`.
+  Q_INVOKABLE bool merge(const QString& method = {});
+  // Stack actions ask first: requestStackMerge(method) merges this layer and
+  // the unmerged ones below it, requestStackRebase() rebases every unmerged
+  // layer onto the base; confirmStack() sends it (`pullRequests.runAction`
+  // with the stack's number and the heads that were shown) and cancelStack()
+  // drops it.
+  Q_INVOKABLE bool requestStackMerge(const QString& method = {});
+  Q_INVOKABLE bool requestStackRebase();
+  Q_INVOKABLE void confirmStack();
+  Q_INVOKABLE void cancelStack();
+  Q_INVOKABLE void retryStack();
   Q_INVOKABLE void setThreadResolved(const QString& threadId, bool resolved);
   Q_INVOKABLE void setViewed(const QString& path, bool viewed);
   Q_INVOKABLE bool isViewed(const QString& path) const { return m_viewed.contains(path); }
@@ -106,6 +133,7 @@ signals:
   void targetChanged();
   void stateChanged();
   void detailChanged();
+  void stackChanged();
   void codeChanged();
   void viewedChanged();
 
@@ -113,6 +141,10 @@ private:
   QJsonObject reference() const;
   void load();
   void readDetail();
+  void readStack();
+  // The stack's unmerged layers, and the ones a merge at this layer takes.
+  QList<QJsonObject> unmergedLayers() const;
+  QList<QJsonObject> mergeLayers() const;
   void readCode(const QString& cursor, const QString& patch);
   void applyViewed();
   void setStatus(const QString& status, const QString& message = {});
@@ -140,6 +172,14 @@ private:
   QVariantMap m_detail;
   QVariantList m_conversation;
   QVariantList m_threads;
+  // The stack as last read, what the viewer may do with it, and whether the
+  // last read failed.
+  QJsonObject m_stack;
+  bool m_stackStale = false;
+  bool m_viewerMayMerge = false;
+  bool m_viewerMayRebase = false;
+  QVariantMap m_stackConfirmation;
+  QString m_stackMethod;
   QString m_codeStatus = QStringLiteral("idle");
   QString m_codeMessage;
   QSet<QString> m_viewed;

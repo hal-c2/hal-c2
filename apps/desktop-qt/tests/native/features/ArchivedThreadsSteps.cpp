@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "Brick.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "Onboarding.h"
@@ -189,7 +190,7 @@ const Steps steps([] {
 
   step(QStringLiteral("the user sees %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // The archive's page title, or the welcome wizard's (or its recovery page's).
-    world.waitFor([&] { return at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("title")) == c[0] || onboardingShows(world, c[0]); },
+    world.waitFor([&] { return at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("title")) == c[0] || onboardingShows(world, c[0]) || (world.brick && world.brick->shows(c[0])); },
                   [&] { return QStringLiteral("\"%1\"; the archive shows %2").arg(c[0], show(world.state(QStringLiteral("archivedThreads")))); });
   });
   step(QStringLiteral("%1 is listed under %1 and %1 under %1").arg(q), [](World& world, const Captures& c, const Table&) {

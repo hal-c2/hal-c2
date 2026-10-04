@@ -6,6 +6,9 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include <memory>
+
+#include "Brick.h"
 #include "Harness.h"
 #include "Stream.h"
 #include "World.h"
@@ -98,6 +101,45 @@ const Steps steps([] {
                                                         stage(QStringLiteral("setup-script"), QStringLiteral("skipped")), stage(QStringLiteral("agent"), QStringLiteral("skipped"))});
          }
        });
+  // source-control/worktrees-and-setup-scripts.feature: the card over a
+  // thread whose first message made its worktree.
+  step(QStringLiteral("the user sends the first message of a thread in a new worktree"), [](World& world, const Captures&, const Table&) {
+    world.openDraft(world.mc.projects.firstKey());
+    world.bridge().dispatch(QStringLiteral("workspace.envMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("worktree")}});
+    world.bridge().dispatch(QStringLiteral("workspace.branch.search"), QVariantMap{{QStringLiteral("query"), QString()}});
+    world.sync();
+    world.bridge().dispatch(QStringLiteral("workspace.branch.select"), QVariantMap{{QStringLiteral("name"), QStringLiteral("main")}});
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), QStringLiteral("Ship the fix")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+    // The window moves to the new thread and follows its setup.
+    world.waitFor([&] { return !world.mc.subscribers(QStringLiteral("worktreeSetup")).isEmpty(); }, QStringLiteral("the shell to follow the new thread's setup"));
+    const QJsonObject asked = world.mc.shapeOf(world.mc.subscribers(QStringLiteral("worktreeSetup")).last());
+    expect(world.mc.threads.contains(asked.value(QLatin1String("threadId")).toString()), QStringLiteral("the shell follows %1").arg(show(asked.toVariantMap())));
+    publish(world, QStringLiteral("running"), {stage(QStringLiteral("fetch"), QStringLiteral("done")), stage(QStringLiteral("checkout"), QStringLiteral("running"), QStringLiteral("120 files")),
+                                               stage(QStringLiteral("setup-script"), QStringLiteral("pending")), stage(QStringLiteral("agent"), QStringLiteral("pending"))});
+  });
+  step(QStringLiteral("the thread shows the worktree's base, branch and path with the stages"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return shown(world).value(QStringLiteral("label")) == QStringLiteral("Setting up worktree…"); },
+                  [&] { return QStringLiteral("the setup; it shows %1").arg(show(shown(world))); });
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nWorktreeSetupCard { width: 700 }\n", QSize(700, 300));
+    Brick& brick = *world.brick;
+    brick.click(QStringLiteral("worktreeSetupDetails"));
+    const QVariantMap setup = shown(world);
+    expect(setup.value(QStringLiteral("baseRef")) == QLatin1String("main") && setup.value(QStringLiteral("branch")) == QLatin1String("hal-c2/cart-totals") &&
+               setup.value(QStringLiteral("worktreePath")) == QLatin1String("/work/worktrees/cart-totals"),
+           QStringLiteral("the setup shown is %1").arg(show(setup)));
+    world.waitFor([&] { return brick.shows(QStringLiteral("main → hal-c2/cart-totals · /work/worktrees/cart-totals")); }, QStringLiteral("the card to say where the worktree is"));
+    for (const QString& label : {QStringLiteral("Fetch base branch"), QStringLiteral("Check out files"), QStringLiteral("Run setup script"), QStringLiteral("Start agent")}) {
+      expect(brick.shows(label), QStringLiteral("the card does not show the stage \"%1\"").arg(label));
+    }
+    expect(brick.shows(QStringLiteral("120 files")), QStringLiteral("the running stage's progress is not shown"));
+  });
+  step(QStringLiteral("it reads %1 once the agent starts").arg(q), [](World& world, const Captures& c, const Table&) {
+    publish(world, QStringLiteral("done"), {stage(QStringLiteral("fetch"), QStringLiteral("done")), stage(QStringLiteral("checkout"), QStringLiteral("done")),
+                                            stage(QStringLiteral("setup-script"), QStringLiteral("done")), stage(QStringLiteral("agent"), QStringLiteral("done"))});
+    world.waitFor([&] { return shown(world).value(QStringLiteral("label")) == c[0] && world.brick->shows(c[0]); },
+                  [&] { return QStringLiteral("\"%1\"; the setup shown is %2").arg(c[0], show(shown(world))); });
+  });
   step(QStringLiteral("the conversation says %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // WorktreeSetupCard.qml shows the label over the conversation.
     world.waitFor([&] { return shown(world).value(QStringLiteral("label")) == c[0]; },

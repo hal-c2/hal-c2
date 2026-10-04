@@ -354,6 +354,7 @@ Rectangle {
 
                                 text: statusWord.length > 0 ? qsTr("%1 · %2").arg(modelData.displayName).arg(statusWord) : modelData.displayName
                                 iconName: "folder"
+                                badge: Shell.state.projectIcons?.[modelData.environmentId + ":" + modelData.projectId] ?? null
                                 current: sidebar.model !== null && sidebar.model.scopeProjectKey === modelData.key
                                 onTriggered: Shell.dispatch("sidebar.scope", {
                                     projectKey: modelData.key

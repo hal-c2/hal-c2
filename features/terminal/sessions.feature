@@ -122,7 +122,6 @@ Feature: Terminal sessions
 
   Rule: Clients open and hide the terminal without stopping it
 
-    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
     @desktop
     Scenario: The user shows and hides the terminal on desktop
       Given a thread whose environment can run terminals
@@ -132,13 +131,11 @@ Feature: Terminal sessions
       Then the terminal is hidden
       And its shell keeps running
 
-    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
     @desktop
     Scenario: The terminal toggle is only offered where a terminal can run
       Given the selected thread's environment cannot run terminals
       Then the user is not offered a way to show the terminal
 
-    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
     @desktop
     Scenario Outline: The desktop terminal keeps a sensible height
       Given the terminal is showing in a window 1000 pixels tall
@@ -151,7 +148,6 @@ Feature: Terminal sessions
         | 400       | 400    |
         | 900       | 750    |
 
-    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
     @desktop
     Scenario: Hiding and showing the terminal keeps what it was showing
       Given the terminal shows the output of a running build
@@ -172,14 +168,12 @@ Feature: Terminal sessions
       Then focus returns to the prompt
       And the shell keeps running on the server
 
-    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
     @desktop
     Scenario: A new terminal opened from the drawer uses the thread's launch context
       Given a thread working in a worktree
       When the user opens another terminal from the drawer
       Then it starts in the same folder and worktree as the thread
 
-    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
     @desktop
     Scenario: A terminal started by a project script shares that script's launch context
       Given a project script is running in a terminal

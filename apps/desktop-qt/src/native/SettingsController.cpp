@@ -129,8 +129,10 @@ SettingsController::SettingsController(ShellBridge*, McClient* client, QObject* 
 void SettingsController::activate() {
   if (m_active) return;
   m_active = true;
+  // `usageLimitsCommand`: this client answers /usage-limits itself (the composer).
   m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("config")},
-                       {QStringLiteral("environment"), m_client->environment()}},
+                       {QStringLiteral("environment"), m_client->environment()},
+                       {QStringLiteral("usageLimitsCommand"), true}},
                       [this](const QJsonObject& frame) { onConfig(frame); });
 }
 

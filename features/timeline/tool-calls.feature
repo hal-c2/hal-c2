@@ -36,26 +36,26 @@ Feature: Tool calls and file changes
     When the user hides them again
     Then the other four are behind "+4 previous tool calls"
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A group of tool calls reads as a summary of what the agent did
     Given the agent ran two commands and sent messages to three threads
     When the user reads the activity group
     Then it reads "Ran 2 commands and sent messages to 3 threads"
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A summary names at most two kinds of work
     Given the agent ran commands, changed files, searched the web and read files
     When the user reads the activity group
     Then the summary names commands and file changes
     And it counts the rest instead of naming them
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Failed calls are not counted as work done
     Given the agent sent three messages and one of them failed
     When the user reads the activity group
     Then the summary counts two messages sent
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A group opens into each call's details
     Given a collapsed group of tool calls
     When the user opens the group
@@ -90,7 +90,7 @@ Feature: Tool calls and file changes
       | called an MCP tool | wrench         |
       | asked for approval | message-circle |
 
-  @mc @shared @backlog-desktop @backlog-mobile
+  @mc @shared @backlog-mobile
   Scenario Outline: An ACP agent's read, search and fetch tools keep their meaning
     Given an ACP agent's tool call is of kind "<provider kind>"
     When the MC projects the call
@@ -124,14 +124,14 @@ Feature: Tool calls and file changes
     Then the reply lists both files with their added and removed lines
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: The user opens the diff of one turn
     Given a turn changed two files
     When the user opens that turn's changes
     Then the diff shows only what that turn changed, split per file
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: The user opens the diff of a single changed file
     Given a turn changed "src/cart.ts" and "src/checkout.ts"
     When the user opens "src/cart.ts" from the list of changed files

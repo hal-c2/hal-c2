@@ -6,7 +6,7 @@
 #   apps/server-ex/lib/hal_c2/local_servers.ex (subscribeDiscoveredLocalServers)
 #   apps/server-ex/lib/hal_c2/rpc.ex (preview.open, navigate, reportStatus, resize, refresh, close, list)
 #   apps/server-ex/test/hal_c2/preview_test.exs
-#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (add menu has no browser entry)
+#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (the add menu's Browser tab)
 #   apps/desktop-qt/src/native/ThreadPreviews.cpp (the right panel's Previews tab)
 #   apps/desktop-qt/qml/HalC2/Bricks/PreviewsPanel.qml
 #   apps/desktop-qt/tests/native/features/PreviewSteps.cpp
@@ -184,8 +184,9 @@ Feature: In-app preview browser
     # The desktop embeds no browser: drawing the page needs QtWebEngine or
     # QtWebView, which on Linux is WebEngine underneath and has no input, zoom or
     # popup control. Until one is chosen the Previews tab lists
-    # the thread's browser tabs and opens them in the user's browser, and the
-    # scenarios that draw the page wait (@backlog-desktop).
+    # the thread's browser tabs, offers where a new one can go and opens them
+    # in the user's browser, and the scenarios that draw the page wait
+    # (@backlog-desktop).
 
     @desktop @backlog-desktop
     Scenario: The user opens a local dev server in a browser tab beside the thread

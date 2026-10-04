@@ -199,7 +199,7 @@ Feature: The desktop's terminal drawer
         | bun test\r |
       And the terminal drawer shows the tabs "Terminal 1, Terminal 2"
 
-  Rule: Not on the desktop yet
+  Rule: The drawer keeps the user's chords and its place
 
     @desktop
     Scenario: The drawer follows the user's own terminal chords

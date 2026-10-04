@@ -110,6 +110,23 @@ const ICONS = [
   "message-square-warning",
   "triangle-alert",
   "octagon-alert",
+  // Project icons (ProjectIconPicker) and the kinds of machine an environment runs on.
+  "folder-code",
+  "rocket",
+  "laptop",
+  "package",
+  "database",
+  "shopping-cart",
+  "book",
+  "bug",
+  "cpu",
+  "flask-conical",
+  "gamepad-2",
+  "music",
+  "palette",
+  "shield",
+  "heart",
+  "download",
 ];
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));

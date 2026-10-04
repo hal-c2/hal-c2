@@ -1,11 +1,13 @@
 #pragma once
 
+#include <QDateTime>
 #include <QHash>
 #include <QJsonObject>
 #include <QLocale>
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
+#include <QTimer>
 
 #include <functional>
 
@@ -18,7 +20,9 @@ class ShellStore;
 
 // The threads the desktop has open, each followed through the MC's `stream`
 // shape into a TimelineModel. The active thread plus a few recently active
-// ones stay subscribed, so switching back is instant; older ones are dropped.
+// ones stay subscribed, so switching back is instant; older ones are dropped,
+// and so is one the user left more than five minutes ago, which loads afresh
+// when they return.
 //
 //   Threads.open("env-a:thread-1")   // makes it active and follows it
 //   Threads.timeline                 // the active thread's rows
@@ -30,7 +34,8 @@ class ShellStore;
 // McClient sends the subscription again after a reconnect or `resync`, and
 // the part-0 snapshot that follows replaces the thread's entities; the rows
 // keep their ids. An MC that refuses the stream (offline, gone) leaves the
-// thread `unreachable` with its rows until the MC is back.
+// thread `unreachable` with its rows until the MC is back, and so does a
+// connection that drops: what was loaded stays readable, not shown as live.
 class ThreadStore : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(QString activeThread READ activeThread NOTIFY activeThreadChanged)
@@ -39,6 +44,8 @@ class ThreadStore : public QObject, public NativeController {
 public:
   // Threads kept following besides the active one.
   static constexpr int warmThreads = 3;
+  // How long a thread the user left stays followed.
+  static constexpr int idleSeconds = 5 * 60;
 
   ThreadStore(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
   ~ThreadStore() override;
@@ -76,13 +83,21 @@ private:
     int subscription = 0;
     // Refused while its MC was offline: retried once the MC is online.
     bool waitOnline = false;
+    // The shell listed it once: when its environment is no longer reached
+    // (the user removed it), what was loaded of it goes too.
+    bool listed = false;
   };
 
   void follow(const QString& threadKey);
   void unfollow(Followed& followed);
   void onFrame(const QString& threadKey, const QJsonObject& frame);
   void retry();
+  // Closes the threads of environments the user removed.
+  void forgetRemoved();
   void evict();
+  // Stops following the threads left for idleSeconds or longer.
+  void evictIdle();
+  QDateTime now() const;
   // The device's timestampFormat, for every timeline.
   void readSettings();
   void configure(TimelineModel* model) const;
@@ -91,6 +106,9 @@ private:
   ShellStore* m_store;
   QHash<QString, Followed> m_threads;
   QStringList m_recent;
+  // When the user left each followed thread that is not the active one.
+  QHash<QString, QDateTime> m_leftAt;
+  QTimer m_idleTimer;
   QString m_active;
   std::function<QDateTime()> m_now;
   QString m_timestampFormat = QStringLiteral("locale");

@@ -136,7 +136,7 @@ Feature: Committing with written or generated messages
     When the user commits
     Then the action reports the hook starting, its output "lint ok" and the hook finishing
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario: The running action shows its stage, elapsed time and last hook line
     Given the repository has a slow pre-commit hook
     When the user commits without writing a message
@@ -155,12 +155,12 @@ Feature: Committing with written or generated messages
     When the user runs commit and push from the terminal client
     Then no commit message is asked for and the branch is pushed
 
-  @backlog @desktop
+  @desktop
   Scenario: Opening a changed file from the commit review
     When the user opens "src/cart.ts" from the commit review
     Then the file opens in the user's editor
 
-  @backlog @desktop
+  @desktop
   Scenario: No editor to open a changed file in
     Given no editor is available on this environment
     When the user opens "src/cart.ts" from the commit review

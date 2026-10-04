@@ -303,6 +303,12 @@ Rectangle {
                     onObjectAdded: (index, object) => scriptsMenu.insertItem(index, object)
                     onObjectRemoved: (index, object) => scriptsMenu.removeItem(object)
                 }
+                ShellMenuItem {
+                    objectName: "addActionMenuItem"
+                    text: qsTr("Add action…")
+                    iconName: "plus"
+                    onTriggered: Shell.dispatch("projectActions.add")
+                }
             }
         }
 

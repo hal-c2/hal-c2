@@ -57,6 +57,18 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   cluster). The scenarios are `features/desktop/native-*.feature` and the
   `@desktop` and `@shared` ones in the files `tests/native/tst_Features.cpp`
   lists, run by the native `tst_Features`.
+- **One owner of retries.** `McClient` is the only thing that reconnects. Before
+  each socket it reads the MC's descriptor and stays blocked on a protocol it
+  does not speak; a drop is retried with growing delays, waits for the network
+  when a remote MC's device is offline, and stops on a credential the MC
+  refuses until the user pairs again. A failed handshake does not say why, so
+  the client asks for a socket ticket: the MC's own token opens the socket
+  directly, a paired session's token only through a ticket, and a token the MC
+  no longer knows gets neither. A thread's stream resubscribes from the
+  offset its last whole snapshot or event reached; every other shape is sent
+  whole. `ConnectionHealthController` turns the phases into `connection`, which
+  is not `connected` until the shell snapshot lands on that socket. Controllers
+  must not add timers of their own to recover a connection.
 - The UI-owned parts of `desktopBridge` (open external, window commands,
   colour scheme, dialogs/context menus) are served by the shell itself; the
   TypeScript-owned parts stay on the Node side.
@@ -272,10 +284,13 @@ an attached URL, and an MC origin on loopback. Do not enable that flag for an
 SSH-forwarded backend with a different filesystem; its loopback origin looks
 local.
 
-`examples/folders` adds a native folder explorer using Qt's `TreeView` and
-asynchronous `QFileSystemModel` through `DefaultShell.navigationPanel`. The
-thread sidebar stays visible beside the file browser, or above it on narrow
-windows; the browser does not replace thread navigation. Files are listed
+`DefaultShell` overlays `ProjectFolderDrop` and shows a native folder explorer
+(Qt's `TreeView` over an asynchronous `QFileSystemModel`) beside the thread
+list while `folders.open` is set (`folders.toggle`, "Manage folders" in the
+palette). `examples/folders` keeps one open through
+`DefaultShell.navigationPanel` instead. The thread sidebar stays visible
+beside the file browser, or above it on narrow windows; the browser does not
+replace thread navigation. Files are listed
 read-only. The `FolderExplorer` brick provides create,
 rename, move and confirmed system-Trash actions through `LocalFolderModel`.
 It never falls back to permanent deletion. Operations are limited to plain

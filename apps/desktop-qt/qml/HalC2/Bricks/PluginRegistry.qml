@@ -33,9 +33,11 @@ QtObject {
     }
 
     // A plugin file may import the terminal client's module; here its types
-    // are QtQuick's and this module's.
+    // are QtQuick's and this module's, with `Text` the themed one in plugin/.
+    readonly property string pluginTypes: Qt.resolvedUrl("plugin")
+
     function source(text) {
-        return text.replace(/^[ \t]*import[ \t]+OpenTUI\b.*$/m, "import QtQuick\nimport HalC2.Bricks");
+        return text.replace(/^[ \t]*import[ \t]+OpenTUI\b.*$/m, "import QtQuick; import HalC2.Bricks; import \"" + registry.pluginTypes + "\"");
     }
 
     function baseName(file) {

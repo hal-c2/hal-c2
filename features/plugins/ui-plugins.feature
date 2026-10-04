@@ -5,6 +5,10 @@
 #   apps/desktop-qt/examples/dashboard/shell.qml (plugin slots example)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml, SidebarThreadRow.qml (plugin mentions)
 #   apps/tui/src/commands.ts (command palette entries)
+#   docs/user/plugins.md
+#   apps/desktop-qt/src/native/PluginController.cpp (plugin files, disable and enable, URL installs)
+#   apps/desktop-qt/qml/HalC2/Bricks/PluginRegistry.qml, PluginSlot.qml, PluginsSettings.qml
+#   apps/desktop-qt/tests/native/features/PluginSteps.cpp
 
 Feature: UI plugins
   Every surface is built from QML documents that expose named slots. A plugin is a

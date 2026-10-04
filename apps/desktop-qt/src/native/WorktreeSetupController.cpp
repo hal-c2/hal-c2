@@ -5,7 +5,7 @@
 //
 // Publishes `worktreeSetup`: null without a setup, else {threadKey, phase
 // (running | done | failed | cancelled), label ("Setting up worktree…",
-// "Worktree ready", ...), error, branch, baseRef, script (the setup script's
+// "Worktree ready", ...), error, branch, baseRef, worktreePath, script (the setup script's
 // name), canCancel, detailsOpen, stages: [{id, label, status, detail, tail}]}.
 //
 // Actions: `worktreeSetup.details {open}` shows or hides the steps and why
@@ -121,6 +121,7 @@ private:
                                   {QStringLiteral("error"), m_snapshot.value(QLatin1String("error")).toString()},
                                   {QStringLiteral("branch"), m_snapshot.value(QLatin1String("branch")).toString()},
                                   {QStringLiteral("baseRef"), m_snapshot.value(QLatin1String("baseRef")).toString()},
+                                  {QStringLiteral("worktreePath"), m_snapshot.value(QLatin1String("worktreePath")).toString()},
                                   {QStringLiteral("script"), m_snapshot.value(QLatin1String("setupScript")).toObject().value(QLatin1String("name")).toString()},
                                   {QStringLiteral("canCancel"), phase == QLatin1String("running")},
                                   {QStringLiteral("detailsOpen"), m_detailsOpen},
