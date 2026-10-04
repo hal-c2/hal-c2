@@ -11,15 +11,9 @@ ColumnLayout {
     id: row
 
     required property var spec
-    // The auto-settle rules are each environment's own: they follow the
-    // settings scope (Shell.state.autoSettle) instead of one document.
-    readonly property var scoped: spec.scoped === true ? (Shell.state.autoSettle?.[spec.key] ?? null) : null
     // Settings.setting is not a property: reading the stores it covers makes
     // the value follow them.
     readonly property var value: {
-        if (scoped !== null) {
-            return scoped.value;
-        }
         Settings.device;
         Settings.document;
         return Settings.setting(spec.key);
@@ -54,13 +48,6 @@ ColumnLayout {
     spacing: 6
 
     function set(next) {
-        if (row.scoped !== null) {
-            Shell.dispatch("autoSettle.set", {
-                key: spec.key,
-                value: next
-            });
-            return;
-        }
         Settings.set(spec.key, next);
     }
 
@@ -84,7 +71,7 @@ ColumnLayout {
 
                 Label {
                     objectName: "mixed"
-                    visible: row.scoped !== null && row.scoped.mixed === true
+                    visible: row.mixed
                     text: qsTr("Mixed")
                     color: row.muted
                     font.pixelSize: Math.round(12 * Theme.fontScale)

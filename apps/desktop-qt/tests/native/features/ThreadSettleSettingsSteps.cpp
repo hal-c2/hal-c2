@@ -1,5 +1,5 @@
 // The auto-settle rules in Settings → General, per environment
-// (features/threads/settle.feature): AutoSettleController over the settings
+// (features/threads/settle.feature): SettingsController's rows over the settings
 // scope, against the MC's settings documents (FakeConfig).
 
 #include <QJsonObject>
@@ -7,6 +7,7 @@
 #include "FakeConfig.h"
 #include "Harness.h"
 #include "NavigationController.h"
+#include "SettingsController.h"
 #include "SettingsScopeController.h"
 #include "World.h"
 
@@ -24,8 +25,13 @@ QVariantMap scope(World& world) {
   return world.state(QStringLiteral("settingsScope")).toMap();
 }
 
+// The rules as Settings → General's rows read them across the scope (SettingsController).
 QVariantMap rules(World& world) {
-  return world.state(QStringLiteral("autoSettle")).toMap();
+  auto* settings = world.native().controller<SettingsController>();
+  const auto rule = [settings](const QString& key) {
+    return QVariantMap{{QStringLiteral("value"), settings->setting(key)}, {QStringLiteral("mixed"), settings->mixed(key)}};
+  };
+  return {{kDays, rule(kDays)}, {kOnMerge, rule(kOnMerge)}, {QStringLiteral("offline"), settings->unreachable()}};
 }
 
 QJsonObject& documentFor(World& world, const QString& environment) {
@@ -77,7 +83,8 @@ void open(World& world, const QString& environment, int targets) {
 
 void set(World& world, const QString& key, const QJsonValue& value) {
   world.mc.part<SettleRules>() = {key, value};
-  world.bridge().dispatch(QStringLiteral("autoSettle.set"), QVariantMap{{QStringLiteral("key"), key}, {QStringLiteral("value"), value.toVariant()}});
+  // As the row's control does (SettingsRow.qml).
+  world.native().controller<SettingsController>()->set(key, value.isNull() ? QVariant::fromValue(nullptr) : value.toVariant());
   world.sync();
 }
 

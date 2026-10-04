@@ -334,6 +334,16 @@ QString SettingsController::disabledReason(const QString& key) const {
   return scopeFor(key) ? scope->disabledReason() : QString();
 }
 
+QStringList SettingsController::unreachable() const {
+  const SettingsScopeController* scope = this->scope();
+  QStringList labels;
+  if (!scope) return labels;
+  for (const QString& environmentId : scope->environments()) {
+    if (!scope->online(environmentId)) labels.append(scope->label(environmentId));
+  }
+  return labels;
+}
+
 bool SettingsController::supports(const QString& capability) const {
   const SettingsScopeController* scope = this->scope();
   if (!scope || scope->targets().isEmpty()) return false;
@@ -395,13 +405,21 @@ void SettingsController::set(const QString& key, const QVariant& value) {
   }
   if (SettingsScopeController* scope = scopeFor(key)) {
     const bool project = scope->projectScope();
-    scope->write([key, json, absent, project](QJsonObject settings, const QString& projectId) {
+    scope->write([key, json, project](QJsonObject settings, const QString& projectId) {
       // A project keeps its own value as an override.
       if (project) return SettingsScopeController::withOverride(settings, projectId, key, json);
-      if (absent) settings.remove(key);
-      else settings.insert(key, json);
+      // Each environment holds what was chosen, its default too: what it would
+      // otherwise fall back to is its own.
+      settings.insert(key, json);
       return settings;
     });
+    // An environment out of reach keeps what it had.
+    if (const QStringList skipped = unreachable(); !skipped.isEmpty()) {
+      if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) {
+        toasts->show(QStringLiteral("warning"), QStringLiteral("Not updated: %1").arg(skipped.join(QStringLiteral(", "))),
+                     QStringLiteral("An offline environment keeps its settings until they are changed while it is connected."));
+      }
+    }
     return;
   }
   change(

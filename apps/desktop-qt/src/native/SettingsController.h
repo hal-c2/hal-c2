@@ -112,6 +112,8 @@ public:
   // cannot be changed at this scope ("" when it can).
   Q_INVOKABLE bool mixed(const QString& key) const;
   Q_INVOKABLE QString disabledReason(const QString& key) const;
+  // The selected environments that are out of reach, by label: a change leaves them as they were.
+  Q_INVOKABLE QStringList unreachable() const;
   // Whether every selected environment is connected and has the capability
   // (ServerConfig environment.capabilities).
   Q_INVOKABLE bool supports(const QString& capability) const;
