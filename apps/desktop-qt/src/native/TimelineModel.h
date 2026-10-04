@@ -9,6 +9,7 @@
 #include <QLocale>
 #include <QSet>
 #include <QStringList>
+#include <QUrl>
 #include <QVariant>
 
 #include <functional>
@@ -78,6 +79,9 @@ public:
     MetaRole,
     // An assistant reply's message, which a quote of it names as its source.
     MessageIdRole,
+    // A user message's images: [{id, name, url}]. `url` is empty until the
+    // brick asks for it (loadAttachment) and the MC has signed one.
+    AttachmentsRole,
   };
 
   // Calls shown per collapsed work group.
@@ -121,6 +125,13 @@ public:
   Q_INVOKABLE QVariantMap checkpointOf(const QString& rowId) const;
   // Puts a message's markdown on the clipboard; false for any other row.
   Q_INVOKABLE bool copy(const QString& rowId) const;
+  // Asks for an image's address (attachmentWanted) unless one that still
+  // works is known or on its way; its row's `attachments` carry it once
+  // setAttachmentUrl lands.
+  Q_INVOKABLE void loadAttachment(const QString& id);
+  // The address the MC signed for an image and when it stops working; an
+  // empty one when the MC had none, so the next ask tries again.
+  void setAttachmentUrl(const QString& id, const QUrl& url, const QDateTime& expiresAt);
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
@@ -139,6 +150,8 @@ signals:
   // After a snapshot, or events that touched subagents, runs or commands
   // starting and settling: what the Agents tab lists.
   void agentsChanged();
+  // An image on screen has no address yet (loadAttachment).
+  void attachmentWanted(const QString& id);
 
 private:
   struct Row {
@@ -158,6 +171,12 @@ private:
     bool meta = false;
 
     bool operator==(const Row&) const = default;
+  };
+
+  // An image's signed address; invalid `expiresAt` while it is asked for.
+  struct AttachmentUrl {
+    QUrl url;
+    QDateTime expiresAt;
   };
 
   using Entities = QHash<QString, QHash<QString, QJsonObject>>;
@@ -190,6 +209,7 @@ private:
   QHash<QString, int> m_rowOfItem;
   QSet<QString> m_expandedFolds;   // run ids
   QSet<QString> m_expandedGroups;  // row ids
+  QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
   QDateTime m_workingSince;
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;

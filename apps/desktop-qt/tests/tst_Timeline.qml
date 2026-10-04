@@ -30,7 +30,8 @@ Item {
             intent: "",
             attribution: "",
             meta: false,
-            messageId: ""
+            messageId: "",
+            attachments: []
         }, fields);
     }
 
@@ -251,6 +252,33 @@ Item {
                 time: "9:42 AM",
                 meta: true
             }));
+        }
+
+        // Scenario: A sent message shows its images
+        function test_userMessageShowsItsImages() {
+            actionRows.clear();
+            actionRows.append(root.row({
+                rowId: "question",
+                author: "user",
+                text: "",
+                attachments: [{
+                    id: "image-1",
+                    name: "cart.png",
+                    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+                }, {
+                    id: "image-2",
+                    name: "checkout.png",
+                    url: ""
+                }]
+            }));
+            const timeline = createTemporaryObject(actionTimelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(0) !== null);
+            const question = list.itemAtIndex(0);
+            const loaded = findNamed(question, "attachment-image-1");
+            tryVerify(() => loaded.pictured, 2000, "the image is drawn");
+            verify(!visibleIn(findText(question, "cart.png")), "a drawn image needs no name");
+            verify(visibleIn(findText(question, "checkout.png")), "an image still on its way is named");
         }
 
         // The opacity a thing is drawn with, through its parents.

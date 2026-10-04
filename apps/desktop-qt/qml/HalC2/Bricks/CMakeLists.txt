@@ -65,6 +65,7 @@ qt_add_qml_module(hal_c2_bricks
     js/centreViews.js
     js/panelTabs.js
     js/scheduledTasks.js
+    js/usageChart.js
     RevertDialog.qml
     TerminalSplits.qml
     TerminalPanel.qml
@@ -73,7 +74,7 @@ qt_add_qml_module(hal_c2_bricks
     PreviewsPanel.qml
     ThreadDetailsPanel.qml
     CommandPalette.qml
-    PullRequestsPage.qml HomePage.qml UsagePage.qml
+    PullRequestsPage.qml HomePage.qml UsagePage.qml UsageChart.qml
     ProvidersSettings.qml
     ProviderAuthTerminal.qml
     ProviderCustomModels.qml

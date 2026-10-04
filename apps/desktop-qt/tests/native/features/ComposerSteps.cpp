@@ -3,6 +3,8 @@
 // images the MC stores, and the text the shell's composer holds
 // (features/composer/sending-turns.feature, desktop/native-composer.feature).
 
+#include <QBuffer>
+#include <QImage>
 #include <QJsonArray>
 #include <QVariantMap>
 
@@ -158,12 +160,30 @@ const Steps steps([] {
 
   // Images.
   step(QStringLiteral("the user attaches the image %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QImage picture(400, 200, QImage::Format_RGB32);
+    picture.fill(Qt::darkCyan);
+    QByteArray png;
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    picture.save(&buffer, "PNG");
     world.bridge().dispatch(QStringLiteral("composer.attach"),
                             QVariantMap{{QStringLiteral("files"), QVariantList{QVariantMap{
                                                                       {QStringLiteral("name"), c[0]},
                                                                       {QStringLiteral("mimeType"), QStringLiteral("image/png")},
-                                                                      {QStringLiteral("base64"), QStringLiteral("iVBORw0KGgo=")},
+                                                                      {QStringLiteral("base64"), QString::fromLatin1(png.toBase64())},
                                                                   }}}});
+  });
+  step(QStringLiteral("the composer shows a thumbnail of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const QVariant& attachment : attachments(world)) {
+      if (attachment.toMap().value(QStringLiteral("name")) != c[0]) continue;
+      const QString preview = attachment.toMap().value(QStringLiteral("preview")).toString();
+      const QImage thumbnail = QImage::fromData(QByteArray::fromBase64(preview.section(QLatin1Char(','), 1).toLatin1()));
+      // The middle square of the 400x200 picture, scaled down.
+      expect(preview.startsWith(QLatin1String("data:image/png;base64,")) && thumbnail.size() == QSize(128, 128),
+             QStringLiteral("the thumbnail is %1x%2").arg(thumbnail.width()).arg(thumbnail.height()));
+      return;
+    }
+    fail(QStringLiteral("the composer lists %1").arg(show(attachments(world))));
   });
   step(QStringLiteral("the user removes the attachment %1").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QVariant& attachment : attachments(world)) {

@@ -205,6 +205,7 @@ private:
   void sendNext(const QString& target);
   void dispatchAll(const Send& send, qsizetype index, std::function<void(const std::optional<QString>&)> done);
   bool attach(const QVariantList& files);
+  static QString thumbnail(const QString& dataUrl);
   // A terminal selection joins the route's draft; blank ones are dropped.
   bool addTerminalContext(const QVariantMap& selection);
   // A selection of one of the route thread's replies joins its draft.
@@ -304,6 +305,8 @@ private:
   QSet<QString> m_closed;
   // Drafts whose first send is on the way.
   QSet<QString> m_launching;
+  // The thumbnails of the draft images the composer has shown, by attachment id.
+  mutable QHash<QString, QString> m_previews;
   QVariantMap m_published;
   QVariant m_publishedComposer;
   QVariantMap m_publishedPicker;

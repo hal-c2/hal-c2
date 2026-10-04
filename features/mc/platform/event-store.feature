@@ -60,6 +60,14 @@ Feature: The MC's event store and projections
     When the thread keeps changing
     Then the changes are appended without waiting for the reader
 
+  # A thread's first use reads its history. Writes queue up on a slow disk, and a
+  # thread that waited its turn behind them could not be created in time.
+  @mc
+  Scenario: A thread starts while the store's writer is busy
+    Given the store's writer is busy
+    When a thread is used for the first time
+    Then it starts without waiting for the writer
+
   @mc
   Scenario: The MC snapshots a stream every 500 events
     When a thread receives 500 more events

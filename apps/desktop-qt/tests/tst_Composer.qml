@@ -173,6 +173,23 @@ Item {
             compare(sent.payload.id, "q-1");
         }
 
+        // Scenario: The draft shows the images attached to it
+        function test_attachedImageShowsItsThumbnailAndRemovesIt() {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    attachments: [{ id: "image-1", name: "cart.png", preview: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" }]
+                })
+            });
+            const composer = createTemporaryObject(composerComponent, root);
+            const image = findChild(composer, "attachment-image-1");
+            verify(!!image);
+            tryVerify(() => image.pictured, 2000, "the thumbnail is drawn");
+            mouseClick(image, image.width - 8, 8);
+            const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.attachment.remove");
+            compare(sent.payload.id, "image-1");
+        }
+
         function test_textDispatchIncludesTarget() {
             let composer = createTemporaryObject(composerComponent, root);
             verify(!!composer, "Component exists");

@@ -30,7 +30,8 @@ Item {
             intent: "",
             attribution: "",
             meta: false,
-            messageId: ""
+            messageId: "",
+            attachments: []
         }, fields);
     }
 

@@ -777,6 +777,31 @@ QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   return {};
 }
 
+void TimelineModel::loadAttachment(const QString& id) {
+  const auto known = m_attachmentUrls.constFind(id);
+  if (known != m_attachmentUrls.cend() && (!known->expiresAt.isValid() || known->expiresAt > m_now())) return;
+  m_attachmentUrls.insert(id, {});
+  emit attachmentWanted(id);
+}
+
+void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const QDateTime& expiresAt) {
+  if (url.isEmpty()) {
+    m_attachmentUrls.remove(id);
+    return;
+  }
+  m_attachmentUrls.insert(id, {url, expiresAt});
+  for (int row = 0; row < m_rows.size(); ++row) {
+    if (m_rows.at(row).kind != QLatin1String("message")) continue;
+    const QJsonArray attachments =
+        entity(QStringLiteral("turn-item"), m_rows.at(row).items.value(0)).value(QLatin1String("attachments")).toArray();
+    for (const QJsonValue& attachment : attachments) {
+      if (text(attachment.toObject(), QLatin1String("id")) != id) continue;
+      emit dataChanged(index(row), index(row), {AttachmentsRole});
+      return;
+    }
+  }
+}
+
 // --- Rows --------------------------------------------------------------------------
 
 int TimelineModel::rowCount(const QModelIndex& parent) const {
@@ -792,6 +817,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {FilesRole, "files"},      {TimeRole, "time"},         {IconRole, "icon"},
       {IntentRole, "intent"},    {AttributionRole, "attribution"}, {MetaRole, "meta"},
       {MessageIdRole, "messageId"},
+      {AttachmentsRole, "attachments"},
   };
 }
 
@@ -950,6 +976,22 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         return QString();
       }
       return text(item, QLatin1String("text"));
+    case AttachmentsRole: {
+      QVariantList images;
+      if (type != QLatin1String("user_message")) return images;
+      for (const QJsonValue& value : item.value(QLatin1String("attachments")).toArray()) {
+        const QJsonObject attachment = value.toObject();
+        if (text(attachment, QLatin1String("type")) != QLatin1String("image")) continue;
+        const QString id = text(attachment, QLatin1String("id"));
+        const AttachmentUrl known = m_attachmentUrls.value(id);
+        images.append(QVariantMap{
+            {QStringLiteral("id"), id},
+            {QStringLiteral("name"), text(attachment, QLatin1String("name"))},
+            {QStringLiteral("url"), known.expiresAt > m_now() ? known.url : QUrl()},
+        });
+      }
+      return images;
+    }
     case FilesRole: {
       QVariantList files;
       const QJsonObject checkpoint = entity(QStringLiteral("turn-item"), row.checkpoint);
