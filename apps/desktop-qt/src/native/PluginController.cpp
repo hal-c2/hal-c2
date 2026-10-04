@@ -46,6 +46,8 @@ void PluginController::setConfigDir(const QString& dir) {
   m_watcher.addPath(m_pluginDir);
   loadRecords();
   scan();
+  // Even with nothing to load: the list says what is turned off.
+  publish();
 }
 
 bool PluginController::handle(const QString& action, const QVariant& payload) {

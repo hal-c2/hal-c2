@@ -18,7 +18,8 @@ QtObject {
     // What a slot could not draw: {id, file, message}, by "id\nslot".
     property var renderProblems: ({})
     property int revision: 0
-    property string reported: ""
+    // The last report sent; with no plugin and no problem there is nothing to say.
+    property string reported: "[[],[]]"
     // How many PluginSlots of each name the shell has on screen.
     property var mounted: ({})
 
