@@ -15,6 +15,8 @@ Row {
 
     signal removeRequested
     signal retryRequested
+    // The attachment opened to look at.
+    signal openRequested
 
     spacing: 2
 
@@ -29,6 +31,16 @@ Row {
         ToolTip.visible: hovered && chip.failed && chip.attachment.error.length > 0
         ToolTip.text: chip.attachment.error
         onClicked: chip.removeRequested()
+    }
+
+    ShellButton {
+        objectName: "attachmentOpen:" + chip.attachment.name
+        implicitHeight: 24
+        subtle: true
+        iconName: "maximize-2"
+        iconSize: 12
+        Accessible.name: qsTr("Open %1").arg(chip.label)
+        onClicked: chip.openRequested()
     }
 
     ShellButton {

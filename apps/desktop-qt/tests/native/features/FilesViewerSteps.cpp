@@ -128,6 +128,13 @@ bool fileOpened(World& world, const QString& path) {
   return true;
 }
 
+bool removeViewedAttachment(World& world) {
+  if (world.state(QStringLiteral("attachmentViewer")).isNull()) return false;
+  world.brick->click(QStringLiteral("attachmentViewerRemove"));
+  world.sync();
+  return true;
+}
+
 bool lookAtFile(World& world, const QString& path) {
   static const QRegularExpression file(QStringLiteral("^[^\\s:]+\\.[a-z]+$"));
   if (!file.match(path).hasMatch() || !path.contains(QLatin1Char('/'))) return false;
@@ -315,6 +322,27 @@ const Steps steps([] {
     // The rendered view follows.
     expect(files(world).renderedText().contains(QStringLiteral("[%1](").arg(c[2] == QLatin1String("done") ? u"☑" : u"☐") + taskLink(world, c[1])),
            QStringLiteral("the view draws %1").arg(files(world).renderedText()));
+  });
+  // A draft's attachment, opened from its chip in the composer.
+  step(QStringLiteral("the user is viewing an attachment of a draft"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.attach"),
+                            QVariantMap{{QStringLiteral("files"), QVariantList{QVariantMap{{QStringLiteral("name"), QStringLiteral("receipt.png")},
+                                                                                           {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+                                                                                           {QStringLiteral("base64"), QStringLiteral("iVBORw0KGgo=")}}}}});
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nItem {\n  Composer { width: parent.width; anchors.bottom: parent.bottom }\n  AttachmentViewer {}\n}\n",
+                                          QSize(900, 700));
+    world.brick->click(QStringLiteral("attachmentOpen:receipt.png"));
+    const auto viewed = [&] { return world.state(QStringLiteral("attachmentViewer")).toMap(); };
+    world.waitFor([&] { return viewed().value(QStringLiteral("name")) == QLatin1String("receipt.png") && shown(world, QStringLiteral("attachmentViewerImage")); },
+                  [&] { return QStringLiteral("the attachment to open; the viewer is %1").arg(show(viewed())); });
+    expect(viewed().value(QStringLiteral("kind")) == QLatin1String("image") && viewed().value(QStringLiteral("origin")) == QLatin1String("Draft"), show(viewed()));
+  });
+  step(QStringLiteral("the viewer closes and the attachment leaves the draft"), [](World& world, const Captures&, const Table&) {
+    const QVariantList left = world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("attachments")).toList();
+    expect(world.state(QStringLiteral("attachmentViewer")).isNull() && left.isEmpty(),
+           QStringLiteral("the viewer is %1 and the draft carries %2").arg(show(world.state(QStringLiteral("attachmentViewer"))), show(left)));
+    world.waitFor([&] { return !world.brick->root()->findChild<QObject*>(QStringLiteral("attachmentViewer"))->property("visible").toBool(); },
+                  QStringLiteral("the viewer to close"));
   });
   step(QStringLiteral("writing %1 fails").arg(q), [](World& world, const Captures& c, const Table&) { viewer(world).unwritable.insert(c[0]); });
   step(QStringLiteral("the user edits %1").arg(q), [](World& world, const Captures& c, const Table&) {

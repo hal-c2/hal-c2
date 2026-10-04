@@ -1795,6 +1795,24 @@ QVariant ComposerController::setting(const QString& key) const {
   return settings ? settings->setting(key) : QVariant();
 }
 
+QVariantMap ComposerController::attachmentPreview(const QString& id) {
+  const Attachment* found = findAttachment(id);
+  if (!found) return {};
+  QVariantMap preview{{QStringLiteral("id"), found->id}, {QStringLiteral("name"), found->name}, {QStringLiteral("mimeType"), found->mimeType}};
+  if (!found->file) {
+    preview.insert(QStringLiteral("url"), found->dataUrl);
+    return preview;
+  }
+  // What was pasted, or the file where it was picked from, up to the megabyte the viewer shows.
+  QByteArray bytes = found->content;
+  if (bytes.isEmpty() && !found->path.isEmpty()) {
+    QFile file(found->path);
+    if (file.open(QIODevice::ReadOnly)) bytes = file.read(1024 * 1024);
+  }
+  if (!bytes.contains('\0')) preview.insert(QStringLiteral("text"), QString::fromUtf8(bytes));
+  return preview;
+}
+
 bool ComposerController::insertAtEnd(const QString& text) {
   const QString where = target();
   if (where.isEmpty()) return false;

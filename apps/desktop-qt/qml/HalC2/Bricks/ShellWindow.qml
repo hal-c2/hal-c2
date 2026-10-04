@@ -82,6 +82,8 @@ Window {
 
     ProjectIconPicker {}
 
+    AttachmentViewer {}
+
     CommandPalette {}
 
     // The theme editor (Themes.editorOpen): the palette's "Toggle theme

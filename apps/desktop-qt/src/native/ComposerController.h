@@ -133,6 +133,10 @@ public:
   // Adds `text` after the route's draft, a space apart from what is there
   // (the Files tab's Add to chat); false with no thread or draft open.
   bool insertAtEnd(const QString& text);
+  // A draft's attachment as this machine holds it, for a viewer: {id, name,
+  // mimeType, url (an image's bytes as a data URL), text (a file's, when it
+  // is text this machine can read)}; empty when it is gone.
+  QVariantMap attachmentPreview(const QString& id);
 
 private:
   struct Attachment {

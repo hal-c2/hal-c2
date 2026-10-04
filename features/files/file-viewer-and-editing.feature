@@ -294,7 +294,7 @@ Feature: Viewing and editing files
       When the user opens the attachment
       Then the captured contents are shown
 
-    @backlog @desktop
+    @desktop
     Scenario: An attachment can be removed from the draft while it is open
       Given the user is viewing an attachment of a draft
       When the user removes it
