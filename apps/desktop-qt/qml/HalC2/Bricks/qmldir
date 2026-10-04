@@ -72,6 +72,7 @@ EnvironmentIconPicker 1.0 EnvironmentIconPicker.qml
 AgentsPanel 1.0 AgentsPanel.qml
 RevertDialog 1.0 RevertDialog.qml
 TerminalSplits 1.0 TerminalSplits.qml
+TerminalMenu 1.0 TerminalMenu.qml
 TerminalPanel 1.0 TerminalPanel.qml
 PullRequestsPanel 1.0 PullRequestsPanel.qml
 PullRequestReviewPanel 1.0 PullRequestReviewPanel.qml
@@ -101,3 +102,8 @@ WelcomeWizard 1.0 WelcomeWizard.qml
 OnboardingTerminal 1.0 OnboardingTerminal.qml
 SnapShotSettings 1.0 SnapShotSettings.qml
 Markdown 1.0 Markdown.qml
+Plugin 1.0 Plugin.qml
+Contribution 1.0 Contribution.qml
+PluginSlot 1.0 PluginSlot.qml
+singleton PluginRegistry 1.0 PluginRegistry.qml
+PluginsSettings 1.0 PluginsSettings.qml

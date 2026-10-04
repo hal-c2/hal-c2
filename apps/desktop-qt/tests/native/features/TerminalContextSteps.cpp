@@ -5,7 +5,10 @@
 // composer/context-references.feature). A quoted reply is held the same way
 // (composer.citation.add, as the timeline's Cite dispatches it).
 
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QUrl>
 #include <QUrlQuery>
@@ -168,6 +171,44 @@ const Steps steps([] {
   step(QStringLiteral("the rest of the draft is unchanged"), [](World& world, const Captures&, const Table&) {
     const QString text = composer(world)->draft(target(world));
     expect(text == g_textBefore, QStringLiteral("the draft's text went from %1 to %2").arg(show(g_textBefore), show(text)));
+  });
+
+  // An excerpt the store kept without its text.
+  step(QStringLiteral("a restored draft holds a terminal excerpt with no text left"), [](World& world, const Captures&, const Table&) {
+    const QJsonObject excerpt{{QStringLiteral("id"), QStringLiteral("c1")}, {QStringLiteral("terminalId"), QStringLiteral("term-1")},
+                              {QStringLiteral("terminalLabel"), QStringLiteral("Terminal 1")}, {QStringLiteral("lineStart"), 3},
+                              {QStringLiteral("lineEnd"), 5}, {QStringLiteral("text"), QString()}};
+    const QJsonObject stashed{{QStringLiteral("id"), QStringLiteral("s1")}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00.000Z")},
+                              {QStringLiteral("text"), QStringLiteral("why does this fail?")}, {QStringLiteral("attachments"), QJsonArray()},
+                              {QStringLiteral("terminalContexts"), QJsonArray{excerpt}}};
+    QDir().mkpath(QDir(world.homeDir()).filePath(QStringLiteral("data")));
+    QFile file(QDir(world.homeDir()).filePath(QStringLiteral("data/shell-composer.json")));
+    expect(file.open(QIODevice::WriteOnly), QStringLiteral("cannot write %1").arg(file.fileName()));
+    file.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), QJsonObject()}, {QStringLiteral("stash"), QJsonArray{stashed}}}).toJson());
+    file.close();
+    world.restart();
+    openTurnThread(world);
+    world.bridge().dispatch(QStringLiteral("composer.stash.restore"), QVariantMap{{QStringLiteral("id"), QStringLiteral("s1")}});
+    world.waitFor([&] { return chips(world).size() == 1 && at(world.state(QStringLiteral("composer")), QStringLiteral("text")) == QLatin1String("why does this fail?"); },
+                  [&] { return QStringLiteral("the restored draft; the composer shows %1").arg(show(world.state(QStringLiteral("composer")))); });
+    expect(chips(world).first().toMap().value(QStringLiteral("text")).toString().isEmpty(), show(chips(world)));
+  });
+  step(QStringLiteral("the user sends the message"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.submit"),
+                            QVariantMap{{QStringLiteral("edit"), QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), world.nextEdit++}}},
+                                        {QStringLiteral("text"), at(world.state(QStringLiteral("composer")), QStringLiteral("text"))},
+                                        {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+  });
+  step(QStringLiteral("the empty excerpt is not sent"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !lastMessage(world).isEmpty(); },
+                  [&] { return QStringLiteral("a message; the MC has %1").arg(world.describeCommands()); });
+    const QJsonObject message = lastMessage(world);
+    expect(message.value(QLatin1String("text")) == QLatin1String("why does this fail?") && terminalRecord(message).isEmpty() &&
+               !message.value(QLatin1String("text")).toString().contains(QLatin1String("hal-c2-context:")),
+           QStringLiteral("the message carries %1").arg(show(message.toVariantMap())));
+    // And the draft is left without it.
+    world.waitFor([&] { return chips(world).isEmpty(); }, [&] { return show(chips(world)); });
   });
 
   // What a send carries.

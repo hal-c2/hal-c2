@@ -200,6 +200,17 @@ ShellWindow {
                 visible: available
             }
         }
+
+        // The status bar: empty, and so absent, until a plugin fills it.
+        PluginSlot {
+            objectName: "statusbarSlot"
+            name: "statusbar"
+            visible: shown.length > 0
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.topMargin: 4
+            Layout.bottomMargin: 4
+        }
     }
 
     ProjectFolderDrop {

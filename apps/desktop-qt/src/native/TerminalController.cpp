@@ -1,6 +1,12 @@
 #include "TerminalController.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
 #include <QJsonValue>
+#include <QSaveFile>
+#include <QUrl>
 #include <QQmlPropertyMap>
 #include <QRegularExpression>
 
@@ -8,6 +14,7 @@
 
 #include "NativeShell.h"
 #include "McClient.h"
+#include "MenuController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -23,6 +30,9 @@ constexpr qsizetype kMaxWrite = 65536;
 // What the transcript keeps for a late Terminal, as the other clients cap their
 // buffers (docs/internals/terminal-runtime.md); the MC keeps the full history.
 constexpr qsizetype kMaxTranscript = 512 * 1024;
+
+// How many threads' drawers the store remembers.
+constexpr qsizetype kStoredThreads = 50;
 
 int terminalNumber(const QString& terminalId) {
   static const QRegularExpression pattern(QStringLiteral("^term(?:inal)?-(\\d+)$"),
@@ -126,6 +136,7 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
     replace(QString());
   } else if (kind == QLatin1String("exited")) {
     note(QStringLiteral("process exited"));
+    emit exited();
   } else if (kind == QLatin1String("error")) {
     note(event.value(QLatin1String("message")).toString());
   } else if (kind == QLatin1String("closed")) {
@@ -302,6 +313,19 @@ void TerminalTabs::update(int index, const Row& next) {
   emit dataChanged(changed, changed);
 }
 
+QHash<QString, TerminalSession*> TerminalTabs::take() {
+  QHash<QString, TerminalSession*> sessions;
+  if (m_rows.isEmpty()) return sessions;
+  beginResetModel();
+  for (const Row& row : std::as_const(m_rows)) {
+    if (row.session) sessions.insert(row.terminalId, row.session);
+  }
+  m_rows.clear();
+  endResetModel();
+  emit countChanged();
+  return sessions;
+}
+
 void TerminalTabs::clear() {
   if (m_rows.isEmpty()) return;
   beginResetModel();
@@ -319,6 +343,7 @@ TerminalController::TerminalController(ShellBridge* bridge, McClient* client, Sh
                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_tabs(this) {
   connect(store, &ShellStore::changed, this, &TerminalController::refresh);
+  connect(this, &TerminalController::changed, this, &TerminalController::save);
 }
 
 void TerminalController::activate() {
@@ -332,7 +357,54 @@ void TerminalController::activate() {
 }
 
 bool TerminalController::isOpen() const {
-  return m_place && m_ui.value(m_threadKey).open;
+  if (!m_place) return false;
+  const ThreadUi ui = m_ui.value(m_threadKey);
+  return ui.open && !ui.restored;
+}
+
+void TerminalController::setStorePath(const QString& path) {
+  m_storePath = path;
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) return;
+  m_saved = file.readAll();
+  const QJsonObject stored = QJsonDocument::fromJson(m_saved).object();
+  m_height = std::max(minimumHeight, stored.value(QLatin1String("height")).toInt(m_height));
+  for (const QJsonValue& value : stored.value(QLatin1String("threads")).toArray()) {
+    const QJsonObject thread = value.toObject();
+    const QString threadKey = thread.value(QLatin1String("threadKey")).toString();
+    if (threadKey.isEmpty()) continue;
+    ThreadUi& ui = m_ui[threadKey];
+    ui.open = thread.value(QLatin1String("open")).toBool();
+    ui.active = thread.value(QLatin1String("active")).toString();
+    ui.restored = true;
+    m_recent.removeOne(threadKey);
+    m_recent.append(threadKey);
+  }
+  emit changed();
+}
+
+void TerminalController::save() {
+  if (m_storePath.isEmpty()) return;
+  if (!m_threadKey.isEmpty() && m_ui.contains(m_threadKey)) {
+    m_recent.removeOne(m_threadKey);
+    m_recent.append(m_threadKey);
+  }
+  QJsonArray threads;
+  for (qsizetype at = m_recent.size() - 1; at >= 0 && threads.size() < kStoredThreads; --at) {
+    const ThreadUi ui = m_ui.value(m_recent.at(at));
+    if (!ui.open && ui.active.isEmpty()) continue;
+    threads.prepend(QJsonObject{{QStringLiteral("threadKey"), m_recent.at(at)},
+                                {QStringLiteral("open"), ui.open},
+                                {QStringLiteral("active"), ui.active}});
+  }
+  const QByteArray json =
+      QJsonDocument(QJsonObject{{QStringLiteral("height"), m_height}, {QStringLiteral("threads"), threads}}).toJson(QJsonDocument::Compact);
+  if (json == m_saved) return;
+  QDir().mkpath(QFileInfo(m_storePath).absolutePath());
+  QSaveFile file(m_storePath);
+  if (!file.open(QIODevice::WriteOnly)) return;
+  file.write(json);
+  if (file.commit()) m_saved = json;
 }
 
 QString TerminalController::activeTerminalId() const {
@@ -418,13 +490,22 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
     if (m_place && terminalIds().contains(terminalId)) openTerminal(terminalId);
     return true;
   }
+  if (action == QLatin1String("terminal.followLink")) {
+    followLink(args.value(QStringLiteral("kind")).toString(), args.value(QStringLiteral("text")).toString(),
+               args.value(QStringLiteral("cwd")).toString());
+    return true;
+  }
   if (action == QLatin1String("terminal.close")) {
     if (!m_place) return true;
     // A keybinding's is the focused terminal's, the drawer's or a panel tab's.
     const QStringList ids = terminalIds();
     const QString fallback = ids.contains(m_focused) ? m_focused : activeTerminalId();
     const QString terminalId = args.value(QStringLiteral("terminalId"), fallback).toString();
-    if (ids.contains(terminalId)) closeTerminal(terminalId);
+    if (!ids.contains(terminalId)) return true;
+    const QString threadKey = m_threadKey;
+    confirmClose({terminalId}, [this, threadKey, terminalId] {
+      if (threadKey == m_threadKey && terminalIds().contains(terminalId)) closeTerminal(terminalId);
+    });
     return true;
   }
   return false;
@@ -463,9 +544,22 @@ void TerminalController::refresh() {
   // Another thread, or the same one launching elsewhere: start over.
   const bool moved = threadKey != m_threadKey || !place || !m_place || place->cwd != m_place->cwd;
   if (moved) {
-    m_tabs.clear();
+    // Leaving a thread keeps its terminals attached; a thread that now runs
+    // somewhere else starts over.
+    if (threadKey != m_threadKey && m_place && m_attached) {
+      park(m_threadKey, m_place->cwd);
+    } else {
+      m_tabs.clear();
+    }
     m_attached = false;
     m_focused.clear();
+    if (place && m_parked.contains(threadKey)) {
+      if (m_parked.value(threadKey).cwd == place->cwd) {
+        m_attached = true;
+      } else {
+        dropParked(threadKey);
+      }
+    }
   }
   m_threadKey = threadKey;
   m_place = std::move(place);
@@ -488,6 +582,7 @@ QStringList TerminalController::terminalIds() const {
 void TerminalController::syncTabs() {
   if (!m_place) return;
   ThreadUi& ui = m_ui[m_threadKey];
+  if (ui.restored) return;
   const QStringList ids = terminalIds();
   // A group loses the terminals that ended, and goes with the last one.
   for (auto it = ui.groups.begin(); it != ui.groups.end();) {
@@ -526,6 +621,12 @@ void TerminalController::syncTabs() {
       m_tabs.update(index, row);
       continue;
     }
+    // Still attached from the user's last visit.
+    if (TerminalSession* parked = m_parked[m_threadKey].sessions.take(id)) {
+      row.session = parked;
+      m_tabs.insert(i, row);
+      continue;
+    }
     auto* session = new TerminalSession(m_client, *m_place, id, m_size, this);
     connect(session, &TerminalSession::resized, this, [this](QSize size) { m_size = size; });
     const QString threadKey = m_threadKey;
@@ -537,9 +638,31 @@ void TerminalController::syncTabs() {
         emit changed();
       }
     });
+    // A shell that ended on its own takes its terminal with it, unasked
+    // (the web's auto-exit cleanup).
+    connect(session, &TerminalSession::exited, this, [this, threadKey, id] {
+      if (threadKey == m_threadKey && terminalIds().contains(id)) closeTerminal(id);
+    });
     row.session = session;
     m_tabs.insert(i, row);
   }
+  // What the visit left that the thread no longer has.
+  dropParked(m_threadKey);
+}
+
+void TerminalController::park(const QString& threadKey, const QString& cwd) {
+  dropParked(threadKey);
+  const QHash<QString, TerminalSession*> sessions = m_tabs.take();
+  if (sessions.isEmpty()) return;
+  m_parked.insert(threadKey, {cwd, sessions});
+  m_parkedOrder.append(threadKey);
+  while (m_parkedOrder.size() > maxParkedThreads) dropParked(m_parkedOrder.constFirst());
+}
+
+void TerminalController::dropParked(const QString& threadKey) {
+  m_parkedOrder.removeOne(threadKey);
+  const Parked parked = m_parked.take(threadKey);
+  for (TerminalSession* session : parked.sessions) session->deleteLater();
 }
 
 // Follows an environment's terminals list once a thread there is shown.
@@ -568,6 +691,12 @@ void TerminalController::onTerminals(const QString& environmentId, const QJsonOb
       it = it.key().startsWith(prefix) ? m_known.erase(it) : std::next(it);
     }
     for (const QJsonValue& value : event.value(QLatin1String("terminals")).toArray()) put(value.toObject());
+    // What the store remembered holds as far as the MC still runs it.
+    for (auto it = m_ui.begin(); it != m_ui.end(); ++it) {
+      if (!it->restored || !it.key().startsWith(prefix)) continue;
+      it->restored = false;
+      if (m_known.value(it.key()).isEmpty()) it->open = false;
+    }
   } else if (type == QLatin1String("upsert")) {
     put(event.value(QLatin1String("terminal")).toObject());
   } else if (type == QLatin1String("remove")) {
@@ -585,6 +714,7 @@ void TerminalController::onTerminals(const QString& environmentId, const QJsonOb
 // Returns whether the drawer's open state changed.
 bool TerminalController::setOpen(bool open) {
   ThreadUi& ui = m_ui[m_threadKey];
+  if (std::exchange(ui.restored, false)) ui.open = false;
   if (ui.open == open) return false;
   ui.open = open;
   // A drawer with no terminal yet gets its first one.
@@ -598,6 +728,7 @@ bool TerminalController::setOpen(bool open) {
 // A terminal of a panel tab becomes the tab's active one instead.
 void TerminalController::openTerminal(const QString& terminalId) {
   ThreadUi& ui = m_ui[m_threadKey];
+  ui.restored = false;
   if (!terminalIds().contains(terminalId)) ui.local.insert(terminalId);
   if (Group* group = groupOf(ui, terminalId); group && group->panel) {
     group->active = terminalId;
@@ -627,6 +758,7 @@ void TerminalController::focusTerminal(const QString& terminalId) {
 void TerminalController::split(const QString& terminalId, bool vertical) {
   if (!m_place) return;
   ThreadUi& ui = m_ui[m_threadKey];
+  ui.restored = false;
   const QStringList ids = terminalIds();
   QString target = ids.contains(terminalId) ? terminalId : ids.contains(m_focused) ? m_focused : ui.active;
   if (target.isEmpty() || !terminalIds().contains(target)) {
@@ -670,6 +802,7 @@ QString TerminalController::addPanelGroup() {
     return {};
   }
   ThreadUi& ui = m_ui[m_threadKey];
+  ui.restored = false;
   const QString id = nextTerminalId();
   const QString group = QStringLiteral("group-%1").arg(++m_groupCount);
   ui.local.insert(id);
@@ -688,6 +821,33 @@ void TerminalController::closeGroup(const QString& group) {
     for (const QString& id : terminals) closeTerminal(id);
     return;
   }
+}
+
+QStringList TerminalController::groupTerminals(const QString& group) const {
+  for (const Group& each : m_ui.value(m_threadKey).groups) {
+    if (each.id == group) return each.terminals;
+  }
+  return {};
+}
+
+void TerminalController::confirmClose(const QStringList& ids, std::function<void()> accepted) {
+  auto* menu = NativeShell::of(this)->controller<MenuController>();
+  if (ids.isEmpty() || !menu) {
+    accepted();
+    return;
+  }
+  const auto known = m_known.value(m_threadKey);
+  QStringList labels;
+  for (const QString& id : ids) labels.append(QStringLiteral("\"%1\"").arg(terminalLabel(id, known.value(id).label)));
+  if (ids.size() == 1) {
+    menu->confirm(QStringLiteral("Close terminal %1?").arg(labels.constFirst()),
+                  QStringLiteral("This stops the running process and clears its history."), QStringLiteral("Close terminal"), true,
+                  std::move(accepted));
+    return;
+  }
+  menu->confirm(QStringLiteral("Close %1 terminals?").arg(ids.size()),
+                QStringLiteral("This stops their running processes and clears their histories: %1.").arg(labels.join(QStringLiteral(", "))),
+                QStringLiteral("Close terminals"), true, std::move(accepted));
 }
 
 void TerminalController::closeTerminal(const QString& terminalId) {
@@ -710,18 +870,26 @@ void TerminalController::closeTerminal(const QString& terminalId) {
     ui.active.clear();
   }
   if (drawerIds(ui, terminalIds()).isEmpty()) ui.open = false;
-  m_client->call(this, m_place->environmentId, QStringLiteral("terminal.close"),
+  const TerminalPlace place = *m_place;
+  m_client->call(this, place.environmentId, QStringLiteral("terminal.close"),
                  QJsonObject{
-                     {QStringLiteral("threadId"), m_place->threadId},
+                     {QStringLiteral("threadId"), place.threadId},
                      {QStringLiteral("terminalId"), terminalId},
                      {QStringLiteral("deleteHistory"), true},
                  },
-                 [this, threadKey, terminalId](const QJsonValue&, const std::optional<QString>& error) {
+                 [this, threadKey, place, terminalId](const QJsonValue&, const std::optional<QString>& error) {
                    m_ui[threadKey].closing.remove(terminalId);
+                   m_known[threadKey].remove(terminalId);
                    if (error) {
-                     toast(QStringLiteral("Failed to close the terminal."), *error);
-                   } else {
-                     m_known[threadKey].remove(terminalId);
+                     // The MC no longer has the session to close: ask the
+                     // shell itself to leave, as the web's closeTerminal does.
+                     m_client->call(this, place.environmentId, QStringLiteral("terminal.write"),
+                                    QJsonObject{
+                                        {QStringLiteral("threadId"), place.threadId},
+                                        {QStringLiteral("terminalId"), terminalId},
+                                        {QStringLiteral("data"), QStringLiteral("exit\n")},
+                                    },
+                                    [](const QJsonValue&, const std::optional<QString>&) {});
                    }
                    if (threadKey == m_threadKey) {
                      syncTabs();
@@ -734,6 +902,36 @@ void TerminalController::closeTerminal(const QString& terminalId) {
     emit focusRequested(next);
   } else if (!panel && m_ui[threadKey].open) {
     emit focusRequested(activeTerminalId());
+  }
+}
+
+// A link the user followed in a terminal, as the web's handleLinkActivate: a
+// web address goes to the browser (the desktop draws no pages itself), a file
+// path to the editor, resolved against the folder the shell reported (OSC 7)
+// or the one the terminal started in.
+void TerminalController::followLink(const QString& kind, const QString& text, const QString& reportedCwd) {
+  if (!m_place || text.isEmpty()) return;
+  if (kind == QLatin1String("url")) {
+    const QUrl url(text);
+    if (url.isValid() && (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https"))) m_bridge->openExternal(url);
+    return;
+  }
+  static const QRegularExpression position(QStringLiteral("^(.*?)((?::\\d+){0,2})$"));
+  const QRegularExpressionMatch match = position.match(text);
+  QString path = match.captured(1);
+  QString cwd = reportedCwd.startsWith(QLatin1String("file://")) ? QUrl(reportedCwd).path() : reportedCwd;
+  if (cwd.isEmpty()) cwd = m_place->cwd;
+  static const QRegularExpression home(QStringLiteral("^(/Users/[^/]+|/home/[^/]+)"));
+  if (path.startsWith(QLatin1String("~/"))) {
+    // The home the folder sits in, as the web's inferHomeFromCwd.
+    const QRegularExpressionMatch found = home.match(cwd);
+    if (found.hasMatch()) path = found.captured(1) + path.mid(1);
+  } else if (!path.startsWith(QLatin1Char('/'))) {
+    path = QDir::cleanPath(cwd + QLatin1Char('/') + path);
+  }
+  auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
+  if (!workspace || !workspace->openInEditor({}, path + match.captured(2))) {
+    toast(QStringLiteral("Unable to open path"), QStringLiteral("This environment has no editor to open %1 in.").arg(path));
   }
 }
 

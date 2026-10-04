@@ -12,28 +12,11 @@
 #include "DraftController.h"
 #include "NavigationController.h"
 #include "TerminalController.h"
+#include "FakeTerminals.h"
 #include "Harness.h"
 #include "World.h"
 
-namespace {
-
-// The MC's terminal manager: terminals attach with the `terminal` shape and
-// are listed by `terminals`; `terminal.*` calls are recorded and act on them
-// the way the MC's does.
-struct FakeTerminals {
-  struct Terminal {
-    QJsonObject summary;
-    QString history;
-  };
-  // By "threadId/terminalId".
-  QMap<QString, Terminal> terminals;
-  // Every terminal.* call, as {method, payload}.
-  QList<QJsonObject> calls;
-  // Why terminal.open fails, when it does.
-  QString refuseOpen;
-  // The terminal the steps' right panel tab runs.
-  QString panelTerminal;
-};
+namespace terminalfake {
 
 QString terminalKey(const QJsonObject& input) {
   return input.value(QLatin1String("threadId")).toString() + QLatin1Char('/') +
@@ -118,6 +101,12 @@ bool ensureTerminal(FakeMc& mc, const QJsonObject& input) {
   return true;
 }
 
+}  // namespace terminalfake
+
+namespace {
+
+using namespace terminalfake;
+
 const FakeMc::Extension extension([](FakeMc& mc) {
   mc.onShape(QStringLiteral("terminals"), [&mc](int id, const QJsonObject& shape) {
     // Only its own environment's list; another environment's goes to the MC serving it.
@@ -135,7 +124,10 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     const QJsonObject input = shape.value(QLatin1String("input")).toObject();
     if (!ensureTerminal(mc, input)) {
       mc.forget(id);
-      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("Unknown terminal")}});
+      // The reason the MC could not open it, or that it has no such terminal.
+      const QString refusal = mc.part<FakeTerminals>().refuseOpen;
+      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id},
+               {QStringLiteral("reason"), refusal.isEmpty() || !input.contains(QLatin1String("cwd")) ? QStringLiteral("Unknown terminal") : refusal}});
       return;
     }
     const FakeTerminals::Terminal& terminal = mc.part<FakeTerminals>().terminals[terminalKey(input)];
@@ -156,11 +148,21 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     }
     auto answer = [&mc, rpc] {
       if (!mc.current(rpc)) return;
+      if (const QString refusal = mc.part<FakeTerminals>().refuseClose; rpc.method == QLatin1String("terminal.close") && !refusal.isEmpty()) {
+        mc.refuse(rpc, refusal);
+        return;
+      }
       if (rpc.method == QLatin1String("terminal.close")) {
         closeTerminal(mc, rpc.payload.value(QLatin1String("threadId")).toString(),
                       rpc.payload.value(QLatin1String("terminalId")).toString());
       }
       mc.reply(rpc, QJsonValue::Null);
+      if (rpc.method == QLatin1String("terminal.write")) {
+        const QString reply = mc.part<FakeTerminals>().replies.value(rpc.payload.value(QLatin1String("data")).toString());
+        if (!reply.isEmpty()) {
+          print(mc, rpc.payload.value(QLatin1String("threadId")).toString(), rpc.payload.value(QLatin1String("terminalId")).toString(), reply);
+        }
+      }
     };
     if (mc.holding(QStringLiteral("answers"))) {
       mc.defer(answer);
@@ -169,6 +171,10 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     }
   });
 });
+
+}  // namespace
+
+namespace terminalfake {
 
 // Gherkin cells and strings spell control characters as `\r` and `\n`.
 QString unescaped(QString text) {
@@ -261,7 +267,7 @@ void addAction(World& world, const QString& project, const QString& name, const 
 }
 
 // Shows a thread of the project, on a worktree when given one.
-void showThread(World& world, const QString& project, const QString& worktree = {}) {
+void showThread(World& world, const QString& project, const QString& worktree) {
   const QString threadId = QStringLiteral("thread-in-") + project;
   QJsonObject row{{QStringLiteral("id"), threadId}, {QStringLiteral("title"), QStringLiteral("Cart")}, {QStringLiteral("projectId"), project},
                   {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}};
@@ -327,6 +333,15 @@ bool toastShown(World& world, const QString& title) {
   return false;
 }
 
+// Closing a terminal asks first (terminal/tabs.feature): the user says yes.
+void confirmTerminalClose(World& world) {
+  const QVariant question = world.state(QStringLiteral("confirmation"));
+  expect(question.typeId() == QMetaType::QVariantMap && at(question, QStringLiteral("title")).toString().startsWith(QLatin1String("Close ")),
+         QStringLiteral("closing the terminal asked %1").arg(show(question)));
+  world.bridge().dispatch(QStringLiteral("confirmation.answer"),
+                          QVariantMap{{QStringLiteral("requestId"), at(question, QStringLiteral("requestId"))}, {QStringLiteral("accepted"), true}});
+}
+
 // The MC's project "p1" at /work/p1, connected, unless a Background set one up.
 void ensureProject(World& world) {
   if (world.mc.projects.isEmpty()) {
@@ -336,6 +351,12 @@ void ensureProject(World& world) {
   if (world.shellSubscriptions() == 0) world.connect();
   world.sync();
 }
+
+}  // namespace terminalfake
+
+namespace {
+
+using namespace terminalfake;
 
 const Steps steps([] {
   const QString q = kQuoted;
@@ -374,6 +395,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user closes the active terminal"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("terminal.close"));
+    confirmTerminalClose(world);
     world.sync();  // what it asked of the MC has been answered
   });
   step(QStringLiteral("the user runs the script %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -635,6 +657,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user closes the terminal tab"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("rightPanel.close"), QVariantMap{{QStringLiteral("id"), at(world.state(QStringLiteral("panel")), QStringLiteral("activeId"))}});
+    confirmTerminalClose(world);
     world.sync();
   });
   step(QStringLiteral("the tab's terminal stops and its history is deleted"), [](World& world, const Captures&, const Table&) {

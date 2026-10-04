@@ -19,6 +19,7 @@
 #include "KeybindingController.h"
 #include "NavigationController.h"
 #include "RightPanelController.h"
+#include "TerminalController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "WorkspaceController.h"
@@ -128,6 +129,7 @@ void NativeWindow::setStoreDirs(const QString& state) {
   if (auto* panel = controller<RightPanelController>()) {
     panel->setStorePath(QDir(state).filePath(QStringLiteral("shell-panel.json")));
   }
+  if (auto* terminals = controller<TerminalController>()) terminals->setStorePath(QDir(state).filePath(QStringLiteral("shell-terminals.json")));
 }
 
 bool NativeWindow::handle(const QString& action, const QVariant& payload) {
@@ -232,6 +234,7 @@ void NativeShell::closeWindow(const QString& id) {
   if (!m_stateDir.isEmpty() && id == NativeWindow::kMain) {
     QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-route.json")));
     QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-panel.json")));
+    QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-terminals.json")));
   } else if (!m_stateDir.isEmpty()) {
     QDir(windowDir(id)).removeRecursively();
   }

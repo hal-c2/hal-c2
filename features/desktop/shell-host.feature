@@ -202,8 +202,8 @@ Feature: The desktop app runs its own MC
       Then the screenshot is taken once the MC's first snapshot is in
       And the screenshot shows the app's native window, not an empty view
 
-    # Delivered natively (main.cpp --screenshot); no desktop test yet.
-    @desktop @backlog-desktop
+    # main.cpp's own path: the native scenario runs the built app (ScreenshotSteps.cpp).
+    @desktop
     Scenario: A screenshot of a desktop app that fails to start shows why and quits
       When the user starts the desktop app asking for a screenshot, with a pairing link for an MC that is not running
       Then the screenshot shows the desktop app saying it cannot reach the MC

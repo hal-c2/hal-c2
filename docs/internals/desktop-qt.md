@@ -250,8 +250,8 @@ path). If `shell.qml` fails to load, the default shell takes over with
 
 ### Local extensions
 
-Extensions are trusted QML components instantiated by `shell.qml`, not a plugin
-registry or a sandbox. `DefaultShell` exposes `sidebar`, `composer`, `workspace`,
+Extensions are trusted QML components instantiated by `shell.qml`, with no
+sandbox. `DefaultShell` exposes `sidebar`, `composer`, `workspace`,
 `centreView`, `terminalDrawer`, and `rightPanel` so extensions do not need to copy
 the layout. Removing a component removes its controls and signal subscriptions.
 `DefaultShell.toolbar` accepts a component above the timeline. Give it an
@@ -306,6 +306,37 @@ opens the shell's own confirmation (below). Confirming permanently deletes
 that entry's conversation history, including archived threads, and its
 drafts; it leaves files on disk. This is separate from Trash, not a safe
 workaround for renaming or moving a registered project root.
+
+### UI plugins
+
+A plugin is a QML file in `<config dir>/plugins/` whose root is a `Plugin`
+holding `Contribution`s, each naming a slot. The bricks place `PluginSlot`s:
+`sidebar.footer` (`Sidebar`), `composer.actions` (`Composer`) and `statusbar`
+(`DefaultShell`), the names the terminal client uses. A plugin is as trusted
+as a rice: it runs in the shell's engine with the shell's access.
+
+- **Two halves.** `PluginController` (native, shared by every window) owns
+  the files: which exist, which are turned off, where a downloaded one came
+  from (`plugins.json`, the terminal client's format), and it publishes each
+  file's text in `plugins.files`. `PluginRegistry`, a QML singleton and so one
+  per window's engine, instantiates that text and answers with
+  `plugins.report`. The controller cannot make QML objects for an engine it
+  does not own, and QML cannot read files, hence the split.
+- **`import OpenTUI` is rewritten.** The terminal client's plugin files
+  import its runtime's module. The registry replaces that import with
+  `QtQuick` and `HalC2.Bricks` before `Qt.createQmlObject`, so one file loads
+  on both as long as it keeps to what both have (`Text`, `Row`, `Column`,
+  `Rectangle`, `Timer`). The terminal client's `data` context property cannot
+  exist here (an `Item` has a `data` property of its own); a contribution
+  declares `property var slotData` to be given the slot's data.
+- **A report must not answer inside the change that caused it.** The report
+  changes `plugins`, which the registry's `wanted` binding reads; it is sent
+  with `Qt.callLater` and only when it differs from the last one.
+- **The config directory is watched twice.** `ShellRuntime` reloads the
+  whole shell on any QML change under the config directory, plugin files
+  included, and the controller re-reads the saved file. The registry outlives
+  the reload (same engine), so a file that no longer loads leaves the version
+  already running.
 
 ### Independent views and windows
 
@@ -582,7 +613,11 @@ host a project reads, as the web dialog does. Offline its rows stay as last
 synced and nothing is sent. The Previews tab (`PreviewsPanel` over
 `ThreadPreviews`) lists the thread's browser tabs from `preview.list` and the
 `preview` shape, subscribed only while it shows, and opens each in the user's
-browser. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
+browser. The add menu's "Browser tab" (`rightPanel.add {kind: "browser"}`) is
+`preview.open` with no address: an empty tab the Previews tab fills from the
+MC's `localServers` shape (the MC's machine's servers, never this one's), the
+project scripts' `previewUrl`s and this device's last ten pages
+(`previewRecentPages`), with `preview.navigate`. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
 in `RightPanelController::nativeKinds`.
 
 The desktop embeds no browser. QtWebView is WebEngine underneath on Linux,
@@ -675,7 +710,26 @@ it; the drawer is available wherever the header is
   coalesce into the next one, so the shell sees the user's order.
 - **Hidden is not detached.** Once opened, the drawer stays attached while
   hidden, like the web's drawer, so output keeps arriving and switching
-  back costs nothing.
+  back costs nothing. Leaving a thread parks its sessions, still attached,
+  for the last ten threads left; returning reuses them instead of attaching
+  again.
+- **Restored state waits for the list.** The drawer's height and each
+  thread's open flag and active terminal are kept in `shell-terminals.json`
+  (state directory). After a restart they apply only once the MC's
+  `terminals` snapshot says which terminals still exist, so the drawer never
+  opens on a terminal that is gone.
+- **A close asks, an exit does not.** Every close the user makes
+  (`terminal.close`, a terminal tab of the right panel) goes through one
+  `MenuController` question naming each terminal; a shell that exits on its
+  own takes its terminal with it unasked. When `terminal.close` fails the
+  shell is sent `exit` instead, as the web does.
+- **Links are found from the text.** qml-ghostty exposes no cell contents, so
+  `TerminalSplits` maps a click to a character of `Terminal.text()`
+  (`js/terminalLinks.js`, the patterns of `packages/shared/terminalLinks.ts`)
+  by counting a row per `columns` characters. Wide characters above the click
+  shift that count; the fix is a link API in qml-ghostty, not more arithmetic
+  here. Web addresses open in the system browser whatever `browserLinkTarget`
+  says, since the desktop draws no pages.
 - **Groups.** Terminals are laid out in groups, as the web's terminal grid: a
   terminal never split is a group of its own, `terminal.split` (side by side)
   and `terminal.splitVertical` (stacked) add one after the focused terminal,
