@@ -21,6 +21,7 @@ function machine(name: string, status?: () => ClusterStatus) {
   let onPhase: ((phase: TuiConnectionPhase) => void) | null = null;
   const calls: string[] = [];
   const threadSubs = new Set<string>();
+  const onThreads = new Map<string, (thread: Row) => void>();
   const client = {
     subscribeShell: (callback: typeof onShell) => {
       onShell = callback;
@@ -32,9 +33,23 @@ function machine(name: string, status?: () => ClusterStatus) {
       onPhase = callback;
       return () => {};
     },
-    subscribeThread: (threadId: string) => {
+    subscribeThread: (threadId: string, onThread: (thread: Row) => void) => {
       threadSubs.add(threadId);
+      onThreads.set(threadId, onThread);
       return () => threadSubs.delete(threadId);
+    },
+    createThread: (input: { readonly projectId: string }) => {
+      calls.push(`createThread ${input.projectId}`);
+      return Promise.resolve("created");
+    },
+    // Balancing is off: the MC answers the machine and project it was asked about.
+    placeThread: (input: { readonly environmentId: string; readonly projectId: string }) => {
+      calls.push(`placeThread ${input.environmentId} ${input.projectId}`);
+      return Promise.resolve({ environmentId: input.environmentId, projectId: input.projectId });
+    },
+    moveThread: (input: { readonly threadId: string; readonly machine: string }) => {
+      calls.push(`moveThread ${input.threadId} ${input.machine}`);
+      return Promise.resolve({ status: "moved", environmentId: input.machine, projectId: "p1" });
     },
     clusterStatus: () =>
       status ? Promise.resolve(status()) : Promise.reject(new Error("no cluster")),
@@ -57,6 +72,7 @@ function machine(name: string, status?: () => ClusterStatus) {
     calls,
     threadSubs,
     pushShell: (snapshot: OrchestrationShellSnapshot) => onShell?.(snapshot),
+    pushThread: (thread: Row) => onThreads.get(thread.id)?.(thread),
     connected: () => onPhase?.("connected" as TuiConnectionPhase),
   };
 }
@@ -150,7 +166,7 @@ describe("makeClusterClient", () => {
     expect(rows(last())).toEqual(["alpha@laptop", "beta@desktop"]);
     expect(
       last().projects.map((project) => `${project.id}@${project.machine}@${project.machineId}`),
-    ).toEqual(["p-laptop@laptop@env-laptop", "p-desktop@desktop@env-desktop"]);
+    ).toEqual(["p-laptop@laptop@env-laptop", "env-desktop:p-desktop@desktop@env-desktop"]);
     expect(last().machines).toEqual([
       { id: "env-laptop", label: "laptop", online: true },
       { id: "env-desktop", label: "desktop", online: true },
@@ -271,6 +287,56 @@ describe("makeClusterClient", () => {
       "listRefs /src/shop",
     ]);
     expect(laptop.calls).toEqual(["listRefs /src/shop"]);
+  });
+
+  it("Given two machines that use the same project id, when their shells arrive, then each machine's project stays its own", async () => {
+    const { laptop, desktop, client, last } = await clustered();
+    laptop.pushShell(
+      shell([{ id: "p1", workspaceRoot: "/src/shop" }], [{ id: "alpha", projectId: "p1" }]),
+    );
+    desktop.pushShell(
+      shell([{ id: "p1", workspaceRoot: "/src/shop" }], [{ id: "beta", projectId: "p1" }]),
+    );
+
+    expect(last().projects.map((project) => `${project.id}@${project.machine}`)).toEqual([
+      "p1@laptop",
+      "env-desktop:p1@desktop",
+    ]);
+    expect(last().threads.map((thread) => `${thread.id} in ${thread.projectId}`)).toEqual([
+      "alpha in p1",
+      "beta in env-desktop:p1",
+    ]);
+
+    // A thread's own detail names its project as the list does.
+    const details: string[] = [];
+    client.subscribeThread("beta" as Parameters<TuiClient["subscribeThread"]>[0], (thread) =>
+      details.push(thread.projectId),
+    );
+    desktop.pushThread({ id: "beta", projectId: "p1" });
+    expect(details).toEqual(["env-desktop:p1"]);
+
+    // Each machine is asked about its own project, by the id it knows it by.
+    const [mine, theirs] = last().projects;
+    const create = (project: typeof mine) =>
+      client.createThread({ projectId: project!.id } as Parameters<TuiClient["createThread"]>[0]);
+    await create(theirs);
+    await create(mine);
+    expect(desktop.calls).toEqual(["createThread p1"]);
+    expect(laptop.calls).toEqual(["createThread p1"]);
+
+    client.viewProject(theirs!.id);
+    await client.listRefs("/src/shop");
+    expect(desktop.calls).toEqual(["createThread p1", "listRefs /src/shop"]);
+
+    // The MC this terminal is paired with places a thread, and a move answers, in the machine's own ids.
+    const placed = await client.placeThread({
+      environmentId: "env-desktop",
+      projectId: theirs!.id,
+    });
+    expect(laptop.calls.at(-1)).toBe("placeThread env-desktop p1");
+    expect(placed).toEqual({ environmentId: "env-desktop", projectId: "env-desktop:p1" });
+    const moved = await client.moveThread({ threadId: "alpha", machine: "env-desktop" });
+    expect(moved).toMatchObject({ status: "moved", projectId: "env-desktop:p1" });
   });
 
   it("Given a member that left the cluster, when the cluster is read again, then its rows and its client go", async () => {

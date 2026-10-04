@@ -4,12 +4,13 @@ import type { OrchestrationShellSnapshot, TuiClient } from "./connection.ts";
 
 type Shell = OrchestrationShellSnapshot;
 type ThreadId = Parameters<TuiClient["interrupt"]>[0];
+type ProjectId = Shell["projects"][number]["id"];
 
 interface Machine {
   readonly id: string;
   readonly client: TuiClient;
   shell: Shell | null;
-  readonly stop: () => void;
+  stop: () => void;
 }
 
 /**
@@ -18,6 +19,10 @@ interface Machine {
  * through the MC this terminal is paired with); this merges their shells into
  * one list that names each row's machine, and sends each request to the
  * machine that owns what it is about. A machine on its own passes through.
+ *
+ * Project ids are a machine's own, so two machines may use the same one. In the
+ * merged list another member's project goes by `<environment id>:<its id>`
+ * (`projectKey`), and gets its own id back when its machine is asked about it.
  *
  * A thread keeps its id when it moves, so its subscription follows it to the
  * machine that owns it now.
@@ -33,7 +38,7 @@ export function makeClusterClient(
   const shellListeners = new Set<(snapshot: Shell) => void>();
   const threadSubscriptions = new Set<{
     readonly threadId: ThreadId;
-    readonly onThread: Parameters<TuiClient["subscribeThread"]>[1];
+    readonly follow: (client: TuiClient) => () => void;
     client: TuiClient;
     stop: () => void;
   }>();
@@ -56,20 +61,34 @@ export function makeClusterClient(
     );
     return (rows.find(({ thread }) => !thread.moving) ?? rows[0])?.client ?? home;
   };
-  const clientForProject = (projectId: string): TuiClient => {
-    for (const machine of members.values()) {
-      if (machine.shell?.projects.some((project) => project.id === projectId)) {
-        return machine.client;
+  /** What the merged list calls a project of the machine `machineId`. */
+  const projectKey = (machineId: string, projectId: string) =>
+    (members.has(machineId) ? `${machineId}:${projectId}` : projectId) as ProjectId;
+  /** The machine a project of the merged list is on, and the project's id there. */
+  const projectOwner = (key: string) => {
+    for (const { id, client } of members.values()) {
+      if (key.startsWith(`${id}:`)) return { client, projectId: key.slice(id.length + 1) };
+    }
+    return { client: home, projectId: key };
+  };
+  /** A thread as `client` tells it, naming its project as the merged list does. */
+  const keyed = <Row extends { readonly projectId: ProjectId }>(
+    client: TuiClient,
+    row: Row,
+  ): Row => {
+    for (const member of members.values()) {
+      if (member.client === client) {
+        return { ...row, projectId: projectKey(member.id, row.projectId) };
       }
     }
-    return home;
+    return row;
   };
   /** The machine of the thread on screen, wherever it has moved to since it was opened. */
   const threadClient = (): TuiClient =>
     viewedThread === null ? home : clientForThread(viewedThread);
   /** The machine of what is on screen: where a path that exists on several is meant. */
   const current = (): TuiClient =>
-    viewedProject === null ? threadClient() : clientForProject(viewedProject);
+    viewedProject === null ? threadClient() : projectOwner(viewedProject).client;
   const hasPath = (shell: Shell | null, cwd: string) =>
     shell !== null &&
     (shell.projects.some((project) => project.workspaceRoot === cwd) ||
@@ -97,20 +116,29 @@ export function makeClusterClient(
       }),
     ];
     const threads = new Map<string, Shell["threads"][number]>();
-    for (const { label, shell } of parts) {
+    for (const { id, label, shell } of parts) {
       for (const thread of shell.threads) {
         // The row a machine keeps for a thread that left only says where it went.
         if (thread.movedTo) continue;
         // Late in a move both ends list it: it lives on the one it is going to (clientForThread).
         const listed = threads.get(thread.id);
         if (listed && (thread.moving || !listed.moving)) continue;
-        threads.set(thread.id, { ...thread, machine: label });
+        threads.set(thread.id, {
+          ...thread,
+          projectId: projectKey(id, thread.projectId),
+          machine: label,
+        });
       }
     }
     return {
       ...homeShell,
       projects: parts.flatMap(({ id, label, shell }) =>
-        shell.projects.map((project) => ({ ...project, machine: label, machineId: id })),
+        shell.projects.map((project) => ({
+          ...project,
+          id: projectKey(id, project.id),
+          machine: label,
+          machineId: id,
+        })),
       ),
       threads: [...threads.values()],
       machines: [
@@ -126,7 +154,7 @@ export function makeClusterClient(
       if (client === subscription.client) continue;
       subscription.stop();
       subscription.client = client;
-      subscription.stop = client.subscribeThread(subscription.threadId, subscription.onThread);
+      subscription.stop = subscription.follow(client);
     }
     const snapshot = merged();
     if (snapshot) for (const listener of shellListeners) listener(snapshot);
@@ -146,16 +174,13 @@ export function makeClusterClient(
       // A member that was never reachable gets its client once it is: its rows are unknown until then.
       if (members.has(member.id) || !member.connected) continue;
       const client = connect(member.id);
-      const machine: Machine = {
-        id: member.id,
-        client,
-        shell: null,
-        stop: client.subscribeShell((snapshot) => {
-          machine.shell = snapshot;
-          changed();
-        }),
-      };
+      const machine: Machine = { id: member.id, client, shell: null, stop: () => {} };
       members.set(member.id, machine);
+      // A client that already has its shell says so while it is being subscribed to.
+      machine.stop = client.subscribeShell((snapshot) => {
+        machine.shell = snapshot;
+        changed();
+      });
     }
     changed();
     return next;
@@ -189,12 +214,9 @@ export function makeClusterClient(
     subscribeThread: (threadId, onThread) => {
       const client = clientForThread(threadId);
       viewedThread = threadId;
-      const subscription = {
-        threadId,
-        onThread,
-        client,
-        stop: client.subscribeThread(threadId, onThread),
-      };
+      const follow = (from: TuiClient) =>
+        from.subscribeThread(threadId, (thread, page) => onThread(keyed(from, thread), page));
+      const subscription = { threadId, follow, client, stop: follow(client) };
       threadSubscriptions.add(subscription);
       return () => {
         threadSubscriptions.delete(subscription);
@@ -202,14 +224,37 @@ export function makeClusterClient(
       };
     },
     loadOlderThreadTurns: (threadId) => clientForThread(threadId).loadOlderThreadTurns(threadId),
-    peekThread: (threadId) => clientForThread(threadId).peekThread(threadId),
+    peekThread: (threadId) => {
+      const client = clientForThread(threadId);
+      const thread = client.peekThread(threadId);
+      return thread && keyed(client, thread);
+    },
     moveDestinations: (threadId) => clientForThread(threadId).moveDestinations(threadId),
-    moveThread: (input) => clientForThread(input.threadId).moveThread(input),
+    // `input.projectId` is the destination's own, as the MC offered it; the project the
+    // thread landed in is named as the merged list names it.
+    moveThread: (input) =>
+      clientForThread(input.threadId)
+        .moveThread(input)
+        .then((result) =>
+          result.status === "moved"
+            ? { ...result, projectId: projectKey(result.environmentId, result.projectId) }
+            : result,
+        ),
+    placeThread: (input) =>
+      home
+        .placeThread({ ...input, projectId: projectOwner(input.projectId).projectId })
+        .then((placement) => ({
+          ...placement,
+          projectId: projectKey(placement.environmentId, placement.projectId),
+        })),
     subscribeTerminal: (input, onEvent) =>
       clientForThread(input.threadId).subscribeTerminal(input, onEvent),
     sendReply: (thread, ...rest) => clientForThread(thread.id).sendReply(thread, ...rest),
     implementPlan: (thread, planId) => clientForThread(thread.id).implementPlan(thread, planId),
-    createThread: (input) => clientForProject(input.projectId).createThread(input),
+    createThread: (input) => {
+      const { client, projectId } = projectOwner(input.projectId);
+      return client.createThread({ ...input, projectId: projectId as ProjectId });
+    },
     interrupt: (threadId) => clientForThread(threadId).interrupt(threadId),
     approve: (threadId, ...rest) => clientForThread(threadId).approve(threadId, ...rest),
     respondUserInput: (threadId, ...rest) =>

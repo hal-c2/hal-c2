@@ -10,6 +10,7 @@
 #   apps/server-ex/lib/hal_c2/web/router.ex (/api/cluster, /.well-known/hal-c2/environment, forwarded uploads)
 #   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove)
 #   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
+#   apps/tui/src/clusterClient.ts (one list over the cluster's machines, a project keyed by its machine)
 #   packages/client-runtime/src/v3/session.ts (mcMembers: the sidebar stream says when a machine comes or goes)
 #   apps/desktop-qt/src/ClusterController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any MC)
@@ -289,6 +290,25 @@ Feature: Clustering one person's machines
     And the terminal has read the cluster
     When "studio" joins the cluster
     Then the terminal's cluster lists "studio" as connected
+
+  # A project's id is its machine's own: machines set up from one copy of the data share them.
+  @tui
+  Scenario: Projects that share an id on two machines stay separate in the terminal
+    Given this machine and "studio" of its cluster each have a project with the id "p1"
+    When the terminal follows the cluster's projects
+    Then the project is listed once for each machine
+    And a thread started in the project on "studio" is started on "studio"
+    And a thread started in the project on "This machine" is started on "This machine"
+
+  # The terminal follows each connected machine with a client of its own, so the rows of a
+  # machine it has not reached since it started are missing, and those of one that went
+  # offline since are listed as if it were there. The MC's sidebar carries both (shell.ex).
+  @backlog @tui
+  Scenario: Threads on an offline machine are listed as unavailable in the terminal
+    Given this machine is clustered with "laptop", which is offline
+    When the terminal starts
+    Then the threads on "laptop" are listed as unavailable
+    And actions that need "laptop" are unavailable
 
   @desktop
   Scenario: The desktop's settings show this machine's cluster
