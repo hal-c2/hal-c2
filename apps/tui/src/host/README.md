@@ -82,14 +82,18 @@ The source-control panel is the `rightPanel` kind `"sourceControl"`
 panel focused (`mode: "panel"`, or `"commit"` while a commit message is asked
 for): `git.next`, `git.previous`, `git.select {index}`, `git.activate
 {index?}`, `git.run {action, label?}`, `git.pull`, `git.openPr` (copies the PR
-link), `git.commit {message}`, `git.commit.cancel`. `settings`
+link), `git.commit {message}`, `git.commit.generate` (Tab in the commit prompt:
+the MC's writer model writes the message), `git.commit.cancel`. An action that
+would land on the default branch asks first, in the picker. `git.progress` is
+the running action's stage and elapsed time, which move when the MC reports
+something, never on a timer. `settings`
 (`settingsState.ts`) is the settings page in place of the conversation:
 `settings.open`, `settings.close` (`mode: "settings"`).
 
 `settingsSection` (`settingsSections.ts`, null-like when `open` is false) is a
 settings page the terminal can act on, in the conversation's place: scheduled
 tasks, storage, background activity, diagnostics, the resource monitor, source
-control tools, updates, usage limits and usage hubs (`sections/*.ts`, each
+control tools, updates, usage, usage limits, usage hubs and plugins (`sections/*.ts`, each
 opened by its palette entry, `section.open {id}`). A page is rows: `rows` is the
 window that fits, each painted and marked selected; `input` is the one-line
 field a row asks its value in, `confirm` the yes / no question before something
@@ -270,10 +274,19 @@ a higher `priority` wins a chord the shell binds.
 
 ## Plugins, problems and connection
 
-- `plugins` lists what the QML engine registered (`{ items: [{ id, kind:
-"qml" | "script", file, order }] }`). The entry attaches the engine with
-  `attachPlugins(enginePluginPort(engine))`; actions `plugins.refresh`,
-  `plugin.remove { id }` and `plugin.load { file }` go through that port.
+- `plugins` lists what the QML engine registered (`items: [{ id, kind:
+"qml" | "script", file, order }]`), the plugins the user turned off
+  (`disabled`) and the URL a downloaded one came from (`sources`, by id). The
+  entry attaches the engine with `attachPlugins(enginePluginPort(engine))`;
+  `pluginCatalog.ts` handles `plugins.refresh`, `plugin.remove { id }`,
+  `plugin.load { file }`, `plugin.disable/enable { id }`, `plugin.install
+{ url }` and `plugin.reload { file }` through that port. A disabled plugin's
+  file stays where it is; `HostOptions.pluginStore` remembers it, and it is
+  dropped again right after the engine starts, so a file that only fails once
+  turned off is never a reason to lose it. A plugin is reloaded by reading its
+  new version before the running one is unregistered: a version that does not
+  parse leaves the old one running. Only dev mode (`HAL_C2_TUI_DEV=1`) watches
+  plugin files.
 - `problems` holds what the runtime reported through `onError`/`onWarning`
   (plugin load, setup and render failures, bad keymap entries, missing plugin
   directories), capped at 50. The runtime never throws for a plugin, so this is

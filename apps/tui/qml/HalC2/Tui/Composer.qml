@@ -171,6 +171,24 @@ Item {
             }
         }
 
+        // What "/usage-limits" answered: the provider's windows, until the next message is sent.
+        Item {
+            objectName: "composerLimits"
+            visible: dock.model.limitLines.length > 0
+            flexDirection: "column"
+            flexShrink: 0
+            Repeater {
+                model: dock.model.limitLines
+                delegate: Text {
+                    height: 1
+                    flexShrink: 0
+                    wrapMode: "none"
+                    text: modelData
+                    color: Theme.colors.dim
+                }
+            }
+        }
+
         // Files referenced with "@": a click on a chip drops it and its mention.
         Item {
             objectName: "composerReferences"

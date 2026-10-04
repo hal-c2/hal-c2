@@ -41,7 +41,20 @@ export interface QmlObject {
 export interface QmlEngine {
   readonly renderer: CliRenderer;
   readonly isDestroyed: boolean;
+  /** Drop a file's cached document so the next load reads it from disk. */
+  invalidate(path?: string): unknown[];
+  /** Read and parse a `.qml` file (cached); throws on a syntax error. */
+  loadFile(path: string): Promise<QmlComponent>;
+  reportError(error: unknown, context?: string): void;
 }
+
+/** A parsed QML document. */
+export interface QmlComponent {
+  readonly filename?: string;
+}
+
+/** Whether a document's root is a `Plugin`. */
+export function isPluginDocument(component: QmlComponent): boolean;
 
 export interface PluginInfo {
   readonly id: string;

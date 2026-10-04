@@ -45,6 +45,27 @@ export interface StoreState {
    * output, and the error it failed with. Kept until the next run or `dismissGitLog`.
    */
   readonly gitLog: ReadonlyArray<GitLogLine>;
+  /**
+   * The running git action's stage as the server names it, the phase it is in,
+   * and how long the action has run. The time moves when the server reports
+   * something, never on a timer. Null with no action running.
+   */
+  readonly gitProgress: GitProgress | null;
+}
+
+/** How long a git action has run, in whole seconds ("7s", "1m 05s"). */
+export function gitElapsed(elapsedMs: number): string {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  return seconds < 60
+    ? `${seconds}s`
+    : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+export interface GitProgress {
+  readonly stage: string;
+  readonly phase: string | null;
+  readonly startedAtMs: number;
+  readonly elapsedMs: number;
 }
 
 export interface GitLogLine {
@@ -70,7 +91,16 @@ export interface Store {
   readonly setStatus: (status: string, kind?: StatusKind) => void;
   readonly setFilter: (filter: string) => void;
   /** Run a git stacked action on the selected thread's worktree (commitMessage for commit-bearing actions). */
-  readonly runGitAction: (action: GitStackedAction, commitMessage?: string) => void;
+  readonly runGitAction: (
+    action: GitStackedAction,
+    commitMessage?: string,
+    options?: {
+      /** Leave the commit message to the server's writer model. */
+      readonly generateMessage?: boolean;
+      /** Move the work onto a new branch first. */
+      readonly featureBranch?: boolean;
+    },
+  ) => void;
   /** Pull the selected thread's worktree from upstream. */
   readonly pullGit: () => void;
   /** Clear the last git action's log (its error with it). */
@@ -98,6 +128,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     vcsStatus: null,
     gitBusy: false,
     gitLog: [],
+    gitProgress: null,
   };
   const listeners = new Set<() => void>();
   let unsubShell: (() => void) | null = null;
@@ -289,10 +320,10 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       ensureValidSelection(rowsNow());
       emit();
     },
-    runGitAction: (action, commitMessage) => {
+    runGitAction: (action, commitMessage, runOptions = {}) => {
       if (state.gitBusy) return;
       const message = commitMessage?.trim();
-      if (gitActionNeedsCommitMessage(action) && !message) {
+      if (gitActionNeedsCommitMessage(action) && !message && !runOptions.generateMessage) {
         set({ status: "Commit needs a message.", statusKind: "error" });
         return;
       }
@@ -301,12 +332,38 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
         set({ status: "No worktree for git actions.", statusKind: "error" });
         return;
       }
-      set({ gitBusy: true, gitLog: [], status: `Running ${action}…`, statusKind: "busy" });
+      const startedAtMs = Date.parse(now());
+      set({
+        gitBusy: true,
+        gitLog: [],
+        gitProgress: { stage: `Running ${action}…`, phase: null, startedAtMs, elapsedMs: 0 },
+        status: `Running ${action}…`,
+        statusKind: "busy",
+      });
       const log = (line: GitLogLine) => set({ gitLog: [...state.gitLog, line] });
+      /** Each report from the server moves the stage's clock on. */
+      const progress = (patch: Partial<GitProgress> = {}) => {
+        const current = state.gitProgress;
+        if (!current) return;
+        const next = { ...current, ...patch, elapsedMs: Date.parse(now()) - startedAtMs };
+        set({
+          gitProgress: next,
+          status: `${next.stage} ${gitElapsed(next.elapsedMs)}`,
+          statusKind: "busy",
+        });
+      };
       void client
         .runGitStackedAction(
-          { cwd, action, ...(message ? { commitMessage: message } : {}) },
+          {
+            cwd,
+            action,
+            ...(message ? { commitMessage: message } : {}),
+            ...(runOptions.featureBranch ? { featureBranch: true } : {}),
+          },
           (event) => {
+            if (event.kind === "phase_started") {
+              progress({ stage: event.label, phase: event.phase });
+            } else if (event.kind !== "action_started") progress();
             if (event.kind === "phase_started") log({ kind: "phase", text: event.label });
             else if (event.kind === "hook_started") {
               log({ kind: "hook", text: `hook ${event.hookName}` });
@@ -316,17 +373,22 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
         .then((result) =>
           set({
             gitBusy: false,
+            gitProgress: null,
             // The server's own summary ("Committed 1a2b3c4", "Pushed to origin/x").
             status: result?.toast.title ?? "Git action complete.",
             statusKind: "success",
           }),
         )
         .catch((error: unknown) => {
+          // The phase it stopped in stays with the error.
+          const phase = state.gitProgress?.phase;
+          const reason = error instanceof Error ? error.message : String(error);
           set({
             gitBusy: false,
+            gitProgress: null,
             gitLog: [
               ...state.gitLog,
-              { kind: "error", text: error instanceof Error ? error.message : String(error) },
+              { kind: "error", text: phase ? `${phase} failed: ${reason}` : reason },
             ],
             status: `Git failed: ${String(error)}`,
             statusKind: "error",

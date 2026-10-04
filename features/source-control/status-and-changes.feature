@@ -105,7 +105,7 @@ Feature: Repository status and working tree changes
     Then "notes" becomes a git repository
     And the git actions for "notes" become available
 
-  @backlog @tui
+  @tui
   Scenario: Initializing a repository from the terminal client
     Given the project "notes" is not in a git repository
     When the user initializes Git for "notes" from the terminal client

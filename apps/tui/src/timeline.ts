@@ -204,6 +204,7 @@ function deriveTurnFolds(
     const terminalUpdatedAt =
       group.items.find((item) => item.message?.id === group.terminalId)?.message?.updatedAt ?? null;
     const interrupted = latestTurn?.turnId === turnId && latestTurn.state === "interrupted";
+    const failed = latestTurn?.turnId === turnId && latestTurn.state === "error";
     const elapsedMs =
       latestTurn?.turnId === turnId && latestTurn.startedAt && latestTurn.completedAt
         ? computeElapsedMs(latestTurn.startedAt, latestTurn.completedAt)
@@ -219,9 +220,13 @@ function deriveTurnFolds(
       ? duration
         ? `You stopped after ${duration}`
         : "You stopped this response"
-      : duration
-        ? `Worked for ${duration}`
-        : "Worked";
+      : failed
+        ? duration
+          ? `Failed after ${duration}`
+          : "Failed"
+        : duration
+          ? `Worked for ${duration}`
+          : "Worked";
 
     folds.set(first.id, {
       turnId,

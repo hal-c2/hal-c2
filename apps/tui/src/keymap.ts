@@ -95,6 +95,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "Esc", description: "Return to the conversation", chords: ["escape"] },
       { keys: "^L", description: "Close the panel", chords: ["ctrl+l"] },
       { keys: "x", description: "Dismiss the last action's log", chords: ["x"] },
+      {
+        keys: "Tab",
+        description: "Commit message: let the writer model write it",
+        chords: ["tab"],
+      },
     ],
   },
   {
@@ -326,7 +331,7 @@ export const KEYMAP_LAYERS = {
     "ctrl+l": "rightPanel.toggle",
     x: "git.log.dismiss",
   },
-  commit: { escape: "git.commit.cancel", "ctrl+p": "rightPanel.blur" },
+  commit: { escape: "git.commit.cancel", "ctrl+p": "rightPanel.blur", tab: "git.commit.generate" },
   project: {
     up: "project.add.previous",
     down: "project.add.next",
@@ -481,9 +486,20 @@ export function resolveKeymapFile(file: Record<string, unknown>): {
   }
   const contested = [...actionsByChord].filter(([, actions]) => actions.size > 1);
   const keymap: Record<string, unknown> = {};
+  const unknown: string[] = [];
   for (const [key, value] of Object.entries(file)) {
     if (typeof value !== "string" && value !== null) {
       keymap[key] = value;
+      continue;
+    }
+    // A modifier no terminal reports would bind a key that can never be pressed.
+    const stranger = splitChords(key)
+      .flatMap((chord) => chord.toLowerCase().replace(/\s+/g, "").split("+").slice(0, -1))
+      .find((modifier) => modifier !== "" && !KEYMAP_FILE_MODIFIERS.has(modifier));
+    if (stranger !== undefined) {
+      unknown.push(
+        `keymap.json: unknown modifier "${stranger}" in "${key}"; the binding is skipped`,
+      );
       continue;
     }
     // Spelled the engine's way ("ctrl+t"), so "Ctrl+T" binds too.
@@ -493,14 +509,31 @@ export function resolveKeymapFile(file: Record<string, unknown>): {
   }
   return {
     keymap,
-    conflicts: contested.map(
-      ([chord, actions]) =>
-        `keymap.json binds ${chordLabel(chord)} to ${[...actions]
-          .map((action) => `"${action}"`)
-          .join(" and ")}; neither is applied`,
-    ),
+    conflicts: [
+      ...unknown,
+      ...contested.map(
+        ([chord, actions]) =>
+          `keymap.json binds ${chordLabel(chord)} to ${[...actions]
+            .map((action) => `"${action}"`)
+            .join(" and ")}; neither is applied`,
+      ),
+    ],
   };
 }
+
+/** The modifiers a keymap.json chord may name, in any of their spellings. */
+const KEYMAP_FILE_MODIFIERS = new Set([
+  "ctrl",
+  "control",
+  "alt",
+  "option",
+  "meta",
+  "shift",
+  "cmd",
+  "command",
+  "super",
+  "win",
+]);
 
 /** How the terminal lines up with the web app's keybindings (the parity table). */
 export interface KeymapParityRow {

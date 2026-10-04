@@ -192,14 +192,14 @@ Feature: The protocol 3 WebSocket
     Then it resubscribes each thread from its last offset
     And it takes the shell whole
 
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A client refuses a server speaking an unknown protocol
     Given an environment whose descriptor declares an unsupported protocol
     When a client tries to connect
     Then it is blocked before opening a socket
     And it says which side to update
 
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A client skips an event type it does not know
     Given a connected client does not recognize an event type the MC publishes
     When the MC publishes an event of that type

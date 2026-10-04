@@ -167,14 +167,14 @@ Feature: Provider capabilities
       | provider    |
       | Codex       |
 
-  @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @shared @backlog-desktop @backlog-mobile
   Scenario: An ACP subagent's messages stay in its own thread
     Given an ACP agent starts a native child session
     When the child sends messages and a final summary
     Then they appear in the child's thread
     And the parent receives only the child's result
 
-  @shared @backlog
+  @shared @backlog-mc @backlog-desktop @backlog-mobile
   Scenario: An ACP edit carries its replaced lines
     Given an ACP agent edits a file by giving the old text and the new text
     When the user looks at the change
