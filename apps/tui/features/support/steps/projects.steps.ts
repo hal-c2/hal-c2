@@ -258,6 +258,16 @@ step("{string} is not offered", async (ctx: World, name: string) => {
     expect(menu.rows.some((row) => row.label?.includes(name))).toBe(false);
     return;
   }
+  // An open picker (the composer's command menu) is what is on offer.
+  const picker = ctx.host!.state.get("select") as {
+    open: boolean;
+    options: ReadonlyArray<{ label: string }>;
+  };
+  if (picker.open) {
+    expect(picker.options.map((option) => option.label)).not.toContain(name);
+    expect(frame).not.toContain(name);
+    return;
+  }
   if (!flow(ctx).open) {
     expect(await paletteTitles(ctx)).not.toContain(name);
     return;

@@ -49,9 +49,9 @@ public:
   // Shows `items` at (x, y); `chosen` runs with the id picked, never on dismiss.
   void open(double x, double y, const QList<Item>& items, Chosen chosen);
   void close();
-  // Asks; `accepted` runs on yes only.
+  // Asks; `accepted` runs on yes only, `declined` (when given) on no.
   void confirm(const QString& title, const QString& description, const QString& confirmLabel, bool destructive,
-               std::function<void()> accepted);
+               std::function<void()> accepted, std::function<void()> declined = {});
 
 private:
   ShellBridge* m_bridge;
@@ -64,6 +64,7 @@ private:
   struct Question {
     QString requestId;
     std::function<void()> accepted;
+    std::function<void()> declined;
   };
   std::optional<Question> m_question;
 };

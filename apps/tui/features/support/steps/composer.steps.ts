@@ -21,6 +21,7 @@ import { shownText } from "../threadWorld.ts";
 import {
   boot,
   findObject,
+  geometry,
   holdKey,
   pasteBytes,
   pasteText,
@@ -639,7 +640,11 @@ step("the user sends it and the MC rejects the message", async (ctx: World) => {
 
 step("the user sees why the send failed", async (ctx: World) => {
   await settle(ctx);
-  expect(String(findObject(ctx, "statusText").get("text"))).toContain("turn rejected by the MC");
+  expect(String(findObject(ctx, "statusText").get("text"))).toContain("send failed");
+  // The status line is short: the composer carries the whole reason.
+  expect(composer(ctx).notice).toBe("Not sent: turn rejected by the MC");
+  expect(geometry(findObject(ctx, "composerNotice")).visible).toBe(true);
+  expect(await snapshot(ctx)).toContain("⚠ Not sent: turn rejected by the MC");
 });
 
 step("the draft reads {string} again", async (ctx: World, text: string) => {
@@ -655,6 +660,7 @@ const TWO_THREADS = [
     title: "Thread A",
     updatedAt: "2026-07-13T00:00:02.000Z",
     session: { status: "idle" },
+    latestTurn: null,
   },
   {
     id: "t2",
@@ -662,6 +668,7 @@ const TWO_THREADS = [
     title: "Thread B",
     updatedAt: "2026-07-13T00:00:01.000Z",
     session: { status: "idle" },
+    latestTurn: null,
   },
 ];
 
@@ -705,7 +712,12 @@ step("the user is starting a new thread in the project", async (ctx: World) => {
 });
 
 step("the user sends {string}", async (ctx: World, text: string) => {
-  await typeIntoPrompt(ctx, text);
+  await typeText(ctx, text);
+  await settle(ctx);
+  // A "/" opens the provider's command menu and what follows narrows it: Enter picks the
+  // command. Otherwise the text is in the prompt and Enter sends it.
+  const picker = ctx.host!.state.get("select") as { open: boolean };
+  if (!picker.open) expect(composer(ctx).text).toContain(text);
   await pressKey(ctx, "Enter");
   await settle(ctx);
 });

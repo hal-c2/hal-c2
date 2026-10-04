@@ -10,6 +10,7 @@
 
 #include "ComposerBrick.h"
 #include "FakeConfig.h"
+#include "FilesIdentity.h"
 #include "Harness.h"
 #include "SharedSteps.h"
 #include "ThemeLibrary.h"
@@ -522,6 +523,7 @@ const Steps steps([] {
            QStringLiteral("the environments are %1").arg(labels.join(QStringLiteral(", "))));
   });
   step(QStringLiteral("%1 is disconnected").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (disconnectOwnEnvironment(world, c[0])) return;
     linkEnvironment(world, c[0], {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
     world.mc.setLinkProblem(c[0], QStringLiteral("unreachable"));
   });

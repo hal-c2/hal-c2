@@ -347,6 +347,7 @@ void TimelineModel::snapshot(int part, const QJsonArray& rows, bool done) {
   emit turnChanged();
   emit checkpointsChanged();
   emit agentsChanged();
+  emit workspaceChanged();
 }
 
 void TimelineModel::events(const QJsonArray& events) {
@@ -355,6 +356,7 @@ void TimelineModel::events(const QJsonArray& events) {
   m_turnTouched = false;
   m_checkpointsTouched = false;
   m_agentsTouched = false;
+  m_workspaceTouched = false;
   for (const QJsonValue& value : events) {
     const QJsonArray event = value.toArray();
     structural |= apply(event.at(1).toString(), event.at(2).toString(), event.at(3).toObject(), changed);
@@ -362,6 +364,7 @@ void TimelineModel::events(const QJsonArray& events) {
   if (m_turnTouched) emit turnChanged();
   if (m_checkpointsTouched) emit checkpointsChanged();
   if (m_agentsTouched) emit agentsChanged();
+  if (m_workspaceTouched) emit workspaceChanged();
   if (structural) {
     restructure(changed, false);
     return;
@@ -382,6 +385,7 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   const std::optional<QJsonObject> next = patched(existed ? *current : QJsonObject(), patch);
   if (kind == QLatin1String("checkpoint") || kind == QLatin1String("subagent")) {
     (kind == QLatin1String("subagent") ? m_agentsTouched : m_checkpointsTouched) = true;
+    if (kind == QLatin1String("checkpoint")) m_workspaceTouched = true;
     if (next) {
       byKind.insert(id, *next);
     } else {
@@ -420,6 +424,9 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   changed.insert(id);
   const QString type = text(next ? *next : existed ? *current : QJsonObject(), QLatin1String("type"));
   if (kTurnItems.contains(type)) m_turnTouched = true;
+  if ((type == QLatin1String("command_execution") || type == QLatin1String("file_change")) && !patch.contains(QLatin1String("a"))) {
+    m_workspaceTouched = true;
+  }
   const bool replaced = patch.value(QLatin1String("d")).toBool();
   // A command starting, settling or going away; not its streamed output.
   if (type == QLatin1String("command_execution") &&
@@ -746,6 +753,17 @@ bool TimelineModel::copy(const QString& rowId) const {
   if (at < 0 || m_rows.at(at).kind != QLatin1String("message")) return false;
   QGuiApplication::clipboard()->setText(data(index(at), TextRole).toString());
   return true;
+}
+
+QString TimelineModel::finishedRunOf(const QString& rowId) const {
+  const int at = indexOf(rowId);
+  if (at < 0) return {};
+  const Row& row = m_rows.at(at);
+  if (row.kind != QLatin1String("message") || row.items.isEmpty()) return {};
+  const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.constFirst());
+  if (text(item, QLatin1String("type")) != QLatin1String("assistant_message")) return {};
+  const QString runId = text(item, QLatin1String("runId"));
+  return text(entity(QStringLiteral("run"), runId), QLatin1String("status")) == QLatin1String("completed") ? runId : QString();
 }
 
 QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {

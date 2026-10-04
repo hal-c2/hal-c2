@@ -198,6 +198,10 @@ struct Input {
   QVariantList drafts;
   Nullable activeThreadKey;
   QVariant activeDraftId;
+  // The shortcut labels of the first rows' jump commands (thread.jump.1..9),
+  // in order; each row carries its own while `showJumpHints`.
+  QStringList jumpLabels;
+  bool showJumpHints = false;
   // The rows selected for a bulk action.
   QSet<QString> selectedKeys;
   // A snoozed row's wake time in the user's clock format ("tomorrow 9:00");

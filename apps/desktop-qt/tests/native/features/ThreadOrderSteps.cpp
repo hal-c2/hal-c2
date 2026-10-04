@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "FilesFolders.h"
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
@@ -19,8 +20,6 @@ struct Arrangement {
   QString dragged;
   qsizetype commandsBefore = 0;
   bool shortcutTaken = false;
-  // Where the keyboard is (KeybindingController's focus).
-  QVariantMap focus;
 };
 
 Arrangement& scene(World& world) {
@@ -98,6 +97,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user tries to move %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (tryMoveManagedFolder(world, c[0])) return;
     scene(world).commandsBefore = world.mc.commands.size();
     pickFromMenu(world, c[0], QStringLiteral("move-up"));
     world.sync();
@@ -172,15 +172,17 @@ const Steps steps([] {
   });
 
   // The undo shortcut.
-  step(QStringLiteral("the user is typing in the composer"), [](World& world, const Captures&, const Table&) {
-    scene(world).focus = {{QStringLiteral("composer"), true}, {QStringLiteral("editable"), true}};
-  });
+  // "the user is typing in the composer" is TerminalSteps': it puts text in the open thread's composer.
   step(QStringLiteral("the user presses the undo shortcut"), [](World& world, const Captures&, const Table&) {
     world.sync();
     scene(world).commandsBefore = world.mc.commands.size();
     auto* keys = world.native().controller<KeybindingController>();
     const auto shortcut = keybindings::parseShortcut(QStringLiteral("mod+z"));
-    scene(world).shortcutTaken = keys->press(keybindings::sequence(*shortcut, false), scene(world).focus);
+    // The keyboard is in the composer while it holds what the user is typing.
+    const bool typing = !world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("text")).toString().isEmpty();
+    expect(typing, QStringLiteral("the composer is %1").arg(show(world.state(QStringLiteral("composer")))));
+    const QVariantMap focus{{QStringLiteral("composer"), true}, {QStringLiteral("editable"), true}};
+    scene(world).shortcutTaken = keys->press(keybindings::sequence(*shortcut, false), focus);
     world.sync();
   });
   step(QStringLiteral("the text edit is undone"), [](World& world, const Captures&, const Table&) {

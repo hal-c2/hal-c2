@@ -25,13 +25,13 @@ const status = (ctx: World) => ctx.host!.state.get("status") as { text: string; 
 const callsTo = (ctx: World, method: string) =>
   ctx.fake!.calls.filter((call) => call.method === method).map((call) => [...call.args]);
 
-async function command(ctx: World, title: string) {
+export async function command(ctx: World, title: string) {
   await ready(ctx);
   await chooseCommand(ctx, title);
   await settle(ctx);
 }
 /** Move the picker's highlight to `label`, then Enter. */
-async function pick(ctx: World, label: string) {
+export async function pick(ctx: World, label: string) {
   const index = select(ctx).options.findIndex((option) => option.label === label);
   expect(index, `no "${label}" in the picker`).toBeGreaterThanOrEqual(0);
   const moves = index - select(ctx).index;
@@ -39,7 +39,7 @@ async function pick(ctx: World, label: string) {
   await pressKey(ctx, "Enter");
   await settle(ctx);
 }
-async function answer(ctx: World, text: string) {
+export async function answer(ctx: World, text: string) {
   expect(hostMode(ctx)).toBe("ask");
   await typeText(ctx, text);
   await pressKey(ctx, "Enter");
@@ -53,7 +53,7 @@ const offered = async (ctx: World, title: string) => {
 };
 
 /** The repository's branches, with the worktrees the fake MC holds. */
-function serveRefs(ctx: World, branches: string[]) {
+export function serveRefs(ctx: World, branches: string[]) {
   ctx.fake!.override("listRefs", async () => {
     const current = ctx.fake!.server.worktrees;
     const names = [...new Set([...branches, ...current.map((worktree) => worktree.refName)])];
@@ -173,7 +173,7 @@ step("the user checks out the pull request {string}", async (ctx: PullRequestWor
   ctx.mode = reference.startsWith("http") ? "worktree" : "local";
   await command(ctx, "Check out a pull request…");
   await answer(ctx, reference);
-  expect(select(ctx).title).toBe("#42 Add tax to the cart");
+  expect(select(ctx).title).toBe("#42 Add tax to the cart · feature/tax → main");
   await pick(ctx, ctx.mode === "worktree" ? "Check out in a worktree" : "Check out here");
 });
 
@@ -291,11 +291,21 @@ step("the user publishes the repository", async (ctx: World) => {
   await answer(ctx, "acme/shop");
   expect(select(ctx).options.map((option) => option.label)).toEqual(["Private", "Public"]);
   await pick(ctx, "Private");
+  expect(select(ctx).options.map((option) => option.label)).toEqual(["Automatic", "SSH", "HTTPS"]);
+  await pick(ctx, "Automatic");
 });
 
 step("the repository is created on the provider and set as the remote", async (ctx: World) => {
   expect(callsTo(ctx, "publishRepository")).toEqual([
-    [{ cwd: CWD, provider: "github", repository: "acme/shop", visibility: "private" }],
+    [
+      {
+        cwd: CWD,
+        provider: "github",
+        repository: "acme/shop",
+        visibility: "private",
+        protocol: "auto",
+      },
+    ],
   ]);
   expect(statusText(ctx)).toBe(
     "Published to https://github.com/acme/shop; origin is git@github.com:acme/shop.git.",
@@ -367,7 +377,7 @@ step("a push fails because of a hook", async (ctx: World) => {
 });
 
 step("the error stays visible until dismissed", async (ctx: World) => {
-  const failure = "✗ pre-push hook failed (exit 1)";
+  const failure = "✗ push failed: pre-push hook failed (exit 1)";
   expect(gitState(ctx)).toMatchObject({ busy: false, failed: true });
   expect(logText(ctx)).toEqual(["▸ Pushing", "⚙ hook pre-push", "  eslint: 2 errors", failure]);
   expect((await objectRows(ctx, "gitLog")).join("\n")).toContain(failure);

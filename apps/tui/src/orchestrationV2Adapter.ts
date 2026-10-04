@@ -14,6 +14,7 @@ import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
 } from "@hal-c2/client-runtime/state/thread-execution";
+import { derivePendingBackgroundWork } from "@hal-c2/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 // The TUI still uses its compact legacy-shaped presentation model. Keep that
@@ -233,8 +234,53 @@ function approvalOutcome(
   return { status: "completed" };
 }
 
+/**
+ * A file change's diff: the provider's patch, or, for an agent that only named the
+ * text it replaced and the text it wrote (ACP), a hunk made of the two.
+ */
+function fileChangeDiff(
+  item: Extract<OrchestrationV2TurnItem, { type: "file_change" }>,
+): string | null {
+  if (item.diffStr !== undefined && item.diffStr.trim().length > 0) return item.diffStr;
+  if (item.oldStr === undefined && item.newStr === undefined) return null;
+  const lines = (text: string | undefined) =>
+    text === undefined || text.length === 0 ? [] : text.replace(/\n$/, "").split("\n");
+  const removed = lines(item.oldStr);
+  const added = lines(item.newStr);
+  if (removed.length + added.length === 0) return null;
+  return [
+    `--- a/${item.fileName}`,
+    `+++ b/${item.fileName}`,
+    `@@ -1,${removed.length} +1,${added.length} @@`,
+    ...removed.map((text) => `-${text}`),
+    ...added.map((text) => `+${text}`),
+  ].join("\n");
+}
+
+/** "+3 -1": the lines a diff adds and removes. */
+function diffStatLabel(diff: string): string {
+  let added = 0;
+  let removed = 0;
+  for (const text of diff.split("\n")) {
+    if (/^\+(?!\+\+ )/.test(text)) added += 1;
+    else if (/^-(?!-- )/.test(text)) removed += 1;
+  }
+  return `+${added} -${removed}`;
+}
+
+/** "attempt 2 of 5", as far as the provider says. */
+function retryLabel(
+  retry: NonNullable<Extract<OrchestrationV2TurnItem, { type: "error" }>["retry"]>,
+) {
+  return retry.maxAttempts === null
+    ? `attempt ${retry.attempt}`
+    : `attempt ${retry.attempt} of ${retry.maxAttempts}`;
+}
+
 function itemSummary(item: OrchestrationV2TurnItem): string {
   if (item.type === "reasoning") return reasoningLabel(item);
+  // A request the provider is trying again is a retry, not the turn's failure.
+  if (item.type === "error" && item.retry) return "Provider retry";
   if (item.title?.trim()) return item.title.trim();
   switch (item.type) {
     case "command_execution":
@@ -298,14 +344,18 @@ function itemPayload(
         status,
         data: { item: { command: item.input, result: { output: item.output } } },
       };
-    case "file_change":
+    case "file_change": {
+      const diff = fileChangeDiff(item);
       return {
         title: itemSummary(item),
-        detail: item.diffStr,
+        // The row says how much changed; the lines themselves open in the diff viewer.
+        detail: diff === null ? undefined : diffStatLabel(diff),
         itemType: item.type,
         status,
         data: { item: { path: item.fileName } },
+        ...(diff === null ? {} : { diff }),
       };
+    }
     case "file_search":
       return {
         title: itemSummary(item),
@@ -383,6 +433,14 @@ function itemPayload(
         })),
       };
     case "error":
+      if (item.retry) {
+        return {
+          title: "Provider retry",
+          detail: `${retryLabel(item.retry)} · ${item.failure.message}`,
+          status,
+          data: item,
+        };
+      }
       return { title: "Error", detail: item.failure.message, status: "failed", data: item };
     default:
       return { title: itemSummary(item), status, data: item };
@@ -426,7 +484,7 @@ function presentActivity(
   return {
     id: item.id as unknown as OrchestrationThreadActivity["id"],
     tone:
-      item.type === "error"
+      item.type === "error" && !item.retry
         ? "error"
         : item.type === "approval_request" || item.type === "user_input_request"
           ? "approval"
@@ -442,10 +500,53 @@ function presentActivity(
   };
 }
 
+/** What the adapter adds to the legacy thread shape for the terminal's timeline. */
+export interface TuiThreadExtras {
+  /** Work the provider still runs after the turn settled (monitors, background commands). */
+  readonly pendingBackgroundTasks?: ReadonlyArray<{
+    readonly taskId: string;
+    readonly description?: string;
+    readonly taskType?: string;
+  }>;
+}
+
+/** A queued run's place in line, on its user message. */
+export interface TuiQueuedMessage {
+  readonly position: number | null;
+  /** The queue waits for the user (after a restart, or a usage limit). */
+  readonly held: boolean;
+}
+
 export function presentTuiThread(projection: OrchestrationV2ThreadProjection): OrchestrationThread {
   const thread = projection.thread;
-  const latestRun = deriveLatestThreadRun(projection);
-  const runtime = deriveThreadRuntime(projection);
+  const queuedRuns = new Map(
+    projection.runs
+      .filter((run) => run.status === "queued")
+      .map((run) => [run.id as string, run] as const),
+  );
+  // The provider thread carries the context it has used; a model change keeps the thread.
+  const providerThread =
+    projection.providerThreads.find((entry) => entry.id === thread.activeProviderThreadId) ??
+    projection.providerThreads.at(-1);
+  const contextUsage = providerThread?.contextUsage ?? null;
+  const pendingBackgroundTasks = derivePendingBackgroundWork({
+    latestRun: projection.runs.reduce<OrchestrationV2Run | null>(
+      (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
+      null,
+    ),
+    providerThreads: projection.providerThreads,
+    turnItems: projection.turnItems,
+    activeProviderThreadId: thread.activeProviderThreadId,
+    runs: projection.runs,
+  });
+  // A queued message is not a turn yet: the latest turn is the newest run that began.
+  const begun = projection.runs.filter((run) => run.status !== "queued");
+  const settled =
+    begun.length > 0 && begun.length < projection.runs.length
+      ? { ...projection, runs: begun }
+      : projection;
+  const latestRun = deriveLatestThreadRun(settled);
+  const runtime = deriveThreadRuntime(settled);
   const proposedPlans = projection.plans.flatMap((plan) => {
     if (plan.kind !== "proposed_plan") return [];
     const item = projection.turnItems.findLast(
@@ -543,12 +644,39 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
       updatedAt: iso(message.updatedAt),
       // Another agent's thread sent this message (a subagent reporting to its parent).
       ...(message.senderThreadId ? { senderThreadId: message.senderThreadId } : {}),
+      // Still waiting for its turn.
+      ...(message.runId !== null && queuedRuns.has(message.runId)
+        ? {
+            queued: {
+              position: queuedRuns.get(message.runId)!.queuePosition ?? null,
+              held: queuedRuns.get(message.runId)!.queueHeld === true,
+            } satisfies TuiQueuedMessage,
+          }
+        : {}),
     })),
     proposedPlans,
-    activities: projection.visibleTurnItems.flatMap((item) => {
-      const activity = presentActivity(item, projection);
-      return activity === null ? [] : [activity];
-    }),
+    activities: [
+      ...projection.visibleTurnItems.flatMap((item) => {
+        const activity = presentActivity(item, projection);
+        return activity === null ? [] : [activity];
+      }),
+      // The header's context meter reads the newest of these (src/contextWindow.ts).
+      ...(contextUsage && providerThread
+        ? [
+            {
+              id: `context-usage:${providerThread.id}`,
+              tone: "info",
+              kind: "context-window.updated",
+              summary: "Context window updated",
+              payload: contextUsage,
+              turnId: null,
+              sequence: projection.visibleTurnItems.length,
+              createdAt: iso(providerThread.updatedAt),
+            } as unknown as OrchestrationThreadActivity,
+          ]
+        : []),
+    ],
+    ...(pendingBackgroundTasks.length > 0 ? { pendingBackgroundTasks } : {}),
     checkpoints: deriveThreadCheckpointSummaries(projection).flatMap((checkpoint) =>
       checkpoint.status === "stale"
         ? []

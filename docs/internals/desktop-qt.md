@@ -284,10 +284,13 @@ an attached URL, and an MC origin on loopback. Do not enable that flag for an
 SSH-forwarded backend with a different filesystem; its loopback origin looks
 local.
 
-`examples/folders` adds a native folder explorer using Qt's `TreeView` and
-asynchronous `QFileSystemModel` through `DefaultShell.navigationPanel`. The
-thread sidebar stays visible beside the file browser, or above it on narrow
-windows; the browser does not replace thread navigation. Files are listed
+`DefaultShell` overlays `ProjectFolderDrop` and shows a native folder explorer
+(Qt's `TreeView` over an asynchronous `QFileSystemModel`) beside the thread
+list while `folders.open` is set (`folders.toggle`, "Manage folders" in the
+palette). `examples/folders` keeps one open through
+`DefaultShell.navigationPanel` instead. The thread sidebar stays visible
+beside the file browser, or above it on narrow windows; the browser does not
+replace thread navigation. Files are listed
 read-only. The `FolderExplorer` brick provides create,
 rename, move and confirmed system-Trash actions through `LocalFolderModel`.
 It never falls back to permanent deletion. Operations are limited to plain

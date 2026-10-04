@@ -17,6 +17,7 @@
 #include "OnboardingController.h"
 #include "ProviderSettingsController.h"
 #include "SettingsController.h"
+#include "FileActionsController.h"
 #include "ThreadMenuController.h"
 #include "RightPanelController.h"
 #include "ThreadStore.h"
@@ -56,6 +57,7 @@ void World::start() {
     return true;
   };
   m_native->controller<ThreadMenuController>()->setClipboardWriter(writeClipboard);
+  m_native->controller<FileActionsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<ProviderSettingsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<RightPanelController>()->review()->setClipboardWriter(writeClipboard);
   setTime(m_now);

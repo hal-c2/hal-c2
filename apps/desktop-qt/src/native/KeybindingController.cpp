@@ -1,5 +1,8 @@
 #include "KeybindingController.h"
 
+#include <QGuiApplication>
+#include <QKeyEvent>
+
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQmlPropertyMap>
@@ -71,9 +74,40 @@ KeybindingController::KeybindingController(ShellBridge* bridge, McClient* client
   setRules({});
 }
 
+// As the web app's THREAD_JUMP_HINT_SHOW_DELAY_MS: a quick shortcut shows no hints.
+void KeybindingController::setJumpModifierHeld(bool held) {
+  auto* sidebar = NativeShell::of(this)->sidebar();
+  if (held) {
+    if (!m_jumpHintDelay.isActive()) m_jumpHintDelay.start();
+    return;
+  }
+  m_jumpHintDelay.stop();
+  sidebar->setJumpHints({}, false);
+}
+
+bool KeybindingController::eventFilter(QObject* watched, QEvent* event) {
+  if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
+    const auto* key = static_cast<QKeyEvent*>(event);
+    // Qt calls the Command key Control on macOS.
+    const bool modifier = key->key() == Qt::Key_Control || (!m_mac && key->key() == Qt::Key_Meta);
+    setJumpModifierHeld(event->type() == QEvent::KeyPress && modifier);
+  } else if (event->type() == QEvent::ApplicationDeactivate) {
+    setJumpModifierHeld(false);
+  }
+  return QObject::eventFilter(watched, event);
+}
+
 void KeybindingController::activate() {
   if (m_active) return;
   m_active = true;
+  m_jumpHintDelay.setSingleShot(true);
+  m_jumpHintDelay.setInterval(200);
+  connect(&m_jumpHintDelay, &QTimer::timeout, this, [this] {
+    QStringList labels;
+    for (int n = 1; n <= 9; ++n) labels.append(shortcutLabel(QStringLiteral("thread.jump.%1").arg(n)));
+    NativeShell::of(this)->sidebar()->setJumpHints(labels, true);
+  });
+  if (qGuiApp) qGuiApp->installEventFilter(this);
   auto* shell = NativeShell::of(this);
   auto* settings = shell->controller<SettingsController>();
   const auto followRules = [this, settings] {

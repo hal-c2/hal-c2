@@ -160,7 +160,7 @@ Feature: The thread list
     When the user looks at the thread list
     Then the helper thread is not listed
 
-  @backlog @desktop
+  @desktop
   Scenario: Jump hints appear while holding the modifier
     When the user holds the thread jump modifier
     Then the first nine threads show their jump numbers after a short delay

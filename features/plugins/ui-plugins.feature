@@ -204,7 +204,7 @@ Feature: UI plugins
     When it is loaded on the desktop app, the mobile app and the TUI
     Then each surface shows "quota" in its sidebar footer
 
-  @backlog @shared @desktop @mobile @tui
+  @shared @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: A slot a surface does not have is skipped quietly
     Given the plugin "hover-card" contributes only to "thread.hovercard"
     When it is loaded on a surface without that slot
@@ -217,52 +217,52 @@ Feature: UI plugins
     When the user loads "team-status" from "workstation"
     Then "team-status" is loaded and listed with "workstation" as its source
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: A plugin can be loaded from a pasted URL
     When the user pastes the URL of a plugin file and confirms loading it
     Then the plugin is downloaded, checked and loaded
     And the plugin is listed with that URL as its source
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: A plugin URL that cannot be reached is reported
     When the user pastes a plugin URL that cannot be reached
     Then the user is told the plugin could not be downloaded
     And nothing is loaded
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: Disabling a plugin keeps it installed but hides its contributions
     Given the plugin "clock" is loaded
     When the user disables "clock"
     Then "statusbar" shows its built-in content
     And "clock" stays in the installed list as disabled
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: Re-enabling a plugin restores its contributions
     Given the plugin "clock" is disabled
     When the user enables "clock"
     Then "statusbar" shows the clock again
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: A disabled plugin stays disabled after a restart
     Given the user disabled "clock"
     When the client restarts
     Then "clock" is still disabled
 
-  @backlog @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Editing a plugin file in dev reloads it without restarting
     Given the client runs in dev mode with the plugin "clock" loaded from a file
     When the developer saves a change to that file
     Then "clock" is replaced by the new version
     And the rest of the shell keeps its state
 
-  @backlog @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: A hot reload that breaks the plugin keeps the last working version
     Given the client runs in dev mode with the plugin "clock" loaded from a file
     When the developer saves a version that fails to load
     Then a plugin error names "clock"
     And the previous version of "clock" keeps running
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: Plugin errors are visible to the user
     Given the plugin "flaky" failed to load
     When the user opens the plugin list

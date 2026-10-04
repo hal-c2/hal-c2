@@ -136,6 +136,15 @@ Rectangle {
             }
 
             Heading {
+                text: qsTr("This machine")
+            }
+
+            EnvironmentIconPicker {
+                Layout.fillWidth: true
+                environmentId: Shell.state.sidebar?.localEnvironmentId ?? ""
+            }
+
+            Heading {
                 text: qsTr("Other environments")
             }
 
@@ -163,6 +172,11 @@ Rectangle {
                         onActivated: Shell.dispatch("connections.unlink.request", {
                             environmentId: linkRow.modelData.environmentId
                         })
+                    }
+
+                    EnvironmentIconPicker {
+                        Layout.fillWidth: true
+                        environmentId: linkRow.modelData.environmentId
                     }
 
                     RowLayout {

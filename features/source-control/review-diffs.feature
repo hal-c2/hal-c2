@@ -105,7 +105,7 @@ Feature: Reviewing working tree and branch changes
     When the user switches the diff to the split view
     Then the old and new lines are shown side by side
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: Choosing what to compare against
     When the user compares the branch against "origin/main" instead of "main"
     Then the diff shows the changes against "origin/main"
@@ -126,7 +126,7 @@ Feature: Reviewing working tree and branch changes
     When the user turns on line wrapping in the diff
     Then long lines wrap instead of scrolling sideways
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: Commenting on lines adds review context to the composer
     When the user comments "Use the tax table" on lines 10 to 12 of "src/cart.ts"
     Then the composer carries that comment with the file and line range

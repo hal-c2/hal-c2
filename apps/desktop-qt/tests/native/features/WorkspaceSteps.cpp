@@ -9,6 +9,7 @@
 
 #include "FakeConfig.h"
 #include "FakeGit.h"
+#include "FilesFolders.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "World.h"
@@ -282,6 +283,7 @@ const Steps steps([] {
 
   // Titles.
   step(QStringLiteral("the user renames %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (renameManagedFolder(world, c[0], c[1])) return;
     // The same words rename a provider instance in the Providers settings.
     if (at(world.state(QStringLiteral("providerSettings")), QStringLiteral("open")).toBool()) {
       renameProviderInstance(world, c[0], c[1]);

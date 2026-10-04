@@ -13,7 +13,7 @@ import type { TuiProblem } from "../../src/host/host.ts";
 import type { TuiPluginInfo } from "../../src/host/plugins.ts";
 import { readUserConfig } from "../../src/host/userConfig.ts";
 import { shownText } from "./threadWorld.ts";
-import { boot, findObject, snapshot, type World } from "./world.ts";
+import { boot, findObject, pressKey, settle, snapshot, type World } from "./world.ts";
 
 export type SlotName = "statusbar" | "composer.actions" | "sidebar.footer";
 
@@ -220,7 +220,14 @@ export function userKeymap(ctx: PluginWorld): Record<string, unknown> | undefine
   const text =
     typeof ctx.keymapFile === "string" ? ctx.keymapFile : JSON.stringify(ctx.keymapFile, null, 2);
   writeFile(ctx, "config/keymap.json", text);
-  return readUserConfig({ configDir: configDir(ctx), warn: () => {} }).keymap;
+  // What the file's reader warns about is told to the host at start, as the entry does.
+  const warnings: string[] = [];
+  const keymap = readUserConfig({
+    configDir: configDir(ctx),
+    warn: (message) => warnings.push(message),
+  }).keymap;
+  if (warnings.length > 0) ctx.hostOptions = { ...ctx.hostOptions, startupWarnings: warnings };
+  return keymap;
 }
 
 /** The screen line a slot is drawn on. */
@@ -292,4 +299,35 @@ export function echoSerial(screen: string, id: string, text: string): string {
   const match = new RegExp(`\\[${id} ${text} #(\\d+)\\]`).exec(screen);
   expect(match, `"${id}" should show "${text}"`).not.toBeNull();
   return match![1]!;
+}
+
+/** Open the plugins page (the palette's "Plugins"). */
+export async function openPluginList(ctx: PluginWorld) {
+  await start(ctx);
+  ctx.host!.dispatch("section.open", { id: "plugins" });
+  await settle(ctx);
+  expect((ctx.host!.state.get("settingsSection") as { id: string }).id).toBe("plugins");
+}
+
+/** On the plugins page, press Enter on a plugin's row: it turns off, or on again. */
+export async function togglePlugin(ctx: PluginWorld, id: string, from: "enabled" | "disabled") {
+  await openPluginList(ctx);
+  const section = () =>
+    ctx.host!.state.get("settingsSection") as {
+      selectedId: string;
+      rows: ReadonlyArray<{ id: string; text: string; selected: boolean }>;
+    };
+  const row = section().rows.find((candidate) => candidate.id === `plugin-${id}`);
+  expect(row, `no plugin "${id}" on the page`).toBeDefined();
+  expect(row!.text).toContain(from);
+  for (let guard = 0; section().selectedId !== `plugin-${id}` && guard < 50; guard += 1) {
+    await pressKey(ctx, "Down");
+  }
+  expect(section().selectedId).toBe(`plugin-${id}`);
+  await pressKey(ctx, "Enter");
+  await settleLoads(ctx);
+  await settle(ctx);
+  // Back to the conversation, where the slots are.
+  await pressKey(ctx, "Esc");
+  await settle(ctx);
 }

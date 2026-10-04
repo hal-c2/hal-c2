@@ -9,6 +9,7 @@
 
 #include "AlertController.h"
 #include "CommandPaletteController.h"
+#include "FilesViewer.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
@@ -288,6 +289,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user is looking at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (lookAtFile(world, c[0])) return;
     Tracked& thread = fake(world).threads.contains(c[0]) ? tracked(world, c[0]) : working(world, c[0]);
     world.native().controller<NavigationController>()->open(NavigationController::Route::thread(keyOf(world, thread)));
   });

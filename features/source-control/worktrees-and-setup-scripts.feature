@@ -36,7 +36,7 @@ Feature: Worktrees and setup scripts
     When the user picks the current checkout mode
     Then the thread will start in the project folder
 
-  @backlog @tui @mobile
+  @tui @mobile @backlog-mobile
   Scenario: Choosing a new worktree from the terminal client and phone
     When the user starts a thread in a new worktree of "shop"
     Then the thread starts in a worktree of its own
