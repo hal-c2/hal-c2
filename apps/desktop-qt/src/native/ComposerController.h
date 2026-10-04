@@ -25,7 +25,7 @@ class TimelineModel;
 
 // The composer on the thread or new-thread draft the window shows (the
 // route), against the MC: the draft itself (text, caret, model, options,
-// modes, images, terminal excerpts), what the picker offers, the @ $ / suggestions, sending,
+// modes, images, terminal excerpts, quoted replies), what the picker offers, the @ $ / suggestions, sending,
 // follow-ups while a turn runs, stop, the thread's pending approvals and
 // questions, and its proposed plan.
 //
@@ -68,6 +68,8 @@ class TimelineModel;
 // composer.interrupt, composer.attach {files}, composer.attachment.remove {id},
 // composer.terminalContext.add {terminalId, terminalLabel, lineStart, lineEnd,
 // text}, composer.terminalContext.remove {id},
+// composer.citation.add {messageId, text, start, end, prefix, suffix},
+// composer.citation.comment {id, comment}, composer.citation.remove {id},
 // composer.approval.respond {requestId, decision},
 // composer.question.answer {requestId, answers}, composer.question.dismiss
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
@@ -83,10 +85,16 @@ class TimelineModel;
 // {entries: [{id, snippet, createdAt}], open, shortcut}, `open` being this
 // window's.
 //
-// A terminal excerpt is a chip on the draft (`composer.terminalContexts`), as
+// A terminal excerpt is a chip on the draft (`composer.excerpts`), as
 // the web's terminal context; a send appends an inline context link for each
 // to the text and carries the excerpts as the message's `context` records,
 // which the MC hands the provider (HalC2.ComposerContext).
+//
+// A quoted reply is a chip too (`composer.citations`: {id, text, comment}),
+// the web's assistant citation: a selection of one of the thread's replies,
+// with the user's comment on it. A send appends its
+// `[Assistant quote](hal-c2-citation://v1/...)` link to the text, which holds
+// the whole citation (packages/shared/src/assistantCitations.ts).
 //
 // Editing a queued message puts its text in the thread's composer
 // (`composer.editingQueuedRunId`) and sets the thread's own draft aside; a
@@ -133,14 +141,17 @@ private:
     QString dataUrl;
     QJsonObject source;
   };
-  // A terminal selection on the draft (apps/web/src/lib/terminalContext.ts).
-  struct TerminalContext {
+  // A terminal selection on the draft (apps/web/src/lib/terminalContext.ts),
+  // or with `citation` a quoted reply (AssistantCitation in
+  // packages/contracts/src/assistantCitations.ts) and nothing else.
+  struct Excerpt {
     QString id;
     QString terminalId;
     QString terminalLabel;
     int lineStart = 1;
     int lineEnd = 1;
     QString text;
+    QJsonObject citation;
   };
   struct Draft {
     QString text;  // a new thread's is DraftController's
@@ -154,7 +165,7 @@ private:
     QString runtimeMode;
     QString interactionMode;
     QList<Attachment> attachments;
-    QList<TerminalContext> terminalContexts;
+    QList<Excerpt> excerpts;
   };
   // A prompt set aside (composer.stash), with what it carried.
   struct StashEntry {
@@ -162,7 +173,7 @@ private:
     QDateTime createdAt;
     QString text;
     QList<Attachment> attachments;
-    QList<TerminalContext> terminalContexts;
+    QList<Excerpt> excerpts;
   };
   struct Send {
     QString target;
@@ -172,7 +183,7 @@ private:
     // Uploaded first; the message carries what the MC stored.
     QList<Attachment> attachments;
     // Given back with the text if the send fails.
-    QList<TerminalContext> terminalContexts;
+    QList<Excerpt> excerpts;
     // The text to give back if the send fails; empty for none.
     QString prompt;
   };
@@ -185,7 +196,7 @@ private:
   // A background send's answer: a toast that opens the thread, or one that
   // gives the prompt back.
   void launchedInBackground(const QString& draftId, const QString& text, const QList<Attachment>& attachments,
-                            const QList<TerminalContext>& contexts, const QString& threadKey,
+                            const QList<Excerpt>& contexts, const QString& threadKey,
                             const std::optional<QString>& error);
   // The model a thread (its own) or a draft (the project's default) starts from.
   QJsonObject baseSelection(const QString& key) const;
@@ -197,9 +208,11 @@ private:
   static QString thumbnail(const QString& dataUrl);
   // A terminal selection joins the route's draft; blank ones are dropped.
   bool addTerminalContext(const QVariantMap& selection);
-  // The message text with a context link per excerpt, and their records as
-  // its `context`.
-  static void withTerminalContexts(QJsonObject& message, const QList<TerminalContext>& contexts);
+  // A selection of one of the route thread's replies joins its draft.
+  bool addCitation(const QVariantMap& selection);
+  // The message text with a link per excerpt and quote, and the excerpts'
+  // records as its `context`.
+  static void withExcerpts(QJsonObject& message, const QList<Excerpt>& contexts);
   bool stash(const QString& target);
   void restoreStash(const QString& target, const QString& id);
   void setStashOpen(bool open);

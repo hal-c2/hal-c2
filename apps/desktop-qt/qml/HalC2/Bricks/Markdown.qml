@@ -18,7 +18,17 @@ Item {
     property bool lineBreaks: false
     property color textColor: Qt.alpha(Theme.palette.color("text", "#f5f5f5"), 0.8)
 
+    // An assistant reply offers "Cite" on a selection (AssistantSelectionToolbar).
+    property bool citable: false
+    // The brick this one is a quote of, which cites for it.
+    property Item host: null
+    // The text with the selection, when one has it.
+    property Item selection: null
+
     signal linkActivated(string link)
+    // The selection to quote in the composer: {text, start, end, prefix,
+    // suffix}, an AssistantCitation's selector over the reply as drawn.
+    signal cited(var selector)
 
     readonly property color headingColor: Theme.palette.color("text", "#f5f5f5")
     readonly property color mutedColor: Theme.palette.color("textMuted", "#818181")
@@ -63,6 +73,49 @@ Item {
 
     function rich(html) {
         return "<html><head>" + styleHead + "</head><body>" + html + "</body></html>";
+    }
+
+    // Every text of the reply, in reading order.
+    function texts() {
+        let all = [];
+        for (let i = 0; i < segments.count; ++i) {
+            const item = segments.itemAt(i);
+            if (item && typeof item.texts === "function")
+                all = all.concat(item.texts());
+        }
+        return all;
+    }
+
+    // A quote's text is tracked by the reply it sits in, whose Cite and
+    // `selection` are the ones the timeline sees.
+    function track(edit) {
+        if (host) {
+            host.track(edit);
+            return;
+        }
+        if (edit.selectedText.length > 0)
+            selection = edit;
+        else if (selection === edit)
+            selection = null;
+    }
+
+    // Cites `edit`'s selection, placed in the whole reply's text.
+    function cite(edit) {
+        if (host) {
+            host.cite(edit);
+            return;
+        }
+        const plain = item => item.getText(0, item.length).replace(/[\u2028\u2029]/g, "\n");
+        const all = texts();
+        const at = all.indexOf(edit);
+        if (at < 0)
+            return;
+        const before = all.slice(0, at).map(plain).join("\n");
+        const offset = before.length + (at > 0 ? 1 : 0);
+        const selector = Md.selector(all.map(plain).join("\n"), offset + edit.selectionStart, offset + edit.selectionEnd);
+        edit.deselect();
+        if (selector)
+            cited(selector);
     }
 
     // Puts plain text on the clipboard.
@@ -160,8 +213,11 @@ Item {
         color: root.textColor
         font.family: root.uiFamily
         font.pixelSize: 14
-        activeFocusOnPress: false
         onLinkActivated: link => root.linkActivated(link)
+        onSelectedTextChanged: root.track(this)
+        function texts() {
+            return [this];
+        }
         ToolTip.visible: hoveredLink.length > 0
         ToolTip.text: hoveredLink
         ToolTip.delay: 600
@@ -204,6 +260,48 @@ Item {
         }
     }
 
+    // "Cite" under the selection's last line, or over it at the brick's foot
+    // when there is a line above to sit on (AssistantSelectionToolbar). It
+    // takes no focus: the selection stays.
+    ShellButton {
+        id: citeButton
+        objectName: "citeSelection"
+
+        readonly property bool tooLong: root.selection !== null && root.selection.selectedText.length > 8000
+        readonly property rect end: {
+            const edit = root.selection;
+            if (edit === null)
+                return Qt.rect(0, 0, 0, 0);
+            edit.width;
+            root.width;
+            const caret = edit.positionToRectangle(edit.selectionEnd);
+            const at = root.mapFromItem(edit, caret.x, caret.y);
+            return Qt.rect(at.x, at.y, caret.width, caret.height);
+        }
+
+        visible: root.citable && root.selection !== null
+        z: 1
+        x: Math.max(0, Math.min(end.x, root.width - width))
+        y: end.y + end.height + 4 + height <= root.height || end.y - height - 4 < 0 ? end.y + end.height + 4 : end.y - height - 4
+        implicitHeight: 24
+        iconName: "quote"
+        iconSize: 12
+        font.pixelSize: 12
+        focusPolicy: Qt.NoFocus
+        enabled: !tooLong
+        text: tooLong ? qsTr("Shorten selection") : qsTr("Cite")
+        Accessible.name: tooLong ? qsTr("Selection is too long to cite") : qsTr("Cite selection in composer")
+        onClicked: root.cite(root.selection)
+
+        // The outline button is see-through; this one floats over text.
+        Rectangle {
+            z: -2
+            anchors.fill: parent
+            radius: citeButton.radius
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+        }
+    }
+
     Column {
         id: column
         width: root.width
@@ -229,6 +327,10 @@ Item {
 
                 function naturalWidth() {
                     return loader.item ? loader.item.implicitWidth + indent : 0;
+                }
+
+                function texts() {
+                    return loader.item && typeof loader.item.texts === "function" ? loader.item.texts() : [];
                 }
 
                 objectName: "markdownSegment"
@@ -272,6 +374,10 @@ Item {
                         property bool copied: false
                         readonly property real lineHeight: Math.round(root.codeSize * 1.375 * 10) / 10
                         readonly property string code: seg.code
+
+                        function texts() {
+                            return [codeText];
+                        }
 
                         function copy() {
                             root.copyText(seg.code);
@@ -358,7 +464,7 @@ Item {
                                 readOnly: true
                                 selectByMouse: true
                                 selectionColor: root.selectionColor
-                                activeFocusOnPress: false
+                                onSelectedTextChanged: root.track(codeText)
                                 color: Theme.palette.color("codeForeground", "#f5f5f5")
                                 font.family: root.monoFamily
                                 font.pixelSize: root.codeSize
@@ -406,6 +512,18 @@ Item {
                                 }
                             }
                             widths = next;
+                        }
+
+                        function texts() {
+                            const all = [];
+                            for (let r = 0; r < lines.count; ++r) {
+                                const line = lines.itemAt(r);
+                                for (let c = 0; line && c < line.cellCount; ++c) {
+                                    if (line.cell(c))
+                                        all.push(line.cell(c));
+                                }
+                            }
+                            return all;
                         }
 
                         implicitWidth: naturalWidth
@@ -591,7 +709,12 @@ Item {
                                 // A quote reads muted; an alert's body is ordinary text.
                                 item.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
                                 item.linkActivated.connect(root.linkActivated);
+                                item.host = root;
                             }
+                        }
+
+                        function texts() {
+                            return inner.item ? inner.item.texts() : [];
                         }
                     }
                 }

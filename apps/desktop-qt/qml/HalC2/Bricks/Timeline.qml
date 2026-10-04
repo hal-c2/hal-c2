@@ -50,6 +50,12 @@ Item {
     signal revertRequested(string rowId)
     // A message went to the clipboard.
     signal copied(string rowId)
+    // The user cited a selection of a reply: an AssistantCitation's selector
+    // {text, start, end, prefix, suffix}.
+    signal cited(string messageId, var selector)
+
+    // Whether a selection in a reply offers "Cite".
+    property bool citable: false
 
     // Whether the model can put a message on the clipboard (copy(rowId)).
     readonly property bool canCopy: root.model !== null && typeof root.model.copy === "function"
@@ -351,6 +357,7 @@ Item {
             required property var intent
             required property var attribution
             required property var meta
+            required property var messageId
             required property var attachments
             // The tool calls whose details are open, by id.
             property var openCalls: ({})
@@ -568,10 +575,16 @@ Item {
                     topPadding: 2
                     bottomPadding: 2
                     Markdown {
+                        // Over the row's files and actions, for "Cite".
+                        z: 1
                         width: parent.width - 8
                         text: row.text ?? ""
                         streaming: row.streaming ?? false
+                        citable: root.citable && row.streaming !== true && !!row.messageId
                         onLinkActivated: link => root.linkActivated(link)
+                        onCited: selector => root.cited(row.messageId, selector)
+                        // "Cite" under a short reply's last line reaches over the next row.
+                        onSelectionChanged: row.z = selection !== null ? 1 : 0
                     }
                     // The files the reply's turn changed (ChangedFilesCard).
                     Item {

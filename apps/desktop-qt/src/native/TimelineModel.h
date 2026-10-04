@@ -77,6 +77,8 @@ public:
     // turn's last reply does, commentary before it does not (the web's
     // showAssistantMeta).
     MetaRole,
+    // An assistant reply's message, which a quote of it names as its source.
+    MessageIdRole,
     // A user message's images: [{id, name, url}]. `url` is empty until the
     // brick asks for it (loadAttachment) and the MC has signed one.
     AttachmentsRole,

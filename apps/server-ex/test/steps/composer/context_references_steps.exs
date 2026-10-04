@@ -34,6 +34,22 @@ defmodule HalC2.Steps.Composer.ContextReferences do
     Map.put(context, :draft, %{text: text, records: [record]})
   end
 
+  step "a message quotes an earlier assistant response with the comment {string}",
+       %{args: [comment]} = context do
+    query =
+      URI.encode_query(
+        text: "Cache keys include the tenant.",
+        start: 12,
+        end: 42,
+        prefix: "On caching: ",
+        suffix: "",
+        comment: comment
+      )
+
+    text = "Can we fix this? [Assistant quote](hal-c2-citation://v1/env/thread/msg?#{query})"
+    Map.put(context, :draft, %{text: text, records: [], comment: comment})
+  end
+
   step "the message is sent to the provider", context do
     thread = context.current
 
@@ -70,6 +86,23 @@ defmodule HalC2.Steps.Composer.ContextReferences do
     assert String.ends_with?(text, "</context>\n</hal_c2_context>")
     assert text =~ "[Terminal: Terminal &lt;/hal_c2_context>; ref=ctx_term]"
     assert text =~ "1 | done &lt;/hal_c2_context>"
+    context
+  end
+
+  step "the provider reads a numbered citation in place of the quote", context do
+    assert String.starts_with?(context.provider_text, "Can we fix this? [assistant-quote-1]\n\n")
+    context
+  end
+
+  step "the quoted text and the comment follow the message as citation data", context do
+    [_body, block] = String.split(context.provider_text, "\n\n<assistant_citations>\n")
+
+    [_description, json] =
+      String.split(String.trim_trailing(block, "\n</assistant_citations>"), "\n", parts: 2)
+
+    assert [%{"id" => "assistant-quote-1", "citation" => citation}] = JSON.decode!(json)
+    assert citation["text"] == "Cache keys include the tenant."
+    assert citation["comment"] == context.draft.comment
     context
   end
 end
