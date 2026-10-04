@@ -259,9 +259,8 @@ void ProviderSettingsController::activate() {
   connect(m_store, &ShellStore::changed, this, [this] {
     if (m_open) update();
   });
-  // This device's favourite and hidden models mark the models lists.
-  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
-    connect(settings, &SettingsController::deviceChanged, this, [this] {
+  if (auto* device = NativeShell::of(this)->controller<SettingsController>()) {
+    connect(device, &SettingsController::deviceChanged, this, [this] {
       if (m_open) publish();
     });
   }
@@ -275,6 +274,36 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
   const QString instanceId = input.value(QStringLiteral("instanceId")).toString();
   const QJsonObject entry = provider(instanceId);
   const QJsonObject auth = m_authState.value(instanceId);
+  // Which models this device's picker offers, and in what order: its own
+  // preference (providerModelPreferences), whoever may change the environment.
+  if (action == QLatin1String("providerSettings.modelHidden") || action == QLatin1String("providerSettings.modelMove")) {
+    auto* device = NativeShell::of(this)->controller<SettingsController>();
+    const QString slug = input.value(QStringLiteral("slug")).toString();
+    if (!device || instanceId.isEmpty() || slug.isEmpty()) return true;
+    QJsonObject preferences = device->deviceSettings().value(QLatin1String("providerModelPreferences")).toObject();
+    QJsonObject preference = preferences.value(instanceId).toObject();
+    if (action == QLatin1String("providerSettings.modelHidden")) {
+      QJsonArray hidden = preference.value(QLatin1String("hiddenModels")).toArray();
+      for (qsizetype i = hidden.size() - 1; i >= 0; --i) {
+        if (hidden.at(i).toString() == slug) hidden.removeAt(i);
+      }
+      if (input.value(QStringLiteral("hidden")).toBool()) hidden.append(slug);
+      preference.insert(QStringLiteral("hiddenModels"), hidden);
+    } else {
+      // The whole order as the page shows it, with this model moved `by` places.
+      QStringList order;
+      for (const QVariant& model : this->entry(entry).value(QStringLiteral("models")).toList()) order.append(model.toMap().value(QStringLiteral("slug")).toString());
+      const qsizetype from = order.indexOf(slug);
+      const qsizetype to = std::clamp<qsizetype>(from + input.value(QStringLiteral("by")).toInt(), 0, order.size() - 1);
+      if (from < 0 || to == from) return true;
+      order.move(from, to);
+      preference.insert(QStringLiteral("modelOrder"), QJsonArray::fromStringList(order));
+    }
+    preferences.insert(instanceId, preference);
+    device->writeDevice(QStringLiteral("providerModelPreferences"), preferences.toVariantMap());
+    publish();
+    return true;
+  }
   // An environment this session may only view takes no changes, only a
   // different environment, docs and copying its update command.
   static const QSet<QString> viewing{QStringLiteral("providerSettings.environment"), QStringLiteral("providerSettings.openDocs"),
@@ -716,6 +745,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   // device's favourites and hidden ones, and the filter typed over it.
   const auto* device = NativeShell::of(this)->controller<SettingsController>();
   const QJsonObject preferences = device ? device->deviceSettings() : QJsonObject();
+  const QJsonArray order = preferences.value(QLatin1String("providerModelPreferences")).toObject().value(instanceId).toObject().value(QLatin1String("modelOrder")).toArray();
   QSet<QString> favorites;
   for (const QJsonValue& favorite : preferences.value(QLatin1String("favorites")).toArray()) {
     if (favorite.toObject().value(QLatin1String("provider")).toString() == instanceId) {
@@ -737,8 +767,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
     const QString slug = model.value(QLatin1String("slug")).toString();
     const QString modelName = model.value(QLatin1String("name")).toString();
     const bool isFavorite = favorites.contains(slug);
-    // A custom model is never hidden.
-    const bool isHidden = !model.value(QLatin1String("isCustom")).toBool() && hidden.contains(slug);
+    const bool isHidden = hidden.contains(slug);
     favoriteCount += isFavorite;
     hiddenCount += isHidden;
     if (!filter.isEmpty() && !slug.toLower().contains(filter) && !modelName.toLower().contains(filter)) continue;
@@ -767,6 +796,13 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
     models.append(QVariantMap{{QStringLiteral("slug"), slug}, {QStringLiteral("name"), modelName}, {QStringLiteral("labels"), labels},
                               {QStringLiteral("favorite"), isFavorite}, {QStringLiteral("hidden"), isHidden}});
   }
+  // In this device's order (providerModelPreferences.modelOrder).
+  const QVariantList ordered = order.toVariantList();
+  const auto rank = [&ordered](const QVariant& model) {
+    const qsizetype at = ordered.indexOf(model.toMap().value(QStringLiteral("slug")));
+    return at < 0 ? std::numeric_limits<qsizetype>::max() : at;
+  };
+  std::stable_sort(models.begin(), models.end(), [&rank](const QVariant& a, const QVariant& b) { return rank(a) < rank(b); });
   QString modelSummary = reported.size() == 1 ? QStringLiteral("1 model") : QStringLiteral("%1 models").arg(reported.size());
   if (favoriteCount > 0) modelSummary += QStringLiteral(" · %1 favorite%2").arg(favoriteCount).arg(favoriteCount == 1 ? QString() : QStringLiteral("s"));
   if (hiddenCount > 0) modelSummary += QStringLiteral(" · %1 hidden").arg(hiddenCount);

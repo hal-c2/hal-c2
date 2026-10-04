@@ -106,8 +106,11 @@ Rectangle {
     function reveal() {
         if (route === null || route.target !== "loadBalancing" || !loadBalancing.visible) return;
         loadBalancing.open = true;
-        const y = loadBalancing.mapToItem(column, 0, 0).y + column.y - 12;
-        flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
+        // Once its rows are laid out.
+        Qt.callLater(() => {
+            const y = loadBalancing.mapToItem(column, 0, 0).y + column.y - 12;
+            flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
+        });
     }
 
     onTargetSeqChanged: Qt.callLater(reveal)
@@ -148,6 +151,10 @@ Rectangle {
 
             Heading {
                 text: qsTr("This machine")
+            }
+
+            ConnectionStatusRow {
+                Layout.fillWidth: true
             }
 
             EnvironmentIconPicker {
@@ -221,10 +228,6 @@ Rectangle {
                 text: qsTr("No other environments yet. Add one with a pairing link from it.")
             }
 
-            LoadBalancingSettings {
-                id: loadBalancing
-            }
-
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
@@ -279,6 +282,12 @@ Rectangle {
                         code.clear();
                     }
                 }
+            }
+
+            LoadBalancingSettings {
+                id: loadBalancing
+
+                Layout.fillWidth: true
             }
 
             Heading {

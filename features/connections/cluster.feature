@@ -310,20 +310,20 @@ Feature: Clustering one person's machines
     Then the cluster page closes
     And the window shows the settings section "/settings/general"
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: A member that joins later appears in the client without pairing again
     Given a client paired with a cluster of two machines
     When a third machine joins the cluster
     Then the client lists the third machine's environment within a minute
     And reaches it with the same credential
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: A member that left stays until the user removes it
     Given a client lists a machine that has left the cluster
     Then the machine stays listed
     And the user can remove it like any environment
 
-  @backlog @desktop
+  @desktop
   Scenario: A user adds a machine to the cluster from settings
     Given the app is paired with two machines that are not clustered
     When the user adds one to the other's cluster from settings

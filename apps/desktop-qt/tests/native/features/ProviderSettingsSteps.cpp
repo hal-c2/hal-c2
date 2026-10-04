@@ -12,6 +12,7 @@
 #include "FakeConfig.h"
 #include "FilesIdentity.h"
 #include "Harness.h"
+#include "SharedSteps.h"
 #include "ThemeLibrary.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -701,7 +702,7 @@ const Steps steps([] {
   });
 
   // Adding an instance.
-  step(QStringLiteral("the user adds (?:a|another) %1 (?:provider|instance) labelled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the user adds (?:a|another) \"?([^\"]*?)\"? (?:provider|instance) labelled %1").arg(q), [](World& world, const Captures& c, const Table&) {
     startAdding(world, c[0], c[1]);
     finishAdding(world);
   });
@@ -1903,7 +1904,8 @@ const Steps customModelSteps([] {
       return saved.size() == 1 && saved.first().toObject().contains(QLatin1String("capabilities"));
     }, [&] { return QStringLiteral("my-model to be saved with its option; Codex holds %1").arg(show(savedModels(world).toVariantList())); });
   });
-  step(QStringLiteral("%1 is offered in the model picker").arg(q), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("%1 is offered in the model picker").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (expectModelOffered(world, c[0])) return;
     chooseCustomModel(world);
   });
   step(QStringLiteral("the composer offers (\\w+) and (\\w+) reasoning for it"), [](World& world, const Captures& c, const Table&) {

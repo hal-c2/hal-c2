@@ -33,12 +33,8 @@ class ShellStore;
 // (its providers); a machine that does not answer keeps its last sample, which
 // goes stale after 15 seconds (packages/client-runtime load-balancing.ts).
 //
-// Publishes `loadBalancing`: null with fewer than two connected machines, else
-// {enabled, summary ("Off", the machines not at Normal, or ""), machines:
-// [{environmentId, label, preference}], preferences: [{value, label}]}: the
-// Connections page's group, the one place the switch is shown.
-// Actions: `loadBalancing.enable {enabled}`, `loadBalancing.prefer
-// {environmentId, value}`.
+// The switch and the preferences are Connections settings' (ConnectionsController's
+// `connections.balancing`, LoadBalancingSettings.qml).
 class LoadBalancingController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -59,7 +55,7 @@ public:
   LoadBalancingController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
-  bool handle(const QString& action, const QVariant& payload) override;
+  bool handle(const QString&, const QVariant&) override { return false; }
 
   // Milliseconds since the epoch; the system's unless tests say.
   void setClock(std::function<qint64()> clock) { m_clock = std::move(clock); }
@@ -87,14 +83,10 @@ private:
   };
   bool enabled() const;
   QJsonObject weights() const;
-  QStringList machines() const;
-  QString label(const QString& environmentId) const;
-  void publish();
   // Puts the window's draft on Auto balance, when it is a new one load balancing may place.
   void balance();
   void decide(const QString& draftId, int request, const QList<Member>& members, const QString& ownEnvironment);
 
-  ShellBridge* m_bridge;
   McClient* m_client;
   ShellStore* m_store;
   std::function<qint64()> m_clock;

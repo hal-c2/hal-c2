@@ -340,7 +340,7 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
   } else if (type == QLatin1String("unsub")) {
     m_live.remove(id);
   } else if (type == QLatin1String("ping")) {
-    send({{QStringLiteral("t"), QStringLiteral("pong")}});
+    if (answerPings) send({{QStringLiteral("t"), QStringLiteral("pong")}});
   } else if (type == QLatin1String("rpc")) {
     const QString down = message.value(QLatin1String("environment")).toString();
     const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket, down};

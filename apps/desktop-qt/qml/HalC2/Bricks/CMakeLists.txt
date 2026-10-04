@@ -25,6 +25,12 @@ qt_add_qml_module(hal_c2_bricks
     RightPanel.qml
     SettingsNav.qml
     ShellErrorOverlay.qml
+    ConnectionNotice.qml
+    UsageModelPrices.qml
+    ProviderModelList.qml
+    ComposerUsageLimits.qml
+    LoadBalancingSettings.qml
+    ConnectionStatusRow.qml
     ShellButton.qml
     ShellCard.qml
     ShellChevron.qml
@@ -50,7 +56,6 @@ qt_add_qml_module(hal_c2_bricks
     BackgroundActivityRow.qml
     TextGenerationRow.qml
     ProjectActionsSettings.qml
-    LoadBalancingSettings.qml
     SettingsBreadcrumb.qml
     GeneralSettings.qml
     AppearanceSettings.qml

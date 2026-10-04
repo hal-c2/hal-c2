@@ -178,7 +178,7 @@ Feature: Subscription limits
     When the user opens Limits
     Then that account is counted once in each window
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Automatic checks wait at least five minutes per environment
     Given the user opened Limits two minutes ago
     When the user opens Limits again
@@ -204,14 +204,14 @@ Feature: Subscription limits
     When a hub that cannot be read is added
     Then Pi offers "/usage-limits" so the hub's error can be shown
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario: The /usage-limits command shows the current model's limits
     Given a Codex thread
     When the user sends "/usage-limits"
     Then Codex's windows are shown above the composer without running the agent
     And they close when the user sends the next message
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario: The /usage-limits command is not offered for providers without limits
     Given an Antigravity thread
     When the user opens the composer's command menu

@@ -16,30 +16,16 @@
 
 namespace {
 
-const QString kKey = QStringLiteral("loadBalancing");
 const QString kEnabled = QStringLiteral("loadBalancingEnabled");
 const QString kWeights = QStringLiteral("loadBalancingWeights");
 
-const NativeControllerRegistrar<LoadBalancingController> registrar(QStringLiteral("loadBalancing"), {kKey});
-
-struct Preference {
-  int value;
-  const char* label;
-};
-const Preference kPreferences[] = {{100, "Prefer"}, {50, "Normal"}, {25, "Less often"}, {0, "Manual only"}};
+const NativeControllerRegistrar<LoadBalancingController> registrar(QStringLiteral("loadBalancing"));
 
 // Snaps a saved weight (older builds stored a slider value) onto the four preferences.
 int preferenceOf(const QJsonValue& weight) {
   if (!weight.isDouble() || weight.toInt() == 50) return 50;
   if (weight.toInt() == 0) return 0;
   return weight.toInt() < 50 ? 25 : 100;
-}
-
-QString preferenceLabel(int preference) {
-  for (const Preference& entry : kPreferences) {
-    if (entry.value == preference) return QString::fromLatin1(entry.label);
-  }
-  return {};
 }
 
 QString repositoryOf(const QJsonObject& project) {
@@ -90,8 +76,8 @@ QString LoadBalancingController::choose(const QList<Candidate>& candidates, qint
   return selected;
 }
 
-LoadBalancingController::LoadBalancingController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_clock([] { return QDateTime::currentMSecsSinceEpoch(); }) {}
+LoadBalancingController::LoadBalancingController(ShellBridge*, McClient* client, ShellStore* store, QObject* parent)
+    : QObject(parent), m_client(client), m_store(store), m_clock([] { return QDateTime::currentMSecsSinceEpoch(); }) {}
 
 void LoadBalancingController::activate() {
   if (m_active) return;
@@ -101,37 +87,14 @@ void LoadBalancingController::activate() {
     connect(settings, &SettingsController::deviceChanged, this, [this] {
       // A switch turned on, or a changed preference, places the new drafts anew.
       m_tried.clear();
-      publish();
       balance();
     });
   }
-  connect(m_store, &ShellStore::changed, this, [this] {
-    publish();
-    balance();
-  });
+  connect(m_store, &ShellStore::changed, this, &LoadBalancingController::balance);
   if (auto* workspace = shell->controller<WorkspaceController>()) {
     connect(workspace, &WorkspaceController::placeChanged, this, &LoadBalancingController::balance, Qt::QueuedConnection);
   }
-  publish();
   balance();
-}
-
-bool LoadBalancingController::handle(const QString& action, const QVariant& payload) {
-  if (!m_active || !action.startsWith(QLatin1String("loadBalancing."))) return false;
-  auto* settings = NativeShell::of(this)->controller<SettingsController>();
-  if (!settings) return true;
-  const QVariantMap input = payload.toMap();
-  if (action == QLatin1String("loadBalancing.enable")) {
-    // Off is the default, kept as its absence.
-    settings->writeDevice(kEnabled, input.value(QStringLiteral("enabled")).toBool() ? QVariant(true) : QVariant());
-  } else if (action == QLatin1String("loadBalancing.prefer")) {
-    const QString environmentId = input.value(QStringLiteral("environmentId")).toString();
-    if (environmentId.isEmpty()) return true;
-    QJsonObject next = weights();
-    next.insert(environmentId, preferenceOf(QJsonValue(input.value(QStringLiteral("value")).toInt())));
-    settings->writeDevice(kWeights, next.toVariantMap());
-  }
-  return true;
 }
 
 bool LoadBalancingController::enabled() const {
@@ -142,53 +105,6 @@ bool LoadBalancingController::enabled() const {
 QJsonObject LoadBalancingController::weights() const {
   const auto* settings = NativeShell::of(this)->controller<SettingsController>();
   return settings ? settings->deviceSettings().value(kWeights).toObject() : QJsonObject();
-}
-
-QStringList LoadBalancingController::machines() const {
-  QStringList connected;
-  if (!m_client->isReady()) return connected;
-  for (const QString& environmentId : m_store->environments()) {
-    if (m_store->environmentOnline(environmentId)) connected.append(environmentId);
-  }
-  // This machine first, the others by name.
-  const QString local = m_client->environment();
-  std::sort(connected.begin(), connected.end(), [this, &local](const QString& a, const QString& b) {
-    if ((a == local) != (b == local)) return a == local;
-    return QString::localeAwareCompare(label(a).toLower(), label(b).toLower()) < 0;
-  });
-  return connected;
-}
-
-QString LoadBalancingController::label(const QString& environmentId) const {
-  const QString label = m_store->environment(environmentId).value(QLatin1String("label")).toString();
-  if (!label.isEmpty()) return label;
-  return environmentId == m_client->environment() ? QStringLiteral("This machine") : environmentId;
-}
-
-void LoadBalancingController::publish() {
-  if (!m_active) return;
-  const QStringList connected = machines();
-  // One machine has nothing to balance against.
-  if (connected.size() < 2) {
-    m_bridge->publish(kKey, QVariant::fromValue(nullptr));
-    return;
-  }
-  const QJsonObject saved = weights();
-  QVariantList rows;
-  QStringList summary;
-  for (const QString& environmentId : connected) {
-    const int preference = preferenceOf(saved.value(environmentId));
-    rows.append(QVariantMap{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("label"), label(environmentId)}, {QStringLiteral("preference"), preference}});
-    if (preference != 50) summary.append(label(environmentId) + QLatin1Char(' ') + preferenceLabel(preference).toLower());
-  }
-  QVariantList preferences;
-  for (const Preference& entry : kPreferences) {
-    preferences.append(QVariantMap{{QStringLiteral("value"), entry.value}, {QStringLiteral("label"), QString::fromLatin1(entry.label)}});
-  }
-  m_bridge->publish(kKey, QVariantMap{{QStringLiteral("enabled"), enabled()},
-                                      {QStringLiteral("summary"), enabled() ? summary.join(QStringLiteral(" · ")) : QStringLiteral("Off")},
-                                      {QStringLiteral("machines"), rows},
-                                      {QStringLiteral("preferences"), preferences}});
 }
 
 LoadBalancingController::State LoadBalancingController::state(const QString& draftId) const {

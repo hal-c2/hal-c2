@@ -4,7 +4,9 @@
 #include <QGuiApplication>
 #include <QUrl>
 
+#include "DraftController.h"
 #include "NativeShell.h"
+#include "SettingsController.h"
 #include "NavigationController.h"
 #include "McClient.h"
 #include "ShellBridge.h"
@@ -36,6 +38,16 @@ QString pairingUrl(const QString& host, const QString& code) {
   return host + QStringLiteral("/pair#token=") + code;
 }
 
+// A saved weight as one of the four preferences (loadPreferenceForWeight):
+// older builds kept a slider's value.
+QPair<int, QString> preferenceFor(const QVariant& saved) {
+  bool ok = false;
+  const double weight = saved.toDouble(&ok);
+  if (!saved.isValid() || !ok || weight == 50) return {50, QStringLiteral("Normal")};
+  if (weight <= 0) return {0, QStringLiteral("Manual only")};
+  return weight < 50 ? QPair<int, QString>{25, QStringLiteral("Less often")} : QPair<int, QString>{100, QStringLiteral("Prefer")};
+}
+
 }  // namespace
 
 ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
@@ -51,14 +63,20 @@ ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* clie
           {QStringLiteral("notice"), null()},
           {QStringLiteral("created"), null()},
           {QStringLiteral("removing"), null()},
+          {QStringLiteral("balancing"), null()},
       } {}
 
 void ConnectionsController::activate() {
   if (m_active) return;
   m_active = true;
   updateLinks();
+  updateBalancing();
   publish();
   connect(m_store, &ShellStore::changed, this, &ConnectionsController::updateLinks);
+  connect(m_store, &ShellStore::changed, this, &ConnectionsController::updateBalancing);
+  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    connect(settings, &SettingsController::deviceChanged, this, &ConnectionsController::updateBalancing);
+  }
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
   auto opened = [navigation] {
     return navigation->route() == NavigationController::Route::settings(NavigationController::kConnectionsSection);
@@ -88,6 +106,15 @@ bool ConnectionsController::handle(const QString& action, const QVariant& payloa
       // A host without a scheme: HTTPS first, then plain HTTP when that cannot connect.
       link(pairingUrl(QStringLiteral("https://") + host, code), pairingUrl(QStringLiteral("http://") + host, code));
     }
+  } else if (action == QLatin1String("connections.balancing.enabled")) {
+    NativeShell::of(this)->controller<SettingsController>()->set(QStringLiteral("loadBalancingEnabled"), input.value(QStringLiteral("enabled")).toBool());
+  } else if (action == QLatin1String("connections.balancing.preference")) {
+    auto* settings = NativeShell::of(this)->controller<SettingsController>();
+    const QString id = input.value(QStringLiteral("environmentId")).toString();
+    if (id.isEmpty() || !settings->setting(QStringLiteral("loadBalancingEnabled")).toBool()) return true;
+    QVariantMap weights = settings->setting(QStringLiteral("loadBalancingWeights")).toMap();
+    weights.insert(id, preferenceFor(input.value(QStringLiteral("weight"))).first);
+    settings->set(QStringLiteral("loadBalancingWeights"), weights);
   } else if (action == QLatin1String("connections.unlink.request")) {
     set(QStringLiteral("removing"), input.value(QStringLiteral("environmentId")).toString());
   } else if (action == QLatin1String("connections.unlink.cancel")) {
@@ -224,6 +251,32 @@ void ConnectionsController::publishAccess() {
                                             {QStringLiteral("clients"), m_clients.toVariantList()}});
 }
 
+// Every machine a new thread could start on, with this device's preference for it.
+void ConnectionsController::updateBalancing() {
+  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  const QStringList ids = m_store->environments();
+  QVariant balancing = null();
+  // One machine has nothing to balance against.
+  if (settings && ids.size() >= 2) {
+    const QVariantMap weights = settings->setting(QStringLiteral("loadBalancingWeights")).toMap();
+    QVariantList environments;
+    for (const QString& id : ids) {
+      const auto [weight, preference] = preferenceFor(weights.value(id));
+      const QString label = m_store->environment(id).value(QLatin1String("label")).toString();
+      environments.append(QVariantMap{{QStringLiteral("environmentId"), id},
+                                      {QStringLiteral("label"), label.isEmpty() ? (id == m_client->environment() ? QStringLiteral("This machine") : id) : label},
+                                      {QStringLiteral("weight"), weight},
+                                      {QStringLiteral("preference"), preference}});
+    }
+    std::sort(environments.begin(), environments.end(), [](const QVariant& a, const QVariant& b) {
+      return a.toMap().value(QStringLiteral("label")).toString() < b.toMap().value(QStringLiteral("label")).toString();
+    });
+    balancing = QVariantMap{{QStringLiteral("enabled"), settings->setting(QStringLiteral("loadBalancingEnabled")).toBool()},
+                            {QStringLiteral("environments"), environments}};
+  }
+  if (balancing != m_state.value(QStringLiteral("balancing"))) set(QStringLiteral("balancing"), balancing);
+}
+
 // The MC's links, from the shell shape, with what each row says.
 void ConnectionsController::updateLinks() {
   QVariantList links;
@@ -282,7 +335,17 @@ void ConnectionsController::link(const QString& pairingUrl, const QString& fallb
 void ConnectionsController::unlink(const QString& environmentId) {
   const QString label = labelOf(environmentId);
   change(QStringLiteral("hal-c2.unlinkEnvironment"), {{QStringLiteral("environmentId"), environmentId}},
-         [this, label](const QJsonObject&) { setNotice(QStringLiteral("success"), QStringLiteral("%1 was removed.").arg(label)); },
+         [this, label, environmentId](const QJsonObject&) {
+           // Nothing written for it is kept: its rows go with the link, its drafts here.
+           if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
+             QStringList ids;
+             for (const DraftController::Draft& draft : drafts->drafts()) {
+               if (draft.environmentId == environmentId) ids.append(draft.id);
+             }
+             for (const QString& id : std::as_const(ids)) drafts->remove(id);
+           }
+           setNotice(QStringLiteral("success"), QStringLiteral("%1 was removed.").arg(label));
+         },
          QStringLiteral("Could not remove %1").arg(label));
 }
 

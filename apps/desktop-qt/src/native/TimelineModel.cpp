@@ -1042,7 +1042,8 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     case TitleRole:
       if (row.kind == QLatin1String("plan")) return planTitle(text(item, QLatin1String("markdown")));
       if (row.kind == QLatin1String("marker")) return markerTitle(item);
-      if (row.kind == QLatin1String("error")) return QStringLiteral("Error");
+      // The MC names what it recorded ("Provider retry"); a plain failure is an error.
+      if (row.kind == QLatin1String("error")) return text(item, QLatin1String("title")).isEmpty() ? QStringLiteral("Error") : text(item, QLatin1String("title"));
       if (row.kind == QLatin1String("subagent")) {
         const QString title = text(item, QLatin1String("title")).trimmed();
         return title.isEmpty() ? QStringLiteral("Subagent") : title;

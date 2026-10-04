@@ -16,6 +16,12 @@ Notifications 1.0 Notifications.qml
 RightPanel 1.0 RightPanel.qml
 SettingsNav 1.0 SettingsNav.qml
 ShellErrorOverlay 1.0 ShellErrorOverlay.qml
+ConnectionNotice 1.0 ConnectionNotice.qml
+UsageModelPrices 1.0 UsageModelPrices.qml
+ProviderModelList 1.0 ProviderModelList.qml
+ComposerUsageLimits 1.0 ComposerUsageLimits.qml
+LoadBalancingSettings 1.0 LoadBalancingSettings.qml
+ConnectionStatusRow 1.0 ConnectionStatusRow.qml
 ShellTextField 1.0 ShellTextField.qml
 ShellWindow 1.0 ShellWindow.qml
 ShellMenuItem 1.0 ShellMenuItem.qml
@@ -41,7 +47,6 @@ SettingsRow 1.0 SettingsRow.qml
 BackgroundActivityRow 1.0 BackgroundActivityRow.qml
 TextGenerationRow 1.0 TextGenerationRow.qml
 ProjectActionsSettings 1.0 ProjectActionsSettings.qml
-LoadBalancingSettings 1.0 LoadBalancingSettings.qml
 SettingsBreadcrumb 1.0 SettingsBreadcrumb.qml
 GeneralSettings 1.0 GeneralSettings.qml
 AppearanceSettings 1.0 AppearanceSettings.qml

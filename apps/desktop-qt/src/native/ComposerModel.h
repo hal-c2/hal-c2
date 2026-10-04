@@ -40,6 +40,7 @@ struct Instance {
   QStringList runtimeModes;  // supportedRuntimeModes; empty: all
   QJsonArray models;
   QJsonArray slashCommands;
+  QJsonObject usageLimits;  // ServerProviderUsageLimits, when the provider reports them
   QJsonArray skills;
 
   bool ready() const { return enabled && available && status == QLatin1String("ready"); }

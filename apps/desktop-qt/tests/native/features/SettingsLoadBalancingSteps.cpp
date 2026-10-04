@@ -70,7 +70,7 @@ QVariantMap workspace(World& world) {
 }
 
 QVariant balancing(World& world) {
-  return world.state(QStringLiteral("loadBalancing"));
+  return at(world.state(QStringLiteral("connections")), QStringLiteral("balancing"));
 }
 
 LoadBalancingController* controller(World& world) {
@@ -162,18 +162,18 @@ void twoMachines(World& world) {
   if (world.shellSubscriptions() == 0) world.connect();
   world.sync();
   controller(world);
-  world.waitFor([&] { return balancing(world).toMap().value(QStringLiteral("machines")).toList().size() == 3; },  // with this machine
+  world.waitFor([&] { return balancing(world).toMap().value(QStringLiteral("environments")).toList().size() == 3; },  // with this machine
                 [&] { return QStringLiteral("the machines to be connected; load balancing is %1").arg(show(balancing(world))); });
 }
 
 void turnOn(World& world) {
   twoMachines(world);
-  world.bridge().dispatch(QStringLiteral("loadBalancing.enable"), QVariantMap{{QStringLiteral("enabled"), true}});
+  world.bridge().dispatch(QStringLiteral("connections.balancing.enabled"), QVariantMap{{QStringLiteral("enabled"), true}});
   expect(balancing(world).toMap().value(QStringLiteral("enabled")).toBool(), describe(world));
 }
 
 void prefer(World& world, const QString& machine, int value) {
-  world.bridge().dispatch(QStringLiteral("loadBalancing.prefer"), QVariantMap{{QStringLiteral("environmentId"), machine}, {QStringLiteral("value"), value}});
+  world.bridge().dispatch(QStringLiteral("connections.balancing.preference"), QVariantMap{{QStringLiteral("environmentId"), machine}, {QStringLiteral("weight"), value}});
 }
 
 QQuickItem* group(World& world) {
@@ -234,8 +234,11 @@ const Steps steps([] {
   step(QStringLiteral("the user prefers %1 and sets %1 to less often").arg(q), [](World& world, const Captures& c, const Table&) {
     prefer(world, c[0], 100);
     prefer(world, c[1], 25);
-    const QString summary = balancing(world).toMap().value(QStringLiteral("summary")).toString();
-    expect(summary.contains(c[0] + QStringLiteral(" prefer")) && summary.contains(c[1] + QStringLiteral(" less often")), describe(world));
+    QHash<QString, QString> preferences;
+    for (const QVariant& row : balancing(world).toMap().value(QStringLiteral("environments")).toList()) {
+      preferences.insert(at(row, QStringLiteral("environmentId")).toString(), at(row, QStringLiteral("preference")).toString());
+    }
+    expect(preferences.value(c[0]) == QLatin1String("Prefer") && preferences.value(c[1]) == QLatin1String("Less often"), describe(world));
   });
   step(QStringLiteral("both machines are equally idle"), [](World& world, const Captures&, const Table&) {
     for (const QString& machine : {kLaptop, kServer}) hostsOf(world).resources.insert(machine, host(0.1, 0.8));

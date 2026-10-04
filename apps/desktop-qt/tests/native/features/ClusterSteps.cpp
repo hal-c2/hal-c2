@@ -67,8 +67,10 @@ void answerCluster(FakeMc& mc, const FakeMc::Rpc& rpc) {
       refuse(cluster.joinRefusal, QStringLiteral("link_lacks_access"));
       return;
     }
-    const QString host = QUrl(rpc.payload.value(QLatin1String("link")).toString()).host();
-    cluster.members.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("env-") + host},
+    // Asked of a linked environment, it is that environment that joins this cluster.
+    const bool linked = !rpc.environment.isEmpty() && rpc.environment != mc.environmentId;
+    const QString host = linked ? rpc.environment : QUrl(rpc.payload.value(QLatin1String("link")).toString()).host();
+    cluster.members.append(QJsonObject{{QStringLiteral("id"), linked ? host : QStringLiteral("env-") + host},
                                        {QStringLiteral("label"), host},
                                        {QStringLiteral("addresses"), QJsonArray{host + QStringLiteral(":4369")}},
                                        {QStringLiteral("connected"), true}});
@@ -211,6 +213,73 @@ const Steps steps([] {
     const QVariantMap page = cluster(world);
     expect(page.value(QStringLiteral("error")).toString() == c[0] && page.value(QStringLiteral("status")).isNull(),
            QStringLiteral("the cluster page is %1").arg(show(page)));
+  });
+  // A machine that left, and one added from settings.
+  step(QStringLiteral("a client lists a machine that has left the cluster"), [cluster](World& world, const Captures&, const Table&) {
+    fake(world).members.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("env-laptop")}, {QStringLiteral("label"), QStringLiteral("laptop")},
+                                          {QStringLiteral("addresses"), QJsonArray()}, {QStringLiteral("connected"), false}});
+    world.connect();
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
+    world.bridge().dispatch(QStringLiteral("cluster.open"), {});
+    world.waitFor([&] { return !at(cluster(world), QStringLiteral("status.members")).toList().isEmpty(); }, QStringLiteral("the cluster to be read"));
+  });
+  step(QStringLiteral("the machine stays listed"), [cluster](World& world, const Captures&, const Table&) {
+    // Read again, it is still a member, shown as offline.
+    const qsizetype reads = fake(world).calls.size();
+    world.bridge().dispatch(QStringLiteral("cluster.refresh"), {});
+    world.waitFor([&] { return fake(world).calls.size() > reads; }, QStringLiteral("the cluster to be read again"));
+    world.sync();
+    const QVariantList members = at(cluster(world), QStringLiteral("status.members")).toList();
+    expect(members.size() == 1 && members[0].toMap().value(QStringLiteral("label")) == QLatin1String("laptop") &&
+               !members[0].toMap().value(QStringLiteral("connected")).toBool(),
+           QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+  });
+  step(QStringLiteral("the user can remove it like any environment"), [cluster, clusterCall](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), QStringLiteral("env-laptop")}});
+    world.waitFor([&] { return at(cluster(world), QStringLiteral("status.members")).toList().isEmpty() && !cluster(world).value(QStringLiteral("busy")).toBool(); },
+                  [&] { return QStringLiteral("the machine to go; the cluster page is %1").arg(show(cluster(world))); });
+    const auto payload = clusterCall(world, QStringLiteral("cluster.remove"));
+    expect(payload && payload->value(QLatin1String("id")) == QLatin1String("env-laptop") &&
+               at(cluster(world), QStringLiteral("notice.text")) == QLatin1String("Removed laptop from the cluster."),
+           QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+  });
+  step(QStringLiteral("the app is paired with two machines that are not clustered"), [cluster](World& world, const Captures&, const Table&) {
+    world.connect();
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
+    world.mc.linkLabels.insert(QStringLiteral("env-build"), QStringLiteral("Build box"));
+    world.mc.link(QStringLiteral("env-build"));
+    world.bridge().dispatch(QStringLiteral("cluster.open"), {});
+    world.waitFor([&] { return cluster(world).value(QStringLiteral("candidates")).toList().size() == 1 && !cluster(world).value(QStringLiteral("status")).isNull(); },
+                  [&] { return QStringLiteral("the paired machine to be offered; the cluster page is %1").arg(show(cluster(world))); });
+    expect(at(cluster(world), QStringLiteral("status.members")).toList().isEmpty(), QStringLiteral("the machines are clustered already"));
+  });
+  step(QStringLiteral("the user adds one to the other's cluster from settings"), [cluster](World& world, const Captures&, const Table&) {
+    const QVariantMap candidate = cluster(world).value(QStringLiteral("candidates")).toList().value(0).toMap();
+    expect(candidate.value(QStringLiteral("label")) == QLatin1String("Build box"), QStringLiteral("the page offers %1").arg(show(candidate)));
+    world.bridge().dispatch(QStringLiteral("cluster.add"), QVariantMap{{QStringLiteral("environmentId"), candidate.value(QStringLiteral("environmentId"))}});
+  });
+  step(QStringLiteral("the app asks the first for a pairing link that grants access and gives it to the second"), [cluster](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !cluster(world).value(QStringLiteral("busy")).toBool() && !cluster(world).value(QStringLiteral("notice")).isNull(); },
+                  [&] { return QStringLiteral("the machine to be added; the cluster page is %1").arg(show(cluster(world))); });
+    QString invited, joined, link;
+    for (const FakeMc::Rpc& rpc : world.mc.calls) {
+      if (rpc.method == QLatin1String("cluster.invite")) invited = rpc.environment;
+      if (rpc.method == QLatin1String("cluster.join")) {
+        joined = rpc.environment;
+        link = rpc.payload.value(QLatin1String("link")).toString();
+      }
+    }
+    expect(invited == world.mc.environmentId && joined == QLatin1String("env-build") && link.contains(QLatin1String("/pair#token=")),
+           QStringLiteral("%1 was asked for an invite and %2 was given \"%3\"").arg(invited, joined, link));
+  });
+  step(QStringLiteral("the two machines join without the command line"), [cluster](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariantList members = at(cluster(world), QStringLiteral("status.members")).toList();
+    expect(members.size() == 1 && members[0].toMap().value(QStringLiteral("id")) == QLatin1String("env-build") &&
+               members[0].toMap().value(QStringLiteral("connected")).toBool() &&
+               at(cluster(world), QStringLiteral("notice.text")) == QLatin1String("Build box joined this cluster.") &&
+               cluster(world).value(QStringLiteral("candidates")).toList().isEmpty(),
+           QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
   });
   step(QStringLiteral("the cluster page closes"), [](World& world, const Captures&, const Table&) {
     world.sync();

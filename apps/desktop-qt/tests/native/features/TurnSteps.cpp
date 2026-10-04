@@ -330,6 +330,8 @@ const Steps steps([] {
       // Or the welcome wizard's pairing, setup terminal or import error.
       if (onboardingTells(world, c[0])) return true;
       if (world.toldInPlace && world.toldInPlace().contains(c[0])) return true;
+      // Or why the add-provider wizard does not take the instance id.
+      if (at(world.state(QStringLiteral("providerSettings")), QStringLiteral("wizard.instanceIdError")) == c[0]) return true;
       // Or what a brick on screen says.
       if (world.brick && world.brick->shows(c[0])) return true;
       return conditionProblem(world) == c[0];

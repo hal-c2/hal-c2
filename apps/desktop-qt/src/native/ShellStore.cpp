@@ -275,6 +275,10 @@ void ShellStore::onFrame(const QJsonObject& frame) {
     }
     setLinks(frame.value(QLatin1String("links")).toArray());
     m_synchronized = true;
+    ++m_snapshots;
+    m_problem.clear();
+  } else if (type == QLatin1String("error")) {
+    m_problem = frame.value(QLatin1String("reason")).toString(QStringLiteral("The MC did not send its projects and threads."));
   } else if (type == QLatin1String("shell.environment")) {
     setEnvironment(frame.value(QLatin1String("mc")).toString(),
                    frame.value(QLatin1String("environment")).toObject());

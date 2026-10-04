@@ -251,7 +251,12 @@ const Steps steps([] {
   step(QStringLiteral("the page brings the setting into view"), [](World& world, const Captures&, const Table&) {
     const QString target = world.mc.part<Opened>().target;
     expect(!target.isEmpty(), QStringLiteral("no result was opened; the route is %1").arg(show(world.state(QStringLiteral("route")))));
-    world.waitFor([&] { return inView(world, target); }, QStringLiteral("the page to bring %1 into view").arg(target));
+    world.waitFor([&] { return inView(world, target); }, [&] {
+      Brick& brick = settingsShell(world);
+      const QQuickItem* item = brick.item(target);
+      return QStringLiteral("the page to bring %1 into view: it is at %2, %3 tall, in a page %4 tall")
+          .arg(target).arg(item->mapToItem(brick.item(QStringLiteral("host")), QPointF(0, 0)).y()).arg(item->height()).arg(brick.item(QStringLiteral("host"))->height());
+    });
   });
   step(QStringLiteral("the page brings the setting into view again"), [](World& world, const Captures&, const Table&) {
     const QString target = world.mc.part<Opened>().target;

@@ -54,13 +54,13 @@ Feature: Managing environments on a client
     Then each environment shows its label, its icon and whether it is this machine, a remote link, SSH or HAL-C2 Connect
     And each shows whether it is connected
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A removed environment can be added back by pairing again
     Given the user removed an environment from this device
     When the user pairs with it again
     Then it returns to the list with its threads
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A saved environment reconnects when the app starts
     Given a saved environment that was offline
     When the app starts
@@ -83,7 +83,7 @@ Feature: Managing environments on a client
     Then the terminal client says it is unreachable
     And stays on the current environment
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: The icon cannot be changed
     Given <situation>
     When the user tries to change the environment's icon
@@ -95,20 +95,20 @@ Feature: Managing environments on a client
       | the environment's server predates icons          | the server is too old to keep an icon and should update  |
       | the user's session cannot change settings        | this session cannot change the environment's settings    |
 
-  @backlog @desktop
+  @desktop
   Scenario: A preference saved by an older build snaps to the nearest choice
     Given an environment's saved load weight is 80
     When the user opens load balancing
     Then the environment shows "Prefer"
 
-  @backlog @desktop
+  @desktop
   Scenario: Turning load balancing off keeps the preferences
     Given load balancing is on with preferences set
     When the user turns load balancing off
     And turns it on again
     Then the earlier preferences are back
 
-  @backlog @desktop
+  @desktop
   Scenario: Load preferences belong to each client
     Given two desktop clients paired with the same environments
     When the user sets a preference on one client

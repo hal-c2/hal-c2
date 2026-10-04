@@ -233,6 +233,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     settings->writeDevice(QStringLiteral("favorites"), favorites.toVariantList());
     return true;
   }
+  if (action == QLatin1String("composer.usageLimits.dismiss")) {
+    if (m_usageLimits.remove(target) > 0) publish();
+    return true;
+  }
   if (action == QLatin1String("composer.option.set")) {
     if (!target.isEmpty()) setOption(target, map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("value")));
     return true;
@@ -543,6 +547,9 @@ bool ComposerController::submit(const QVariantMap& payload) {
   }
   if (m_queuedEdit && m_queuedEdit->thread == target) return saveQueuedEdit(target, text);
   if (slashMode(target, text)) return true;
+  if (slashUsageLimits(target, text)) return true;
+  // The next message closes the limits "/usage-limits" opened.
+  if (!text.trimmed().isEmpty()) m_usageLimits.remove(target);
   if (!m_draftId.isEmpty()) return submitDraft(target, payload);
   const Draft& kept = m_drafts.value(target);
   const bool hasExtras = !kept.attachments.isEmpty() || !kept.terminalContexts.isEmpty();
@@ -1925,6 +1932,34 @@ bool ComposerController::slashMode(const QString& target, const QString& text) {
   return true;
 }
 
+bool ComposerController::slashUsageLimits(const QString& target, const QString& text) {
+  static const QRegularExpression command(QStringLiteral("^/usage-limits\\s*$"), QRegularExpression::CaseInsensitiveOption);
+  if (!command.match(text.trimmed()).hasMatch()) return false;
+  const composer::Instance* instance = instanceOf(selection(target));
+  // Offered by the environment only where there are limits to show.
+  const bool offered = instance && std::any_of(instance->slashCommands.begin(), instance->slashCommands.end(), [](const QJsonValue& value) {
+    return value.toObject().value(QLatin1String("name")) == QLatin1String("usage-limits");
+  });
+  if (!offered) return false;
+  QVariantList windows;
+  for (const QJsonValue& value : instance->usageLimits.value(QLatin1String("windows")).toArray()) {
+    const QJsonObject window = value.toObject();
+    const double used = window.value(QLatin1String("usedPercent")).toDouble();
+    windows.append(QVariantMap{{QStringLiteral("label"), window.value(QLatin1String("label")).toString()},
+                               {QStringLiteral("usedPercent"), used},
+                               {QStringLiteral("remainingPercent"), std::clamp(100.0 - used, 0.0, 100.0)},
+                               {QStringLiteral("resetsAt"), window.value(QLatin1String("resetsAt")).toString()}});
+  }
+  m_usageLimits.insert(target, QVariantMap{{QStringLiteral("provider"), instance->displayName},
+                                           {QStringLiteral("checkedAt"), instance->usageLimits.value(QLatin1String("checkedAt")).toString()},
+                                           {QStringLiteral("windows"), windows},
+                                           {QStringLiteral("message"), windows.isEmpty() ? tr("%1 has not reported its limits yet.").arg(instance->displayName)
+                                                                                          : QString()}});
+  setText(target, QString(), 0);
+  publish();
+  return true;
+}
+
 void ComposerController::setInteractionMode(const QString& target, const QString& mode) {
   if (mode != QLatin1String("plan") && mode != QLatin1String("default")) return;
   if (mode == QLatin1String("plan") && !planModeOn(instanceOf(selection(target)))) return;
@@ -2282,6 +2317,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},
       {QStringLiteral("interactionMode"), interactionModeOf(target)},
       {QStringLiteral("showInteractionModeToggle"), planOn},
+      {QStringLiteral("usageLimits"), m_usageLimits.contains(target) ? QVariant(m_usageLimits.value(target)) : QVariant::fromValue(nullptr)},
       {QStringLiteral("editingQueuedRunId"), m_queuedEdit && m_queuedEdit->thread == target
                                                  ? QVariant(m_queuedEdit->runId)
                                                  : QVariant::fromValue(nullptr)},

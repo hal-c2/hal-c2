@@ -132,6 +132,8 @@ Window {
         anchors.fill: parent
     }
 
+    ConnectionNotice {}
+
     // One window shortcut per sequence the keymap (Keybindings) binds. A key
     // with no command in the current focus stands down and stays with the
     // focused control. A focused terminal keeps every key except the shell's

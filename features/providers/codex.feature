@@ -99,7 +99,7 @@ Feature: Codex
     Then the task list shows each step and its status
     And the finished plan is shown as a proposed plan
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: A plan Codex marked finished can still be implemented
     Given Codex proposed a plan and marked it finished
     Then the plan is offered for implementation
