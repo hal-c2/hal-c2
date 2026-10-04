@@ -8,6 +8,7 @@
 #include <QJsonObject>
 
 #include "FakeConfig.h"
+#include "FakeGit.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "World.h"
@@ -652,4 +653,9 @@ const Steps steps([] {
 // default, for other step files (ScheduledTasksSteps.cpp).
 void seedBranches(World& world, const QString& project, const QStringList& branches, const QString& current) {
   gitRepo(world, project, branches, current, current);
+}
+
+void fakeGitRepo(World& world, const QString& cwd, const QStringList& branches, const QString& current, const QString& defaultBranch) {
+  world.mc.part<FakeGit>().repos.insert(cwd, {branches, current, defaultBranch});
+  sendStatus(world.mc, cwd);
 }

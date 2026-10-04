@@ -482,7 +482,44 @@ const Steps steps([] {
     resetDesktop(world, environment(QStringLiteral("x11")));
     settings(world)->set(QStringLiteral("snapShotEnabled"), true);
   });
-  step(QStringLiteral("the user opens Snap Shot settings"), [](World& world, const Captures&, const Table&) { openPanel(world); });
+  step(QStringLiteral("the user opens Snap Shot settings"), [](World& world, const Captures&, const Table&) {
+    // On a fresh desktop when the scenario starts here (composer/qt-shell-backlog.feature).
+    if (world.shellSubscriptions() == 0) resetDesktop(world);
+    openPanel(world);
+  });
+  step(QStringLiteral("the user can record the global shortcut"), [](World& world, const Captures&, const Table&) {
+    recordCtrlShift2(world);
+    send(world, QStringLiteral("shortcut.save"));
+    expect(QJsonValue::fromVariant(settings(world)->setting(QStringLiteral("snapShotShortcut"))).toObject() == kCtrlShift2 &&
+               desktop().binds.endsWith(QStringLiteral("CTRL+SHIFT+2")) && field(world, QStringLiteral("shortcut.keys")) == QLatin1String("Ctrl+Shift+2"),
+           QStringLiteral("the desktop to hold Ctrl+Shift+2; it holds %1, Snap Shot is %2").arg(desktop().binds.join(u','), show(snapShot(world))));
+  });
+  step(QStringLiteral("the user can see whether the desktop compositor supports it"), [](World& world, const Captures&, const Table&) {
+    // This desktop captures through its portal, and the page says so.
+    expect(field(world, QStringLiteral("available")).toBool() && field(world, QStringLiteral("mode")) == QLatin1String("portal") &&
+               field(world, QStringLiteral("status")) == QLatin1String("Ready to capture"),
+           QStringLiteral("the page to say capture is supported; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the composer is focused in HAL-C2"), [](World& world, const Captures&, const Table&) {
+    // On a desktop whose own prompt asks what to capture.
+    resetDesktop(world);
+    turnOn(world);
+    desktop().picker = true;
+    openThread(world);
+  });
+  step(QStringLiteral("the user presses the global Snap Shot shortcut and selects a screen region"), [](World& world, const Captures&, const Table&) {
+    capture(world);
+    expect(desktop().captures == QList<bool>{true}, QStringLiteral("the desktop to ask what to capture"));
+  });
+  step(QStringLiteral("the capture is attached to that composer"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap image = attached(world, threadKey(world));
+    const QVariantList shown = world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("attachments")).toList();
+    expect(image.value(QStringLiteral("mimeType")) == QLatin1String("image/png") && shown.size() == 1 &&
+               shown.first().toMap().value(QStringLiteral("id")) == image.value(QStringLiteral("id")) &&
+               world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("target")) == threadKey(world),
+           QStringLiteral("the composer to show the capture; it shows %1").arg(show(shown)));
+    expect(world.actionsOf(QStringLiteral("composer.focus")).size() == 1, QStringLiteral("the composer to take focus"));
+  });
   step(QStringLiteral("Snap Shot is shown as not supported on this platform"), [](World& world, const Captures&, const Table&) {
     expect(!field(world, QStringLiteral("available")).toBool() && !field(world, QStringLiteral("rows")).toBool() &&
                field(world, QStringLiteral("status")).toString().contains(QLatin1String("not supported")),

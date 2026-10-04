@@ -137,16 +137,16 @@ Feature: Provider capabilities
 
     Examples:
       | provider |
+      | Cursor   |
       | Grok     |
 
-    # The Cursor and OpenCode rows are split out: the MC captures no proposed plan from them yet.
+    # The OpenCode row is split out: OpenCode's plan agent answers in prose, and neither
+    # server captures a proposed plan from it (OpenCodeAdapterV2.ts emitsProposedPlan: false).
     @backlog
     Examples: Not yet on the MC
       | provider |
-      | Cursor   |
       | OpenCode |
 
-  @backlog
   Scenario Outline: Subagent work is shown as child work
     Given a <provider> thread
     When the provider runs a subagent
@@ -155,11 +155,17 @@ Feature: Provider capabilities
     Examples:
       | provider    |
       | Claude      |
-      | Codex       |
       | Cursor      |
       | Grok        |
       | OpenCode    |
       | Antigravity |
+
+    # The Codex row is split out: the MC does not project Codex's subagents yet
+    # (codex.feature, "Codex subagents appear as child threads").
+    @backlog
+    Examples: Not yet on the MC
+      | provider    |
+      | Codex       |
 
   @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: An ACP subagent's messages stay in its own thread

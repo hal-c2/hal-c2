@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include "ComposerBrick.h"
 #include "FakeConfig.h"
 #include "Harness.h"
 #include "ThemeLibrary.h"
@@ -997,6 +998,7 @@ const Steps steps([] {
     }, QStringLiteral("to offer browser sign-in without a stored key"));
   });
   step(QStringLiteral("the user removes %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (removeComposerAttachment(world, c[0])) return;
     // In Settings → Appearance it is one of this device's themes (ThemeLibrarySteps.cpp).
     if (removesTheme(world, c[0])) return;
     const QVariantList rows = variables(world, QStringLiteral("Claude Work"));

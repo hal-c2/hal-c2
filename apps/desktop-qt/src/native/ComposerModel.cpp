@@ -799,6 +799,10 @@ QList<Suggestion> pathItems(const QList<std::pair<QString, bool>>& entries) {
   return items;
 }
 
+QString pathLink(const QString& path) {
+  return fileLink(path);
+}
+
 QString emptyText(const QString& kind) {
   if (kind == QLatin1String("skill")) return QStringLiteral("No skills found. Try / to browse provider commands.");
   if (kind == QLatin1String("path")) return QStringLiteral("No matching files or folders.");

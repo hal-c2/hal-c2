@@ -8,6 +8,7 @@
 
 #include <optional>
 
+#include "ComposerBrick.h"
 #include "DraftController.h"
 #include "NavigationController.h"
 #include "TerminalController.h"
@@ -529,6 +530,7 @@ const Steps steps([] {
     expect(terminalWrites(world, c[0]) == wanted, QStringLiteral("the MC got %1").arg(describeTerminalCalls(world)));
   });
   step(QStringLiteral("%1 shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (modelPickerShows(world, c[0], c[1])) return;
     const QString transcript = terminalSession(world, c[0])->transcript();
     expect(transcript.contains(unescaped(c[1])), QStringLiteral("%1 shows \"%2\"").arg(c[0], transcript));
   });

@@ -39,7 +39,7 @@ defmodule HalC2.Codex.Provider do
         "enabled" => HalC2.Settings.instance_enabled?(id, "codex"),
         "installed" => true,
         "version" => version(path),
-        "versionAdvisory" => HalC2.ProviderUpdates.advisory("codex", path, version(path)),
+        "versionAdvisory" => HalC2.ProviderUpdates.advisory("codex", path, version(path), id),
         "status" => "ready",
         "availability" => "available",
         "auth" => %{"status" => "authenticated"},

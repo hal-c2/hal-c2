@@ -142,6 +142,64 @@ defmodule HalC2.Orchestration.NativeSubagent do
     sub
   end
 
+  @doc """
+  Reopens a subagent the provider resumed with `message` (Claude's SendMessage to a
+  subagent it started earlier): the subagent `entity` runs again, and the message is
+  the next thing its child thread says, where the answer to it will follow. Works from
+  the thread's record alone, so a runtime that has forgotten the subagent can resume
+  it. Returns the handle `append/2` and `finish/3` take.
+  """
+  def resume(ids, %{"id" => id, "childThreadId" => child} = entity, message) do
+    driver = Entities.driver(ids)
+    native = get_in(entity, ["nativeTaskRef", "nativeId"])
+    at = Entities.now()
+    said = stream(child) |> StreamState.list("message") |> length()
+
+    sub = %{
+      id: id,
+      item: "turn-item:subagent:#{id}",
+      thread: entity["threadId"],
+      child: child,
+      root: "node:subagent-root:#{driver}:#{native}",
+      # Its own messages, after those the child thread already has.
+      native: "#{native}:resume:#{said}",
+      ordinal: 100 + 2 * said,
+      driver: driver,
+      sender: entity["threadId"],
+      text: ""
+    }
+
+    open =
+      &Map.merge(&1, %{
+        "status" => "running",
+        "completedAt" => nil,
+        "result" => nil,
+        "updatedAt" => at
+      })
+
+    HalC2.Streams.transact(sub.thread, :thread, fn state ->
+      {[
+         Orchestration.upsert(state, "subagent", id, open),
+         Orchestration.upsert(
+           state,
+           "node",
+           id,
+           &Map.merge(&1, %{"status" => "running", "completedAt" => nil})
+         ),
+         Orchestration.upsert(state, "turn-item", sub.item, open)
+       ]
+       |> Enum.filter(&is_tuple/1), :ok}
+    end)
+
+    HalC2.Streams.transact(child, :thread, fn _state ->
+      {Enum.map(conversation(sub, :user, message || "", at), fn {kind, id, entity} ->
+         Orchestration.create(kind, id, entity)
+       end), :ok}
+    end)
+
+    sub
+  end
+
   @doc "Appends streamed answer text to the subagent's child thread."
   def append(sub, ""), do: sub
 
@@ -253,7 +311,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
         ids,
         item_id,
         "#{role}_message",
-        if(role == :user, do: 100, else: 101),
+        Map.get(sub, :ordinal, 100) + if(role == :user, do: 0, else: 1),
         "completed",
         at,
         Map.merge(fields, %{"messageId" => message_id, "text" => text})

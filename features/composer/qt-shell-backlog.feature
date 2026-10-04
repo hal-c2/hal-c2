@@ -11,13 +11,13 @@ Feature: Desktop shell gaps: composer
 
   Rule: Snap Shot
 
-    @backlog @desktop
+    @desktop
     Scenario: The global Snap Shot shortcut attaches a screen region
       Given the composer is focused in HAL-C2
       When the user presses the global Snap Shot shortcut and selects a screen region
       Then the capture is attached to that composer
 
-    @backlog @desktop
+    @desktop
     Scenario: Snap Shot settings record the shortcut and show support
       When the user opens Snap Shot settings
       Then the user can record the global shortcut

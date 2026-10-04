@@ -200,7 +200,8 @@ void LoadBalancingController::balance() {
   if (m_placed.contains(place.draftId)) return;
   const WorkspaceController::Checkout checkout = workspace->checkout(place.draftId);
   // A draft the user tied to a machine stays there.
-  if (!checkout.selection.isEmpty() || checkout.branch || checkout.worktreePath) return;
+  // So does one on the picker's Auto balance, which WorkspaceController places itself.
+  if (!checkout.selection.isEmpty() || checkout.automatic || checkout.branch || checkout.worktreePath) return;
 
   // The connected machines with a checkout of the draft's project.
   const QString repository = repositoryOf(m_store->projectRow(place.environmentId, place.projectId));
@@ -250,7 +251,7 @@ void LoadBalancingController::decide(const QString& draftId, const QList<Member>
   auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
   if (!workspace || !enabled()) return;
   WorkspaceController::Checkout checkout = workspace->checkout(draftId);
-  if (!checkout.selection.isEmpty() || checkout.branch || checkout.worktreePath) return;
+  if (!checkout.selection.isEmpty() || checkout.automatic || checkout.branch || checkout.worktreePath) return;
   // The provider the draft will start with: the composer's choice, else the
   // first one ready where the draft is (as the composer defaults to).
   QJsonObject chosenProvider;

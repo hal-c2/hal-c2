@@ -176,11 +176,15 @@ defmodule HalC2.Test.Mc do
 
   @doc """
   Sends an RPC and waits for its reply. Returns `{{:ok, result} | {:error, error, detail}, client}`.
+
+  The reply is what ends the wait. The deadline only stops a call the MC never
+  answers, so it is long: an RPC that runs an installer or a provider CLI takes
+  seconds on a busy machine.
   """
   def call(client, environment, method, payload \\ %{}) do
     id = System.unique_integer([:positive])
     client = rpc(client, environment, id, method, payload)
-    {frame, client} = await(client, reply?(id))
+    {frame, client} = await(client, reply?(id), 30_000)
 
     case frame do
       %{"t" => "rpc.result", "result" => result} -> {{:ok, result}, client}

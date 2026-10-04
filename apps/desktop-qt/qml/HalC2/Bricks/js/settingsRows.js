@@ -68,6 +68,8 @@ var general = [
       description: "Show formatted Markdown as you type." },
     { key: "composerCollapseOnScroll", kind: "switch", title: "Collapse composer on scroll",
       description: "Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again." },
+    { key: "composerVimKeys", kind: "switch", title: "Vim keys in the composer",
+      description: "Escape leaves insert mode; h, j, k, l, w, b, 0, $, x and u move and edit, and i, a, I and A insert again." },
     { key: "sendShortcut", kind: "select", title: "Send shortcut",
       description: "Choose when Enter sends a prompt or inserts a new line",
       options: [option("enter", "Enter"), option("mod-enter-multiline", "Ctrl + Enter for multiline prompts"),
@@ -82,6 +84,8 @@ var general = [
       description: "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments. Update older servers first." },
 
     { section: "Projects & threads" },
+    { key: "loadBalancingEnabled", kind: "switch", title: "Balance new threads across machines",
+      description: "Offer Auto balance where a project has a checkout on several machines: a new thread starts on the one with the most free CPU and memory." },
     { key: "newWorktreesStartFromOrigin", kind: "switch", title: "Start from origin",
       description: "Creates the worktree from the latest matching branch on origin instead of your local branch." },
     { key: "addProjectBaseDirectory", kind: "text", title: "Add project starts in",
