@@ -57,7 +57,7 @@ Feature: Background activity and the background service
       When the client does not renew the report for its lifetime
       Then the MC stops checking provider health for it
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-mobile
     Scenario: Clients report what the user is looking at
       When the user opens a thread in the client
       Then the client tells the MC it is watching that thread's git status
