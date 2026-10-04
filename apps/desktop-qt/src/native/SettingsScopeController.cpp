@@ -19,10 +19,10 @@ const NativeControllerRegistrar<SettingsScopeController> registrar(QStringLitera
 const QString kKey = QStringLiteral("settingsScope");
 
 // The native sections that edit environments' settings, which follow the scope.
-const QStringList kScopedSections{QStringLiteral("/settings/general"), QStringLiteral("/settings/storage"), QStringLiteral("/settings/source-control"),
+const QStringList kScopedSections{QStringLiteral("/settings/storage"), QStringLiteral("/settings/source-control"),
                                   QStringLiteral("/settings/projects"), QStringLiteral("/settings/scheduled-tasks"),
                                   QStringLiteral("/settings/integrations"),
-                                  // General's auto-settle rules (AutoSettleController); "" is General too.
+                                  // General's rows of the MC; "" is General too.
                                   QStringLiteral("/settings/general"), QStringLiteral("/settings"), QString()};
 
 }  // namespace
