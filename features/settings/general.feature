@@ -174,7 +174,7 @@ Feature: General settings
       When the user opens a thread with a linked pull request
       Then no side panel opens by itself
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Composer preferences change how the composer behaves
       When the user turns "<setting>" <state>
       Then <result>

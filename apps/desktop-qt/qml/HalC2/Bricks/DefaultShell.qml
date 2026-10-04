@@ -170,6 +170,7 @@ ShellWindow {
 
                     Layout.fillWidth: true
                     visible: ready && !root.settingsActive
+                    conversationScrolled: centreHost.conversationScrolled
                 }
 
                 TerminalDrawer {
