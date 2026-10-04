@@ -1368,6 +1368,15 @@ defmodule HalC2.Web.Socket do
       "environment" => descriptor
     }
 
+  defp shell_message(id, {:mc, mc, :removed}),
+    do: %{
+      "t" => "shell.mc",
+      "id" => id,
+      "mc" => to_string(mc),
+      "online" => false,
+      "removed" => true
+    }
+
   defp shell_message(id, {:mc, mc, status}),
     do: %{
       "t" => "shell.mc",

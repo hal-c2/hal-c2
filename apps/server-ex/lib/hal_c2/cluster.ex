@@ -507,6 +507,8 @@ defmodule HalC2.Cluster do
     for pin <- stale, do: :ets.delete_object(@table, pin)
 
     for mc <- Node.list(), not Map.has_key?(members, id_of(mc)), do: Node.disconnect(mc)
+    # Its projects and threads leave the sidebar with it.
+    for {id, entry} <- state.members, not member?(entry), do: HalC2.Shell.forget(id)
 
     state
   end

@@ -808,6 +808,8 @@ defmodule HalC2.Steps.Parity.Shapes do
         await(context, t, id, &(&1["mc"] == to_string(@gone)))
 
       "shell.mc" ->
+        # Only a machine that was up goes down.
+        send(HalC2.Shell, {:nodeup, @gone})
         send(HalC2.Shell, {:nodedown, @gone})
         await(context, t, id, &(&1["online"] == false))
 

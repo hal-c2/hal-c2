@@ -156,6 +156,13 @@ Feature: Clustering one person's machines
     And the first two stay connected
 
   @mc
+  Scenario: A removed member's projects and threads leave the sidebar
+    Given a cluster of three members
+    And the first two list a project of the third
+    When the user removes the third member on the first
+    Then the first two no longer list the third or its project
+
+  @mc
   Scenario: The sidebar lists every member's projects and threads
     Given a client connected to one member of a two-machine cluster
     When it follows the shell

@@ -123,7 +123,7 @@ Feature: Protocol 3 wire parity
       | shell                    | the shell subscription opens                           | id, MCs with online and environment, rows                     |
       | shell.rows               | projects or threads on one MC change                   | id, mc, rows                                                  |
       | shell.environment        | an MC's environment descriptor changes                 | id, mc, environment                                           |
-      | shell.mc                 | an MC joins or leaves the cluster                      | id, mc, online                                                |
+      | shell.mc                 | an MC joins or leaves the cluster                      | id, mc, online, and removed once it is no longer a member     |
       | snapshot                 | a stream subscription starts or falls too far behind   | id, offset, at, part, rows in creation order, done            |
       | events                   | stream entities change                                 | id, offset, events as seq, kind, id, patch and unix ms at     |
       | live                     | a stream has caught up                                 | id, offset                                                    |

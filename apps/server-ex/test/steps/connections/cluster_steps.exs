@@ -466,6 +466,35 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
+  step "the first two list a project of the third", context do
+    %{a: a, b: b, c: c} = context.machines
+
+    project = %{
+      "type" => "project.create",
+      "projectId" => "garden",
+      "title" => "Garden",
+      "workspaceRoot" => Mc.tmp_dir(context.mc, "garden")
+    }
+
+    assert {:ok, _} = :peer.call(c.peer, HalC2.Projects, :mutate, [project])
+    for m <- [a, b], do: assert(await_sidebar(m, c, true))
+    context
+  end
+
+  step "the first two no longer list the third or its project", context do
+    %{a: a, b: b, c: c} = context.machines
+
+    for m <- [a, b] do
+      assert await_sidebar(m, c, false)
+
+      refute Enum.any?(:peer.call(m.peer, HalC2.Shell, :environments, []), fn {_mc, environment} ->
+               environment["environmentId"] == c.id
+             end)
+    end
+
+    context
+  end
+
   # --- one socket, every member ------------------------------------------------------
 
   step "a client connected to one member of a two-machine cluster", context do
@@ -896,6 +925,28 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   defp await_disconnected(machine, other) do
     await_mc(machine, :nodedown, HalC2.Cluster.mc_name(other.id), 15_000)
+  end
+
+  # Waits until `machine`'s sidebar has rows of `other` (`listed`) or has none.
+  defp await_sidebar(machine, other, listed) do
+    code = """
+    :ok = HalC2.Shell.subscribe(self())
+
+    wait = fn wait ->
+      Enum.any?(HalC2.Shell.rows(), &match?({{^mc, _}, _}, &1)) == listed or
+        receive do
+          {:hal_c2_shell, _} -> wait.(wait)
+        after
+          15_000 -> false
+        end
+    end
+
+    wait.(wait)
+    """
+
+    binding = [mc: HalC2.Cluster.mc_name(other.id), listed: listed]
+    {result, _} = :peer.call(machine.peer, Code, :eval_string, [code, binding], 20_000)
+    result
   end
 
   defp await_mc(machine, event, mc, timeout) do

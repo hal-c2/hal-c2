@@ -7,14 +7,15 @@ defmodule HalC2.Shell do
   store's `shell` table and from stream servers as threads change; peers push theirs.
   They live in a protected ETS table keyed by `{mc, stream_id}`, so any process can
   read the whole shell without copying it through this server. When a peer goes down
-  its rows stay, marked offline, so a sleeping laptop's threads remain visible.
+  its rows stay, marked offline, so a sleeping laptop's threads remain visible. Only a
+  machine removed from the cluster is dropped (`forget/1`).
 
   Each MC's environment descriptor (`HalC2.Environment.descriptor/0`) travels with its
   rows, so clients can list and label every machine, online or not.
 
   Subscribers receive `{:hal_c2_shell, {:rows, mc, [{id, {kind, row}}]}}`,
   `{:hal_c2_shell, {:environment, mc, descriptor}}` and
-  `{:hal_c2_shell, {:mc, mc, :up | :down}}`.
+  `{:hal_c2_shell, {:mc, mc, :up | :down | :removed}}`.
   """
 
   use GenServer
@@ -65,6 +66,13 @@ defmodule HalC2.Shell do
   @doc "MCs whose shell is currently reachable, this one included."
   @spec online_mcs() :: [node]
   def online_mcs, do: GenServer.call(__MODULE__, :online_mcs)
+
+  @doc """
+  Drops the machine with `environment_id` and its rows: a member removed from the
+  cluster (`HalC2.Cluster`) is not coming back, as an offline one is.
+  """
+  @spec forget(String.t()) :: :ok
+  def forget(environment_id), do: GenServer.cast(__MODULE__, {:forget, environment_id})
 
   @spec subscribe(pid) :: :ok
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
@@ -136,6 +144,21 @@ defmodule HalC2.Shell do
     {:noreply, state}
   end
 
+  def handle_cast({:forget, environment_id}, state) do
+    peers =
+      for {peer, %{"environmentId" => ^environment_id}} <- :ets.tab2list(@mcs),
+          peer != node(),
+          do: peer
+
+    for peer <- peers do
+      :ets.match_delete(@table, {{peer, :_}, :_})
+      :ets.delete(@mcs, peer)
+      notify(state, {:mc, peer, :removed})
+    end
+
+    {:noreply, %{state | online: MapSet.difference(state.online, MapSet.new(peers))}}
+  end
+
   def handle_cast({:peer_hello, peer}, state) do
     push_all(peer)
     {:noreply, state}
@@ -156,7 +179,8 @@ defmodule HalC2.Shell do
   end
 
   def handle_info({:nodedown, peer}, state) do
-    notify(state, {:mc, peer, :down})
+    # A machine already forgotten has nothing left to mark offline.
+    if MapSet.member?(state.online, peer), do: notify(state, {:mc, peer, :down})
     {:noreply, %{state | online: MapSet.delete(state.online, peer)}}
   end
 

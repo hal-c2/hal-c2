@@ -70,6 +70,8 @@ defmodule HalC2.Web.Protocol do
       {"t": "shell.environment", "id", "mc", "environment"}
       {"t": "shell.rows", "id", "mc", "rows": [[id, kind, row]]}
       {"t": "shell.mc", "id", "mc", "online"}
+        (with "removed": true once the machine was removed from the cluster: its
+        environment and rows are no longer part of the shell)
       {"t": "snapshot", "id", "offset", "at", "part", "rows": [[kind, id, entity]], "done"}
       {"t": "events", "id", "offset", "events": [[seq, kind, id, patch, at]]}
       {"t": "live", "id", "offset"}     (caught up; later events are live)
