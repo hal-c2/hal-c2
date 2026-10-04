@@ -16,6 +16,7 @@
 #   apps/web/src/components/chat/ContextWindowMeter.logic.ts
 #   apps/tui/src/contextWindow.ts
 #   apps/tui/src/components/ChatView.tsx (interrupt)
+#   apps/desktop-qt/src/native/ThreadStore.cpp (a sent image's signed address, asked for again once it expires)
 
 Feature: Runs, interruptions and the queue
   A turn runs until it finishes, fails or the user stops it. Messages sent meanwhile
@@ -89,6 +90,24 @@ Feature: Runs, interruptions and the queue
       | queued behind the active turn        | Queued behind the active turn                             |
       | sent as a steer                      | Steered the active turn                                   |
       | queued and later promoted to a steer | Originally queued, then promoted to steer the active turn |
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A sent message shows its images
+    When the user sent the image "cart.png" with a message
+    Then the message shows the image "cart.png" from its MC
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: An image is still shown after its address stops working
+    Given the user sent the image "cart.png" with a message
+    And the message shows the image "cart.png" from its MC
+    When more than an hour passes
+    Then the message shows the image "cart.png" from a new address
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: An image sent in a linked environment is loaded from that environment
+    Given the user is looking at a thread on an environment the MC is linked to
+    When the user sent the image "cart.png" with a message
+    Then the message shows the image "cart.png" from the linked environment
 
   @mc
   Scenario: After a restart the queue waits for the user

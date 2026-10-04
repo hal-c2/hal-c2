@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QUrl>
 
 #include "SidebarModel.h"
 
@@ -63,6 +64,10 @@ public:
   // is reached through a link whose pairing did not grant orchestration:operate
   // (the MC checks its own clients; the linked environment checks the link).
   bool mayOperate(const QString& environmentId) const;
+  // The http(s) origin of the link `environmentId` is reached through, for
+  // what only its own MCs serve (a signed asset address); empty when the
+  // cluster serves it.
+  QUrl linkOrigin(const QString& environmentId) const;
   // The MC's links as `shell.links` carries them: {environment, origin,
   // online, scopes?, problem?}, where problem is "unreachable" or "refused".
   const QJsonArray& links() const { return m_links; }
@@ -74,6 +79,7 @@ private:
   void onFrame(const QJsonObject& frame);
   void setEnvironment(const QString& mc, const QJsonObject& environment);
   void setLinks(const QJsonArray& links);
+  QJsonObject linkTo(const QString& environmentId) const;
   void putRows(const QString& mc, const QJsonArray& rows);
   void putRow(const QString& mc, const QString& id, const QString& kind, const QJsonObject& fields);
 

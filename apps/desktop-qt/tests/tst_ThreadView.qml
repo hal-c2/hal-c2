@@ -29,7 +29,8 @@ Item {
             icon: "",
             intent: "",
             attribution: "",
-            meta: false
+            meta: false,
+            attachments: []
         }, fields);
     }
 
