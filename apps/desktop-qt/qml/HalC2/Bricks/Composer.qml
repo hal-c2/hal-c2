@@ -994,8 +994,18 @@ Rectangle {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.bottomMargin: visible ? 16 : 0
-                    visible: children.length > 0
+                    // A layout's own controls, or a plugin's.
+                    visible: children.length > 1 || actionsSlot.shown.length > 0
                     spacing: 6
+
+                    PluginSlot {
+                        id: actionsSlot
+
+                        objectName: "composerActionsSlot"
+                        name: "composer.actions"
+                        mode: "append"
+                        visible: shown.length > 0
+                    }
                 }
             }
         }

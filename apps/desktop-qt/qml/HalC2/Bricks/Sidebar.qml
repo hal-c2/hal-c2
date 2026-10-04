@@ -845,6 +845,14 @@ Rectangle {
             Item {
                 Layout.fillWidth: true
             }
+
+            // What plugins add to the footer (the terminal client's "sidebar.footer").
+            PluginSlot {
+                objectName: "sidebarFooterSlot"
+                name: "sidebar.footer"
+                visible: shown.length > 0
+                Layout.alignment: Qt.AlignVCenter
+            }
         }
     }
 
