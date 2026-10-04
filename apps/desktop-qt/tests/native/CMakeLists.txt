@@ -51,6 +51,8 @@ target_compile_definitions(tst_Features PRIVATE
 )
 target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::Test)
 hal_c2_target_platform_window(tst_Features)
+# The terminal bricks draw with qml-ghostty's Terminal.
+target_link_libraries(tst_Features PRIVATE qmlghosttyplugin)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 add_executable(tst_LocalTranscriber tst_LocalTranscriber.cpp ../../src/LocalTranscriber.cpp)

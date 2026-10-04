@@ -385,6 +385,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/thread-list.feature"),
     QStringLiteral("terminal/drawer.feature"),
     QStringLiteral("terminal/tabs.feature"),
+    QStringLiteral("terminal/sessions.feature"),
     QStringLiteral("threads/creating.feature:A new thread start*"),
     QStringLiteral("threads/creating.feature:Starting a thread from another thread's branch"),
     QStringLiteral("threads/menu-and-selection.feature:Opening a thread's menu"),
