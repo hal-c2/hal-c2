@@ -3,8 +3,8 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// The environment this window is connected to, in Connections settings: how
-// its connection stands (ConnectionHealthController's `connection`), with a
+// Under "This machine" in Connections settings: how the window's connection to
+// its environment stands (ConnectionHealthController's `connection`), with a
 // retry and the failed attempt's trace id for a bug report.
 RowLayout {
     id: row
@@ -16,7 +16,7 @@ RowLayout {
 
     Label {
         Layout.fillWidth: true
-        text: qsTr("This machine's environment")
+        text: qsTr("Connection")
         color: Theme.palette.color("text", "#e4e4e7")
         font.pixelSize: Math.round(13 * Theme.fontScale)
         elide: Text.ElideRight

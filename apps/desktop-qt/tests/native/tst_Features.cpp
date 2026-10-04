@@ -337,6 +337,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mc/orchestration/runs.feature:A provider retry is recorded*"),
     QStringLiteral("mc/orchestration/queue-and-steering.feature:A usage limit keeps the queue*"),
     QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),
+    QStringLiteral("connections/environments.feature:The icon cannot be changed*"),
     QStringLiteral("/Users/olafurarason/dev/hal-c2/.claude/worktrees/desktop-connections/connections/environments.feature removed environment can be added back*"),
     QStringLiteral("/Users/olafurarason/dev/hal-c2/.claude/worktrees/desktop-connections/connections/environments.feature saved environment reconnects*"),
     QStringLiteral("/Users/olafurarason/dev/hal-c2/.claude/worktrees/desktop-connections/connections/environments.feature preference saved by an older build*"),

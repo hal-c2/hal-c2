@@ -131,12 +131,12 @@ Rectangle {
                 wrapMode: Text.Wrap
             }
 
-            ConnectionStatusRow {
-                Layout.fillWidth: true
-            }
-
             Heading {
                 text: qsTr("This machine")
+            }
+
+            ConnectionStatusRow {
+                Layout.fillWidth: true
             }
 
             EnvironmentIconPicker {
