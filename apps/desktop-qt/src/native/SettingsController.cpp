@@ -54,7 +54,8 @@ const QList<Row>& rows() {
       {"timestampFormat", true, QStringLiteral("locale")},
       {"responseStreamingMode", false, QStringLiteral("paragraph")},
       {"diffIgnoreWhitespace", true, true},
-      {"diffFilesCollapsed", true, true},
+      // The web starts diffs collapsed; the desktop has always opened them, and keeps to that until told otherwise.
+      {"diffFilesCollapsed", true, false},
       {"diffLayout", true, QStringLiteral("stacked")},
       {"proactivePanelsEnabled", true, false},
       {"showSkillsInSlashMenu", true, true},
