@@ -106,6 +106,15 @@ Feature: Load balancing new threads across machines
     When the user opens connection settings
     Then load balancing is not offered
 
+  # The terminal reads the MC's settings when a second machine first makes them matter,
+  # not only when settings or the palette open.
+  @tui
+  Scenario: Load balancing appears when a second machine joins while settings are open
+    Given only one machine is connected
+    And the user opens connection settings
+    When a second machine joins the cluster
+    Then load balancing is offered and off without opening settings again
+
   @backlog @mobile
   Scenario: On a phone the user always chooses the machine for a new thread
     Given two connected machines share project "api"

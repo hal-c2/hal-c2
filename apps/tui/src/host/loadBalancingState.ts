@@ -34,8 +34,8 @@ const WRITE_ATTEMPTS = 3;
  * Balancing new threads across the cluster's machines, from the terminal:
  * whether it is on and each machine's preference in settings, changed from
  * the palette. Both live in the home MC's settings document, which is read
- * again when settings or the palette open; the MC does the choosing
- * (`placeNewThread`).
+ * when the cluster first has a second machine and again when settings or the
+ * palette open; the MC does the choosing (`placeNewThread`).
  */
 export function createLoadBalancingController(ctx: {
   readonly client: TuiClient;
@@ -139,6 +139,10 @@ export function createLoadBalancingController(ctx: {
     state: (): TuiLoadBalancingState | null =>
       available() ? { machines: machines(), settings, error } : null,
     refresh,
+    /** Follow the shell: read the settings once a second machine makes them matter. */
+    sync: () => {
+      if (generation === 0) void refresh();
+    },
     /** Resolves once every settings call in flight has landed (tests wait on it). */
     settled: async () => {
       while (pending.size > 0) await Promise.allSettled(pending);

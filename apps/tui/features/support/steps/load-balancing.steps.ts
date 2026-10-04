@@ -176,6 +176,27 @@ step("load balancing is not offered", async (ctx: World) => {
   );
 });
 
+step("a second machine joins the cluster", (ctx: World) => {
+  change(ctx, (environment) => {
+    environment.machines = ["laptop", "server"].map((label) => ({
+      id: `env-${label}`,
+      label,
+      online: true,
+    }));
+  });
+});
+
+step("load balancing is offered and off without opening settings again", async (ctx: World) => {
+  await settle(ctx);
+  expect(ctx.host!.state.get("mode")).toBe("settings");
+  const group = (ctx.host!.state.get("settings") as TuiSettingsState).groups.find(
+    (candidate) => candidate.title === "Load balancing",
+  );
+  expect(
+    Object.fromEntries((group?.rows ?? []).map((row) => [row.label, row.value])),
+  ).toMatchObject({ "balance load": "Off", laptop: "Normal", server: "Normal" });
+});
+
 // --- How the machines are doing (what the fake MC weighs) ---------------------------
 
 step("{string} is busy and {string} is idle", (ctx: World, busy: string, idle: string) => {

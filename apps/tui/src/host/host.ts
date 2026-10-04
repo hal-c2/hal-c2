@@ -1083,6 +1083,7 @@ export function createHost(options: HostOptions): Host {
     composer!.sync();
     palette.sync();
     move.sync();
+    loadBalancing.sync();
   });
   const unsubscribeConnection = client.subscribeConnection((phase) =>
     state.set("connection", connectionState(phase)),
