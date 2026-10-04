@@ -234,8 +234,7 @@ const Steps steps([] {
     pick(world, QStringLiteral("hostPicker"), choiceLabelled(world, QStringLiteral("Auto balance")));
   });
   step(QStringLiteral("the thread starts on the machine with the most room when the first message is sent"), [](World& world, const Captures&, const Table&) {
-    expect(part(world, QStringLiteral("hostPicker"))->property("displayText") == QLatin1String("Auto balance") && // Both machines are asked each time: once as the new thread is placed (load balancing is on), once more for the pick.
-               world.mc.part<FakeResources>().asked >= 2 && world.mc.part<FakeResources>().asked % 2 == 0,
+    expect(part(world, QStringLiteral("hostPicker"))->property("displayText") == QLatin1String("Auto balance") && world.mc.part<FakeResources>().asked == 2,
            QStringLiteral("the picker reads \"%1\" after %2 checks").arg(part(world, QStringLiteral("hostPicker"))->property("displayText").toString()).arg(world.mc.part<FakeResources>().asked));
     sendFirstMessage(world);
     // The idle server's checkout, not the busy laptop's.

@@ -99,8 +99,8 @@ void LoadBalancingController::activate() {
   auto* shell = NativeShell::of(this);
   if (auto* settings = shell->controller<SettingsController>()) {
     connect(settings, &SettingsController::deviceChanged, this, [this] {
-      // A changed preference places the drafts anew.
-      m_placed.clear();
+      // A switch turned on, or a changed preference, places the new drafts anew.
+      m_tried.clear();
       publish();
       balance();
     });
@@ -191,67 +191,92 @@ void LoadBalancingController::publish() {
                                       {QStringLiteral("preferences"), preferences}});
 }
 
+LoadBalancingController::State LoadBalancingController::state(const QString& draftId) const {
+  const Check check = m_checks.value(draftId);
+  return {check.waiting > 0 && !check.quiet, check.failed && !check.quiet};
+}
+
 void LoadBalancingController::balance() {
-  if (!m_active || !enabled() || !m_placing.isEmpty()) return;
-  auto* shell = NativeShell::of(this);
-  auto* workspace = shell->controller<WorkspaceController>();
+  if (!m_active || !enabled()) return;
+  auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
   if (!workspace || !workspace->place() || workspace->place()->draftId.isEmpty()) return;
-  const WorkspaceController::Place place = *workspace->place();
-  if (m_placed.contains(place.draftId)) return;
-  const WorkspaceController::Checkout checkout = workspace->checkout(place.draftId);
-  // A draft the user tied to a machine stays there.
-  // So does one on the picker's Auto balance, which WorkspaceController places itself.
-  if (!checkout.selection.isEmpty() || checkout.automatic || checkout.branch || checkout.worktreePath) return;
-
-  // The connected machines with a checkout of the draft's project.
-  const QString repository = repositoryOf(m_store->projectRow(place.environmentId, place.projectId));
-  QList<Member> members;
-  for (const QString& environmentId : machines()) {
-    if (environmentId == place.environmentId) {
-      members.append({environmentId, place.projectId});
-      continue;
-    }
-    if (repository.isEmpty()) continue;
-    for (const QJsonObject& project : m_store->projectRows(environmentId)) {
-      if (repositoryOf(project) != repository) continue;
-      members.append({environmentId, project.value(QLatin1String("id")).toString()});
-      break;
-    }
+  const QString draftId = workspace->place()->draftId;
+  WorkspaceController::Checkout checkout = workspace->checkout(draftId);
+  if (m_tried.contains(draftId)) return;
+  // One the user tied to a machine stays there; one already on Auto balance is placed, or being placed.
+  if (checkout.manual || checkout.automatic || checkout.branch || checkout.worktreePath || !checkout.environmentId.isEmpty()) return;
+  // Only where the project has a checkout on more than one connected machine.
+  int checkouts = 0;
+  for (const QVariant& choice : workspace->environmentChoices()) {
+    const QVariantMap entry = choice.toMap();
+    checkouts += entry.value(QStringLiteral("checkout")).toBool() && m_store->environmentOnline(entry.value(QStringLiteral("environmentId")).toString());
   }
-  if (members.size() < 2) return;
+  if (checkouts < 2) return;
+  m_tried.insert(draftId);
+  place(draftId, true);
+}
 
-  m_placing = place.draftId;
-  m_waiting = int(members.size()) * 2;
-  const QString draftId = place.draftId;
-  const QString own = place.environmentId;
-  const auto answered = [this, draftId, members, own] {
-    if (--m_waiting > 0) return;
-    decide(draftId, members, own);
-  };
+void LoadBalancingController::place(const QString& draftId, bool quietly) {
+  auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
+  if (!m_active || !workspace || !workspace->place() || workspace->place()->draftId != draftId) return;
+  // The connected machines with a checkout of the draft's project.
+  QList<Member> members;
+  for (const QVariant& choice : workspace->environmentChoices()) {
+    const QVariantMap entry = choice.toMap();
+    const QString environmentId = entry.value(QStringLiteral("environmentId")).toString();
+    const QString key = entry.value(QStringLiteral("key")).toString();
+    if (!entry.value(QStringLiteral("checkout")).toBool() || !m_store->environmentOnline(environmentId)) continue;
+    members.append({environmentId, key.mid(key.indexOf(QLatin1Char(':')) + 1)});
+  }
+  Check& check = m_checks[draftId];
+  const int request = ++check.request;
+  check.failed = false;
+  check.waiting = 0;
+  check.quiet = quietly;
+  const QJsonObject saved = weights();
+  const QString own = workspace->place()->environmentId;
   for (const Member& member : members) {
     const QString environmentId = member.environmentId;
+    // A machine on manual only is not asked.
+    if (preferenceOf(saved.value(environmentId)) <= 0) continue;
+    check.waiting += 2;
+    const auto answered = [this, draftId, request, members, own] {
+      Check& check = m_checks[draftId];
+      if (check.request != request || --check.waiting > 0) return;
+      decide(draftId, request, members, own);
+    };
     m_client->call(this, environmentId, QStringLiteral("server.getHostResources"), QJsonObject(),
-                   [this, environmentId, answered](const QJsonValue& result, const std::optional<QString>& error) {
+                   [this, draftId, request, environmentId, answered](const QJsonValue& result, const std::optional<QString>& error) {
                      // A machine that does not answer keeps its last sample, which goes stale.
-                     if (!error && result.isObject()) m_samples.insert(environmentId, {result.toObject(), m_clock()});
+                     if (!error && result.isObject()) {
+                       m_samples.insert(environmentId, {result.toObject(), m_clock()});
+                     } else if (m_checks.value(draftId).request == request) {
+                       m_checks[draftId].failed = true;
+                     }
                      answered();
                    });
     // And for its providers (ServerConfig).
     m_client->call(this, environmentId, QStringLiteral("server.getConfig"), QJsonObject(),
                    [this, environmentId, answered](const QJsonValue& result, const std::optional<QString>& error) {
-                     if (!error && result.isObject()) m_providers.insert(environmentId, result.toObject().value(QLatin1String("providers")).toArray());
+                     if (!error && result.isObject()) {
+                       m_providers.insert(environmentId, result.toObject().value(QLatin1String("providers")).toArray());
+                       m_configured.insert(environmentId);
+                     }
                      answered();
                    });
   }
+  // The picker says it is checking.
+  workspace->refresh();
+  if (check.waiting == 0) decide(draftId, request, members, own);
 }
 
-void LoadBalancingController::decide(const QString& draftId, const QList<Member>& members, const QString& ownEnvironment) {
-  m_placing.clear();
-  m_placed.insert(draftId);
+void LoadBalancingController::decide(const QString& draftId, int request, const QList<Member>& members, const QString& ownEnvironment) {
   auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
-  if (!workspace || !enabled()) return;
+  if (!workspace || m_checks.value(draftId).request != request) return;
   WorkspaceController::Checkout checkout = workspace->checkout(draftId);
-  if (!checkout.selection.isEmpty() || checkout.automatic || checkout.branch || checkout.worktreePath) return;
+  const bool quiet = m_checks.value(draftId).quiet;
+  // Taken off Auto balance meanwhile, or tied to a machine: the user's choice stands.
+  if (quiet ? (checkout.manual || checkout.automatic || checkout.branch || checkout.worktreePath) : !checkout.automatic) return;
   // The provider the draft will start with: the composer's choice, else the
   // first one ready where the draft is (as the composer defaults to).
   QJsonObject chosenProvider;
@@ -271,19 +296,23 @@ void LoadBalancingController::decide(const QString& draftId, const QList<Member>
   const QJsonObject saved = weights();
   QList<Candidate> candidates;
   for (const Member& member : members) {
-    if (!m_store->environmentOnline(member.environmentId) || !offers(m_providers.value(member.environmentId), chosenProvider)) continue;
+    if (!m_store->environmentOnline(member.environmentId)) continue;
+    // A machine whose providers are known must have the chosen one signed in.
+    if (m_configured.contains(member.environmentId) && !offers(m_providers.value(member.environmentId), chosenProvider)) continue;
     const Sample sample = m_samples.value(member.environmentId);
     candidates.append({member.environmentId, sample.resources, sample.receivedAt, preferenceOf(saved.value(member.environmentId))});
   }
   const QString target = choose(candidates, m_clock());
-  if (target.isEmpty()) return;
   for (const Member& member : members) {
-    if (member.environmentId != target) continue;
-    checkout.selection = QStringLiteral("auto");
+    if (target.isEmpty() || member.environmentId != target) continue;
     checkout.environmentId = member.environmentId;
     checkout.projectId = member.projectId;
+    checkout.automatic = true;
+    checkout.balanced = true;
+    m_checks[draftId].failed = false;
     workspace->setCheckout(draftId, checkout);
+    return;
   }
-  // Another draft may have come up meanwhile.
-  balance();
+  // None could take it: the picker says so, and sending asks for a machine.
+  workspace->refresh();
 }

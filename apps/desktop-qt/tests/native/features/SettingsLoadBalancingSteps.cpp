@@ -116,13 +116,13 @@ WorkspaceController::Checkout checkout(World& world) {
 QString describe(World& world) {
   const WorkspaceController::Checkout placed = checkout(world);
   return QStringLiteral("the draft is on %1 (chosen by \"%2\"); the machines were asked %3; load balancing is %4")
-      .arg(workspace(world).value(QStringLiteral("activeEnvironmentId")).toString(), placed.selection,
+      .arg(workspace(world).value(QStringLiteral("activeEnvironmentId")).toString(), placed.manual ? u"the user"_qs : placed.automatic ? u"load balancing"_qs : u"nobody"_qs,
            hostsOf(world).asked.join(QStringLiteral(", ")), show(balancing(world)));
 }
 
 // Load balancing put the draft on `machine`.
 void expectBalancedTo(World& world, const QString& machine) {
-  world.waitFor([&] { return checkout(world).selection == QLatin1String("auto") && workspace(world).value(QStringLiteral("activeEnvironmentId")) == machine; },
+  world.waitFor([&] { return checkout(world).automatic && checkout(world).balanced && workspace(world).value(QStringLiteral("activeEnvironmentId")) == machine; },
                 [&] { return describe(world); });
 }
 
@@ -148,7 +148,7 @@ void twoMachines(World& world) {
   answerForMachines(world.mc);
   world.expectStartsOn = [&world](const QString& machine) {
     // A draft the user tied to a machine was never balanced.
-    if (checkout(world).selection != QLatin1String("manual")) expectBalancedTo(world, machine);
+    if (!checkout(world).manual) expectBalancedTo(world, machine);
     expectLaunchOn(world, machine);
   };
   for (const QString& machine : {kLaptop, kServer}) {
@@ -189,7 +189,7 @@ const Steps steps([] {
   step(QStringLiteral("load balancing is on"), [](World& world, const Captures&, const Table&) { turnOn(world); });
   step(QStringLiteral("the thread starts on the machine the user picked"), [](World& world, const Captures&, const Table&) {
     // Off by default: nothing is asked of the machines, and the draft is where the user opened it.
-    expect(!balancing(world).toMap().value(QStringLiteral("enabled"), true).toBool() && hostsOf(world).asked.isEmpty() && checkout(world).selection.isEmpty(),
+    expect(!balancing(world).toMap().value(QStringLiteral("enabled"), true).toBool() && hostsOf(world).asked.isEmpty() && !checkout(world).automatic && !checkout(world).manual,
            describe(world));
     const QString other = workspace(world).value(QStringLiteral("activeEnvironmentId")) == kLaptop ? kServer : kLaptop;
     // And follows the user's own choice of machine.
@@ -266,7 +266,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user sends the first message"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    expect(checkout(world).selection == QLatin1String("manual"), describe(world));
+    expect(checkout(world).manual && !checkout(world).automatic, describe(world));
   });
 
   // One machine.
