@@ -42,7 +42,7 @@ ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
 ```
 
 `Features` runs the `@desktop` and `@shared` scenarios in the feature files `tst_Features.cpp`
-lists (`features/desktop/native-*.feature`, cluster, links, pairing, Connections settings and more)
+lists (`features/desktop/native-*.feature`, cluster, pairing, Connections settings and more)
 against a fake MC, skipping `@backlog`,
 `@backlog-desktop` and `@dropped`; `HAL_C2_FEATURES="threads/thread-list.feature"` narrows it, and
 `HAL_C2_BACKLOG=1` runs only the backlog ones instead, to see what each still lacks.

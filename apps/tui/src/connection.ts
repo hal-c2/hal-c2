@@ -41,6 +41,11 @@ import {
   type TerminalRestartInput,
   type ThreadId,
   ThreadId as ThreadIdSchema,
+  ThreadMoveDestination,
+  type ThreadMoveInput,
+  ThreadMoveResult,
+  ThreadPlacement,
+  type ThreadPlacementInput,
   TrimmedNonEmptyString,
   type UploadChatImageAttachment,
   type ServerConfig,
@@ -78,6 +83,8 @@ import {
 } from "@hal-c2/client-runtime/operations";
 import { inferProjectTitleFromPath } from "@hal-c2/client-runtime/state/projects";
 import {
+  mcMembers,
+  mcRequest,
   remoteHttpClientLayer,
   request,
   layerWithOptions,
@@ -117,6 +124,7 @@ import * as Logger from "effect/Logger";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -492,6 +500,14 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly hostPlatform: NodeJS.Platform;
   /** Live connection phase (emits the current one first). Returns an unsubscribe fn. */
   readonly subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => () => void;
+  /** Told when a machine of this machine's cluster joins, leaves, goes offline or comes back. */
+  readonly subscribeCluster: (onChange: () => void) => () => void;
+  /**
+   * Says which project the draft on screen is in, null once it closes. In a
+   * cluster a checkout path several machines have is then read on that
+   * project's machine (clusterClient.ts).
+   */
+  readonly viewProject: (projectId: string | null) => void;
   readonly browseFilesystem: (partialPath: string, cwd?: string) => Promise<FilesystemBrowseResult>;
   readonly discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
   readonly lookupRepository: (
@@ -503,6 +519,25 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly clusterInvite: (input: ClusterInviteInput) => Promise<ClusterInvite>;
   readonly clusterJoin: (link: string) => Promise<ClusterStatus>;
   readonly clusterRemove: (id: string) => Promise<ClusterStatus>;
+  /** The other machines of the cluster a thread could move to, and their projects. */
+  readonly moveDestinations: (threadId: string) => Promise<ReadonlyArray<ThreadMoveDestination>>;
+  /**
+   * Move a thread to another machine. Besides `moved` the MC may answer `confirm`
+   * (ask again with `confirmed`) or `choose_project` (ask again with a `projectId`).
+   */
+  readonly moveThread: (input: ThreadMoveInput) => Promise<ThreadMoveResult>;
+  /**
+   * Where the MC would start a new thread the user is starting in a project of
+   * one of the cluster's machines: that same pair, or another machine's checkout.
+   */
+  readonly placeThread: (input: ThreadPlacementInput) => Promise<ThreadPlacement>;
+  /** The MC's settings document, and the version to write it back at. */
+  readonly readSettings: () => Promise<McSettings>;
+  /**
+   * Replace the MC's settings document. False when it changed since `version`
+   * was read: read it again and reapply the edit.
+   */
+  readonly writeSettings: (settings: McSettings["settings"], version: number) => Promise<boolean>;
   readonly cloneRepository: (
     remoteUrl: string,
     destinationPath: string,
@@ -659,6 +694,25 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   ) => Promise<Pick<ProjectReadFileResult, "contents" | "byteLength" | "truncated"> | null>;
   readonly dispose: () => Promise<void>;
 }
+
+// The MC's own methods (`hal-c2.*`) are outside the RPC contract, so their
+// answers are decoded here.
+const decodeMoveDestinations = Schema.decodeUnknownSync(Schema.Array(ThreadMoveDestination));
+const decodeMoveResult = Schema.decodeUnknownSync(ThreadMoveResult);
+const decodePlacement = Schema.decodeUnknownSync(ThreadPlacement);
+
+/** The MC's settings document as stored: a client edits the keys it knows and keeps the rest. */
+const McSettings = Schema.Struct({
+  settings: Schema.Record(Schema.String, Schema.Unknown),
+  version: Schema.Int,
+});
+export type McSettings = typeof McSettings.Type;
+const decodeSettings = Schema.decodeUnknownSync(McSettings);
+
+/** The MC refused a settings write because another client wrote first. */
+const isStaleSettings = (error: unknown): boolean =>
+  (error as { readonly detail?: { readonly _tag?: unknown } } | null)?.detail?._tag ===
+  "StaleSettings";
 
 const randomUuid = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -856,6 +910,24 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
     clusterInvite: (input) => runtime.runPromise(request(WS_METHODS.clusterInvite, input)),
     clusterJoin: (link) => runtime.runPromise(request(WS_METHODS.clusterJoin, { link })),
     clusterRemove: (id) => runtime.runPromise(request(WS_METHODS.clusterRemove, { id })),
+    moveDestinations: (threadId) =>
+      runtime
+        .runPromise(mcRequest("hal-c2.moveDestinations", { threadId }))
+        .then(decodeMoveDestinations),
+    moveThread: (input) =>
+      runtime.runPromise(mcRequest("hal-c2.moveThread", input)).then(decodeMoveResult),
+    placeThread: (input) =>
+      runtime.runPromise(mcRequest("hal-c2.placeThread", input)).then(decodePlacement),
+    readSettings: () =>
+      runtime.runPromise(mcRequest("hal-c2.readSettings", {})).then(decodeSettings),
+    writeSettings: (settings, version) =>
+      runtime.runPromise(mcRequest("hal-c2.writeSettings", { settings, version })).then(
+        () => true,
+        (error: unknown) => {
+          if (isStaleSettings(error)) return false;
+          throw error;
+        },
+      ),
     cloneRepository: (remoteUrl, destinationPath) =>
       runtime.runPromise(
         request(WS_METHODS.sourceControlCloneRepository, {
@@ -874,6 +946,10 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         ).pipe(Stream.tap((state) => Effect.sync(() => onPhase(toPhase(state))))),
       );
     },
+    subscribeCluster: (onChange) =>
+      drainStreamUntilUnsubscribe(mcMembers.pipe(Stream.tap(() => Effect.sync(onChange)))),
+    // One machine: every path is its own.
+    viewProject: () => {},
     subscribeShell: (onSnapshot) => {
       shellWarm ??= startWarmSubscriptionRef(makeEnvironmentShellState());
       return subscribeToWarmRef(shellWarm, (state) => {

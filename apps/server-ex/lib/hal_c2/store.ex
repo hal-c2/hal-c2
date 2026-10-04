@@ -194,8 +194,30 @@ defmodule HalC2.Store do
   @doc "The store schema version this MC writes; stores with a newer one are refused."
   def schema_version, do: @schema_version
 
-  @spec path(GenServer.server()) :: String.t()
-  def path(store \\ __MODULE__), do: GenServer.call(store, :path)
+  @doc """
+  The file a store on this node writes. Read without a call to the store, so a
+  reader opening its own connection never waits behind queued writes.
+  """
+  @spec path(pid | atom) :: String.t()
+  def path(store \\ __MODULE__) do
+    with pid when is_pid(pid) <- GenServer.whereis(store),
+         key when key != nil <- path_key(pid),
+         path when path != nil <- :persistent_term.get(key, nil) do
+      path
+    else
+      _ -> exit({:noproc, {__MODULE__, :path, [store]}})
+    end
+  end
+
+  # A named store keeps its path under its name, so a restart replaces the entry
+  # instead of leaving one behind for each process it has been.
+  defp path_key(pid) do
+    case Process.info(pid, :registered_name) do
+      {:registered_name, name} when is_atom(name) -> {__MODULE__, name}
+      {:registered_name, []} -> {__MODULE__, pid}
+      nil -> nil
+    end
+  end
 
   @doc """
   Folds a stream's events after `after_seq` in order, reading from a private
@@ -271,6 +293,8 @@ defmodule HalC2.Store do
 
   @impl true
   def init(path) do
+    # First, so a reader that finds this store by name finds its path too.
+    :persistent_term.put(path_key(self()), path)
     File.mkdir_p!(Path.dirname(path))
     {:ok, db} = Sqlite3.open(path)
 
@@ -454,8 +478,6 @@ defmodule HalC2.Store do
 
     {:reply, :ok, state}
   end
-
-  def handle_call(:path, _from, state), do: {:reply, state.path, state}
 
   def handle_call(:checkpoint, from, state) do
     send(state.checkpointer, {:checkpoint, from})

@@ -93,12 +93,7 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   step ~r/^the client subscribes to an? (?<shape>\w+) shape with (?<fields>.+)$/,
        %{args: [type, fields]} = context do
-    form =
-      cond do
-        "environment" in String.split(fields, ", ") -> "environment"
-        fields == "links" -> "links"
-        true -> "mc"
-      end
+    form = if "environment" in String.split(fields, ", "), do: "environment", else: "mc"
 
     context = Shapes.subscribe(context, type, form)
     expected = if fields == "none", do: [], else: String.split(fields, ", ")
@@ -113,7 +108,7 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   step ~r/^later changes arrive as (?<text>.+)$/, %{args: [text]} = context do
     %{type: type, form: form} = context.shape
-    later = Shapes.later(type, form)
+    later = Shapes.later(type)
 
     if form == "environment",
       do: assert(text == "the same frames as the MC form"),
@@ -148,7 +143,7 @@ defmodule HalC2.Steps.Parity.Protocol do
       nil -> World.put_client(context, World.client(context))
       # These frames are the subscription opening; the When subscribes.
       _ when frame in ~w(shell snapshot config) -> context
-      type -> Shapes.subscribe(context, type, Shapes.form_for(frame))
+      type -> Shapes.subscribe(context, type)
     end
   end
 
@@ -166,10 +161,6 @@ defmodule HalC2.Steps.Parity.Protocol do
     "projects or threads on one MC change" => "shell.rows",
     "an MC's environment descriptor changes" => "shell.environment",
     "an MC joins or leaves the cluster" => "shell.mc",
-    "the environments the MC links to change" => "shell.links",
-    "a linked environment's projects or threads change" => "shell.linkRows",
-    "a linked environment's MC descriptor changes" => "shell.linkEnvironment",
-    "a linked environment's MC comes online or goes offline" => "shell.linkMc",
     "a stream subscription starts or falls too far behind" => "snapshot",
     "stream entities change" => "events",
     "a stream has caught up" => "live",
@@ -202,7 +193,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "the relay client install progresses" => "relayClientInstall"
   }
 
-  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|the environments the MC links to change|a linked environment's projects or threads change|a linked environment's MC descriptor changes|a linked environment's MC comes online or goes offline|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
+  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
        %{args: [text]} = context do
     frame = Map.fetch!(@whens, text)
 
@@ -246,14 +237,10 @@ defmodule HalC2.Steps.Parity.Protocol do
     "error" => ~w(id reason),
     "rpc.result" => ~w(id result),
     "rpc.error" => ~w(id error detail),
-    "shell" => ~w(id mcs rows links),
+    "shell" => ~w(id mcs rows),
     "shell.rows" => ~w(id mc rows),
     "shell.environment" => ~w(id mc environment),
     "shell.mc" => ~w(id mc online),
-    "shell.links" => ~w(id links),
-    "shell.linkRows" => ~w(id link mc rows),
-    "shell.linkEnvironment" => ~w(id link mc environment),
-    "shell.linkMc" => ~w(id link mc online),
     "snapshot" => ~w(id offset at part rows done),
     "events" => ~w(id offset events),
     "live" => ~w(id offset),
@@ -472,6 +459,37 @@ defmodule HalC2.Steps.Parity.Protocol do
     context
   end
 
+  @settings_script Path.expand("../../support/v3_update_settings.ts", __DIR__)
+  @balancing %{
+    "loadBalancingEnabled" => true,
+    "loadBalancingWeights" => %{"env-server" => 2}
+  }
+
+  step "the MC's settings have load balancing on and a machine preferred", context do
+    World.update_settings(context, @balancing)
+  end
+
+  step "a client changes another setting through the protocol 3 adapter", context do
+    {:ok, ticket, _} = ticket()
+    url = "ws://127.0.0.1:#{context.mc.port}/ws?wsTicket=#{ticket}"
+    patch = JSON.encode!(%{"enableProviderUpdateChecks" => false})
+    args = [@settings_script, url, context.mc.environment, patch]
+    {out, status} = System.cmd("bun", args, stderr_to_stdout: true)
+    assert status == 0, out
+    context
+  end
+
+  step "the other setting is changed", context do
+    assert {%{"enableProviderUpdateChecks" => false}, _version} = HalC2.Settings.get()
+    context
+  end
+
+  step "load balancing is still on with the machine preferred", context do
+    {settings, _version} = HalC2.Settings.get()
+    assert Map.take(settings, Map.keys(@balancing)) == @balancing
+    context
+  end
+
   defp ticket do
     {:ok, %{"credential" => credential}} =
       HalC2.Auth.create_pairing_link(%{
@@ -560,13 +578,6 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   def later(type), do: [type]
 
-  def later("shell", "links"), do: ~w(shell.linkRows shell.linkEnvironment shell.linkMc)
-  def later(type, _form), do: later(type)
-
-  @doc "The form of the shape a frame type needs: a linked environment's frames need links."
-  def form_for("shell.link" <> _), do: "links"
-  def form_for(_t), do: "mc"
-
   @doc "Subscribes the default socket to `type` and collects its first frames."
   def subscribe(context, type, form \\ "mc") do
     context = Fixtures.setup(context)
@@ -643,14 +654,6 @@ defmodule HalC2.Steps.Parity.Shapes do
                  Enum.map(HalC2.Shell.environments(), &to_string(elem(&1, 0)))
 
         assert length(rows) == length(HalC2.Shell.rows())
-
-        # With links, each link also carries its environment's MCs and rows. A link
-        # paired since scopes were kept also lists them.
-        link_keys = if form == "links", do: ~w(environment mcs online origin rows)
-        link_keys = link_keys || ~w(environment online origin)
-
-        for link <- frame["links"],
-            do: assert(Enum.sort(Map.keys(link) -- ["scopes"]) == link_keys)
 
       {"stream", [first | _] = frames} ->
         assert first["part"] == 0
@@ -738,17 +741,7 @@ defmodule HalC2.Steps.Parity.Shapes do
     mc = %{"mc" => Atom.to_string(node())}
 
     case type do
-      "shell" ->
-        # The socket follows the MC's links for shell.links from the moment it subscribes.
-        ensure([
-          {Registry, keys: :unique, name: HalC2.Links.Registry},
-          {DynamicSupervisor, name: HalC2.Links.Supervisor, strategy: :one_for_one},
-          HalC2.Links
-        ])
-
-        {if(form == "links", do: %{"links" => true}, else: %{}), context}
-
-      "authAccess" ->
+      type when type in ~w(shell authAccess) ->
         {%{}, context}
 
       "stream" ->
@@ -846,23 +839,10 @@ defmodule HalC2.Steps.Parity.Shapes do
         await(context, t, id, &(&1["mc"] == to_string(@gone)))
 
       "shell.mc" ->
+        # Only a machine that was up goes down.
+        send(HalC2.Shell, {:nodeup, @gone})
         send(HalC2.Shell, {:nodedown, @gone})
         await(context, t, id, &(&1["online"] == false))
-
-      "shell.links" ->
-        # A link to an environment nobody serves; removed once the frame lands.
-        environment = %{"environmentId" => "env-linked", "label" => "Linked"}
-        link = %{"origin" => "http://127.0.0.1:9", "token" => "t", "environment" => environment}
-        :ok = GenServer.call(HalC2.Links, {:put, link})
-
-        result =
-          await(context, t, id, &match?([%{"origin" => "http://127.0.0.1:9"} | _], &1["links"]))
-
-        HalC2.Links.remove("env-linked")
-        result
-
-      "shell.link" <> _ ->
-        linked_frame(context, t, id)
 
       "live" ->
         await(context, t, id)
@@ -1034,33 +1014,6 @@ defmodule HalC2.Steps.Parity.Shapes do
         {_, context} = await(context, "end", id, & &1, 5_000)
         {frame, context}
     end
-  end
-
-  # A link to an environment nobody serves, whose shell frames the test plays to the
-  # MC's links as that environment would send them; removed once the frame lands.
-  defp linked_frame(context, t, id) do
-    environment = %{"environmentId" => "env-linked", "label" => "Linked"}
-    link = %{"origin" => "http://127.0.0.1:9", "token" => "t", "environment" => environment}
-    :ok = GenServer.call(HalC2.Links, {:put, link})
-    [ref] = for {ref, "env-linked"} <- :sys.get_state(HalC2.Links).following, do: ref
-
-    frame =
-      case t do
-        "shell.linkRows" ->
-          row = %{"id" => "th-linked", "title" => "Linked"}
-          %{"t" => "shell.rows", "mc" => "beast@host", "rows" => [["th-linked", "thread", row]]}
-
-        "shell.linkEnvironment" ->
-          %{"t" => "shell.environment", "mc" => "beast@host", "environment" => environment}
-
-        "shell.linkMc" ->
-          %{"t" => "shell.mc", "mc" => "beast@host", "online" => true}
-      end
-
-    send(HalC2.Links, {:hal_c2_link, ref, frame})
-    result = await(context, t, id, &(&1["link"] == "env-linked"))
-    :ok = HalC2.Links.remove("env-linked")
-    result
   end
 
   defp await(context, t, id, fun \\ fn _ -> true end, timeout \\ 3_000) do

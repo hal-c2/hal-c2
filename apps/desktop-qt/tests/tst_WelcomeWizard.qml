@@ -19,7 +19,7 @@ Item {
 
     function onboarding(overrides) {
         return Object.assign({ gate: "wizard", recovery: null, step: "connection", stage: 0, importing: false,
-                               computers: [{ environmentId: "env-a", label: "studio", url: "", connected: true, selected: true }],
+                               computers: [{ environmentId: "env-a", label: "studio", connected: true, selected: true }],
                                canContinue: true, pairing: false, pairingError: "", pairingDetail: "",
                                agents: [], terminal: null, import: {} }, overrides);
     }

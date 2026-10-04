@@ -410,8 +410,8 @@ Feature: Keybindings
       Then the window shows "env-a:t3"
 
     @desktop
-    Scenario: The next thread reaches a thread on an environment the MC is linked to
-      Given the MC is linked to "env-c"
+    Scenario: The next thread reaches a thread on another machine of the cluster
+      Given the MC is clustered with "mc-c", which serves "env-c"
       And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
       And the user opens "env-a:t3" from the sidebar
       When the user presses mod+shift+]

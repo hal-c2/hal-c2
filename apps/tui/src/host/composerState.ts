@@ -51,12 +51,14 @@ import {
 } from "../components/ChatView.layout.ts";
 import type { TuiClient } from "../connection.ts";
 import { clip } from "../format.ts";
+import { projectLabel } from "../orchestrationV2Adapter.ts";
 import {
   interactionModeLabel,
   RUNTIME_MODE_META,
   RUNTIME_MODES,
   runtimeModeLabel,
 } from "../controls.ts";
+import { placeNewThread } from "../loadBalancing.ts";
 import {
   currentModelIndex,
   modelOptionStates,
@@ -255,27 +257,8 @@ export type TuiSelectKind =
   | "workspace"
   | "branch"
   | "project-scope"
-  | "menu";
-
-/** A list another controller opens in the picker (`Composer.openMenu`). */
-export interface TuiMenuSpec {
-  readonly title: string;
-  readonly status?: TuiSelectState["status"];
-  readonly options: ReadonlyArray<{
-    readonly label: string;
-    readonly description?: string;
-    readonly value: string;
-  }>;
-  readonly index?: number;
-  /** Runs with the chosen option's value after the menu closed. */
-  readonly onChoose: (value: string) => void;
-  /** The mode that has the keys while it is open ("select" unless given). */
-  readonly mode?: TuiMode;
-  /** The mode the keys go back to when it closes ("compose" unless given). */
-  readonly returnMode?: TuiMode;
-  /** A search field above the options: typing narrows them by label and description. */
-  readonly searchable?: boolean;
-}
+  /** A choice another controller asks for (`Composer.pick`). */
+  | "choice";
 
 /** Published under `select`: the one open picker (or `{ open: false }`). */
 export interface TuiSelectState {
@@ -283,7 +266,12 @@ export interface TuiSelectState {
   readonly kind: TuiSelectKind | null;
   readonly title: string;
   readonly status: "loading" | "ready" | "empty" | "error";
-  readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
+  readonly options: ReadonlyArray<{
+    readonly label: string;
+    readonly description: string;
+    /** Listed but not choosable. */
+    readonly disabled?: boolean;
+  }>;
   readonly index: number;
   /** The picker has a search field; `query` is what was typed into it. */
   readonly searchable: boolean;
@@ -326,22 +314,49 @@ interface NewDraft {
   readonly refsStatus: TuiNewThreadState["refsStatus"];
   /** The user picked the workspace: the project file's default no longer applies. */
   readonly workspaceChosen?: boolean;
+  /**
+   * The user chose its workspace or branch among this machine's: the thread
+   * starts here, not on whichever machine has the most room.
+   */
+  readonly tied: boolean;
 }
 
 interface SelectOption {
   readonly label: string;
   readonly description: string;
   readonly value: string;
+  readonly disabled?: boolean;
 }
 
 interface Picker {
-  readonly menu?: TuiMenuSpec;
+  /** A "choice" picker's asker, which gets the chosen option's value. */
+  readonly request?: PickRequest;
   readonly query?: string;
   readonly kind: TuiSelectKind;
   readonly title: string;
   readonly status: TuiSelectState["status"];
   readonly options: ReadonlyArray<SelectOption>;
   readonly index: number;
+}
+
+/** A choice another controller puts in the picker (`Composer.pick`). */
+export interface PickRequest {
+  readonly title: string;
+  /** "ready" with options and "empty" without, unless given (a list still loading). */
+  readonly status?: TuiSelectState["status"];
+  readonly options: ReadonlyArray<
+    Omit<SelectOption, "description"> & { readonly description?: string }
+  >;
+  /** The option the cursor starts on (the first that can be chosen unless given). */
+  readonly index?: number;
+  /** Runs with the chosen option's value after the picker closed. */
+  readonly onChoose: (value: string) => void;
+  /** The mode that has the keys while it is open ("select" unless given). */
+  readonly mode?: TuiMode;
+  /** The mode the keys go back to when it closes ("compose" unless given). */
+  readonly returnMode?: TuiMode;
+  /** A search field above the options: typing narrows them by label and description. */
+  readonly searchable?: boolean;
 }
 
 const EMPTY_DRAFT: Draft = { text: "", images: [] };
@@ -367,9 +382,7 @@ const envMode = (mode: ThreadEnvMode | null | undefined): "local" | "worktree" |
 export interface Composer {
   /** Handle a `composer.*`, `select.*`, `thread.new` or `newThread.*` action. */
   readonly dispatch: (action: string, payload?: unknown) => boolean;
-  /** Open (or replace) a list in the picker for another controller. */
-  readonly openMenu: (spec: TuiMenuSpec) => void;
-  /** Close the picker when a menu (with this title, if given) is open. */
+  /** Close the picker while it holds another controller's choice (with this title, if given). */
   readonly closeMenu: (title?: string) => void;
   /** Attach a context record to the open thread's prompt; false without a thread to reply to. */
   readonly addContext: (record: KnownComposerContextRecord) => boolean;
@@ -395,6 +408,11 @@ export interface Composer {
   }) => number;
   /** The rows an open picker asks for above the prompt (ChatView's pickerWanted). */
   readonly pickerRows: () => number;
+  /**
+   * Ask the user to choose in the picker. The returned function replaces the
+   * status and options (a list that was loading) while that picker is still open.
+   */
+  readonly pick: (request: PickRequest) => (next: Pick<PickRequest, "status" | "options">) => void;
   /** Resolves when every request the composer started has settled. */
   readonly idle: () => Promise<void>;
   /** For the palette: what the composer can offer right now. */
@@ -894,7 +912,9 @@ export function createComposer(options: ComposerOptions): Composer {
         active,
         name: styled(
           chunk(active ? "▸ " : "  ", { fg: active ? palette.accent : palette.dim }),
-          chunk(clip(option.label, labelRoom), { fg: active ? palette.text : palette.dim }),
+          chunk(clip(option.label, labelRoom), {
+            fg: active && !option.disabled ? palette.text : palette.dim,
+          }),
         ),
         description: description
           ? styled(
@@ -914,9 +934,13 @@ export function createComposer(options: ComposerOptions): Composer {
           kind: picker.kind,
           title: picker.title,
           status: picker.status,
-          options: picker.options.map(({ label, description }) => ({ label, description })),
+          options: picker.options.map(({ label, description, disabled }) => ({
+            label,
+            description,
+            ...(disabled ? { disabled } : {}),
+          })),
           index: picker.index,
-          searchable: picker.menu?.searchable === true,
+          searchable: picker.request?.searchable === true,
           query: picker.query ?? "",
           rows: selectRows(picker),
         }
@@ -932,10 +956,10 @@ export function createComposer(options: ComposerOptions): Composer {
           rows: [],
         };
   const pickerRows = () =>
-    picker ? Math.max(picker.options.length, 1) * 2 + 3 + (picker.menu?.searchable ? 1 : 0) : 0;
+    picker ? Math.max(picker.options.length, 1) * 2 + 3 + (picker.request?.searchable ? 1 : 0) : 0;
   /** Narrow a searchable menu to the options whose label or description holds the query. */
   const searchMenu = (query: string) => {
-    const spec = picker?.menu;
+    const spec = picker?.request;
     if (!picker || !spec?.searchable) return;
     const needle = query.trim().toLowerCase();
     const matches = spec.options
@@ -945,11 +969,7 @@ export function createComposer(options: ComposerOptions): Composer {
           option.label.toLowerCase().includes(needle) ||
           (option.description ?? "").toLowerCase().includes(needle),
       )
-      .map((option) => ({
-        label: option.label,
-        description: option.description ?? "",
-        value: option.value,
-      }));
+      .map(selectOption);
     picker = {
       ...picker,
       query,
@@ -1004,29 +1024,18 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const openPicker = (next: Picker) => {
     picker = next;
-    options.setMode(next.menu?.mode ?? "select");
+    options.setMode(next.request?.mode ?? "select");
     publish();
   };
   const closePicker = () => {
     if (!picker) return;
-    const menu = picker.menu;
+    const request = picker.request;
     picker = null;
-    if (options.mode() === (menu?.mode ?? "select")) options.setMode(menu?.returnMode ?? "compose");
+    if (options.mode() === (request?.mode ?? "select")) {
+      options.setMode(request?.returnMode ?? "compose");
+    }
     publish();
   };
-  const openMenu = (spec: TuiMenuSpec) =>
-    openPicker({
-      menu: spec,
-      kind: "menu",
-      title: spec.title,
-      status: spec.status ?? (spec.options.length > 0 ? "ready" : "empty"),
-      options: spec.options.map((option) => ({
-        label: option.label,
-        description: option.description ?? "",
-        value: option.value,
-      })),
-      index: Math.min(Math.max(0, spec.index ?? 0), Math.max(0, spec.options.length - 1)),
-    });
   /** Opening the picker that is already open closes it (clicking a control twice). */
   const toggles = (kind: TuiSelectKind) => {
     if (picker?.kind !== kind) return false;
@@ -1037,6 +1046,42 @@ export function createComposer(options: ComposerOptions): Composer {
     if (picker?.kind !== kind) return;
     picker = update(picker);
     publish();
+  };
+  /** The first option that can be chosen (0 when none can). */
+  const firstChoosable = (list: ReadonlyArray<SelectOption>) =>
+    Math.max(
+      0,
+      list.findIndex((option) => !option.disabled),
+    );
+  const selectOption = (option: PickRequest["options"][number]): SelectOption => ({
+    ...option,
+    description: option.description ?? "",
+  });
+  const pick: Composer["pick"] = (request) => {
+    const list = request.options.map(selectOption);
+    openPicker({
+      request,
+      kind: "choice",
+      title: request.title,
+      status: request.status ?? (list.length > 0 ? "ready" : "empty"),
+      options: list,
+      index:
+        request.index === undefined
+          ? firstChoosable(list)
+          : Math.min(Math.max(0, request.index), Math.max(0, list.length - 1)),
+    });
+    return (next) => {
+      // Closed, or another choice took its place: nothing to update.
+      if (picker?.request !== request) return;
+      const listed = next.options.map(selectOption);
+      picker = {
+        ...picker,
+        status: next.status ?? (listed.length > 0 ? "ready" : "empty"),
+        options: listed,
+        index: firstChoosable(listed),
+      };
+      publish();
+    };
   };
 
   const loadModels = () =>
@@ -1201,7 +1246,7 @@ export function createComposer(options: ComposerOptions): Composer {
         value: ALL_PROJECTS,
       },
       ...(current.shell?.projects ?? []).map((project) => ({
-        label: project.title,
+        label: projectLabel(project),
         description: project.workspaceRoot,
         value: project.id as string,
       })),
@@ -1316,7 +1361,7 @@ export function createComposer(options: ComposerOptions): Composer {
           ? "on"
           : "off"
         : (trait.choices.find((choice) => choice.id === trait.value)?.label ?? "—");
-    openMenu({
+    pick({
       title: "options",
       options: traits.map((trait) => ({
         label: `${trait.label}: ${shown(trait)}`,
@@ -1330,7 +1375,7 @@ export function createComposer(options: ComposerOptions): Composer {
           setOption(trait.id, trait.value !== true);
           return;
         }
-        openMenu({
+        pick({
           title: trait.label.toLowerCase(),
           options: trait.choices.map((choice) => ({ label: choice.label, value: choice.id })),
           index: Math.max(
@@ -1408,7 +1453,14 @@ export function createComposer(options: ComposerOptions): Composer {
           );
       if (currentRef) branch = currentRef.name;
     }
-    newDraft = { ...newDraft, workspaceMode: mode, branch, worktreePath, workspaceChosen: true };
+    newDraft = {
+      ...newDraft,
+      workspaceMode: mode,
+      branch,
+      worktreePath,
+      workspaceChosen: true,
+      tied: true,
+    };
     store.setStatus(
       mode === "new-worktree" ? "Workspace → New worktree" : "Workspace → Current checkout",
       "success",
@@ -1429,13 +1481,18 @@ export function createComposer(options: ComposerOptions): Composer {
       ref,
     });
     if (selection.kind === "select-base") {
-      newDraft = { ...draft, branch: selection.branch };
+      newDraft = { ...draft, branch: selection.branch, tied: true };
       store.setStatus(`Worktree base → ${selection.branch}`, "success");
       publish();
       return;
     }
     if (selection.kind === "reuse-worktree") {
-      newDraft = { ...draft, branch: selection.branch, worktreePath: selection.worktreePath };
+      newDraft = {
+        ...draft,
+        branch: selection.branch,
+        worktreePath: selection.worktreePath,
+        tied: true,
+      };
       store.setStatus(`Workspace → ${selection.branch}`, "success");
       publish();
       return;
@@ -1451,7 +1508,7 @@ export function createComposer(options: ComposerOptions): Composer {
           (result) => {
             if (switchToken !== token || !newDraft) return;
             const branch = result.refName ?? selection.branch;
-            newDraft = { ...newDraft, branch, worktreePath: selection.worktreePath };
+            newDraft = { ...newDraft, branch, worktreePath: selection.worktreePath, tied: true };
             store.setStatus(`Branch → ${branch}`, "success");
           },
           (error) => {
@@ -1551,12 +1608,15 @@ export function createComposer(options: ComposerOptions): Composer {
       contextWorktreePath: context.worktreePath,
       refs: [],
       refsStatus: project ? "loading" : "empty",
+      tied: false,
     };
     drafts.delete(NEW_TARGET);
     closePicker();
     options.setMode("newThread");
     publish();
     options.onDraftChange?.();
+    // Its branches and files are this project's machine's, whatever thread was open before.
+    client.viewProject(project?.id ?? null);
     if (project) void loadRefs(newDraft.draftId, project.workspaceRoot);
     if (project && savedMode === null) {
       const draftId = newDraft.draftId;
@@ -1581,6 +1641,7 @@ export function createComposer(options: ComposerOptions): Composer {
   const closeNewThread = () => {
     if (!newDraft) return;
     newDraft = null;
+    client.viewProject(null);
     switchToken += 1;
     switchPending = false;
     drafts.delete(NEW_TARGET);
@@ -1618,31 +1679,55 @@ export function createComposer(options: ComposerOptions): Composer {
     store.setStatus("Creating thread and starting its first turn…", "busy");
     publish();
     const createWorktree = draft.workspaceMode === "new-worktree";
+    // A draft the user tied to this machine, or that inherited a worktree here, starts here.
+    const placing =
+      draft.tied || draft.worktreePath !== null
+        ? Promise.resolve(project)
+        : placeNewThread({
+            projects: projects(),
+            machines: store.getState().shell?.machines,
+            project,
+            instanceId: modelSelection.instanceId,
+            place: client.placeThread,
+          });
     void track(
-      client
-        .createThread({
-          projectId: project.id,
-          projectCwd: project.workspaceRoot,
-          title: typed.length > 0 ? truncate(typed) : "Image attachment",
-          modelSelection,
-          firstMessage: message,
-          attachments: images.map((image) => image.upload),
-          runtimeMode: draft.runtimeMode,
-          interactionMode: draft.interactionMode,
-          branch: draft.branch,
-          worktreePath: createWorktree ? null : draft.worktreePath,
-          createWorktree,
-          startFromOrigin: createWorktree && settings.newWorktreesStartFromOrigin,
+      placing
+        .then((placed) => {
+          const elsewhere = placed.id !== project.id;
+          return client
+            .createThread({
+              projectId: placed.id,
+              projectCwd: placed.workspaceRoot,
+              title: typed.length > 0 ? truncate(typed) : "Image attachment",
+              modelSelection,
+              firstMessage: message,
+              attachments: images.map((image) => image.upload),
+              runtimeMode: draft.runtimeMode,
+              interactionMode: draft.interactionMode,
+              // The branch this machine's checkout is on says nothing of another's;
+              // a new worktree's base branch is the repository's on either.
+              branch: elsewhere && !createWorktree ? null : draft.branch,
+              worktreePath: createWorktree ? null : draft.worktreePath,
+              createWorktree,
+              startFromOrigin: createWorktree && settings.newWorktreesStartFromOrigin,
+            })
+            .then((threadId) => ({ threadId, placed, elsewhere }));
         })
         .then(
-          (threadId) => {
+          ({ threadId, placed, elsewhere }) => {
             createPending = false;
             rememberModel(modelSelection);
             closeNewThread();
+            // The user follows the thread: a list scoped to another project would hide it.
             const scope = store.getState().projectScopeId;
-            if (scope !== null && scope !== project.id) store.setProjectScope(project.id);
+            if (scope !== null && scope !== placed.id) store.setProjectScope(placed.id);
             store.select({ kind: "thread", id: threadId });
-            store.setStatus("Thread created.", "success");
+            store.setStatus(
+              elsewhere && placed.machine
+                ? `Thread created on ${placed.machine}.`
+                : "Thread created.",
+              "success",
+            );
             publish();
           },
           (error) => {
@@ -1666,6 +1751,17 @@ export function createComposer(options: ComposerOptions): Composer {
     if (typed.length === 0 && draft.images.length === 0 && contexts.length === 0) return;
     if (!detail || !key) {
       store.setStatus("Select a thread (Alt+↑/↓ or click) to send a message.");
+      return;
+    }
+    // The machine it is leaving would refuse the message: the draft waits for the thread.
+    const moving = store
+      .getState()
+      .shell?.threads.find((thread) => thread.id === detail.id)?.moving;
+    if (moving) {
+      store.setStatus(
+        `${detail.title} is moving to ${moving.label}. Send the message once it has arrived.`,
+        "error",
+      );
       return;
     }
     // The draft stays as typed: it is sent when the user asks again, once connected.
@@ -1938,7 +2034,7 @@ export function createComposer(options: ComposerOptions): Composer {
               return;
             }
             if (picker !== null) return;
-            openMenu({
+            pick({
               title: "files",
               searchable: true,
               options: entries
@@ -1961,7 +2057,7 @@ export function createComposer(options: ComposerOptions): Composer {
       const commands =
         withUsageLimitsCommands(provider ? [provider] : [], usageSources)[0]?.slashCommands ?? [];
       if (commands.length === 0) return;
-      openMenu({
+      pick({
         title: "commands",
         searchable: true,
         options: commands.map((command) => ({
@@ -1982,7 +2078,7 @@ export function createComposer(options: ComposerOptions): Composer {
       return;
     }
     if (!(provider?.skills ?? []).some((skill) => skill.enabled)) return;
-    openMenu({
+    pick({
       title: "skills",
       searchable: true,
       options: (provider?.skills ?? [])
@@ -2074,8 +2170,9 @@ export function createComposer(options: ComposerOptions): Composer {
   const choose = (index: number) => {
     const current = picker;
     if (!current) return;
-    const value = current.options[index]?.value;
-    if (value === undefined) return;
+    const option = current.options[index];
+    if (option === undefined || option.disabled) return;
+    const { value } = option;
     if (current.kind === "branch") {
       closePicker();
       selectBranch(value);
@@ -2083,9 +2180,6 @@ export function createComposer(options: ComposerOptions): Composer {
     }
     closePicker();
     switch (current.kind) {
-      case "menu":
-        current.menu?.onChoose(value);
-        return;
       case "model": {
         const parsed = JSON.parse(value) as { instanceId: string; model: string };
         setModel(parsed.instanceId, parsed.model);
@@ -2105,13 +2199,22 @@ export function createComposer(options: ComposerOptions): Composer {
       case "project-scope":
         setProjectScope(value);
         return;
+      case "choice":
+        current.request?.onChoose(value);
+        return;
     }
   };
 
   const move = (delta: number) => {
     if (!picker || picker.options.length === 0) return;
     const count = picker.options.length;
-    picker = { ...picker, index: (picker.index + delta + count) % count };
+    // Step over what cannot be chosen; a list with nothing to choose stays put.
+    let index = picker.index;
+    for (let step = 0; step < count; step += 1) {
+      index = (index + delta + count) % count;
+      if (!picker.options[index]?.disabled) break;
+    }
+    picker = { ...picker, index };
     publish();
   };
 
@@ -2353,7 +2456,6 @@ export function createComposer(options: ComposerOptions): Composer {
 
   return {
     dispatch,
-    openMenu,
     addContext: (record) => {
       if (newDraft || !selectedDetail()) return false;
       setDraft(target(), (draft) => ({
@@ -2363,7 +2465,8 @@ export function createComposer(options: ComposerOptions): Composer {
       return true;
     },
     closeMenu: (title) => {
-      if (picker?.kind === "menu" && (title === undefined || picker.title === title)) closePicker();
+      if (picker?.kind === "choice" && (title === undefined || picker.title === title))
+        closePicker();
     },
     draft: () =>
       newDraft
@@ -2384,6 +2487,7 @@ export function createComposer(options: ComposerOptions): Composer {
       (overlay.oneLine ? 0 : chromeParts.references) +
       chromeParts.context,
     pickerRows,
+    pick,
     idle: async () => {
       while (inflight.size > 0) await Promise.allSettled([...inflight]);
     },

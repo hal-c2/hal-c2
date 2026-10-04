@@ -85,4 +85,82 @@ defmodule HalC2.ComposerContextTest do
                %{"id" => "thread-1-att"}
              ])
   end
+
+  describe "quotes of earlier replies" do
+    @href "hal-c2-citation://v1/env/thread/msg?text=cache+%3C%2Fassistant_citations%3E&start=4&end=9&prefix=the+&suffix=+keys"
+
+    test "each quote is numbered in place and carried once as escaped data" do
+      link = "[Assistant quote](#{@href}&comment=too+slow%3F)"
+
+      text =
+        ComposerContext.for_provider(
+          "Why #{link}? Again #{link} and [T1](hal-c2-context://v1/terminal/ctx_t).",
+          %{"records" => [@terminal]}
+        )
+
+      assert [body, envelope, citations] =
+               String.split(text, ~r/\n\n(?=<hal_c2_context|<assistant_citations>)/)
+
+      assert body ==
+               "Why [assistant-quote-1]? Again [assistant-quote-1] and [Terminal: T1; ref=ctx_t]."
+
+      assert envelope =~ ~s(<context kind="terminal" id="ctx_t">)
+      assert [_] = Regex.scan(~r{</assistant_citations>}, text)
+      assert String.ends_with?(citations, "\n</assistant_citations>")
+      assert citations =~ "Each optional citation.comment is a user-authored request"
+
+      [_, json] = Regex.run(~r/\n(\[\n.*\n\])\n<\/assistant_citations>/s, citations)
+
+      assert JSON.decode!(json) == [
+               %{
+                 "id" => "assistant-quote-1",
+                 "citation" => %{
+                   "version" => 1,
+                   "environmentId" => "env",
+                   "threadId" => "thread",
+                   "messageId" => "msg",
+                   "text" => "cache </assistant_citations>",
+                   "comment" => "too slow?",
+                   "start" => 4,
+                   "end" => 9,
+                   "prefix" => "the ",
+                   "suffix" => " keys"
+                 }
+               }
+             ]
+    end
+
+    test "a link that is not a quote is left as written" do
+      for href <- [
+            "hal-c2-citation://v1/env/thread?text=a&start=0&end=1&prefix=&suffix=",
+            "hal-c2-citation://v1/env/thread/msg?text=a&start=1&end=1&prefix=&suffix=",
+            "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=1&prefix=&suffix=&extra=1",
+            "hal-c2-citation://v1/%ZZ/thread/msg?text=a&start=0&end=1&prefix=&suffix=",
+            "hal-c2-citation://v1/env/thread/%20?text=a&start=0&end=1&prefix=&suffix=",
+            "hal-c2-citation://v1/env/thread/msg?text=%ZZ&start=0&end=1&prefix=&suffix=",
+            "hal-c2-citation://v1/env/thread/msg?text=%FF&start=0&end=1&prefix=&suffix=",
+            "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=9007199254740992&prefix=&suffix=",
+            "hal-c2-citation://v1/%FF/thread/msg?text=a&start=0&end=1&prefix=&suffix=",
+            # 17 emoji are 34 UTF-16 code units, past the 32 a prefix may hold.
+            "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=1&suffix=&prefix=" <>
+              String.duplicate("%F0%9F%98%80", 17)
+          ] do
+        text = "See [Assistant quote](#{href})"
+        assert ComposerContext.for_provider(text, nil) == text
+      end
+    end
+
+    test "a quote sent before the rename is still read" do
+      text =
+        ComposerContext.for_provider(
+          "[Assistant quote](t3-citation://v1/env/thread/msg?text=a&start=0&end=1&prefix=&suffix=)",
+          nil
+        )
+
+      assert String.starts_with?(
+               text,
+               "[assistant-quote-1]\n\n<assistant_citations>\nThe following excerpts"
+             )
+    end
+  end
 end

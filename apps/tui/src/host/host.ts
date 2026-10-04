@@ -58,8 +58,9 @@ import {
   type TerminalScrollAction,
   type TerminalThread,
 } from "./terminalState.ts";
+import { createLoadBalancingController } from "./loadBalancingState.ts";
+import { createMoveController } from "./moveState.ts";
 import { createThreadActions } from "./threadActions.ts";
-import { createThreadMove } from "./threadMove.ts";
 import { createTuiTheme, tuiThemeState, type TuiTheme } from "./theme.ts";
 import { createThreadView } from "./threadView.ts";
 import type { CellPixels } from "./timelineState.ts";
@@ -462,6 +463,7 @@ export function createHost(options: HostOptions): Host {
               ]
             : []),
         ],
+        loadBalancing: loadBalancing.state(),
         // Before the first layout the pane is the whole terminal.
         width: (layout as TuiLayoutState | undefined)?.chatWidth ?? size.columns,
       }),
@@ -622,7 +624,7 @@ export function createHost(options: HostOptions): Host {
     }),
     width: () => (layout ? layout.rightPanel.width : 0),
     focusPanel: () => setRightPanel(SOURCE_CONTROL_PANEL, true),
-    menu: (spec) => composer!.openMenu(spec),
+    menu: (spec) => composer!.pick(spec),
     copyToClipboard: options.copyToClipboard,
   });
 
@@ -799,6 +801,16 @@ export function createHost(options: HostOptions): Host {
       return dispatch("files.view", { path, line });
     },
   });
+  // Load balancing: in settings, on / off and each machine's preference from the palette.
+  const loadBalancing = createLoadBalancingController({
+    client,
+    store,
+    pick: (request) => composer!.pick(request),
+    publish: () => {
+      if (settingsOpen) publishSettings();
+      palette.sync();
+    },
+  });
   /** The files, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
     [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
@@ -857,10 +869,10 @@ export function createHost(options: HostOptions): Host {
       };
     },
     // After the composer's own entries: thread lifecycle and scope, then the
-    // diff, source-control, settings, files, add-project, terminal and cluster entries.
+    // diff, source-control, settings, files, add-project, terminal, cluster and
+    // load-balancing entries.
     extraCommands: () => [
       ...threadActions.paletteCommands(),
-      ...threadMove.paletteCommands(selectedShellThread()),
       ...threadView.paletteCommands(),
       ...detailCommands({
         panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
@@ -872,19 +884,13 @@ export function createHost(options: HostOptions): Host {
       ...features.commands(),
       ...sections!.commands(),
       ...updateNotice.commands(),
+      ...loadBalancing.commands(),
     ],
     run: (action, payload) => {
       dispatch(action, payload);
     },
   });
 
-  const selectedShellThread = () => {
-    const current = store.getState();
-    const selection = current.selection;
-    return selection?.kind === "thread"
-      ? (current.shell?.threads.find((thread) => thread.id === selection.id) ?? null)
-      : null;
-  };
   const theme = createTuiTheme();
   /**
    * The palette changed under everything already drawn: the bricks follow
@@ -1010,8 +1016,9 @@ export function createHost(options: HostOptions): Host {
   const handle = (action: string, payload?: unknown): boolean => {
     if (action === "palette.open") {
       threadActions.closeMenu();
-      // Its remove entries follow the members.
+      // Its remove entries follow the members, its load-balancing entries the MC's settings.
       void cluster.refresh();
+      void loadBalancing.refresh();
     }
     if (palette.dispatch(action, payload)) return true;
     // A draft would have nowhere to go: say so instead of opening one.
@@ -1023,15 +1030,6 @@ export function createHost(options: HostOptions): Host {
     if (action === "composer.paste") return composer!.dispatch(action, payload);
     if (composer!.dispatch(action, payload)) return true;
     if (threadActions.dispatch(action, payload)) return true;
-    if (action === "thread.move") {
-      const key = payloadField(payload, "key");
-      const thread =
-        typeof key === "string"
-          ? (store.getState().shell?.threads.find((entry) => entry.id === idFromKey(key)) ?? null)
-          : selectedShellThread();
-      if (thread) threadMove.choose(thread);
-      return true;
-    }
     // ↑/↓ walk the approvals only while the prompt is empty (then they edit it).
     if (
       (action === "approval.previous" || action === "approval.next") &&
@@ -1153,6 +1151,7 @@ export function createHost(options: HostOptions): Host {
         settingsOpen = true;
         publishSettings();
         void cluster.refresh();
+        void loadBalancing.refresh();
         setMode("settings");
         return true;
       case "settings.close":
@@ -1292,6 +1291,7 @@ export function createHost(options: HostOptions): Host {
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
         if (cluster.dispatch(action, payload)) return true;
         if (sections!.dispatch(action, payload)) return true;
+        if (loadBalancing.dispatch(action, payload)) return true;
         // Known actions that decline when they do not apply (the key falls through).
         if (DECLINABLE_ACTIONS.has(action)) return false;
         if (!unknownActions.has(action)) {
@@ -1302,6 +1302,13 @@ export function createHost(options: HostOptions): Host {
     }
   };
 
+  // Moving a thread to another machine asks its questions in the composer's picker.
+  const move = createMoveController({
+    client,
+    store,
+    pick: (request) => composer!.pick(request),
+    width: () => popoverViewport().width,
+  });
   const threadActions = createThreadActions({
     client,
     store,
@@ -1314,18 +1321,8 @@ export function createHost(options: HostOptions): Host {
     copyToClipboard: options.copyToClipboard,
     offline: () => offline(),
     now,
-    extraMenuItems: () => threadMove.menuItems(),
-    runExtraMenuItem: (thread, id) => threadMove.runMenuItem(thread, id),
-  });
-  // Moving a thread to another machine of the cluster: from its menu and the palette.
-  const threadMove = createThreadMove({
-    client,
-    store,
-    clustered: () => {
-      const status = cluster.state().status;
-      return status?.clustered === true && status.members.length > 0;
-    },
-    openSubmenu: (thread, submenu) => threadActions.openSubmenu(thread, submenu),
+    canMove: move.available,
+    move: move.start,
   });
 
   const ask = createAsk({ state, mode: () => mode, setMode: (next) => setMode(next) });
@@ -1336,7 +1333,7 @@ export function createHost(options: HostOptions): Host {
       state,
       mode: () => mode,
       setMode: (next) => setMode(next),
-      menu: (spec) => composer!.openMenu(spec),
+      menu: (spec) => composer!.pick(spec),
       closeMenu: (title) => composer!.closeMenu(title),
       ask: (spec) => ask.ask(spec),
       status: (text, kind) => store.setStatus(text, kind),
@@ -1414,6 +1411,8 @@ export function createHost(options: HostOptions): Host {
     composer!.sync();
     features.sync();
     palette.sync();
+    move.sync();
+    loadBalancing.sync();
   });
   for (const message of options.startupWarnings ?? []) {
     addProblem({ level: "warning", message, where: null });
@@ -1439,6 +1438,8 @@ export function createHost(options: HostOptions): Host {
       updateNotice.check();
     }
   });
+  // A machine that joins, leaves or drops is followed as it happens, not when settings next open.
+  const unsubscribeCluster = client.subscribeCluster(() => void cluster.refresh());
   store.start();
 
   return {
@@ -1463,11 +1464,12 @@ export function createHost(options: HostOptions): Host {
       await terminal.settled();
       await threadView.settled();
       await cluster.settled();
-      await threadMove.settled();
       await features.settled();
       await sections!.settled();
       await plugins.settled();
       await updateNotice.settled();
+      await loadBalancing.settled();
+      await move.settled();
     },
     attachPlugins: (port) => plugins.attach(port),
     reportError: (error, where) =>
@@ -1482,6 +1484,7 @@ export function createHost(options: HostOptions): Host {
       disposeStatusRow();
       clientActivity.dispose();
       unsubscribeConnection();
+      unsubscribeCluster();
       unsubscribe();
       terminal.dispose();
       features.dispose();

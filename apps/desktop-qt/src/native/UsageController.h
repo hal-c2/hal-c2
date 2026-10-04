@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QSet>
+#include <QTimeZone>
 #include <QVariantMap>
 
 #include <functional>
@@ -41,7 +42,9 @@ class ShellStore;
 // cachedInputTokens, uncachedInputTokens, cacheCreationTokens, outputTokens,
 // providers [{id, label, costUsd, totalTokens, sessions}], models [{provider,
 // model, costUsd, totalTokens, unpriced}], periods [{key, label, costUsd,
-// totalTokens}] newest first} | null, limits {pools [{driver, label, windows
+// totalTokens}] newest first, chart [{key, label, heading, costUsd [one per
+// provider], totalTokens [one per provider]}] every period of the window,
+// oldest first} | null, limits {pools [{driver, label, windows
 // [{key, label, remainingPercent, resetsAt, accounts [{name, usedPercent,
 // resetsAt}]}], credits [{key, name, available, nextExpiresAt, busy,
 // status}]}], notices [text]}}.
@@ -58,11 +61,14 @@ public:
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  // The zone the window's days and the labels of its hours are read in.
+  void setZone(std::function<QTimeZone()> zone) { m_zone = std::move(zone); }
 
 private:
   struct Answer {
     QString status;  // scanning, ready, failed, offline
     QJsonObject summary;
+    QJsonObject window;  // what the summary was asked over
   };
   // Where an account's reset credit is spent: `provider.consumeResetCredit`'s input.
   struct Redeem {
@@ -89,6 +95,7 @@ private:
   McClient* m_client;
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
+  std::function<QTimeZone()> m_zone = [] { return QTimeZone::systemTimeZone(); };
   bool m_active = false;
   bool m_open = false;
   QString m_metric = QStringLiteral("limits");

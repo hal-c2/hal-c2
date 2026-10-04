@@ -149,16 +149,10 @@ WorkspaceController::Launch WorkspaceController::launch(const QString& draftId) 
     return launch;
   }
   const Checkout checkout = m_checkouts.value(draftId);
-  if (checkout.automatic && !checkout.balanced) {
-    // ChatView's send guard for a draft still waiting on Auto balance.
-    launch.problem = m_balancing.value(draftId).pending > 0
-                         ? QStringLiteral("Resource checks are still running. You can choose a machine in the composer.")
-                         : QStringLiteral("No eligible machine has available resources. Choose a machine in the composer to override.");
-    return launch;
-  }
   const bool moved = !checkout.environmentId.isEmpty();
   launch.environmentId = moved ? checkout.environmentId : draft->environmentId;
   launch.projectId = moved ? checkout.projectId : draft->projectId;
+  launch.tied = moved || checkout.branch || checkout.worktreePath;
   // The checkout's status is known only for the draft the window shows.
   const bool shown = m_place && m_place->draftId == draftId;
   const bool repo = !(shown && m_git && !m_git->local.value(QLatin1String("isRepo")).toBool(true));
@@ -194,7 +188,7 @@ std::optional<WorkspaceController::Place> WorkspaceController::resolve() const {
   Place place;
   if (route.kind == QLatin1String("thread")) {
     const QJsonObject row = m_store->threadRow(route.threadKey);
-    // A thread the shell does not list (yet: a link's rows come after its snapshot).
+    // A thread the shell does not list (yet: a member's rows come once it joins).
     if (row.isEmpty()) return std::nullopt;
     place.environmentId = route.threadKey.left(route.threadKey.indexOf(QLatin1Char(':')));
     place.threadId = text(row, "id");
@@ -242,8 +236,8 @@ void WorkspaceController::refresh() {
     ++m_renameRequestId;
   }
   follow(m_place ? m_place->cwd() : QString());
-  // Another machine's editors, through its cluster member or its link; a link
-  // that is down ends the watch at once, so it waits for the machine to be back.
+  // Another machine's editors; one that is unreachable ends the watch at once,
+  // so it waits for the machine to be back.
   if (m_place && m_place->environmentId != m_client->environment() && m_store->environmentOnline(m_place->environmentId)) {
     watchConfig(m_place->environmentId);
   } else {
@@ -263,10 +257,10 @@ QJsonObject WorkspaceController::threadRow() const {
   return m_store->threadRow(m_place->threadKey());
 }
 
-// The checkout's status, from wherever the MC reaches the thread's
-// environment: a cluster member or a link. It is followed again when the
-// environment comes back online, since a link that is down ends it at once
-// with its reason (gitError()).
+// The checkout's status, from the cluster member serving the thread's
+// environment. It is followed again when the environment comes back online,
+// since a member that is unreachable ends it at once with its reason
+// (gitError()).
 void WorkspaceController::follow(const QString& cwd) {
   const QString environment = m_place ? m_place->environmentId : QString();
   const bool online = !environment.isEmpty() && m_store->environmentOnline(environment);
@@ -361,7 +355,7 @@ void WorkspaceController::watchConfig(const QString& environmentId) {
 }
 
 QJsonObject WorkspaceController::environmentConfig() const {
-  // A linked environment that is down has none until it is back.
+  // Another machine that is down has none until it is back.
   if (m_place && m_place->environmentId != m_client->environment()) {
     return m_place->environmentId == m_configEnvironment ? m_configElsewhere : QJsonObject();
   }
@@ -537,85 +531,16 @@ QVariantList WorkspaceController::environmentChoices() const {
     return a.label.localeAwareCompare(b.label) < 0;
   });
   QVariantList result;
-  // Auto balance, where the project has a checkout on more than one machine.
-  if (!m_place->draftId.isEmpty() && checkouts.size() > 1 && NativeShell::of(this)->controller<SettingsController>()->setting(QStringLiteral("loadBalancingEnabled")).toBool()) {
-    result.append(QVariantMap{{QStringLiteral("environmentId"), QString()}, {QStringLiteral("key"), QStringLiteral("auto")}, {QStringLiteral("label"), automaticLabel()}});
-  }
   for (const QList<Choice>* list : {&checkouts, &elsewhere}) {
     for (const Choice& choice : *list) {
       result.append(QVariantMap{
           {QStringLiteral("environmentId"), choice.environmentId},
           {QStringLiteral("key"), choice.key},
           {QStringLiteral("label"), choice.label},
-          {QStringLiteral("checkout"), list == &checkouts},
       });
     }
   }
   return result;
-}
-
-QString WorkspaceController::automaticLabel() const {
-  const Checkout checkout = m_checkouts.value(m_place->draftId);
-  if (!checkout.automatic || checkout.balanced) return QStringLiteral("Auto balance");
-  const Balancing state = m_balancing.value(m_place->draftId);
-  if (state.pending > 0) return QStringLiteral("Checking machines…");
-  return state.failed ? QStringLiteral("Auto balance unavailable") : QStringLiteral("Auto balance");
-}
-
-void WorkspaceController::balance(const QString& draftId) {
-  Balancing& state = m_balancing[draftId];
-  state = {0, false, state.request + 1, {}};
-  const int request = state.request;
-  const QVariantMap weights = NativeShell::of(this)->controller<SettingsController>()->setting(QStringLiteral("loadBalancingWeights")).toMap();
-  for (const QVariant& entry : environmentChoices()) {
-    const QVariantMap choice = entry.toMap();
-    const QString environmentId = choice.value(QStringLiteral("environmentId")).toString();
-    const QString key = choice.value(QStringLiteral("key")).toString();
-    // The machines with a checkout of the project, which name only themselves.
-    if (!choice.value(QStringLiteral("checkout")).toBool()) continue;
-    const double weight = weights.contains(environmentId) ? weights.value(environmentId).toDouble() : 50;
-    if (weight <= 0 || !m_store->environmentOnline(environmentId)) continue;
-    ++state.pending;
-    m_client->call(this, environmentId, QStringLiteral("server.getHostResources"), QJsonObject(),
-                   [this, draftId, request, key, weight](const QJsonValue& result, const std::optional<QString>& error) {
-                     Balancing& state = m_balancing[draftId];
-                     if (state.request != request) return;
-                     --state.pending;
-                     if (error) {
-                       state.failed = true;
-                     } else {
-                       state.answers.append({{QStringLiteral("key"), key}, {QStringLiteral("weight"), weight}, {QStringLiteral("resources"), result}});
-                     }
-                     if (state.pending == 0 && m_checkouts.value(draftId).automatic) {
-                       // chooseLoadBalancedEnvironment: the most free CPU and memory, weighted.
-                       QString best;
-                       double bestScore = 0;
-                       for (const QJsonObject& answer : std::as_const(state.answers)) {
-                         const QJsonObject resources = answer.value(QLatin1String("resources")).toObject();
-                         const QJsonValue cpu = resources.value(QLatin1String("cpuUtilization"));
-                         const double total = resources.value(QLatin1String("totalMemoryBytes")).toDouble();
-                         const double count = resources.value(QLatin1String("cpuCount")).toDouble();
-                         if (!cpu.isDouble() || cpu.toDouble() >= 0.95 || total <= 0 || count <= 0) continue;
-                         const double memory = resources.value(QLatin1String("availableMemoryBytes")).toDouble() / total;
-                         if (memory <= 0.05) continue;
-                         const double score = answer.value(QLatin1String("weight")).toDouble() * count * (1 - cpu.toDouble()) * memory;
-                         if (score > bestScore) {
-                           bestScore = score;
-                           best = answer.value(QLatin1String("key")).toString();
-                         }
-                       }
-                       if (!best.isEmpty()) {
-                         const qsizetype colon = best.indexOf(QLatin1Char(':'));
-                         Checkout& checkout = m_checkouts[draftId];
-                         checkout.environmentId = best.left(colon);
-                         checkout.projectId = best.mid(colon + 1);
-                         checkout.balanced = true;
-                       }
-                     }
-                     refresh();
-                   });
-  }
-  refresh();
 }
 
 QVariantMap WorkspaceController::build() const {
@@ -711,10 +636,9 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("preferredScriptId"), known ? QVariant(lastScript) : QVariant::fromValue(nullptr)},
       {QStringLiteral("environments"), environmentChoices()},
       {QStringLiteral("activeEnvironmentId"), place.environmentId},
-      // The MC serving it is out of reach (a cluster member asleep, a link down).
+      // The MC serving it is out of reach (a cluster member asleep).
       {QStringLiteral("offline"), !m_store->environmentOnline(place.environmentId)},
       {QStringLiteral("environmentChangeable"), draft},
-      {QStringLiteral("environmentAutomatic"), draft && m_checkouts.value(place.draftId).automatic},
       {QStringLiteral("renameRequestId"), m_renameRequestId},
       {QStringLiteral("branchQuery"), m_query},
       {QStringLiteral("branches"), branches},
@@ -836,26 +760,6 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
           break;
         }
       }
-    }
-    if (key == QLatin1String("auto")) {
-      if (m_place->draftId.isEmpty()) return true;
-      const QString draftId = m_place->draftId;
-      updateCheckout([](Checkout& checkout) {
-        checkout.automatic = true;
-        checkout.balanced = false;
-        checkout.branch.reset();
-        checkout.worktreePath.reset();
-      });
-      balance(draftId);
-      return true;
-    }
-    // A machine picked by hand takes the draft off Auto balance.
-    if (!m_place->draftId.isEmpty() && m_checkouts.value(m_place->draftId).automatic) {
-      m_balancing.remove(m_place->draftId);
-      updateCheckout([](Checkout& checkout) {
-        checkout.automatic = false;
-        checkout.balanced = false;
-      });
     }
     setEnvironment(key);
   }

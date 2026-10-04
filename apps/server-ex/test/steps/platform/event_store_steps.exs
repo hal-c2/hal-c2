@@ -242,6 +242,22 @@ defmodule HalC2.Steps.Platform.EventStore do
     context
   end
 
+  step "the store's writer is busy", context do
+    :ok = :sys.suspend(Store)
+    ExUnit.Callbacks.on_exit(fn -> if Process.whereis(Store), do: :sys.resume(Store) end)
+    context
+  end
+
+  step "a thread is used for the first time", context do
+    Map.put(context, :started, Streams.ensure("thread-#{System.unique_integer([:positive])}"))
+  end
+
+  step "it starts without waiting for the writer", context do
+    assert Process.alive?(context.started)
+    :ok = :sys.resume(Store)
+    context
+  end
+
   # --- snapshots ------------------------------------------------------------------------
 
   step "a thread receives 500 more events", context do

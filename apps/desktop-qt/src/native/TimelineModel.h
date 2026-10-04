@@ -9,6 +9,7 @@
 #include <QLocale>
 #include <QSet>
 #include <QStringList>
+#include <QUrl>
 #include <QVariant>
 
 #include <functional>
@@ -92,6 +93,11 @@ public:
     // The first pull (or merge) request address a message mentions, for
     // linking it to the thread; empty when it mentions none.
     PullRequestUrlRole,
+    // An assistant reply's message, which a quote of it names as its source.
+    MessageIdRole,
+    // A user message's images: [{id, name, url}]. `url` is empty until the
+    // brick asks for it (loadAttachment) and the MC has signed one.
+    AttachmentsRole,
   };
 
   // Calls shown per collapsed work group.
@@ -151,6 +157,13 @@ public:
   Q_INVOKABLE QVariantMap rewindPointOf(const QString& rowId) const;
   // Puts a message's markdown on the clipboard; false for any other row.
   Q_INVOKABLE bool copy(const QString& rowId) const;
+  // Asks for an image's address (attachmentWanted) unless one that still
+  // works is known or on its way; its row's `attachments` carry it once
+  // setAttachmentUrl lands.
+  Q_INVOKABLE void loadAttachment(const QString& id);
+  // The address the MC signed for an image and when it stops working; an
+  // empty one when the MC had none, so the next ask tries again.
+  void setAttachmentUrl(const QString& id, const QUrl& url, const QDateTime& expiresAt);
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
@@ -172,6 +185,8 @@ signals:
   // After a snapshot, or a command or file change starting or settling: the
   // workspace's files may have changed (WorkspaceFiles lists them again).
   void workspaceChanged();
+  // An image on screen has no address yet (loadAttachment).
+  void attachmentWanted(const QString& id);
 
 private:
   struct Row {
@@ -196,6 +211,12 @@ private:
     bool startsOpen = false;
 
     bool operator==(const Row&) const = default;
+  };
+
+  // An image's signed address; invalid `expiresAt` while it is asked for.
+  struct AttachmentUrl {
+    QUrl url;
+    QDateTime expiresAt;
   };
 
   using Entities = QHash<QString, QHash<QString, QJsonObject>>;
@@ -231,6 +252,7 @@ private:
   // run stopped here (Row::startsOpen).
   QSet<QString> m_expandedGroups;
   QSet<QString> m_keptOpen;  // run ids
+  QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
   QDateTime m_workingSince;
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;

@@ -49,7 +49,7 @@ QJsonObject provider(const QString& instanceId, const QString& name, const QJson
 
 void link(World& world, const QString& environment, const QJsonArray& providers) {
   fakeConfig(world.mc).elsewhere.insert(environment, QJsonObject{{QStringLiteral("providers"), providers}});
-  world.mc.link(environment);
+  world.mc.join(environment);
 }
 
 void openPanel(World& world) {
@@ -150,14 +150,6 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("the panel to ask for a reconnect; it is %1").arg(show(panel(world))); });
   });
 
-  // A session that may only view.
-  step(QStringLiteral("the client has view-only access to the environment"), [](World& world, const Captures&, const Table&) {
-    const QString environment = QStringLiteral("Build box");
-    world.mc.linkScopes.insert(environment, {QStringLiteral("orchestration:read")});
-    link(world, environment, {provider(QStringLiteral("codex"), QStringLiteral("Codex"))});
-    world.mc.part<ProviderList>().environment = environment;
-    world.sync();
-  });
   step(QStringLiteral("the user opens provider settings"), [](World& world, const Captures&, const Table&) {
     const QString environment = world.mc.part<ProviderList>().environment;
     if (environment.isEmpty()) {
@@ -165,31 +157,6 @@ const Steps steps([] {
     } else {
       pick(world, environment);
     }
-  });
-  step(QStringLiteral("the providers are shown but every change is unavailable"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return listed(world) == QStringList{QStringLiteral("Codex")} && panel(world).value(QStringLiteral("readOnly")).toBool(); },
-                  [&] { return QStringLiteral("the providers read-only; the panel is %1").arg(show(panel(world))); });
-    // Nothing on the page takes a change: no instance is added, turned off or reconfigured.
-    const qsizetype writes = fakeConfig(world.mc).writes.size();
-    const QVariantMap before = panel(world);
-    const QVariantMap codex{{QStringLiteral("instanceId"), QStringLiteral("codex")}};
-    const auto act = [&](const QString& action, QVariantMap payload) {
-      world.bridge().dispatch(QStringLiteral("providerSettings.") + action, payload);
-    };
-    act(QStringLiteral("wizardOpen"), {});
-    act(QStringLiteral("enable"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("enabled"), false}});
-    act(QStringLiteral("rename"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("name"), QStringLiteral("Mine")}});
-    act(QStringLiteral("healthInterval"), {{QStringLiteral("seconds"), 60}});
-    act(QStringLiteral("delete"), codex);
-    world.sync();
-    expect(panel(world) == before && fakeConfig(world.mc).writes.size() == writes &&
-               documentOf(world.mc, world.mc.part<ProviderList>().environment).version == 0,
-           QStringLiteral("no change to be made; the panel is %1").arg(show(panel(world))));
-  });
-  step(QStringLiteral("the user is told this session can only view them"), [](World& world, const Captures&, const Table&) {
-    const QString said = panel(world).value(QStringLiteral("readOnlyDescription")).toString();
-    expect(said == QLatin1String("This session can view Build box's providers but can't change their settings."),
-           QStringLiteral("the read-only note; it says \"%1\"").arg(said));
   });
 
   // Which models this device's picker offers (providers/models.feature).

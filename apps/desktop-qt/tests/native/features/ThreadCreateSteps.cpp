@@ -243,16 +243,15 @@ const Steps steps([] {
                                                        QJsonObject{{QStringLiteral("id"), c[0]}, {QStringLiteral("title"), c[0]},
                                                                    {QStringLiteral("workspaceRoot"), QStringLiteral("/srv/") + c[0]}, {QStringLiteral("scripts"), QJsonArray()}}})});
     world.sync();
-  });
-  step(QStringLiteral("the user moves the draft to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The draft that is moved (DraftSteps' "the user moves the draft to"): this machine's, with something written.
     startDraft(world);
     type(world, QStringLiteral("Sketch the endpoint"));
     const auto before = world.native().controller<DraftController>()->draft(world.draftId);
     expect(before && before->environmentId == world.mc.environmentId, QStringLiteral("the draft is not this machine's"));
-    world.bridge().dispatch(QStringLiteral("draft.project"), QVariantMap{{QStringLiteral("draftId"), world.draftId}, {QStringLiteral("projectKey"), world.projectKey(c[0])}});
   });
   step(QStringLiteral("the draft targets the environment %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const auto draft = world.native().controller<DraftController>()->draft(world.draftId);
+    // The draft the window shows after the move.
+    const auto draft = world.native().controller<DraftController>()->draft(world.native().controller<NavigationController>()->route().draftId);
     expect(draft && draft->environmentId == c[0] && draft->projectId == QLatin1String("api"),
            QStringLiteral("the draft is on %1 in %2").arg(draft ? draft->environmentId : QString(), draft ? draft->projectId : QString()));
     // What was written came along, and the header names the new project.

@@ -109,7 +109,7 @@ QStringList UsagePricesController::chosen() const {
   const QString filter = m_bridge->state()->value(QStringLiteral("usage")).toMap().value(QStringLiteral("environmentId")).toString();
   QStringList targets;
   for (const QString& id : m_store->environments()) {
-    if (m_store->reaches(id) && (filter.isEmpty() || id == filter)) targets.append(id);
+    if (m_store->servesEnvironment(id) && (filter.isEmpty() || id == filter)) targets.append(id);
   }
   // This machine first, the rest by name.
   std::sort(targets.begin(), targets.end(), [this](const QString& a, const QString& b) {

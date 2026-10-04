@@ -26,8 +26,8 @@ namespace stream {
 // change the entities, so the next snapshot carries them.
 struct FakeStreams {
   QHash<QString, QMap<QString, QJsonObject>> threads;
-  // Environments that are down (a cluster member that left, a link that
-  // dropped): a stream on one is refused.
+  // Environments that are down (a cluster member that left): a stream on one
+  // is refused.
   QSet<QString> offline;
   // The thread the steps write to, and its environment.
   QString thread;

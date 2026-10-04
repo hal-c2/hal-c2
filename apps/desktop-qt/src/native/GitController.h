@@ -33,8 +33,8 @@ class WorkspaceController;
 // Publish repository `sourceControl.publishRepository` from the brick's own
 // dialog (`git.publish` opens it), which walks through the host (with whether
 // it is installed and signed in, from `server.discoverSourceControl`), the
-// repository and a summary to confirm. Actions on a linked environment run
-// through the link; a link that is down says why.
+// repository and a summary to confirm. Actions on another machine of the
+// cluster run there; one that is unreachable says why.
 class GitController : public QObject, public NativeController {
   Q_OBJECT
 

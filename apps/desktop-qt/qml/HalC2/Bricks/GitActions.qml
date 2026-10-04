@@ -13,7 +13,7 @@ RowLayout {
     readonly property bool ready: model !== null && model.available
     // The running action's stage, elapsed time and last hook line, or null.
     readonly property var progress: ready ? model.progress ?? null : null
-    // Why a checkout the MC cannot reach (a linked thread's) has no git actions.
+    // Why a checkout the MC cannot reach (its machine is offline) has no git actions.
     readonly property string unavailableReason: model !== null && !model.available ? (model.unavailableReason ?? "") : ""
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")

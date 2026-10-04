@@ -11,6 +11,7 @@
 #   apps/web/src/components/settings/EnvironmentRow.tsx (This machine, HAL-C2 Connect, Remote link, SSH)
 #   apps/web/src/components/settings/EnvironmentIconPicker.tsx
 #   apps/web/src/components/settings/LoadBalancingSettings.tsx
+#   apps/desktop-qt/src/native/LoadBalancingController.cpp, qml/HalC2/Bricks/LoadBalancingGroup.qml
 #   apps/web/src/components/settings/LocalEnvironmentSetting.tsx
 #   apps/mobile/src/features/connection/ConnectionsRouteScreen.tsx, LocalEnvironmentList.tsx,
 #     ConnectionEnvironmentRow.tsx, environmentSections.ts, CloudEnvironmentRows.tsx
@@ -54,13 +55,13 @@ Feature: Managing environments on a client
     Then each environment shows its label, its icon and whether it is this machine, a remote link, SSH or HAL-C2 Connect
     And each shows whether it is connected
 
-  @desktop @mobile @backlog-mobile
+  @backlog @desktop @mobile
   Scenario: A removed environment can be added back by pairing again
     Given the user removed an environment from this device
     When the user pairs with it again
     Then it returns to the list with its threads
 
-  @desktop @mobile @backlog-mobile
+  @backlog @desktop @mobile
   Scenario: A saved environment reconnects when the app starts
     Given a saved environment that was offline
     When the app starts
@@ -108,7 +109,8 @@ Feature: Managing environments on a client
     And turns it on again
     Then the earlier preferences are back
 
-  @desktop
+  # The MC holds the preferences it places threads by (settings/load-balancing.feature), so its clients share them.
+  @dropped @desktop
   Scenario: Load preferences belong to each client
     Given two desktop clients paired with the same environments
     When the user sets a preference on one client

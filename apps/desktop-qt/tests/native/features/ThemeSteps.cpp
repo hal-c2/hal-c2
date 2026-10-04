@@ -16,6 +16,7 @@
 #include "FilesViewer.h"
 #include "Harness.h"
 #include "SharedSteps.h"
+#include "Move.h"
 #include "Onboarding.h"
 #include "SettingsController.h"
 #include "ThemeController.h"
@@ -259,12 +260,13 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user connected a second environment that publishes %1").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureConnected(world);
-    world.mc.link(QStringLiteral("env-b"));
+    world.mc.join(QStringLiteral("env-b"));
     publish(world, QStringLiteral("env-b"), {published(c[0], QStringLiteral("#444444"))});
     world.sync();
   });
   step(QStringLiteral("%1 is not offered").arg(q), [](World& world, const Captures& c, const Table&) {
     if (checkIconImageOffered(world, c[0], false)) return;
+    if (machineNotOffered(world, c[0])) return;
     world.sync();
     expectCommandNotOffered(world, c[0]);
     for (const QVariant& theme : themes(world)->available()) {

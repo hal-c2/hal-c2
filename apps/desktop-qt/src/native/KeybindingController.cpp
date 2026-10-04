@@ -572,7 +572,7 @@ void KeybindingController::call(const QString& method, const QJsonObject& input,
   ShellStore* store = m_store;
   QStringList environments{m_client->environment()};
   for (const QString& environmentId : store->environments()) {
-    if (!environments.contains(environmentId) && store->environmentOnline(environmentId) && store->mayOperate(environmentId)) {
+    if (!environments.contains(environmentId) && store->environmentOnline(environmentId)) {
       environments.append(environmentId);
     }
   }

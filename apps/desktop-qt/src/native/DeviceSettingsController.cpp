@@ -161,15 +161,11 @@ private:
       m_pending.clear();
       ++m_generation;
       if (!environmentId.isEmpty()) {
-        const QString mc = m_store->mcServing(environmentId);
-        if (mc.isEmpty()) {
-          list({}, {});
-        } else {
-          m_subscription = m_client->subscribe(this, 
-              {{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("mc"), mc}}, [this](const QJsonObject& frame) {
-                if (frame.value(QLatin1String("t")) == QLatin1String("devices")) take(frame.value(QLatin1String("state")).toObject());
-              });
-        }
+        m_subscription = m_client->subscribe(
+            this, {{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("mc"), m_store->mcServing(environmentId)}},
+            [this](const QJsonObject& frame) {
+              if (frame.value(QLatin1String("t")) == QLatin1String("devices")) take(frame.value(QLatin1String("state")).toObject());
+            });
       }
     }
     publish();

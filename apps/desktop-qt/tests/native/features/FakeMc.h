@@ -117,7 +117,7 @@ public:
   // Every `sub` frame, in order.
   QList<QJsonObject> subscriptions;
   QList<QJsonObject> commands;
-  // The environment each command was for ("" for the MC's own), beside `commands`.
+  // The environment each of `commands` was sent to ("" for the MC's own).
   QStringList commandEnvironments;
   // Every call, in order, whoever answers it.
   QList<Rpc> calls;
@@ -142,44 +142,37 @@ public:
   };
   bool holdSnapshot = false;
   bool answerPings = true;  // false: the MC has stopped answering, its socket still open
-  // Environments outside the cluster the MC is linked to (HalC2.Links), and
-  // why a link is down ("unreachable", "refused"; absent while it is online).
-  QStringList linked;
-  QHash<QString, QString> linkProblems;
-  // What each link's pairing granted, listed as its `scopes`; none listed when unset.
-  QHash<QString, QStringList> linkScopes;
-  // Each linked environment's label, when it is not its id.
-  QHash<QString, QString> linkLabels;
-
-  // Whether the shell was asked for with its links' rows (`"links": true`).
-  bool shellLinks = false;
-  // Each linked environment's own rows, by environment then id: [id, kind, row].
-  // Its one MC is named as this MC is, since a linked environment's MC
-  // names may collide with the cluster's.
-  QHash<QString, QMap<QString, QJsonArray>> linkedRows;
+  // The cluster's other members, in the order they joined, and the MC serving
+  // each environment.
+  QStringList members;
+  QHash<QString, QString> peers;
+  // A member's label, when its environment has one.
+  QHash<QString, QString> peerLabels;
+  // Members whose MC is down: their rows stay, and requests for them fail.
+  QSet<QString> offline;
+  // Each member's rows, by environment then id: [id, kind, row].
+  QHash<QString, QMap<QString, QJsonArray>> peerRows;
 
   void sendSnapshot();
-  // The MC pairs with an environment outside its cluster, announced as
-  // `shell.links`; with links' rows, then its MC (offline until
-  // `shell.linkMc`) and its rows follow as the MC's first follow of that
-  // environment's shell brings them.
-  void link(const QString& environment);
-  void unlink(const QString& environment);
-  // Announces the links as they now are.
-  void sendLinks();
-  // Another MC joins this one's cluster, announced as the shell announces it on nodeup.
+  // Another MC joins this one's cluster, announced as the shell announces it
+  // on nodeup: its environment, whether it is online, and its rows.
   void join(const QString& peer, const QString& peerEnvironment);
-  // The cluster member serving each environment that joined, by environment.
-  QHash<QString, QString> peers;
+  // The same for a machine known by one name, its environment's id and label.
+  void join(const QString& name) {
+    peerLabels.insert(name, name);
+    join(QStringLiteral("mc-") + name, name);
+  }
   void sendRow(const QString& id, const QJsonObject& row, const QString& kind = QStringLiteral("thread"));
   // Rows of the cluster member `mc` as `shell.rows`: each [id, kind, fields].
   void sendRows(const QString& mc, const QJsonArray& rows);
-  // A linked environment's row, kept and sent as `shell.linkRows`.
-  void sendLinkRow(const QString& environment, const QString& id, const QJsonObject& row,
+  // A member's row, kept and sent as its `shell.rows` once it has joined.
+  void sendPeerRow(const QString& environment, const QString& id, const QJsonObject& row,
                    const QString& kind = QStringLiteral("thread"));
-  // A link goes down (`problem`, e.g. "unreachable") or comes back (empty):
-  // `shell.links` says so, and its MC goes offline or online.
-  void setLinkProblem(const QString& environment, const QString& problem);
+  // A member's MC goes down or comes back (`shell.mc`).
+  void setOnline(const QString& environment, bool online);
+  // A member is removed from the cluster: the shell drops it and its rows
+  // (`shell.mc` with `removed`).
+  void remove(const QString& environment);
 
   void drop() {
     if (m_socket) m_socket->close();
@@ -194,10 +187,9 @@ private:
   void answerHttp(QTcpSocket* socket, const QByteArray& request);
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
-  QJsonArray links() const;
-  QJsonObject linkedEnvironment(const QString& environment) const;
-  QJsonObject unreachable(const QString& environment) const;
-  void sendLinkFrame(const QString& type, const QString& environment, QJsonObject frame);
+  QJsonObject peerEnvironment(const QString& environment) const;
+  // The member a request is for, when its MC is down.
+  bool down(const QString& environment, const QString& mc) const;
 
   // Listens for both: the socket's handshakes go on to m_server.
   QTcpServer m_tcp;

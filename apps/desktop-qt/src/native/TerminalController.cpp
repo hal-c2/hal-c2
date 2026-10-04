@@ -317,7 +317,7 @@ void TerminalTabs::clear() {
 
 TerminalController::TerminalController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                        QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_tabs(this) {
+    : QObject(parent), m_bridge(bridge), m_client(client), m_tabs(this) {
   connect(store, &ShellStore::changed, this, &TerminalController::refresh);
 }
 
@@ -431,12 +431,12 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
 }
 
 // Where the route's thread (a draft too) runs its terminals: its project root,
-// worktree and scripts, on an environment the MC reaches.
+// worktree and scripts.
 std::optional<TerminalPlace> TerminalController::placeOfWorkspace() const {
   auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
   if (!workspace || !workspace->place()) return std::nullopt;
   const WorkspaceController::Place& at = *workspace->place();
-  if (at.root.isEmpty() || at.threadId.isEmpty() || !m_store->reaches(at.environmentId)) return std::nullopt;
+  if (at.root.isEmpty() || at.threadId.isEmpty()) return std::nullopt;
   TerminalPlace place;
   place.environmentId = at.environmentId;
   place.threadId = at.threadId;

@@ -913,7 +913,7 @@ const Steps fileSteps([] {
   step(QStringLiteral("two environments are connected"), [](World& world, const Captures&, const Table&) {
     if (connectSecondComposerEnvironment(world)) return;
     ensureShell(world);
-    world.mc.link(QStringLiteral("env-b"));
+    world.mc.join(QStringLiteral("env-b"));
     world.sync();
     world.waitFor([&] { return world.native().store()->environmentOnline(QStringLiteral("env-b")); }, QStringLiteral("the second environment"));
   });

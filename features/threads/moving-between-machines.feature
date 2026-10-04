@@ -7,6 +7,8 @@
 #     project inferred from the workspace root or the only project, else named)
 #   apps/server-ex/lib/hal_c2/streams.ex, apps/server-ex/lib/hal_c2/stream_state.ex (a thread is one
 #     event stream owned by one MC)
+#   apps/server-ex/lib/hal_c2/thread_move.ex (the destination asks before it imports, and a move cut
+#     off after that is settled by what the destination says)
 #   apps/server-ex/lib/hal_c2/shell.ex, apps/server-ex/lib/hal_c2/cluster.ex (cluster-wide sidebar keyed
 #     by MC, offline members keep their rows)
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (checkpoints are hidden commits under
@@ -18,6 +20,12 @@
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (native session when the provider can, else a
 #     trimmed transcript)
 #   apps/server-ex/lib/hal_c2/mcp/tools/threads.ex (agent-facing thread tools and their error codes)
+#   apps/desktop-qt/src/native/ThreadMenuController.cpp (the menu's and the palette's thread.move,
+#     stopping a turn before moving), ShellStore.cpp (located: a key from before a move finds the
+#     thread where it lives now), ComposerController.cpp (no sending while a thread is moving)
+#   apps/desktop-qt/tests/native/tst_Features.cpp (runs the desktop's scenarios against a fake cluster)
+#   apps/tui/src/host/moveState.ts (the menu's and the palette's move, asking its questions in the picker),
+#     apps/tui/src/clusterClient.ts (one list over the cluster's machines; a thread's requests follow it)
 #   Shared domain: providers/portable-sessions.feature owns how each provider's native session is
 #   carried; threads/migration-and-handoffs.feature owns the transcript handoff and its budget;
 #   connections/cluster.feature owns forming the cluster and the shared sidebar;
@@ -30,6 +38,18 @@
 #     source keeps it, unchanged and read-only. A move that fails leaves the thread where it was.
 #   - Terminal scrollback travels as history. Running terminals do not: they belong to the source
 #     machine and are closed when the thread leaves, after the user is told.
+#   - What a thread carries can be far larger than the thread: its repository's commits, its
+#     agent's session. A move sends a list of the files and the destination copies each one from
+#     the source's disk to its own, a piece at a time, so neither machine holds one in memory.
+#     What a machine writes for a move it writes under its own directories, not the system's
+#     temporary one, which is often kept in memory.
+#   - A move within a cluster carries only the commits and files the destination's checkout of
+#     the repository does not already have: the destination names the commits its branches are
+#     at before the source bundles anything. A thread file is read by a machine the source
+#     knows nothing about, so it carries everything the thread's commits reach.
+#   - A thread file is read as it was written: the files in it go to disk a piece at a time.
+#   - How long a move waits on its destination grows with how much the thread carries. A
+#     destination that goes offline ends the wait at once.
 #   - Moving has no default shortcut. It is rare and deliberate; the menu, the palette and the
 #     agent tool are enough.
 #   - Export and import copy a thread between machines that are not in one cluster. Exporting
@@ -53,7 +73,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Moving within a cluster
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: The user moves a thread to another machine
       When the user moves "Alpha" to "desktop"
       Then "Alpha" is listed under "desktop"
@@ -67,6 +87,12 @@ Feature: Moving a thread and its agent to another machine
       Then "desktop" is offered
       And "server" is shown as offline and cannot be chosen
       And "laptop" is not offered
+
+    @shared @backlog-mobile
+    Scenario: Machines with the same name are told apart
+      Given the cluster also has a second machine called "desktop"
+      When the user chooses where to move "Alpha"
+      Then both machines called "desktop" are offered, each with its environment id
 
     @backlog @shared
     Scenario: Moving is not offered on a machine that is alone
@@ -163,9 +189,26 @@ Feature: Moving a thread and its agent to another machine
       Then "desktop" serves the image
 
     @mc
+    Scenario: A thread's files go from disk to disk, never whole through memory
+      Given "Alpha" has an attachment larger than the machines send at once
+      When "Alpha" is being copied to "desktop"
+      Then the partial copy on "desktop" holds the attachment as a file
+      And once the move finishes the attachment on "desktop" is the same as it was on "laptop"
+      And neither machine keeps the copies it made for the move
+
+    @mc
     Scenario: Checkpoints are carried into the destination's repository
       Given "Alpha" has checkpoints for runs 1 to 3
       When "Alpha" moves to "desktop"
+      Then the checkpoints of runs 1 to 3 exist in the repository of "shop" on "desktop"
+      And the diff of each of those runs is the same as it was on "laptop"
+
+    @mc
+    Scenario: A move carries only what the destination's checkout does not have
+      Given "Alpha" has checkpoints for runs 1 to 3
+      When "Alpha" is being copied to "desktop"
+      Then what "desktop" was sent of the checkpoints leaves out the files its checkout already has
+      When the copy finishes
       Then the checkpoints of runs 1 to 3 exist in the repository of "shop" on "desktop"
       And the diff of each of those runs is the same as it was on "laptop"
 
@@ -245,7 +288,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Moving back
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A moved thread can be moved back
       Given "Alpha" was moved from "laptop" to "desktop"
       And the user worked in "Alpha" on "desktop"
@@ -269,7 +312,7 @@ Feature: Moving a thread and its agent to another machine
       When the user follows the link
       Then "Alpha" opens on "desktop"
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A notification from before the move opens the thread where it lives now
       Given the user was notified that "Alpha" finished while it lived on "laptop"
       And "Alpha" has since moved to "desktop"
@@ -284,6 +327,12 @@ Feature: Moving a thread and its agent to another machine
       Then it is served by "desktop"
 
     @mc
+    Scenario: A thread is found on its destination as soon as the destination holds it
+      Given "desktop" has confirmed it holds "Alpha"
+      When a link to "Alpha" is followed before "laptop" has let go
+      Then the thread is found on "desktop"
+
+    @mc
     Scenario: A thread that moved and was then deleted is reported as deleted
       Given "Alpha" moved to "desktop" and was deleted there
       When the user follows an old link to "Alpha"
@@ -291,21 +340,21 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Other clients see the move
 
-    @backlog @shared
+    @shared @backlog-mobile
     Scenario: Another client sees the thread move
       Given a phone and the desktop app both follow the cluster's threads
       When the user moves "Alpha" to "desktop" from the desktop app
       Then the phone lists "Alpha" under "desktop" and no longer under "laptop"
       And the phone did not have to reconnect
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A client looking at the thread follows it to its new machine
       Given the phone is showing "Alpha"
       When "Alpha" is moved to "desktop" from another client
       Then the phone keeps showing "Alpha"
       And a message sent from the phone reaches "Alpha" on "desktop"
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A client sees that a thread is moving
       Given the phone lists "Alpha"
       When "Alpha" starts moving to "desktop"
@@ -334,7 +383,15 @@ Feature: Moving a thread and its agent to another machine
       Then the running turn of "Alpha" is interrupted
       And "Alpha" moves to "desktop"
 
-    @shared @backlog-mobile @backlog-tui
+    # The MC refuses a thread whose turn is starting as it does a running one.
+    @tui
+    Scenario: A thread whose turn is still starting is stopped and moved the same way
+      Given the agent in "Alpha" is still starting
+      When the user moves "Alpha" to "desktop" and chooses to stop it first
+      Then the running turn of "Alpha" is interrupted
+      And "Alpha" moves to "desktop"
+
+    @shared @backlog-mobile
     Scenario: A message cannot be sent while the thread is moving
       Given "Alpha" is moving to "desktop"
       When the user writes a message in "Alpha"
@@ -357,6 +414,15 @@ Feature: Moving a thread and its agent to another machine
         | the directory of the chosen project on "desktop" is gone | The project folder on desktop no longer exists. Alpha was not moved.      |
         | "desktop" has too little free disk space for "Alpha"     | desktop does not have enough free space for Alpha. Alpha was not moved.   |
 
+    # A label is the user's own name for a machine, so two may share one: clients name the
+    # destination by its environment id, and a label two machines share is not guessed at.
+    @mc
+    Scenario: A move to a name two machines share is refused
+      Given "desktop" is also called "laptop"
+      When the user moves "Alpha" to "laptop"
+      Then the user is told several machines are called "laptop" and to name one by its environment id
+      And "Alpha" stays on "laptop" as it was
+
     @backlog @shared
     Scenario: A thread whose agent is missing on the destination can move onto another agent
       Given "desktop" does not have the agent "Alpha" runs on
@@ -377,6 +443,39 @@ Feature: Moving a thread and its agent to another machine
       When "desktop" comes back online
       Then "desktop" does not list "Alpha"
       And the space used by the partial copy is freed
+
+    @mc
+    Scenario: A destination that was cut off while copying does not take the thread afterwards
+      Given "Alpha" is being copied to "desktop"
+      When "laptop" restarts while "desktop" is still copying
+      And "desktop" finishes copying
+      Then "Alpha" stays on "laptop" and can be used again
+      And "desktop" does not list "Alpha"
+      And the space used by the partial copy is freed
+
+    @mc
+    Scenario: A move cut off while the destination takes the thread waits for the destination
+      Given "desktop" is taking "Alpha"
+      When "desktop" goes offline before it has confirmed the thread
+      Then "Alpha" is still moving to "desktop"
+      And the user is told the move was cut off while "desktop" was taking the thread
+      When "desktop" comes back without "Alpha"
+      Then "Alpha" stays on "laptop" and can be used again
+
+    @mc
+    Scenario: The source restarting while the destination takes the thread does not undo the move
+      Given "desktop" is taking "Alpha"
+      When "laptop" restarts before "desktop" has finished
+      And "desktop" finishes taking "Alpha"
+      Then "Alpha" lives on "desktop"
+      And when "laptop" comes back it lists "Alpha" only under "desktop"
+
+    @backlog @mc
+    Scenario: A move to a machine that is removed from the cluster is called off
+      Given a move of "Alpha" was cut off while "desktop" was taking it
+      And "desktop" has not come back
+      When "desktop" is removed from the cluster
+      Then "Alpha" stays on "laptop" and can be used again
 
     @mc
     Scenario: The source going offline after the destination confirmed does not undo the move
@@ -461,6 +560,14 @@ Feature: Moving a thread and its agent to another machine
       And the file "alpha.hal-c2-thread" was exported from "laptop"
       When the user imports the file on "desktop" into the project "shop"
       Then "Alpha" is listed under "desktop" in "shop" with everything a move carries
+
+    @mc
+    Scenario: A thread file's files are read onto disk a piece at a time
+      Given "Alpha" has an attachment larger than the machines send at once
+      And the file "alpha.hal-c2-thread" was exported from "laptop"
+      When the user imports the file on "desktop" into the project "shop"
+      Then the attachment on "desktop" is the same as it was on "laptop"
+      And "desktop" keeps none of the copies it made to read the file
 
     @mc
     Scenario Outline: Importing without naming a project

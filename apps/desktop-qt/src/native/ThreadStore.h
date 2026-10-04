@@ -29,8 +29,8 @@ class ShellStore;
 //   Threads.close("env-a:thread-1")  // stops following it
 //
 // A thread is addressed by its environment, which the MC routes to the
-// cluster member serving it or through its link to it. It waits in `loading`
-// until the shell lists it (ShellStore), whose MC says when it is online. The
+// cluster member serving it. It waits in `loading` until the shell lists it
+// (ShellStore), whose MC says when it is online. The
 // McClient sends the subscription again after a reconnect or `resync`, and
 // the part-0 snapshot that follows replaces the thread's entities; the rows
 // keep their ids. An MC that refuses the stream (offline, gone) leaves the
@@ -98,6 +98,9 @@ private:
   // Stops following the threads left for idleSeconds or longer.
   void evictIdle();
   QDateTime now() const;
+  // Asks the thread's MC for an image's address (`assets.createUrl`) and
+  // gives it to the model.
+  void signAttachment(TimelineModel* model, const QString& threadKey, const QString& id);
   // The device's timestampFormat, for every timeline.
   void readSettings();
   void configure(TimelineModel* model) const;

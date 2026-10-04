@@ -87,6 +87,8 @@ void NavigationController::setStorePath(const QString& path) {
 void NavigationController::activate() {
   if (m_active) return;
   m_active = true;
+  // A thread that moved since the last run opens where it lives now.
+  if (!m_route.threadKey.isEmpty()) m_route.threadKey = m_store->located(m_route.threadKey);
   // A thread deleted since the last run is not coming back; one on an
   // environment the MC does not serve yet may still arrive.
   if (!m_route.threadKey.isEmpty() && m_store->servesEnvironment(m_route.threadKey.section(QLatin1Char(':'), 0, 0)) &&
@@ -132,13 +134,14 @@ void NavigationController::activate() {
 
 void NavigationController::leaveVanishedThread() {
   if (!m_active || m_route.kind != QLatin1String("thread")) return;
-  // The open thread moved to another machine: the window follows it there.
-  if (m_store->movedTo(m_route.threadKey)) {
-    replace(Route::thread(m_route.threadKey));
-    return;
-  }
   if (m_store->thread(m_route.threadKey)) {
     m_threadSeen = true;
+    return;
+  }
+  // A thread that moved to another machine is followed there.
+  const QString located = m_store->located(m_route.threadKey);
+  if (located != m_route.threadKey) {
+    replace(Route::thread(located));
     return;
   }
   if (!m_threadSeen || NativeShell::of(this)->sidebar()->parking(m_route.threadKey)) return;
@@ -223,14 +226,11 @@ void NavigationController::forward() {
   m_forwardStack = rest;
 }
 
-void NavigationController::go(Route route, bool replace) {
-  // A thread that moved to another machine opens where it lives now, so links
-  // and alerts from before the move still find it.
-  for (int hops = 0; hops < 8 && route.kind == QLatin1String("thread"); ++hops) {
-    const auto moved = m_store->movedTo(route.threadKey);
-    if (!moved) break;
-    route.threadKey = *moved;
-  }
+void NavigationController::go(const Route& to, bool replace) {
+  // A key from before the thread moved (a link, a notification, the back
+  // stack) opens it where it lives now.
+  Route route = to;
+  if (!route.threadKey.isEmpty()) route.threadKey = m_store->located(route.threadKey);
   if (route != m_route) {
     m_target.clear();
     if (route.kind != QLatin1String("settings")) m_search.clear();

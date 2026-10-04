@@ -11,9 +11,10 @@
 #   apps/web/src/components/usage/UsagePage.tsx
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
 #   apps/desktop-qt/src/native/UsageController.cpp, apps/desktop-qt/qml/HalC2/Bricks/UsagePage.qml
-#   apps/desktop-qt/tests/tst_UsagePage.qml (backing out of a reset credit, not yet a scenario)
+#   apps/desktop-qt/qml/HalC2/Bricks/UsageChart.qml (the chart)
+#   apps/desktop-qt/tests/tst_UsagePage.qml (backing out of a reset credit, not yet a scenario; the chart's hover)
 #   apps/web/src/components/usage/UsageLimits.tsx (reset credits)
-#   apps/web/src/components/usage/usageBreakdown.ts, apps/web/src/components/usage/UsageProviderChart.tsx (model and day breakdown, stacked chart)
+#   apps/web/src/components/usage/usageBreakdown.ts, apps/web/src/components/usage/UsageProviderChart.tsx (model and day breakdown, chart)
 #   apps/web/src/components/usage/UsagePriceOverrides.tsx, apps/web/src/components/usage/usagePriceTable.ts (model prices dialog)
 #   apps/web/src/components/usage/usagePagePreferences.ts (environment subset)
 #   apps/web/src/components/usage/UsageLimitsPooled.tsx (account chips)
@@ -196,7 +197,7 @@ Feature: Usage and limits
       Then the usage of "server" is shown
       And the usage of this environment is not counted
 
-    # The web's breakdown, chart and environment choices the desktop's Usage page does not draw yet.
+    # The web's breakdown and environment choices the desktop's Usage page does not draw yet.
     @desktop @backlog-desktop
     Scenario: Usage breaks cost down by model and by day
       Given the user views cost for the past 7 days
@@ -205,13 +206,30 @@ Feature: Usage and limits
       When the user breaks usage down by day
       Then each day lists its tokens and estimated cost
 
-    @desktop @backlog-desktop
-    Scenario: The usage chart stacks each provider and reads out a day on hover
+    # One line per provider, each measured from zero, as the web's UsageProviderChart. Drawing
+    # them and following the pointer are UsageChart.qml's own (tst_UsagePage.qml).
+    @desktop
+    Scenario: The usage chart draws each provider and reads out a day on hover
       Given Codex and Claude both have usage in the past 7 days
       When the user views cost for the past 7 days
-      Then each day's bar stacks Codex and Claude in their own colours
+      Then the chart draws Codex and Claude over all 7 days
       When the user hovers a day
       Then that day's cost for each provider is read out
+
+    # "laptop" still shows its last answer, asked over a window ten minutes older.
+    @desktop
+    Scenario: A refresh still under way keeps every provider on the chart
+      Given Codex and Claude both have usage in the past 24 hours
+      And the user views cost for the past 24 hours
+      When 10 minutes pass and "laptop" is slow to answer
+      And the user refreshes usage
+      Then the chart still draws Codex and Claude
+
+    @desktop
+    Scenario: An hour the clocks repeat says which of the two it is
+      Given the user is in "America/New_York" on the night its clocks fall back
+      When the user views cost for the past 24 hours
+      Then the chart tells the two hours labelled 1 AM apart
 
     @desktop @backlog-desktop
     Scenario: Each model shows its share of the cost

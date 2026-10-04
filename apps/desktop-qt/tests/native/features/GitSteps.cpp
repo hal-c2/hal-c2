@@ -1035,7 +1035,7 @@ const Steps steps([] {
     expect(!fake(world).inputs.isEmpty() && fake(world).inputs.last().value(QLatin1String("action")) == QStringLiteral("push"),
            QStringLiteral("the MC was asked %1").arg(show(fake(world).inputs.value(fake(world).inputs.size() - 1).toVariantMap())));
   });
-  // Threads the MC reaches through a link.
+  // Threads on another machine of the cluster.
   step(QStringLiteral("the action ran on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QString environment;
     for (const QJsonObject& sub : std::as_const(world.mc.subscriptions)) {

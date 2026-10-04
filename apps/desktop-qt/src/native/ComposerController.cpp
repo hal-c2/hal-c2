@@ -1,13 +1,17 @@
 #include "ComposerController.h"
 
+#include <QBuffer>
 #include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocale>
 #include <QRegularExpression>
 #include <QStringList>
+#include <QTimer>
+#include <QUrl>
 #include <QUuid>
 
 #include <algorithm>
@@ -37,6 +41,10 @@ const NativeControllerRegistrar<ComposerController> registrar(QStringLiteral("co
 
 // apps/web/src/proposedPlan.ts PLAN_IMPLEMENTATION_PROMPT_PREFIX.
 const QString kImplementPrefix = QStringLiteral("PLEASE IMPLEMENT THIS PLAN:\n");
+// How long a new thread waits to be placed before it starts where the user
+// picked: the MC itself waits a second for the picked machine and a second for
+// the others.
+constexpr int kPlacementWaitMs = 3000;
 // apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx.
 const QString kProviderGone = QStringLiteral("Provider process is gone — interrupt or restart the run to respond.");
 
@@ -136,6 +144,30 @@ QString recallable(QString prompt) {
   return prompt.startsWith(kImplementPrefix.trimmed()) ? QString() : prompt;
 }
 
+// packages/contracts/src/assistantCitations.ts: the longest quote or comment,
+// and how much of the reply on either side a citation keeps.
+constexpr qsizetype kMaxCitationLength = 8000;
+constexpr qsizetype kCitationContextLength = 32;
+
+// `[Assistant quote](hal-c2-citation://v1/<environment>/<thread>/<message>?text=...)`:
+// serializeAssistantCitation in packages/shared/src/assistantCitations.ts.
+QString citationLink(const QJsonObject& citation) {
+  const auto encoded = [](const QString& value) { return QString::fromLatin1(QUrl::toPercentEncoding(value)); };
+  QStringList path;
+  for (const auto key : {QLatin1String("environmentId"), QLatin1String("threadId"), QLatin1String("messageId")}) {
+    path.append(encoded(citation.value(key).toString()));
+  }
+  QStringList query;
+  for (const auto key : {QLatin1String("text"), QLatin1String("start"), QLatin1String("end"), QLatin1String("prefix"),
+                         QLatin1String("suffix"), QLatin1String("comment")}) {
+    const QJsonValue value = citation.value(key);
+    if (value.isUndefined()) continue;
+    const QString text = value.isString() ? value.toString() : QString::number(qint64(value.toDouble()));
+    query.append(key + u'=' + encoded(text).replace(QLatin1String("%20"), QLatin1String("+")));
+  }
+  return QStringLiteral("[Assistant quote](hal-c2-citation://v1/%1?%2)").arg(path.join(u'/'), query.join(u'&'));
+}
+
 }  // namespace
 
 ComposerController::ComposerController(ShellBridge* bridge, McClient* client, ShellStore* store,
@@ -155,15 +187,11 @@ void ComposerController::activate() {
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &ComposerController::follow);
   // A draft opened, renewed or promoted in any window.
   connect(shell->controller<DraftController>(), &DraftController::changed, this, &ComposerController::publish);
-  // A thread that moved to another machine takes what was written in it along.
-  connect(m_store, &ShellStore::changed, this, [this] {
-    for (const QString& key : m_drafts.keys()) {
-      const auto moved = m_store->movedTo(key);
-      if (moved && !m_drafts.contains(*moved)) m_drafts.insert(*moved, m_drafts.take(key));
-    }
-  });
   // The row says whether a turn runs, which decides follow-ups and the plan.
-  connect(m_store, &ShellStore::changed, this, &ComposerController::publish);
+  connect(m_store, &ShellStore::changed, this, [this] {
+    carryDrafts();
+    publish();
+  });
   // The route environment's providers are the picker's catalogue.
   connect(shell->controller<WorkspaceController>(), &WorkspaceController::configChanged, this, [this] {
     refreshCatalogue();
@@ -206,10 +234,28 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
   }
   if (action == QLatin1String("composer.terminalContext.add")) return addTerminalContext(map);
   if (action == QLatin1String("composer.reviewComment.add")) return addReviewComment(map);
-  if (action == QLatin1String("composer.terminalContext.remove") || action == QLatin1String("composer.reviewComment.remove")) {
+  if (action == QLatin1String("composer.citation.add")) return addCitation(map);
+  if (action == QLatin1String("composer.citation.comment")) {
     if (target.isEmpty()) return true;
     const QString id = map.value(QStringLiteral("id")).toString();
-    if (m_drafts[target].terminalContexts.removeIf([&](const TerminalContext& context) { return context.id == id; }) > 0) {
+    for (Excerpt& excerpt : m_drafts[target].excerpts) {
+      if (excerpt.id != id || excerpt.citation.isEmpty()) continue;
+      // withAssistantCitationComment: a blank comment is no comment.
+      const QString comment = map.value(QStringLiteral("comment")).toString().trimmed().left(kMaxCitationLength);
+      if (comment.isEmpty()) {
+        excerpt.citation.remove(QLatin1String("comment"));
+      } else {
+        excerpt.citation.insert(QStringLiteral("comment"), comment);
+      }
+      publish();
+    }
+    return true;
+  }
+  if (action == QLatin1String("composer.terminalContext.remove") || action == QLatin1String("composer.citation.remove") ||
+      action == QLatin1String("composer.reviewComment.remove")) {
+    if (target.isEmpty()) return true;
+    const QString id = map.value(QStringLiteral("id")).toString();
+    if (m_drafts[target].excerpts.removeIf([&](const Excerpt& context) { return context.id == id; }) > 0) {
       publish();
     }
     return true;
@@ -388,7 +434,7 @@ void ComposerController::stepHistory(const QString& target, bool backward) {
   qsizetype next = -1;
   if (backward) {
     // Only an empty composer starts a recall: attachments count as content.
-    if (active < 0 && (!current.isEmpty() || !kept.attachments.isEmpty() || !kept.terminalContexts.isEmpty())) return;
+    if (active < 0 && (!current.isEmpty() || !kept.attachments.isEmpty() || !kept.excerpts.isEmpty())) return;
     next = active < 0 ? entries.size() - 1 : active - 1;
     if (next < 0) return;
   } else {
@@ -431,7 +477,7 @@ bool ComposerController::stash(const QString& target) {
     return true;
   }
   const QString text = draft(target).trimmed();
-  if (text.isEmpty() && kept.attachments.isEmpty() && kept.terminalContexts.isEmpty()) {
+  if (text.isEmpty() && kept.attachments.isEmpty() && kept.excerpts.isEmpty()) {
     if (m_kept.stash.size() == 1) {
       restoreStash(target, m_kept.stash.constFirst().id);
     } else {
@@ -439,7 +485,7 @@ bool ComposerController::stash(const QString& target) {
     }
     return true;
   }
-  m_kept.stash.prepend({newId(), m_now(), text, kept.attachments, kept.terminalContexts});
+  m_kept.stash.prepend({newId(), m_now(), text, kept.attachments, kept.excerpts});
   if (m_kept.stash.size() > kMaxStashEntries) {
     m_kept.stash.removeLast();
     NativeShell::of(this)->controller<ToastController>()->show(
@@ -447,7 +493,7 @@ bool ComposerController::stash(const QString& target) {
         QStringLiteral("The stash holds %1 prompts; the oldest was removed to make room.").arg(kMaxStashEntries));
   }
   kept.attachments.clear();
-  kept.terminalContexts.clear();
+  kept.excerpts.clear();
   // Clearing saves and publishes.
   setText(target, QString(), 0);
   save();
@@ -465,7 +511,7 @@ void ComposerController::restoreStash(const QString& target, const QString& id) 
   m_stashOpen = false;
   Draft& kept = m_drafts[target];
   kept.attachments.append(entry.attachments);
-  kept.terminalContexts.append(entry.terminalContexts);
+  kept.excerpts.append(entry.excerpts);
   const QString current = draft(target);
   const QString text = current.trimmed().isEmpty() ? entry.text : current.trimmed() + QStringLiteral("\n\n") + entry.text;
   setText(target, text, int(text.size()));
@@ -483,7 +529,16 @@ QVariantMap ComposerController::stashState() const {
   static const QRegularExpression space(QStringLiteral("\\s+"));
   QVariantList entries;
   for (const StashEntry& entry : m_kept.stash) {
-    QString snippet = entry.text.trimmed().replace(space, QStringLiteral(" "));
+    QString snippet = entry.text;
+    // A quote reads as its text and comment (assistantCitationsToPlainText).
+    for (const Excerpt& excerpt : entry.excerpts) {
+      if (excerpt.citation.isEmpty()) continue;
+      snippet += QLatin1Char(' ') + excerpt.citation.value(QStringLiteral("text")).toString();
+      if (const QString comment = excerpt.citation.value(QStringLiteral("comment")).toString(); !comment.isEmpty()) {
+        snippet += QStringLiteral(" Comment: ") + comment;
+      }
+    }
+    snippet = snippet.trimmed().replace(space, QStringLiteral(" "));
     if (snippet.size() > 90) {
       snippet = snippet.left(90) + QStringLiteral("…");
     } else if (snippet.isEmpty()) {
@@ -552,7 +607,7 @@ bool ComposerController::submit(const QVariantMap& payload) {
   if (!text.trimmed().isEmpty()) m_usageLimits.remove(target);
   if (!m_draftId.isEmpty()) return submitDraft(target, payload);
   const Draft& kept = m_drafts.value(target);
-  const bool hasExtras = !kept.attachments.isEmpty() || !kept.terminalContexts.isEmpty();
+  const bool hasExtras = !kept.attachments.isEmpty() || !kept.excerpts.isEmpty();
   const bool planFollowUp = !hasExtras && turnState().value(QStringLiteral("plan")).isValid();
   if (text.trimmed().isEmpty() && !hasExtras && !planFollowUp) return true;
 
@@ -577,11 +632,11 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
     return true;
   }
   if (fromDraft && filesBlock(m_drafts.value(target).attachments, QStringLiteral("sending"))) return true;
-  // A thread on its way to another machine is read-only until it arrives.
+  // Nor while the thread is on its way to another machine, which would refuse it.
   if (thread->movingTo) {
     NativeShell::of(this)->controller<ToastController>()->show(
-        QStringLiteral("warning"), QStringLiteral("%1 is moving to %2: message not sent").arg(thread->title, *thread->movingTo),
-        QStringLiteral("Your message is kept as a draft. Send it once the thread has arrived."));
+        QStringLiteral("warning"), QStringLiteral("%1 is moving to %2").arg(thread->title, *thread->movingTo),
+        QStringLiteral("Send the message once it has arrived."));
     return true;
   }
   const QString trimmed = text.trimmed();
@@ -645,9 +700,9 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
 
   // Implementing from the plan's own button leaves the draft alone.
   const QList<Attachment> attachments = fromDraft ? std::exchange(draft.attachments, {}) : QList<Attachment>();
-  const QList<TerminalContext> contexts =
-      fromDraft ? std::exchange(draft.terminalContexts, {}) : QList<TerminalContext>();
-  withTerminalContexts(message, contexts);
+  const QList<Excerpt> contexts =
+      fromDraft ? std::exchange(draft.excerpts, {}) : QList<Excerpt>();
+  withExcerpts(message, contexts);
   commands.append(message);
   if (fromDraft) setText(target, QString(), 0);
   save();
@@ -660,11 +715,47 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   return true;
 }
 
-// A new thread's first send, as the web's: its images are stored, then the
-// thread is launched with the message in the draft's checkout. The draft (its
-// text and images) stays until the MC confirms; the window then shows the
-// thread in its place. A background send (mod+alt+Enter) leaves the window on
-// the draft, emptied for another prompt.
+// Where a new thread starts. With more than one machine in the cluster the MC
+// this shell is connected to chooses (`hal-c2.placeThread`, HalC2.LoadBalancing):
+// it answers the user's own pick while balancing is off or no machine has more
+// room, else another machine and its checkout of the repository. The pick
+// stands for a draft the user tied to its machine, and whenever the MC cannot
+// be followed: it refuses, takes longer than kPlacementWaitMs, or names a
+// project or machine this shell cannot reach. Balancing never holds a first
+// message back.
+void ComposerController::place(const QString& environmentId, const QString& projectId, bool tied, const QString& instanceId,
+                               std::function<void(const QString&, const QString&)> then) {
+  QStringList machines = m_store->environments();
+  machines.removeDuplicates();
+  if (tied || machines.size() < 2) {
+    then(environmentId, projectId);
+    return;
+  }
+  QJsonObject input{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("projectId"), projectId}};
+  if (!instanceId.isEmpty()) input.insert(QStringLiteral("instanceId"), instanceId);
+  // The MC's answer or the wait running out, whichever is first.
+  const auto answered = std::make_shared<bool>(false);
+  const auto answer = [this, environmentId, projectId, then, answered](const QJsonValue& result, const std::optional<QString>& error) {
+    if (std::exchange(*answered, true)) return;
+    const QString placedOn = str(result.toObject(), QLatin1String("environmentId"));
+    const QString placedIn = str(result.toObject(), QLatin1String("projectId"));
+    const bool reachable = !error && m_store->environmentOnline(placedOn) && !m_store->projectRow(placedOn, placedIn).isEmpty();
+    if (reachable) {
+      then(placedOn, placedIn);
+    } else {
+      then(environmentId, projectId);
+    }
+  };
+  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.placeThread"), input, answer);
+  QTimer::singleShot(kPlacementWaitMs, this, [answer] { answer(QJsonValue(), QStringLiteral("no answer")); });
+}
+
+// A new thread's first send, as the web's: the thread is placed, its images
+// are stored, then it is launched with the message in the draft's checkout
+// (or the one it was placed in). The draft (its text and images) stays until
+// the MC confirms; the window then shows the thread in its place. A
+// background send (mod+alt+Enter) leaves the window on the draft, emptied for
+// another prompt.
 bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& payload) {
   auto* shell = NativeShell::of(this);
   auto* drafts = shell->controller<DraftController>();
@@ -673,7 +764,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   const bool background = payload.value(QStringLiteral("intent")).toString() == QLatin1String("background");
   const QString text = kept->text;
   QList<Attachment> attachments = m_drafts.value(draftId).attachments;
-  const QList<TerminalContext> contexts = m_drafts.value(draftId).terminalContexts;
+  const QList<Excerpt> contexts = m_drafts.value(draftId).excerpts;
   if (text.trimmed().isEmpty() && attachments.isEmpty() && contexts.isEmpty()) return true;
   if (m_launching.contains(draftId)) return true;
 
@@ -717,7 +808,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   rememberModel(modelSelection);
   if (!contexts.isEmpty()) {
     QJsonObject initial = input.value(QLatin1String("initialMessage")).toObject();
-    withTerminalContexts(initial, contexts);
+    withExcerpts(initial, contexts);
     input.insert(QStringLiteral("initialMessage"), initial);
   }
 
@@ -728,70 +819,88 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
     // The thread is on its way; the draft takes the next prompt under a new
     // thread id, so the launched thread's row does not end it.
     m_drafts[draftId].attachments.clear();
-    m_drafts[draftId].terminalContexts.clear();
+    m_drafts[draftId].excerpts.clear();
     drafts->renew(draftId);
     setText(draftId, QString(), 0);
   } else {
     m_launching.insert(draftId);
   }
   publish();
-  const QString environmentId = where.environmentId;
-  const auto start = [this, draftId, environmentId, background, text, attachments, contexts](const QJsonObject& input) {
-    m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), input,
-                   [this, draftId, environmentId, input, background, text, attachments, contexts](
-                       const QJsonValue& result, const std::optional<QString>& error) {
-                     QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
-                     if (threadId.isEmpty()) threadId = str(input, QLatin1String("threadId"));
-                     const QString threadKey = environmentId + QLatin1Char(':') + threadId;
-                     if (background) {
-                       launchedInBackground(draftId, text, attachments, contexts, threadKey, error);
-                     } else {
-                       launched(draftId, threadKey, error);
+  const QString threadId = kept->threadId;
+  // The images go to the machine the thread starts on, then the thread does.
+  const auto begin = [this, draftId, threadId, background, text, attachments, contexts](const QString& environmentId,
+                                                                                         QJsonObject input) {
+    const auto start = [this, draftId, environmentId, background, text, attachments, contexts](const QJsonObject& input) {
+      m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), input,
+                     [this, draftId, environmentId, input, background, text, attachments, contexts](
+                         const QJsonValue& result, const std::optional<QString>& error) {
+                       QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
+                       if (threadId.isEmpty()) threadId = str(input, QLatin1String("threadId"));
+                       const QString threadKey = environmentId + QLatin1Char(':') + threadId;
+                       if (background) {
+                         launchedInBackground(draftId, text, attachments, contexts, threadKey, error);
+                       } else {
+                         launched(draftId, threadKey, error);
+                       }
+                     });
+    };
+    const QJsonArray files = fileRecords(attachments);
+    if (std::all_of(attachments.cbegin(), attachments.cend(), [](const Attachment& a) { return a.file; })) {
+      if (!files.isEmpty()) {
+        QJsonObject initial = input.value(QLatin1String("initialMessage")).toObject();
+        initial.insert(QStringLiteral("attachments"), files);
+        input.insert(QStringLiteral("initialMessage"), initial);
+      }
+      start(input);
+      return;
+    }
+    QJsonArray images;
+    for (const Attachment& attachment : attachments) {
+      if (attachment.file) continue;
+      QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
+                        {QStringLiteral("name"), attachment.name},
+                        {QStringLiteral("mimeType"), attachment.mimeType},
+                        {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                        {QStringLiteral("dataUrl"), attachment.dataUrl}};
+      if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+      images.append(image);
+    }
+    QJsonObject message = input.value(QLatin1String("initialMessage")).toObject();
+    m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
+                   QJsonObject{{QStringLiteral("threadId"), threadId},
+                               {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
+                               {QStringLiteral("attachments"), images}},
+                   [this, draftId, input, message, start, background, text, attachments, contexts, files](
+                       const QJsonValue& result, const std::optional<QString>& error) mutable {
+                     if (error) {
+                       if (background) {
+                         launchedInBackground(draftId, text, attachments, contexts, QString(), error);
+                       } else {
+                         launched(draftId, QString(), error);
+                       }
+                       return;
                      }
+                     QJsonArray stored = result.toObject().value(QLatin1String("attachments")).toArray();
+                     for (const QJsonValue& file : files) stored.append(file);
+                     message.insert(QStringLiteral("attachments"), stored);
+                     input.insert(QStringLiteral("initialMessage"), message);
+                     start(input);
                    });
   };
-  const QJsonArray files = fileRecords(attachments);
-  if (std::all_of(attachments.cbegin(), attachments.cend(), [](const Attachment& a) { return a.file; })) {
-    if (!files.isEmpty()) {
-      QJsonObject initial = input.value(QLatin1String("initialMessage")).toObject();
-      initial.insert(QStringLiteral("attachments"), files);
-      input.insert(QStringLiteral("initialMessage"), initial);
-    }
-    start(input);
-    return true;
-  }
-  QJsonArray images;
-  for (const Attachment& attachment : attachments) {
-    if (attachment.file) continue;
-    QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
-                      {QStringLiteral("name"), attachment.name},
-                      {QStringLiteral("mimeType"), attachment.mimeType},
-                      {QStringLiteral("sizeBytes"), attachment.sizeBytes},
-                      {QStringLiteral("dataUrl"), attachment.dataUrl}};
-    if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
-    images.append(image);
-  }
-  QJsonObject message = input.value(QLatin1String("initialMessage")).toObject();
-  m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
-                 QJsonObject{{QStringLiteral("threadId"), kept->threadId},
-                             {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
-                             {QStringLiteral("attachments"), images}},
-                 [this, draftId, input, message, start, background, text, attachments, contexts, files](
-                     const QJsonValue& result, const std::optional<QString>& error) mutable {
-                   if (error) {
-                     if (background) {
-                       launchedInBackground(draftId, text, attachments, contexts, QString(), error);
-                     } else {
-                       launched(draftId, QString(), error);
-                     }
-                     return;
-                   }
-                   QJsonArray stored = result.toObject().value(QLatin1String("attachments")).toArray();
-                   for (const QJsonValue& file : files) stored.append(file);
-                   message.insert(QStringLiteral("attachments"), stored);
-                   input.insert(QStringLiteral("initialMessage"), message);
-                   start(input);
-                 });
+  // Files already went to the machine the user picked, so the thread starts there.
+  const bool hasFiles = std::any_of(attachments.cbegin(), attachments.cend(), [](const Attachment& a) { return a.file; });
+  place(where.environmentId, where.projectId, where.tied || hasFiles, str(modelSelection, QLatin1String("instanceId")),
+        [where, input, begin](const QString& environmentId, const QString& projectId) mutable {
+          if (environmentId != where.environmentId || projectId != where.projectId) {
+            input.insert(QStringLiteral("projectId"), projectId);
+            // The branch this machine's checkout is on says nothing of
+            // another's; a new worktree's base is the repository's on either.
+            QJsonObject strategy = where.strategy;
+            if (str(strategy, QLatin1String("type")) == QLatin1String("root")) strategy.remove(QLatin1String("branch"));
+            input.insert(QStringLiteral("workspaceStrategy"), strategy);
+          }
+          begin(environmentId, input);
+        });
   return true;
 }
 
@@ -837,7 +946,7 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
 // comes back.
 bool ComposerController::submitToModels(const QString& draftId, const QList<QJsonObject>& models, const QJsonObject& input,
                                         const QJsonObject& strategy, const QString& environmentId, const QString& text,
-                                        const QList<Attachment>& attachments, const QList<TerminalContext>& contexts) {
+                                        const QList<Attachment>& attachments, const QList<Excerpt>& contexts) {
   auto* shell = NativeShell::of(this);
   const QString type = str(strategy, QLatin1String("type"));
   const QString base = type == QLatin1String("worktree") ? str(strategy, QLatin1String("baseRef"))
@@ -853,7 +962,7 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
   if (strategy.value(QLatin1String("startFromOrigin")).toBool()) worktree.insert(QStringLiteral("startFromOrigin"), true);
 
   m_drafts[draftId].attachments.clear();
-  m_drafts[draftId].terminalContexts.clear();
+  m_drafts[draftId].excerpts.clear();
   shell->controller<DraftController>()->renew(draftId);
   setText(draftId, QString(), 0);
 
@@ -884,7 +993,7 @@ bool ComposerController::submitToModels(const QString& draftId, const QList<QJso
     // Nothing started: the prompt goes back into an untouched draft.
     if (!shell->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty()) return;
     m_drafts[draftId].attachments = attachments;
-    m_drafts[draftId].terminalContexts = contexts;
+    m_drafts[draftId].excerpts = contexts;
     setText(draftId, text, int(text.size()));
   };
 
@@ -959,7 +1068,7 @@ void ComposerController::launched(const QString& draftId, const QString& threadK
 // prompt, a toast that gives it back once the draft is empty).
 void ComposerController::launchedInBackground(const QString& draftId, const QString& text,
                                               const QList<Attachment>& attachments,
-                                              const QList<TerminalContext>& contexts, const QString& threadKey,
+                                              const QList<Excerpt>& contexts, const QString& threadKey,
                                               const std::optional<QString>& error) {
   auto* shell = NativeShell::of(this);
   auto* toasts = shell->controller<ToastController>();
@@ -974,11 +1083,11 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
   // Only into an empty draft: newer typing is the user's.
   const auto restore = [this, draftId, text, attachments, contexts] {
     if (!NativeShell::of(this)->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty() ||
-        !m_drafts.value(draftId).attachments.isEmpty() || !m_drafts.value(draftId).terminalContexts.isEmpty()) {
+        !m_drafts.value(draftId).attachments.isEmpty() || !m_drafts.value(draftId).excerpts.isEmpty()) {
       return false;
     }
     m_drafts[draftId].attachments = attachments;
-    m_drafts[draftId].terminalContexts = contexts;
+    m_drafts[draftId].excerpts = contexts;
     setText(draftId, text, int(text.size()));
     return true;
   };
@@ -1009,11 +1118,11 @@ void ComposerController::sendNext(const QString& target) {
       const QList<Send> unsent = m_queues.take(target);
       QStringList prompts;
       QList<Attachment> attachments;
-      QList<TerminalContext> contexts;
+      QList<Excerpt> contexts;
       for (const Send& queued : unsent) {
         if (!queued.prompt.isEmpty()) prompts.append(queued.prompt);
         attachments.append(queued.attachments);
-        contexts.append(queued.terminalContexts);
+        contexts.append(queued.excerpts);
       }
       // Only into an untouched draft: newer typing is the user's.
       if (draft(target).isEmpty() && !prompts.isEmpty()) {
@@ -1022,7 +1131,7 @@ void ComposerController::sendNext(const QString& target) {
       }
       Draft& draft = m_drafts[target];
       draft.attachments = attachments + draft.attachments;
-      draft.terminalContexts = contexts + draft.terminalContexts;
+      draft.excerpts = contexts + draft.excerpts;
       save();
       publish();
       return;
@@ -1089,6 +1198,28 @@ void ComposerController::dispatchAll(const Send& send, qsizetype index,
                               }
                               done(error);
                             });
+}
+
+// What the composer shows of a draft image, its middle square scaled down, as
+// a PNG data URL: the full image would be compared and handed to QML on every
+// keystroke. Empty when Qt cannot read the image.
+QString ComposerController::thumbnail(const QString& dataUrl) {
+  constexpr int kSide = 128;
+  QByteArray bytes = QByteArray::fromBase64(QStringView(dataUrl).mid(dataUrl.indexOf(QLatin1Char(',')) + 1).toLatin1());
+  QBuffer source(&bytes);
+  QImageReader reader(&source);
+  reader.setAutoTransform(true);
+  const QSize size = reader.size();
+  const int side = std::min(size.width(), size.height());
+  if (side > 0) {
+    reader.setClipRect(QRect((size.width() - side) / 2, (size.height() - side) / 2, side, side));
+    if (side > kSide) reader.setScaledSize(QSize(kSide, kSide));
+  }
+  const QImage image = reader.read();
+  QByteArray png;
+  QBuffer target(&png);
+  if (image.isNull() || !target.open(QIODevice::WriteOnly) || !image.save(&target, "PNG")) return {};
+  return QStringLiteral("data:image/png;base64,") + QString::fromLatin1(png.toBase64());
 }
 
 // What the brick read from disk or the clipboard joins the route's draft: an
@@ -1316,7 +1447,7 @@ QJsonArray ComposerController::fileRecords(const QList<Attachment>& attachments)
 // `source` is a Snap Shot's {appName, windowTitle, accessibility}, the
 // last being what its window said of itself, in the web's words
 // (SnapShotAttachmentDetails.tsx).
-QVariantList ComposerController::shownAttachments(const QList<Attachment>& attachments) {
+QVariantList ComposerController::shownAttachments(const QList<Attachment>& attachments, bool previews) const {
   QVariantList shown;
   for (const Attachment& attachment : attachments) {
     QVariant source = QVariant::fromValue(nullptr);
@@ -1342,12 +1473,29 @@ QVariantList ComposerController::shownAttachments(const QList<Attachment>& attac
                            {QStringLiteral("windowTitle"), str(attachment.source, QLatin1String("windowTitle"))},
                            {QStringLiteral("accessibility"), said}};
     }
-    shown.append(QVariantMap{{QStringLiteral("id"), attachment.id},
-                             {QStringLiteral("name"), attachment.name},
-                             {QStringLiteral("kind"), attachment.file ? QStringLiteral("file") : QStringLiteral("image")},
-                             {QStringLiteral("status"), attachment.upload},
-                             {QStringLiteral("error"), attachment.error},
-                             {QStringLiteral("source"), source}});
+    QVariantMap entry{{QStringLiteral("id"), attachment.id},
+                      {QStringLiteral("name"), attachment.name},
+                      {QStringLiteral("kind"), attachment.file ? QStringLiteral("file") : QStringLiteral("image")},
+                      {QStringLiteral("status"), attachment.upload},
+                      {QStringLiteral("error"), attachment.error},
+                      {QStringLiteral("source"), source}};
+    if (previews && !attachment.file) {
+      auto preview = m_previews.constFind(attachment.id);
+      if (preview == m_previews.cend()) {
+        // A new image is when the ones that left the drafts and the stash are forgotten.
+        QSet<QString> held;
+        for (const Draft& draft : std::as_const(m_drafts)) {
+          for (const Attachment& image : draft.attachments) held.insert(image.id);
+        }
+        for (const StashEntry& entry : std::as_const(m_kept.stash)) {
+          for (const Attachment& image : entry.attachments) held.insert(image.id);
+        }
+        m_previews.removeIf([&](const auto& known) { return !held.contains(known.key()); });
+        preview = m_previews.insert(attachment.id, thumbnail(attachment.dataUrl));
+      }
+      entry.insert(QStringLiteral("preview"), *preview);
+    }
+    shown.append(entry);
   }
   return shown;
 }
@@ -1389,7 +1537,36 @@ bool ComposerController::addTerminalContext(const QVariantMap& selection) {
   if (text.isEmpty() || terminalId.isEmpty() || terminalLabel.isEmpty()) return true;
   const int lineStart = std::max(1, int(std::floor(selection.value(QStringLiteral("lineStart")).toDouble())));
   const int lineEnd = std::max(lineStart, int(std::floor(selection.value(QStringLiteral("lineEnd")).toDouble())));
-  m_drafts[target].terminalContexts.append({newId(), terminalId, terminalLabel, lineStart, lineEnd, text});
+  m_drafts[target].excerpts.append({newId(), terminalId, terminalLabel, lineStart, lineEnd, text});
+  publish();
+  return true;
+}
+
+// A quote the composer holds: one selection of one reply of the thread it
+// is on, within the citation's limits (AssistantCitation); anything else
+// adds nothing.
+bool ComposerController::addCitation(const QVariantMap& selection) {
+  const QString target = this->target();
+  const auto thread = m_store->thread(target);
+  if (!thread) return true;
+  const QString messageId = selection.value(QStringLiteral("messageId")).toString();
+  const QString text = selection.value(QStringLiteral("text")).toString();
+  const qint64 start = qint64(selection.value(QStringLiteral("start")).toDouble());
+  const qint64 end = qint64(selection.value(QStringLiteral("end")).toDouble());
+  if (messageId.isEmpty() || text.trimmed().isEmpty() || text.size() > kMaxCitationLength || start < 0 || end <= start) {
+    return true;
+  }
+  m_drafts[target].excerpts.append(
+      {newId(), {}, {}, 1, 1, {},
+       QJsonObject{{QStringLiteral("version"), 1},
+                   {QStringLiteral("environmentId"), thread->environmentId},
+                   {QStringLiteral("threadId"), thread->id},
+                   {QStringLiteral("messageId"), messageId},
+                   {QStringLiteral("text"), text},
+                   {QStringLiteral("start"), start},
+                   {QStringLiteral("end"), end},
+                   {QStringLiteral("prefix"), selection.value(QStringLiteral("prefix")).toString().right(kCitationContextLength)},
+                   {QStringLiteral("suffix"), selection.value(QStringLiteral("suffix")).toString().left(kCitationContextLength)}}});
   publish();
   return true;
 }
@@ -1408,7 +1585,7 @@ bool ComposerController::addReviewComment(const QVariantMap& comment) {
   if (filePath.isEmpty() || note.isEmpty()) return true;
   const int first = std::max(1, comment.value(QStringLiteral("lineStart")).toInt());
   const int last = std::max(first, comment.value(QStringLiteral("lineEnd")).toInt());
-  TerminalContext context{newId(), {}, {}, first, last, note, {}};
+  Excerpt context{newId(), {}, {}, first, last, note, {}, {}};
   context.review = QJsonObject{{QStringLiteral("filePath"), filePath},
                                {QStringLiteral("sectionId"), comment.value(QStringLiteral("sectionId"), QStringLiteral("diff")).toString()},
                                {QStringLiteral("sectionTitle"), comment.value(QStringLiteral("sectionTitle"), QStringLiteral("Diff")).toString()},
@@ -1416,7 +1593,7 @@ bool ComposerController::addReviewComment(const QVariantMap& comment) {
                                {QStringLiteral("endIndex"), comment.value(QStringLiteral("endIndex")).toInt()},
                                {QStringLiteral("rangeLabel"), comment.value(QStringLiteral("rangeLabel")).toString()},
                                {QStringLiteral("diff"), comment.value(QStringLiteral("diff")).toString().left(32000)}};
-  m_drafts[target].terminalContexts.append(context);
+  m_drafts[target].excerpts.append(context);
   publish();
   NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("success"), QStringLiteral("Comment added to the prompt"),
                                                              reviewLabel(filePath, first, last));
@@ -1435,8 +1612,8 @@ bool ComposerController::attachmentsPending(const QString& target) const {
 
 QVariantList ComposerController::terminalContexts(const QString& target) const {
   QVariantList contexts;
-  for (const TerminalContext& context : m_drafts.value(target).terminalContexts) {
-    if (!context.review.isEmpty()) continue;
+  for (const Excerpt& context : m_drafts.value(target).excerpts) {
+    if (!context.citation.isEmpty() || !context.review.isEmpty()) continue;
     contexts.append(QVariantMap{{QStringLiteral("id"), context.id},
                                 {QStringLiteral("terminalId"), context.terminalId},
                                 {QStringLiteral("terminalLabel"), context.terminalLabel},
@@ -1451,7 +1628,7 @@ std::optional<QString> ComposerController::draftPreview(const QString& target) c
   const QString text = draft(target).trimmed();
   if (!text.isEmpty()) return text.section(QLatin1Char('\n'), 0, 0);
   const auto kept = m_drafts.constFind(target);
-  const qsizetype count = kept == m_drafts.cend() ? 0 : kept->attachments.size() + kept->terminalContexts.size();
+  const qsizetype count = kept == m_drafts.cend() ? 0 : kept->attachments.size() + kept->excerpts.size();
   if (count == 0) return std::nullopt;
   return count == 1 ? tr("1 attachment") : tr("%1 attachments").arg(count);
 }
@@ -1459,14 +1636,19 @@ std::optional<QString> ComposerController::draftPreview(const QString& target) c
 // As the web's composer: each excerpt is an inline link in the text
 // (formatTerminalContextReference) and a record in `context`
 // (terminalContextRecord); the MC swaps the links for the excerpts when it
-// hands the message to the provider.
-void ComposerController::withTerminalContexts(QJsonObject& message, const QList<TerminalContext>& contexts) {
+// hands the message to the provider. A quoted reply is only a link, which
+// holds all of it.
+void ComposerController::withExcerpts(QJsonObject& message, const QList<Excerpt>& contexts) {
   if (contexts.isEmpty()) return;
   static const QRegularExpression unsafe(QStringLiteral("[\\[\\]\\\\\\r\\n]"));
   static const QRegularExpression spaces(QStringLiteral("\\s+"));
   QStringList links;
   QJsonArray records;
-  for (const TerminalContext& context : contexts) {
+  for (const Excerpt& context : contexts) {
+    if (!context.citation.isEmpty()) {
+      links.append(citationLink(context.citation));
+      continue;
+    }
     if (!context.review.isEmpty()) {
       // reviewCommentRecord: the note with the file, the lines and their text.
       const QString filePath = context.review.value(QLatin1String("filePath")).toString();
@@ -1505,6 +1687,7 @@ void ComposerController::withTerminalContexts(QJsonObject& message, const QList<
   const QString text = message.value(QLatin1String("text")).toString();
   const QString joined = links.join(QLatin1Char(' '));
   message.insert(QStringLiteral("text"), text.isEmpty() ? joined : text + QStringLiteral("\n\n") + joined);
+  if (records.isEmpty()) return;
   QJsonObject context = message.value(QLatin1String("context")).toObject();
   QJsonArray existing = context.value(QLatin1String("records")).toArray();
   for (const QJsonValue& record : records) existing.append(record);
@@ -1861,6 +2044,25 @@ QString ComposerController::target() const {
   return m_store->thread(m_thread) ? m_thread : QString();
 }
 
+// A thread that moved to another machine has a new key: what was written for
+// it, and the model and modes chosen, follow it there.
+void ComposerController::carryDrafts() {
+  QList<std::pair<QString, QString>> moved;
+  for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
+    const QString located = m_store->located(it.key());
+    if (located != it.key()) moved.append({it.key(), located});
+  }
+  if (moved.isEmpty()) return;
+  for (const auto& [from, to] : moved) {
+    Draft carried = m_drafts.take(from);
+    // The brick showing the thread there has made no edit yet.
+    carried.edit = QVariant();
+    const Draft there = m_drafts.value(to);
+    if (there.text.isEmpty() && there.attachments.isEmpty() && there.excerpts.isEmpty()) m_drafts.insert(to, carried);
+  }
+  save();
+}
+
 QString ComposerController::draft(const QString& target) const {
   if (const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(target)) return kept->text;
   return m_drafts.value(target).text;
@@ -1924,7 +2126,7 @@ bool ComposerController::slashMode(const QString& target, const QString& text) {
   static const QRegularExpression command(QStringLiteral("^/(plan|default)\\s*$"), QRegularExpression::CaseInsensitiveOption);
   const QRegularExpressionMatch match = command.match(text.trimmed());
   if (!match.hasMatch() || !m_drafts.value(target).attachments.isEmpty() ||
-      !m_drafts.value(target).terminalContexts.isEmpty() || !planModeOn(instanceOf(selection(target)))) {
+      !m_drafts.value(target).excerpts.isEmpty() || !planModeOn(instanceOf(selection(target)))) {
     return false;
   }
   setInteractionMode(target, match.captured(1).toLower());
@@ -2202,10 +2404,19 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
     if (!waiting && !composer::emptyText(trigger->kind).isEmpty()) emptyText = composer::emptyText(trigger->kind);
   }
 
-  const QVariantList attachments = shownAttachments(kept.attachments);
+  const QVariantList attachments = shownAttachments(kept.attachments, true);
   QVariantList terminalContexts;
   QVariantList reviewComments;
-  for (const TerminalContext& context : kept.terminalContexts) {
+  QVariantList citations;
+  for (const Excerpt& context : kept.excerpts) {
+    if (!context.citation.isEmpty()) {
+      const QJsonValue comment = context.citation.value(QLatin1String("comment"));
+      citations.append(QVariantMap{{QStringLiteral("id"), context.id},
+                                   {QStringLiteral("text"), context.citation.value(QLatin1String("text")).toString()},
+                                   {QStringLiteral("comment"), comment.isString() ? QVariant(comment.toString())
+                                                                                  : QVariant::fromValue(nullptr)}});
+      continue;
+    }
     if (!context.review.isEmpty()) {
       const QString filePath = context.review.value(QLatin1String("filePath")).toString();
       reviewComments.append(QVariantMap{{QStringLiteral("id"), context.id},
@@ -2228,7 +2439,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
                           : questions.constFirst().toMap().value(QStringLiteral("questions")).toList().value(0).toMap();
   const bool choiceOnly = !firstQuestion.isEmpty() && !firstQuestion.value(QStringLiteral("allowCustomAnswer")).toBool();
   const bool planOffered = !turn.value(QStringLiteral("plan")).isNull() && turn.value(QStringLiteral("plan")).isValid();
-  const bool showPlanFollowUp = planOffered && kept.attachments.isEmpty() && kept.terminalContexts.isEmpty();
+  const bool showPlanFollowUp = planOffered && kept.attachments.isEmpty() && kept.excerpts.isEmpty();
   QString environmentId = thread ? thread->environmentId : QString();
   if (isDraft) {
     if (const auto draft = NativeShell::of(this)->controller<DraftController>()->draft(target)) {
@@ -2239,7 +2450,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   const bool noProvider =
       std::none_of(m_catalogue.cbegin(), m_catalogue.cend(), [](const composer::Instance& entry) { return entry.ready(); });
   const bool busy = isDraft && m_launching.contains(target);
-  const bool hasContent = !text.trimmed().isEmpty() || !kept.attachments.isEmpty() || !kept.terminalContexts.isEmpty();
+  const bool hasContent = !text.trimmed().isEmpty() || !kept.attachments.isEmpty() || !kept.excerpts.isEmpty();
   const bool isRunning = thread && thread->activeRunId.has_value();
 
   QString placeholder = QStringLiteral("Ask anything, @tag files/folders, $use skills, or / for commands");
@@ -2294,6 +2505,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("attachments"), attachments},
       {QStringLiteral("terminalContexts"), terminalContexts},
       {QStringLiteral("reviewComments"), reviewComments},
+      {QStringLiteral("citations"), citations},
       {QStringLiteral("placeholder"), placeholder},
       {QStringLiteral("editorDisabled"), !approvals.isEmpty() || choiceOnly},
       {QStringLiteral("canSend"), !(busy || offline || noProvider) && (hasContent || showPlanFollowUp)},
@@ -2413,7 +2625,7 @@ std::optional<ComposerController::Attachment> ComposerController::attachmentOf(c
 
 // Each target's text and choices, as {targets: {<target>: {text, modelSelection,
 // runtimeMode, interactionMode}}, stash: [{id, createdAt, text, attachments,
-// terminalContexts}]}, and the drafts' images beside them (imagesPath).
+// terminalContexts}]} (a quoted reply among them carries its `citation`), and the drafts' images beside them (imagesPath).
 void ComposerController::setStorePath(const QString& path) {
   m_kept.path = path;
   QFile file(path);
@@ -2432,10 +2644,10 @@ void ComposerController::setStorePath(const QString& path) {
     }
     for (const QJsonValue& context : entry.value(QLatin1String("terminalContexts")).toArray()) {
       const QJsonObject t = context.toObject();
-      kept.terminalContexts.append({str(t, QLatin1String("id")), str(t, QLatin1String("terminalId")),
+      kept.excerpts.append({str(t, QLatin1String("id")), str(t, QLatin1String("terminalId")),
                                     str(t, QLatin1String("terminalLabel")), t.value(QLatin1String("lineStart")).toInt(1),
                                     t.value(QLatin1String("lineEnd")).toInt(1), str(t, QLatin1String("text")),
-                                    t.value(QLatin1String("review")).toObject()});
+                                    t.value(QLatin1String("citation")).toObject(), t.value(QLatin1String("review")).toObject()});
     }
     if (!kept.id.isEmpty()) m_kept.stash.append(kept);
   }
@@ -2503,11 +2715,13 @@ void ComposerController::save() const {
     QJsonArray images;
     for (const Attachment& a : entry.attachments) images.append(attachmentJson(a));
     QJsonArray contexts;
-    for (const TerminalContext& t : entry.terminalContexts) {
-      contexts.append(QJsonObject{{QStringLiteral("id"), t.id}, {QStringLiteral("terminalId"), t.terminalId},
-                                  {QStringLiteral("terminalLabel"), t.terminalLabel}, {QStringLiteral("lineStart"), t.lineStart},
-                                  {QStringLiteral("lineEnd"), t.lineEnd}, {QStringLiteral("text"), t.text},
-                                  {QStringLiteral("review"), t.review}});
+    for (const Excerpt& t : entry.excerpts) {
+      QJsonObject context{{QStringLiteral("id"), t.id}, {QStringLiteral("terminalId"), t.terminalId},
+                          {QStringLiteral("terminalLabel"), t.terminalLabel}, {QStringLiteral("lineStart"), t.lineStart},
+                          {QStringLiteral("lineEnd"), t.lineEnd}, {QStringLiteral("text"), t.text}};
+      if (!t.citation.isEmpty()) context.insert(QStringLiteral("citation"), t.citation);
+      if (!t.review.isEmpty()) context.insert(QStringLiteral("review"), t.review);
+      contexts.append(context);
     }
     stash.append(QJsonObject{{QStringLiteral("id"), entry.id},
                              {QStringLiteral("createdAt"), entry.createdAt.toString(Qt::ISODateWithMs)},

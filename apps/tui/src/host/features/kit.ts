@@ -4,7 +4,7 @@ import type { PropertyMap } from "opentui-qml";
 import type { TuiClient } from "../../connection.ts";
 import type { StatusKind, Store } from "../../store.ts";
 import type { AskSpec } from "../askState.ts";
-import type { TuiMenuSpec } from "../composerState.ts";
+import type { PickRequest } from "../composerState.ts";
 import type { TuiMode } from "../layoutState.ts";
 import type { PaletteCommand } from "../paletteState.ts";
 import type { TuiSettingsExtraGroup } from "../settingsState.ts";
@@ -28,7 +28,7 @@ export interface FeatureKit {
   readonly state: PropertyMap;
   readonly mode: () => TuiMode;
   readonly setMode: (mode: TuiMode) => void;
-  readonly menu: (spec: TuiMenuSpec) => void;
+  readonly menu: (spec: PickRequest) => void;
   readonly closeMenu: (title?: string) => void;
   readonly ask: (spec: AskSpec) => void;
   readonly status: (text: string, kind?: StatusKind) => void;

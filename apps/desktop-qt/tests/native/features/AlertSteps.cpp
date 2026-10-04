@@ -8,9 +8,11 @@
 #include <QVariantList>
 
 #include "AlertController.h"
+#include "Alerts.h"
 #include "CommandPaletteController.h"
 #include "FilesViewer.h"
 #include "Harness.h"
+#include "Move.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -23,8 +25,7 @@ using stream::iso;
 
 // A thread the steps drive, and where its rows come from.
 struct Tracked {
-  QString environment;  // empty: the MC's own
-  QString peer;         // another MC of the cluster that serves it
+  QString peer;  // another MC of the cluster that serves it; empty: the MC's own
   QString id;
   QJsonObject row;
   int runs = 0;
@@ -82,16 +83,12 @@ AlertController& alerts(World& world) {
 }
 
 QString keyOf(World& world, const Tracked& thread) {
-  const QString environment = !thread.environment.isEmpty() ? thread.environment
-                              : !thread.peer.isEmpty()      ? QStringLiteral("env-b")
-                                                            : world.mc.environmentId;
+  const QString environment = thread.peer.isEmpty() ? world.mc.environmentId : world.mc.peers.key(thread.peer);
   return environment + QLatin1Char(':') + thread.id;
 }
 
 void send(World& world, const Tracked& thread) {
-  if (!thread.environment.isEmpty()) {
-    world.mc.sendLinkRow(thread.environment, thread.id, thread.row);
-  } else if (!thread.peer.isEmpty()) {
+  if (!thread.peer.isEmpty()) {
     world.mc.sendRows(thread.peer, QJsonArray{QJsonValue(QJsonArray{thread.id, QStringLiteral("thread"), thread.row})});
   } else {
     world.mc.threads.insert(thread.id, thread.row);
@@ -109,11 +106,10 @@ Tracked& tracked(World& world, const QString& title) {
 }
 
 // A thread with a run under way, in the Background's project.
-Tracked& working(World& world, const QString& title, const QString& environment = {}, const QString& peer = {}) {
+Tracked& working(World& world, const QString& title, const QString& peer = {}) {
   alerts(world);
   FakeAlerts& state = fake(world);
   Tracked& thread = state.threads[title];
-  thread.environment = environment;
   thread.peer = peer;
   thread.id = QStringLiteral("thread-") + title.toLower().replace(QLatin1Char(' '), QLatin1Char('-'));
   thread.runs += 1;
@@ -307,17 +303,11 @@ const Steps steps([] {
   step(QStringLiteral("the thread %1 is working in the background").arg(q), [](World& world, const Captures& c, const Table&) {
     working(world, c[0]);
   });
-  step(QStringLiteral("the thread %1 is working in the background on (a linked environment|another MC of the cluster)").arg(q),
+  step(QStringLiteral("the thread %1 is working in the background on another MC of the cluster").arg(q),
        [](World& world, const Captures& c, const Table&) {
-         if (c[1] == QLatin1String("a linked environment")) {
-           world.mc.link(QStringLiteral("laptop"));
-           world.sync();
-           working(world, c[0], QStringLiteral("laptop"));
-         } else {
-           world.mc.join(stream::kPeer, QStringLiteral("env-b"));
-           world.sync();
-           working(world, c[0], {}, stream::kPeer);
-         }
+         world.mc.join(stream::kPeer, stream::kPeerEnvironment);
+         world.sync();
+         working(world, c[0], stream::kPeer);
        });
   step(QStringLiteral("the thread (completes|asks for approval|asks the user a question|fails|stops at the provider's usage limit)"),
        [](World& world, const Captures& c, const Table&) { change(world, tracked(world, fake(world).current), c[0]); });
@@ -345,6 +335,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user is looking at %1").arg(q), [](World& world, const Captures& c, const Table&) {
     if (lookAtFile(world, c[0])) return;
+    if (!fake(world).threads.contains(c[0]) && showMachineThread(world, c[0])) return;
     Tracked& thread = fake(world).threads.contains(c[0]) ? tracked(world, c[0]) : working(world, c[0]);
     world.native().controller<NavigationController>()->open(NavigationController::Route::thread(keyOf(world, thread)));
   });
@@ -508,3 +499,19 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void awaitSystemNotifications(World& world) {
+  auto* settings = world.native().controller<SettingsController>();
+  settings->set(QStringLiteral("inAppNotificationsEnabled"), true);
+  settings->set(QStringLiteral("notificationMode"), QStringLiteral("notifications-and-sound"));
+  fake(world).focused = false;
+  alerts(world);
+}
+
+QStringList systemNotifications(World& world) {
+  return fake(world).delivered;
+}
+
+bool clickSystemNotification(World& world, const QString& key) {
+  return alerts(world).openThread(key);
+}

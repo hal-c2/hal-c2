@@ -13,8 +13,7 @@ class McClient;
 // The Previews tab: a thread's browser tabs as the MC keeps them
 // (`preview.list`), each opened in the user's browser rather than embedded.
 // While shown it follows the MC's `preview` events (the MC serving the
-// thread's environment; a linked environment's list is read again on show
-// and on reload()).
+// thread's environment).
 //
 // close(tabId) is `preview.close`: the row goes at once and stays gone while
 // the close is in flight; a close that fails brings it back where it was.

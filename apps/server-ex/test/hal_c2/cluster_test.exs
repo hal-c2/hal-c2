@@ -111,8 +111,15 @@ defmodule HalC2.ClusterTest do
              config
 
     :peer.stop(peer)
-    {down, _, _client} = WsClient.recv_until(client, &(&1["t"] == "shell.mc"), 5_000)
+    {down, _, client} = WsClient.recv_until(client, &(&1["t"] == "shell.mc"), 5_000)
     assert down == %{"t" => "shell.mc", "id" => 1, "mc" => b_name, "online" => false}
     assert Enum.any?(HalC2.Shell.rows(), &match?({{^b, "remote-th"}, _}, &1))
+
+    # Removed from the cluster, it is gone with its rows, for clients too.
+    HalC2.Shell.forget(b_env)
+    {removed, _, _client} = WsClient.recv_until(client, &(&1["t"] == "shell.mc"), 5_000)
+    assert %{"mc" => ^b_name, "online" => false, "removed" => true} = removed
+    refute Enum.any?(HalC2.Shell.rows(), &match?({{^b, _}, _}, &1))
+    refute List.keymember?(HalC2.Shell.environments(), b, 0)
   end
 end

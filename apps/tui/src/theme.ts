@@ -110,6 +110,10 @@ export const THREAD_STATUS_GLYPHS: ReadonlyArray<string> = [
  * uses. Always returns a status (idle is the fallback) so list rows show a dot.
  */
 export function resolveThreadStatus(thread: OrchestrationThreadShell): ThreadStatus {
+  // On its way to another machine: nothing else can happen to it until it arrives.
+  if (thread.moving) {
+    return { ...CONNECTING, key: "moving", label: `Moving to ${thread.moving.label}` };
+  }
   if (thread.hasPendingApprovals) return PENDING_APPROVAL;
   if (thread.hasPendingUserInput) return AWAITING_INPUT;
   if (thread.hasActionableProposedPlan) return PLAN_READY;

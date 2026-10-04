@@ -31,7 +31,7 @@ export interface TuiGitAction {
  * terminal's source-control panel draws (summary lines, the keyboard-navigable
  * action list, the pending commit message prompt).
  */
-export interface TuiGitState extends ShellGitState {
+export interface TuiGitState extends Omit<ShellGitState, "progress"> {
   /** The branch as the "on …" row draws it, clipped to the panel. */
   readonly branchText: string;
   readonly actions: ReadonlyArray<TuiGitAction>;
@@ -53,7 +53,10 @@ export interface TuiGitState extends ShellGitState {
   readonly log: ReadonlyArray<{ readonly kind: GitLogLine["kind"]; readonly text: string }>;
   /** The last action failed: its error stays in `log` until dismissed. */
   readonly failed: boolean;
-  /** The running action's stage ("Committing...") and how long it has run ("7s"); null when idle. */
+  /**
+   * The running action's stage ("Committing...") and how long it has run ("7s"); null when
+   * idle. A hook's output is listed in `log`, not on a `hookLine` as the contract's has it.
+   */
   readonly progress: { readonly stage: string; readonly elapsed: string } | null;
 }
 

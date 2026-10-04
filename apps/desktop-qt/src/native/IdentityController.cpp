@@ -257,7 +257,7 @@ QString IdentityController::lockOf(const QString& environmentId) const {
     return tr("This environment's server is too old to keep an icon. Update it to choose one.");
   }
   const bool own = environmentId == m_client->environment();
-  if (!m_store->mayOperate(environmentId) || (own && m_mayOperate == false)) return tr("Your session on this environment cannot change its settings.");
+  if (own && m_mayOperate == false) return tr("Your session on this environment cannot change its settings.");
   return {};
 }
 

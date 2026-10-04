@@ -44,8 +44,9 @@ defmodule HalC2.PortableSessions do
 
   @doc """
   The session a thread carries: `%{driver, instanceId, providerThreadId, nativeId,
-  cwd, files}` with each file as `%{fileName, sha256, dataBase64}`, or nil when the
-  thread's agent has no session this machine can carry.
+  cwd, files}` with each file as `{name, path on this machine}`, or `{name, {:data,
+  bytes}}` for what a provider's own export printed, or nil when the thread's agent
+  has no session this machine can carry.
   """
   def export(state, thread, cwd) do
     with %{} = provider_thread <- provider_thread(state, thread),
@@ -53,23 +54,14 @@ defmodule HalC2.PortableSessions do
          instance = provider_thread["providerInstanceId"] || driver,
          {native_id, [{_, main} | _] = found} <-
            session_files(driver, instance, provider_thread, cwd),
-         {:ok, _} <- read(main) do
-      files =
-        for {name, source} <- found,
-            {:ok, data} <- [read(source)],
-            do: %{
-              "fileName" => name,
-              "sha256" => :crypto.hash(:sha256, data) |> Base.encode16(case: :lower),
-              "dataBase64" => Base.encode64(data)
-            }
-
+         true <- held?(main) do
       %{
         "driver" => driver,
         "instanceId" => instance,
         "providerThreadId" => provider_thread["id"],
         "nativeId" => native_id,
         "cwd" => recorded_cwd(provider_thread, cwd),
-        "files" => files
+        "files" => Enum.filter(found, fn {_name, source} -> held?(source) end)
       }
     else
       _ -> nil
@@ -77,8 +69,9 @@ defmodule HalC2.PortableSessions do
   end
 
   @doc """
-  Places a carried session (decoded, each file's bytes under `"data"`) for the
-  project at `root`: `{%{providerThreadId, carriedSession} | nil, notes}`.
+  Places a carried session (decoded: each file's bytes under `"data"`, or the file at
+  `"path"` on this machine) for the project at `root`:
+  `{%{providerThreadId, carriedSession} | nil, notes}`.
   """
   def place(%{"driver" => driver, "files" => [_ | _]} = session, root, archive) do
     cond do
@@ -92,15 +85,15 @@ defmodule HalC2.PortableSessions do
 
   def place(_session, _root, _archive), do: {nil, []}
 
-  # A session's file is read where the provider keeps it, or was handed over by the
+  # A session's file is where the provider keeps it, or was handed over by the
   # provider's own export.
-  defp read({:data, data}), do: {:ok, data}
+  defp held?({:data, data}), do: is_binary(data)
+  defp held?(path), do: is_binary(path) and File.regular?(path)
 
-  defp read(path) when is_binary(path) do
-    if File.regular?(path), do: File.read(path), else: {:error, :enoent}
-  end
-
-  defp read(_), do: {:error, :enoent}
+  # A carried file's bytes, for a session that is placed as a whole.
+  defp bytes(%{"data" => data}), do: {:ok, data}
+  defp bytes(%{"path" => path}), do: File.read(path)
+  defp bytes(_file), do: :error
 
   # --- OpenCode ----------------------------------------------------------------------
 
@@ -132,11 +125,12 @@ defmodule HalC2.PortableSessions do
   # OpenCode keeps sessions in a store of its own, so its own import puts the copy
   # there, run in the destination project so the session belongs to it. A session the
   # destination already has is its own copy: it stays, and nothing is carried.
-  defp place_opencode(%{"files" => [%{"data" => data} | _]} = session, root, archive) do
+  defp place_opencode(%{"files" => [file | _]} = session, root, archive) do
     instance = session["instanceId"] || session["driver"]
     id = session["nativeId"]
 
-    with {:ok, %{"info" => %{"id" => ^id}} = export} <- JSON.decode(data),
+    with {:ok, data} <- bytes(file),
+         {:ok, %{"info" => %{"id" => ^id}} = export} <- JSON.decode(data),
          :error <- opencode_export(instance, id, root),
          :ok <- opencode_import(instance, rehome(export, session["cwd"], root), root) do
       {%{
@@ -291,16 +285,13 @@ defmodule HalC2.PortableSessions do
   # Gemini loads a session by its id from the project's chats, so the copy goes there
   # under its own name, saying it belongs to the destination's project. A chat already
   # there is the machine's own copy of that session: it stays, and nothing is carried.
-  defp place_gemini(
-         %{"files" => [%{"fileName" => name, "data" => data} | _]} = session,
-         root,
-         archive
-       ) do
+  defp place_gemini(%{"files" => [%{"fileName" => name} = file | _]} = session, root, archive) do
     instance = session["instanceId"] || session["driver"]
     path = Path.join(gemini_folder(gemini_home(instance), root), name)
 
     with true <- safe?(name) and Path.basename(name) == name,
          false <- File.exists?(path),
+         {:ok, data} <- bytes(file),
          {:ok, %{} = chat} <- JSON.decode(data) do
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, JSON.encode!(Map.put(chat, "projectHash", project_hash(root))))
@@ -327,13 +318,13 @@ defmodule HalC2.PortableSessions do
     {base, main_name} = target(driver, instance, root, session)
 
     written =
-      for %{"fileName" => name, "data" => data} <- files, safe?(name) do
+      for %{"fileName" => name} = file <- files, safe?(name) do
         path = Path.join(base, name)
 
         # The machine keeps a copy it already has: moving back never overwrites it.
         unless File.exists?(path) do
           File.mkdir_p!(Path.dirname(path))
-          File.write!(path, rewrite(driver, name, data, from, root))
+          copy(file, path, driver, from, root)
           File.chmod(path, 0o600)
         end
 
@@ -362,10 +353,14 @@ defmodule HalC2.PortableSessions do
 
   # The plugin places the copy itself; the next run continues from the id it answers.
   defp place_plugin(module, %{"driver" => driver} = session, root, archive) do
-    files =
-      for %{"fileName" => name, "data" => data} <- session["files"], safe?(name), do: {name, data}
+    files = for %{"fileName" => name} = file <- session["files"], safe?(name), do: file
 
-    case plugin_call(fn -> module.place_session(files, session["cwd"], root) end) do
+    placed =
+      plugin_call(fn ->
+        HalC2.ThreadArchive.files_on_disk(files, &module.place_session(&1, session["cwd"], root))
+      end)
+
+    case placed do
       {:ok, native_id} when is_binary(native_id) ->
         {%{
            "providerThreadId" => session["providerThreadId"],
@@ -512,25 +507,39 @@ defmodule HalC2.PortableSessions do
   defp safe?(name),
     do: Path.type(name) == :relative and ".." not in Path.split(name) and name != ""
 
-  # Every recorded working directory under `from` now points under `to`.
-  defp rewrite(_driver, _name, data, from, to) when not is_binary(from) or from == to, do: data
+  # Writes a carried file to `path`, every recorded working directory under `from`
+  # now pointing under `to`. A file on disk is copied a line at a time.
+  defp copy(%{"fileName" => name} = file, path, driver, from, to) do
+    lines? = String.ends_with?(name, ".jsonl") and is_binary(from) and from != to
 
-  defp rewrite(driver, name, data, from, to) do
-    if String.ends_with?(name, ".jsonl") do
-      data
-      |> String.split("\n")
-      |> Enum.map(&rewrite_line(driver, &1, from, to))
-      |> Enum.join("\n")
-    else
-      data
+    case file do
+      %{"data" => data} when lines? ->
+        File.write!(
+          path,
+          data |> String.split("\n") |> Enum.map_join("\n", &rewrite_line(driver, &1, from, to))
+        )
+
+      %{"data" => data} ->
+        File.write!(path, data)
+
+      %{"path" => source} when lines? ->
+        source
+        |> File.stream!()
+        |> Stream.map(&rewrite_line(driver, &1, from, to))
+        |> Stream.into(File.stream!(path))
+        |> Stream.run()
+
+      %{"path" => source} ->
+        File.cp!(source, path)
     end
   end
 
+  # A line keeps the newline it ended with.
   defp rewrite_line(driver, line, from, to) do
     with true <- String.contains?(line, from),
          {:ok, %{} = record} <- JSON.decode(line),
          changed when changed != record <- rewrite_record(driver, record, from, to) do
-      JSON.encode!(changed)
+      JSON.encode!(changed) <> if(String.ends_with?(line, "\n"), do: "\n", else: "")
     else
       _ -> line
     end

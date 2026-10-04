@@ -16,7 +16,6 @@ Rectangle {
     readonly property var environments: model ? model.environments : []
     readonly property var providers: model ? model.providers : []
     // The session may only view this environment: nothing on it can be changed.
-    readonly property bool readOnly: !!(model && model.readOnly)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warning", "#f59e0b")
@@ -730,7 +729,7 @@ Rectangle {
                     ShellButton {
                         objectName: "runtimeInstall"
                         visible: !!(runtimeSection.runtime && runtimeSection.runtime.installLabel)
-                        enabled: !page.readOnly && !runtimeSection.busy
+                        enabled: !runtimeSection.busy
                         text: runtimeSection.runtime ? runtimeSection.runtime.installLabel : ""
                         onClicked: page.act("runtimeInstall", card.provider)
                     }
@@ -738,7 +737,7 @@ Rectangle {
                     ShellButton {
                         objectName: "runtimeCancel"
                         visible: !!(runtimeSection.runtime && runtimeSection.runtime.canCancel)
-                        enabled: !page.readOnly && !runtimeSection.busy
+                        enabled: !runtimeSection.busy
                         text: qsTr("Cancel installation")
                         onClicked: page.act("runtimeCancel", card.provider)
                     }
@@ -746,7 +745,7 @@ Rectangle {
                     ShellButton {
                         objectName: "runtimeRemove"
                         visible: !!(runtimeSection.runtime && runtimeSection.runtime.canRemove)
-                        enabled: !page.readOnly && !runtimeSection.busy
+                        enabled: !runtimeSection.busy
                         text: qsTr("Remove downloaded runtime")
                         onClicked: page.act("runtimeRemove", card.provider)
                     }
@@ -774,7 +773,6 @@ Rectangle {
 
                 ShellButton {
                     objectName: "continueUrlAuth"
-                    enabled: !page.readOnly
                     text: qsTr("Continue authentication")
                     onClicked: page.act("continueUrlAuth", card.provider)
                 }
@@ -1196,7 +1194,7 @@ Rectangle {
 
                 ShellButton {
                     objectName: "addInstance"
-                    enabled: page.model !== null && page.model.status === "ready" && !page.model.wizard && !page.readOnly
+                    enabled: page.model !== null && page.model.status === "ready" && !page.model.wizard
                     iconName: "plus"
                     text: qsTr("Add provider")
                     onClicked: Shell.dispatch("providerSettings.wizardOpen")
@@ -1212,7 +1210,7 @@ Rectangle {
 
                 ShellButton {
                     objectName: "refresh"
-                    enabled: page.model !== null && page.model.status === "ready" && !page.model.refreshing && !page.readOnly
+                    enabled: page.model !== null && page.model.status === "ready" && !page.model.refreshing
                     text: page.model && page.model.refreshing ? qsTr("Refreshing…") : qsTr("Refresh")
                     onClicked: Shell.dispatch("providerSettings.refresh")
                 }
@@ -1261,26 +1259,6 @@ Rectangle {
                 }
             }
 
-            ColumnLayout {
-                objectName: "readOnly"
-                Layout.fillWidth: true
-                Layout.topMargin: 12
-                visible: page.readOnly
-                spacing: 4
-
-                Label {
-                    Layout.fillWidth: true
-                    text: qsTr("Limited permissions")
-                    color: page.foreground
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
-                    font.weight: Font.DemiBold
-                }
-
-                Note {
-                    text: page.model ? (page.model.readOnlyDescription ?? "") : ""
-                }
-            }
-
             Loader {
                 Layout.fillWidth: true
                 active: !!(page.model && page.model.wizard)
@@ -1294,9 +1272,7 @@ Rectangle {
             Repeater {
                 model: page.providers
 
-                delegate: ProviderCard {
-                    enabled: !page.readOnly
-                }
+                delegate: ProviderCard {}
             }
 
             // How often the environment checks its providers in the background.
@@ -1308,7 +1284,6 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.topMargin: 12
                 visible: health !== null
-                enabled: !page.readOnly
                 spacing: 12
 
                 ColumnLayout {
@@ -1387,7 +1362,6 @@ Rectangle {
 
                     ShellButton {
                         objectName: "addHub"
-                        visible: !page.readOnly
                         iconName: "plus"
                         text: qsTr("Add hub")
                         onClicked: addHubDialog.open()
@@ -1428,7 +1402,6 @@ Rectangle {
 
                         ShellButton {
                             objectName: "remove"
-                            visible: !page.readOnly
                             subtle: true
                             text: qsTr("Remove")
                             onClicked: {

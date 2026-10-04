@@ -1,7 +1,7 @@
 // The Providers settings section on the desktop (ProviderSettingsController):
 // the @desktop scenarios of features/settings/providers-panel.feature and
 // the desktop's side of providers/provider-setup.feature. The MC's own
-// environment plays "Laptop", this machine; others are linked environments.
+// environment plays "Laptop", this machine; others are members of its cluster.
 
 #include <QDateTime>
 #include <QJsonArray>
@@ -370,9 +370,9 @@ void offer(World& world, const QJsonObject& entry) {
   publishProviders(world.mc, providers);
 }
 
-void linkEnvironment(World& world, const QString& environment, const QJsonArray& providers) {
+void joinEnvironment(World& world, const QString& environment, const QJsonArray& providers) {
   fakeConfig(world.mc).elsewhere.insert(environment, QJsonObject{{QStringLiteral("providers"), providers}});
-  world.mc.link(environment);
+  world.mc.join(environment);
 }
 
 void showEnvironment(World& world, const QString& environment) {
@@ -507,8 +507,8 @@ const Steps steps([] {
 
   // Environments.
   step(QStringLiteral("the user has environments %1, %1 and this machine").arg(q), [](World& world, const Captures& c, const Table&) {
-    linkEnvironment(world, c[0], {});
-    linkEnvironment(world, c[1], {});
+    joinEnvironment(world, c[0], {});
+    joinEnvironment(world, c[1], {});
   });
   step(QStringLiteral("the user chooses which environment's providers to show"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return panel(world).value(QStringLiteral("environments")).toList().size() == 3; },
@@ -524,30 +524,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 is disconnected").arg(q), [](World& world, const Captures& c, const Table&) {
     if (disconnectOwnEnvironment(world, c[0])) return;
-    linkEnvironment(world, c[0], {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
-    world.mc.setLinkProblem(c[0], QStringLiteral("unreachable"));
-  });
-  step(QStringLiteral("the user's session may view but not operate %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.mc.linkScopes.insert(c[0], {QStringLiteral("orchestration:read")});
-    linkEnvironment(world, c[0], {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
-  });
-  step(QStringLiteral("the providers are shown read-only"), [](World& world, const Captures&, const Table&) {
-    waitForEntry(world, QStringLiteral("Codex"), [&](const QVariantMap&) { return panel(world).value(QStringLiteral("readOnly")).toBool(); },
-                 QStringLiteral("to be listed read-only"));
-    // Nothing on it takes a change.
-    const qsizetype writes = fakeConfig(world.mc).writes.size();
-    act(world, QStringLiteral("wizardOpen"));
-    act(world, QStringLiteral("enable"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("enabled"), false}});
-    act(world, QStringLiteral("healthInterval"), {{QStringLiteral("seconds"), 60}});
-    expect(panel(world).value(QStringLiteral("wizard")).isNull() && fakeConfig(world.mc).writes.size() == writes &&
-               !entry(world, QStringLiteral("Codex")).value(QStringLiteral("busy")).toBool(),
-           QStringLiteral("no change to be made; the panel is %1").arg(show(panel(world))));
-  });
-  step(QStringLiteral("the user is told this session can view the providers but not change their settings"),
-       [](World& world, const Captures&, const Table&) {
-    const QString said = panel(world).value(QStringLiteral("readOnlyDescription")).toString();
-    expect(said == QLatin1String("This session can view Build box's providers but can't change their settings."),
-           QStringLiteral("the read-only note; it says \"%1\"").arg(said));
+    joinEnvironment(world, c[0], {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
+    world.mc.setOnline(c[0], false);
   });
   // Usage-limit hubs (settings/usage-limit-sources.feature).
   step(QStringLiteral("the user adds a hub with a URL and management key but no label"), [](World& world, const Captures&, const Table&) {
@@ -602,24 +580,8 @@ const Steps steps([] {
   step(QStringLiteral("the hub itself is untouched"), [](World& world, const Captures&, const Table&) {
     expect(fakeConfig(world.mc).writes.size() == 1, QStringLiteral("one settings write; there were %1").arg(fakeConfig(world.mc).writes.size()));
   });
-  step(QStringLiteral("the user is connected with read-only access"), [](World& world, const Captures&, const Table&) {
-    world.mc.linkScopes.insert(QStringLiteral("Build box"), {QStringLiteral("orchestration:read")});
-    documentOf(world.mc, QStringLiteral("Build box")).settings.insert(QStringLiteral("usageLimitSources"), QJsonObject{});
-    linkEnvironment(world, QStringLiteral("Build box"), {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
-  });
-  step(QStringLiteral("the user opens usage providers"), [](World& world, const Captures&, const Table&) {
-    showEnvironment(world, QStringLiteral("Build box"));
-  });
-  step(QStringLiteral("the user cannot add a hub"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return panel(world).value(QStringLiteral("readOnly")).toBool(); },
-                  [&] { return QStringLiteral("the providers read-only; the panel is %1").arg(show(panel(world))); });
-    act(world, QStringLiteral("addHub"), {{QStringLiteral("url"), QStringLiteral("https://hub.example")}, {QStringLiteral("key"), QStringLiteral("hub-key")}});
-    world.sync();
-    expect(documentOf(world.mc, QStringLiteral("Build box")).version == 0 && fakeConfig(world.mc).writes.isEmpty(),
-           QStringLiteral("no hub saved on Build box"));
-  });
   step(QStringLiteral("%1 reconnects").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.mc.setLinkProblem(c[0], QString());
+    world.mc.setOnline(c[0], true);
   });
   step(QStringLiteral("the user shows the providers of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     showEnvironment(world, c[0]);
@@ -1070,7 +1032,7 @@ const Steps steps([] {
     world.waitFor([&] { return fake(world).heldStarts.size() == 1; }, QStringLiteral("the sign-in to be started"));
   });
   step(QStringLiteral("the user switches to another environment and back and signs in to %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
-    linkEnvironment(world, QStringLiteral("Studio"), QJsonArray{});
+    joinEnvironment(world, QStringLiteral("Studio"), QJsonArray{});
     showEnvironment(world, QStringLiteral("Studio"));
     showEnvironment(world, world.mc.environmentId);
     waitForEntry(world, c[0], [](const QVariantMap& found) { return at(found, QStringLiteral("account.canSignIn")).toBool(); },
@@ -1298,16 +1260,6 @@ const Steps steps([] {
       expect(!command.value(QLatin1String("type")).toString().contains(QLatin1String("delete")),
              QStringLiteral("no thread to be deleted; the MC has %1").arg(world.describeCommands()));
     }
-  });
-  step(QStringLiteral("%1 is linked and its %1 can sign in from HAL-C2").arg(q), [](World& world, const Captures& c, const Table&) {
-    linkEnvironment(world, c[0], {gemini(QStringLiteral("unauthenticated"))});
-  });
-  step(QStringLiteral("the user is told to sign in from a client paired with %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    waitForEntry(world, QStringLiteral("Gemini"), [&](const QVariantMap& found) {
-      return at(found, QStringLiteral("account.description")) == QStringLiteral("Sign in from a client paired with %1.").arg(c[0]) &&
-             !at(found, QStringLiteral("account.canSignIn")).toBool();
-    }, QStringLiteral("to be signed in from elsewhere"));
-    expect(world.mc.subscribers(QStringLiteral("providerAuth")).isEmpty(), QStringLiteral("no sign-in to be followed"));
   });
 
   // The health check interval. The environment starts on the "performance"

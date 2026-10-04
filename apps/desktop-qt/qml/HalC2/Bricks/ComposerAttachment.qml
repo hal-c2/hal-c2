@@ -2,9 +2,11 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// One attachment of a draft or of an answer: its name (a Snap Shot's app and
-// window instead), how its upload stands, and taking it off again.
-// `attachment` is the shell's {id, name, kind, status, error, source}.
+// One attachment of a draft or of an answer: an image's thumbnail, its name (a
+// Snap Shot's app and window instead), how its upload stands, and taking it
+// off again. `attachment` is the shell's {id, name, kind, status, error,
+// source, preview}; `preview` is a draft image's thumbnail, empty for one Qt
+// cannot read.
 Row {
     id: chip
 
@@ -19,6 +21,61 @@ Row {
     signal openRequested
 
     spacing: 2
+
+    Rectangle {
+        id: tile
+
+        readonly property bool pictured: thumbnail.status === Image.Ready
+
+        objectName: "attachment-" + chip.attachment.id
+        visible: chip.attachment.kind !== "file" && chip.attachment.preview !== undefined
+        width: 64
+        height: 64
+        radius: 2
+        color: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.04)
+        border.color: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.12)
+
+        Image {
+            id: thumbnail
+            objectName: "attachmentThumbnail"
+            anchors.fill: parent
+            anchors.margins: 1
+            source: chip.attachment.preview ?? ""
+            fillMode: Image.PreserveAspectCrop
+            clip: true
+        }
+        ShellIcon {
+            visible: !tile.pictured
+            anchors.centerIn: parent
+            name: "image"
+            size: 20
+            color: Theme.palette.color("iconMuted", "#8b8b93")
+        }
+        HoverHandler {
+            id: tileHover
+        }
+        ToolTip.visible: tileHover.hovered
+        ToolTip.delay: 500
+        ToolTip.text: chip.label
+        ShellButton {
+            id: removeTile
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 2
+            implicitWidth: 18
+            implicitHeight: 18
+            iconName: "x"
+            iconSize: 12
+            Accessible.name: qsTr("Remove %1").arg(chip.label)
+            background: Rectangle {
+                radius: 9
+                color: Qt.alpha(Theme.palette.color("canvas", "#0f0f12"), 0.8)
+                border.color: removeTile.focusRing
+                border.width: removeTile.visualFocus ? 1 : 0
+            }
+            onClicked: chip.removeRequested()
+        }
+    }
 
     ShellButton {
         objectName: "attachment:" + chip.attachment.name

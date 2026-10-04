@@ -13,8 +13,11 @@ export type ThreadContextMenuAction =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | "move"
   | "archive"
   | "delete";
+
+export const MOVE_THREAD_LABEL = "Move to another machine…";
 
 export function buildThreadContextMenuItems(input: {
   readonly row: Pick<Extract<Row, { kind: "thread" }>, "section" | "thread">;
@@ -22,12 +25,11 @@ export function buildThreadContextMenuItems(input: {
   readonly hasWorkspacePath: boolean;
   /** Whether the thread may be snoozed now; omitted by a host that cannot snooze. */
   readonly canSnooze?: boolean;
-  /** Entries a host adds after the copy group (moving the thread). */
-  readonly extra?: ReadonlyArray<ContextMenuItem>;
-}): ReadonlyArray<ContextMenuItem<ThreadContextMenuAction | string>> {
+  /** The cluster has another machine the thread could move to. */
+  readonly canMove?: boolean;
+}): ReadonlyArray<ContextMenuItem<ThreadContextMenuAction>> {
   const { row } = input;
   const settled = row.section === "settled";
-  const extra = input.extra ?? [];
   const snooze =
     input.canSnooze === undefined
       ? []
@@ -59,12 +61,14 @@ export function buildThreadContextMenuItems(input: {
     },
     ...(row.thread.branch ? [{ id: "copy-branch" as const, label: "Copy branch" }] : []),
     { id: "copy-thread-id", label: "Copy thread ID" },
-    ...extra.map((item, index) => (index === 0 ? { ...item, separatorBefore: true } : item)),
+    ...(input.canMove
+      ? [{ id: "move" as const, label: MOVE_THREAD_LABEL, separatorBefore: true }]
+      : []),
     {
       id: "archive",
       label: "Archive thread",
       disabled: row.thread.session?.status === "running",
-      separatorBefore: true,
+      separatorBefore: !input.canMove,
     },
     { id: "delete", label: "Delete", destructive: true },
   ];

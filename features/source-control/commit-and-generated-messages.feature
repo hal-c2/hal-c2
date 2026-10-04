@@ -9,7 +9,7 @@
 #   apps/web/src/components/GitActionsControl.tsx (commit dialog)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (commit dialog)
 #   apps/desktop-qt/src/native/GitController.cpp (runs the desktop's actions through gitAction, its toasts)
-#   apps/server-ex/lib/hal_c2/links.ex (a linked environment's requests)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (a cluster member's requests)
 #   apps/desktop-qt/tests/tst_GitActions.qml
 #   apps/tui/src/components/ChatView.tsx (onRunGitAction, commit message prompt)
 #   apps/tui/src/store.ts (runGitAction)
@@ -188,8 +188,8 @@ Feature: Committing with written or generated messages
     Then the MC is asked to push
 
   @desktop
-  Scenario: A git action on a linked environment runs through the link
-    Given the MC is linked to "env-c"
+  Scenario: A git action on another machine of the cluster runs there
+    Given the MC is clustered with "mc-c", which serves "env-c"
     And "env-c" has the thread "t7" titled "Deploy" in "shop" on the branch "feature/tax"
     When the user goes to "env-c:t7"
     And the user commits with the message "Add tax"

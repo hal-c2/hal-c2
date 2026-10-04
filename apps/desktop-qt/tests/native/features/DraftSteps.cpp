@@ -96,6 +96,36 @@ const Steps steps([] {
                                                               {QStringLiteral("y"), c[1].toDouble()},
                                                           });
   });
+  const auto openProjects = [](World& world, double x, double y) {
+    world.bridge().dispatch(QStringLiteral("draft.project"), QVariantMap{{QStringLiteral("x"), x}, {QStringLiteral("y"), y}});
+  };
+  step(QStringLiteral("the user opens the draft's projects at (\\d+), (\\d+)"), [openProjects](World& world, const Captures& c, const Table&) {
+    openProjects(world, c[0].toDouble(), c[1].toDouble());
+  });
+  step(QStringLiteral("the user moves the draft to %1").arg(q), [openProjects](World& world, const Captures& c, const Table&) {
+    openProjects(world, 0, 0);
+    const QVariant menu = world.state(QStringLiteral("menu"));
+    expect(menu.typeId() == QMetaType::QVariantMap, QStringLiteral("no menu is open"));
+    world.bridge().dispatch(QStringLiteral("menu.select"), QVariantMap{{QStringLiteral("requestId"), at(menu, QStringLiteral("requestId"))},
+                                                                       {QStringLiteral("id"), world.projectKey(c[0])}});
+  });
+  step(QStringLiteral("the menu offers the projects %1 and %1 with %1 ticked").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariant menu = world.state(QStringLiteral("menu"));
+    QStringList offered;
+    QStringList ticked;
+    for (const QVariant& item : at(menu, QStringLiteral("items")).toList()) {
+      offered << item.toMap().value(QStringLiteral("label")).toString();
+      if (item.toMap().value(QStringLiteral("checked")).toBool()) ticked << offered.last();
+    }
+    offered.sort();
+    expect(offered == QStringList{c[0], c[1]} && ticked == QStringList{c[2]}, QStringLiteral("the menu is %1").arg(show(menu)));
+  });
+  step(QStringLiteral("the composer's caret follows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QVariant composer = world.state(QStringLiteral("composer"));
+    expect(at(composer, QStringLiteral("text")) == c[0] && at(composer, QStringLiteral("cursor")).toInt() == c[0].size(),
+           QStringLiteral("the composer shows %1").arg(show(composer)));
+  });
 
   // The MC.
   step(QStringLiteral("the MC creates the draft's thread"), [](World& world, const Captures&, const Table&) {

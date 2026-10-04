@@ -182,6 +182,17 @@ function settingsError(operation: "read-file" | "write-file", cause: unknown) {
   return new ServerSettingsError({ settingsPath: "settings.json", operation, cause });
 }
 
+/**
+ * What the MC's settings document holds that `ServerSettings` does not name: the keys of
+ * the MC and of other clients (load balancing, for one), which a write leaves as they are.
+ */
+function unknownSettings(document: unknown): Record<string, unknown> {
+  if (typeof document !== "object" || document === null) return {};
+  return Object.fromEntries(
+    Object.entries(document).filter(([key]) => !(key in ServerSettings.fields)),
+  );
+}
+
 function isStaleSettings(cause: unknown): boolean {
   return (
     cause instanceof ClusterRpcError &&
@@ -352,9 +363,27 @@ export function makeV3Session(input: {
     );
     const initialConfig = Effect.succeed(config);
 
+    // The MC says on the shell subscription when a machine of its cluster comes, goes
+    // or changes; what follows the cluster (`mcMembers`) is told from there.
+    const memberListeners = new Set<() => void>();
+    const mcMembers = Stream.callback<void>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const listener = () => Queue.offerAllUnsafe(queue, [undefined]);
+          memberListeners.add(listener);
+          return listener;
+        }),
+        (listener) => Effect.sync(() => memberListeners.delete(listener)),
+      ),
+    );
+
     const shell = () => {
       const fold = new ShellShapeFold(mc);
       return shapeStream(socket, { type: "shell" }, (frame) => {
+        if (frame.t === "shell.mc" || frame.t === "shell.environment") {
+          for (const listener of memberListeners) listener();
+          return [];
+        }
         if (frame.t === "shell") return fold.shell(frame.rows as ReadonlyArray<ShellRow>);
         if (frame.t === "shell.rows")
           return fold.rows(
@@ -1064,7 +1093,7 @@ export function makeV3Session(input: {
         const patched = applyServerSettingsPatch(settings, request.patch);
         const next = mutation === undefined ? patched : withProviderInstance(patched, mutation);
         yield* mcCall("hal-c2.writeSettings", {
-          settings: yield* encodeSettings(next),
+          settings: Object.assign(unknownSettings(current.settings), yield* encodeSettings(next)),
           version: current.version,
         });
         return next;
@@ -1407,11 +1436,13 @@ export function makeV3Session(input: {
       ready: Effect.void,
       probe: Effect.void,
       closed: Effect.never,
+      mcCall,
       callEnvironment: (environmentId, method, payload) =>
         Effect.tryPromise({
           try: () => socket.call(environmentId, method, payload),
           catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
         }),
+      mcMembers,
     } satisfies RpcSession;
   });
 }

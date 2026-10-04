@@ -32,14 +32,13 @@ QJsonObject& documentFor(World& world, const QString& environment) {
   return environment.isEmpty() ? fakeConfig(world.mc).settings : documentOf(world.mc, environment).settings;
 }
 
-// Another environment the MC is linked to, settling after three days and not on merge.
+// Another machine of the cluster, settling after three days and not on merge.
 void addEnvironment(World& world, const QString& name) {
-  if (world.mc.linked.contains(name)) return;
+  if (world.mc.members.contains(name)) return;
   fakeConfig(world.mc).elsewhere.insert(name, fakeConfig(world.mc).elsewhere.value(name));
   documentOf(world.mc, name).settings.insert(kDays, 3);
   documentOf(world.mc, name).settings.insert(kOnMerge, false);
-  world.mc.linkLabels.insert(name, name);
-  world.mc.link(name);
+  world.mc.join(name);
 }
 
 // This machine settles after three days and not on merge, like the others.

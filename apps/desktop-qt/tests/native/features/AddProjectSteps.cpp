@@ -83,14 +83,14 @@ const Steps steps([] {
 
   // Which environment.
   step(QStringLiteral("two environments are connected and one is disconnected"), [](World& world, const Captures&, const Table&) {
-    world.mc.link(QStringLiteral("env-b"));
-    world.mc.link(QStringLiteral("env-c"));
-    world.mc.setLinkProblem(QStringLiteral("env-c"), QStringLiteral("unreachable"));
+    world.mc.join(QStringLiteral("env-b"));
+    world.mc.join(QStringLiteral("env-c"));
+    world.mc.setOnline(QStringLiteral("env-c"), false);
     world.sync();
     auto* store = world.native().store();
     world.waitFor([&] { return store->environmentOnline(QStringLiteral("env-b")) && store->environments().contains(QStringLiteral("env-c")) &&
                                !store->environmentOnline(QStringLiteral("env-c")); },
-                  QStringLiteral("the linked environments"));
+                  QStringLiteral("the other environments"));
   });
   step(QStringLiteral("the palette lists \"This device\" and the other connected environment"), [](World& world, const Captures&, const Table&) {
     CommandPaletteController& model = palette(world);
@@ -111,7 +111,7 @@ const Steps steps([] {
            describe(world));
   });
   step(QStringLiteral("the user chose an environment for a new project"), [](World& world, const Captures&, const Table&) {
-    world.mc.link(QStringLiteral("env-b"));
+    world.mc.join(QStringLiteral("env-b"));
     world.sync();
     world.waitFor([&] { return world.native().store()->environmentOnline(QStringLiteral("env-b")); }, QStringLiteral("the second environment"));
     fakeFiles(world.mc).folders.insert(QStringLiteral("/home/sam/code"));
@@ -124,7 +124,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("that environment disconnects before the project is added"), [](World& world, const Captures&, const Table&) {
     palette(world).setQuery(QStringLiteral("/srv/shop"));
-    world.mc.setLinkProblem(QStringLiteral("env-b"), QStringLiteral("unreachable"));
+    world.mc.setOnline(QStringLiteral("env-b"), false);
     world.sync();
     world.waitFor([&] { return !world.native().store()->environmentOnline(QStringLiteral("env-b")); }, QStringLiteral("the environment to go"));
     // The user adds the folder they typed.

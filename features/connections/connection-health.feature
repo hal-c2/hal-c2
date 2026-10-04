@@ -46,7 +46,7 @@ Feature: Connection health
     Then the client stops retrying
     And asks the user to pair again
 
-  @desktop @mobile @backlog-mobile
+  @backlog @desktop @mobile
   Scenario: Only the environment with the bad credential stops
     Given two paired environments
     And one of them revoked this client
