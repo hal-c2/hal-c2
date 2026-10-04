@@ -104,8 +104,8 @@ A thread whose agent is working is stopped first, if you agree. While it moves i
 where it is going and takes no messages. Afterwards the agent continues its own session
 when the provider can carry it, and otherwise gets the conversation handed over as after a
 [provider switch](./portable-handoffs.md). Running terminals stay on the machine the thread
-left and are closed. Links and notifications from before the move open the thread where it
-lives now.
+left and are closed. Notifications from before the move open the thread where it lives now,
+and so do links to it in the desktop app.
 
 To copy a thread between machines that are not in one cluster, see
 [Copying a thread to another machine](./thread-migration.md#copying-a-thread-to-another-machine).
