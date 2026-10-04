@@ -19,6 +19,9 @@ import {
   configDir,
   expectProblem,
   planShell,
+  togglePlugin,
+  problems,
+  problemText,
   start,
   writeFile,
   type KeymapHandle,
@@ -237,6 +240,25 @@ step("pressing {string} opens the command palette", async (ctx: KeymapWorld, key
   expect(await press(ctx, key)).toContain("palette.open");
 });
 
+// The file is the user's keymap.json, read from the config directory as the entry reads it.
+step(
+  "it is loaded on the desktop app, the mobile app with a hardware keyboard, and the TUI",
+  async (ctx: KeymapWorld) => {
+    await startKeymaps(ctx);
+    expect(NodeFS.existsSync(NodePath.join(configDir(ctx), "keymap.json"))).toBe(true);
+    expect(ctx.qml!.keymap).toEqual(ctx.keymapFile as Record<string, unknown>);
+  },
+);
+
+step(
+  "pressing {string} opens the command palette on each",
+  async (ctx: KeymapWorld, key: string) => {
+    expect(await press(ctx, key)).toContain("palette.open");
+    expect((ctx.host!.state.get("palette") as { open: boolean }).open).toBe(true);
+    expect(problems(ctx).map(problemText)).toEqual([]);
+  },
+);
+
 step("pressing {string} does not start a new thread", async (ctx: KeymapWorld, key: string) => {
   expect(await press(ctx, key)).not.toContain("thread.new");
 });
@@ -405,7 +427,13 @@ step("a new thread is started", (ctx: KeymapWorld) => {
   expect(actions(ctx)).toContain("thread.new");
 });
 
+// A plugin keymap by its name; otherwise a plugin, turned off on the plugins page
+// (plugins/ui-plugins.feature).
 step("the user disables {string}", async (ctx: KeymapWorld, name: string) => {
+  if (!ctx.keymaps?.[name] && !ctx.rawPlugins?.has(`${name}.qml`)) {
+    await togglePlugin(ctx, name, "enabled");
+    return;
+  }
   await startKeymaps(ctx);
   ctx.keymaps![name]!.enabled = false;
 });

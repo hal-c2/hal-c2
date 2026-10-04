@@ -31,6 +31,8 @@ Item {
     // lasts, and whether it ended in a drop.
     signal dragMoved(real windowY)
     signal dragEnded(bool dropped)
+    // Image files dropped on the row go to the thread's composer.
+    signal filesDropped(var urls)
     signal menuRequested(real windowX, real windowY)
     signal settleRequested
     signal unsettleRequested
@@ -215,6 +217,55 @@ Item {
 
     HoverHandler {
         id: hover
+    }
+
+    // Resting the pointer on a row previews the thread.
+    ToolTip.visible: hover.hovered && !row.draft && !row.showActions && !!row.item.preview
+    ToolTip.delay: 700
+    ToolTip.text: {
+        const preview = row.item.preview;
+        if (!preview) {
+            return "";
+        }
+        return [row.oneLineTitle, preview.project, preview.branch, preview.activity].filter(line => !!line).join("\n");
+    }
+
+    DropArea {
+        anchors.fill: parent
+        enabled: !row.draft
+        keys: ["text/uri-list"]
+        onDropped: drop => {
+            if (drop.hasUrls) {
+                row.filesDropped(drop.urls);
+                drop.accept(Qt.CopyAction);
+            }
+        }
+    }
+
+    // The key that opens the row, while the jump modifier is held.
+    Rectangle {
+        objectName: "jumpHint"
+        visible: !!row.item.jumpLabel
+        anchors.right: parent.right
+        anchors.rightMargin: 6
+        anchors.verticalCenter: parent.verticalCenter
+        z: 1
+        implicitWidth: jumpText.implicitWidth + 12
+        implicitHeight: 20
+        radius: 10
+        color: Theme.palette.color("surfaceOverlay", "#18181b")
+        border.width: 1
+        border.color: Theme.palette.color("border", "#27272a")
+
+        Text {
+            id: jumpText
+
+            anchors.centerIn: parent
+            text: row.item.jumpLabel ?? ""
+            color: row.textColor
+            font.pixelSize: Math.round(10 * Theme.fontScale)
+            font.weight: Font.Medium
+        }
     }
 
     TapHandler {

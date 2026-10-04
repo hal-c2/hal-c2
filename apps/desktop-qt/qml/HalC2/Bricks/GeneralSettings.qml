@@ -8,5 +8,6 @@ SettingsPage {
     title: qsTr("General")
     rows: Rows.general
 
+    // Its rows of the MC apply to the environments chosen here.
     SettingsScopeSentence {}
 }

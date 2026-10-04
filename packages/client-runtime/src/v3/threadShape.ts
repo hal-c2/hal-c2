@@ -36,6 +36,9 @@ const PROJECTION_FIELD = {
   "context-transfer": "contextTransfers",
 } as const;
 
+/** The entity kinds a thread stream carries that this client folds. */
+const KNOWN_KINDS = new Set(["thread", "project", ...Object.keys(PROJECTION_FIELD)]);
+
 // The v2 domain event that carries a whole entity of each kind.
 const UPSERT_EVENT: Record<string, string> = {
   thread: "thread.metadata-updated",
@@ -91,6 +94,9 @@ export class ThreadShapeFold {
   events(events: ReadonlyArray<ShapeEvent>): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
     const items: Array<OrchestrationV2ThreadStreamItem> = [];
     for (const [seq, kind, id, patch, at] of events) {
+      // An entity kind a newer MC publishes and this client has no place for: skipped, so
+      // the events after it are still applied.
+      if (!KNOWN_KINDS.has(kind)) continue;
       const byKind = this.byKind(kind);
       const entity = applyPatch(byKind.get(id), patch);
       // Map order is creation order: updates keep their slot, while a deleted or

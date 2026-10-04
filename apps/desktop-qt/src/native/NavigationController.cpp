@@ -151,6 +151,8 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   if (action == QLatin1String("thread.open")) {
     const QString key = map.value(QStringLiteral("key")).toString();
     if (!key.isEmpty()) open(Route::thread(key));
+  } else if (action == QLatin1String("link.open")) {
+    openLink(QUrl(map.value(QStringLiteral("url")).toString()));
   } else if (action == QLatin1String("draft.open")) {
     const QString id = map.value(QStringLiteral("draftId")).toString();
     if (!id.isEmpty()) open(Route::draft(id));
@@ -190,6 +192,18 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   } else {
     return false;
   }
+  return true;
+}
+
+QString NavigationController::threadLink(const QString& key) {
+  const qsizetype colon = key.indexOf(QLatin1Char(':'));
+  return QStringLiteral("hal-c2://thread/%1/%2").arg(key.left(colon), key.mid(colon + 1));
+}
+
+bool NavigationController::openLink(const QUrl& url) {
+  const QStringList parts = url.path().split(QLatin1Char('/'), Qt::SkipEmptyParts);
+  if (url.scheme() != QLatin1String("hal-c2") || url.host() != QLatin1String("thread") || parts.size() != 2) return false;
+  open(Route::thread(parts.at(0) + QLatin1Char(':') + parts.at(1)));
   return true;
 }
 

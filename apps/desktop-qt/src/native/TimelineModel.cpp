@@ -748,6 +748,17 @@ bool TimelineModel::copy(const QString& rowId) const {
   return true;
 }
 
+QString TimelineModel::finishedRunOf(const QString& rowId) const {
+  const int at = indexOf(rowId);
+  if (at < 0) return {};
+  const Row& row = m_rows.at(at);
+  if (row.kind != QLatin1String("message") || row.items.isEmpty()) return {};
+  const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.constFirst());
+  if (text(item, QLatin1String("type")) != QLatin1String("assistant_message")) return {};
+  const QString runId = text(item, QLatin1String("runId"));
+  return text(entity(QStringLiteral("run"), runId), QLatin1String("status")) == QLatin1String("completed") ? runId : QString();
+}
+
 QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   const int at = indexOf(rowId);
   if (at < 0) return {};

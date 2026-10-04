@@ -12,9 +12,9 @@ import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts
 import { detectInlineImageTransport, inlineImageProtocol } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
 import { fileMutedThreads, MUTED_THREADS_FILE } from "./host/mutedThreads.ts";
-import { enginePluginPort } from "./host/plugins.ts";
+import { enginePluginPort, filePluginStore, PLUGIN_RECORDS_FILE } from "./host/plugins.ts";
 import { movePromptCursorToEnd } from "./host/promptCursor.ts";
-import { readUserConfig, saveKeymapOverrides } from "./host/userConfig.ts";
+import { PLUGINS_DIR, readUserConfig, saveKeymapOverrides } from "./host/userConfig.ts";
 import { resolveShellConfigDir } from "./shellConfigDir.ts";
 import {
   connectRemoteMc,
@@ -85,6 +85,43 @@ async function resolveConnection(): Promise<
     bearerToken: mc.bearerToken,
     environmentId: mc.environmentId,
     orchestrationProtocolVersion: mc.orchestrationProtocolVersion,
+  };
+}
+
+/**
+ * Dev mode (`HAL_C2_TUI_DEV=1`): tell the host when one of the loaded plugin
+ * files is saved. Editors write in bursts and often replace the file, so the
+ * directory is watched and a burst is reported once.
+ */
+function watchPluginFiles(
+  files: ReadonlyArray<string>,
+  onChange: (file: string) => void,
+): () => void {
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const watchers = [...new Set(files.map((file) => NodePath.dirname(file)))].flatMap((dir) => {
+    try {
+      return [
+        NodeFS.watch(dir, (_event, name) => {
+          const file = name === null ? null : NodePath.join(dir, String(name));
+          if (file === null || !files.includes(file)) return;
+          clearTimeout(timers.get(file));
+          timers.set(
+            file,
+            setTimeout(() => {
+              timers.delete(file);
+              onChange(file);
+            }, 100),
+          );
+        }),
+      ];
+    } catch {
+      // A directory that cannot be watched: its plugins are reloaded on restart.
+      return [];
+    }
+  });
+  return () => {
+    for (const timer of timers.values()) clearTimeout(timer);
+    for (const watcher of watchers) watcher.close();
   };
 }
 
@@ -208,6 +245,10 @@ async function main(): Promise<void> {
     // The launcher says which HAL-C2 release this client is; servers behind it are offered an update.
     appVersion: process.env.HAL_C2_TUI_APP_VERSION?.trim() || null,
     dismissedUpdates: fileMutedThreads(NodePath.join(configDir, "dismissed-updates.json")),
+    // Plugins turned off, and where downloaded ones came from, are this device's too.
+    pluginStore: filePluginStore(NodePath.join(configDir, PLUGIN_RECORDS_FILE)),
+    pluginDir: NodePath.join(configDir, PLUGINS_DIR),
+    ...(process.env.HAL_C2_TUI_DEV === "1" ? { watchPlugins: watchPluginFiles } : {}),
     // Muted threads are this device's: they live beside the user's shell config.
     mutedThreads: fileMutedThreads(NodePath.join(configDir, MUTED_THREADS_FILE)),
     // ^G: hand the terminal to the editor, then take the screen back.

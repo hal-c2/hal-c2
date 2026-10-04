@@ -12,6 +12,7 @@
 #include "Harness.h"
 #include "NavigationController.h"
 #include "McClient.h"
+#include "Stream.h"
 #include "ThreadList.h"
 #include "World.h"
 
@@ -393,6 +394,8 @@ const Steps steps([] {
            const auto finished = [&](const QString& visitedAt) {
              run(QStringLiteral("completed"));
              row.insert(QStringLiteral("latestRunCompletedAt"), iso(now.addSecs(-600)));
+             // The MC stamps the thread when its run ends.
+             row.insert(QStringLiteral("updatedAt"), iso(now.addSecs(-600)));
              row.insert(QStringLiteral("lastVisitedAt"), visitedAt);
            };
            if (state == QLatin1String("has an agent working")) {
@@ -423,6 +426,17 @@ const Steps steps([] {
              finished(iso(now.addSecs(-3600)));
            }
          });
+         // The conversation holds what the agent said when it stopped on the limit.
+         if (state.contains(QLatin1String("usage limit"))) {
+           stream::FakeStreams& streams = world.mc.part<stream::FakeStreams>();
+           streams.thread = idOf(threadKeyOf(world, c[0]));
+           streams.environment = world.mc.environmentId;
+           stream::startRun(world, 900, QStringLiteral("failed"));
+           stream::addItem(world, QStringLiteral("error"),
+                           {{QStringLiteral("status"), QStringLiteral("failed")},
+                            {QStringLiteral("failure"), QJsonObject{{QStringLiteral("class"), QStringLiteral("usage_limit")},
+                                                                    {QStringLiteral("message"), QStringLiteral("You've hit your usage limit. It resets at 2:00 PM.")}}}});
+         }
        });
   step(QStringLiteral("the row for %1 reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();

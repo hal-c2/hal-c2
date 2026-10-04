@@ -605,7 +605,13 @@ AbstractButton {
             readonly property var model: entry ? entry.model : null
             readonly property var instance: entry ? entry.instance : null
             readonly property string disabledReason: model && model.disabledReason !== null ? model.disabledReason : ""
-            readonly property bool isSelected: instance !== null && model !== null && instance.instanceId === control.selectedInstanceId && model.slug === control.selectedModel
+            readonly property bool isSelected: {
+                if (instance === null || model === null)
+                    return false;
+                if (control.multiple !== null)
+                    return control.multiple.some(picked => picked.instanceId === instance.instanceId && picked.model === model.slug);
+                return instance.instanceId === control.selectedInstanceId && model.slug === control.selectedModel;
+            }
             readonly property bool highlighted: control.highlightedIndex === rowIndex
             readonly property string jumpText: entry ? control.jumpLabel(entry) : ""
 
@@ -623,8 +629,17 @@ AbstractButton {
 
             TapHandler {
                 onTapped: {
-                    if (row.disabledReason.length === 0 && row.model)
-                        control.choose(row.instance.instanceId, row.model.slug);
+                    if (row.disabledReason.length > 0 || !row.model)
+                        return;
+                    // Shift-click is the row's "send to this model too".
+                    if ((point.modifiers & Qt.ShiftModifier) && control.catalogue?.supportsMultiple === true) {
+                        Shell.dispatch("composer.model.multiple.toggle", {
+                            instanceId: row.instance.instanceId,
+                            model: row.model.slug
+                        });
+                        return;
+                    }
+                    control.choose(row.instance.instanceId, row.model.slug);
                 }
             }
 

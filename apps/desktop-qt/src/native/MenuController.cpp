@@ -56,7 +56,11 @@ bool MenuController::handle(const QString& action, const QVariant& payload) {
     const Question question = std::move(*m_question);
     m_question.reset();
     m_bridge->publish(QStringLiteral("confirmation"), QVariant::fromValue(nullptr));
-    if (map.value(QStringLiteral("accepted")).toBool() && question.accepted) question.accepted();
+    if (map.value(QStringLiteral("accepted")).toBool()) {
+      if (question.accepted) question.accepted();
+    } else if (question.declined) {
+      question.declined();
+    }
     return true;
   }
   return false;
@@ -84,9 +88,9 @@ void MenuController::close() {
 }
 
 void MenuController::confirm(const QString& title, const QString& description, const QString& confirmLabel,
-                             bool destructive, std::function<void()> accepted) {
+                             bool destructive, std::function<void()> accepted, std::function<void()> declined) {
   const QString requestId = QStringLiteral("confirm:%1").arg(m_nextId++);
-  m_question = Question{requestId, std::move(accepted)};
+  m_question = Question{requestId, std::move(accepted), std::move(declined)};
   m_bridge->publish(QStringLiteral("confirmation"), QVariantMap{
                                                         {QStringLiteral("requestId"), requestId},
                                                         {QStringLiteral("title"), title},

@@ -70,6 +70,13 @@ QString canonicalKey(QString key) {
 ThreadPullRequests::ThreadPullRequests(McClient* client, ShellStore* store, Notify notify, Open open, QObject* parent)
     : QAbstractListModel(parent), m_client(client), m_store(store), m_notify(std::move(notify)), m_open(std::move(open)) {}
 
+QString ThreadPullRequests::notice() const {
+  if (m_thread.isEmpty() || m_store->environment(environmentId()).isEmpty()) return {};
+  return m_store->supports(environmentId(), QStringLiteral("threadPullRequests"))
+             ? QString()
+             : tr("Update this environment's server to see branch pull requests.");
+}
+
 void ThreadPullRequests::setThread(const QString& threadKey) {
   if (threadKey != m_thread) {
     m_thread = threadKey;

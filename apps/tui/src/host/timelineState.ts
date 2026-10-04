@@ -1,4 +1,6 @@
 import type { OrchestrationCheckpointSummary, OrchestrationThread } from "@hal-c2/contracts";
+
+import type { TuiQueuedMessage, TuiThreadExtras } from "../orchestrationV2Adapter.ts";
 import { shouldCollapseUserMessage } from "@hal-c2/shared/chatMessages";
 
 import { CHAT_CONTENT_MAX_WIDTH } from "../components/ChatView.layout.ts";
@@ -115,7 +117,7 @@ export const FALLBACK_CELL_PIXELS: CellPixels = { width: 18, height: 35 };
 
 export interface TimelineItem {
   readonly key: string;
-  readonly kind: "pager" | "lineage" | "message" | "work" | "fold" | "files";
+  readonly kind: "pager" | "lineage" | "message" | "work" | "fold" | "files" | "background";
   readonly align: "left" | "right";
   readonly boxed: boolean;
   /** Width of the item's box (the column width unless boxed). */
@@ -236,7 +238,11 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     palette,
     width,
     view,
-    openTurns: input.openTurns ?? new Set(),
+    // A turn that failed starts open too: where it stopped and why is what the user needs.
+    openTurns:
+      detail.latestTurn?.state === "error"
+        ? new Set([...(input.openTurns ?? []), detail.latestTurn.turnId as string])
+        : (input.openTurns ?? new Set()),
     copied: input.copied ?? null,
     threadTitle: input.threadTitle ?? (() => null),
     checkpointByMessage,
@@ -296,6 +302,36 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
           ),
         ],
         { marginTop: 1, marginBottom: 1 },
+      ),
+    );
+  }
+
+  // Work the provider still runs once the turn settled: named, and never a command row.
+  const background = (detail as OrchestrationThread & TuiThreadExtras).pendingBackgroundTasks ?? [];
+  if (showingLatest && background.length > 0) {
+    items.push(
+      item(
+        "background",
+        "background",
+        width,
+        [
+          line(
+            styled(
+              chunk("◌ ", { fg: palette.accent }),
+              chunk(`Background work · ${background.length} running`, { fg: palette.dim }),
+            ),
+          ),
+          ...background.map((task) =>
+            line(
+              styled(
+                chunk(`  ${task.taskType ?? "task"}`, { fg: palette.text }),
+                task.description !== undefined &&
+                  chunk(` · ${task.description}`, { fg: palette.dim }),
+              ),
+            ),
+          ),
+        ],
+        { marginTop: 1 },
       ),
     );
   }
@@ -551,9 +587,22 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
     const sender = senderThreadId
       ? `↩ from ${ctx.threadTitle(senderThreadId) ?? "another agent"}`
       : null;
+    // A message waiting for its turn says so, and where it stands in line.
+    const queued = (message as { queued?: TuiQueuedMessage }).queued;
+    const waiting = queued
+      ? `⏸ queued${queued.position === null ? "" : ` · ${queued.position}`}${queued.held ? " · held" : ""}`
+      : null;
     const bubbleWidth = Math.max(
       attachmentMinWidth,
-      Math.min(width, maxBubble, Math.max(longest, sender ? Bun.stringWidth(sender) : 0) + 4),
+      Math.min(
+        width,
+        maxBubble,
+        Math.max(
+          longest,
+          sender ? Bun.stringWidth(sender) : 0,
+          waiting ? Bun.stringWidth(waiting) : 0,
+        ) + 4,
+      ),
     );
     const innerWidth = Math.max(1, bubbleWidth - 4);
     const bodyLines = markdownLines(body, palette, innerWidth);
@@ -561,6 +610,7 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
       attachmentLines(attachment, Math.max(8, innerWidth), ctx),
     );
     const head = [
+      ...(waiting ? [line(styled(chunk(waiting, { fg: palette.warning })))] : []),
       ...(sender && senderThreadId
         ? [
             line(styled(chunk(sender, { fg: palette.dim })), "thread.open", {
@@ -721,10 +771,13 @@ function workGroupLines(
   const visible = hasOverflow && !expanded ? entries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : entries;
   const hidden = entries.length - visible.length;
   // A subagent's row opens the thread it works in.
+  // A file change's row opens its diff.
   const lines = visible.map((entry) =>
     entry.childThreadId
       ? line(toolRow(entry, ctx), "thread.open", { key: threadKey(entry.childThreadId) })
-      : line(toolRow(entry, ctx)),
+      : entry.diff
+        ? line(toolRow(entry, ctx), "diff.item", { id: entry.id })
+        : line(toolRow(entry, ctx)),
   );
   if (hasOverflow) {
     lines.push(

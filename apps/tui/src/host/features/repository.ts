@@ -213,7 +213,8 @@ export function createRepositoryFeature(kit: FeatureKit): Feature {
             (pullRequest) => {
               kit.status(`#${pullRequest.number} ${pullRequest.title}`, "info");
               kit.menu({
-                title: `#${pullRequest.number} ${pullRequest.title}`,
+                // What is about to be checked out, before choosing where.
+                title: `#${pullRequest.number} ${pullRequest.title} · ${pullRequest.headBranch} → ${pullRequest.baseBranch}`,
                 options: [
                   {
                     label: "Check out here",
@@ -312,17 +313,35 @@ export function createRepositoryFeature(kit: FeatureKit): Feature {
                   { label: "Public", description: "Anyone can see it.", value: "public" },
                 ],
                 onChoose: (visibility) =>
-                  void report(
-                    client.publishRepository({
-                      cwd: where as never,
-                      provider,
-                      repository: repository as never,
-                      visibility: visibility as never,
-                    }),
-                    (result) =>
-                      `Published to ${result.repository.url}; ${result.remoteName} is ${result.remoteUrl}.`,
-                    "Publish failed",
-                  ),
+                  kit.menu({
+                    title: "remote protocol",
+                    options: [
+                      {
+                        label: "Automatic",
+                        description: "What the provider's CLI is set up to use.",
+                        value: "auto",
+                      },
+                      { label: "SSH", description: "git@host:owner/name.git", value: "ssh" },
+                      {
+                        label: "HTTPS",
+                        description: "https://host/owner/name.git",
+                        value: "https",
+                      },
+                    ],
+                    onChoose: (protocol) =>
+                      void report(
+                        client.publishRepository({
+                          cwd: where as never,
+                          provider,
+                          repository: repository as never,
+                          visibility: visibility as never,
+                          protocol: protocol as never,
+                        }),
+                        (result) =>
+                          `Published to ${result.repository.url}; ${result.remoteName} is ${result.remoteUrl}.`,
+                        "Publish failed",
+                      ),
+                  }),
               });
             },
           });

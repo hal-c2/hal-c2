@@ -791,6 +791,16 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
   if (m_draftId.isEmpty() || target != m_draftId) return false;
   const composer::Instance* instance = composer::find(m_catalogue, instanceId);
   if (!instance || !instance->ready() || composer::findModel(*instance, model).isEmpty()) return false;
+  // Each model needs a worktree of its own: a folder that is not a Git
+  // repository runs one model, the one just chosen.
+  const auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
+  if (workspace && workspace->git() && !workspace->git()->local.value(QLatin1String("isRepo")).toBool(true)) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("Only one model can be chosen"),
+        QStringLiteral("Multiple models need a new thread in a Git project. Each gets its own worktree."));
+    m_drafts[target].multipleModels.reset();
+    return selectModel(target, instanceId, model);
+  }
   Draft& kept = m_drafts[target];
   QList<QJsonObject> models = kept.multipleModels.value_or(QList<QJsonObject>{selection(target)});
   const auto same = [&](const QJsonObject& chosen) {

@@ -79,6 +79,12 @@ public:
   // The same for the draft `id`, whose thread may be on another environment
   // ("Run on"). Takes its own copy of the id: the draft it may name is erased.
   void promote(QString id, const QString& threadKey);
+  // Changes the draft's project to the logical project `projectKey`
+  // (`draft.project {draftId, projectKey}`, the palette's "Move draft to..."):
+  // on the draft's own environment when the project has a folder there, else
+  // on an environment that has it. What was written stays with the draft. A
+  // project that already has a draft is opened instead.
+  void moveTo(const QString& id, const QString& projectKey);
   void setText(const QString& id, const QString& text);
   // Gives the draft a new thread id and clears its text: its old thread was
   // started in the background and the draft stays for another prompt.

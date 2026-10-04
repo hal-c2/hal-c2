@@ -25,13 +25,13 @@ Feature: Command palette
 
   Rule: Opening and closing
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: The palette opens from its shortcut
       When the user presses the command palette shortcut
       Then the command palette is open
       And the search field has keyboard focus
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: The palette closes from its shortcut
       Given the command palette is open
       When the user presses the command palette shortcut
@@ -200,7 +200,7 @@ Feature: Command palette
       When the user searches the palette for "model"
       Then the "Default model" setting is listed before the "Model Picker" shortcut
 
-    @backlog @tui
+    @tui
     Scenario: The terminal palette ranks title prefix, then substring, then keyword, then subsequence
       Given the palette commands "New thread", "Renew token" and "Toggle terminal"
       When the user types "new" into the palette

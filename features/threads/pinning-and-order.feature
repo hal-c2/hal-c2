@@ -166,7 +166,7 @@ Feature: Pinning and arranging threads
     When the user drags "Gamma" to the top of the list
     Then "Gamma" is pinned
 
-  @backlog @desktop
+  @desktop
   Scenario: Dropping files onto a thread attaches them
     When the user drops two files onto "Beta" in the thread list
     Then "Beta" opens

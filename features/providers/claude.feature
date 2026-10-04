@@ -188,7 +188,7 @@ Feature: Claude
     Then the thread shows the message that resumed it
     And the parent thread does not
 
-  @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A Claude monitor shows as background work, not as a command
     Given Claude starts a monitor in the thread
     Then the thread lists the monitor as background work

@@ -374,6 +374,24 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("notification.action"), QVariantMap{{QStringLiteral("id"), moves(world).alert}});
   });
 
+  // Links.
+  step(QStringLiteral("the user copied a link to %1 while it lived on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(home(world, c[0]) == c[1], QStringLiteral("%1 lives on %2").arg(c[0], home(world, c[0])));
+    world.sync();
+    world.bridge().dispatch(QStringLiteral("thread.menu"),
+                            QVariantMap{{QStringLiteral("key"), keyOn(c[0], c[1])}, {QStringLiteral("x"), 40}, {QStringLiteral("y"), 120}});
+    const QVariant menu = world.state(QStringLiteral("menu"));
+    world.bridge().dispatch(QStringLiteral("menu.select"),
+                            QVariantMap{{QStringLiteral("requestId"), at(menu, QStringLiteral("requestId"))}, {QStringLiteral("id"), QStringLiteral("copy-link")}});
+    expect(world.clipboard == QStringLiteral("hal-c2://thread/%1/%2").arg(environmentOf(c[1]), idOf(c[0])),
+           QStringLiteral("the clipboard holds \"%1\"").arg(world.clipboard));
+    // The user is somewhere else when the link is followed.
+    world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("usage")));
+  });
+  step(QStringLiteral("the user follows the link"), [](World& world, const Captures&, const Table&) {
+    world.bridge().openExternal(QUrl(world.clipboard));
+  });
+
   // A client that did not make the move.
   step(QStringLiteral("the phone is showing %1").arg(q), [](World& world, const Captures& c, const Table&) {
     view(world, keyOn(c[0], home(world, c[0])));

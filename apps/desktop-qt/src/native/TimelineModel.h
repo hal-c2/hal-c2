@@ -117,6 +117,9 @@ public:
   // The checkpoint an agent reply's settled turn left, to revert the thread
   // to: {checkpointId, scopeId, turn} (turn counts from 1), or empty.
   Q_INVOKABLE QVariantMap checkpointOf(const QString& rowId) const;
+  // The run an assistant reply's row belongs to once it has finished (a fork
+  // can start from it), else empty.
+  Q_INVOKABLE QString finishedRunOf(const QString& rowId) const;
   // Puts a message's markdown on the clipboard; false for any other row.
   Q_INVOKABLE bool copy(const QString& rowId) const;
 

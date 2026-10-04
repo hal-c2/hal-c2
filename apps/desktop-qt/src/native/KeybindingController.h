@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QObject>
 #include <QStringList>
+#include <QTimer>
 #include <QVariant>
 
 #include "CommandRegistry.h"
@@ -116,6 +117,10 @@ public:
 
   void setMac(bool mac);
 
+  // The thread jump modifier (the one thread.jump.1 is bound with) went down
+  // or up: held for a moment, the sidebar's first rows show their jump keys.
+  void setJumpModifierHeld(bool held);
+
 signals:
   void shortcutsChanged();
   void bindingsChanged();
@@ -123,7 +128,11 @@ signals:
   void filePathChanged();
   void modelPickerOpenChanged();
 
+protected:
+  bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
+  QTimer m_jumpHintDelay;
   void setRules(const QJsonArray& rules);
   void refreshShortcuts();
   void refreshRows();

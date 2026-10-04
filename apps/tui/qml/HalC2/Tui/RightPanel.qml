@@ -65,6 +65,28 @@ Rectangle {
 
     GitActions { marginTop: 1; focused: panel.focused }
 
+    // The running action's stage and how long it has run, as of the server's last report.
+    // The stage gives way in a narrow panel; the time is always whole.
+    Item {
+        objectName: "gitProgress"
+        visible: panel.git.progress !== null
+        height: 1
+        flexShrink: 0
+        marginTop: 1
+        flexDirection: "row"
+        Text {
+            flexShrink: 1
+            wrapMode: "none"
+            text: panel.git.progress ? panel.git.progress.stage : ""
+            color: Theme.colors.warning
+        }
+        Text {
+            flexShrink: 0
+            text: panel.git.progress ? " " + panel.git.progress.elapsed : ""
+            color: Theme.colors.dim
+        }
+    }
+
     // The running (or last) action as the server reports it: phases, hooks and
     // their output. A failure stays here until dismissed (x, or a click).
     Item {
@@ -72,7 +94,7 @@ Rectangle {
         visible: panel.git.log.length > 0
         flexDirection: "column"
         flexShrink: 0
-        marginTop: 1
+        marginTop: panel.git.progress !== null ? 0 : 1
         onMouseDown: if (panel.git.failed) Shell.dispatch("git.log.dismiss")
         Repeater {
             model: panel.git.log
