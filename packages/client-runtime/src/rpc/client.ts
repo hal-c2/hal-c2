@@ -161,6 +161,24 @@ export const mcRequest = Effect.fn("EnvironmentRpc.mcRequest")(function* (
   return yield* session.mcCall(method, payload);
 });
 
+/**
+ * Emits when the cluster of the MC the environment is changes: a machine joined, left,
+ * went offline or came back. Never on a server that is not an MC.
+ */
+export const mcMembers: Stream.Stream<void, never, EnvironmentSupervisor> = Stream.unwrap(
+  Effect.gen(function* () {
+    const supervisor = yield* EnvironmentSupervisor;
+    return SubscriptionRef.changes(supervisor.session).pipe(
+      Stream.switchMap(
+        Option.match({
+          onNone: () => Stream.empty,
+          onSome: (session) => session.mcMembers ?? Stream.empty,
+        }),
+      ),
+    );
+  }),
+);
+
 export const request = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
 >(tag: TTag, input: EnvironmentRpcInput<TTag>) {

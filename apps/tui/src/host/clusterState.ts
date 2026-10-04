@@ -35,7 +35,8 @@ const errorText = (error: unknown): string =>
 /**
  * The cluster from the terminal: status in settings, and invite, join and
  * remove from the palette. The MC does the work (`cluster.*`); this reads
- * the status again when settings or the palette open and after each change.
+ * the status again when the MC says a machine came or went, when settings
+ * or the palette open, and after each change.
  */
 export function createClusterController(ctx: {
   readonly client: TuiClient;

@@ -352,9 +352,27 @@ export function makeV3Session(input: {
     );
     const initialConfig = Effect.succeed(config);
 
+    // The MC says on the shell subscription when a machine of its cluster comes, goes
+    // or changes; what follows the cluster (`mcMembers`) is told from there.
+    const memberListeners = new Set<() => void>();
+    const mcMembers = Stream.callback<void>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const listener = () => Queue.offerAllUnsafe(queue, [undefined]);
+          memberListeners.add(listener);
+          return listener;
+        }),
+        (listener) => Effect.sync(() => memberListeners.delete(listener)),
+      ),
+    );
+
     const shell = () => {
       const fold = new ShellShapeFold(mc);
       return shapeStream(socket, { type: "shell" }, (frame) => {
+        if (frame.t === "shell.mc" || frame.t === "shell.environment") {
+          for (const listener of memberListeners) listener();
+          return [];
+        }
         if (frame.t === "shell") return fold.shell(frame.rows as ReadonlyArray<ShellRow>);
         if (frame.t === "shell.rows")
           return fold.rows(
@@ -1408,6 +1426,7 @@ export function makeV3Session(input: {
       probe: Effect.void,
       closed: Effect.never,
       mcCall,
+      mcMembers,
     } satisfies RpcSession;
   });
 }

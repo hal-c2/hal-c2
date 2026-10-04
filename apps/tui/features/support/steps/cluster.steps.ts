@@ -187,6 +187,19 @@ step("the MC answers", async (ctx: World) => {
   await settle(ctx);
 });
 
+step("{string} joins the cluster", async (ctx: World, label: string) => {
+  ctx.fake!.cluster.members = [...ctx.fake!.cluster.members, member(label, true)];
+  ctx.fake!.emitCluster();
+  await settle(ctx);
+});
+
+step("the terminal's cluster lists {string} as connected", async (ctx: World, label: string) => {
+  await settle(ctx);
+  const cluster = ctx.host!.state.get("cluster") as TuiClusterState;
+  const members = cluster.status?.clustered ? cluster.status.members : [];
+  expect(members.find((member) => member.label === label)?.connected).toBe(true);
+});
+
 step("the terminal's cluster no longer lists {string}", async (ctx: World, label: string) => {
   await settle(ctx);
   const cluster = ctx.host!.state.get("cluster") as TuiClusterState;

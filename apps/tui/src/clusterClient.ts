@@ -154,6 +154,8 @@ export function makeClusterClient(
 
   return {
     ...home,
+    // The host reads the cluster whenever the MC says a machine came or went (`subscribeCluster`),
+    // which is what keeps the members here current between reconnections.
     clusterStatus: () => home.clusterStatus().then(apply),
     clusterJoin: (link) => home.clusterJoin(link).then(apply),
     clusterRemove: (id) => home.clusterRemove(id).then(apply),

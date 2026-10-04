@@ -148,6 +148,7 @@ export interface FakeClientCall {
 // Streams and cache reads are plumbing, not commands a step asserts on.
 const UNRECORDED = new Set([
   "subscribeConnection",
+  "subscribeCluster",
   "subscribeShell",
   "subscribeThread",
   "peekThread",
@@ -316,6 +317,8 @@ export function fakeClient({
   readonly emitConnection: (phase: TuiConnectionPhase) => void;
   /** The MC's cluster: its members, the invite it hands out, why it refuses a join. */
   readonly cluster: FakeCluster;
+  /** The MC says a machine of its cluster came, went or changed. */
+  readonly emitCluster: () => void;
 } {
   const cluster: FakeCluster = {
     members: [],
@@ -337,6 +340,7 @@ export function fakeClient({
   let connectionPhase: TuiConnectionPhase = "connecting";
   let latestShell = shellSnapshot;
   const connectionSubscribers = new Set<(phase: TuiConnectionPhase) => void>();
+  const clusterSubscribers = new Set<() => void>();
   const terminals = new Map<string, FakeTerminal>();
   const terminalFor = (threadId: string, terminalId: string): FakeTerminal => {
     const key = `${threadId}:${terminalId}`;
@@ -396,6 +400,12 @@ export function fakeClient({
       onPhase(connectionPhase);
       return () => {
         connectionSubscribers.delete(onPhase);
+      };
+    },
+    subscribeCluster: (onChange: () => void) => {
+      clusterSubscribers.add(onChange);
+      return () => {
+        clusterSubscribers.delete(onChange);
       };
     },
     browseFilesystem,
@@ -615,6 +625,9 @@ export function fakeClient({
     workspaceFiles,
     currentThread,
     cluster,
+    emitCluster: () => {
+      for (const subscriber of clusterSubscribers) subscriber();
+    },
     emitConnection: (phase) => {
       connectionPhase = phase;
       for (const onPhase of connectionSubscribers) onPhase(phase);

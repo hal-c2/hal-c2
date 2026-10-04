@@ -60,6 +60,11 @@ export interface RpcSession {
    * fails with the MC's message. Absent on a TypeScript server's session.
    */
   readonly mcCall?: (method: string, payload: unknown) => Effect.Effect<unknown, Error>;
+  /**
+   * Emits when a machine of the MC's cluster comes, goes or changes, while the shell
+   * is subscribed to (the MC says so there). Absent on a TypeScript server's session.
+   */
+  readonly mcMembers?: Stream.Stream<void>;
 }
 
 export interface RpcSessionOptions {

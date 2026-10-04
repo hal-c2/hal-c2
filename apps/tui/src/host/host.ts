@@ -1087,6 +1087,8 @@ export function createHost(options: HostOptions): Host {
   const unsubscribeConnection = client.subscribeConnection((phase) =>
     state.set("connection", connectionState(phase)),
   );
+  // A machine that joins, leaves or drops is followed as it happens, not when settings next open.
+  const unsubscribeCluster = client.subscribeCluster(() => void cluster.refresh());
   store.start();
 
   return {
@@ -1128,6 +1130,7 @@ export function createHost(options: HostOptions): Host {
     destroy: () => {
       disposeStatusRow();
       unsubscribeConnection();
+      unsubscribeCluster();
       unsubscribe();
       terminal.dispose();
       store.stop();

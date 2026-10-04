@@ -10,6 +10,7 @@
 #   apps/server-ex/lib/hal_c2/web/router.ex (/api/cluster, /.well-known/hal-c2/environment, forwarded uploads)
 #   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove)
 #   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
+#   packages/client-runtime/src/v3/session.ts (mcMembers: the sidebar stream says when a machine comes or goes)
 #   apps/desktop-qt/src/ClusterController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any MC)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex, web/socket.ex (streams by MC or by environment)
@@ -264,6 +265,15 @@ Feature: Clustering one person's machines
     When the user picks "Remove laptop from the cluster" in the command palette
     And the MC answers
     Then the terminal's cluster no longer lists "laptop"
+
+  # The MC says on the sidebar's stream when a machine comes or goes, so the terminal reads
+  # the cluster again then, not only when it reconnects or settings open.
+  @tui
+  Scenario: A machine that joins while the terminal is open is followed without asking
+    Given this machine is clustered with "laptop", which is connected
+    And the terminal has read the cluster
+    When "studio" joins the cluster
+    Then the terminal's cluster lists "studio" as connected
 
   @desktop
   Scenario: The desktop's settings show this machine's cluster

@@ -79,6 +79,7 @@ import {
 } from "@hal-c2/client-runtime/operations";
 import { inferProjectTitleFromPath } from "@hal-c2/client-runtime/state/projects";
 import {
+  mcMembers,
   mcRequest,
   remoteHttpClientLayer,
   request,
@@ -491,6 +492,8 @@ export interface TuiClient {
   readonly hostPlatform: NodeJS.Platform;
   /** Live connection phase (emits the current one first). Returns an unsubscribe fn. */
   readonly subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => () => void;
+  /** Told when a machine of this machine's cluster joins, leaves, goes offline or comes back. */
+  readonly subscribeCluster: (onChange: () => void) => () => void;
   readonly browseFilesystem: (partialPath: string, cwd?: string) => Promise<FilesystemBrowseResult>;
   readonly discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
   readonly lookupRepository: (
@@ -906,6 +909,8 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         ).pipe(Stream.tap((state) => Effect.sync(() => onPhase(toPhase(state))))),
       );
     },
+    subscribeCluster: (onChange) =>
+      drainStreamUntilUnsubscribe(mcMembers.pipe(Stream.tap(() => Effect.sync(onChange)))),
     subscribeShell: (onSnapshot) => {
       shellWarm ??= startWarmSubscriptionRef(makeEnvironmentShellState());
       return subscribeToWarmRef(shellWarm, (state) => {
