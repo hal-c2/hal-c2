@@ -73,8 +73,13 @@ QJsonArray registryAgents() {
                        {QStringLiteral("distribution"), QStringLiteral("npx")},
                        {QStringLiteral("icon"), QStringLiteral("https://cdn.agentclientprotocol.com/%1.svg").arg(id)}};
   };
-  return {agent(QStringLiteral("gemini-cli"), QStringLiteral("Gemini CLI"), QStringLiteral("Google's Gemini agent")),
-          agent(QStringLiteral("gemini-lite"), QStringLiteral("Gemini Lite"), QStringLiteral("A smaller Gemini")),
+  // One with a website, one with only a repository, one with neither.
+  QJsonObject cli = agent(QStringLiteral("gemini-cli"), QStringLiteral("Gemini CLI"), QStringLiteral("Google's Gemini agent"));
+  cli.insert(QStringLiteral("website"), QStringLiteral("https://geminicli.com"));
+  cli.insert(QStringLiteral("repository"), QStringLiteral("https://github.com/google-gemini/gemini-cli"));
+  QJsonObject lite = agent(QStringLiteral("gemini-lite"), QStringLiteral("Gemini Lite"), QStringLiteral("A smaller Gemini"));
+  lite.insert(QStringLiteral("repository"), QStringLiteral("https://github.com/example/gemini-lite"));
+  return {cli, lite,
           agent(QStringLiteral("goose"), QStringLiteral("Goose"), QStringLiteral("An open agent"))};
 }
 
@@ -2047,6 +2052,56 @@ const Steps accountEmailSteps([] {
     QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(email(world)));
   });
   step(QStringLiteral("it is scrambled again"), [scrambled](World& world, const Captures&, const Table&) { scrambled(world); });
+});
+
+// A registry agent's row in the wizard, as ProvidersSettings.qml draws it.
+const Steps registryDetailSteps([] {
+  const QString q = kQuoted;
+  const auto pane = [](World& world) -> Brick& {
+    if (!world.brick) world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nProvidersSettings {}\n", QSize(900, 1200));
+    world.brick->grab();
+    return *world.brick;
+  };
+  const auto part = [](QQuickItem* row, const char* type) -> QQuickItem* {
+    std::function<QQuickItem*(QQuickItem*)> find = [&](QQuickItem* item) -> QQuickItem* {
+      if (QString::fromLatin1(item->metaObject()->className()).contains(QLatin1String(type))) return item;
+      for (QQuickItem* child : item->childItems()) {
+        if (QQuickItem* found = find(child)) return found;
+      }
+      return nullptr;
+    };
+    return find(row);
+  };
+  step(QStringLiteral("each agent shows its icon and description"), [pane, part](World& world, const Captures&, const Table&) {
+    const QVariantList agents = registry(world).value(QStringLiteral("agents")).toList();
+    expect(agents.size() == 2, QStringLiteral("the registry is %1").arg(show(registry(world))));
+    for (const QVariant& agent : agents) {
+      const QString id = at(agent, QStringLiteral("id")).toString();
+      QQuickItem* row = pane(world).item(QStringLiteral("registryAgent_") + id);
+      const QQuickItem* icon = part(row, "QQuickImage");
+      expect(icon && icon->isVisible() && icon->property("source").toUrl() == QUrl(QStringLiteral("https://cdn.agentclientprotocol.com/%1.svg").arg(id)),
+             QStringLiteral("%1 shows no icon").arg(id));
+      expect(pane(world).shows(at(agent, QStringLiteral("description")).toString()), QStringLiteral("%1 shows no description").arg(id));
+    }
+  });
+  step(QStringLiteral("an agent with a website or repository links to it as \"About <agent>\""), [pane](World& world, const Captures&, const Table&) {
+    const QHash<QString, QString> links{{QStringLiteral("gemini-cli"), QStringLiteral("https://geminicli.com")},
+                                        {QStringLiteral("gemini-lite"), QStringLiteral("https://github.com/example/gemini-lite")}};
+    const QHash<QString, QString> names{{QStringLiteral("gemini-cli"), QStringLiteral("Gemini CLI")}, {QStringLiteral("gemini-lite"), QStringLiteral("Gemini Lite")}};
+    for (auto it = links.cbegin(); it != links.cend(); ++it) {
+      QQuickItem* row = pane(world).item(QStringLiteral("registryAgent_") + it.key());
+      QQuickItem* about = row->findChild<QQuickItem*>(QStringLiteral("registryAbout"));
+      expect(about && about->isVisible() && about->property("text") == QStringLiteral("About ") + names.value(it.key()),
+             QStringLiteral("%1 has no About link").arg(it.key()));
+      world.openedUrls.clear();
+      QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(about));
+      expect(world.openedUrls == QList<QUrl>{QUrl(it.value())}, QStringLiteral("%1 opened %2").arg(it.key()).arg(world.openedUrls.size()));
+    }
+    // One with neither offers no link.
+    searchRegistry(world, QStringLiteral("goose"));
+    const QQuickItem* about = pane(world).item(QStringLiteral("registryAgent_goose"))->findChild<QQuickItem*>(QStringLiteral("registryAbout"));
+    expect(about && !about->isVisible(), QStringLiteral("Goose links somewhere"));
+  });
 });
 
 // The models list of a provider's card.

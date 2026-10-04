@@ -376,6 +376,14 @@ Rectangle {
                         }
 
                         ShellButton {
+                            objectName: "registryAbout"
+                            visible: agentRow.modelData.website.length > 0
+                            subtle: true
+                            text: qsTr("About %1").arg(agentRow.modelData.name)
+                            onClicked: registryPane.send("About", { agentId: agentRow.modelData.id })
+                        }
+
+                        ShellButton {
                             objectName: "registryAdd"
                             primary: !agentRow.modelData.added
                             subtle: agentRow.modelData.added

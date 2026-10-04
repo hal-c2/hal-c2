@@ -171,7 +171,7 @@ Feature: Providers settings panel
       And the agent finishes preparing
       Then the new wizard still asks which agent to add
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A registry agent in the results shows its details
       When the user searches the ACP Registry for "gemini"
       Then each agent shows its icon and description
