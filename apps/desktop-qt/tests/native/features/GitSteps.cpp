@@ -420,10 +420,6 @@ const Steps steps([] {
     world.connect();
     world.sync();
   });
-  step(QStringLiteral("a connected environment"), [](World& world, const Captures&, const Table&) {
-    world.connect();
-    world.sync();
-  });
   step(QStringLiteral("the agent's turn ends after editing a file"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return git(world).value(QStringLiteral("available")).toBool() && git(world).value(QStringLiteral("files")).toList().isEmpty(); },
                   [&] { return QStringLiteral("a clean checkout; the git actions are %1").arg(show(git(world))); });
