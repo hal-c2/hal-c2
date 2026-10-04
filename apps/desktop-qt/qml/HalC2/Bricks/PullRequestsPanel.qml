@@ -21,6 +21,13 @@ Rectangle {
     readonly property color warningColor: Theme.palette.color("warning", "#f59e0b")
     readonly property color infoColor: Theme.palette.color("info", "#38bdf8")
     readonly property bool online: source !== null && source.online
+    // The project's other open pull requests, under the linked ones.
+    readonly property var projectOpen: source?.projectOpen ?? []
+
+    onVisibleChanged: if (visible && source && typeof source.loadProject === "function")
+        source.loadProject()
+    Component.onCompleted: if (visible && source && typeof source.loadProject === "function")
+        source.loadProject()
 
     function stateIcon(state) {
         if (state === "merged")
@@ -183,7 +190,7 @@ Rectangle {
         anchors.centerIn: parent
         width: parent.width - 32
         spacing: 8
-        visible: list.count === 0
+        visible: list.count === 0 && root.projectOpen.length === 0
 
         Text {
             width: parent.width
@@ -216,6 +223,95 @@ Rectangle {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         model: root.source
+
+        // The open pull requests of the thread's project: each opens its review.
+        footer: Column {
+            width: list.width - 12
+            visible: root.projectOpen.length > 0 || (root.source?.projectProblem ?? "").length > 0
+            height: visible ? implicitHeight : 0
+            topPadding: 10
+
+            Text {
+                objectName: "projectPullRequestsTitle"
+                x: 8
+                height: 24
+                verticalAlignment: Text.AlignVCenter
+                text: qsTr("Open in this project")
+                color: root.muted
+                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.weight: Font.Medium
+            }
+            Text {
+                x: 8
+                width: parent.width - 16
+                visible: text.length > 0
+                text: root.source?.projectProblem ?? ""
+                color: root.errorColor
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+            Repeater {
+                model: root.projectOpen
+
+                delegate: AbstractButton {
+                    id: open
+
+                    required property var modelData
+
+                    objectName: "projectPullRequest-" + modelData.number
+                    width: parent.width
+                    height: 44
+                    Accessible.name: qsTr("Review #%1 %2").arg(modelData.number).arg(modelData.title)
+                    onClicked: Shell.dispatch("rightPanel.reviewProject", {
+                        key: open.modelData.key
+                    })
+                    background: Rectangle {
+                        radius: 6
+                        color: open.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                    }
+                    contentItem: Item {
+                        ShellIcon {
+                            x: 8
+                            y: 8
+                            name: "git-pull-request"
+                            size: 14
+                            color: open.modelData.draft ? root.muted : root.successColor
+                        }
+                        Text {
+                            x: 30
+                            y: 5
+                            width: parent.width - x - linkButton.width - 12
+                            text: open.modelData.title
+                            color: root.foreground
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            x: 30
+                            y: 24
+                            width: parent.width - x - linkButton.width - 12
+                            text: [qsTr("#%1").arg(open.modelData.number), open.modelData.author, open.modelData.branches].filter(part => part.length > 0).join(" · ")
+                            color: root.muted
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            elide: Text.ElideRight
+                        }
+                        ShellButton {
+                            id: linkButton
+
+                            objectName: "projectPullRequestLink-" + open.modelData.number
+                            anchors.right: parent.right
+                            anchors.rightMargin: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            implicitHeight: 24
+                            subtle: true
+                            text: qsTr("Link")
+                            enabled: root.online
+                            onClicked: root.source.link(open.modelData.url)
+                        }
+                    }
+                }
+            }
+        }
 
         delegate: AbstractButton {
             id: row

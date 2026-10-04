@@ -24,6 +24,11 @@ class ShellStore;
 // stack layer is dismissed instead), refresh() asks the MC to read every
 // listed one from its host again (`pullRequests.invalidate`). While the
 // environment is offline the rows stay as last synced and nothing is sent.
+//
+// Under them the tab lists the open pull requests of the thread's project
+// that are not linked (`projectOpen`, from `pullRequests.list`), read when
+// the tab asks (loadProject()) and again on refresh(); each opens its review
+// (RightPanelController's `rightPanel.reviewProject`) and can be linked.
 class ThreadPullRequests : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
@@ -40,6 +45,10 @@ class ThreadPullRequests : public QAbstractListModel {
   // The link field shows: the tab's Link button, or "Link pull request to
   // thread" from anywhere else.
   Q_PROPERTY(bool linkOpen READ linkOpen WRITE setLinkOpen NOTIFY stateChanged)
+  // [{key, number, title, author, branches, draft, url}], newest first, and
+  // why they could not be read.
+  Q_PROPERTY(QVariantList projectOpen READ projectOpen NOTIFY projectChanged)
+  Q_PROPERTY(QString projectProblem READ projectProblem NOTIFY projectChanged)
 
 public:
   enum Role {
@@ -104,6 +113,10 @@ public:
   Q_INVOKABLE void link(const QString& text);
   Q_INVOKABLE void unlink(const QString& key);
   Q_INVOKABLE void refresh();
+  QVariantList projectOpen() const;
+  QString projectProblem() const { return m_projectProblem; }
+  // Reads the project's open pull requests; a thread already read is not read again.
+  Q_INVOKABLE void loadProject(bool again = false);
   // Opens the pull request in the browser.
   Q_INVOKABLE void open(const QString& key);
   Q_INVOKABLE void copyLink(const QString& key);
@@ -126,6 +139,7 @@ signals:
   void countChanged();
   void rowsChanged();
   void stateChanged();
+  void projectChanged();
 
 private:
   QString environmentId() const { return m_thread.left(m_thread.indexOf(QLatin1Char(':'))); }
@@ -144,4 +158,8 @@ private:
   bool m_linking = false;
   int m_refreshing = 0;
   bool m_linkOpen = false;
+  // The project's open pull requests as last read, and the thread they were read for.
+  QList<QJsonObject> m_project;
+  QString m_projectThread;
+  QString m_projectProblem;
 };

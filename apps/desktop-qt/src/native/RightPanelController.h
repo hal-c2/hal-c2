@@ -48,7 +48,8 @@ class ShellStore;
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,
 // `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.resize
 // {width?}` (no width: the default), `rightPanel.toggleMaximized`,
-// `threadPanel.toggle`, `rightPanel.linkPullRequest {url}` (a message's
+// `threadPanel.toggle`, `rightPanel.reviewProject {key}` (a pull request of
+// the thread's project, from the Pull requests tab), `rightPanel.linkPullRequest {url}` (a message's
 // mention), `rightPanel.openThread {threadKey}` (an Agents row's;
 // the brick's), `rightPanel.review {key}` (a linked pull request's review), and
 // `panel.open {tab: "diff"|"files", path?, only?, line?, turn?, turnId?}` (the

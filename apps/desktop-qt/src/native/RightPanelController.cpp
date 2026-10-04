@@ -219,6 +219,9 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
       showTab(QStringLiteral("pull-requests"));
       m_pullRequests.link(map.value(QStringLiteral("url")).toString());
     }
+  } else if (action == QLatin1String("rightPanel.reviewProject")) {
+    // A pull request of the thread's project that is not linked to it.
+    if (m_onThread) showTab(kReviewTab + map.value(QStringLiteral("key")).toString());
   } else if (action == QLatin1String("rightPanel.openThread")) {
     openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {

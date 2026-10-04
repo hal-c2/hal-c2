@@ -80,6 +80,10 @@ QString ThreadPullRequests::notice() const {
 void ThreadPullRequests::setThread(const QString& threadKey) {
   if (threadKey != m_thread) {
     m_thread = threadKey;
+    m_project.clear();
+    m_projectThread.clear();
+    m_projectProblem.clear();
+    emit projectChanged();
     m_problem.clear();
     m_linkOpen = false;
     emit stateChanged();
@@ -107,6 +111,8 @@ void ThreadPullRequests::setThread(const QString& threadKey) {
     m_links = links;
     endResetModel();
     emit countChanged();
+    // A linked one leaves the project's list, an unlinked one returns to it.
+    emit projectChanged();
   }
   emit rowsChanged();
 }
@@ -258,7 +264,44 @@ void ThreadPullRequests::unlink(const QString& key) {
                             });
 }
 
+QVariantList ThreadPullRequests::projectOpen() const {
+  QVariantList open;
+  for (const QJsonObject& entry : m_project) {
+    const QString key = QStringLiteral("%1/%2#%3").arg(text(entry, QLatin1String("host")), text(entry, QLatin1String("repository"))).arg(entry.value(QLatin1String("number")).toInt());
+    // The linked ones are the rows above.
+    if (find(key)) continue;
+    open.append(QVariantMap{{QStringLiteral("key"), key},
+                            {QStringLiteral("number"), entry.value(QLatin1String("number")).toInt()},
+                            {QStringLiteral("title"), text(entry, QLatin1String("title"))},
+                            {QStringLiteral("author"), text(entry.value(QLatin1String("author")).toObject(), QLatin1String("login"))},
+                            {QStringLiteral("branches"), QStringLiteral("%1 → %2").arg(text(entry, QLatin1String("headBranch")), text(entry, QLatin1String("baseBranch")))},
+                            {QStringLiteral("draft"), entry.value(QLatin1String("isDraft")).toBool()},
+                            {QStringLiteral("url"), text(entry, QLatin1String("url"))}});
+  }
+  return open;
+}
+
+void ThreadPullRequests::loadProject(bool again) {
+  if (m_thread.isEmpty() || !m_online || (!again && m_projectThread == m_thread)) return;
+  const QString thread = m_thread;
+  m_projectThread = thread;
+  const QString projectId = m_store->threadRow(thread).value(QLatin1String("projectId")).toString();
+  m_client->call(this, environmentId(), QStringLiteral("pullRequests.list"),
+                 QJsonObject{{QStringLiteral("state"), QStringLiteral("open")}, {QStringLiteral("involvement"), QStringLiteral("all")},
+                             {QStringLiteral("projectId"), projectId}, {QStringLiteral("limit"), 50}},
+                 [this, thread](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (thread != m_thread) return;
+                   m_project.clear();
+                   m_projectProblem = error.value_or(QString());
+                   // A read that failed is tried again the next time the tab asks.
+                   if (error) m_projectThread.clear();
+                   for (const QJsonValue& entry : result.toObject().value(QLatin1String("entries")).toArray()) m_project.append(entry.toObject());
+                   emit projectChanged();
+                 });
+}
+
 void ThreadPullRequests::refresh() {
+  loadProject(true);
   if (m_links.isEmpty() || m_refreshing > 0 || !m_online) return;
   m_refreshing = int(m_links.size());
   emit stateChanged();
