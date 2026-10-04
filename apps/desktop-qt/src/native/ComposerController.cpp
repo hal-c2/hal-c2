@@ -1686,7 +1686,8 @@ void ComposerController::withExcerpts(QJsonObject& message, const QList<Excerpt>
         {QStringLiteral("text"), context.text},
     });
   }
-  if (records.isEmpty()) return;
+  // A quote is a link with no record, so the links decide whether anything is added.
+  if (links.isEmpty()) return;
   const QString text = message.value(QLatin1String("text")).toString();
   const QString joined = links.join(QLatin1Char(' '));
   message.insert(QStringLiteral("text"), text.isEmpty() ? joined : text + QStringLiteral("\n\n") + joined);
