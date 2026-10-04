@@ -70,7 +70,8 @@ public:
     // promoted_queued_to_steer or empty.
     IntentRole,
     // Who sent a user message when not the user: "Sent by automation",
-    // "Sent by another agent", or empty.
+    // "From <thread>" for an agent whose thread is known (ThreadRole opens
+    // it), "Sent by another agent", or empty.
     AttributionRole,
     // Whether an assistant reply carries its time and actions: a settled
     // turn's last reply does, commentary before it does not (the web's
@@ -83,6 +84,11 @@ public:
     SummaryRole,
     // Whether a call the group's summary counts failed.
     SummaryFailedRole,
+    // The id of the thread a row leads to: a subagent's own thread, or the
+    // thread of the agent that sent a message. Empty when there is none.
+    ThreadRole,
+    // The model a subagent runs on (its `subagent` entity's), or empty.
+    ModelRole,
   };
 
   // Calls shown per collapsed work group.
@@ -101,6 +107,9 @@ public:
   // "Working for 12s", from the clock; the brick asks once a second.
   Q_INVOKABLE QString workingLabel() const;
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  // Names another thread of this one's environment by id, for messages its
+  // agent sent here; empty when the thread is not known.
+  void setThreadTitles(std::function<QString(const QString& threadId)> titleOf) { m_threadTitle = std::move(titleOf); }
   // The device's timestampFormat (locale, 12-hour, 24-hour) and the locale
   // times are read in; a change redraws every row's time.
   void setTimestampFormat(const QString& format);
@@ -212,6 +221,7 @@ private:
   bool m_checkpointsTouched = false;
   bool m_agentsTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
+  std::function<QString(const QString&)> m_threadTitle;
   QString m_timestampFormat = QStringLiteral("locale");
   QLocale m_locale;
 };

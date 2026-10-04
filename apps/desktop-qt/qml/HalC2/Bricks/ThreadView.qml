@@ -87,11 +87,50 @@ Item {
         color: Theme.palette.color("canvas", "#0b0b0d")
     }
 
+    // Where the thread came from: its parent opens.
+    Rectangle {
+        id: lineageBar
+        objectName: "threadLineage"
+
+        readonly property var parentThread: !view.draft && (Shell.state.panel?.threadKey ?? "") === Threads.activeThread ? Shell.state.panel?.parent ?? null : null
+
+        anchors.top: problemBar.visible ? problemBar.bottom : parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? 28 : 0
+        visible: parentThread !== null
+        color: lineageHover.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+        Accessible.role: Accessible.Link
+        Accessible.name: lineageLabel.text
+
+        Label {
+            id: lineageLabel
+            anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            verticalAlignment: Text.AlignVCenter
+            text: lineageBar.parentThread ? qsTr("↳ %1 %2").arg(lineageBar.parentThread.relation).arg(lineageBar.parentThread.title) : ""
+            color: view.mutedColor
+            font.family: view.uiFamily
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+            elide: Text.ElideRight
+        }
+        HoverHandler {
+            id: lineageHover
+            cursorShape: Qt.PointingHandCursor
+        }
+        TapHandler {
+            onTapped: Shell.dispatch("rightPanel.openThread", {
+                threadKey: lineageBar.parentThread.threadKey
+            })
+        }
+    }
+
     Timeline {
         id: timeline
         objectName: "threadTimeline"
 
-        anchors.top: problemBar.visible ? problemBar.bottom : parent.top
+        anchors.top: lineageBar.visible ? lineageBar.bottom : problemBar.visible ? problemBar.bottom : parent.top
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -101,6 +140,10 @@ Item {
         onLinkActivated: link => view.openLink(link)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
         onRevertRequested: rowId => view.askRevert(rowId)
+        // Another thread of this one's environment.
+        onThreadActivated: threadId => Shell.dispatch("rightPanel.openThread", {
+                threadKey: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":") + 1) + threadId
+            })
     }
 
     // Why the thread stopped following its MC, with a way to try again.

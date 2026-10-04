@@ -364,7 +364,13 @@ void TimelineModel::events(const QJsonArray& events) {
   }
   if (m_turnTouched) emit turnChanged();
   if (m_checkpointsTouched) emit checkpointsChanged();
-  if (m_agentsTouched) emit agentsChanged();
+  if (m_agentsTouched) {
+    emit agentsChanged();
+    // A subagent's row shows its entity's model.
+    for (int row = 0; row < m_rows.size(); ++row) {
+      if (m_rows.at(row).kind == QLatin1String("subagent")) emit dataChanged(index(row), index(row), {ModelRole});
+    }
+  }
   if (structural) {
     restructure(changed, false);
     return;
@@ -581,6 +587,8 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     for (const QString& id : turn.items) {
       if (id == turn.terminal) continue;
       const Kind kind = classify(text(items.value(id), QLatin1String("type")));
+      // Work a turn left running (a background command) stays in view.
+      if (kind == Kind::Work && text(items.value(id), QLatin1String("status")) == QLatin1String("running")) continue;
       if (kind == Kind::Work || kind == Kind::Message) hidden.append(id);
     }
     if (hidden.isEmpty()) continue;
@@ -802,7 +810,8 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {EntriesRole, "entries"},  {HiddenCountRole, "hiddenCount"}, {ExpandedRole, "expanded"},
       {FilesRole, "files"},      {TimeRole, "time"},         {IconRole, "icon"},
       {IntentRole, "intent"},    {AttributionRole, "attribution"}, {MetaRole, "meta"},
-      {SummaryRole, "summary"},  {SummaryFailedRole, "summaryFailed"},
+      {SummaryRole, "summary"},  {SummaryFailedRole, "summaryFailed"}, {ThreadRole, "thread"},
+      {ModelRole, "agentModel"},
   };
 }
 
@@ -947,8 +956,21 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       // apps/web/src/components/chat/MessagesTimeline.tsx UserMessageTimelineRow.
       if (type != QLatin1String("user_message")) return QString();
       if (!text(item, QLatin1String("scheduledTaskId")).isEmpty()) return QStringLiteral("Sent by automation");
-      if (text(item, QLatin1String("createdBy")) == QLatin1String("agent")) return QStringLiteral("Sent by another agent");
+      if (text(item, QLatin1String("createdBy")) == QLatin1String("agent")) {
+        const QString sender = text(item, QLatin1String("senderThreadId"));
+        const QString title = sender.isEmpty() || !m_threadTitle ? QString() : m_threadTitle(sender);
+        return title.isEmpty() ? QStringLiteral("Sent by another agent") : QStringLiteral("From %1").arg(title);
+      }
       return QString();
+    case ThreadRole:
+      if (row.kind == QLatin1String("subagent")) return text(item, QLatin1String("childThreadId"));
+      if (type == QLatin1String("user_message") && text(item, QLatin1String("createdBy")) == QLatin1String("agent")) {
+        return text(item, QLatin1String("senderThreadId"));
+      }
+      return QString();
+    case ModelRole:
+      if (row.kind != QLatin1String("subagent")) return QString();
+      return text(entity(QStringLiteral("subagent"), text(item, QLatin1String("subagentId"))), QLatin1String("model"));
     case MetaRole:
       return row.meta;
     case IconRole:

@@ -548,6 +548,7 @@ void RightPanelController::publish() {
                         {QStringLiteral("maximized"), state.open && state.maximized},
                         {QStringLiteral("detailsOpen"), state.details},
                         {QStringLiteral("details"), state.details ? QVariant(threadDetails()) : QVariant()},
+                        {QStringLiteral("parent"), parentThread()},
                         {QStringLiteral("canAdd"),
                          QVariantMap{{QStringLiteral("diff"), true},
                                      {QStringLiteral("files"), !m_files.root().isEmpty()},
@@ -563,6 +564,21 @@ void RightPanelController::publish() {
 // What the thread details column shows of the thread, from the rows the
 // store holds: where it runs, its checkout, and the threads it came from or
 // started (its lineage's parent, and every thread whose parent it is).
+// The thread this one was started from, for the line over its timeline:
+// {threadKey, title, relation: "Subagent of" | "Forked from"}, or null.
+QVariant RightPanelController::parentThread() const {
+  const QString environment = m_thread.left(m_thread.indexOf(QLatin1Char(':')) + 1);
+  const QJsonObject lineage = m_store->threadRow(m_thread).value(QLatin1String("lineage")).toObject();
+  const QString parent = text(lineage, QLatin1String("parentThreadId"));
+  if (parent.isEmpty()) return QVariant::fromValue(nullptr);
+  const QString title = text(m_store->threadRow(environment + parent), QLatin1String("title"));
+  return QVariantMap{{QStringLiteral("threadKey"), environment + parent},
+                     {QStringLiteral("title"), title.isEmpty() ? QStringLiteral("Unavailable thread") : title},
+                     {QStringLiteral("relation"), text(lineage, QLatin1String("relationshipToParent")) == QLatin1String("subagent")
+                                                      ? QStringLiteral("Subagent of")
+                                                      : QStringLiteral("Forked from")}};
+}
+
 QVariantMap RightPanelController::threadDetails() const {
   const qsizetype colon = m_thread.indexOf(QLatin1Char(':'));
   const QString environmentId = m_thread.left(colon);

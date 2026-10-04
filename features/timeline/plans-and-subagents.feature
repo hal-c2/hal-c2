@@ -128,7 +128,7 @@ Feature: Plans and subagents
       | failed               | Failed           |
       | cancelled            | Stopped          |
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: The user moves between a subagent and its parent
     Given the agent has a subagent
     When the user opens the subagent's thread
@@ -136,28 +136,28 @@ Feature: Plans and subagents
     When the user opens the parent thread
     Then the parent thread is shown
 
-  @mc @shared @backlog-desktop @backlog-mobile
+  @mc @shared @backlog-mobile
   Scenario: A message from another agent says which thread it came from
     Given a subagent sent a message to its parent
     When the user reads the message in the parent thread
     Then it says which thread it came from
     And the user can open that thread
 
-  @mc @shared @backlog-desktop @backlog-mobile
+  @mc @shared @backlog-mobile
   Scenario: A subagent shows the model it runs on
     Given the agent delegated work to a subagent on the model "model-b"
     When the user looks at the parent's subagents
     Then the subagent is shown with "model-b"
     And the parent's model is not shown for it
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-mobile @backlog-tui
   Scenario: A finished subagent with work still running is shown as pending
     Given a subagent returned its result while background work it started is still running
     When the user looks at the parent thread
     Then the subagent's result is shown
     And its background work is still shown as running
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-mobile @backlog-tui
   Scenario: A subagent's approval request shows up in the parent thread
     Given a subagent asks for approval to run a command
     When the user looks at the parent thread

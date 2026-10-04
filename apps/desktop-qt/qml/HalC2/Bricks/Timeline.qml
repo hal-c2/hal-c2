@@ -52,6 +52,9 @@ Item {
     signal revertRequested(string rowId)
     // A message went to the clipboard.
     signal copied(string rowId)
+    // A thread to open: a subagent's own, or the one a message came from
+    // (the model's `thread` role, an id in this thread's environment).
+    signal threadActivated(string threadId)
 
     // The user's long messages shown in full, by row id; kept here so a row
     // scrolled away and back stays as the user left it.
@@ -425,14 +428,26 @@ Item {
                 id: userMessage
                 Column {
                     spacing: 4
-                    // Who sent it, when not the user.
+                    // Who sent it, when not the user; a known thread opens.
                     RowText {
+                        id: attribution
+                        readonly property string thread: row.model.thread ?? ""
+                        objectName: "messageAttribution"
                         visible: text.length > 0
                         anchors.right: parent.right
                         anchors.rightMargin: 4
                         text: row.attribution ?? ""
-                        color: Qt.alpha(root.mutedColor, 0.7)
+                        color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : Qt.alpha(root.mutedColor, 0.7)
                         font.pixelSize: Math.round(11 * Theme.fontScale)
+                        HoverHandler {
+                            id: attributionHover
+                            enabled: attribution.thread.length > 0
+                            cursorShape: Qt.PointingHandCursor
+                        }
+                        TapHandler {
+                            enabled: attribution.thread.length > 0
+                            onTapped: root.threadActivated(attribution.thread)
+                        }
                     }
                     // How it reached the agent (UserMessageIntentMarker).
                     Row {
@@ -1025,7 +1040,19 @@ Item {
                     }
                     readonly property bool failed: row.status === "failed"
                     readonly property bool hasDetail: (row.text ?? "").length > 0
+                    // Its own thread, when it has one, and the model it runs on.
+                    readonly property string thread: row.model.thread ?? ""
+                    readonly property string agentModel: row.model.agentModel ?? ""
+                    objectName: "subagentRow"
                     implicitHeight: Math.max(24, subagentText.implicitHeight) + 12
+                    HoverHandler {
+                        enabled: subagentRow.thread.length > 0
+                        cursorShape: Qt.PointingHandCursor
+                    }
+                    TapHandler {
+                        enabled: subagentRow.thread.length > 0
+                        onTapped: root.threadActivated(subagentRow.thread)
+                    }
                     Rectangle {
                         id: avatar
                         x: 8
@@ -1082,7 +1109,8 @@ Item {
                         }
                         RowText {
                             width: parent.width
-                            text: subagentRow.hasDetail ? row.text : (row.statusLabel ?? "")
+                            objectName: "subagentDetail"
+                            text: (subagentRow.agentModel.length > 0 ? subagentRow.agentModel + " · " : "") + (subagentRow.hasDetail ? row.text : (row.statusLabel ?? ""))
                             color: subagentRow.failed ? root.errorColor : root.mutedColor
                             font.pixelSize: Math.round(11 * Theme.fontScale)
                             wrapMode: Text.NoWrap
