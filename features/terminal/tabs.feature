@@ -145,7 +145,7 @@ Feature: Terminal tabs and splits
       When the user closes a split group of three terminals
       Then the user is asked once to close 3 terminals, naming each of them
 
-    @backlog @desktop
+    @desktop
     Scenario: Recently visited threads keep their terminals ready
       Given the user has visited ten threads with open terminals
       When the user returns to one of them

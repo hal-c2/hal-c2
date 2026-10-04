@@ -525,7 +525,8 @@ const Steps steps([] {
 
   // Pressing keys.
   step(QStringLiteral("the user presses ([^ ]+)(?: again)?"), [](World& world, const Captures& c, const Table&) {
-    press(world, c[0]);
+    // A feature may quote the chord.
+    press(world, QString(c[0]).remove(QLatin1Char('"')));
   });
   step(QStringLiteral("the user presses (Command|Ctrl|Control|Super) and ([A-Z])"), [](World& world, const Captures& c, const Table&) {
     press(world, modifierToken(keys(world).mac, c[0]) + QLatin1Char('+') + c[1].toLower());

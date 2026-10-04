@@ -9,6 +9,7 @@
 #include "Brick.h"
 #include "FakeTerminals.h"
 #include "Harness.h"
+#include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "TerminalController.h"
@@ -194,6 +195,112 @@ const Steps steps([] {
       QMetaObject::invokeMethod(terminal, "text", Q_RETURN_ARG(QString, text));
       return text.contains(kBuild);
     }, [&] { return QStringLiteral("the drawer to draw the build output; it draws \"%1\"").arg(text); });
+  });
+
+  // The drawer's own chord and what it keeps across a restart (terminal/drawer.feature).
+  step(QStringLiteral("the user bound %1 to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    auto* keymap = world.native().controller<KeybindingController>();
+    keymap->save(c[0], c[1], QString());
+    world.waitFor([&] { return !keymap->saving() && keymap->shortcutLabel(c[0]) == keymap->keyLabel(c[1]); },
+                  [&] { return QStringLiteral("%1 on %2; it is on %3").arg(c[0], keymap->keyLabel(c[1]), keymap->shortcutLabel(c[0])); });
+  });
+  step(QStringLiteral("the terminal drawer opens"), [](World& world, const Captures&, const Table&) {
+    const QString threadId = shownThread(world);
+    world.waitFor([&] { return terminals(world)->isOpen() && terminalAttach(world, threadId, QStringLiteral("term-1")).has_value(); },
+                  [&] { return describeRows(world); });
+  });
+  step(QStringLiteral("the user dragged the drawer to (\\d+) pixels with %1 active").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const QString threadId = shownThread(world);
+    world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+    world.bridge().dispatch(QStringLiteral("terminal.new"));
+    world.waitFor([&] { return terminalAttach(world, threadId, c[1]).has_value() && terminals(world)->activeTerminalId() == c[1]; },
+                  [&] { return describeRows(world); });
+    Brick& brick = drawerBrick(world, 900);
+    QQuickItem* drawer = brick.item(QStringLiteral("drawer"));
+    const QPoint from = brick.at(drawer, 0.5, 0) + QPoint(0, 2);
+    const QPoint to(from.x(), 900 - c[0].toInt() + 2);
+    QTest::mousePress(&brick.window(), Qt::LeftButton, Qt::NoModifier, from);
+    for (int step = 1; step <= 8; ++step) QTest::mouseMove(&brick.window(), QPoint(from.x(), from.y() + (to.y() - from.y()) * step / 8));
+    QTest::mouseRelease(&brick.window(), Qt::LeftButton, Qt::NoModifier, to);
+    world.waitFor([&] { return terminals(world)->height() == c[0].toInt(); },
+                  [&] { return QStringLiteral("the drawer to be %1 tall; it is %2").arg(c[0]).arg(terminals(world)->height()); });
+    world.sync();
+  });
+  step(QStringLiteral("the desktop starts again"), [](World& world, const Captures&, const Table&) {
+    const QString key = world.native().controller<NavigationController>()->threadKey();
+    world.restart();
+    world.connect();
+    world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key && terminals(world)->available(); },
+                  [&] { return QStringLiteral("the window to show %1 again; it shows %2").arg(key, show(world.state(QStringLiteral("route")))); });
+  });
+  step(QStringLiteral("the drawer is (\\d+) pixels tall with %1 active").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const QString threadId = shownThread(world);
+    world.waitFor([&] { return terminals(world)->isOpen() && terminals(world)->height() == c[0].toInt() && terminals(world)->activeTerminalId() == c[1]; },
+                  [&] { return QStringLiteral("the drawer open at %1 on %2; it is %3 at %4 on %5; %6").arg(c[0], c[1], terminals(world)->isOpen() ? QStringLiteral("open") : QStringLiteral("closed"))
+                                   .arg(terminals(world)->height()).arg(terminals(world)->activeTerminalId(), describeRows(world)); });
+    // Both terminals are the MC's own, attached again, and drawn at that height.
+    expect(tabLabels(world) == QLatin1String("Terminal 1, Terminal 2") && terminalAttach(world, threadId, c[1]).has_value(), describeRows(world));
+    Brick& brick = drawerBrick(world, 900);
+    QQuickItem* drawer = brick.item(QStringLiteral("drawer"));
+    world.waitFor([&] { return int(drawer->height()) == c[0].toInt(); }, [&] { return QStringLiteral("the drawer drawn %1 tall").arg(drawer->height()); });
+  });
+
+  // Threads the user left keep their terminals attached (terminal/tabs.feature).
+  step(QStringLiteral("the user has visited ten threads with open terminals"), [](World& world, const Captures&, const Table&) {
+    ensureProject(world);
+    const QString project = world.mc.projects.firstKey();
+    for (int n = 1; n <= 10; ++n) {
+      const QString threadId = QStringLiteral("visited-%1").arg(n);
+      const QJsonObject row{{QStringLiteral("id"), threadId}, {QStringLiteral("title"), QStringLiteral("Visit %1").arg(n)}, {QStringLiteral("projectId"), project},
+                            {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}};
+      world.mc.threads.insert(threadId, row);
+      world.mc.sendRow(threadId, row);
+      const QString key = world.mc.environmentId + QLatin1Char(':') + threadId;
+      world.native().controller<NavigationController>()->open(NavigationController::Route::thread(key));
+      world.waitFor([&] { return terminals(world)->threadKey() == key && terminals(world)->available(); },
+                    [&] { return QStringLiteral("the drawer of %1; it is on %2").arg(key, terminals(world)->threadKey()); });
+      world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+      world.waitFor([&] { return terminalAttach(world, threadId, QStringLiteral("term-1")).has_value() && !rowsIn(world, false).isEmpty(); },
+                    [&] { return describeRows(world); });
+      world.sync();
+      print(world.mc, threadId, QStringLiteral("term-1"), QStringLiteral("started in %1\r\n").arg(threadId));
+      world.sync();
+      if (n == 1) {
+        SessionWorld& kept = world.mc.part<SessionWorld>();
+        kept.session = terminalSession(world, QStringLiteral("term-1"));
+      }
+    }
+  });
+  step(QStringLiteral("the user returns to one of them"), [](World& world, const Captures&, const Table&) {
+    // The first one, whose build went on printing while the user was away.
+    const QString threadId = QStringLiteral("visited-1");
+    SessionWorld& kept = world.mc.part<SessionWorld>();
+    kept.attaches = attachesOf(world, threadId, QStringLiteral("term-1"));
+    expect(attached(world.mc).contains(threadId + QStringLiteral("/term-1")), QStringLiteral("%1's terminal is no longer attached").arg(threadId));
+    print(world.mc, threadId, QStringLiteral("term-1"), kBuild);
+    world.sync();
+    const QString key = world.mc.environmentId + QLatin1Char(':') + threadId;
+    world.native().controller<NavigationController>()->open(NavigationController::Route::thread(key));
+    world.waitFor([&] { return terminals(world)->threadKey() == key && terminals(world)->isOpen() && !rowsIn(world, false).isEmpty(); },
+                  [&] { return describeRows(world); });
+    world.sync();
+  });
+  step(QStringLiteral("its terminals show their live output without replaying history"), [](World& world, const Captures&, const Table&) {
+    const SessionWorld& kept = world.mc.part<SessionWorld>();
+    const QString threadId = QStringLiteral("visited-1");
+    TerminalSession* session = terminalSession(world, QStringLiteral("term-1"));
+    expect(session == kept.session, QStringLiteral("the terminal was attached anew"));
+    expect(attachesOf(world, threadId, QStringLiteral("term-1")) == kept.attaches && kept.attaches == 1,
+           QStringLiteral("the terminal was attached %1 times").arg(attachesOf(world, threadId, QStringLiteral("term-1"))));
+    expect(session->transcript().contains(kBuild) && session->transcript().contains(QLatin1String("started in visited-1")),
+           QStringLiteral("the terminal shows \"%1\"").arg(session->transcript()));
+    Brick& brick = drawerBrick(world, 700);
+    QQuickItem* terminal = brick.item(QStringLiteral("HalC2Terminal"));
+    QString text;
+    world.waitFor([&] {
+      QMetaObject::invokeMethod(terminal, "text", Q_RETURN_ARG(QString, text));
+      return text.contains(kBuild);
+    }, [&] { return QStringLiteral("the drawer to draw the live output; it draws \"%1\"").arg(text); });
   });
 
   step(QStringLiteral("a thread working in a worktree"), [](World& world, const Captures&, const Table&) {

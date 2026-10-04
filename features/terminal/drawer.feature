@@ -201,13 +201,13 @@ Feature: The desktop's terminal drawer
 
   Rule: Not on the desktop yet
 
-    @backlog @desktop
+    @desktop
     Scenario: The drawer follows the user's own terminal chords
       Given the user bound "terminal.toggle" to "mod+shift+t"
       When the user presses "mod+shift+t"
       Then the terminal drawer opens
 
-    @backlog @desktop
+    @desktop
     Scenario: The drawer's height and open terminals survive a restart
       Given the user dragged the drawer to 400 pixels with "term-2" active
       When the desktop starts again
