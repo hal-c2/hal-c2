@@ -86,6 +86,12 @@ Feature: Moving a thread and its agent to another machine
       And "server" is shown as offline and cannot be chosen
       And "laptop" is not offered
 
+    @shared @backlog-mobile
+    Scenario: Machines with the same name are told apart
+      Given the cluster also has a second machine called "desktop"
+      When the user chooses where to move "Alpha"
+      Then both machines called "desktop" are offered, each with its environment id
+
     @backlog @shared
     Scenario: Moving is not offered on a machine that is alone
       Given "laptop" is not in a cluster

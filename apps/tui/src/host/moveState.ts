@@ -186,14 +186,17 @@ export function createMoveController(ctx: {
             labels = new Map(
               destinations.map(({ environmentId, machine }) => [environmentId, machine]),
             );
+            // Labels are the user's own and may repeat: one that does is told apart by its id.
+            const name = ({ machine, environmentId }: (typeof destinations)[number]) =>
+              destinations.filter((other) => other.machine === machine).length > 1
+                ? `${machine} · ${environmentId}`
+                : machine;
             update({
               status: "ready",
               options: destinations
                 .toSorted((a, b) => a.machine.localeCompare(b.machine))
                 .map((destination) => ({
-                  label: destination.online
-                    ? destination.machine
-                    : `${destination.machine} (offline)`,
+                  label: destination.online ? name(destination) : `${name(destination)} (offline)`,
                   description:
                     destination.projects.find((project) => project.sameRepository)?.workspaceRoot ??
                     "",

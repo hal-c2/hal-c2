@@ -131,6 +131,11 @@ step("the cluster also has the machine {string}, which is offline", (ctx: World,
   env(ctx).machines.push({ id: `env-${label}`, label, online: false });
 });
 
+// Its environment is its own; only the name is shared.
+step("the cluster also has a second machine called {string}", (ctx: World, label: string) => {
+  env(ctx).machines.push({ id: `env-${label}-2`, label, online: true });
+});
+
 step(
   "the project {string} on each machine is a checkout of the same repository",
   (ctx: World, title: string) => {
@@ -188,6 +193,16 @@ step(
       title: `Stop "${title}" and move it to ${machine}?`,
     });
     await choose(ctx, "Stop and move");
+  },
+);
+
+step(
+  "both machines called {string} are offered, each with its environment id",
+  async (ctx: World, label: string) => {
+    const names = [`${label} · env-${label}`, `${label} · env-${label}-2`];
+    expect(picker(ctx).options.map((option) => option.label)).toEqual(names);
+    const frame = await settle(ctx);
+    for (const name of names) expect(frame).toContain(name);
   },
 );
 

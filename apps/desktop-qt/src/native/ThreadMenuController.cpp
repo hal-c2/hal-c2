@@ -54,6 +54,12 @@ QString text(const QJsonObject& row, const char* key) {
   return row.value(QLatin1String(key)).toString();
 }
 
+// A machine as a move offers it. Labels are the user's own and may repeat: one
+// that does among `offered` is told apart by its environment id.
+QString machineName(const QString& label, const QString& environmentId, const QStringList& offered) {
+  return offered.count(label) > 1 ? QStringLiteral("%1 · %2").arg(label, environmentId) : label;
+}
+
 bool setting(QObject* context, const char* key) {
   const auto* settings = NativeShell::of(context)->controller<SettingsController>();
   return settings && settings->setting(QString::fromLatin1(key)).toBool();
@@ -389,6 +395,7 @@ void ThreadMenuController::activate() {
     const QString key = navigation->threadKey();
     const auto thread = m_store->thread(key);
     if (!thread) return machines;
+    QStringList labels;
     for (const QString& environmentId : m_store->environments()) {
       if (environmentId == thread->environmentId) continue;
       const QString machine = m_store->environment(environmentId).value(QLatin1String("label")).toString(environmentId);
@@ -398,7 +405,9 @@ void ThreadMenuController::activate() {
       choice.terms = {environmentId};
       choice.run = [this, key, environmentId, machine] { startMove(key, {environmentId, machine}, {0, 0, true}); };
       machines.append(choice);
+      labels.append(machine);
     }
+    for (CommandRegistry::Choice& choice : machines) choice.title = machineName(choice.title, choice.id, labels);
     std::sort(machines.begin(), machines.end(),
               [](const CommandRegistry::Choice& left, const CommandRegistry::Choice& right) { return left.title < right.title; });
     return machines;
@@ -518,13 +527,15 @@ void ThreadMenuController::chooseDestination(const QString& key, double x, doubl
         }
         QList<Item> items;
         QHash<QString, QString> labels;
+        QStringList offered;
+        for (const QJsonValue& value : result.toArray()) offered.append(text(value.toObject(), "machine"));
         for (const QJsonValue& value : result.toArray()) {
           const QJsonObject destination = value.toObject();
           const QString id = text(destination, "environmentId");
           const QString machine = text(destination, "machine");
+          const QString name = machineName(machine, id, offered);
           const bool online = destination.value(QLatin1String("online")).toBool();
-          Item item{QStringLiteral("machine:") + id, online ? machine : machine + QStringLiteral(" (offline)"),
-                    QStringLiteral("monitor")};
+          Item item{QStringLiteral("machine:") + id, online ? name : name + QStringLiteral(" (offline)"), QStringLiteral("monitor")};
           item.enabled = online;
           items.append(item);
           labels.insert(id, machine);

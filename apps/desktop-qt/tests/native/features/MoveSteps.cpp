@@ -352,6 +352,14 @@ const Steps steps([] {
     world.mc.join(c[0]);
     world.sync();
   });
+  // Its environment is its own; only the name is shared.
+  step(QStringLiteral("the cluster also has a second machine called %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString environment = c[0] + QStringLiteral("-2");
+    world.mc.sendPeerRow(environment, kProject, project(), QStringLiteral("project"));
+    world.mc.peerLabels.insert(environment, c[0]);
+    world.mc.join(QStringLiteral("mc-") + environment, environment);
+    world.sync();
+  });
   step(QStringLiteral("%1 runs on an agent whose provider (can|cannot) carry its session").arg(q),
        [](World& world, const Captures& c, const Table&) { fake(world).carries = c[1] == QLatin1String("can"); });
 
@@ -459,6 +467,15 @@ const Steps steps([] {
                listed->description == QLatin1String("Offline"),
            offered(world));
   });
+  step(QStringLiteral("both machines called %1 are offered, each with its environment id").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         for (const QString& environment : {c[0], c[0] + QStringLiteral("-2")}) {
+           const QString name = QStringLiteral("%1 · %2").arg(c[0], environment);
+           const auto entry = item(world, QStringLiteral("machine:") + environment);
+           const auto listed = choice(world, name);
+           expect(entry && entry->value(QStringLiteral("label")) == name && listed && listed->enabled, offered(world));
+         }
+       });
   step(QStringLiteral("moving to another machine is offered"), [](World& world, const Captures&, const Table&) {
     const auto entry = item(world, QStringLiteral("move"));
     expect(entry && entry->value(QStringLiteral("enabled")).toBool(), QStringLiteral("the menu is %1").arg(show(items(world))));
@@ -607,7 +624,7 @@ bool answerMachineMove(FakeMc& mc, const FakeMc::Rpc& rpc) {
     QJsonArray destinations;
     for (const QString& machine : machines(mc)) {
       if (machine == from) continue;
-      destinations.append(QJsonObject{{QStringLiteral("machine"), machine},
+      destinations.append(QJsonObject{{QStringLiteral("machine"), mc.peerLabels.value(machine, machine)},
                                       {QStringLiteral("environmentId"), machine},
                                       {QStringLiteral("online"), !mc.offline.contains(machine)},
                                       {QStringLiteral("projects"), QJsonArray{project()}}});
