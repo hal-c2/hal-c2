@@ -135,6 +135,12 @@ Rectangle {
             }
 
             ShellButton {
+                objectName: "usagePrices"
+                text: qsTr("Model prices")
+                onClicked: Shell.dispatch("usagePrices.open")
+            }
+
+            ShellButton {
                 objectName: "usageRefresh"
                 iconName: "refresh-cw"
                 enabled: page.model !== null && !page.model.refreshing
@@ -537,6 +543,10 @@ Rectangle {
             }
         }
     }
+    UsageModelPrices {
+        anchors.fill: parent
+    }
+
     Dialog {
         id: resetDialog
 

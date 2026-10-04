@@ -26,6 +26,7 @@ qt_add_qml_module(hal_c2_bricks
     SettingsNav.qml
     ShellErrorOverlay.qml
     ConnectionNotice.qml
+    UsageModelPrices.qml
     ProviderModelList.qml
     ComposerUsageLimits.qml
     LoadBalancingSettings.qml
