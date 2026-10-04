@@ -224,6 +224,13 @@ defmodule HalC2.Orchestration.Recovery do
           into: MapSet.new(),
           do: id
 
+    # Questions answered with a message need no provider: they stay open.
+    asked =
+      for {id, request} <- StreamState.get(state, "runtime-request"),
+          HalC2.Orchestration.TurnWriter.message_request?(request),
+          into: MapSet.new(),
+          do: id
+
     for {kind, fun} <- [
           {"run",
            fn run ->
@@ -245,7 +252,9 @@ defmodule HalC2.Orchestration.Recovery do
              do: Map.merge(&1, Map.put(done, "updatedAt", at))
            )},
           {"turn-item",
-           &if(&1["status"] in @active and &1["nodeId"] not in delegated,
+           &if(
+             &1["status"] in @active and &1["nodeId"] not in delegated and
+               &1["requestId"] not in asked,
              do:
                Map.merge(&1, %{
                  "status" => "interrupted",
@@ -260,7 +269,7 @@ defmodule HalC2.Orchestration.Recovery do
            )},
           # The provider that asked is gone, so nobody can answer the request now.
           {"runtime-request",
-           &if(&1["status"] == "pending",
+           &if(&1["status"] == "pending" and &1["id"] not in asked,
              do:
                Map.merge(&1, %{
                  "status" => "expired",
