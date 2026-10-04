@@ -882,6 +882,46 @@ const Steps steps([] {
     finish(world.mc, *std::exchange(checkout.held, std::nullopt), checkout.inputs.last());
     awaitIdle(world);
   });
+  // The commit review (GitActions' dialog), as the git menu's Commit opens it.
+  const auto startCommit = [](World& world) -> QObject* {
+    Brick& brick = gitBrick(world);
+    QObject* dialog = brick.root()->findChild<QObject*>(QStringLiteral("commitDialog"));
+    expect(dialog != nullptr, QStringLiteral("the git actions have no commit review"));
+    world.waitFor([&] { return git(world).value(QStringLiteral("files")).toList().size() > 0; }, QStringLiteral("the changed files to be listed"));
+    QMetaObject::invokeMethod(dialog, "reset");
+    QMetaObject::invokeMethod(dialog, "open");
+    world.waitFor([&] { return dialog->property("opened").toBool(); }, QStringLiteral("the commit review to open"));
+    return dialog;
+  };
+  step(QStringLiteral("the user starts a commit"), [startCommit](World& world, const Captures&, const Table&) { startCommit(world); });
+  step(QStringLiteral("the user leaves every file out of the commit"), [startCommit](World& world, const Captures&, const Table&) {
+    startCommit(world);
+    for (const QString& path : std::as_const(fake(world).changed)) world.brick->click(QStringLiteral("fileCheck-") + path);
+  });
+  step(QStringLiteral("neither committing nor committing on a new branch is possible"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = gitBrick(world);
+    world.waitFor([&] { return !brick.item(QStringLiteral("commitSelected"))->isEnabled() && !brick.item(QStringLiteral("commitNewBranch"))->isEnabled(); },
+                  QStringLiteral("Commit and Commit on new branch to be unavailable"));
+    expect(fake(world).inputs.isEmpty(), QStringLiteral("the MC ran %1 actions").arg(fake(world).inputs.size()));
+    // The reverse: a file put back makes committing possible again.
+    brick.click(QStringLiteral("fileCheck-") + fake(world).changed.first());
+    world.waitFor([&] { return brick.item(QStringLiteral("commitSelected"))->isEnabled(); }, QStringLiteral("Commit to be available again"));
+  });
+  step(QStringLiteral("the user starts a commit and then cancels it"), [startCommit](World& world, const Captures&, const Table&) {
+    QObject* dialog = startCommit(world);
+    world.brick->click(QStringLiteral("commitCancel"));
+    world.waitFor([&] { return !dialog->property("opened").toBool(); }, QStringLiteral("the commit review to close"));
+    world.sync();
+  });
+  step(QStringLiteral("nothing is committed and both files are still changed"), [](World& world, const Captures&, const Table&) {
+    expect(fake(world).inputs.isEmpty() && fake(world).commits.isEmpty() && fake(world).changed.size() == 2 && git(world).value(QStringLiteral("files")).toList().size() == 2,
+           QStringLiteral("the MC ran %1 actions; the git actions are %2").arg(fake(world).inputs.size()).arg(show(git(world))));
+  });
+  step(QStringLiteral("the user is warned that the commit lands on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString warning = QStringLiteral("Warning: committing on the default branch %1").arg(c[0]);
+    world.waitFor([&] { return world.brick->shows(warning); }, QStringLiteral("the warning \"%1\"").arg(warning));
+  });
+
   // A running action's stage, elapsed time and hook line (`git.progress`), as the pill draws them.
   step(QStringLiteral("the repository has a slow pre-commit hook"), [](World& world, const Captures&, const Table&) {
     fake(world).hookLine = QStringLiteral("lint: 12 files checked");

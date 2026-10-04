@@ -307,6 +307,7 @@ RowLayout {
                 }
 
                 ShellButton {
+                    objectName: "commitCancel"
                     text: qsTr("Cancel")
                     onClicked: commitDialog.close()
                 }
