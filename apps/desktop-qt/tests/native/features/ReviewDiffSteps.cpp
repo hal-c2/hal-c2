@@ -140,7 +140,7 @@ void setEditors(World& world, const QJsonArray& editors) {
 
 // The user's editor, unless the scenario says there is none.
 void haveEditor(World& world, const QString& path) {
-  world.mc.part<OpenedInEditor>() = {path, QStringLiteral("zed")};
+  world.mc.part<filesteps::OpenedInEditor>() = {path, QStringLiteral("zed")};
   if (fake(world).noEditor) return;
   setEditors(world, QJsonArray{QStringLiteral("zed")});
   world.waitFor([&] { return !world.state(QStringLiteral("workspace")).toMap().value(QStringLiteral("editors")).toList().isEmpty(); },

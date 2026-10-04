@@ -606,10 +606,6 @@ const Steps reviewSteps([] {
     fake.stackBase = c[0];
     fake.stack = {c[1].toInt(), c[2].toInt(), c[3].toInt()};
   });
-  step(QStringLiteral("the user looks at %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    lookAt(world, c[0]);
-    expect(world.mc.threads.value(kThread).value(QLatin1String("title")) == c[0], QStringLiteral("the thread shown is not %1").arg(c[0]));
-  });
   step(QStringLiteral("its pull request shows it is layer (\\d+) of (\\d+)"), [](World& world, const Captures& c, const Table&) {
     const QString wanted = QStringLiteral("Layer %1 of %2").arg(c[0], c[1]);
     world.waitFor([&] { return model(world).rowCount() == 1 && model(world).value(0, ThreadPullRequests::StackLabelRole) == wanted; },

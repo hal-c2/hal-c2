@@ -76,6 +76,13 @@ private:
     return forkedFrom.isEmpty() ? lineage.value(QLatin1String("parentThreadId")).toString() : forkedFrom;
   }
 
+  // The thread a subagent's thread works for; it is shown, never merged back.
+  static QString subagentParentId(const QJsonObject& row) {
+    const QJsonObject lineage = row.value(QLatin1String("lineage")).toObject();
+    if (lineage.value(QLatin1String("relationshipToParent")).toString() != QLatin1String("subagent")) return {};
+    return lineage.value(QLatin1String("parentThreadId")).toString();
+  }
+
   static bool running(const sidebar::Thread& thread) { return sidebar::status(thread) == QLatin1String("working"); }
 
   void mergeBack() {
@@ -157,11 +164,12 @@ private:
     }
     const QJsonObject row = m_store->threadRow(key);
     const QString parent = parentId(row);
+    const QString shownParent = parent.isEmpty() ? subagentParentId(row) : parent;
     QVariant parentState = QVariant::fromValue(nullptr);
     QString parentTitle;
     int runningCount = 0;
-    if (!parent.isEmpty()) {
-      const QString parentKey = thread->environmentId + QLatin1Char(':') + parent;
+    if (!shownParent.isEmpty()) {
+      const QString parentKey = thread->environmentId + QLatin1Char(':') + shownParent;
       const auto parentThread = m_store->thread(parentKey);
       parentTitle = parentThread ? parentThread->title : QString();
       if (parentThread && running(*parentThread)) ++runningCount;
@@ -169,8 +177,7 @@ private:
                                 {QStringLiteral("title"), parentThread ? parentThread->title : QStringLiteral("This related thread is unavailable")},
                                 {QStringLiteral("missing"), !parentThread.has_value()},
                                 // A subagent's thread says whose it is, and is not merged back.
-                                {QStringLiteral("subagent"), row.value(QLatin1String("lineage")).toObject().value(QLatin1String("relationshipToParent")).toString() ==
-                                                                 QLatin1String("subagent")}};
+                                {QStringLiteral("subagent"), parent.isEmpty()}};
     }
     QVariantList forks;
     for (const sidebar::Thread& other : m_store->threads()) {
@@ -179,7 +186,7 @@ private:
       if (running(other)) ++runningCount;
       forks.append(QVariantMap{{QStringLiteral("key"), other.key()}, {QStringLiteral("title"), other.title}, {QStringLiteral("running"), running(other)}});
     }
-    if (parent.isEmpty() && forks.isEmpty()) {
+    if (shownParent.isEmpty() && forks.isEmpty()) {
       m_bridge->publish(QStringLiteral("lineage"), QVariant::fromValue(nullptr));
       return;
     }
