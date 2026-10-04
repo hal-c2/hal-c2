@@ -375,6 +375,9 @@ struct FakeReview {
   bool writeAccess = false;
   // Every `pullRequests.runAction` input.
   QList<QJsonObject> actions;
+  // The stack cannot be read from the host now, and how often it was asked.
+  bool stackFails = false;
+  int stackReads = 0;
 };
 
 const QString kCartPatch = QStringLiteral(
@@ -403,7 +406,11 @@ void serveReview(FakeMc& mc) {
                         {QStringLiteral("capabilities"), QJsonObject{{QStringLiteral("actions"), QJsonArray{QStringLiteral("merge"), QStringLiteral("close")}},
                                                                      {QStringLiteral("mergeMethods"), QJsonArray{QStringLiteral("merge"), QStringLiteral("squash"), QStringLiteral("rebase")}}}},
                         {QStringLiteral("mergeCapabilities"), QJsonObject{{QStringLiteral("merge"), true}, {QStringLiteral("squash"), true}, {QStringLiteral("rebase"), true}}},
-                        {QStringLiteral("viewerPermissions"), QJsonObject{{QStringLiteral("actions"), fake.writeAccess ? QJsonArray{QStringLiteral("merge"), QStringLiteral("close")} : QJsonArray()}}},
+                        // A stack is its author's to merge and rebase.
+                        {QStringLiteral("viewerPermissions"), QJsonObject{{QStringLiteral("actions"), fake.writeAccess || !mc.part<FakePullRequests>().stack.isEmpty()
+                                                                                                           ? QJsonArray{QStringLiteral("merge"), QStringLiteral("close")}
+                                                                                                           : QJsonArray()},
+                                                                          {QStringLiteral("stackRebase"), true}}},
                         {QStringLiteral("mergeability"), QStringLiteral("mergeable")},
                         {QStringLiteral("headBranch"), QStringLiteral("feature/tax")},
                         {QStringLiteral("baseBranch"), QStringLiteral("main")},
@@ -472,11 +479,33 @@ void serveReview(FakeMc& mc) {
                                                                                                                    : QStringLiteral("COMMENTED")}});
     mc.reply(rpc, QJsonValue::Null);
   });
+  // The host's stack, as `pullRequests.stack` reads it: every layer with the head it has now.
+  mc.onRpc(QStringLiteral("pullRequests.stack"), [&mc](const FakeMc::Rpc& rpc) {
+    const FakePullRequests& pulls = mc.part<FakePullRequests>();
+    FakeReview& fake = mc.part<FakeReview>();
+    ++fake.stackReads;
+    if (fake.stackFails) {
+      mc.refuse(rpc, QStringLiteral("GitHub could not be reached."));
+      return;
+    }
+    if (!pulls.stack.contains(rpc.payload.value(QLatin1String("number")).toInt())) {
+      mc.reply(rpc, QJsonValue::Null);
+      return;
+    }
+    QJsonArray layers;
+    for (const int number : pulls.stack) {
+      layers.append(QJsonObject{{QStringLiteral("number"), number}, {QStringLiteral("title"), QStringLiteral("Layer %1").arg(number)}, {QStringLiteral("isDraft"), false},
+                                {QStringLiteral("headSha"), QStringLiteral("sha-%1").arg(number)}, {QStringLiteral("headBranch"), QStringLiteral("stack/%1").arg(number)},
+                                {QStringLiteral("state"), QStringLiteral("open")}});
+    }
+    mc.reply(rpc, QJsonObject{{QStringLiteral("id"), QStringLiteral("stack-1")}, {QStringLiteral("number"), 1},
+                              {QStringLiteral("url"), QStringLiteral("https://github.com/acme/shop/stacks/1")}, {QStringLiteral("base"), pulls.stackBase}, {QStringLiteral("layers"), layers}});
+  });
   mc.onRpc(QStringLiteral("pullRequests.runAction"), [&mc](const FakeMc::Rpc& rpc) {
     FakeReview& fake = mc.part<FakeReview>();
     fake.sent.append(rpc.method);
     fake.actions.append(rpc.payload);
-    if (!fake.writeAccess) {
+    if (!fake.writeAccess && !rpc.payload.contains(QLatin1String("stackNumber"))) {
       mc.refuse(rpc, QStringLiteral("You do not have permission to merge this pull request."));
       return;
     }
@@ -605,6 +634,91 @@ const Steps reviewSteps([] {
     FakePullRequests& fake = world.mc.part<FakePullRequests>();
     fake.stackBase = c[0];
     fake.stack = {c[1].toInt(), c[2].toInt(), c[3].toInt()};
+  });
+  // The stack in the pull request's review, and its actions, which ask first.
+  const auto reviewStack = [](World& world, int number) -> Brick& {
+    world.mc.part<FakeReview>().author = QStringLiteral("octocat");
+    serveReview(world.mc);
+    lookAt(world, QStringLiteral("Tax work"));
+    if (rowOf(world, number) < 0) link(world, QString::number(number));
+    waitForRow(world, number, true);
+    openReview(world, number);
+    world.waitFor([&] { return review(world).stack().value(QStringLiteral("size")).toInt() == 3; }, [&] { return QStringLiteral("the stack; it is %1").arg(show(review(world).stack())); });
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nPullRequestReviewPanel { source: Panel.review }\n", QSize(700, 800));
+    world.waitFor([&] { return world.brick->shows(QStringLiteral("Stack #1 · layer 2 of 3 onto main")); }, QStringLiteral("the review to show the stack"));
+    return *world.brick;
+  };
+  step(QStringLiteral("the user chooses to merge the stack at pull request (\\d+)"), [reviewStack](World& world, const Captures& c, const Table&) {
+    Brick& brick = reviewStack(world, c[0].toInt());
+    expect(brick.shows(QStringLiteral("Merge stack (2)")), QStringLiteral("the stack does not offer to merge two layers"));
+    brick.click(QStringLiteral("reviewStackMerge"));
+  });
+  step(QStringLiteral("the user is asked to confirm merging (\\d+) pull requests into %1 with the chosen method").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap asked = review(world).stackConfirmation();
+    expect(asked.value(QStringLiteral("title")) == QStringLiteral("Merge %1 pull requests?").arg(c[0]) &&
+               asked.value(QStringLiteral("description")).toString().startsWith(QStringLiteral("Merge #42 and its unmerged layers below into %1 using merge.").arg(c[1])),
+           QStringLiteral("the user is asked %1").arg(show(asked)));
+    Brick& brick = *world.brick;
+    world.waitFor([&] { return brick.shows(asked.value(QStringLiteral("title")).toString()) && brick.shows(asked.value(QStringLiteral("description")).toString()); },
+                  QStringLiteral("the confirmation to be drawn"));
+    // Nothing is merged before the answer; cancelling asks nothing of the host.
+    expect(world.mc.part<FakeReview>().actions.isEmpty(), QStringLiteral("the host was asked before the user confirmed"));
+    brick.click(QStringLiteral("reviewStackConfirmCancel"));
+    world.sync();
+    expect(review(world).stackConfirmation().isEmpty() && world.mc.part<FakeReview>().actions.isEmpty(), QStringLiteral("cancelling did not drop the merge"));
+    // Confirmed, the two layers go with the heads that were shown.
+    brick.click(QStringLiteral("reviewStackMerge"));
+    brick.click(QStringLiteral("reviewStackConfirmAccept"));
+    world.waitFor([&] { return world.mc.part<FakeReview>().actions.size() == 1; }, QStringLiteral("the merge to be asked of the host"));
+    const QJsonObject action = world.mc.part<FakeReview>().actions.first();
+    const QJsonArray heads = action.value(QLatin1String("expectedStackHeads")).toArray();
+    expect(action.value(QLatin1String("action")) == QLatin1String("merge") && action.value(QLatin1String("stackNumber")).toInt() == 1 &&
+               action.value(QLatin1String("number")).toInt() == 42 && action.value(QLatin1String("mergeMethod")) == QLatin1String("merge") && heads.size() == 2 &&
+               heads.at(0).toObject().value(QLatin1String("number")).toInt() == 41 && heads.at(1).toObject().value(QLatin1String("headSha")) == QLatin1String("sha-42"),
+           QStringLiteral("the host was asked %1").arg(show(action.toVariantMap())));
+  });
+  step(QStringLiteral("the user chooses to rebase the stack"), [reviewStack](World& world, const Captures&, const Table&) {
+    reviewStack(world, 42).click(QStringLiteral("reviewStackRebase"));
+  });
+  step(QStringLiteral("the user is warned that branch history is rewritten and checks may restart"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap asked = review(world).stackConfirmation();
+    const QString warning = QStringLiteral("Rebase the remote branches from bottom to top onto main. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.");
+    expect(asked.value(QStringLiteral("title")) == QLatin1String("Rebase 3 pull requests?") && asked.value(QStringLiteral("description")) == warning,
+           QStringLiteral("the user is asked %1").arg(show(asked)));
+    Brick& brick = *world.brick;
+    world.waitFor([&] { return brick.shows(warning); }, QStringLiteral("the warning to be drawn"));
+    expect(world.mc.part<FakeReview>().actions.isEmpty(), QStringLiteral("the host was asked before the user confirmed"));
+    brick.click(QStringLiteral("reviewStackConfirmAccept"));
+    world.waitFor([&] { return world.mc.part<FakeReview>().actions.size() == 1; }, QStringLiteral("the rebase to be asked of the host"));
+    const QJsonObject action = world.mc.part<FakeReview>().actions.first();
+    expect(action.value(QLatin1String("action")) == QLatin1String("update-branch") && action.value(QLatin1String("updateMethod")) == QLatin1String("rebase") &&
+               action.value(QLatin1String("number")).toInt() == 43 && action.value(QLatin1String("expectedStackHeads")).toArray().size() == 3,
+           QStringLiteral("the host was asked %1").arg(show(action.toVariantMap())));
+  });
+  step(QStringLiteral("the last stack refresh failed"), [reviewStack](World& world, const Captures&, const Table&) {
+    Brick& brick = reviewStack(world, 42);
+    world.mc.part<FakeReview>().stackFails = true;
+    brick.click(QStringLiteral("reviewReload"));
+    world.sync();
+  });
+  step(QStringLiteral("the user looks at the stack"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return review(world).stack().value(QStringLiteral("stale")).toBool(); }, [&] { return QStringLiteral("the stack; it is %1").arg(show(review(world).stack())); });
+  });
+  step(QStringLiteral("the stack is marked as possibly stale with a way to retry"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = *world.brick;
+    // What was read before is still shown, with the notice; nothing can be done to it meanwhile.
+    const QVariantMap stack = review(world).stack();
+    expect(stack.value(QStringLiteral("size")).toInt() == 3 && stack.value(QStringLiteral("notice")) == QStringLiteral("Stack data may be stale. We couldn’t refresh it.") &&
+               !stack.value(QStringLiteral("canMerge")).toBool() && !stack.value(QStringLiteral("canRebase")).toBool(),
+           QStringLiteral("the stack is %1").arg(show(stack)));
+    world.waitFor([&] { return brick.shows(QStringLiteral("Stack data may be stale. We couldn’t refresh it.")) && brick.item(QStringLiteral("reviewStackRetry"))->isVisible(); },
+                  QStringLiteral("the notice and its retry to be drawn"));
+    // The retry reads the stack again; once the host answers the notice goes.
+    world.mc.part<FakeReview>().stackFails = false;
+    const int reads = world.mc.part<FakeReview>().stackReads;
+    brick.click(QStringLiteral("reviewStackRetry"));
+    world.waitFor([&] { return !review(world).stack().value(QStringLiteral("stale")).toBool(); }, QStringLiteral("the stack to be read again"));
+    expect(world.mc.part<FakeReview>().stackReads == reads + 1 && review(world).stack().value(QStringLiteral("canRebase")).toBool(), QStringLiteral("the stack is %1").arg(show(review(world).stack())));
   });
   step(QStringLiteral("its pull request shows it is layer (\\d+) of (\\d+)"), [](World& world, const Captures& c, const Table&) {
     const QString wanted = QStringLiteral("Layer %1 of %2").arg(c[0], c[1]);

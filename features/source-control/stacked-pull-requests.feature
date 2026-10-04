@@ -69,12 +69,12 @@ Feature: Stacked pull requests
     When the user unlinks pull request 43
     Then the next sync does not bring 43 back
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Confirming a stack merge shows scope and strategy
     When the user chooses to merge the stack at pull request 42
     Then the user is asked to confirm merging 2 pull requests into "main" with the chosen method
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Confirming a stack rebase warns it rewrites history
     When the user chooses to rebase the stack
     Then the user is warned that branch history is rewritten and checks may restart
@@ -85,7 +85,7 @@ Feature: Stacked pull requests
     When the user looks at "Tax work"
     Then its pull request shows it is layer 2 of 3
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A stack that could not be refreshed says it may be stale
     Given the last stack refresh failed
     When the user looks at the stack

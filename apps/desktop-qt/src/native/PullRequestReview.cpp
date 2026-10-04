@@ -108,6 +108,10 @@ void PullRequestReview::setPullRequest(const QString& environmentId, const QStri
   ++m_generation;
   m_loaded = false;
   m_detail.clear();
+  m_stack = {};
+  m_stackStale = false;
+  m_stackConfirmation.clear();
+  emit stackChanged();
   m_conversation.clear();
   m_threads.clear();
   m_viewed.clear();
@@ -129,6 +133,7 @@ void PullRequestReview::setOnline(bool online) {
   if (online == m_online) return;
   m_online = online;
   emit stateChanged();
+  emit stackChanged();
   // Back online, what could not be read is read now.
   if (online && m_active && (!m_loaded || m_status == QLatin1String("error"))) load();
 }
@@ -171,9 +176,17 @@ void PullRequestReview::readDetail() {
                      return;
                    }
                    m_detail = detailOf(result.toObject());
+                   // A permission the host says nothing of is granted.
+                   const QJsonObject detail = result.toObject();
+                   const QJsonValue permissions = detail.value(QLatin1String("viewerPermissions"));
+                   m_viewerMayMerge = detail.value(QLatin1String("capabilities")).toObject().value(QLatin1String("actions")).toArray().contains(QStringLiteral("merge")) &&
+                                      (!permissions.isObject() || permissions.toObject().value(QLatin1String("actions")).toArray().contains(QStringLiteral("merge")));
+                   m_viewerMayRebase = !permissions.isObject() || permissions.toObject().value(QLatin1String("stackRebase")).toBool(true);
                    setStatus(QStringLiteral("ready"));
                    emit detailChanged();
+                   emit stackChanged();
                  });
+  readStack();
   m_client->call(this, m_environment, QStringLiteral("pullRequests.activity"), reference(),
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation || error) return;
@@ -302,6 +315,148 @@ bool PullRequestReview::comment(const QString& body) {
   QJsonObject input = reference();
   input.insert(QStringLiteral("body"), body);
   return change(QStringLiteral("pullRequests.comment"), input, QStringLiteral("Could not comment"));
+}
+
+void PullRequestReview::readStack() {
+  const quint64 generation = m_generation;
+  m_client->call(this, m_environment, QStringLiteral("pullRequests.stack"), reference(),
+                 [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (generation != m_generation) return;
+                   if (error) {
+                     // What was read before stays, marked as possibly stale.
+                     m_stackStale = !m_stack.isEmpty();
+                   } else {
+                     m_stack = result.toObject();
+                     m_stackStale = false;
+                   }
+                   emit stackChanged();
+                 });
+}
+
+void PullRequestReview::retryStack() {
+  if (m_number > 0) readStack();
+}
+
+QList<QJsonObject> PullRequestReview::unmergedLayers() const {
+  QList<QJsonObject> layers;
+  for (const QJsonValue& layer : m_stack.value(QLatin1String("layers")).toArray()) {
+    if (text(layer.toObject(), QLatin1String("state")) != QLatin1String("merged")) layers.append(layer.toObject());
+  }
+  return layers;
+}
+
+QList<QJsonObject> PullRequestReview::mergeLayers() const {
+  QList<QJsonObject> layers;
+  for (const QJsonValue& value : m_stack.value(QLatin1String("layers")).toArray()) {
+    const QJsonObject layer = value.toObject();
+    if (text(layer, QLatin1String("state")) != QLatin1String("merged")) layers.append(layer);
+    if (layer.value(QLatin1String("number")).toInt() == m_number) return layers;
+  }
+  return {};
+}
+
+// apps/web PullRequestStackMenu: what the stack is, and what can be done with it.
+QVariantMap PullRequestReview::stack() const {
+  const QJsonArray all = m_stack.value(QLatin1String("layers")).toArray();
+  if (all.isEmpty()) return {};
+  QVariantList layers;
+  int position = 0;
+  for (qsizetype index = 0; index < all.size(); ++index) {
+    const QJsonObject layer = all.at(index).toObject();
+    const bool current = layer.value(QLatin1String("number")).toInt() == m_number;
+    if (current) position = int(index) + 1;
+    layers.append(QVariantMap{{QStringLiteral("number"), layer.value(QLatin1String("number")).toInt()},
+                              {QStringLiteral("title"), text(layer, QLatin1String("title"))},
+                              {QStringLiteral("state"), text(layer, QLatin1String("state"))},
+                              {QStringLiteral("current"), current}});
+  }
+  const auto ready = [](const QList<QJsonObject>& chosen) {
+    return !chosen.isEmpty() && std::all_of(chosen.cbegin(), chosen.cend(), [](const QJsonObject& layer) {
+      return text(layer, QLatin1String("state")) == QLatin1String("open") && !text(layer, QLatin1String("headSha")).isEmpty();
+    });
+  };
+  const QList<QJsonObject> merging = mergeLayers();
+  const bool noDrafts = std::none_of(merging.cbegin(), merging.cend(), [](const QJsonObject& layer) { return layer.value(QLatin1String("isDraft")).toBool(); });
+  return {{QStringLiteral("number"), m_stack.value(QLatin1String("number")).toInt()},
+          {QStringLiteral("base"), text(m_stack, QLatin1String("base"))},
+          {QStringLiteral("position"), position},
+          {QStringLiteral("size"), int(all.size())},
+          {QStringLiteral("layers"), layers},
+          {QStringLiteral("mergeCount"), int(merging.size())},
+          {QStringLiteral("canMerge"), m_online && !m_stackStale && m_viewerMayMerge && ready(merging) && noDrafts},
+          {QStringLiteral("canRebase"), m_online && !m_stackStale && m_viewerMayRebase && ready(unmergedLayers())},
+          {QStringLiteral("stale"), m_stackStale},
+          {QStringLiteral("notice"), m_stackStale ? QStringLiteral("Stack data may be stale. We couldn’t refresh it.") : QString()}};
+}
+
+bool PullRequestReview::requestStackMerge(const QString& method) {
+  const QVariantMap shown = stack();
+  if (!shown.value(QStringLiteral("canMerge")).toBool()) return false;
+  const QStringList methods = m_detail.value(QStringLiteral("mergeMethods")).toStringList();
+  m_stackMethod = method.isEmpty() ? methods.value(0, QStringLiteral("merge")) : method;
+  const int count = shown.value(QStringLiteral("mergeCount")).toInt();
+  m_stackConfirmation = {
+      {QStringLiteral("action"), QStringLiteral("merge")},
+      {QStringLiteral("title"), QStringLiteral("Merge %1 pull %2?").arg(count).arg(count == 1 ? QStringLiteral("request") : QStringLiteral("requests"))},
+      {QStringLiteral("description"),
+       QStringLiteral("Merge #%1 and its unmerged layers below into %2 using %3. GitHub checks their rules before merging or queueing them and rebases the "
+                      "remaining stack after merging.")
+           .arg(m_number)
+           .arg(shown.value(QStringLiteral("base")).toString(), m_stackMethod)},
+      {QStringLiteral("confirmLabel"), QStringLiteral("Merge stack")}};
+  emit stackChanged();
+  return true;
+}
+
+bool PullRequestReview::requestStackRebase() {
+  const QVariantMap shown = stack();
+  if (!shown.value(QStringLiteral("canRebase")).toBool()) return false;
+  const int count = int(unmergedLayers().size());
+  m_stackConfirmation = {
+      {QStringLiteral("action"), QStringLiteral("rebase")},
+      {QStringLiteral("title"), QStringLiteral("Rebase %1 pull %2?").arg(count).arg(count == 1 ? QStringLiteral("request") : QStringLiteral("requests"))},
+      {QStringLiteral("description"),
+       QStringLiteral("Rebase the remote branches from bottom to top onto %1. This rewrites branch history and may restart checks. If a layer fails, "
+                      "earlier updates remain.")
+           .arg(shown.value(QStringLiteral("base")).toString())},
+      {QStringLiteral("confirmLabel"), QStringLiteral("Rebase stack")}};
+  emit stackChanged();
+  return true;
+}
+
+void PullRequestReview::cancelStack() {
+  if (m_stackConfirmation.isEmpty()) return;
+  m_stackConfirmation.clear();
+  emit stackChanged();
+}
+
+void PullRequestReview::confirmStack() {
+  if (m_stackConfirmation.isEmpty()) return;
+  const bool merging = m_stackConfirmation.value(QStringLiteral("action")) == QLatin1String("merge");
+  m_stackConfirmation.clear();
+  emit stackChanged();
+  // The heads the user saw: the host refuses a stack that moved since.
+  const QList<QJsonObject> layers = merging ? mergeLayers() : unmergedLayers();
+  if (layers.isEmpty()) return;
+  QJsonArray heads;
+  for (const QJsonObject& layer : layers) {
+    heads.append(QJsonObject{{QStringLiteral("number"), layer.value(QLatin1String("number"))}, {QStringLiteral("headSha"), layer.value(QLatin1String("headSha"))}});
+  }
+  QJsonObject input = reference();
+  // A merge is asked at this layer, a rebase at the stack's top.
+  input.insert(QStringLiteral("number"), merging ? m_number : layers.last().value(QLatin1String("number")).toInt());
+  input.insert(QStringLiteral("stackNumber"), m_stack.value(QLatin1String("number")));
+  input.insert(QStringLiteral("expectedStackHeads"), heads);
+  input.insert(QStringLiteral("action"), merging ? QStringLiteral("merge") : QStringLiteral("update-branch"));
+  if (merging) {
+    input.insert(QStringLiteral("mergeMethod"), m_stackMethod);
+  } else {
+    input.insert(QStringLiteral("updateMethod"), QStringLiteral("rebase"));
+  }
+  change(QStringLiteral("pullRequests.runAction"), input, QStringLiteral("Stack operation did not complete"), [this, merging] {
+    m_notify(QStringLiteral("success"), merging ? QStringLiteral("Stack merge request completed") : QStringLiteral("Stack rebased"),
+             merging ? QStringLiteral("GitHub merged the stack or added it to its merge queue.") : QString());
+  });
 }
 
 bool PullRequestReview::merge(const QString& method) {
