@@ -164,7 +164,7 @@ Feature: Where HAL-C2 keeps its files
         | the development runner | --home-dir |
         | the server             | --base-dir |
 
-    @backlog @desktop
+    @desktop
     Scenario: The desktop app's home directory outranks the worktree and HAL_C2_HOME
       Given HAL_C2_HOME is "/srv/hal-c2" in the developer's shell
       When a developer starts the desktop app from a linked git worktree with --home-dir "/tmp/sandbox"
@@ -346,7 +346,7 @@ Feature: Where HAL-C2 keeps its files
         | triage source checkouts           | ~/.cache/hal-c2/source                        |
         | the WSL server tree               | ~/.cache/hal-c2/wsl-server-tree               |
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: The desktop app's control socket lives in the runtime directory
       Given <runtime>
       When the user starts the desktop app
@@ -357,7 +357,7 @@ Feature: Where HAL-C2 keeps its files
         | XDG_RUNTIME_DIR is "/run/user/1000" | /run/user/1000/hal-c2 |
         | XDG_RUNTIME_DIR is not set          | ~/.local/state/hal-c2 |
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The desktop app on Windows keeps its named pipe
       Given a Windows user
       When the user starts the desktop app
