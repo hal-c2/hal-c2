@@ -6,5 +6,5 @@
 
 class World;
 
-// Every `orchestration.launchThread` the MC was asked, in order.
+// Every `orchestration.launchThread` payload the MC got, oldest first.
 QList<QJsonObject> launchCalls(World& world);

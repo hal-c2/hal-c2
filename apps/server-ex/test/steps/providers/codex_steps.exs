@@ -270,6 +270,454 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
+  # --- questions asked without waiting ---------------------------------------------------
+
+  # Codex's async question: an agent message that carries questions and waits for no
+  # reply, delivered as the app-server reports it.
+  defp ask_async(context) do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    context =
+      World.codex_notify(context, @thread, "item/completed", %{
+        "threadId" => runtime.native_thread_id,
+        "turnId" => runtime.turn.native_turn_id,
+        "item" => %{
+          "type" => "agentMessage",
+          "id" => "msg-async",
+          "delivery" => "async",
+          "text" => "",
+          "questions" => [%{"title" => "Which color?", "options" => ["Red", "Blue"]}]
+        }
+      })
+
+    request = World.await_request(context, @thread)
+    assert request["responseCapability"] == %{"type" => "message"}
+    Map.put(context, :request, request)
+  end
+
+  defp answer_async(context) do
+    reply =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "commandId" => "cmd-answer-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "answers" => %{"0" => "Red"}
+      })
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  defp request_now(context),
+    do: StreamState.get(World.stream(context, @thread), "runtime-request")[context.request["id"]]
+
+  step "Codex asked a question and kept working", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+    context = ask_async(context)
+    # The question does not hold the run: it is still running, not waiting.
+    assert %{"status" => "running"} = World.latest_run(context, @thread)
+    context
+  end
+
+  step "the answer reaches the running turn as a new message", context do
+    steer =
+      World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/steer"))
+
+    assert [%{"text" => "Which color?
+Red"}] = get_in(steer, ["in", "params", "input"])
+    assert %{"status" => "resolved"} = request_now(context)
+    assert [_] = World.runs(context, @thread)
+    context
+  end
+
+  step "Codex asked a question and then finished the turn", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+    context = ask_async(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+
+    World.await_runs(context, @thread, ["completed"])
+    assert %{"status" => "pending"} = request_now(context)
+    context
+  end
+
+  step "the answer starts a new turn", context do
+    World.await_value(context, @thread, fn state ->
+      runs = state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
+      with [%{"status" => "completed"}, %{"userMessageId" => message}] <- runs,
+           %{"text" => "Which color?
+Red"} <- StreamState.get(state, "message")[message],
+           do: true,
+           else: (_ -> nil)
+    end)
+
+    assert %{"status" => "resolved"} = request_now(context)
+    # Sending the same answer again changes nothing.
+    answer_async(context)
+    assert length(World.runs(context, @thread)) == 2
+    context
+  end
+
+  step "Codex asked a question that is not answered yet", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+    ask_async(context)
+  end
+
+  # The client's socket drops, and the provider behind the question goes with its run.
+  step "the client reconnects to the MC", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    World.await_runs(context, @thread, ["failed"])
+    context |> World.disconnect() |> World.put_client(HalC2.Test.Mc.connect(context.mc))
+  end
+
+  step "the question is still waiting for an answer", context do
+    thread_id = World.thread_id(context, @thread)
+    id = System.unique_integer([:positive])
+
+    client =
+      HalC2.Test.Mc.sub(World.client(context), id, %{
+        "type" => "stream",
+        "mc" => Atom.to_string(node()),
+        "stream" => thread_id
+      })
+
+    {frame, client} = HalC2.Test.Mc.await(client, &(&1["id"] == id), 5_000)
+    context = World.put_client(context, client)
+    request_id = context.request["id"]
+
+    # The new socket's snapshot of the thread carries the open question.
+    assert Enum.any?(
+             frame["rows"],
+             &match?(["runtime-request", ^request_id, %{"status" => "pending"}], &1)
+           )
+
+    assert %{"status" => "pending"} = request_now(context)
+
+    assert [%{"status" => "waiting", "questions" => [%{"question" => "Which color?"}]}] =
+             World.entities(context, @thread, "turn-item")
+             |> Enum.filter(&(&1["type"] == "user_input_request"))
+
+    # It can still be answered: the answer starts a turn.
+    answer_async(context)
+    assert %{"status" => "resolved"} = request_now(context)
+    context
+  end
+
+  # --- access to another app -------------------------------------------------------------
+
+  @elicitation "elicit-1"
+
+  # A connector's request, as Codex's app-server forwards it while a turn runs.
+  step "a Codex tool asks for access to {string}", %{args: [app]} = context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+    {pid, runtime} = World.codex_runtime(context, @thread)
+
+    params = %{
+      "threadId" => runtime.native_thread_id,
+      "turnId" => runtime.turn.native_turn_id,
+      "serverName" => "codex_apps",
+      "mode" => "form",
+      "message" => "Allow ChatGPT to use #{app}?",
+      "_meta" => %{"persist" => ["session", "always"]},
+      "requestedSchema" => %{"type" => "object", "properties" => %{}}
+    }
+
+    send(
+      pid,
+      {:json_rpc, runtime.conn, {:request, @elicitation, "mcpServer/elicitation/request", params}}
+    )
+
+    request = World.await_request(context, @thread)
+    assert request["kind"] == "mcp-elicitation"
+
+    # The approval names the app and the scopes once the runtime has described it.
+    %{"options" => options} =
+      World.await_value(context, @thread, fn state ->
+        Enum.find(
+          StreamState.list(state, "turn-item"),
+          &(&1["requestId"] == request["id"] and &1["appName"] == app)
+        )
+      end)
+
+    assert Enum.map(options, & &1["decision"]) ==
+             ~w(cancel decline acceptForSession acceptAlways accept)
+
+    Map.put(context, :request, request)
+  end
+
+  defp decide(context, decision) do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "decision" => decision
+      })
+
+    context
+  end
+
+  # What the fake app-server got back for the tool's request.
+  defp elicitation_answer(context) do
+    World.await_provider_log(
+      context,
+      "codex",
+      &(get_in(&1, ["in", "id"]) == @elicitation and get_in(&1, ["in", "method"]) == nil)
+    )["in"]["result"]
+  end
+
+  @scopes %{
+    "for this request" => {"accept", nil},
+    "for this session" => {"acceptForSession", "session"},
+    "permanently" => {"acceptAlways", "always"}
+  }
+
+  step ~r/^the user grants access (?<scope>for this request|for this session|permanently)$/,
+       %{args: [scope]} = context do
+    decide(context, elem(@scopes[scope], 0))
+  end
+
+  step ~r/^the tool gets access (?<scope>for this request|for this session|permanently)$/,
+       %{args: [scope]} = context do
+    {decision, persist} = @scopes[scope]
+    answer = elicitation_answer(context)
+    assert answer["action"] == "accept"
+    assert get_in(answer, ["_meta", "persist"]) == persist
+    assert %{"status" => "resolved", "decision" => ^decision} = request_now(context)
+    context
+  end
+
+  step "the user declines", context do
+    decide(context, "decline")
+  end
+
+  step "the tool is told access was declined", context do
+    assert elicitation_answer(context) == %{"action" => "decline"}
+    assert %{"status" => "resolved", "decision" => "decline"} = request_now(context)
+    # The turn goes on without the app.
+    assert %{"status" => "running"} = World.latest_run(context, @thread)
+    context
+  end
+
+  # Codex closes its plan item (`item/completed`) when the plan is written: the step
+  # is done, the plan itself still open to implement.
+  step "Codex proposed a plan and marked it finished", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "codex", "make a plan", %{"interactionMode" => "plan"})
+
+    state = World.await_runs(context, @thread, ["completed"])
+    [plan] = for p <- StreamState.list(state, "plan"), p["kind"] == "proposed_plan", do: p
+
+    assert [%{"status" => "completed", "streaming" => false}] =
+             Enum.filter(StreamState.list(state, "turn-item"), &(&1["planId"] == plan["id"]))
+
+    Map.put(context, :plan, plan)
+  end
+
+  step "the plan is offered for implementation", context do
+    id = World.thread_id(context, @thread)
+
+    assert StreamState.get(World.stream(context, @thread), "plan")[context.plan["id"]]["status"] ==
+             "active"
+
+    World.await_row(id, &(&1["hasActionableProposedPlan"] == true))
+    context
+  end
+
+  # Implementing leaves plan mode, as the clients do, and names the plan.
+  step "the user implements the plan", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.interaction-mode.set",
+        "commandId" => "cmd-mode-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "interactionMode" => "default"
+      })
+
+    World.post_message(context, @thread, "Implement the plan.", %{
+      "sourcePlanRef" => %{
+        "threadId" => World.thread_id(context, @thread),
+        "planId" => context.plan["id"]
+      },
+      "dispatchMode" => nil
+    })
+  end
+
+  step "a new run starts from that plan", context do
+    state = World.await_runs(context, @thread, ["completed", "completed"])
+    assert StreamState.get(state, "plan")[context.plan["id"]]["status"] == "completed"
+    [_, run] = state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
+    assert StreamState.get(state, "message")[run["userMessageId"]]["text"] ==
+             "Implement the plan."
+
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["hasActionableProposedPlan"] == false)
+    )
+
+    context
+  end
+
+  # --- accounts on one home --------------------------------------------------------------
+
+  @second "codex-work"
+
+  # The built-in Codex uses the shared home itself; the second instance is another
+  # account on it, with a shadow home for its own login.
+  step "a shared Codex home and a second Codex instance with its own shadow home", context do
+    context = World.fake_providers(context)
+    shared = HalC2.Test.Mc.tmp_dir(context.mc, "codex-home")
+    shadow = Path.join(HalC2.Test.Mc.tmp_dir(context.mc, "codex-shadows"), "work")
+    File.write!(Path.join(shared, "config.toml"), "model = \"gpt-6-luna\"\n")
+    File.write!(Path.join(shared, "auth.json"), ~s({"account":"home"}))
+    File.write!(Path.join(shared, "models_cache.json"), ~s({"models":["home"]}))
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    World.merge_settings(%{
+      "providers" => %{"codex" => %{"homePath" => shared}},
+      "providerInstances" => %{
+        @second => %{
+          "driver" => "codex",
+          "enabled" => true,
+          "config" => %{"homePath" => shared, "shadowHomePath" => shadow}
+        }
+      }
+    })
+
+    Map.merge(context, %{codex_shared: shared, codex_shadow: shadow})
+  end
+
+  # `codex login` in the instance's home: the shadow home, where the login stays.
+  step "the user signs in to the second instance", context do
+    assert {:ok, [{"CODEX_HOME", home}]} = HalC2.Codex.Home.env(@second)
+    assert home == context.codex_shadow
+    File.write!(Path.join(home, "auth.json"), ~s({"account":"work"}))
+    File.write!(Path.join(home, "models_cache.json"), ~s({"models":["work"]}))
+    context
+  end
+
+  step "both instances see the same Codex sessions and settings", context do
+    context = World.launch_on(context, "Home", "codex", "hello from home")
+    World.await_runs(context, "Home", ["completed"])
+    context = World.launch_on(context, "Work", @second, "hello from work")
+    World.await_runs(context, "Work", ["completed"])
+
+    # Each ran in its own home.
+    homes = for %{"argv" => _, "home" => home} <- World.provider_log(context, "codex"), do: home
+    assert context.codex_shared in homes and context.codex_shadow in homes
+
+    # Both conversations are in the shared home's sessions, which the shadow home links.
+    rollouts = fn home ->
+      Path.join(home, "sessions/*/*/*/rollout-*.jsonl")
+      |> Path.wildcard()
+      |> Enum.map(&Path.basename/1)
+    end
+
+    assert [_, _] = rollouts.(context.codex_shared)
+
+    assert Enum.sort(rollouts.(context.codex_shadow)) ==
+             Enum.sort(rollouts.(context.codex_shared))
+
+    assert File.read_link!(Path.join(context.codex_shadow, "sessions")) ==
+             Path.join(context.codex_shared, "sessions")
+
+    # One settings file: a change made through either home is the other's too.
+    File.write!(Path.join(context.codex_shadow, "config.toml"), "model = \"gpt-5.5\"\n")
+    assert File.read!(Path.join(context.codex_shared, "config.toml")) == "model = \"gpt-5.5\"\n"
+    context
+  end
+
+  step "each keeps its own login and model list", context do
+    for {home, account} <- [{context.codex_shared, "home"}, {context.codex_shadow, "work"}] do
+      assert %File.Stat{type: :regular} = File.lstat!(Path.join(home, "auth.json"))
+      assert File.read!(Path.join(home, "auth.json")) == ~s({"account":"#{account}"})
+      assert File.read!(Path.join(home, "models_cache.json")) == ~s({"models":["#{account}"]})
+    end
+
+    context
+  end
+
+  # --- subagents -------------------------------------------------------------------------
+
+  # The fake's spawnAgent tool call starts the thread native-child-1, which answers.
+  step "Codex starts a subagent", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "spawn a subagent")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the subagent's work is shown as a child of the turn", context do
+    state = World.stream(context, @thread)
+    [run] = StreamState.list(state, "run")
+
+    assert [
+             %{
+               "origin" => "provider_native",
+               "status" => "completed",
+               "prompt" => "List the modules in lib",
+               "result" => "lib has three modules"
+             } = subagent
+           ] = StreamState.list(state, "subagent")
+
+    assert subagent["runId"] == run["id"] and subagent["parentNodeId"] == run["rootNodeId"]
+
+    assert [%{"status" => "completed", "runId" => run_id, "subagentId" => id}] =
+             Enum.filter(StreamState.list(state, "turn-item"), &(&1["type"] == "subagent"))
+
+    assert run_id == run["id"] and id == subagent["id"]
+
+    # What the subagent said is its own thread's, not this turn's; the turn went on.
+    replies = World.replies(context, @thread)
+    refute "lib has three modules" in replies
+    assert "The subagent found three modules." in replies
+    Map.put(context, :subagent, subagent)
+  end
+
+  step "the user can open the subagent's own thread", context do
+    thread_id = World.thread_id(context, @thread)
+    child_id = context.subagent["childThreadId"]
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
+
+    assert %{"parentThreadId" => ^thread_id, "relationshipToParent" => "subagent"} =
+             StreamState.get(child, "thread")[child_id]["lineage"]
+
+    assert [{"user", "List the modules in lib"}, {"assistant", "lib has three modules"}] =
+             child
+             |> StreamState.list("message")
+             |> Enum.sort_by(& &1["createdAt"])
+             |> Enum.map(&{&1["role"], &1["text"]})
+
+    context
+  end
+
   step "the thread is in plan mode on Codex", context do
     World.fake_providers(context)
   end
@@ -425,6 +873,42 @@ defmodule HalC2.Steps.Providers.Codex do
     context
     |> World.fake_providers()
     |> World.run_turns(@thread, "codex", ["hello", "hello again", "one more"])
+  end
+
+  # The app-server that ran the turns is gone; the next thing asked of Codex starts a
+  # new one, which has not loaded the thread.
+  step "Codex's app-server restarted after the first turn", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    ref = Process.monitor(runtime.conn)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    {_, runtime} = World.codex_runtime(context, @thread)
+    assert runtime.conn == nil
+    context
+  end
+
+  step "the revert is reported as complete", context do
+    assert {:ok, _} = context.reply
+    log = World.provider_log(context, "codex")
+    # A second app-server ran it: it resumed the thread, then rewound it.
+    assert [_, _ | _] = Enum.filter(log, &Map.has_key?(&1, "argv"))
+    methods = for %{"in" => %{"method" => method}} <- log, do: method
+
+    restarted =
+      methods |> Enum.reverse() |> Enum.take_while(&(&1 != "initialize")) |> Enum.reverse()
+
+    assert Enum.find_index(restarted, &(&1 == "thread/resume")) <
+             Enum.find_index(restarted, &(&1 == "thread/revert"))
+
+    assert [
+             %{"status" => "completed"},
+             %{"status" => "rolled_back"},
+             %{"status" => "rolled_back"} | _
+           ] =
+             World.runs(context, @thread)
+
+    context
   end
 
   step "Codex's own thread is rolled back to that point", context do

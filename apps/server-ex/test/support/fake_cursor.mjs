@@ -51,12 +51,27 @@ const store = {
 };
 
 let agents = 0;
-const makeAgent = (options) => {
+// A resumed agent keeps its id, as the SDK's `Agent.resume` does.
+const makeAgent = (options, resumed) => {
   if (refused(options.apiKey)) throw authError();
-  const agentId = `cursor-agent-${process.pid}-${++agents}`;
+  const agentId = resumed ?? `cursor-agent-${process.pid}-${++agents}`;
+  // The SDK loads the project's rules and skills from the agent's working directory
+  // unless its setting sources leave the project out.
+  const sources = options.local?.settingSources;
+  const cwd = options.local?.cwd;
+  const loaded = [];
+  if (cwd && (sources === undefined || sources.includes("project") || sources.includes("all"))) {
+    for (const kind of ["rules", "skills"]) {
+      const folder = path.join(cwd, ".cursor", kind);
+      if (fs.existsSync(folder))
+        for (const name of fs.readdirSync(folder).sort()) loaded.push(`${kind}/${name}`);
+    }
+  }
   log({
     event: "agent",
     agentId,
+    cwd: cwd ?? null,
+    loaded,
     mode: options.mode,
     apiKey: options.apiKey,
     autoReview: options.local?.autoReview,
@@ -67,7 +82,13 @@ const makeAgent = (options) => {
     agentId,
     close: () => {},
     send: async (message, sendOptions) => {
-      log({ event: "send", agentId, message, model: sendOptions.model });
+      log({
+        event: "send",
+        agentId,
+        message,
+        model: sendOptions.model,
+        mode: sendOptions.mode ?? null,
+      });
       let cancel;
       const cancelled = new Promise((resolve) => (cancel = resolve));
       const say = (text) => sendOptions.onDelta({ update: { type: "text-delta", text } });
@@ -99,6 +120,37 @@ const makeAgent = (options) => {
           if (message.includes("wait")) {
             await cancelled;
             return { status: "cancelled" };
+          }
+          if (message.includes("make a plan")) {
+            // Plan mode: the task list, then the plan itself.
+            const todos = [
+              { content: "Read the code", status: "completed" },
+              { content: "Write the plan", status: "inProgress" },
+              { content: "Dropped", status: "cancelled" },
+            ];
+            sendOptions.onDelta({
+              update: {
+                type: "tool-call-completed",
+                callId: "todos-1",
+                toolCall: {
+                  type: "updateTodos",
+                  args: { todos },
+                  result: { status: "success", value: { todos } },
+                },
+              },
+            });
+            const plan = { type: "createPlan", args: { plan: "# Plan\n- do it" } };
+            sendOptions.onDelta({
+              update: { type: "tool-call-started", callId: "plan-1", toolCall: plan },
+            });
+            sendOptions.onDelta({
+              update: {
+                type: "tool-call-completed",
+                callId: "plan-1",
+                toolCall: { ...plan, result: { status: "success", value: {} } },
+              },
+            });
+            return { status: "finished" };
           }
           if (message.includes("a command that cannot start")) {
             // The shell could not be spawned: the tool call fails and the run goes on.
@@ -158,7 +210,7 @@ const acp = makeCursorAcp({
     store,
     envApiKey: process.env.CURSOR_API_KEY?.trim() || undefined,
     createAgent: async (options) => makeAgent(options),
-    resumeAgent: async (_agentId, options) => makeAgent(options),
+    resumeAgent: async (agentId, options) => makeAgent(options, agentId),
     listModels: async (key) => {
       if (refused(key)) throw authError();
       return (
@@ -166,7 +218,13 @@ const acp = makeCursorAcp({
           ["composer-2", "Composer 2"],
           ["gpt-5", "GPT-5"],
         ]
-      ).map(([id, displayName]) => ({ id, displayName }));
+      ).map(([id, displayName]) => ({
+        id,
+        displayName,
+        // `parameters` / `variants` in the control give a model its own options.
+        ...(control.parameters?.[id] ? { parameters: control.parameters[id] } : {}),
+        ...(control.variants?.[id] ? { variants: control.variants[id] } : {}),
+      }));
     },
     login: async ({ store, signal, onLoginUrl }) => {
       log({ event: "login" });

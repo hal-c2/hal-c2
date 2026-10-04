@@ -51,7 +51,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user chooses the model "gpt-5-codex"
     Then the composer shows "gpt-5-codex" marked as a Codex model
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: Searching the models matches provider and model names
     Given Claude is enabled
     When the user searches the models for "<query>"
@@ -64,7 +64,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | claude | sonnet      | gpt-5-codex |
       | codex  | gpt-5-codex | opus        |
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A model that cannot be used says why and cannot be chosen
     Given the model "gpt-5.5" cannot be used because "Start a new thread to use this model."
     When the user looks through the models
@@ -78,26 +78,26 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then Cursor is listed with the reason it is unavailable
     And Cursor's models cannot be chosen
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user chooses a model with the keyboard
     When the user opens the model picker
     And the user moves to the next model and confirms it
     Then the next turn runs on that model
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user moves between providers with the keyboard
     Given Claude is enabled
     When the user opens the model picker
     And the user moves to the next provider
     Then Claude's models are listed
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user jumps to a model by its number
     When the user opens the model picker
     And the user presses the shortcut for the second model
     Then the next turn runs on the second model listed
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The model picker shortcut opens and closes the model picker
     When the user presses the model picker shortcut
     Then the model picker is open
@@ -135,7 +135,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user toggles back
     Then the next turn builds again
 
-  @backlog @desktop
+  @desktop
   Scenario: Ultrathink prefixes the prompt
     Given the thread runs on Claude
     When the user turns on Ultrathink and sends "design the cache"
@@ -154,46 +154,46 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user looks through the models
     Then only Codex models can be chosen
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: The last model used with each provider is remembered
     Given the user last used "gpt-5" with Codex
     When the user starts a new thread on Codex
     Then "gpt-5" is chosen
     But a model set for the project takes precedence
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: New threads start with the default permissions
     Given the default permissions for new threads are Supervised
     When the user starts a new thread
     Then the thread runs in Supervised
     But a project that overrides the default uses its own permissions
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user chooses which environment runs a new thread
     Given two environments are connected
     When the user starts a new thread on the second environment
     Then the thread is created in the second environment
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The user chooses to work in the current checkout or a new worktree
     Given the project is a Git repository
     When the user chooses to work in a new worktree from branch "main"
     Then the first turn works in a new worktree based on "main"
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A branch that does not exist is created when chosen
     Given the project has no branch "feature/cache"
     When the user searches for "feature/cache" and confirms it
     Then the thread works on a new branch "feature/cache"
 
-  @backlog @desktop
+  @desktop
   Scenario: New worktree mode needs a base branch before sending
     Given the user chose to work in a new worktree
     And no base branch is chosen
     When the user tries to send the first message
     Then the user is asked to select a base branch
 
-  @backlog @desktop
+  @desktop
   Scenario: A new thread can run on a machine that has other projects
     Given "laptop" has the project "shop" and the connected machine "server" has only "scratch"
     And the user has typed a prompt for a new thread in "shop"
@@ -201,19 +201,19 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the new thread is in "scratch" on "server"
     And the prompt is still there
 
-  @backlog @desktop
+  @desktop
   Scenario: The user lets a new thread's machine be picked automatically
     Given the project exists on two connected machines and load balancing is on
     When the user chooses "Auto balance" as the machine a new thread runs on
     Then the thread starts on the machine with the most room when the first message is sent
 
-  @backlog @desktop
+  @desktop
   Scenario: Auto balance says when it cannot check the machines
     Given the user chose "Auto balance" for a new thread
     When checking the machines' free resources fails
     Then the picker shows "Auto balance unavailable"
 
-  @backlog @desktop
+  @desktop
   Scenario: The user takes a new thread off Auto balance
     Given the user chose "Auto balance" for a new thread
     When the user chooses the machine "laptop" instead

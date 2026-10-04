@@ -100,7 +100,6 @@ Feature: Cursor
     When the user opens the provider list
     Then Cursor says the sign-in expired and to sign in again
 
-  @backlog
   Scenario: Cursor model options come from the Cursor catalog
     When the user opens the options for a Cursor model
     Then the reasoning, context size, fast mode and thinking choices Cursor offers for that model are shown
@@ -110,13 +109,11 @@ Feature: Cursor
     When the user opens the provider list
     Then Cursor is shown with a warning that no models were found
 
-  @backlog
   Scenario: Cursor's plan and task list are shown
     Given the thread is in plan mode on Cursor
     When Cursor finishes planning
     Then the plan is shown as a proposed plan with its task list
 
-  @backlog
   Scenario: Cursor's monthly allowance is shown in the limits view
     Given Cursor is signed in with a file-based login
     When the user opens the limits view
@@ -127,7 +124,6 @@ Feature: Cursor
     When the user opens the limits view
     Then Cursor says usage needs a file-based login
 
-  @backlog
   Scenario: Cursor skills can be mentioned in the composer
     Given the project has the Cursor skill "deploy"
     When the user mentions "deploy" in a message
@@ -178,7 +174,6 @@ Feature: Cursor
     When a Cursor turn runs
     Then the project folder gains no files generated for Cursor
 
-  @backlog
   Scenario: Cursor receives the project's skills and rules
     Given the project has skills and rules for Cursor
     When a Cursor turn starts in the project
@@ -190,7 +185,6 @@ Feature: Cursor
     Then the turn keeps going
     And the command is shown as failed
 
-  @backlog
   Scenario: A Cursor send whose run was abandoned is ended
     Given a message was sent to Cursor but the MC kept only its local run record and no live Cursor session
     When the MC checks its Cursor sessions

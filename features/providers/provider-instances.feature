@@ -218,7 +218,6 @@ Feature: Provider instances
       | Codex    |
       | Claude   |
 
-  @backlog
   Scenario Outline: A second instance's checks read its own binary path
     Given a second <provider> instance "<instance>" with the binary path "<path>"
     When the MC checks the version, update and usage of "<instance>"

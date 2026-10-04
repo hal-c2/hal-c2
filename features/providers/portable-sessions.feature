@@ -76,12 +76,12 @@ Feature: Carrying an agent's own session to another machine
       | provider | where it lives                                                          | where the copy goes                                        | resumes                                                               |
       | Pi       | a session file under its sessions folder named by the working directory | the destination's Pi sessions folder named by "~/src/shop" | continues a new session forked from the copy, started in "~/src/shop" |
 
-    @backlog @plugin-acp-registry
+    @plugin-acp-registry
     Examples: ACP agents that keep sessions in files, such as Gemini
       | provider | where it lives                               | where the copy goes                                  | resumes                            |
       | Gemini   | a chat file under its home, kept per project | the destination's Gemini home, kept for "~/src/shop" | loads the copy by the session's id |
 
-    @backlog @plugin-opencode
+    @plugin-opencode
     Examples: OpenCode
       | provider | where it lives                                          | where the copy goes                                                           | resumes                                |
       | OpenCode | its own session store, exported with its session export | the destination's OpenCode, through its session import, bound to "~/src/shop" | resumes the imported session by its id |
@@ -227,7 +227,7 @@ Feature: Carrying an agent's own session to another machine
     Then "laptop" holds both its original copy of the session and the one from "desktop"
     And the agent on "laptop" continues the conversation including the work on "desktop"
 
-  @backlog @mc @plugin-acp-registry
+  @mc @plugin-acp-registry
   Scenario: An agent that cannot branch a session is handed the conversation rather than overwrite a copy
     Given "Alpha" runs on Gemini and moved from "laptop" to "desktop" with its session
     And the user worked in "Alpha" on "desktop"

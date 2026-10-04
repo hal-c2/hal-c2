@@ -152,6 +152,52 @@ describe("Cursor over ACP", () => {
     });
   });
 
+  it("reports a subagent's result as what the subagent said", async () => {
+    const task = { type: "task", args: { description: "Survey", prompt: "List the modules" } };
+    const { sdk } = fakeSdk([
+      { type: "tool-call-started", callId: "t1", toolCall: task },
+      {
+        type: "tool-call-completed",
+        callId: "t1",
+        toolCall: {
+          ...task,
+          result: {
+            status: "success",
+            value: {
+              conversationSteps: [
+                { type: "assistantMessage", message: { text: "lib has three modules" } },
+                { type: "toolCall" },
+              ],
+              resultSuffix: "Agent finished.",
+            },
+          },
+        },
+      },
+    ] as unknown as ReadonlyArray<InteractionUpdate>);
+    await sdk.store.save(credentials);
+    const { out, call } = client(sdk);
+    await call("session/new", { cwd: "/work" });
+    await call("session/prompt", {
+      sessionId: "agent-1",
+      prompt: [{ type: "text", text: "survey the code" }],
+    });
+
+    const updates = out
+      .filter((m) => m.method === "session/update")
+      .map((m: any) => m.params.update);
+    expect(updates[0]).toMatchObject({ sessionUpdate: "tool_call", title: "task" });
+    expect(updates[1]).toMatchObject({
+      status: "completed",
+      rawInput: { prompt: "List the modules" },
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "lib has three modules\nAgent finished." },
+        },
+      ],
+    });
+  });
+
   it("cancels a running prompt", async () => {
     const { sdk } = fakeSdk([]);
     await sdk.store.save(credentials);

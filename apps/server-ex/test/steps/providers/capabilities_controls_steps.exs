@@ -231,11 +231,22 @@ defmodule HalC2.Steps.Providers.CapabilitiesControls do
     context
     |> FakeAcp.install("grok", %{"turns" => [plan | FakeAcp.turns()]}, enabled: true)
     |> FakeAcp.thread(@thread, "approval-required", %{"interactionMode" => "plan"})
-    |> Map.put(:current_thread, @thread)
+    |> Map.merge(%{current_thread: @thread, plan_prompt: "plan the work"})
+  end
+
+  # Cursor hands its plan over with its `createPlan` tool (`fake_acp.py`).
+  step "a Cursor thread in plan mode", context do
+    context = World.fake_providers(context)
+    World.merge_settings(%{"providers" => %{"cursor" => %{"enabled" => true}}})
+
+    context
+    |> Map.put(:provider, "cursor")
+    |> FakeAcp.thread(@thread, "approval-required", %{"interactionMode" => "plan"})
+    |> Map.merge(%{current_thread: @thread, plan_prompt: "write the plan down"})
   end
 
   step "the provider finishes a plan", context do
-    context = FakeAcp.send_message(context, "plan the work")
+    context = FakeAcp.send_message(context, context.plan_prompt)
     FakeAcp.await_run(context, "completed")
     context
   end
@@ -261,6 +272,96 @@ defmodule HalC2.Steps.Providers.CapabilitiesControls do
     World.await_value(context, @thread, fn state ->
       StreamState.get(state, "plan")[plan["id"]]["status"] == "completed"
     end)
+
+    context
+  end
+
+  # --- subagents ------------------------------------------------------------------------
+
+  # Antigravity's `start_subagent` tool, which runs a batch inside the turn.
+  @antigravity_batch %{
+    "match" => "split the work",
+    "steps" => [
+      %{
+        "update" => %{
+          "sessionUpdate" => "tool_call",
+          "toolCallId" => "subagents-1",
+          "title" => "Running start_subagent",
+          "kind" => "other",
+          "status" => "in_progress",
+          "rawInput" => %{"subagents" => [%{"task" => "Check the tests"}]},
+          "content" => [
+            %{"type" => "content", "content" => %{"type" => "text", "text" => "Check the tests"}}
+          ]
+        }
+      },
+      %{
+        "update" => %{
+          "sessionUpdate" => "tool_call_update",
+          "toolCallId" => "subagents-1",
+          "status" => "completed"
+        }
+      },
+      %{"text" => "The subagents finished."}
+    ]
+  }
+
+  # Each provider's own way of starting one: Claude's Agent tool, the `task` tool of
+  # Grok, Cursor and OpenCode, Antigravity's batch.
+  step "the provider runs a subagent", context do
+    title = World.current_thread(context)
+    count = length(World.runs(context, title))
+
+    {text, expected} =
+      case context.instance do
+        "claudeAgent" ->
+          {"subagent list the modules",
+           %{prompt: "list the modules", result: "Dev server started"}}
+
+        "antigravity" ->
+          FakeAcp.configure(
+            context,
+            &Map.update!(&1, "turns", fn turns -> [@antigravity_batch | turns] end)
+          )
+
+          {"split the work", %{prompt: "Check the tests"}}
+
+        "codex" ->
+          flunk("the fake Codex starts no subagent: the MC does not project Codex's yet")
+
+        _acp ->
+          {"hand it to a subagent",
+           %{prompt: "List the modules in lib", result: "lib has three modules"}}
+      end
+
+    context = World.post_message(context, title, text)
+    World.await_value(context, title, &(length(StreamState.list(&1, "run")) > count))
+    World.await_idle(context, title)
+    Map.put(context, :subagent_expected, expected)
+  end
+
+  step "the subagent's work is shown under the turn that started it", context do
+    title = World.current_thread(context)
+    state = World.stream(context, title)
+    run = List.last(World.runs(context, title))
+    assert run["status"] == "completed"
+
+    assert [item] = for(i <- StreamState.list(state, "turn-item"), i["type"] == "subagent", do: i)
+    assert %{"runId" => run_id, "status" => "completed"} = item
+    assert run_id == run["id"]
+    assert inspect(item) =~ "provider_native"
+    assert inspect(item) =~ context.subagent_expected.prompt
+
+    # It hangs off the turn's root as a subagent, not as one more tool call.
+    assert %{"kind" => "subagent", "parentNodeId" => root} =
+             StreamState.get(state, "node")[item["nodeId"]]
+
+    assert root == run["rootNodeId"]
+
+    if result = context.subagent_expected[:result] do
+      assert item["result"] == result
+      assert [%{"result" => ^result, "runId" => ^run_id}] = StreamState.list(state, "subagent")
+    end
 
     context
   end

@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QVariantMap>
 
+#include "ComposerBrick.h"
 #include "FakeConfig.h"
 #include <QTest>
 
@@ -329,6 +330,7 @@ const Steps pickerSteps([] {
   Brick::registerSingletons();
 
   step(QStringLiteral("the model picker is open"), [](World& world, const Captures&, const Table&) {
+    if (modelPickerShownOpen(world)) return;
     world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject},
                                           {QStringLiteral("title"), kProject},
                                           {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},

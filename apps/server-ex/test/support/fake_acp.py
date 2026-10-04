@@ -84,6 +84,36 @@ def save(sid, msgs):
         json.dump(msgs, f)
     os.replace(path + ".tmp", path)
 
+def directory_file(sid):
+    return os.path.join(SESSIONS, "%s.dir" % sid)
+
+def set_directory(sid, cwd):
+    os.makedirs(SESSIONS, exist_ok=True)
+    with open(directory_file(sid), "w") as f:
+        f.write(cwd)
+
+# `export <id>` and `import <file>` are OpenCode's own (`opencode export`, `opencode
+# import`), over the sessions in FAKE_ACP_SESSIONS: an export is the session's `info`
+# (its id, and the directory it belongs to) with its messages, and an import keeps
+# the id and belongs to the directory it is run in.
+if len(sys.argv) > 2 and sys.argv[1] in ("export", "import") and os.environ.get("FAKE_ACP_SESSIONS"):
+    if sys.argv[1] == "export":
+        sid = sys.argv[2]
+        if not os.path.exists(os.path.join(SESSIONS, "%s.json" % sid)):
+            sys.stderr.write("Session not found: %s\n" % sid)
+            sys.exit(1)
+        print(json.dumps({"info": {"id": sid, "directory": open(directory_file(sid)).read()},
+                          "messages": messages(sid)}))
+    else:
+        data = json.load(open(sys.argv[2]))
+        sid = data["info"]["id"]
+        save(sid, data["messages"])
+        set_directory(sid, os.getcwd())
+        with open(os.path.join(SESSIONS, "imports.jsonl"), "a") as f:
+            f.write(json.dumps({"id": sid, "directory": data["info"]["directory"], "cwd": os.getcwd()}) + "\n")
+        print("Imported session: %s" % sid)
+    sys.exit(0)
+
 def add_message(sid, role, text):
     if PORT:
         with LOCK:
@@ -254,6 +284,9 @@ for line in sys.stdin:
         result = {"configOptions": [{"id": "model", "currentValue": options[0]["value"], "options": options}]}
         if method == "session/new": result["sessionId"] = sid
         cwds[sid] = params.get("cwd") or os.getcwd()
+        # A session in the shared store belongs to the directory it was opened in.
+        if method == "session/new" and os.environ.get("FAKE_ACP_SESSIONS"):
+            set_directory(sid, cwds[sid])
         send({"id": mid, "result": result})
     elif method == "session/set_config_option":
         if params.get("configId") == "model": model = params["value"]
@@ -296,6 +329,22 @@ for line in sys.stdin:
             send({"id": "perm-text", "method": "session/request_permission", "params": {"sessionId": sid,
                   "toolCall": {"toolCallId": "call-1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
                   "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}]}})
+        elif "write the plan down" in text:
+            # Cursor's createPlan tool, as cursor-acp passes it on: named after the SDK's
+            # tool, with its input repeated when it ends.
+            call = {"toolCallId": "plan-1", "title": "createPlan", "kind": "other",
+                    "rawInput": {"plan": "# Plan\n\n1. Add the form"}}
+            update(sid, dict(call, sessionUpdate="tool_call", status="pending"))
+            update(sid, dict(call, sessionUpdate="tool_call_update", status="completed"))
+            finish_turn(mid, sid)
+        elif "hand it to a subagent" in text:
+            # The agent's task tool: a subagent it runs to the end inside the turn.
+            update(sid, {"sessionUpdate": "tool_call", "toolCallId": "task-1", "title": "task", "kind": "other",
+                         "status": "in_progress", "rawInput": {"description": "Survey the modules",
+                             "prompt": "List the modules in lib", "subagent_type": "general-purpose"}})
+            update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "task-1", "status": "completed",
+                         "content": [{"type": "content", "content": {"type": "text", "text": "lib has three modules"}}]})
+            finish_turn(mid, sid)
         elif "in the background" in text:
             # Grok's background work: a shell started as a task (task-sh), and a subagent
             # spawned in the background (spawn-1, session CHILD). With "wait" the turn

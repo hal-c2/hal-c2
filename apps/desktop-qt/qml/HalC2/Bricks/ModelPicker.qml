@@ -21,7 +21,13 @@ AbstractButton {
     readonly property bool locked: catalogue ? catalogue.locked : false
     readonly property var activeInstance: Picker.findInstance(instances, selectedInstanceId)
     readonly property var activeModel: Picker.findModel(activeInstance, selectedModel)
-    readonly property string triggerTitle: activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
+    // The models a new thread's prompt goes to, once more than one is chosen.
+    readonly property var multiple: catalogue?.multiple ?? null
+    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
+
+    function inMultiple(instanceId, model) {
+        return multiple !== null && multiple.some(entry => entry.instanceId === instanceId && entry.model === model);
+    }
     readonly property string triggerLabel: activeModel && activeModel.isUnavailable ? triggerTitle + qsTr(" (Unavailable)") : triggerTitle
     readonly property bool mac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property alias popup: popup
@@ -602,9 +608,8 @@ AbstractButton {
             readonly property bool isSelected: {
                 if (instance === null || model === null)
                     return false;
-                const several = Shell.state.modelPicker?.multiple ?? [];
-                if (several.length > 1)
-                    return several.some(picked => picked.instanceId === instance.instanceId && picked.model === model.slug);
+                if (control.multiple !== null)
+                    return control.multiple.some(picked => picked.instanceId === instance.instanceId && picked.model === model.slug);
                 return instance.instanceId === control.selectedInstanceId && model.slug === control.selectedModel;
             }
             readonly property bool highlighted: control.highlightedIndex === rowIndex
@@ -626,9 +631,9 @@ AbstractButton {
                 onTapped: {
                     if (row.disabledReason.length > 0 || !row.model)
                         return;
-                    // Shift-click adds the model to the ones a new thread's first message goes to.
-                    if (point.modifiers & Qt.ShiftModifier) {
-                        Shell.dispatch("composer.model.toggle", {
+                    // Shift-click is the row's "send to this model too".
+                    if ((point.modifiers & Qt.ShiftModifier) && control.catalogue?.supportsMultiple === true) {
+                        Shell.dispatch("composer.model.multiple.toggle", {
                             instanceId: row.instance.instanceId,
                             model: row.model.slug
                         });
@@ -738,6 +743,43 @@ AbstractButton {
                         font.family: control.fontFamily
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
+                    }
+                }
+
+                // Also send a new thread's prompt to this model.
+                AbstractButton {
+                    id: also
+
+                    readonly property bool chosen: row.instance !== null && row.model !== null && control.inMultiple(row.instance.instanceId, row.model.slug)
+
+                    objectName: row.instance && row.model ? "modelPickerMultiple:" + row.instance.instanceId + ":" + row.model.slug : ""
+                    visible: control.catalogue?.supportsMultiple === true
+                    implicitWidth: 24
+                    implicitHeight: 24
+                    enabled: row.disabledReason.length === 0
+                    hoverEnabled: true
+                    focusPolicy: Qt.NoFocus
+                    Accessible.name: chosen ? qsTr("Stop sending to this model too") : qsTr("Send to this model too")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 0
+                    ToolTip.text: chosen ? qsTr("Stop sending to this model too") : qsTr("Send to this model too: one thread per model, each in its own worktree")
+                    onClicked: Shell.dispatch("composer.model.multiple.toggle", {
+                        instanceId: row.instance.instanceId,
+                        model: row.model.slug
+                    })
+
+                    background: Rectangle {
+                        radius: 4
+                        color: also.hovered ? control.highlight : "transparent"
+                    }
+
+                    contentItem: Item {
+                        ShellIcon {
+                            anchors.centerIn: parent
+                            name: also.chosen ? "check" : "plus"
+                            size: 12
+                            color: also.chosen ? Theme.palette.color("accent", "#2563eb") : control.fade(control.muted, also.hovered ? 1 : 0.72)
+                        }
                     }
                 }
 

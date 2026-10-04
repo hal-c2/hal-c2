@@ -10,7 +10,7 @@
 #include "DraftController.h"
 #include "FakeConfig.h"
 #include "Harness.h"
-#include "Launch.h"
+#include "Launches.h"
 #include "NavigationController.h"
 #include "ThreadList.h"
 #include "WorkspaceController.h"
@@ -186,8 +186,8 @@ const Steps steps([] {
                   QStringLiteral("the draft's checkout to be known"));
     offerModels(world);
     choose(world, "composer.model.select", c[0]);
-    choose(world, "composer.model.toggle", c[1]);
-    choose(world, "composer.model.toggle", c[2]);
+    choose(world, "composer.model.multiple.toggle", c[1]);
+    choose(world, "composer.model.multiple.toggle", c[2]);
     expect(severalModels(world).size() == 3, QStringLiteral("the picker is %1").arg(show(world.state(QStringLiteral("modelPicker")))));
     type(world, QStringLiteral("Add caching"));
     world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("intent"), QStringLiteral("foreground")}});
@@ -220,7 +220,7 @@ const Steps steps([] {
   step(QStringLiteral("the user tries to pick more than one model for the first message"), [](World& world, const Captures&, const Table&) {
     offerModels(world);
     choose(world, "composer.model.select", QStringLiteral("Opus"));
-    choose(world, "composer.model.toggle", QStringLiteral("GPT-5"));
+    choose(world, "composer.model.multiple.toggle", QStringLiteral("GPT-5"));
   });
   step(QStringLiteral("only one model can be chosen"), [](World& world, const Captures&, const Table&) {
     const QVariantMap composer = world.state(QStringLiteral("composer")).toMap();

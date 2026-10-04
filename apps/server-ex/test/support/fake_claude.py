@@ -90,7 +90,16 @@ resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
 # classifier approves the command "approve" would otherwise ask about.
 mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
-trace({"argv": sys.argv[1:]})
+# The login is the config directory's, as Claude Code keeps it (`.claude.json`'s
+# oauthAccount); without one the fake is signed in as me@example.com.
+ACCOUNT_EMAIL = "me@example.com"
+try:
+    with open(os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", ""), ".claude.json")) as f:
+        ACCOUNT_EMAIL = json.load(f)["oauthAccount"]["emailAddress"]
+except (OSError, ValueError, KeyError):
+    pass
+# The start also traces where it was pointed: its config directory, its account and any router.
+trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k == "CLAUDE_CONFIG_DIR"}})
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -140,7 +149,7 @@ for line in sys.stdin:
         if sub == "initialize":
             dialogs = msg["request"].get("supportedDialogKinds", [])
         # FAKE_CLAUDE_COMMANDS is a JSON list of the slash command names it reports.
-        reply = {"account": {"email": "me@example.com", "subscriptionType": "max", "tokenSource": "claude.ai"},
+        reply = {"account": {"email": ACCOUNT_EMAIL, "subscriptionType": "max", "tokenSource": "claude.ai"},
                  "commands": [{"name": n, "description": "", "argumentHint": ""} for n in json.loads(os.environ.get("FAKE_CLAUDE_COMMANDS", "[]"))]} if sub == "initialize" else {}
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
         if sub == "interrupt":
@@ -189,6 +198,29 @@ for line in sys.stdin:
               "payload": {"sessionAgeMinutes": 135, "estimatedTokens": 182400}}})
         continue
     if "wait" in text:
+        continue
+    # "grow the conversation": with an autoCompactWindow in --settings the conversation
+    # outgrows it and Claude compacts (compact_boundary) before it answers.
+    if "grow the conversation" in text:
+        window = json.loads(sys.argv[sys.argv.index("--settings") + 1]).get("autoCompactWindow") if "--settings" in sys.argv else None
+        if window:
+            send({"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": f"compact-{turn}",
+                  "compact_metadata": {"trigger": "auto", "pre_tokens": window + 5000, "post_tokens": 42000}})
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}k", "role": "assistant", "content": [{"type": "text", "text": "It grew"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "It grew", "session_id": session})
+        continue
+    # "start a monitor": the Monitor tool watches a command (task task-mon-N) and the
+    # turn ends while it runs.
+    if "start a monitor" in text:
+        mon = f"mon-{turn}"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": mon, "name": "Monitor", "input": {
+            "command": "tail -f log/dev.log", "description": "Watch the dev log", "persistent": False}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{mon}", "tool_use_id": mon,
+              "description": "Watch the dev log", "task_type": "monitor"})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": mon,
+              "content": f"Monitor started (task task-{mon})", "is_error": False}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Watching the log"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "Watching the log", "session_id": session})
         continue
     if text.startswith("subagent "):
         agent, bash = f"agent-{turn}", f"bash-{turn}"

@@ -10,7 +10,6 @@
 #include "ComposerController.h"
 #include "DraftController.h"
 #include "Harness.h"
-#include "Launch.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "World.h"
