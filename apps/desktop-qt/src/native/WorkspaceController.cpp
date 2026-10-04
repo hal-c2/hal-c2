@@ -339,6 +339,7 @@ void WorkspaceController::watchConfig(const QString& environmentId) {
       {
           {QStringLiteral("type"), QStringLiteral("config")},
           {QStringLiteral("environment"), environmentId},
+          {QStringLiteral("usageLimitsCommand"), true},
       },
       [this](const QJsonObject& frame) {
         const QString type = frame.value(QLatin1String("t")).toString();

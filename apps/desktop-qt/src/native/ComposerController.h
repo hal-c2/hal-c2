@@ -277,6 +277,13 @@ private:
   void setText(const QString& target, const QString& text, int cursor, const QVariant& edit = {});
   // A standalone "/plan" or "/default": the mode changes and the text goes.
   bool slashMode(const QString& target, const QString& text);
+  // A standalone "/usage-limits" on a provider that offers it: the provider's
+  // limits show above the composer (`composer.usageLimits`) from what the
+  // environment last reported, and nothing is sent to the agent.
+  bool slashUsageLimits(const QString& target, const QString& text);
+  // The limits "/usage-limits" opened, by thread or draft, until the next
+  // message or `composer.usageLimits.dismiss`.
+  QHash<QString, QVariantMap> m_usageLimits;
   void setInteractionMode(const QString& target, const QString& mode);
   bool selectModel(const QString& target, const QString& instanceId, const QString& model);
   // A send used this model: new threads start from it.

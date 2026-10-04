@@ -13,7 +13,7 @@
 #include "FakeConfig.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
-#include "SavedEnvironment.h"
+#include "SharedSteps.h"
 #include "Onboarding.h"
 #include "SettingsController.h"
 #include "ThemeController.h"
@@ -263,6 +263,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 is not offered").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
+    expectCommandNotOffered(world, c[0]);
     for (const QVariant& theme : themes(world)->available()) {
       expect(theme.toMap().value(QStringLiteral("id")) != c[0], QStringLiteral("%1 is offered").arg(c[0]));
     }

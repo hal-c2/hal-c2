@@ -323,6 +323,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("providers/codex.feature"),
     QStringLiteral("providers/capabilities.feature"),
     QStringLiteral("providers/permission-modes.feature:The permission mode can be changed from the desktop*"),
+    QStringLiteral("providers/usage-limits.feature:The /usage-limits command*"),
     QStringLiteral("/Users/olafurarason/dev/hal-c2/.claude/worktrees/desktop-connections/connections/environments.feature removed environment can be added back*"),
     QStringLiteral("/Users/olafurarason/dev/hal-c2/.claude/worktrees/desktop-connections/connections/environments.feature saved environment reconnects*"),
     QStringLiteral("/Users/olafurarason/dev/hal-c2/.claude/worktrees/desktop-connections/connections/environments.feature preference saved by an older build*"),
