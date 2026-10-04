@@ -94,6 +94,10 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
           client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
           [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this),
       m_devices(client, this) {
+  // A note on the diff's lines joins the prompt and is said to have.
+  connect(&m_diff, &ThreadDiff::commentRequested, this, [this](const QVariantMap& comment) {
+    m_bridge->dispatch(QStringLiteral("composer.reviewComment.add"), comment);
+  });
   connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
   connect(&m_devices, &ThreadDevices::closed, this, &RightPanelController::closeTabIn);
   connect(&m_devices, &ThreadDevices::namesChanged, this, &RightPanelController::publish);
@@ -227,6 +231,15 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     toggleDetails();
   } else if (action == QLatin1String("rightPanel.review")) {
     reviewPullRequest(map.value(QStringLiteral("key")).toString());
+  } else if (action == QLatin1String("rightPanel.linkPullRequest")) {
+    // A pull request a message mentions: the tab shows it once it is linked.
+    if (m_onThread) {
+      showTab(QStringLiteral("pull-requests"));
+      m_pullRequests.link(map.value(QStringLiteral("url")).toString());
+    }
+  } else if (action == QLatin1String("rightPanel.reviewProject")) {
+    // A pull request of the thread's project that is not linked to it.
+    if (m_onThread) showTab(kReviewTab + map.value(QStringLiteral("key")).toString());
   } else if (action == QLatin1String("rightPanel.openThread")) {
     openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {
@@ -259,6 +272,7 @@ void RightPanelController::retarget() {
     }
     TimelineModel* timeline = shell->controller<ThreadStore>()->timeline(threadKey);
     m_diff.setThread(environmentId, threadId, timeline);
+    m_diff.setCheckout(root);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root);
     m_files.setTimeline(timeline);
@@ -386,7 +400,13 @@ void RightPanelController::open(const QString& tab, const QVariantMap& options) 
     } else if (!run.isEmpty()) {
       m_diff.selectRun(run);
     }
-    if (!path.isEmpty()) m_diff.revealFile(path);
+    // One file of the turn is shown alone; the turn's diff shows them all.
+    if (options.value(QStringLiteral("only")).toBool()) {
+      m_diff.focusFile(path);
+    } else {
+      m_diff.showAllFiles();
+      if (!path.isEmpty()) m_diff.revealFile(path);
+    }
   } else if (!path.isEmpty()) {
     m_files.openFile(path, options.value(QStringLiteral("line")).toInt());
   }
@@ -618,6 +638,7 @@ void RightPanelController::publish() {
                         {QStringLiteral("maximized"), state.open && state.maximized},
                         {QStringLiteral("detailsOpen"), state.details},
                         {QStringLiteral("details"), state.details ? QVariant(threadDetails()) : QVariant()},
+
                         {QStringLiteral("canAdd"),
                          QVariantMap{{QStringLiteral("diff"), true},
                                      {QStringLiteral("files"), !m_files.root().isEmpty()},

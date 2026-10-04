@@ -17,6 +17,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "TerminalController.h"
+#include "ThreadMenuController.h"
 #include "ToastController.h"
 
 namespace {
@@ -296,6 +297,8 @@ void WorkspaceController::follow(const QString& cwd) {
   const bool hadRefs = !m_refsCwd.isEmpty();
   m_refs = {};
   m_refsTotal = 0;
+  m_refsNextCursor.reset();
+  m_refsLoadingMore = false;
   m_refsCwd.clear();
   ++m_refsGeneration;
   m_refsLoading = false;
@@ -318,6 +321,7 @@ void WorkspaceController::follow(const QString& cwd) {
         const QJsonObject event = frame.value(QLatin1String("event")).toObject();
         const QString tag = text(event, "_tag");
         Git git = m_git.value_or(Git{});
+        const QString previousRef = m_git ? text(m_git->local, "refName") : QString();
         if (tag == QLatin1String("snapshot")) {
           git.local = event.value(QLatin1String("local")).toObject();
           git.remote = event.value(QLatin1String("remote")).toObject();
@@ -329,6 +333,7 @@ void WorkspaceController::follow(const QString& cwd) {
           return;
         }
         m_git = git;
+        if (tag == QLatin1String("localUpdated")) followCheckout(previousRef, text(git.local, "refName"));
         emit gitChanged();
         if (m_optimisticBranch && !m_switching && text(git.local, "refName") == *m_optimisticBranch) {
           m_optimisticBranch.reset();
@@ -395,9 +400,52 @@ void WorkspaceController::loadRefs() {
                    const QJsonObject list = result.toObject();
                    m_refs = list.value(QLatin1String("refs")).toArray();
                    m_refsTotal = list.value(QLatin1String("totalCount")).toInt(m_refs.size());
+                   const QJsonValue next = list.value(QLatin1String("nextCursor"));
+                   m_refsNextCursor = next.isDouble() ? std::optional(next.toInt()) : std::nullopt;
+                   m_refsLoadingMore = false;
                    publish();
                  });
   publish();
+}
+
+void WorkspaceController::loadMoreRefs() {
+  if (!m_place || m_place->cwd().isEmpty() || !m_refsNextCursor || m_refsLoadingMore || m_refsLoading) return;
+  const quint64 generation = m_refsGeneration;
+  m_refsLoadingMore = true;
+  QJsonObject input{{QStringLiteral("cwd"), m_place->cwd()}, {QStringLiteral("limit"), 100}, {QStringLiteral("cursor"), *m_refsNextCursor}};
+  const QString query = refName(m_query);
+  if (!query.isEmpty()) input.insert(QStringLiteral("query"), query);
+  m_client->call(this, m_place->environmentId, QStringLiteral("vcs.listRefs"), input,
+                 [this, generation](const QJsonValue& result, const std::optional<QString>&) {
+                   // A search or another checkout started the list over.
+                   if (generation != m_refsGeneration) return;
+                   m_refsLoadingMore = false;
+                   const QJsonObject list = result.toObject();
+                   for (const QJsonValue& ref : list.value(QLatin1String("refs")).toArray()) m_refs.append(ref);
+                   m_refsTotal = list.value(QLatin1String("totalCount")).toInt(m_refsTotal);
+                   const QJsonValue next = list.value(QLatin1String("nextCursor"));
+                   m_refsNextCursor = next.isDouble() ? std::optional(next.toInt()) : std::nullopt;
+                   publish();
+                 });
+}
+
+// The web's resolveLiveThreadBranchUpdate, for a thread that was on the
+// checkout's branch: a thread deliberately on another branch is left alone,
+// as is a worktree's temporary branch.
+void WorkspaceController::followCheckout(const QString& previousRef, const QString& ref) {
+  if (!m_place || !m_place->draftId.isEmpty() || m_switching) return;
+  if (previousRef.isEmpty() || ref.isEmpty() || previousRef == ref) return;
+  if (optionalText(threadRow(), "branch") != std::optional(previousRef)) return;
+  static const QRegularExpression temporary(
+      QStringLiteral("^hal-c2/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"));
+  if (temporary.match(ref.trimmed().toLower()).hasMatch()) return;
+  m_client->dispatchCommand(this, m_place->environmentId,
+                            {
+                                {QStringLiteral("type"), QStringLiteral("thread.metadata.update")},
+                                {QStringLiteral("threadId"), m_place->threadId},
+                                {QStringLiteral("branch"), ref},
+                            },
+                            [](const QJsonValue&, const std::optional<QString>&) {});
 }
 
 // --- What the header shows ------------------------------------------------------------
@@ -709,6 +757,8 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
     rename(args.value(QStringLiteral("title")).toString());
   } else if (action == QLatin1String("workspace.openInEditor")) {
     openInEditor(args.value(QStringLiteral("editorId")).toString());
+  } else if (action == QLatin1String("workspace.openFile")) {
+    openFileInEditor(args.value(QStringLiteral("path")).toString());
   } else if (action == QLatin1String("workspace.runScript")) {
     runScript(args.value(QStringLiteral("scriptId")).toString());
   } else if (action == QLatin1String("workspace.branch.search")) {
@@ -718,6 +768,15 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
     selectBranch(args.value(QStringLiteral("name")).toString());
   } else if (action == QLatin1String("workspace.branch.create")) {
     createBranch(args.value(QStringLiteral("name")).toString());
+  } else if (action == QLatin1String("workspace.branch.more")) {
+    loadMoreRefs();
+  } else if (action == QLatin1String("workspace.branch.copy")) {
+    // The branch the header names (the web's "Copy branch name").
+    const QString branch = build().value(QStringLiteral("branch")).toString();
+    if (!branch.isEmpty()) {
+      NativeShell::of(this)->controller<ThreadMenuController>()->copy(branch, QStringLiteral("Branch name copied"),
+                                                                    QStringLiteral("Failed to copy branch name"));
+    }
   } else if (action == QLatin1String("workspace.envMode.set")) {
     setEnvMode(args.value(QStringLiteral("mode")).toString());
   } else if (action == QLatin1String("workspace.startFromOrigin.set")) {
@@ -805,6 +864,17 @@ bool WorkspaceController::openInEditor(const QString& editorId, const QString& p
                  });
   publish();
   return true;
+}
+
+// The web's openChangedFileInEditor (GitActionsControl.tsx).
+void WorkspaceController::openFileInEditor(const QString& path) {
+  if (!m_place || path.isEmpty()) return;
+  const QString cwd = m_place->cwd();
+  const QString target = path.startsWith(QLatin1Char('/')) || cwd.isEmpty() ? path : cwd + QLatin1Char('/') + path;
+  // The same way the Files tab opens one; with no editor it says so.
+  if (cwd.isEmpty() || !openInEditor({}, target)) {
+    NativeShell::of(this)->controller<ToastController>()->error(QStringLiteral("Editor opening is unavailable."));
+  }
 }
 
 // In the thread's terminal drawer; the one run last is offered first next time.

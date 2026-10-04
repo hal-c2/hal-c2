@@ -56,12 +56,15 @@ Item {
         Shell.dispatch("panel.open", options);
     }
 
-    // A reply's changed file opens on that reply's turn in the diff.
+    // A reply's changed file opens alone on that reply's turn in the diff;
+    // "Open diff" (no path) opens every file the turn changed.
     function openFile(path, tab, rowId) {
         const options = {
             tab: tab,
             path: path
         };
+        if (tab === "diff" && path.length > 0)
+            options.only = true;
         const turn = tab === "diff" && view.model ? view.model.checkpointOf(rowId).turn : undefined;
         if (turn !== undefined)
             options.turn = turn;
@@ -100,6 +103,16 @@ Item {
         onLinkActivated: link => view.openLink(link)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
         onRevertRequested: rowId => view.askRevert(rowId)
+        onEditRequested: rowId => Shell.dispatch("rewind.request", {
+                rowId: rowId
+            })
+        onPullRequestLinkRequested: url => Shell.dispatch("rightPanel.linkPullRequest", {
+                url: url
+            })
+        // Another thread of this one's environment.
+        onThreadActivated: threadId => Shell.dispatch("rightPanel.openThread", {
+                threadKey: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":") + 1) + threadId
+            })
     }
 
     // Why the thread stopped following its MC, with a way to try again.

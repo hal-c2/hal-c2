@@ -26,6 +26,8 @@ class ShellStore;
 // the window has focus, an in-app toast with "Open thread" for any thread but
 // the one shown; without focus, a system notification per thread (a newer one
 // replaces it), which the window's focus clears. Sound follows the mode alone.
+// Turns that finish without focus are counted on the dock or taskbar badge
+// until the window has focus again.
 // The platform side is the Presenter, which the app wires to
 // NativeNotifications and tests fake.
 //
@@ -52,7 +54,8 @@ public:
     // Choosing system notifications while it does not is undone, with a
     // toast saying how to allow them.
     std::function<bool()> permitted;
-    // The app's badge: how many system notifications wait unseen (0 clears it).
+    // The dock or taskbar badge: how many turns finished since the window
+    // last had focus (0 clears it).
     std::function<void(int count)> badge;
   };
 
@@ -88,8 +91,6 @@ public:
 private:
   void readSettings();
   void evaluate();
-  // The notified threads the user has not come back to, as the app's badge.
-  void setUnseen(QSet<QString> keys);
   // Keeps kToggleMute's title to the route thread, in every window or one.
   void present();
   void present(NativeWindow* window);
@@ -106,8 +107,9 @@ private:
   QString m_mode = QStringLiteral("off");
   bool m_inApp = false;
   bool m_focused = true;
+  // Turns finished since the window last had focus.
+  int m_unseen = 0;
   QHash<QString, Seen> m_seen;
   QSet<QString> m_muted;
-  QSet<QString> m_unseen;
   bool m_settingsRead = false;
 };

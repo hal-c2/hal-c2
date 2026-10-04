@@ -48,12 +48,14 @@ class ShellStore;
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,
 // `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.resize
 // {width?}` (no width: the default), `rightPanel.toggleMaximized`,
-// `threadPanel.toggle`, `rightPanel.openThread {threadKey}` (an Agents row's;
+// `threadPanel.toggle`, `rightPanel.reviewProject {key}` (a pull request of
+// the thread's project, from the Pull requests tab), `rightPanel.linkPullRequest {url}` (a message's
+// mention), `rightPanel.openThread {threadKey}` (an Agents row's;
 // the brick's), `rightPanel.review {key}` (a linked pull request's review), and
-// `panel.open {tab: "diff"|"files", path?, line?, turn?, turnId?}` (the
+// `panel.open {tab: "diff"|"files", path?, only?, line?, turn?, turnId?}` (the
 // timeline's "view diff" and file links): opens the panel on that tab, the
-// diff on a turn (its number, or the run it finished) scrolled to `path`, or
-// `path` in the file viewer at `line`. Keybinding commands: rightPanel.toggle,
+// diff on a turn (its number, or the run it finished) scrolled to `path` (or
+// showing `path` alone, with `only`), or `path` in the file viewer at `line`. Keybinding commands: rightPanel.toggle,
 // rightPanel.close (the active tab), rightPanel.toggleMaximized,
 // threadPanel.toggle, diff.toggle, preview.toggle and pullRequest.copyNumber
 // (the reviewed pull request's); palette commands:

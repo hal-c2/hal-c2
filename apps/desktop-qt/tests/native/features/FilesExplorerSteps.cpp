@@ -126,8 +126,10 @@ const Steps steps([] {
   });
   step(QStringLiteral("the file opens in the user's editor"), [](World& world, const Captures&, const Table&) {
     const QList<QJsonObject> calls = editorCalls(world);
-    const QJsonObject wanted{{QStringLiteral("cwd"), workspaceRoot(world) + QLatin1Char('/') + world.mc.part<Explorer>().chosen},
-                             {QStringLiteral("editor"), QStringLiteral("vscode")}};
+    // The explorer's file in VS Code, or the changed file another surface opened.
+    const OpenedInEditor other = world.mc.part<OpenedInEditor>();
+    const QJsonObject wanted{{QStringLiteral("cwd"), workspaceRoot(world) + QLatin1Char('/') + (other.path.isEmpty() ? world.mc.part<Explorer>().chosen : other.path)},
+                             {QStringLiteral("editor"), other.path.isEmpty() ? QStringLiteral("vscode") : other.editor}};
     expect(calls.size() == 1 && calls.first() == wanted, QStringLiteral("the MC was asked %1").arg(show(QVariant::fromValue(calls))));
   });
   step(QStringLiteral("a mention of %1 is on the clipboard").arg(q), [](World& world, const Captures& c, const Table&) {

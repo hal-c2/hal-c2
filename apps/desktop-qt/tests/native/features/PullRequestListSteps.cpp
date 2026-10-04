@@ -5,6 +5,13 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include <memory>
+
+#include "Brick.h"
+#include "RightPanelController.h"
+#include "ThreadPullRequests.h"
+#include "PullRequestReview.h"
+#include "NavigationController.h"
 #include "Harness.h"
 #include "World.h"
 
@@ -181,6 +188,46 @@ const Steps steps([] {
   });
   // The MC's own gh is the fake's; nothing to set up on the desktop.
   step(QStringLiteral("the GitHub CLI is installed and signed in"), [](World&, const Captures&, const Table&) {});
+
+  // The project's open pull requests beside a thread: the right panel's
+  // Pull requests tab (ThreadPullRequests, PullRequestsPanel).
+  step(QStringLiteral("the user adds a pull requests tab to the right panel"), [](World& world, const Captures&, const Table&) {
+    const QString project = QStringLiteral("acme/shop");
+    const QString id = QStringLiteral("t-tax");
+    world.mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), QStringLiteral("Tax work")}, {QStringLiteral("projectId"), project},
+                                 {QStringLiteral("pullRequests"), QJsonArray()},
+                                 {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+    world.mc.sendRow(id, world.mc.threads.value(id));
+    world.sync();
+    const QString key = world.mc.environmentId + QLatin1Char(':') + id;
+    world.native().controller<NavigationController>()->open(NavigationController::Route::thread(key));
+    world.waitFor([&] { return world.state(QStringLiteral("panel")).toMap().value(QStringLiteral("threadKey")) == key; }, QStringLiteral("the thread's panel"));
+    world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("pull-requests")}});
+    world.sync();
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nPullRequestsPanel { source: Panel.pullRequests }\n", QSize(420, 500));
+  });
+  step(QStringLiteral("the open pull requests of the project are listed"), [](World& world, const Captures&, const Table&) {
+    ThreadPullRequests& tab = *world.native().controller<RightPanelController>()->pullRequests();
+    world.waitFor([&] { return tab.projectOpen().size() == 1; }, [&] { return QStringLiteral("the project's open pull requests; the tab has %1").arg(show(tab.projectOpen())); });
+    // The thread's project only, and only what is open: not acme/api's, not the merged #3.
+    const QVariantMap open = tab.projectOpen().first().toMap();
+    expect(open.value(QStringLiteral("number")).toInt() == 12 && open.value(QStringLiteral("title")) == QLatin1String("Fix tax rounding") &&
+               open.value(QStringLiteral("key")) == QLatin1String("github.com/acme/shop#12"),
+           QStringLiteral("the tab lists %1").arg(show(tab.projectOpen())));
+    Brick& brick = *world.brick;
+    world.waitFor([&] { return brick.shows(QStringLiteral("Open in this project")) && brick.shows(QStringLiteral("Fix tax rounding")); }, QStringLiteral("the tab to draw them"));
+    expect(brick.shows(QStringLiteral("#12 · octocat · topic-12 → main")), QStringLiteral("the pull request's number, author and branches are not drawn"));
+  });
+  step(QStringLiteral("opening one shows its review"), [](World& world, const Captures&, const Table&) {
+    world.brick->click(QStringLiteral("projectPullRequest-12"));
+    world.sync();
+    const QVariantMap panel = world.state(QStringLiteral("panel")).toMap();
+    expect(panel.value(QStringLiteral("activeId")) == QLatin1String("pull-request:github.com/acme/shop#12"), QStringLiteral("the panel is %1").arg(show(panel)));
+    PullRequestReview& review = *world.native().controller<RightPanelController>()->review();
+    expect(review.number() == 12 && review.key() == QLatin1String("github.com/acme/shop#12"), QStringLiteral("the review is of %1").arg(review.key()));
+    // It reads the pull request from its host.
+    world.waitFor([&] { return calls(world, QStringLiteral("pullRequests.detail")) >= 1; }, QStringLiteral("the review to read the pull request"));
+  });
 
   step(QStringLiteral("the user opens the pull requests page"), [](World& world, const Captures&, const Table&) {
     openPage(world);

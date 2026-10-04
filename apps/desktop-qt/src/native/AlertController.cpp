@@ -97,15 +97,11 @@ void AlertController::setFocused(bool focused) {
   if (m_focused == focused) return;
   m_focused = focused;
   // Back at the window, the system notifications have done their job.
-  if (!focused) return;
-  if (m_presenter.clear) m_presenter.clear();
-  setUnseen({});
-}
-
-void AlertController::setUnseen(QSet<QString> keys) {
-  if (keys == m_unseen) return;
-  m_unseen = std::move(keys);
-  if (m_presenter.badge) m_presenter.badge(int(m_unseen.size()));
+  if (focused && m_presenter.clear) m_presenter.clear();
+  if (focused && m_unseen > 0) {
+    m_unseen = 0;
+    if (m_presenter.badge) m_presenter.badge(0);
+  }
 }
 
 bool AlertController::openThread(const QString& key) {
@@ -150,7 +146,6 @@ void AlertController::readSettings() {
   }
   m_mode = mode;
   if (m_presenter.clear) m_presenter.clear();
-  setUnseen({});
   if (m_presenter.setEnabled) m_presenter.setEnabled(hasSystemNotifications(m_mode));
   // Alerts just turned on follow the threads as they are now.
   if (m_seen.isEmpty()) evaluate();
@@ -206,6 +201,10 @@ void AlertController::evaluate() {
                           : status == QLatin1String("failed")   ? tr("Thread failed")
                                                                 : tr("Input needed");
     if (hasSound(m_mode) && m_presenter.play) m_presenter.play(kind);
+    if (kind == QLatin1String("completion") && !m_focused) {
+      ++m_unseen;
+      if (m_presenter.badge) m_presenter.badge(m_unseen);
+    }
     if (m_inApp && m_focused && key != shown) {
       if (!toasts) continue;
       const QString type = kind == QLatin1String("completion") ? QStringLiteral("success")
@@ -221,11 +220,7 @@ void AlertController::evaluate() {
     }
     if (!hasSystemNotifications(m_mode) || m_focused || !m_presenter.show) continue;
     // The sound, when there is one, is the mode's own, not the system's.
-    if (m_presenter.show(key, title, thread.title, true)) {
-      QSet<QString> unseen = m_unseen;
-      unseen.insert(key);
-      setUnseen(std::move(unseen));
-    }
+    m_presenter.show(key, title, thread.title, true);
   }
   m_seen = std::move(next);
 }

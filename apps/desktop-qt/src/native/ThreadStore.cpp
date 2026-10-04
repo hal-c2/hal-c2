@@ -72,6 +72,12 @@ void ThreadStore::readSettings() {
 void ThreadStore::configure(TimelineModel* model) const {
   model->setTimestampFormat(m_timestampFormat);
   model->setLocale(m_locale);
+  // The other threads of its environment, by the titles the shell lists.
+  const QString key = model->threadKey();
+  const QString environment = key.left(key.indexOf(QLatin1Char(':')) + 1);
+  model->setThreadTitles([store = m_store, environment](const QString& threadId) {
+    return store->threadRow(environment + threadId).value(QLatin1String("title")).toString();
+  });
 }
 
 void ThreadStore::open(const QString& threadKey) {

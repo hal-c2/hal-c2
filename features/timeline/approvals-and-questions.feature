@@ -87,7 +87,7 @@ Feature: Approvals and agent questions
     Then the warning is shown next to that option
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: Several pending approvals are answered one at a time
     Given the agent has three pending approvals
     Then the user sees "1/3"

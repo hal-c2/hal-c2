@@ -73,6 +73,18 @@ Rectangle {
             }
         }
 
+        // Where the worktree comes from and where it is.
+        Label {
+            objectName: "worktreeSetupPlace"
+            Layout.fillWidth: true
+            visible: card.setup?.detailsOpen === true && text.length > 0
+            text: [(card.setup?.baseRef ?? "").length > 0 && (card.setup?.branch ?? "").length > 0 ? qsTr("%1 → %2").arg(card.setup.baseRef).arg(card.setup.branch) : card.setup?.branch ?? "", card.setup?.worktreePath ?? ""].filter(part => part.length > 0).join(" · ")
+            color: card.muted
+            font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+            font.pixelSize: Math.round(11 * Theme.fontScale)
+            elide: Text.ElideMiddle
+        }
+
         Label {
             objectName: "worktreeSetupError"
             Layout.fillWidth: true

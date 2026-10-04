@@ -144,6 +144,11 @@ private:
   void follow(const QString& cwd);
   void watchConfig(const QString& environmentId);
   void loadRefs();
+  // The next page of the ref list, after the ones shown.
+  void loadMoreRefs();
+  // The open thread's branch follows its checkout when the checkout it was
+  // on moves to another branch (the agent's `git switch`).
+  void followCheckout(const QString& previousRef, const QString& ref);
   void publish();
   QVariantMap build() const;
   QJsonObject threadRow() const;
@@ -156,6 +161,10 @@ private:
 
   void rename(const QString& title);
   void openInEditor(const QString& editorId);
+  // `path` of the route's checkout (or absolute) in the preferred editor: a
+  // changed file from the diff or the commit review. Says so when there is
+  // no editor to open it in.
+  void openFileInEditor(const QString& path);
   void runScript(const QString& scriptId);
   void setEnvMode(const QString& mode);
   void setEnvironment(const QString& key);
@@ -206,6 +215,9 @@ private:
   QString m_refsCwd;
   QJsonArray m_refs;
   int m_refsTotal = 0;
+  // Where the next page starts; none once the list is whole.
+  std::optional<int> m_refsNextCursor;
+  bool m_refsLoadingMore = false;
   bool m_refsLoading = false;
   quint64 m_refsGeneration = 0;
 

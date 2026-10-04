@@ -217,7 +217,8 @@ int main(int argc, char* argv[]) {
       },
       // Without a notification service nothing could be shown.
       [&notifications] { return notifications.supported(); },
-      [](int count) { QGuiApplication::setBadgeNumber(count); },
+      // The dock's badge, and the taskbar's where the desktop has one.
+      [&app](int count) { app.setBadgeNumber(count); },
   });
   QObject::connect(&notifications, &NativeNotifications::activated, alerts, &AlertController::openThread);
 

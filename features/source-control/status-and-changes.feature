@@ -34,7 +34,7 @@ Feature: Repository status and working tree changes
     And it reports 2 commits ahead and 1 behind
 
   # Delivered natively (WorkspaceController follows the checkout's vcs status); no desktop test yet.
-  @mc @desktop @tui @backlog-desktop
+  @mc @desktop @tui
   Scenario: Status follows the checkout while the thread is open
     Given the user is looking at a thread in "shop"
     When the agent's turn ends after editing a file
@@ -98,7 +98,7 @@ Feature: Repository status and working tree changes
     Then the status says it is not a repository
 
   # Delivered natively (GitController, vcs.init); source-control/git-actions.feature runs it in its own words, not these steps.
-  @mc @desktop @backlog-desktop
+  @mc @desktop
   Scenario: Initializing a repository in a plain folder
     Given the project "notes" is not in a git repository
     When the user initializes Git for "notes"

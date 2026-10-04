@@ -143,20 +143,20 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Then the repository is created and added as the remote
     And the result says the remote was added without pushing
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Publishing walks through provider, repository and summary
     Given the project "notes" has no remote
     When the user publishes the repository
     Then the user picks a host, names the repository, picks its visibility and confirms a summary
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A host that is not ready is explained before publishing
     Given the GitHub CLI is not signed in
     When the user picks GitHub to publish to
     Then the user is told GitHub is not authenticated and how to fix it
 
   # Delivered natively (GitController, GitActions' publish dialog); source-control/git-actions.feature runs it in its own words, not these steps.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Starting to publish from the git actions
     Given the project "notes" has commits and no remote
     When the user chooses to publish the repository

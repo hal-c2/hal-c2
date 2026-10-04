@@ -86,6 +86,14 @@ inline QString editorId(const QString& label) {
   return ids.value(label);
 }
 
+// The file a scenario outside the explorer opened in the editor (a changed
+// file from the diff or the commit review), and the editor it has, for "the
+// file opens in the user's editor".
+struct OpenedInEditor {
+  QString path;
+  QString editor;
+};
+
 // Every `shell.openInEditor` the MC was asked.
 inline QList<QJsonObject> editorCalls(World& world) {
   world.sync();
