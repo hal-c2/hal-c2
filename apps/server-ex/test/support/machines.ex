@@ -46,8 +46,18 @@ defmodule HalC2.Test.Machines do
     opts =
       case mode do
         :cluster ->
+          # A machine that comes back is the MC it was (`HalC2.Cluster.mc_name/1`).
+          name =
+            case context[:machines][label] do
+              %{mc: mc} when is_atom(mc) and mc != nil ->
+                mc |> Atom.to_string() |> String.split("@") |> hd()
+
+              _ ->
+                "hal_c2_#{label}#{System.unique_integer([:positive])}"
+            end
+
           %{
-            name: :"hal_c2_#{label}#{System.unique_integer([:positive])}",
+            name: String.to_atom(name),
             host: ~c"127.0.0.1",
             longnames: true,
             args: args,

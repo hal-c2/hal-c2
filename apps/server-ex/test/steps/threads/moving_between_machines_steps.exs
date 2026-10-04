@@ -1384,6 +1384,27 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     Map.put(context, :located, HalC2.ThreadMove.locate(World.thread_id(context, title)))
   end
 
+  step "a link to {string} is followed before {string} has let go",
+       %{args: [title, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    id = World.thread_id(context, title)
+    dest = Machines.mc_of(context, context.move_to)
+    :ok = HalC2.Shell.subscribe(self())
+
+    await_shell(
+      fn -> match?({"thread", _}, HalC2.Shell.row(dest, id)) end,
+      "#{title} on #{context.move_to}"
+    )
+
+    assert {"thread", %{"moving" => %{}}} = HalC2.Shell.row(node(), id)
+    Map.put(context, :located, HalC2.ThreadMove.locate(id))
+  end
+
+  step "the thread is found on {string}", %{args: [machine]} = context do
+    assert {:ok, %{"machine" => ^machine}} = context.located
+    context
+  end
+
   step "the user is told the thread was deleted", context do
     assert {:error, message} = context.located
     assert message =~ "Alpha was deleted"
@@ -1424,6 +1445,76 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  step "{string} restarts while {string} is still copying", %{args: [machine, to]} = context do
+    assert Machines.machine(context, machine) == :local
+    assert to == context.move_to
+    restart_source(context)
+  end
+
+  step "{string} finishes copying", %{args: [machine]} = context do
+    assert machine == context.move_to
+    release_held(context)
+  end
+
+  step "{string} is taking {string}", %{args: [machine, title]} = context do
+    hold(context, title, machine, machine, :taking)
+  end
+
+  step "{string} restarts before {string} has finished", %{args: [machine, to]} = context do
+    assert Machines.machine(context, machine) == :local
+    assert to == context.move_to
+    restart_source(context)
+  end
+
+  step "{string} finishes taking {string}", %{args: [machine, title]} = context do
+    assert machine == context.move_to
+    id = World.thread_id(context, title)
+    context = release_held(context)
+
+    await_shell(
+      fn -> match?({"thread", %{"movedTo" => %{}}}, HalC2.Shell.row(node(), id)) end,
+      "#{title} as moved to #{machine}"
+    )
+
+    context
+  end
+
+  step "{string} is still moving to {string}", %{args: [title, machine]} = context do
+    assert %{"moving" => %{"label" => ^machine}, "movedTo" => nil} =
+             Map.put_new(World.thread(context, title), "movedTo", nil)
+
+    context
+  end
+
+  step "the user is told the move was cut off while {string} was taking the thread",
+       %{args: [machine]} = context do
+    assert {:error, %{"message" => message}} = context.move
+    assert message =~ "was cut off while #{machine} was taking it"
+    assert message =~ "stays read-only"
+    context
+  end
+
+  step "{string} comes back without {string}", %{args: [machine, title]} = context do
+    id = World.thread_id(context, title)
+    home = Machines.home(context, machine)
+    :ok = HalC2.Shell.subscribe(self())
+    # What settles the move when its destination is back.
+    Mc.ensure(HalC2.ThreadMove)
+    :sys.get_state(HalC2.ThreadMove)
+
+    context =
+      put_in(context, [:machines, machine], Machines.start(context, machine, :cluster, home))
+
+    refute remote_row(context, machine, id)
+
+    await_shell(
+      fn -> World.thread(context, title)["moving"] == nil end,
+      "#{title} no longer moving"
+    )
+
+    context
+  end
+
   step "{string} comes back online", %{args: [machine]} = context do
     home = Machines.home(context, machine)
     put_in(context, [:machines, machine], Machines.start(context, machine, :cluster, home))
@@ -1450,12 +1541,8 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     assert Machines.machine(context, machine) == :local
     id = World.thread_id(context, title)
     dest = Machines.mc_of(context, context.move_to)
-    Task.shutdown(context.held.task, :brutal_kill)
     Application.delete_env(:hal_c2, :thread_move_hook)
-    context = %{context | mc: Mc.restart(context.mc)}
-    :ok = HalC2.Shell.subscribe(self())
-    Mc.ensure(HalC2.ThreadMove)
-    :sys.get_state(HalC2.ThreadMove)
+    context = restart_source(context)
 
     # Back online, it has the sidebar of the machine it moved the thread to.
     await_shell(
@@ -1782,6 +1869,25 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     task = Task.async(fn -> HalC2.ThreadMove.move(id, to, confirmed: true) end)
     assert_receive {:move_held, pid, ^stage, ^id}, 30_000
     Map.merge(context, %{held: %{task: task, pid: pid}, move_to: to})
+  end
+
+  # The scenario's MC goes offline in the middle of the held move and comes back: the
+  # move's own process is gone, and `HalC2.ThreadMove` has settled what it found.
+  defp restart_source(context) do
+    Task.shutdown(context.held.task, :brutal_kill)
+    context = %{context | mc: Mc.restart(context.mc)}
+    :ok = HalC2.Shell.subscribe(self())
+    Mc.ensure(HalC2.ThreadMove)
+    :sys.get_state(HalC2.ThreadMove)
+    context
+  end
+
+  # Lets the held move go on, and waits until the process that was held is done.
+  defp release_held(context) do
+    ref = Process.monitor(context.held.pid)
+    send(context.held.pid, :release)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 30_000
+    context
   end
 
   defp held_result(context) do

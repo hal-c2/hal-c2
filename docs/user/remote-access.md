@@ -101,7 +101,9 @@ worktree there. HAL-C2 asks which project to use when several fit, and tells you
 stays behind when none is the same repository.
 
 A thread whose agent is working is stopped first, if you agree. While it moves it says
-where it is going and takes no messages. Afterwards the agent continues its own session
+where it is going and takes no messages. A move that is cut off leaves the thread where it
+was; if the other machine had already started taking it, the thread stays read-only until
+that machine is reachable again and says whether it has it. Once moved, the agent continues its own session
 when the provider can carry it, and otherwise gets the conversation handed over as after a
 [provider switch](./portable-handoffs.md). Running terminals stay on the machine the thread
 left and are closed. Notifications from before the move open the thread where it lives now,

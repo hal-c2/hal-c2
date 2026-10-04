@@ -7,6 +7,8 @@
 #     project inferred from the workspace root or the only project, else named)
 #   apps/server-ex/lib/hal_c2/streams.ex, apps/server-ex/lib/hal_c2/stream_state.ex (a thread is one
 #     event stream owned by one MC)
+#   apps/server-ex/lib/hal_c2/thread_move.ex (the destination asks before it imports, and a move cut
+#     off after that is settled by what the destination says)
 #   apps/server-ex/lib/hal_c2/shell.ex, apps/server-ex/lib/hal_c2/cluster.ex (cluster-wide sidebar keyed
 #     by MC, offline members keep their rows)
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (checkpoints are hidden commits under
@@ -325,6 +327,12 @@ Feature: Moving a thread and its agent to another machine
       Then it is served by "desktop"
 
     @mc
+    Scenario: A thread is found on its destination as soon as the destination holds it
+      Given "desktop" has confirmed it holds "Alpha"
+      When a link to "Alpha" is followed before "laptop" has let go
+      Then the thread is found on "desktop"
+
+    @mc
     Scenario: A thread that moved and was then deleted is reported as deleted
       Given "Alpha" moved to "desktop" and was deleted there
       When the user follows an old link to "Alpha"
@@ -435,6 +443,39 @@ Feature: Moving a thread and its agent to another machine
       When "desktop" comes back online
       Then "desktop" does not list "Alpha"
       And the space used by the partial copy is freed
+
+    @mc
+    Scenario: A destination that was cut off while copying does not take the thread afterwards
+      Given "Alpha" is being copied to "desktop"
+      When "laptop" restarts while "desktop" is still copying
+      And "desktop" finishes copying
+      Then "Alpha" stays on "laptop" and can be used again
+      And "desktop" does not list "Alpha"
+      And the space used by the partial copy is freed
+
+    @mc
+    Scenario: A move cut off while the destination takes the thread waits for the destination
+      Given "desktop" is taking "Alpha"
+      When "desktop" goes offline before it has confirmed the thread
+      Then "Alpha" is still moving to "desktop"
+      And the user is told the move was cut off while "desktop" was taking the thread
+      When "desktop" comes back without "Alpha"
+      Then "Alpha" stays on "laptop" and can be used again
+
+    @mc
+    Scenario: The source restarting while the destination takes the thread does not undo the move
+      Given "desktop" is taking "Alpha"
+      When "laptop" restarts before "desktop" has finished
+      And "desktop" finishes taking "Alpha"
+      Then "Alpha" lives on "desktop"
+      And when "laptop" comes back it lists "Alpha" only under "desktop"
+
+    @backlog @mc
+    Scenario: A move to a machine that is removed from the cluster is called off
+      Given a move of "Alpha" was cut off while "desktop" was taking it
+      And "desktop" has not come back
+      When "desktop" is removed from the cluster
+      Then "Alpha" stays on "laptop" and can be used again
 
     @mc
     Scenario: The source going offline after the destination confirmed does not undo the move
