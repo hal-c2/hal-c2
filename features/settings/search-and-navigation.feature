@@ -134,8 +134,7 @@ Feature: Settings search and navigation
       Then the search is empty
       And the list of sections is shown again
 
-    # tst_SettingsPages.qml and tst_SettingsNav.qml check the next ones in QML, but no
-    # feature runner drives the settings page yet.
+    # The native runner drives the settings navigation beside its page (SettingsSearchSteps.cpp).
     @desktop
     Scenario: The slash key starts a settings search
       Given the keyboard is not in a text field
@@ -170,7 +169,7 @@ Feature: Settings search and navigation
         | the machine is not running Windows         | wsl         | WSL backend       |
         | the user is editing all projects           | project     | Project overview  |
 
-    # Load balancing is not on the native Connections page yet (settings/load-balancing.feature).
+    # Load balancing is a folded group on the native Connections page (settings/load-balancing.feature).
     @desktop
     Scenario: A search result inside a folded section opens the fold
       Given the "Load balancing" group on the Connections page is folded
@@ -186,8 +185,7 @@ Feature: Settings search and navigation
 
   Rule: Restoring defaults
 
-    # SettingsNav.qml asks and resets (tst_SettingsNav.qml, tst_ThemeResolution.cpp), but no
-    # feature runner drives the settings page yet.
+    # SettingsNav.qml asks and resets; the native runner drives its dialog (SettingsSearchSteps.cpp).
     @desktop
     Scenario: Restoring defaults lists what will change and asks first
       Given the user has changed the theme and the time format

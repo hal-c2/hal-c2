@@ -101,10 +101,97 @@ void openResult(World& world, const QString& title) {
 
 struct Opened {
   QString target;
+  QString section;
 };
 
 const Steps steps([] {
   const QString q = kQuoted;
+
+  // Sections.
+  step(QStringLiteral("the user chooses the %1 section").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Tall enough to show every section.
+    Brick& brick = settingsShell(world, QSize(900, 800));
+    const QVariantList list = rows(world);
+    for (int index = 0; index < list.size(); ++index) {
+      if (list.at(index).toMap().value(QStringLiteral("label")) != c[0]) continue;
+      brick.click(QStringLiteral("settingsRow%1").arg(index));
+      world.sync();
+      return;
+    }
+    fail(QStringLiteral("no section is named \"%1\"; %2").arg(c[0], describeRows(world)));
+  });
+  step(QStringLiteral("the Providers settings are shown"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return at(world.state(QStringLiteral("route")), QStringLiteral("section")) == QLatin1String("/settings/providers") &&
+             settingsShell(world).item(QStringLiteral("host"))->property("brick") == QLatin1String("ProvidersSettings");
+    }, [&] { return QStringLiteral("the route is %1").arg(show(world.state(QStringLiteral("route")))); });
+  });
+  step(QStringLiteral("%1 is marked as the current section").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& brick = settingsShell(world);
+    const QVariantList list = rows(world);
+    QStringList current;
+    for (int index = 0; index < list.size(); ++index) {
+      if (brick.item(QStringLiteral("settingsRow%1").arg(index))->property("current").toBool()) current.append(list.at(index).toMap().value(QStringLiteral("label")).toString());
+    }
+    expect(current == QStringList{c[0]}, QStringLiteral("the current section is %1").arg(current.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the \"General\" section has keyboard focus"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = settingsShell(world);
+    expect(rows(world).value(0).toMap().value(QStringLiteral("label")) == QLatin1String("General"), describeRows(world));
+    QQuickItem* row = brick.item(QStringLiteral("settingsRow0"));
+    row->forceActiveFocus(Qt::TabFocusReason);
+    expect(row->hasActiveFocus(), QStringLiteral("General did not take the keyboard"));
+  });
+  step(QStringLiteral("the user moves down and confirms"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = settingsShell(world);
+    brick.press(QStringLiteral("down"));
+    expect(brick.item(QStringLiteral("settingsRow1"))->hasActiveFocus(), QStringLiteral("the next section did not take the keyboard"));
+    brick.press(QStringLiteral("enter"));
+    world.sync();
+  });
+  step(QStringLiteral("the next section opens"), [](World& world, const Captures&, const Table&) {
+    const QString next = rows(world).value(1).toMap().value(QStringLiteral("to")).toString();
+    expect(!next.isEmpty() && next != QLatin1String("/settings/general") && at(world.state(QStringLiteral("route")), QStringLiteral("section")) == next,
+           QStringLiteral("the route is %1, the next section %2").arg(show(world.state(QStringLiteral("route"))), next));
+  });
+
+  // Searching.
+  step(QStringLiteral("the user has searched settings for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& brick = settingsShell(world);
+    brick.click(QStringLiteral("search"));
+    for (const QChar character : c[0]) QTest::keyClick(&brick.window(), character.toLatin1());
+    world.waitFor([&] { return !rows(world).isEmpty() && rows(world).first().toMap().value(QStringLiteral("result")).toBool(); }, [&] { return describeRows(world); });
+  });
+  step(QStringLiteral("the user opens the first result"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap first = rows(world).value(0).toMap();
+    world.mc.part<Opened>() = {first.value(QStringLiteral("targetId")).toString(), first.value(QStringLiteral("to")).toString()};
+    settingsShell(world).click(QStringLiteral("settingsRow0"));
+    world.sync();
+  });
+  step(QStringLiteral("the section holding that setting opens"), [](World& world, const Captures&, const Table&) {
+    const Opened& opened = world.mc.part<Opened>();
+    const QVariant route = world.state(QStringLiteral("route"));
+    expect(!opened.target.isEmpty() && at(route, QStringLiteral("section")) == opened.section && at(route, QStringLiteral("target")) == opened.target,
+           QStringLiteral("the route is %1; the result was %2 in %3").arg(show(route), opened.target, opened.section));
+  });
+  step(QStringLiteral("the user is told no settings match"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = settingsShell(world);
+    expect(rows(world).isEmpty() && brick.item(QStringLiteral("noMatches"))->isVisible() && brick.shows(QStringLiteral("No matching settings")), describeRows(world));
+  });
+  step(QStringLiteral("the user presses escape in the search"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = settingsShell(world);
+    expect(brick.item(QStringLiteral("search"))->hasActiveFocus(), QStringLiteral("the search does not have the keyboard"));
+    brick.press(QStringLiteral("escape"));
+  });
+  step(QStringLiteral("the search is empty"), [](World& world, const Captures&, const Table&) {
+    const QString text = settingsShell(world).item(QStringLiteral("search"))->property("text").toString();
+    expect(text.isEmpty(), QStringLiteral("the search holds \"%1\"").arg(text));
+  });
+  step(QStringLiteral("the list of sections is shown again"), [](World& world, const Captures&, const Table&) {
+    const QVariantList list = rows(world);
+    expect(!list.isEmpty() && !list.first().toMap().value(QStringLiteral("result")).toBool() && list.first().toMap().value(QStringLiteral("label")) == QLatin1String("General"),
+           describeRows(world));
+  });
 
   // The slash key.
   step(QStringLiteral("the keyboard is not in a text field"), [](World& world, const Captures&, const Table&) {

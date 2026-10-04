@@ -319,6 +319,7 @@ const Steps steps([] {
            QStringLiteral("the alert is still shown: %1").arg(describe(world)));
   });
   step(QStringLiteral("%1 is shown").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("isShown"))) return world.onSettingsPage.value(QStringLiteral("isShown"))(c);
     const QString key = keyOf(world, tracked(world, c[0]));
     const QString shown = world.native().controller<NavigationController>()->threadKey();
     expect(shown == key, QStringLiteral("the window shows \"%1\", not \"%2\"").arg(shown, key));

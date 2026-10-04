@@ -17,6 +17,9 @@
 #include "NavigationController.h"
 #include "Stream.h"
 #include "SettingsController.h"
+#include <QTest>
+#include "Brick.h"
+#include <QQuickItem>
 #include "World.h"
 
 namespace {
@@ -2006,6 +2009,44 @@ const Steps customModelIdSteps([] {
     expect(fakeConfig(world.mc).writes.size() == fake(world).writesBefore && saved == QJsonArray{QStringLiteral("my-model")},
            QStringLiteral("Claude holds %1 after %2 writes").arg(show(saved.toVariantList())).arg(fakeConfig(world.mc).writes.size() - fake(world).writesBefore));
   });
+});
+
+// The signed-in account's email on a provider's card, as ProvidersSettings.qml draws it.
+const Steps accountEmailSteps([] {
+  const QString q = kQuoted;
+  const auto email = [](World& world) {
+    if (!world.brick) {
+      world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nProvidersSettings {}\n", QSize(900, 900));
+    }
+    world.brick->grab();
+    return world.brick->item(QStringLiteral("email"));
+  };
+  step(QStringLiteral("%1 is signed in as %1").arg(q), [email](World& world, const Captures& c, const Table&) {
+    seedInstance(world, QStringLiteral("claudeAgent_work"),
+                 {{QStringLiteral("driver"), QStringLiteral("claudeAgent")}, {QStringLiteral("displayName"), c[0]}, {QStringLiteral("enabled"), true}},
+                 provider(QStringLiteral("claudeAgent_work"), QStringLiteral("claudeAgent"), c[0],
+                          {{QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), QStringLiteral("authenticated")}, {QStringLiteral("email"), c[1]}}}}));
+    waitForEntry(world, c[0], [&](const QVariantMap& found) { return found.value(QStringLiteral("email")) == c[1]; }, QStringLiteral("to be signed in"));
+    // AlertSteps' "<text> is shown", on this page.
+    world.onSettingsPage.insert(QStringLiteral("isShown"), [&world, email](const QStringList& shown) {
+      const QString text = email(world)->property("text").toString();
+      expect(text == shown.value(0), QStringLiteral("the card shows \"%1\"").arg(text));
+    });
+  });
+  const auto scrambled = [email](World& world) {
+    const QQuickItem* shown = email(world);
+    const QString text = shown->property("text").toString();
+    expect(shown->isVisible() && !text.isEmpty() && !text.contains(QLatin1String("ada")) && !text.contains(QLatin1String("example.com")),
+           QStringLiteral("the card shows \"%1\"").arg(text));
+  };
+  step(QStringLiteral("the account email is shown scrambled"), [scrambled](World& world, const Captures&, const Table&) { scrambled(world); });
+  step(QStringLiteral("the user reveals the email"), [email](World& world, const Captures&, const Table&) {
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(email(world)));
+  });
+  step(QStringLiteral("the user hides it again"), [email](World& world, const Captures&, const Table&) {
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(email(world)));
+  });
+  step(QStringLiteral("it is scrambled again"), [scrambled](World& world, const Captures&, const Table&) { scrambled(world); });
 });
 
 // The models list of a provider's card.

@@ -639,6 +639,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/licenses.feature"),
     QStringLiteral("settings/diagnostics.feature"),
     QStringLiteral("settings/updates.feature:At launch*"),
+    // Every settings file: what is not backlog on the desktop passes.
+    QStringLiteral("settings/*.feature"),
     QStringLiteral("settings/notifications.feature"),
     QStringLiteral("settings/background-service.feature:Clients report what the user is looking at"),
     QStringLiteral("settings/project-actions.feature"),
