@@ -331,7 +331,10 @@ void DraftController::openProjects(double x, double y) {
     const QString to = navigation->route().draftId;
     const auto opened = draft(to);
     if (to == from || !opened || !opened->text.isEmpty() || left->text.isEmpty()) return;
-    setText(to, left->text);
+    // Through the composer, which the window now shows `to` in, so the caret
+    // lands after the text.
+    m_bridge->dispatch(QStringLiteral("composer.text.set"),
+                       QVariantMap{{QStringLiteral("target"), to}, {QStringLiteral("text"), left->text}, {QStringLiteral("cursor"), left->text.size()}});
     setText(from, {});
     changedEverywhere();
   });

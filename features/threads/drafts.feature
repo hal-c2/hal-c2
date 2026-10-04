@@ -120,6 +120,7 @@ Feature: Drafts on the desktop
       When the user moves the draft to "proj-2"
       Then the window shows a new draft in "proj-2"
       And the new thread still reads "Fix the build"
+      And the composer's caret follows "Fix the build"
 
     @desktop
     Scenario: A draft moved onto a project with its own draft opens that draft

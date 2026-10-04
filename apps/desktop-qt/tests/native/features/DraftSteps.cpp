@@ -120,6 +120,12 @@ const Steps steps([] {
     offered.sort();
     expect(offered == QStringList{c[0], c[1]} && ticked == QStringList{c[2]}, QStringLiteral("the menu is %1").arg(show(menu)));
   });
+  step(QStringLiteral("the composer's caret follows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QVariant composer = world.state(QStringLiteral("composer"));
+    expect(at(composer, QStringLiteral("text")) == c[0] && at(composer, QStringLiteral("cursor")).toInt() == c[0].size(),
+           QStringLiteral("the composer shows %1").arg(show(composer)));
+  });
 
   // The MC.
   step(QStringLiteral("the MC creates the draft's thread"), [](World& world, const Captures&, const Table&) {
