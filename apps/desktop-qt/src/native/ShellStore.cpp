@@ -244,8 +244,13 @@ void ShellStore::onFrame(const QJsonObject& frame) {
     setEnvironment(frame.value(QLatin1String("mc")).toString(),
                    frame.value(QLatin1String("environment")).toObject());
   } else if (type == QLatin1String("shell.mc")) {
-    m_mcs[frame.value(QLatin1String("mc")).toString()].online =
-        frame.value(QLatin1String("online")).toBool();
+    const QString mc = frame.value(QLatin1String("mc")).toString();
+    // A machine removed from the cluster takes its rows with it; an offline one keeps them.
+    if (frame.value(QLatin1String("removed")).toBool()) {
+      m_mcs.remove(mc);
+    } else {
+      m_mcs[mc].online = frame.value(QLatin1String("online")).toBool();
+    }
   } else if (type == QLatin1String("shell.rows")) {
     putRows(frame.value(QLatin1String("mc")).toString(), frame.value(QLatin1String("rows")).toArray());
   } else {

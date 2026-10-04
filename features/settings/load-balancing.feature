@@ -106,6 +106,13 @@ Feature: Load balancing new threads across machines
     When the user opens connection settings
     Then load balancing is not offered
 
+  @desktop @tui
+  Scenario: Load balancing goes when the cluster is one machine again
+    Given a cluster of the machines "laptop" and "server"
+    And the user opens connection settings
+    When "server" is removed from the cluster
+    Then load balancing is not offered
+
   # The terminal reads the MC's settings when a second machine first makes them matter,
   # not only when settings or the palette open.
   @tui

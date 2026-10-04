@@ -186,6 +186,19 @@ step("a second machine joins the cluster", (ctx: World) => {
   });
 });
 
+step("{string} is removed from the cluster", async (ctx: World, machine: string) => {
+  await settle(ctx);
+  const { groups } = ctx.host!.state.get("settings") as TuiSettingsState;
+  expect(groups.map((group) => group.title)).toContain("Load balancing");
+  change(ctx, (environment) => {
+    // A machine on its own lists no cluster, as before the other joined.
+    expect(environment.machines.map((candidate) => candidate.label)).toContain(machine);
+    environment.machines = [];
+  });
+  // The MC says a machine left, and the terminal reads the cluster again.
+  ctx.fake!.emitCluster();
+});
+
 step("load balancing is offered and off without opening settings again", async (ctx: World) => {
   await settle(ctx);
   expect(ctx.host!.state.get("mode")).toBe("settings");

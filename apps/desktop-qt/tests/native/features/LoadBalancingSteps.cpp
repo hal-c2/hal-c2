@@ -278,6 +278,10 @@ const Steps steps([] {
   step(QStringLiteral("the user opens connection settings"), [](World& world, const Captures&, const Table&) {
     openConnections(world);
   });
+  step(QStringLiteral("%1 is removed from the cluster").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForGroup(world);
+    world.mc.remove(c[0]);
+  });
   step(QStringLiteral("load balancing is not offered"), [](World& world, const Captures&, const Table&) {
     world.sync();
     world.waitFor([&] { return world.native().controller<SettingsController>()->ready(); }, QStringLiteral("the shell to read the MC's settings"));

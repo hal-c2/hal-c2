@@ -157,6 +157,19 @@ void FakeMc::setOnline(const QString& environment, bool online) {
         {QStringLiteral("online"), online}});
 }
 
+void FakeMc::remove(const QString& environment) {
+  const QString peer = peers.take(environment);
+  members.removeAll(environment);
+  offline.remove(environment);
+  peerRows.remove(environment);
+  if (!m_socket || m_shellSubscription < 0) return;
+  send({{QStringLiteral("t"), QStringLiteral("shell.mc")},
+        {QStringLiteral("id"), m_shellSubscription},
+        {QStringLiteral("mc"), peer},
+        {QStringLiteral("online"), false},
+        {QStringLiteral("removed"), true}});
+}
+
 // A request for a member whose MC is down, by its environment or its MC.
 bool FakeMc::down(const QString& environment, const QString& mc) const {
   return offline.contains(environment) || (!mc.isEmpty() && offline.contains(peers.key(mc)));

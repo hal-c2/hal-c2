@@ -15,7 +15,8 @@ class McClient;
 // The MC's `shell` shape folded into rows: every MC of the cluster, its
 // environment descriptor, and its live projects and threads. Each change
 // (shell.rows, shell.environment, shell.mc) is applied as it comes; a member
-// that leaves keeps its rows, with its MC offline. A thread that moved to
+// that goes offline keeps its rows, and one removed from the cluster takes
+// them with it. A thread that moved to
 // another machine leaves a forwarding record (`movedTo`) on the one it left:
 // the thread is listed where it lives, and located() follows the record.
 class ShellStore : public QObject {

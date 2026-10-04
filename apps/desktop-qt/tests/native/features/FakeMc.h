@@ -165,6 +165,9 @@ public:
                    const QString& kind = QStringLiteral("thread"));
   // A member's MC goes down or comes back (`shell.mc`).
   void setOnline(const QString& environment, bool online);
+  // A member is removed from the cluster: the shell drops it and its rows
+  // (`shell.mc` with `removed`).
+  void remove(const QString& environment);
 
   void drop() {
     if (m_socket) m_socket->close();
