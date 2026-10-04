@@ -14,6 +14,7 @@
 
 #include "Brick.h"
 #include "Harness.h"
+#include "NavigationController.h"
 #include "KeybindingController.h"
 #include "PullRequestReview.h"
 #include "RightPanelController.h"
@@ -600,6 +601,70 @@ const Steps reviewSteps([] {
     world.sync();
     waitForRow(world, c[0].toInt(), true);
   });
+  // A thread started on a pull request the user names (PullRequestThreadController).
+  step(QStringLiteral("the user pastes %1 to start a pull request thread").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The MC resolves the link without checking anything out (git.resolvePullRequest),
+    // and prepares the checkout when asked (git.preparePullRequestThread).
+    const QJsonObject pullRequest{{QStringLiteral("number"), 42}, {QStringLiteral("title"), QStringLiteral("Add tax to the cart")}, {QStringLiteral("url"), c[0]},
+                                  {QStringLiteral("baseBranch"), QStringLiteral("main")}, {QStringLiteral("headBranch"), QStringLiteral("feature/tax")}, {QStringLiteral("state"), QStringLiteral("open")}};
+    world.mc.onRpc(QStringLiteral("git.resolvePullRequest"), [&mc = world.mc, pullRequest](const FakeMc::Rpc& rpc) {
+      mc.reply(rpc, QJsonObject{{QStringLiteral("pullRequest"), pullRequest}});
+    });
+    world.mc.onRpc(QStringLiteral("git.preparePullRequestThread"), [&mc = world.mc, pullRequest](const FakeMc::Rpc& rpc) {
+      const bool worktree = rpc.payload.value(QLatin1String("mode")) == QLatin1String("worktree");
+      mc.reply(rpc, QJsonObject{{QStringLiteral("pullRequest"), pullRequest}, {QStringLiteral("branch"), QStringLiteral("feature/tax")},
+                                {QStringLiteral("worktreePath"), worktree ? QJsonValue(QStringLiteral("/work/worktrees/pr-42")) : QJsonValue()},
+                                {QStringLiteral("isOnPullRequestHead"), true}});
+    });
+    lookAt(world, QStringLiteral("Tax work"));
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nItem { PullRequestThreadDialog {} }\n", QSize(640, 480));
+    // From the command palette's entry.
+    auto* keys = world.native().controller<KeybindingController>();
+    expect(keys->commands()->contains(QStringLiteral("pullRequestThread.open")), QStringLiteral("no command starts a pull request thread"));
+    keys->commands()->run(QStringLiteral("pullRequestThread.open"));
+    Brick& brick = *world.brick;
+    QQuickItem* field = brick.item(QStringLiteral("pullRequestThreadReference"));
+    world.waitFor([&] { return field->isVisible(); }, QStringLiteral("the dialog to ask for a pull request"));
+    brick.click(QStringLiteral("pullRequestThreadReference"));
+    field->setProperty("text", c[0]);
+    QTest::keyClick(&brick.window(), Qt::Key_Return);
+    world.sync();
+  });
+  step(QStringLiteral("the user sees the pull request's title and branches before choosing local or worktree"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = *world.brick;
+    const auto asked = [&world](const QString& method) {
+      QList<QJsonObject> found;
+      for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+        if (rpc.method == method) found.append(rpc.payload);
+      }
+      return found;
+    };
+    world.waitFor([&] { return brick.shows(QStringLiteral("#42 Add tax to the cart")) && brick.shows(QStringLiteral("feature/tax → main")); },
+                  [&] { return QStringLiteral("the pull request to be shown; the dialog is %1").arg(show(world.state(QStringLiteral("pullRequestThread")))); });
+    const QList<QJsonObject> resolved = asked(QStringLiteral("git.resolvePullRequest"));
+    expect(resolved.size() == 1 && resolved.first().value(QLatin1String("cwd")) == QLatin1String("/work/shop") &&
+               resolved.first().value(QLatin1String("reference")) == QLatin1String("https://github.com/acme/shop/pull/42"),
+           QStringLiteral("the MC was asked to resolve %1").arg(resolved.size()));
+    expect(brick.item(QStringLiteral("pullRequestThreadLocal"))->isVisible() && brick.item(QStringLiteral("pullRequestThreadWorktree"))->isVisible(),
+           QStringLiteral("local and worktree are not both offered"));
+    // Nothing was checked out to show it.
+    expect(asked(QStringLiteral("git.preparePullRequestThread")).isEmpty() && asked(QStringLiteral("orchestration.launchThread")).isEmpty(),
+           QStringLiteral("the pull request was checked out before the user chose"));
+    // Chosen, the worktree is prepared and the window moves to the new thread in it.
+    brick.click(QStringLiteral("pullRequestThreadWorktree"));
+    world.waitFor([&] { return asked(QStringLiteral("orchestration.launchThread")).size() == 1; }, QStringLiteral("the thread to be started"));
+    const QJsonObject prepared = asked(QStringLiteral("git.preparePullRequestThread")).value(0);
+    const QJsonObject launched = asked(QStringLiteral("orchestration.launchThread")).first();
+    const QJsonObject strategy = launched.value(QLatin1String("workspaceStrategy")).toObject();
+    expect(prepared.value(QLatin1String("mode")) == QLatin1String("worktree") && prepared.value(QLatin1String("threadId")) == launched.value(QLatin1String("threadId")) &&
+               launched.value(QLatin1String("title")) == QLatin1String("#42 Add tax to the cart") && strategy.value(QLatin1String("type")) == QLatin1String("existing_worktree") &&
+               strategy.value(QLatin1String("worktreePath")) == QLatin1String("/work/worktrees/pr-42") && strategy.value(QLatin1String("branch")) == QLatin1String("feature/tax"),
+           QStringLiteral("the MC was asked %1 then %2").arg(show(prepared.toVariantMap()), show(launched.toVariantMap())));
+    const QString key = world.mc.environmentId + QLatin1Char(':') + launched.value(QLatin1String("threadId")).toString();
+    world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key && world.state(QStringLiteral("pullRequestThread")).isNull(); },
+                  QStringLiteral("the new thread to open"));
+  });
+
   // A pull request a message mentions, linked from that message.
   step(QStringLiteral("a message in %1 mentions %1").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAt(world, c[0]);

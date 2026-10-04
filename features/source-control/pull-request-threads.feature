@@ -80,7 +80,7 @@ Feature: Threads that work on or link pull requests
     When the user starts a thread on pull request 42 in a new worktree
     Then the setup script does not run
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario: Starting a pull request thread from a pasted link
     When the user pastes "https://github.com/acme/shop/pull/42" to start a pull request thread
     Then the user sees the pull request's title and branches before choosing local or worktree

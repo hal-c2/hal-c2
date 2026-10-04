@@ -78,6 +78,8 @@ Window {
 
     CustomSnoozeDialog {}
 
+    PullRequestThreadDialog {}
+
     ProjectActionEditor {}
 
     ProjectIconPicker {}
