@@ -51,8 +51,7 @@ void linkOther(World& world, const QJsonObject& capabilities, const QJsonObject&
   FakeConfig& fake = fakeConfig(world.mc);
   fake.elsewhere.insert(kOther, withCapabilities({}, capabilities));
   documentOf(world.mc, kOther).settings = settings;
-  world.mc.linkLabels.insert(kOther, kOther);
-  world.mc.link(kOther);
+  world.mc.join(kOther);
   world.waitFor([&] { return scope(world)->targets().size() == 2 && scope(world)->settings(kOther).has_value(); },
                 [&] { return QStringLiteral("both environments in the scope; it is %1").arg(show(world.state(QStringLiteral("settingsScope")))); });
 }

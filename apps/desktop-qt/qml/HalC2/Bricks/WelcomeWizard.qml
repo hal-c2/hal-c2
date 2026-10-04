@@ -278,14 +278,6 @@ Item {
                                     color: wizard.muted
                                 }
                             }
-                            Label {
-                                Layout.fillWidth: true
-                                visible: computer.modelData.url.length > 0
-                                text: computer.modelData.url
-                                wrapMode: Text.WrapAnywhere
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
-                                color: wizard.muted
-                            }
                         }
                     }
                 }
@@ -322,7 +314,7 @@ Item {
                         spacing: 8
 
                         Label {
-                            text: qsTr("Pairing link")
+                            text: qsTr("Invite link")
                             font.pixelSize: Math.round(13 * Theme.fontScale)
                             font.weight: Font.Medium
                             color: wizard.foreground
@@ -352,7 +344,7 @@ Item {
                             ShellButton {
                                 subtle: true
                                 iconName: wizard.pairingHelpOpen ? "chevron-down" : "chevron-right"
-                                text: qsTr("Need a pairing link?")
+                                text: qsTr("Need an invite link?")
                                 tint: wizard.muted
                                 onClicked: wizard.pairingHelpOpen = !wizard.pairingHelpOpen
                             }
@@ -375,13 +367,13 @@ Item {
                             spacing: 6
 
                             Detail {
-                                text: qsTr("Run this on the computer with your code.")
+                                text: qsTr("On the computer with your code, make an invite in Settings → Cluster, or run:")
                             }
                             TextEdit {
                                 Layout.fillWidth: true
                                 readOnly: true
                                 selectByMouse: true
-                                text: "npx hal-c2 pair"
+                                text: "hal-c2-service cluster invite"
                                 font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                                 color: wizard.foreground
@@ -389,7 +381,7 @@ Item {
                             Detail {
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                                 textFormat: Text.StyledText
-                                text: qsTr("Start HAL-C2 first, or run <tt>npx hal-c2 serve</tt>. Add <tt>--tailscale</tt> to use your tailnet.")
+                                text: qsTr("The link is good once, for five minutes. Add <tt>--tailscale</tt> to use your tailnet.")
                             }
                         }
                     }

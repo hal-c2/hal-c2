@@ -352,7 +352,6 @@ void ProjectCloneController::follow() {
   }
   for (const QString& environmentId : std::as_const(online)) {
     if (m_subscriptions.contains(environmentId)) continue;
-    // By environment, so a linked one's come through its link.
     const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("projectClones")},
                             {QStringLiteral("environment"), environmentId}};
     m_subscriptions.insert(environmentId, m_client->subscribe(this, shape, [this, environmentId](const QJsonObject& frame) {

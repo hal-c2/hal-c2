@@ -75,6 +75,32 @@ double tokens(const QJsonObject& totals) {
          number(totals, "cacheCreationTokens") + number(totals, "outputTokens");
 }
 
+// Which period of `window` a bucket falls in, counted from its first; -1 for none.
+int placeOf(const QJsonObject& bucket, const QJsonObject& window, bool hourly) {
+  if (hourly) {
+    const QDateTime since = QDateTime::fromString(text(window, "sinceTime"), Qt::ISODateWithMs);
+    const QDateTime hour = QDateTime::fromString(text(bucket, "hourStart"), Qt::ISODateWithMs);
+    return since.isValid() && hour.isValid() && hour >= since ? int(since.secsTo(hour) / (60 * 60)) : -1;
+  }
+  const QDate since = QDate::fromString(text(window, "sinceDay"), Qt::ISODate);
+  const QDate day = QDate::fromString(text(bucket, "day"), Qt::ISODate);
+  return since.isValid() && day.isValid() && day >= since ? int(since.daysTo(day)) : -1;
+}
+
+// `2 PM` in `zone`. An hour the clocks repeat when they fall back says its
+// zone too, as the web's formatHourShort.
+QString hourName(const QDateTime& instant, const QTimeZone& zone) {
+  const QDateTime local = instant.toTimeZone(zone);
+  const QString name = english().toString(local.time(), QStringLiteral("h AP"));
+  for (const int away : {-60 * 60, 60 * 60}) {
+    const QDateTime other = instant.addSecs(away).toTimeZone(zone);
+    if (other.date() == local.date() && other.time().hour() == local.time().hour()) {
+      return QStringLiteral("%1 %2").arg(name, local.timeZoneAbbreviation());
+    }
+  }
+  return name;
+}
+
 int kindRank(const QString& kind) {
   const int rank = kWindowKinds.indexOf(kind);
   return rank < 0 ? kWindowKinds.size() : rank;
@@ -212,8 +238,7 @@ void UsageController::update() {
 QStringList UsageController::targets() const {
   QStringList environments;
   for (const QString& environmentId : m_store->environments()) {
-    if (!m_environment.isEmpty() && environmentId != m_environment) continue;
-    if (m_store->reaches(environmentId)) environments.append(environmentId);
+    if (m_environment.isEmpty() || environmentId == m_environment) environments.append(environmentId);
   }
   return environments;
 }
@@ -227,7 +252,8 @@ QString UsageController::label(const QString& environmentId) const {
 // or the past 24 hours to the minute, bucketed by hour.
 QJsonObject UsageController::window() const {
   const QDateTime now = m_now().toUTC();
-  QJsonObject window{{QStringLiteral("timeZone"), QString::fromUtf8(QTimeZone::systemTimeZoneId())}};
+  const QTimeZone zone = m_zone();
+  QJsonObject window{{QStringLiteral("timeZone"), QString::fromUtf8(zone.id())}};
   if (m_windowDays == 1) {
     QDateTime until = now;
     until.setTime(QTime(now.time().hour(), now.time().minute()));
@@ -235,11 +261,11 @@ QJsonObject UsageController::window() const {
     window.insert(QStringLiteral("resolution"), QStringLiteral("hour"));
     window.insert(QStringLiteral("sinceTime"), since.toString(Qt::ISODateWithMs));
     window.insert(QStringLiteral("untilTime"), until.toString(Qt::ISODateWithMs));
-    window.insert(QStringLiteral("sinceDay"), since.toLocalTime().date().toString(Qt::ISODate));
-    window.insert(QStringLiteral("untilDay"), until.toLocalTime().date().toString(Qt::ISODate));
+    window.insert(QStringLiteral("sinceDay"), since.toTimeZone(zone).date().toString(Qt::ISODate));
+    window.insert(QStringLiteral("untilDay"), until.toTimeZone(zone).date().toString(Qt::ISODate));
     return window;
   }
-  const QDate today = now.toLocalTime().date();
+  const QDate today = now.toTimeZone(zone).date();
   window.insert(QStringLiteral("resolution"), QStringLiteral("day"));
   window.insert(QStringLiteral("sinceDay"), today.addDays(-(m_windowDays - 1)).toString(Qt::ISODate));
   window.insert(QStringLiteral("untilDay"), today.toString(Qt::ISODate));
@@ -272,14 +298,14 @@ void UsageController::read(bool rescan) {
         return;
       }
       m_client->call(this, environmentId, QStringLiteral("server.getUsageSummary"), input,
-                     [this, generation, environmentId, rescan](const QJsonValue& result, const std::optional<QString>& error) {
+                     [this, generation, environmentId, input, rescan](const QJsonValue& result, const std::optional<QString>& error) {
                        if (rescan) --m_refreshing;
                        if (generation != m_generation || !m_answers.contains(environmentId)) {
                          publish();
                          return;
                        }
                        m_answers[environmentId] = error ? Answer{QStringLiteral("failed"), {}}
-                                                        : Answer{QStringLiteral("ready"), result.toObject()};
+                                                        : Answer{QStringLiteral("ready"), result.toObject(), input};
                        publish();
                      });
     };
@@ -368,6 +394,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
   struct Contribution {
     QString id;
     QJsonObject summary;
+    QJsonObject window;
   };
   QList<Contribution> current;
   QStringList ids = m_answers.keys();
@@ -385,7 +412,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
       notices.append(QStringLiteral("%1 runs an older server version and is excluded from totals.").arg(label(environmentId)));
       continue;
     }
-    current.append({environmentId, answer.summary});
+    current.append({environmentId, answer.summary, answer.window});
   }
   if (current.isEmpty()) return {};
 
@@ -430,6 +457,11 @@ QVariantMap UsageController::summary(QStringList& notices) const {
   QHash<QString, Sum> providers;
   std::map<QPair<QString, QString>, Sum> models;
   std::map<QString, Sum> periods;
+  // Each provider's part of each period, which the chart draws. A period is
+  // counted from the start of the window its summary was asked over: while a
+  // read is in flight that environment still shows its last answer, asked over
+  // an earlier window, and keeps its place on the chart.
+  QHash<int, QHash<QString, Sum>> parts;
   const bool hourly = m_windowDays == 1;
   for (const Contribution& contribution : current) {
     QSet<QString> owned;
@@ -453,7 +485,8 @@ QVariantMap UsageController::summary(QStringList& notices) const {
       const double records = number(bucket, "records");
       const double unpriced = number(bucket, "unpricedRecords");
       for (Sum* sum : {&total, &providers[provider], &models[{provider, text(bucket, "model")}],
-                       &periods[hourly ? text(bucket, "hourStart") : text(bucket, "day")]}) {
+                       &periods[hourly ? text(bucket, "hourStart") : text(bucket, "day")],
+                       &parts[placeOf(bucket, contribution.window, hourly)][provider]}) {
         sum->cost += cost;
         sum->tokens += used;
         sum->records += records;
@@ -468,9 +501,11 @@ QVariantMap UsageController::summary(QStringList& notices) const {
   }
 
   QVariantList providerRows;
+  QStringList listed;
   for (const auto& [id, name] : kUsageProviders) {
     const Sum sum = providers.value(id);
     if (sum.tokens <= 0 && sum.cost <= 0) continue;
+    listed.append(id);
     providerRows.append(QVariantMap{{QStringLiteral("id"), id},
                                     {QStringLiteral("label"), name},
                                     {QStringLiteral("costUsd"), sum.cost},
@@ -492,18 +527,60 @@ QVariantMap UsageController::summary(QStringList& notices) const {
                                  {QStringLiteral("totalTokens"), sum.tokens},
                                  {QStringLiteral("unpriced"), sum.records > 0 && sum.unpriced >= sum.records}});
   }
+  const QTimeZone zone = m_zone();
+  const auto name = [hourly, &zone](const QString& period) {
+    if (hourly) return hourName(QDateTime::fromString(period, Qt::ISODateWithMs), zone);
+    return english().toString(QDate::fromString(period, Qt::ISODate), QStringLiteral("MMM d"));
+  };
   QVariantList periodRows;
   for (auto it = periods.crbegin(); it != periods.crend(); ++it) {
-    QString name;
-    if (hourly) {
-      name = english().toString(QDateTime::fromString(it->first, Qt::ISODateWithMs).toLocalTime().time(), QStringLiteral("h AP"));
-    } else {
-      name = english().toString(QDate::fromString(it->first, Qt::ISODate), QStringLiteral("MMM d"));
-    }
     periodRows.append(QVariantMap{{QStringLiteral("key"), it->first},
-                                  {QStringLiteral("label"), name},
+                                  {QStringLiteral("label"), name(it->first)},
                                   {QStringLiteral("costUsd"), it->second.cost},
                                   {QStringLiteral("totalTokens"), it->second.tokens}});
+  }
+
+  // The chart: every period of the window the newest read was asked over, the
+  // quiet ones too, with each listed provider's part of it.
+  const QJsonObject& window = current.first().window;
+  QStringList charted;
+  if (hourly) {
+    const QDateTime until = QDateTime::fromString(text(window, "untilTime"), Qt::ISODateWithMs);
+    for (QDateTime hour = QDateTime::fromString(text(window, "sinceTime"), Qt::ISODateWithMs); hour.isValid() && hour < until;
+         hour = hour.addSecs(60 * 60)) {
+      charted.append(hour.toUTC().toString(Qt::ISODateWithMs));
+    }
+  } else {
+    const QDate until = QDate::fromString(text(window, "untilDay"), Qt::ISODate);
+    for (QDate day = QDate::fromString(text(window, "sinceDay"), Qt::ISODate); day.isValid() && day <= until; day = day.addDays(1)) {
+      charted.append(day.toString(Qt::ISODate));
+    }
+  }
+  // An hour is read out against the day the window ends on (formatRelativeHourShort).
+  const QDate today = QDateTime::fromString(text(window, "untilTime"), Qt::ISODateWithMs).toTimeZone(zone).date();
+  QVariantList chartRows;
+  for (qsizetype place = 0; place < charted.size(); ++place) {
+    const QString& period = charted[place];
+    const QHash<QString, Sum> part = parts.value(place);
+    QVariantList cost, used;
+    for (const QString& id : std::as_const(listed)) {
+      cost.append(part.value(id).cost);
+      used.append(part.value(id).tokens);
+    }
+    const QString label = name(period);
+    QString heading = label;
+    if (hourly) {
+      const QDateTime hour = QDateTime::fromString(period, Qt::ISODateWithMs).toTimeZone(zone);
+      const qint64 daysAgo = hour.date().daysTo(today);
+      heading = daysAgo == 0   ? QStringLiteral("%1 today").arg(label)
+                : daysAgo == 1 ? QStringLiteral("%1 yesterday").arg(label)
+                               : english().toString(hour, QStringLiteral("MMM d, h AP"));
+    }
+    chartRows.append(QVariantMap{{QStringLiteral("key"), period},
+                                 {QStringLiteral("label"), label},
+                                 {QStringLiteral("heading"), heading},
+                                 {QStringLiteral("costUsd"), cost},
+                                 {QStringLiteral("totalTokens"), used}});
   }
   return {
       {QStringLiteral("costUsd"), total.cost},
@@ -518,6 +595,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
       {QStringLiteral("providers"), providerRows},
       {QStringLiteral("models"), modelRows},
       {QStringLiteral("periods"), periodRows},
+      {QStringLiteral("chart"), chartRows},
   };
 }
 
@@ -773,7 +851,6 @@ void UsageController::publish() {
   QVariantList environments;
   bool scanning = false;
   for (const QString& environmentId : m_store->environments()) {
-    if (!m_store->reaches(environmentId)) continue;
     const Answer answer = m_answers.value(environmentId);
     QString status = m_store->environmentOnline(environmentId) ? answer.status : QStringLiteral("offline");
     if (status.isEmpty()) status = QStringLiteral("scanning");
@@ -800,7 +877,7 @@ void UsageController::publish() {
   } else if (merged.value(QStringLiteral("periods")).toList().isEmpty()) {
     message = QStringLiteral("No activity in this window.");
   }
-  const QDateTime now = m_now().toLocalTime();
+  const QDateTime now = m_now().toTimeZone(m_zone());
   QString windowLabel;
   if (m_windowDays == 1) {
     windowLabel = QStringLiteral("%1 to %2").arg(english().toString(now.addSecs(-24 * 60 * 60), QStringLiteral("MMM d, h AP")),

@@ -171,7 +171,7 @@ struct ProjectGroup {
 
 // The web app's logical grouping (client-runtime's state/projectGrouping.ts) and
 // sidebar order (Sidebar.logic.ts sortLogicalProjectsForSidebar), from every
-// project the shell sees. Linked environments' projects are just more rows.
+// project the shell sees.
 QList<ProjectGroup> groupProjects(const QList<Project>& projects, const GroupingSettings& settings,
                                   const QString& preferredEnvironmentId, const QList<Thread>& threads);
 

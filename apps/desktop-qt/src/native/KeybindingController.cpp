@@ -11,6 +11,7 @@
 #include <algorithm>
 
 #include "../ShellBridge.h"
+#include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "RightPanelController.h"
@@ -152,6 +153,10 @@ void KeybindingController::setModelPickerOpen(bool open) {
 }
 
 bool KeybindingController::handle(const QString& action, const QVariant&) {
+  if (action == QLatin1String("keybindings.resetAll")) {
+    resetAll();
+    return true;
+  }
   if (action != QLatin1String("keybindings.openFile")) return false;
   openFile();
   return true;
@@ -564,6 +569,21 @@ void KeybindingController::reset(const QVariantMap& row) {
        row);
 }
 
+void KeybindingController::resetAll() {
+  if (m_rules.isEmpty()) return;
+  auto* menu = NativeShell::of(this)->controller<MenuController>();
+  if (!menu) return;
+  const QJsonArray rules = m_rules;
+  menu->confirm(tr("Reset every keybinding to its default?"),
+                rules.size() == 1 ? tr("This removes your 1 custom keybinding.") : tr("This removes your %1 custom keybindings.").arg(rules.size()),
+                tr("Reset keybindings"), true, [this, rules] {
+                  for (const QJsonValue& rule : rules) {
+                    call(QStringLiteral("hal-c2.removeKeybinding"), rule.toObject(), tr("Unable to reset keybindings"),
+                         tr("A keybinding was not removed."));
+                  }
+                });
+}
+
 void KeybindingController::call(const QString& method, const QJsonObject& input, const QString& failureTitle,
                                 const QString& failure) {
   // The keymap is the user's on every environment they reach, as the web
@@ -572,7 +592,7 @@ void KeybindingController::call(const QString& method, const QJsonObject& input,
   ShellStore* store = m_store;
   QStringList environments{m_client->environment()};
   for (const QString& environmentId : store->environments()) {
-    if (!environments.contains(environmentId) && store->environmentOnline(environmentId) && store->mayOperate(environmentId)) {
+    if (!environments.contains(environmentId) && store->environmentOnline(environmentId)) {
       environments.append(environmentId);
     }
   }

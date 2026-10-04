@@ -1,9 +1,11 @@
 # Sources:
 #   docs/user/composer.md (slash commands, skills, context references, pull requests, threads, citing)
 #   docs/internals/composer-context-references.md
-#   apps/server-ex/lib/hal_c2/composer_context.ex (provider envelope, attachment remapping)
+#   apps/server-ex/lib/hal_c2/composer_context.ex (provider envelope, attachment remapping, quoted replies)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (@file, $skill and /command suggestions)
-#   apps/desktop-qt/src/native/ComposerController.cpp (terminal excerpts as context records on send)
+#   apps/desktop-qt/src/native/ComposerController.cpp (terminal excerpts as context records on send, quoted replies)
+#   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml (Cite on a selection of a reply)
+#   packages/shared/src/assistantCitations.ts (citation links, the provider's view)
 #   apps/desktop-qt/tests/tst_ComposerKeyboard.qml (suggestion keys)
 #   apps/web/src/composer-logic.ts (trigger kinds, built-in slash commands)
 #   apps/web/src/components/chat/composerSlashCommandSearch.ts
@@ -101,12 +103,33 @@ Feature: Referencing files, skills, commands and context
     Then the user is told the agent can only read threads on its own server
     And the draft is unchanged
 
-  @backlog @desktop
+  @desktop
   Scenario: Part of an assistant response can be quoted with a comment
     Given the assistant replied with a paragraph about caching
     When the user cites that paragraph in the composer
     Then the draft carries the quoted paragraph
     And the user can add a comment to it
+
+  @desktop
+  Scenario: A quoted response is sent with its comment
+    Given the draft quotes the assistant's paragraph about caching with the comment "Too slow?"
+    When the user sends "Can we fix this?"
+    Then the message starts with "Can we fix this?"
+    And the message cites the paragraph with the comment "Too slow?"
+    And the draft no longer quotes it
+
+  @desktop
+  Scenario: A stashed quote is listed by its text
+    Given the draft quotes the assistant's paragraph about caching with the comment "Too slow?"
+    When the user stashes the prompt
+    Then the stash lists the prompt by the quoted paragraph and its comment
+
+  @mc
+  Scenario: The provider reads a quoted response as reference material
+    Given a message quotes an earlier assistant response with the comment "Too slow?"
+    When the message is sent to the provider
+    Then the provider reads a numbered citation in place of the quote
+    And the quoted text and the comment follow the message as citation data
 
   @desktop
   Scenario: A terminal excerpt is sent as a reference with its text

@@ -23,9 +23,9 @@ Feature: The desktop's terminal drawer and the page's environments
 
   Rule: The page lends nothing
 
-    # Lending: the page's saved environments were lent to the MC. Environments outside the
-    # cluster are paired as MC links from the shell's Connections settings instead
-    # (settings/connections.feature), so the page has nothing to lend.
+    # Lending: the page's saved environments were lent to the MC. Another machine joins
+    # the MC's cluster instead (connections/cluster.feature), so the page has nothing to
+    # lend.
     @dropped @desktop
     Scenario: A thread on an environment the page has access to has its terminal there
       Given the page has access to "env-c"

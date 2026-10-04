@@ -59,7 +59,7 @@ Feature: Running a thread's actions from its menu
     @desktop
     Scenario: A thread on an offline environment offers only what needs no environment
       Given the environment "env-b" is offline
-      When the user opens the thread menu for "env-b:t-linked" at 40, 120
+      When the user opens the thread menu for "env-b:t-member" at 40, 120
       Then only these of the menu's actions can be chosen: "copy"
 
     @desktop
@@ -152,10 +152,10 @@ Feature: Running a thread's actions from its menu
       And the user opens the thread menu for "env-a:t1" at 40, 120
       When the user picks "move"
       Then a menu opens at 40, 120 with:
-        | id           | label          |
-        | machine:mc-b | mc-b           |
-        | machine:mc-c | mc-c (offline) |
-      And only these of the menu's actions can be chosen: "machine:mc-b"
+        | id            | label          |
+        | machine:env-b | mc-b           |
+        | machine:env-c | mc-c (offline) |
+      And only these of the menu's actions can be chosen: "machine:env-b"
 
     @desktop
     Scenario: Moving the open thread follows it to its new machine
@@ -163,7 +163,7 @@ Feature: Running a thread's actions from its menu
       And the user is viewing "env-a:t1"
       And the user opens the thread menu for "env-a:t1" at 40, 120
       And the user picks "move"
-      When the user picks "machine:mc-b"
+      When the user picks "machine:env-b"
       Then the MC is asked to move "t1" to "mc-b"
       And the user sees a "success" toast "First moved to mc-b."
       And the window shows the thread "env-b:t1"
@@ -173,7 +173,7 @@ Feature: Running a thread's actions from its menu
       Given the MC can move "t1" to "mc-b" once told "Its terminal stays behind."
       And the user opens the thread menu for "env-a:t1" at 40, 120
       And the user picks "move"
-      And the user picks "machine:mc-b"
+      And the user picks "machine:env-b"
       When the user confirms the question
       Then the MC is asked to move "t1" to "mc-b" confirmed
 
@@ -182,5 +182,5 @@ Feature: Running a thread's actions from its menu
       Given the MC can move "t1" to "mc-b" but refuses with "mc-b has no checkout of shop"
       And the user opens the thread menu for "env-a:t1" at 40, 120
       And the user picks "move"
-      When the user picks "machine:mc-b"
+      When the user picks "machine:env-b"
       Then the user sees an "error" toast "Failed to move thread" saying "mc-b has no checkout of shop"

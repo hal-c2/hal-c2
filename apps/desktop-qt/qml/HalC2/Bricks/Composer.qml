@@ -17,6 +17,7 @@ Rectangle {
     readonly property var stashEntries: Shell.state.composerStash?.entries ?? []
     readonly property bool stashOpen: ready && Shell.state.composerStash?.open === true
     readonly property var attachments: ready ? model.attachments : []
+    readonly property var citations: ready ? (model.citations ?? []) : []
     readonly property bool ready: model !== null && model.target !== null
     readonly property string publishedTarget: ready ? model.target : ""
     readonly property string publishedText: ready ? model.text : ""
@@ -663,13 +664,13 @@ Rectangle {
                     }
                 }
 
-                // Attached images and terminal selections living on the draft.
+                // Attached images, terminal selections and quoted replies living on the draft.
                 Flow {
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.topMargin: 12
-                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0)
+                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || composer.citations.length > 0)
                     spacing: 6
 
                     Repeater {
@@ -727,6 +728,118 @@ Rectangle {
                             onClicked: Shell.dispatch("composer.terminalContext.remove", {
                                 id: modelData.id
                             })
+                        }
+                    }
+
+                    // A quoted reply shows the user's comment on it, or the
+                    // start of the quote; it opens to comment on or remove.
+                    Repeater {
+                        model: composer.citations
+
+                        delegate: ShellButton {
+                            id: citationChip
+
+                            required property var modelData
+                            readonly property string preview: (modelData.comment ?? modelData.text).replace(/\s+/g, " ").trim()
+
+                            function saveComment() {
+                                const comment = citationComment.text;
+                                citationEditor.close();
+                                Shell.dispatch("composer.citation.comment", {
+                                    id: modelData.id,
+                                    comment: comment
+                                });
+                            }
+
+                            objectName: "citation-" + modelData.id
+                            implicitHeight: 24
+                            iconName: modelData.comment === null ? "quote" : "pencil"
+                            text: preview.length > 40 ? preview.slice(0, 40) + "\u2026" : preview
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            Accessible.name: qsTr("Assistant quote: %1").arg(preview)
+                            onClicked: citationEditor.open()
+
+                            Popup {
+                                id: citationEditor
+                                objectName: "citationEditor"
+
+                                scale: Shell.state.layout?.zoom ?? 1
+                                transformOrigin: Item.BottomLeft
+                                y: -height - 4
+                                width: 360
+                                padding: 10
+                                onOpened: {
+                                    citationComment.text = citationChip.modelData.comment ?? "";
+                                    citationComment.forceActiveFocus();
+                                }
+
+                                background: Rectangle {
+                                    color: Theme.palette.color("surfaceOverlay", "#18181b")
+                                    border.color: Qt.alpha(composer.foreground, 0.1)
+                                    radius: 10
+                                }
+
+                                contentItem: ColumnLayout {
+                                    spacing: 8
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: citationChip.modelData.text
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.Wrap
+                                        maximumLineCount: 6
+                                        elide: Text.ElideRight
+                                        color: composer.muted
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                                    }
+
+                                    ShellTextField {
+                                        id: citationComment
+                                        objectName: "citationComment"
+
+                                        Layout.fillWidth: true
+                                        maximumLength: 8000
+                                        placeholderText: qsTr("Add a comment")
+                                        Accessible.name: qsTr("Comment on the quote")
+                                        Keys.onReturnPressed: citationChip.saveComment()
+                                        Keys.onEnterPressed: citationChip.saveComment()
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+
+                                        ShellButton {
+                                            objectName: "citationRemove"
+                                            implicitHeight: 24
+                                            subtle: true
+                                            text: qsTr("Remove quote")
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            onClicked: {
+                                                const id = citationChip.modelData.id;
+                                                citationEditor.close();
+                                                Shell.dispatch("composer.citation.remove", {
+                                                    id: id
+                                                });
+                                            }
+                                        }
+
+                                        Item {
+                                            Layout.fillWidth: true
+                                        }
+
+                                        ShellButton {
+                                            objectName: "citationSave"
+                                            implicitHeight: 24
+                                            primary: true
+                                            text: qsTr("Save")
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            onClicked: citationChip.saveComment()
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1043,8 +1156,18 @@ Rectangle {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.bottomMargin: visible ? 16 : 0
-                    visible: children.length > 0
+                    // A layout's own controls, or a plugin's.
+                    visible: children.length > 1 || actionsSlot.shown.length > 0
                     spacing: 6
+
+                    PluginSlot {
+                        id: actionsSlot
+
+                        objectName: "composerActionsSlot"
+                        name: "composer.actions"
+                        mode: "append"
+                        visible: shown.length > 0
+                    }
                 }
             }
         }
@@ -1096,8 +1219,7 @@ Rectangle {
                     iconName: "monitor"
                     enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
                     model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
-                    // Auto balance leads the list while it picks the machine.
-                    currentIndex: !contextStrip.wsReady ? -1 : contextStrip.ws.environmentAutomatic ? contextStrip.ws.environments.findIndex(env => env.key === "auto") : contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId)
+                    currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId) : -1
                     Accessible.name: qsTr("Environment")
                     onActivated: index => Shell.dispatch("workspace.environment.set", {
                             environmentId: contextStrip.ws.environments[index].environmentId,

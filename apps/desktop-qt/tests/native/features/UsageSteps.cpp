@@ -1,16 +1,20 @@
 // The usage page on the desktop (UsageController), and the MC's side of it:
 // the @shared scenarios of features/settings/usage.feature.
 
+#include <algorithm>
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QTimeZone>
 
 #include "Brick.h"
 #include "FakeConfig.h"
 #include "Harness.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "UsageController.h"
 #include "World.h"
 
 namespace {
@@ -29,6 +33,7 @@ struct FakeUsage {
   int limitChecks = 0;
   int followedBefore = 0;
   int priceWrites = 0;
+  QString hoveredDay;                 // the chart's day under the pointer
   // provider.consumeResetCredit: what the MC says, and what it was asked.
   QString creditOutcome = QStringLiteral("reset");
   QList<QJsonObject> redeemed;
@@ -77,7 +82,8 @@ QJsonObject summary(FakeMc& mc, const QString& environment, const QJsonObject& i
   };
   return {
       {QStringLiteral("contractVersion"), mc.part<FakeUsage>().versions.value(environment, 5)},
-      {QStringLiteral("readAt"), QStringLiteral("2026-09-23T10:00:00.000Z")},
+      // An hourly read is as new as the window it was asked over.
+      {QStringLiteral("readAt"), input.value(QLatin1String("untilTime")).toString(QStringLiteral("2026-09-23T10:00:00.000Z"))},
       {QStringLiteral("timeZone"), input.value(QLatin1String("timeZone"))},
       {QStringLiteral("sinceDay"), input.value(QLatin1String("sinceDay"))},
       {QStringLiteral("untilDay"), input.value(QLatin1String("untilDay"))},
@@ -172,9 +178,9 @@ void expectShown(World& world, const QString& environment) {
                 [&] { return QStringLiteral("the usage of %1 to be shown; the page is %2").arg(environment, show(usage(world))); });
 }
 
-void link(World& world, const QString& environment, const QString& provider) {
+void join(World& world, const QString& environment, const QString& provider) {
   fake(world).providers.insert(environment, provider);
-  world.mc.link(environment);
+  world.mc.join(environment);
 }
 
 QList<FakeMc::Rpc> summariesFor(World& world, const QString& environment) {
@@ -318,7 +324,7 @@ const Steps steps([] {
     setProviders(world, {codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits)});
     fakeConfig(world.mc).elsewhere.insert(QStringLiteral("Studio"), QJsonObject{{QStringLiteral("providers"), QJsonArray{claude}}});
     documentOf(world.mc, QStringLiteral("Studio"));
-    link(world, QStringLiteral("Studio"), QStringLiteral("claude"));
+    join(world, QStringLiteral("Studio"), QStringLiteral("claude"));
     if (!c.value(0).isEmpty()) fake(world).scanning.insert(QStringLiteral("Studio"));
   });
   step(QStringLiteral("the user selects only one environment in Usage"), [](World& world, const Captures&, const Table&) {
@@ -371,8 +377,8 @@ const Steps steps([] {
   // Model prices (UsagePricesController), for this machine and "Studio".
   step(QStringLiteral("one of two selected environments is offline"), [](World& world, const Captures&, const Table&) {
     documentOf(world.mc, QStringLiteral("Studio"));
-    link(world, QStringLiteral("Studio"), QStringLiteral("claude"));
-    world.mc.setLinkProblem(QStringLiteral("Studio"), QStringLiteral("unreachable"));
+    join(world, QStringLiteral("Studio"), QStringLiteral("claude"));
+    world.mc.setOnline(QStringLiteral("Studio"), false);
     world.sync();
   });
   step(QStringLiteral("the user saves a custom price(?: for %1)? to both").arg(q), [](World& world, const Captures&, const Table&) {
@@ -400,7 +406,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the environment reconnects and the user chooses %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).priceWrites = priceWrites(world, world.mc.environmentId);
-    world.mc.setLinkProblem(QStringLiteral("Studio"), QString());
+    world.mc.setOnline(QStringLiteral("Studio"), true);
     world.sync();
     expect(world.brick->shows(c[0]), QStringLiteral("the dialog does not offer \"%1\"").arg(c[0]));
     world.brick->click(QStringLiteral("pricesRetry"));
@@ -414,7 +420,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("two environments with different prices for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     documentOf(world.mc, QStringLiteral("Studio"));
-    link(world, QStringLiteral("Studio"), QStringLiteral("claude"));
+    join(world, QStringLiteral("Studio"), QStringLiteral("claude"));
     saveElsewhere(world.mc, QStringLiteral("usagePriceOverrides"), QJsonObject{{c[0], price(3, 15)}});
     saveOn(world.mc, QStringLiteral("Studio"), QStringLiteral("usagePriceOverrides"), QJsonObject{{c[0], price(5, 15)}});
   });
@@ -477,7 +483,14 @@ const Steps steps([] {
       for (auto it = expected.begin(); it != expected.end(); ++it) {
         if (calls.last().payload.value(it.key()) != it.value()) return false;
       }
-      return !at(usage(world), QStringLiteral("summary.periods")).toList().isEmpty();
+      if (at(usage(world), QStringLiteral("summary.periods")).toList().isEmpty()) return false;
+      // The chart has every period of the window, and what was spent falls inside it.
+      const QVariantList chart = at(usage(world), QStringLiteral("summary.chart")).toList();
+      double charted = 0;
+      for (const QVariant& period : chart) {
+        for (const QVariant& cost : period.toMap().value(QStringLiteral("costUsd")).toList()) charted += cost.toDouble();
+      }
+      return chart.size() == (days == 1 ? 24 : days) && qFuzzyCompare(charted, at(usage(world), QStringLiteral("summary.costUsd")).toDouble());
     }, [&] {
       const QList<FakeMc::Rpc> calls = summariesFor(world, world.mc.environmentId);
       return QStringLiteral("usage to be read over %1; it was asked for %2 and shows %3")
@@ -486,17 +499,90 @@ const Steps steps([] {
                show(usage(world)));
     });
   });
+  // The chart. Drawing it and following the pointer are UsageChart.qml's
+  // (tst_UsagePage.qml); these read what the page is given to draw.
+  step(QStringLiteral("Codex and Claude both have usage in the past (?:7 days|24 hours)"), [](World& world, const Captures&, const Table&) {
+    // This environment's history is Codex's; another brings Claude's.
+    join(world, QStringLiteral("laptop"), QStringLiteral("claude"));
+  });
+  step(QStringLiteral("the chart draws Codex and Claude over all (\\d+) days"), [](World& world, const Captures& c, const Table&) {
+    const QString today = world.now().toLocalTime().date().toString(Qt::ISODate);
+    world.waitFor([&] {
+      const QVariantList chart = at(usage(world), QStringLiteral("summary.chart")).toList();
+      if (chart.size() != c[0].toInt() || chart.last().toMap().value(QStringLiteral("key")) != today) return false;
+      if (!counted(world, QStringLiteral("codex")) || !counted(world, QStringLiteral("claude"))) return false;
+      return std::all_of(chart.begin(), chart.end(), [](const QVariant& day) {
+        return day.toMap().value(QStringLiteral("costUsd")).toList().size() == 2;
+      });
+    }, [&] { return QStringLiteral("a chart of %1 days ending %2 for Codex and Claude; the page is %3").arg(c[0], today, show(usage(world))); });
+  });
+  step(QStringLiteral("(\\d+) minutes pass and %1 is slow to answer").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, world.mc.environmentId);
+    expectShown(world, c[1]);
+    world.setTime(world.now().addSecs(c[0].toInt() * 60));
+    fake(world).scanning.insert(c[1]);
+  });
+  step(QStringLiteral("the chart still draws Codex and Claude"), [](World& world, const Captures&, const Table&) {
+    // This environment's new read has landed: the chart starts where its window does.
+    QDateTime until = world.now().toUTC();
+    until.setTime(QTime(until.time().hour(), until.time().minute()));
+    const QString since = until.addSecs(-24 * 60 * 60).toString(Qt::ISODateWithMs);
+    const auto chart = [&] { return at(usage(world), QStringLiteral("summary.chart")).toList(); };
+    world.waitFor([&] { return !chart().isEmpty() && chart().first().toMap().value(QStringLiteral("key")) == since; },
+                  [&] { return QStringLiteral("a chart from %1; the page is %2").arg(since, show(usage(world))); });
+    double codex = 0, claude = 0;
+    for (const QVariant& hour : chart()) {
+      const QVariantList cost = hour.toMap().value(QStringLiteral("costUsd")).toList();
+      codex += cost.value(0).toDouble();
+      claude += cost.value(1).toDouble();
+    }
+    expect(codex > 0 && claude > 0, QStringLiteral("both providers on the chart; the page is %1").arg(show(usage(world))));
+  });
+  // 1 AM comes twice there on 1 November 2026; it is half past three, after both.
+  step(QStringLiteral("the user is in %1 on the night its clocks fall back").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QTimeZone zone(c[0].toUtf8());
+    expect(zone.isValid(), QStringLiteral("the zone %1 to be known").arg(c[0]));
+    world.native().controller<UsageController>()->setZone([zone] { return zone; });
+    world.setTime(QDateTime(QDate(2026, 11, 1), QTime(8, 30), QTimeZone::UTC));
+  });
+  step(QStringLiteral("the chart tells the two hours labelled 1 AM apart"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return at(usage(world), QStringLiteral("summary.chart")).toList().size() == 24; },
+                  [&] { return QStringLiteral("a chart of 24 hours; the page is %1").arg(show(usage(world))); });
+    QStringList labels, headings;
+    for (const QVariant& value : at(usage(world), QStringLiteral("summary.chart")).toList()) {
+      const QVariantMap hour = value.toMap();
+      if (!hour.value(QStringLiteral("label")).toString().startsWith(QLatin1String("1 AM"))) continue;
+      labels.append(hour.value(QStringLiteral("label")).toString());
+      headings.append(hour.value(QStringLiteral("heading")).toString());
+    }
+    expect(labels.size() == 2 && labels[0] != labels[1], QStringLiteral("two different 1 AM labels; they are %1").arg(labels.join(QStringLiteral(", "))));
+    expect(headings.size() == 2 && headings[0] != headings[1], QStringLiteral("two different 1 AM headings; they are %1").arg(headings.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the user hovers a day"), [](World& world, const Captures&, const Table&) {
+    fake(world).hoveredDay = world.now().toLocalTime().date().toString(Qt::ISODate);
+  });
+  step(QStringLiteral("that day's cost for each provider is read out"), [](World& world, const Captures&, const Table&) {
+    for (const QVariant& value : at(usage(world), QStringLiteral("summary.chart")).toList()) {
+      const QVariantMap day = value.toMap();
+      if (day.value(QStringLiteral("key")) != fake(world).hoveredDay) continue;
+      // Codex first, as the page lists them; each history spent 1.5 that day.
+      expect(day.value(QStringLiteral("costUsd")).toList() == QVariantList{1.5, 1.5},
+             QStringLiteral("Codex and Claude to have spent 1.5 each on %1; the day is %2").arg(fake(world).hoveredDay, show(day)));
+      return;
+    }
+    expect(false, QStringLiteral("the chart to have %1; the page is %2").arg(fake(world).hoveredDay, show(usage(world))));
+  });
   step(QStringLiteral("%1 is still scanning and %1 has finished").arg(q), [](World& world, const Captures& c, const Table&) {
-    link(world, c[0], QStringLiteral("grok"));
-    link(world, c[1], QStringLiteral("claude"));
+    join(world, c[0], QStringLiteral("grok"));
+    join(world, c[1], QStringLiteral("claude"));
     fake(world).scanning.insert(c[0]);
   });
   step(QStringLiteral("%1 is offline").arg(q), [](World& world, const Captures& c, const Table&) {
-    link(world, c[0], QStringLiteral("claude"));
-    world.mc.setLinkProblem(c[0], QStringLiteral("unreachable"));
+    join(world, c[0], QStringLiteral("claude"));
+    world.mc.setOnline(c[0], false);
   });
   step(QStringLiteral("%1 runs an older server version").arg(q), [](World& world, const Captures& c, const Table&) {
-    link(world, c[0], QStringLiteral("claude"));
+    join(world, c[0], QStringLiteral("claude"));
     fake(world).versions.insert(c[0], 3);
   });
   step(QStringLiteral("the user views usage for all environments"), [](World& world, const Captures&, const Table&) {
@@ -716,7 +802,7 @@ const Steps steps([] {
         QStringLiteral("Studio"),
         QJsonObject{{QStringLiteral("providers"),
                      QJsonArray{codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"), limits(60, 1))}}});
-    world.mc.link(QStringLiteral("Studio"));
+    world.mc.join(QStringLiteral("Studio"));
     // The hub's read is the oldest, the other environment's the freshest.
     QJsonObject account = hubAccount(world, QStringLiteral("sam@example.com"), false);
     QJsonObject read = account.value(QLatin1String("usageLimits")).toObject();

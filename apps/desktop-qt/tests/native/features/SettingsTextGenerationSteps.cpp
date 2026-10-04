@@ -50,8 +50,7 @@ const Steps steps([] {
     FakeConfig& fake = fakeConfig(world.mc);
     fake.elsewhere.insert(kOther, {{QStringLiteral("providers"), QJsonArray{provider({QStringLiteral("Sonnet")})}}});
     documentOf(world.mc, kOther).settings.insert(kSetting, selection(QStringLiteral("sonnet")));
-    world.mc.linkLabels.insert(kOther, kOther);
-    world.mc.link(kOther);
+    world.mc.join(kOther);
     world.waitFor([&] { return scope(world)->targets().size() == 2 && scope(world)->settings(kOther).has_value() && row(world).value(QStringLiteral("models")).toList().size() == 2; },
                   [&] { return describe(world); });
   });

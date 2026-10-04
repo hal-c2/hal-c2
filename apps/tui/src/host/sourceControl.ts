@@ -2,7 +2,7 @@ import type { GitStackedAction } from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
 import type { Store, StoreState } from "../store.ts";
-import type { TuiMenuSpec } from "./composerState.ts";
+import type { PickRequest } from "./composerState.ts";
 import { buildTuiGitState, clampIndex, planGitRun, type TuiGitState } from "./gitState.ts";
 import type { TuiMode } from "./layoutState.ts";
 
@@ -30,7 +30,7 @@ export function createSourceControl(deps: {
   /** Open the source-control panel with the keys on it. */
   readonly focusPanel: () => void;
   /** Ask the user to choose (the picker). */
-  readonly menu: (spec: TuiMenuSpec) => void;
+  readonly menu: (spec: PickRequest) => void;
   /** Put text on the system clipboard; false when the terminal cannot (OSC 52). */
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
 }) {

@@ -52,14 +52,6 @@ public:
     // "Run on" another machine's checkout; empty keeps the draft's own.
     QString environmentId;
     QString projectId;
-    // The user picked the machine with Run on: load balancing leaves it there.
-    bool manual = false;
-    // "Auto balance": the machine is picked for the thread, the one with the
-    // most room among those with a checkout (LoadBalancingController, which
-    // also puts a new draft on it while load balancing is on). `balanced`
-    // once the machines answered and one was picked.
-    bool automatic = false;
-    bool balanced = false;
   };
   // Where the route's thread is and what its terminals start in.
   struct Place {
@@ -87,10 +79,9 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   const std::optional<Place>& place() const { return m_place; }
-  // The route's checkout status; none while unknown or not followed (a linked
-  // environment's, whose `vcs` the MC does not route).
+  // The route's checkout status; none while unknown or not followed.
   const std::optional<Git>& git() const { return m_git; }
-  // Why the checkout's status could not be followed (a link that is down).
+  // Why the checkout's status could not be followed (a machine that is unreachable).
   const QString& gitError() const { return m_gitError; }
   // Asks the MC to read the checkout's status again.
   void refreshGit();
@@ -103,26 +94,24 @@ public:
   // Where a draft's first message starts its thread: the environment and
   // project it runs in, and the MC's `workspaceStrategy` for
   // `orchestration.launchThread` ({type: "root" | "existing_worktree" |
-  // "worktree", ...}), or `problem` when it cannot start yet.
+  // "worktree", ...}), or `problem` when it cannot start yet. `tied` when the
+  // user chose where it runs (a machine, a branch or a worktree), so it is
+  // not placed on another machine (ComposerController::place).
   struct Launch {
     QString environmentId;
     QString projectId;
     QJsonObject strategy;
     QString problem;
+    bool tied = false;
   };
   Launch launch(const QString& draftId) const;
   // The draft is gone (sent or discarded).
-  void forgetDraft(const QString& draftId) {
-    m_checkouts.remove(draftId);
-  }
-  // The machines a draft may run on: [{environmentId, key (<environment>:<project>), label,
-  // checkout (it has a checkout of the draft's project)}], Auto balance first when offered.
-  QVariantList environmentChoices() const;
+  void forgetDraft(const QString& draftId) { m_checkouts.remove(draftId); }
   // Resolves the route again (a draft moved, say).
   void refresh();
   // The ServerConfig of the route's environment: the shell's own
-  // (SettingsController::config()), or the one watched on the linked
-  // environment the route is on (empty until it arrives).
+  // (SettingsController::config()), or the one watched on the other machine
+  // the route is on (empty until it arrives).
   QJsonObject environmentConfig() const;
   // Opens `path` on the route's environment in `editorId` (the preferred one
   // when empty), or shows it in the file manager (`reveal`). False when the
@@ -138,8 +127,6 @@ signals:
   void configChanged();
 
 private:
-  // What the picker's automatic entry reads for the route's draft.
-  QString automaticLabel() const;
   std::optional<Place> resolve() const;
   void follow(const QString& cwd);
   void watchConfig(const QString& environmentId);
@@ -158,6 +145,7 @@ private:
   QString currentBranch() const;
   QJsonArray editors() const;
   QString preferredEditor(const QJsonArray& editors) const;
+  QVariantList environmentChoices() const;
 
   void rename(const QString& title);
   void openInEditor(const QString& editorId);

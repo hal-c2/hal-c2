@@ -104,9 +104,10 @@ void AlertController::setFocused(bool focused) {
   }
 }
 
-bool AlertController::openThread(const QString& key) {
-  // A thread that moved since is opened where it lives now (NavigationController).
-  if (!hasSystemNotifications(m_mode) || (!m_store->thread(key) && !m_store->movedTo(key))) return false;
+bool AlertController::openThread(const QString& notified) {
+  // A notification from before the thread moved opens it where it lives now.
+  const QString key = m_store->located(notified);
+  if (!hasSystemNotifications(m_mode) || !m_store->thread(key)) return false;
   // The window the user last acted in shows it, and comes to the front.
   NativeWindow* window = NativeShell::of(this);
   auto* navigation = window->controller<NavigationController>();

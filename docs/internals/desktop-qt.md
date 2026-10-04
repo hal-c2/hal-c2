@@ -45,14 +45,11 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   opens one protocol-3 socket (`McClient`) and folds the `shell` snapshot and
   row deltas (`ShellStore`, projects and threads). The controllers start on
   the first snapshot (`NativeShell::isActive`, `ready`); nothing is sent to the
-  MC before it. Environments outside the MC's cluster are reached
-  through the MC's links (`ConnectionsController`). The shell subscribes
-  with `{"type":"shell","links":true}`, and `ShellStore` keeps each linked
-  MC's rows beside the cluster's under a key of link and MC (a linked
-  environment's MC names can collide with the cluster's), so everything
-  that reads rows lists linked threads without special casing. A link that
-  leaves `shell.links` takes its rows; one that drops keeps them, its MCs
-  offline, and the sidebar rows and header say `offline`. The hello frame names the environment the MC
+  MC before it. Every environment the shell sees is the MC's own or a
+  member of its cluster: `ShellStore` keeps each MC's rows by MC, and a
+  member that goes offline keeps them, so the sidebar rows and header say
+  `offline`. Another machine is added by clustering (`cluster.join`), never
+  by a connection of the shell's own. The hello frame names the environment the MC
   serves, which is where the shell sends calls about the MC itself (its
   cluster). The scenarios are `features/desktop/native-*.feature` and the
   `@desktop` and `@shared` ones in the files `tests/native/tst_Features.cpp`
@@ -253,8 +250,8 @@ path). If `shell.qml` fails to load, the default shell takes over with
 
 ### Local extensions
 
-Extensions are trusted QML components instantiated by `shell.qml`, not a plugin
-registry or a sandbox. `DefaultShell` exposes `sidebar`, `composer`, `workspace`,
+Extensions are trusted QML components instantiated by `shell.qml`, with no
+sandbox. `DefaultShell` exposes `sidebar`, `composer`, `workspace`,
 `centreView`, `terminalDrawer`, and `rightPanel` so extensions do not need to copy
 the layout. Removing a component removes its controls and signal subscriptions.
 `DefaultShell.toolbar` accepts a component above the timeline. Give it an
@@ -310,6 +307,37 @@ that entry's conversation history, including archived threads, and its
 drafts; it leaves files on disk. This is separate from Trash, not a safe
 workaround for renaming or moving a registered project root.
 
+### UI plugins
+
+A plugin is a QML file in `<config dir>/plugins/` whose root is a `Plugin`
+holding `Contribution`s, each naming a slot. The bricks place `PluginSlot`s:
+`sidebar.footer` (`Sidebar`), `composer.actions` (`Composer`) and `statusbar`
+(`DefaultShell`), the names the terminal client uses. A plugin is as trusted
+as a rice: it runs in the shell's engine with the shell's access.
+
+- **Two halves.** `PluginController` (native, shared by every window) owns
+  the files: which exist, which are turned off, where a downloaded one came
+  from (`plugins.json`, the terminal client's format), and it publishes each
+  file's text in `plugins.files`. `PluginRegistry`, a QML singleton and so one
+  per window's engine, instantiates that text and answers with
+  `plugins.report`. The controller cannot make QML objects for an engine it
+  does not own, and QML cannot read files, hence the split.
+- **`import OpenTUI` is rewritten.** The terminal client's plugin files
+  import its runtime's module. The registry replaces that import with
+  `QtQuick` and `HalC2.Bricks` before `Qt.createQmlObject`, so one file loads
+  on both as long as it keeps to what both have (`Text`, `Row`, `Column`,
+  `Rectangle`, `Timer`). The terminal client's `data` context property cannot
+  exist here (an `Item` has a `data` property of its own); a contribution
+  declares `property var slotData` to be given the slot's data.
+- **A report must not answer inside the change that caused it.** The report
+  changes `plugins`, which the registry's `wanted` binding reads; it is sent
+  with `Qt.callLater` and only when it differs from the last one.
+- **The config directory is watched twice.** `ShellRuntime` reloads the
+  whole shell on any QML change under the config directory, plugin files
+  included, and the controller re-reads the saved file. The registry outlives
+  the reload (same engine), so a file that no longer loads leaves the version
+  already running.
+
 ### Independent views and windows
 
 `window.new` (the palette's "New window", or `Shell.dispatch("window.new",
@@ -352,7 +380,7 @@ allowing launch-profile-specific window rules.
 ### Notification delivery
 
 `AlertController` decides when a thread alerts, from the shell's own rows
-(cluster and linked environments alike), as the web's
+(every machine of the cluster), as the web's
 `ThreadNotificationCoordinator` does. It compares each thread with what it saw
 last, so the snapshot after connecting, or reconnecting, is a baseline rather
 than a burst of old completions. This device's `notificationMode` and
@@ -431,8 +459,8 @@ hosting provider's repository, asked for in the palette's ask mode, then a
 destination browsed with the repository's folder name pinned. Both browse
 from the environment's `addProjectBaseDirectory` setting, else `~/`. The MC
 adds the project at once and clones in the background; each clone an online
-environment reports on its `projectClones` shape (by environment, so a linked
-one's come through the link) is one toast, updated in place, whose Cancel and
+environment reports on its `projectClones` shape (by environment, so another
+machine's are followed too) is one toast, updated in place, whose Cancel and
 Retry keep it open. A path does nothing when the MC is not on this
 machine, whose folders it cannot reach. `project.remove
 {projectKey}` publishes `projectRemoval {projectKey, title, workspaceRoot,
@@ -495,12 +523,18 @@ publishes the route thread's pending state as `turn` (see
 `ComposerController.h`), which the `Composer` brick stacks above its prompt
 (`TurnRequests`), so a shell that hosts the composer needs nothing more to answer them. A new thread's first send launches it
 (`orchestration.launchThread` with the draft's checkout, model and modes) and
-the window replaces the draft with the thread; a background send leaves the
+the window replaces the draft with the thread. In a cluster the launch first
+asks the connected MC where the thread starts (`hal-c2.placeThread`, see
+`ComposerController::place`) and goes to the machine and project it answers:
+the MC holds the load-balancing rules, so the shell has none. A draft tied to
+its machine (a "Run on" pick, a picked branch or worktree) is not asked about,
+and the user's pick stands when the MC fails or does not answer in time, so a
+send is never lost to placement. A background send leaves the
 draft for another prompt and toasts a way to open the thread, or to restore
 the prompt if the launch fails.
 
 The model catalogue is the `providers` of the route environment's config
-(`WorkspaceController::environmentConfig`), so a linked thread lists its own
+(`WorkspaceController::environmentConfig`), so a thread on another machine lists that
 machine's models, gated on the environment being online rather than local.
 It is its own key, `modelPicker`, because `composer` republishes on every
 keystroke and an OpenCode catalogue runs to dozens of models. It holds the
@@ -579,7 +613,11 @@ host a project reads, as the web dialog does. Offline its rows stay as last
 synced and nothing is sent. The Previews tab (`PreviewsPanel` over
 `ThreadPreviews`) lists the thread's browser tabs from `preview.list` and the
 `preview` shape, subscribed only while it shows, and opens each in the user's
-browser. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
+browser. The add menu's "Browser tab" (`rightPanel.add {kind: "browser"}`) is
+`preview.open` with no address: an empty tab the Previews tab fills from the
+MC's `localServers` shape (the MC's machine's servers, never this one's), the
+project scripts' `previewUrl`s and this device's last ten pages
+(`previewRecentPages`), with `preview.navigate`. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
 in `RightPanelController::nativeKinds`.
 
 The desktop embeds no browser. QtWebView is WebEngine underneath on Linux,
@@ -641,11 +679,11 @@ draft's checkout (mode, start from origin, branch, worktree, the machine it
 runs on) is kept by draft id, set with `workspace.envMode.set`,
 `.startFromOrigin.set`, `.environment.set` and the branch picker. Which thread a draft is, `NativeShell` asks
 `DraftController` (`setDraftResolver`). The `vcs` shape names the thread's
-environment, so a linked thread's git status comes through its link; while the
-link is down the subscription fails at once with the link's message
+environment, so the MC routes it to the cluster member with the checkout; while
+that member is offline the subscription fails at once with the MC's reason
 (`gitError`), and it is followed again when the environment comes back.
-`config` names the environment too, so another machine's editors, cluster or
-linked, are watched while it is online.
+`config` names the environment too, so another machine's editors are watched
+while it is online.
 
 The terminal drawer is native: `TerminalDrawer` draws each of the thread's
 terminals with [qml-ghostty](https://github.com/hal-c2/qml-ghostty)'s
@@ -656,11 +694,8 @@ project root, worktree and scripts from `WorkspaceController::place()`, and
 the header's run pill (`workspace.runScript`, handled by the workspace) types
 into a drawer terminal it launched itself. Its shapes name the
 environment, not an MC, so the MC routes them to the cluster member that serves
-it or through a link (`HalC2.Links`) to an environment outside the cluster; the
-drawer is available wherever the header is, cluster and linked environments
-alike (`features/terminal/drawer.feature`).
-Environments outside the cluster are paired natively, as MC links (see
-`connections` below).
+it; the drawer is available wherever the header is
+(`features/terminal/drawer.feature`).
 
 - **Launch context.** Every attach and open sends the thread's cwd (worktree,
   else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables as the
@@ -675,7 +710,26 @@ Environments outside the cluster are paired natively, as MC links (see
   coalesce into the next one, so the shell sees the user's order.
 - **Hidden is not detached.** Once opened, the drawer stays attached while
   hidden, like the web's drawer, so output keeps arriving and switching
-  back costs nothing.
+  back costs nothing. Leaving a thread parks its sessions, still attached,
+  for the last ten threads left; returning reuses them instead of attaching
+  again.
+- **Restored state waits for the list.** The drawer's height and each
+  thread's open flag and active terminal are kept in `shell-terminals.json`
+  (state directory). After a restart they apply only once the MC's
+  `terminals` snapshot says which terminals still exist, so the drawer never
+  opens on a terminal that is gone.
+- **A close asks, an exit does not.** Every close the user makes
+  (`terminal.close`, a terminal tab of the right panel) goes through one
+  `MenuController` question naming each terminal; a shell that exits on its
+  own takes its terminal with it unasked. When `terminal.close` fails the
+  shell is sent `exit` instead, as the web does.
+- **Links are found from the text.** qml-ghostty exposes no cell contents, so
+  `TerminalSplits` maps a click to a character of `Terminal.text()`
+  (`js/terminalLinks.js`, the patterns of `packages/shared/terminalLinks.ts`)
+  by counting a row per `columns` characters. Wide characters above the click
+  shift that count; the fix is a link API in qml-ghostty, not more arithmetic
+  here. Web addresses open in the system browser whatever `browserLinkTarget`
+  says, since the desktop draws no pages.
 - **Groups.** Terminals are laid out in groups, as the web's terminal grid: a
   terminal never split is a group of its own, `terminal.split` (side by side)
   and `terminal.splitVertical` (stacked) add one after the focused terminal,
@@ -699,12 +753,14 @@ by a `link` row of its parent, and keeps the parent marked
 
 Search is the shell's too. `settingsPages.searchRows` matches sections by
 label and keywords, and a section's settings (its `settingsRows.js` rows and
-any `settings` entries) by title and description; every word of the query
+any `settings` entries, each left out while a state key it `requires` is
+missing) by title and description; every word of the query
 must match, and a result names the setting's `targetId`. Opening one is
 `settings.openResult {to, targetId}`: `NavigationController` opens the
 section and bumps `route.targetSeq` with `route.target` set, and
 `SettingsPage` scrolls the brick's child of that objectName to the top on
-each bump, so opening the same result twice scrolls back to it.
+each bump, so opening the same result twice scrolls back to it. A folded
+group that is a target opens itself on the same bump (`LoadBalancingGroup`).
 
 General and Appearance are rows over `Settings` (`js/settingsRows.js`: a key,
 a kind and the web's wording). Each key's store and default are
@@ -719,21 +775,20 @@ documents the shape and actions:
 
 - **Cluster** (`ClusterController`, `cluster`) calls the MC's `cluster.*`
   RPCs.
-- **Connections** (`ConnectionsController`, `connections`). Other
-  environments are the MC's links from the `shell` shape; adding one is
-  `hal-c2.linkEnvironment` with a pairing link, or a host and code (a host
-  without a scheme tries HTTPS, then HTTP), and the MC has no rename for a
-  link. While open it follows the `authAccess` shape and calls the `hal-c2.*`
-  access RPCs, which need `access:read`/`access:write`, so a session paired
-  with standard scopes sees one explanation in place of the list. A created
-  link's secret lives only in `created` until the section closes. A link
-  needs a direct origin and a bearer token: an environment reached only
-  through the relay (DPoP) cannot be linked yet.
+- **Connections** (`ConnectionsController`, `connections`) is who may reach
+  this machine. While open it follows the `authAccess` shape and calls the
+  `hal-c2.*` access RPCs, which need `access:read`/`access:write`, so a
+  session paired with standard scopes sees one explanation in place of the
+  list. A created pairing link's secret lives only in `created` until the
+  section closes. Other machines are the Cluster section's, which the page
+  leads to. With more than one machine the page also has the load-balancing
+  group (`LoadBalancingController`, `loadBalancing`): its switch and each
+  machine's preference are in the connected MC's settings document, because
+  that MC is the one that places new threads.
 - **Providers** (`ProviderSettingsController`, `providerSettings`) shows one
   environment at a time: its `config` shape brings the providers, and each
   provider that signs in from HAL-C2 has its `providerAuth` shape followed.
-  That shape is MC-addressed, so signing in works only on environments a
-  cluster MC serves. Turning a provider off is a settings edit on that
+  That shape is MC-addressed, to the cluster member serving the environment. Turning a provider off is a settings edit on that
   environment, read back and retried on `StaleSettings` like the shell's own
   settings. Instances, custom models and a registry agent's sessions and model
   providers are edited through the same model; the ACP Registry search and a
@@ -832,7 +887,7 @@ resolves as `theme`. The choice lives in this device's preferences: `appearance`
 (`system`, `light`, `dark`), `theme`, `themeHalves` (a theme per appearance)
 and `customThemes`. An id is looked up among the built-ins first, then this
 device's saved themes, then the themes the shell's own MC publishes. Themes
-from linked environments are never offered. The lookup mirrors the web's
+from other machines are never offered. The lookup mirrors the web's
 `getThemeDefinition`: missing roles come from the T3 Chat palette, and a
 theme with one appearance takes that half only. An id that is no longer found
 draws the standard look, published as `hal-c2`. The built-ins are `src/native/themes.json`, generated from
@@ -927,8 +982,8 @@ The command palette (`CommandPaletteController`, the `PaletteModel` singleton,
 drawn by `CommandPalette`) lists those rows as its actions, so an action
 reaches the palette by being registered there, never by the palette naming
 it; only the order of the root list (`kRootCommands`, the web's hand-picked
-actions) is its own. It adds the shell's threads by key (linked environments
-and cluster threads alike), the sidebar's projects, the settings sections
+actions) is its own. It adds the shell's threads by key (every machine of
+the cluster), the sidebar's projects, the settings sections
 `js/settingsPages.js` hands it (without those whose `requires` is missing)
 and, from two characters, threads whose messages match. Go to file
 (`filePicker.toggle`) and project search (`projectSearch.toggle`) are modes of
@@ -1040,10 +1095,11 @@ A stacked action is one `gitAction` subscription; its stage and last hook line
 update one loading toast in place, and the MC's result toast (with its
 next-step CTA) replaces it. The subscription is dropped, not resent, when the
 connection drops, since the MC would run the action twice. `gitAction`
-names the environment, so a linked thread's actions run through its link. While
-an environment is offline the brick publishes `available: false`, with the
-link's message (`EnvironmentUnreachableError`) as the `unavailableReason` it
-shows; a refused action or call carries the same message in its error toast.
+names the environment, so a thread's actions run on the machine with its
+checkout. While an environment is offline the brick publishes
+`available: false`, with the MC's reason for the failed `vcs` subscription as
+the `unavailableReason` it shows; a refused action or call carries its reason
+in its error toast.
 
 ### Composer layout
 
@@ -1100,7 +1156,7 @@ actions fade in on hover but keep their place while hidden, so hovering never
 re-lays out the list; `Timeline.alwaysShowMeta` shows them where there is no
 hover (on by default on Android and iOS). A thread is
 addressed by its environment (`ThreadStore::streamShape`), which the MC
-routes to a cluster member or through a link; a stream that errors waits for
+routes to the cluster member serving it; a stream that errors waits for
 the shell to list the thread's MC online again. A part-0 snapshot after a reconnect or `resync` replaces the
 entities but not the rows: row ids are stable, streamed text only emits
 `dataChanged` for its row, and structural changes are applied as inserts,

@@ -2,7 +2,7 @@
 // (StorageSettingsController, SettingsScopeController): the @desktop and
 // @shared scenarios of features/settings/storage.feature and the scope ones of
 // features/settings/scopes-and-inheritance.feature it delivers. Other
-// machines are linked environments, each with its own settings document.
+// machines are members of the cluster, each with its own settings document.
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -40,13 +40,12 @@ void supportHere(World& world, const QJsonObject& capabilities = kSupported) {
   fake.config = withCapabilities(fake.config, capabilities);
 }
 
-// Another machine the MC is linked to, named `name`, with its own settings.
-void linkMachine(World& world, const QString& name, const QJsonObject& capabilities = kSupported) {
+// Another machine of the cluster, named `name`, with its own settings.
+void joinMachine(World& world, const QString& name, const QJsonObject& capabilities = kSupported) {
   FakeConfig& fake = fakeConfig(world.mc);
   fake.elsewhere.insert(name, withCapabilities(fake.elsewhere.value(name), capabilities));
   documentOf(world.mc, name);
-  world.mc.linkLabels.insert(name, name);
-  world.mc.link(name);
+  world.mc.join(name);
 }
 
 void setCleanup(World& world, const QString& environment, const QString& key, const QJsonValue& value) {
@@ -134,7 +133,7 @@ const Steps steps([] {
                                                  {QStringLiteral("scripts"), QJsonArray()}});
   });
   step(QStringLiteral("%1 deletes inactive worktrees and %1 does not").arg(q), [](World& world, const Captures& c, const Table&) {
-    for (const QString& name : {c[0], c[1]}) linkMachine(world, name);
+    for (const QString& name : {c[0], c[1]}) joinMachine(world, name);
     setCleanup(world, c[0], QStringLiteral("worktreeAfterDays"), 8);
     setCleanup(world, c[1], QStringLiteral("worktreeAfterDays"), QJsonValue::Null);
   });
@@ -166,11 +165,11 @@ const Steps steps([] {
   // scopes-and-inheritance.feature, through the Storage section.
   step(QStringLiteral("the user has environments %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     supportHere(world);
-    for (const QString& name : {c[0], c[1]}) linkMachine(world, name);
+    for (const QString& name : {c[0], c[1]}) joinMachine(world, name);
   });
   step(QStringLiteral("the project %1 has a checkout on each environment").arg(q), [](World& world, const Captures& c, const Table&) {
-    for (const QString& environment : world.mc.linked) {
-      world.mc.sendLinkRow(environment, c[0] + QLatin1Char('-') + environment,
+    for (const QString& environment : world.mc.members) {
+      world.mc.sendPeerRow(environment, c[0] + QLatin1Char('-') + environment,
                              QJsonObject{{QStringLiteral("id"), c[0] + QLatin1Char('-') + environment},
                                          {QStringLiteral("title"), c[0]},
                                          {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[0]},
@@ -247,10 +246,10 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("%1 to be listed offline; the scope is %2").arg(c[0], show(scope(world))); });
   });
   step(QStringLiteral("the user is editing settings across all environments"), [](World& world, const Captures&, const Table&) {
-    // The ledger's two other machines, when the feature has linked none.
-    if (world.mc.linked.isEmpty()) {
+    // The ledger's two other machines, when the feature has named none.
+    if (world.mc.members.isEmpty()) {
       supportHere(world);
-      for (const QString& name : {QStringLiteral("Laptop"), QStringLiteral("Build box")}) linkMachine(world, name);
+      for (const QString& name : {QStringLiteral("Laptop"), QStringLiteral("Build box")}) joinMachine(world, name);
     }
     openStorage(world);
     chooseEnvironment(world, {});

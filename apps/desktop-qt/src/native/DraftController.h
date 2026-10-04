@@ -24,7 +24,7 @@ class ShellStore;
 // `thread.new {projectKey?}` opens the project's draft (the given logical
 // project, else the scoped one, else the one the window shows, else the first),
 // `draft.menu {draftId, x, y}` offers to delete it and `draft.delete {draftId}`
-// does.
+// does. `draft.project {x, y}` offers the projects the open draft can move to.
 //
 // The draft's text is `text`: ComposerController saves the composer's edits
 // on a draft route here, and reopens the draft with it.
@@ -79,12 +79,11 @@ public:
   // The same for the draft `id`, whose thread may be on another environment
   // ("Run on"). Takes its own copy of the id: the draft it may name is erased.
   void promote(QString id, const QString& threadKey);
-  // Changes the draft's project to the logical project `projectKey`
-  // (`draft.project {draftId, projectKey}`, the palette's "Move draft to..."):
-  // on the draft's own environment when the project has a folder there, else
-  // on an environment that has it. What was written stays with the draft. A
-  // project that already has a draft is opened instead.
-  void moveTo(const QString& id, const QString& projectKey);
+  // Moves the draft `from` to the logical project `projectKey` (the opening
+  // line's menu, the palette's "Move draft to..."): opens that project's
+  // draft and brings what was typed along, unless that draft has text of its
+  // own. Attachments stay with the draft they were added to.
+  void moveTo(const QString& from, const QString& projectKey);
   void setText(const QString& id, const QString& text);
   // Gives the draft a new thread id and clears its text: its old thread was
   // started in the background and the draft stays for another prompt.
@@ -104,6 +103,7 @@ private:
   const sidebar::ProjectGroup* defaultGroup() const;
   void present();
   void openMenu(const QString& id, double x, double y);
+  void openProjects(double x, double y);
   // Drops drafts whose thread now exists or whose project is gone.
   void reconcile();
   bool save() const;

@@ -15,7 +15,7 @@ import {
 } from "../components/ContextMenu.logic.ts";
 import { clip } from "../format.ts";
 import type { Row } from "../components/Sidebar.logic.ts";
-import type { TuiThreadShell } from "../orchestrationV2Adapter.ts";
+import { projectLabel, type TuiThreadShell } from "../orchestrationV2Adapter.ts";
 import type { Store } from "../store.ts";
 import { THEME } from "../theme.ts";
 import { buildThreadContextMenuItems, type ThreadContextMenuAction } from "../threadMenu.logic.ts";
@@ -91,13 +91,13 @@ export interface ThreadActionsContext {
   readonly offline: () => boolean;
   /** The clock (ISO), for what a thread may do now and the snooze choices. */
   readonly now: () => string;
-  /** Menu entries other controllers add for a thread (moving it), and what choosing one does. */
-  readonly extraMenuItems?: (thread: TuiThreadShell) => ReadonlyArray<ContextMenuItem>;
-  readonly runExtraMenuItem?: (thread: TuiThreadShell, id: string) => boolean;
+  /** Moving to another machine of the cluster (moveState.ts); offered only when there is one. */
+  readonly canMove: () => boolean;
+  readonly move: (thread: TuiThreadShell) => void;
 }
 
-/** A second menu where the first was (snooze times, machines): its items and what choosing does. */
-export interface ThreadSubmenu {
+/** A second menu where the first was (snooze times): its items and what choosing does. */
+interface ThreadSubmenu {
   readonly items: ReadonlyArray<ContextMenuItem>;
   readonly choose: (id: string) => void;
 }
@@ -112,7 +112,7 @@ const errorText = (error: unknown): string =>
 
 /**
  * Thread lifecycle from the sidebar and the palette: the row context menu,
- * rename and delete prompts, settle/archive/stop and copy, plus the palette
+ * rename and delete prompts, settle/archive/stop, copy and move, plus the palette
  * entries for them. `dispatch` returns false for actions it does not own.
  */
 export function createThreadActions(ctx: ThreadActionsContext) {
@@ -233,7 +233,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       settlementSupported: ctx.settlementSupported(),
       hasWorkspacePath: workspacePath(thread) !== null,
       canSnooze: canSnooze(thread, { now: ctx.now() }),
-      extra: ctx.extraMenuItems?.(thread) ?? [],
+      canMove: ctx.canMove(),
     });
     menuAt = { x, y, threadId: thread.id };
     showMenu(thread, items, menuAt, null);
@@ -322,6 +322,8 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         return openSubmenu(thread, snoozeMenu(thread));
       case "unsnooze":
         return report(client.unsnoozeThread(thread.id as never), "Woken.", "Failed to wake thread");
+      case "move":
+        return ctx.move(thread);
       case "archive":
         return report(client.archiveThread(thread.id as never), "Archived.", "Archive failed");
       case "delete":
@@ -398,6 +400,15 @@ export function createThreadActions(ctx: ThreadActionsContext) {
               payload,
             },
       );
+      if (ctx.canMove()) {
+        list.push({
+          id: "action:move-thread",
+          title: "Move thread to another machine",
+          keywords: "cluster machine transfer",
+          action: "thread.move",
+          payload,
+        });
+      }
       list.push({ id: "delete", title: "Delete thread", action: "thread.delete", payload });
       list.push({ id: "stop", title: "Stop session", action: "thread.stop", payload });
     }
@@ -407,7 +418,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       if (project.id === scopeId) continue;
       list.push({
         id: `scope:${project.id}`,
-        title: `Show project ${project.title}`,
+        title: `Show project ${projectLabel(project)}`,
         keywords: "scope filter projects",
         action: "sidebar.scope",
         payload: { projectKey: projectKey(project.id) },
@@ -476,9 +487,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         ctx.setMode(ctx.restingMode());
         if (!item || !thread) return true;
         if (choose) choose(item.id);
-        else if (ctx.runExtraMenuItem?.(thread, item.id) !== true) {
-          runMenuAction(thread, item.id as ThreadContextMenuAction);
-        }
+        else runMenuAction(thread, item.id as ThreadContextMenuAction);
         return true;
       }
       case "thread.rename": {
@@ -531,6 +540,11 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         if (thread) runMenuAction(thread, "unsettle");
         return true;
       }
+      case "thread.move": {
+        const thread = threadFromPayload(payload);
+        if (thread) ctx.move(thread);
+        return true;
+      }
       case "thread.archive": {
         const thread = threadFromPayload(payload);
         if (thread) runMenuAction(thread, "archive");
@@ -568,6 +582,5 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     paletteCommands,
     /** The palette opening over an open menu closes the menu. */
     closeMenu,
-    openSubmenu,
   };
 }

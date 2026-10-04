@@ -46,8 +46,18 @@ defmodule HalC2.Test.Machines do
     opts =
       case mode do
         :cluster ->
+          # A machine that comes back is the MC it was (`HalC2.Cluster.mc_name/1`).
+          name =
+            case context[:machines][label] do
+              %{mc: mc} when is_atom(mc) and mc != nil ->
+                mc |> Atom.to_string() |> String.split("@") |> hd()
+
+              _ ->
+                "hal_c2_#{label}#{System.unique_integer([:positive])}"
+            end
+
           %{
-            name: :"hal_c2_#{label}#{System.unique_integer([:positive])}",
+            name: String.to_atom(name),
             host: ~c"127.0.0.1",
             longnames: true,
             args: args,
@@ -180,6 +190,26 @@ defmodule HalC2.Test.Machines do
   @doc "Threads this MC is receiving in a move (`HalC2.ThreadMove.accept/2`)."
   def incoming_moves do
     dir = Path.join(HalC2.Paths.data_dir(), "incoming-moves")
+    if File.dir?(dir), do: File.ls!(dir), else: []
+  end
+
+  @doc "The sha256 of each file this MC holds for moves that have not finished arriving."
+  def incoming_move_files do
+    for path <- Path.wildcard(Path.join([HalC2.Paths.data_dir(), "incoming-moves", "*", "*"])),
+        do: :crypto.hash(:sha256, File.read!(path))
+  end
+
+  @doc "The git bundles this MC holds for moves that have not finished arriving."
+  def incoming_move_bundles do
+    for path <- Path.wildcard(Path.join([HalC2.Paths.data_dir(), "incoming-moves", "*", "*"])),
+        data = File.read!(path),
+        String.starts_with?(data, "# v"),
+        do: data
+  end
+
+  @doc "The bundles this MC holds that it made for a thread's archive."
+  def archive_bundles do
+    dir = Path.join(HalC2.Paths.cache_dir(), "thread-bundles")
     if File.dir?(dir), do: File.ls!(dir), else: []
   end
 

@@ -139,12 +139,19 @@ invite, and `joining` while the one-line join prompt has the keys (`mode:
 (copies the link), `cluster.join.open`, `cluster.join {link}`,
 `cluster.join.cancel` and `cluster.remove {id}`.
 
-`threadMove.ts` moves a thread to another machine of the cluster (`thread.move
-{key?}`, the thread menu's "Move to another machine…" and the palette, offered
-only while the cluster has other members): `hal-c2.moveDestinations` fills a
-menu of machines, a running thread is offered "stop it and move", and
-`hal-c2.moveThread`'s questions (what stays behind, which project) are asked in
-the same menu before the move is sent again. The MC's message is the status.
+Moving a thread to another machine of the cluster (`moveState.ts`) is offered
+from the thread menu and the palette (`thread.move {key?}`) once the shell
+spans more than one machine. It asks its questions (where to, stop the running
+turn first, what stays behind, which project) in the composer's picker
+(`Composer.pick`); the MC's message is the status.
+
+Load balancing (`loadBalancingState.ts`) is offered once the shell spans more
+than one machine: settings list whether it is on and each machine's
+preference, and the palette runs `loadBalancing.set {enabled}` and
+`loadBalancing.preference {id}` (a picker). Both write the home MC's settings
+document. A new thread's first message asks that MC where to start
+(`placeNewThread` in `../loadBalancing.ts`) unless the draft's branch or
+workspace was chosen by hand.
 
 `threadView.ts` publishes the open thread's keys and handles their actions
 (the timeline wraps at `layout.contentWidth`):
@@ -216,7 +223,7 @@ server, workspace, repository, appearance, context, reach), each a `Feature` wit
 commands and a `dispatch`. They own no brick. A feature talks to the user
 through three things the host hands it (`features/kit.ts`):
 
-- `menu`: a list in the picker (`select`, kind `"menu"`), optionally with a
+- `menu`: a list in the picker (`Composer.pick`; `select`, kind `"choice"`), optionally with a
   search field (`select.query.set`). Choosing closes it, then runs the choice.
 - `ask`: a one-line question in the prompt's place (`ask`, mode `"ask"`;
   `ask.submit {text}`, `ask.cancel`).

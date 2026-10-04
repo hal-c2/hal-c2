@@ -70,20 +70,20 @@ Feature: Preview across MCs and devices
     When the client stops watching
     Then the MC stops sending it tab changes
 
-  @backlog @desktop
+  @desktop
   Scenario: A client drops its old tabs after the MC restarts
     Given the client shows a thread's browser tabs
     When the MC restarts and a tab change arrives with a new run number
     Then the client lists the thread's tabs again
     And it shows only the tabs the restarted MC has
 
-  @backlog @desktop
+  @desktop
   Scenario: A late tab list from before a change is ignored
     Given the client has seen a tab change with a newer change number
     When an older tab list arrives
     Then the client keeps the newer tab state
 
-  @backlog @desktop
+  @desktop
   Scenario: A remote client suggests the MC's dev servers, not its own
     Given the desktop is connected to an MC on another machine
     When the user opens a new browser tab

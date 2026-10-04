@@ -177,6 +177,14 @@ Rectangle {
             }
 
             ShellButton {
+                objectName: "keybindingResetAll"
+                subtle: true
+                text: qsTr("Reset all")
+                enabled: Keybindings.customCount > 0 && !Keybindings.saving
+                onClicked: Keybindings.resetAll()
+            }
+
+            ShellButton {
                 objectName: "keybindingAdd"
                 subtle: true
                 text: qsTr("Add keybinding")

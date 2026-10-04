@@ -168,7 +168,7 @@ Feature: Reattaching to terminals
       When the user opens that terminal in the terminal client
       Then a new shell starts in the thread's folder
 
-    @backlog @desktop
+    @desktop
     Scenario: The web terminal keeps up to 512 KiB of output per terminal
       Given a terminal that has printed more than 512 KiB since the client attached
       Then the client keeps the newest 512 KiB

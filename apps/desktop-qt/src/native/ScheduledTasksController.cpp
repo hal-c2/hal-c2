@@ -1,8 +1,7 @@
 // Settings → Scheduled Tasks, natively (the web's ScheduledTasksSettings):
 // each environment's tasks (HalC2.ScheduledTasks), in the settings scope
 // (SettingsScopeController), and the editor that creates and edits them.
-// A cluster environment's list is followed live (`scheduledTasks` shape);
-// a linked one's is listed when shown and after each change.
+// Each environment's list is followed live (`scheduledTasks` shape).
 //
 // Publishes `scheduledTasks`: {open, canCreate, environments [{id, label, heading (several shown), status:
 // disconnected | loading | error | ready, message, linkMissing, tasks [{id,
@@ -238,31 +237,26 @@ private:
         ++it;
         continue;
       }
-      if (it->subscription >= 0) m_client->unsubscribe(it->subscription);
+      m_client->unsubscribe(it->subscription);
       it = m_listings.erase(it);
     }
     for (const QString& environmentId : wanted) {
       if (m_listings.contains(environmentId)) continue;
       m_listings.insert(environmentId, Listing{});
-      const QString mc = m_store->mcServing(environmentId);
-      if (!mc.isEmpty()) {
-        m_listings[environmentId].subscription = m_client->subscribe(this, 
-            {{QStringLiteral("type"), QStringLiteral("scheduledTasks")}, {QStringLiteral("mc"), mc}},
-            [this, environmentId](const QJsonObject& frame) {
-              auto found = m_listings.find(environmentId);
-              if (found == m_listings.end()) return;
-              if (frame.value(QLatin1String("t")) == QLatin1String("scheduledTasks")) {
-                found->tasks = frame.value(QLatin1String("tasks")).toArray();
-                found->listed = true;
-                found->error.clear();
-              } else if (frame.value(QLatin1String("t")) == QLatin1String("error")) {
-                found->error = frame.value(QLatin1String("reason")).toString();
-              }
-              publish();
-            });
-      } else {
-        list(environmentId);
-      }
+      m_listings[environmentId].subscription = m_client->subscribe(
+          this, {{QStringLiteral("type"), QStringLiteral("scheduledTasks")}, {QStringLiteral("mc"), m_store->mcServing(environmentId)}},
+          [this, environmentId](const QJsonObject& frame) {
+            auto found = m_listings.find(environmentId);
+            if (found == m_listings.end()) return;
+            if (frame.value(QLatin1String("t")) == QLatin1String("scheduledTasks")) {
+              found->tasks = frame.value(QLatin1String("tasks")).toArray();
+              found->listed = true;
+              found->error.clear();
+            } else if (frame.value(QLatin1String("t")) == QLatin1String("error")) {
+              found->error = frame.value(QLatin1String("reason")).toString();
+            }
+            publish();
+          });
     }
     if (m_open) {
       m_tick.start();
@@ -270,24 +264,6 @@ private:
       m_tick.stop();
     }
     publish();
-  }
-
-  void list(const QString& environmentId) {
-    const QPointer<ScheduledTasksController> self(this);
-    m_client->call(this, environmentId, QStringLiteral("scheduledTasks.list"), QJsonObject{},
-                   [self, environmentId](const QJsonValue& result, const std::optional<QString>& error) {
-                     if (!self) return;
-                     auto found = self->m_listings.find(environmentId);
-                     if (found == self->m_listings.end()) return;
-                     if (error) {
-                       found->error = *error;
-                     } else {
-                       found->tasks = result.toObject().value(QLatin1String("tasks")).toArray();
-                       found->listed = true;
-                       found->error.clear();
-                     }
-                     self->publish();
-                   });
   }
 
   // The environment's tasks in the scope.
@@ -507,15 +483,14 @@ private:
     // The reply belongs to this editor; one opened since keeps its draft.
     const int seq = m_editorSeq;
     m_client->call(this, environmentId, QStringLiteral("scheduledTasks.upsert"), input,
-                   [self, environmentId, seq](const QJsonValue&, const std::optional<QString>& error) {
+                   [self, seq](const QJsonValue&, const std::optional<QString>& error) {
                      if (!self) return;
                      const bool current = self->m_editor.open && self->m_editorSeq == seq;
                      if (current) self->m_editor.saving = false;
                      if (error) {
                        self->fail(QStringLiteral("Could not save scheduled task"), *error);
-                     } else {
-                       if (current) self->m_editor = {};
-                       if (self->m_listings.contains(environmentId)) self->list(environmentId);
+                     } else if (current) {
+                       self->m_editor = {};
                      }
                      self->publish();
                    });
@@ -554,11 +529,10 @@ private:
     if (m_busy.contains(busy) || find(environmentId, id).isEmpty()) return;
     m_busy.insert(busy);
     const QPointer<ScheduledTasksController> self(this);
-    m_client->call(this, environmentId, method, payload, [self, environmentId, busy](const QJsonValue&, const std::optional<QString>& error) {
+    m_client->call(this, environmentId, method, payload, [self, busy](const QJsonValue&, const std::optional<QString>& error) {
       if (!self) return;
       self->m_busy.remove(busy);
       if (error) self->fail(QStringLiteral("Could not update scheduled task"), *error);
-      if (self->m_listings.contains(environmentId)) self->list(environmentId);
       self->publish();
     });
   }
@@ -578,7 +552,6 @@ private:
       QVariantList rows;
       if (!scope->online(environmentId) || listing == m_listings.cend()) {
         entry.insert(QStringLiteral("status"), QStringLiteral("disconnected"));
-        // Connections is where a link is repaired.
         entry.insert(QStringLiteral("message"), QStringLiteral("Reconnect %1 to view its scheduled tasks.").arg(label(environmentId)));
       } else if (!listing->error.isEmpty() && !listing->listed) {
         entry.insert(QStringLiteral("status"), QStringLiteral("error"));

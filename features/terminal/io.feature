@@ -188,7 +188,7 @@ Feature: Terminal input and output
 
   Rule: The web terminal offers editing actions
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The user copies, pastes and clears from the terminal's menu
       Given the terminal has a selection
       When the user chooses "<action>" from the terminal's menu
@@ -199,18 +199,18 @@ Feature: Terminal input and output
         | Copy   | the selected text is on the clipboard      |
         | Paste  | the clipboard text is sent to the shell    |
 
-    @backlog @desktop
+    @desktop
     Scenario: Clearing the web terminal asks the shell to redraw
       When the user clears the terminal from the keyboard
       Then the shell receives Ctrl-L and redraws its prompt at the top
 
-    @backlog @desktop
+    @desktop
     Scenario: Closing a terminal whose server session is gone still ends the shell
       Given a terminal whose close request fails
       When the user closes it
       Then the client sends "exit" to the shell instead
 
-    @backlog @desktop
+    @desktop
     Scenario: A terminal that exits on its own closes without asking
       Given the terminal's shell exits after the user types "exit"
       Then the terminal closes without a confirmation

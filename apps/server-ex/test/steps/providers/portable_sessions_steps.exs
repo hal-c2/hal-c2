@@ -1046,8 +1046,13 @@ defmodule HalC2.Steps.Providers.PortableSessions do
             dir = Path.dirname(path("copy", to))
             File.mkdir_p!(dir)
 
-            for {name, data} <- files, path = Path.join(dir, name), not File.exists?(path),
-                do: File.write!(path, String.replace(data, JSON.encode!(from), JSON.encode!(to)))
+            for {name, source} <- files, path = Path.join(dir, name), not File.exists?(path) do
+              source
+              |> File.stream!()
+              |> Stream.map(&String.replace(&1, JSON.encode!(from), JSON.encode!(to)))
+              |> Stream.into(File.stream!(path))
+              |> Stream.run()
+            end
 
             {:ok, Path.rootname(main)}
           end

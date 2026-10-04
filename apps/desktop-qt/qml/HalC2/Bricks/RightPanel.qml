@@ -203,6 +203,7 @@ Rectangle {
                 iconSize: 16
                 iconTint: panel.muted
                 visible: panel.open
+                objectName: "panelAdd"
                 Accessible.name: qsTr("Add panel")
                 onClicked: addMenu.open()
 
@@ -262,6 +263,17 @@ Rectangle {
                         enabled: panel.open && panel.model.canAdd.pullRequest === true
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "pull-request"
+                        })
+                    }
+
+                    // An empty browser tab on the MC, filled from the Previews tab.
+                    ShellMenuItem {
+                        objectName: "panelAddBrowser"
+                        text: qsTr("Browser tab")
+                        iconName: "globe"
+                        enabled: panel.open && panel.model.canAdd.previews === true
+                        onTriggered: Shell.dispatch("rightPanel.add", {
+                            kind: "browser"
                         })
                     }
 

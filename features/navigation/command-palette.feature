@@ -158,8 +158,13 @@ Feature: Command palette
 
       Examples:
         | where                     |
-        | a linked environment      |
         | another MC of the cluster |
+
+      # MCs join only by clustering (connections/links.feature).
+      @dropped
+      Examples:
+        | where                |
+        | a linked environment |
 
     @desktop
     Scenario: Message content search reports while it runs

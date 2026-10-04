@@ -1,25 +1,19 @@
-// The desktop's Connections settings page (ConnectionsController): the
-// environments its MC is linked to, pairing them, and who may reach this
-// machine (features/settings/connections.feature, the desktop scenarios of
-// connections/pairing.feature and connections/links.feature).
+// The desktop's Connections settings page (ConnectionsController): who may
+// reach this machine (features/settings/connections.feature and the desktop
+// scenarios of connections/pairing.feature).
 
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QSet>
-#include <QUrl>
-#include <QUrlQuery>
 
 #include "Harness.h"
 #include "World.h"
 
 namespace {
 
-// Who may reach the MC and the environments it can pair with, as
-// apps/server-ex lib/hal_c2/rpc.ex answers `hal-c2.*` access calls and the
-// `authAccess` shape. Other machines serve plain HTTP only, so an HTTPS
-// pairing link cannot reach them.
+// Who may reach the MC, as apps/server-ex lib/hal_c2/rpc.ex answers `hal-c2.*`
+// access calls and the `authAccess` shape.
 struct FakeAccess {
   bool admin = true;
   bool refuseCreate = false;
@@ -34,15 +28,9 @@ struct FakeAccess {
   }};
   // Unused pairing links' credentials, by link id.
   QHash<QString, QString> credentials;
-  // Machines that answer, by host, with their label; and pairing tokens already used.
-  QHash<QString, QString> hosts;
-  QSet<QString> usedTokens;
   QList<QPair<QString, QJsonObject>> calls;
   int next = 1;
   int revision = 0;
-  // The pairing link the scenario holds, and the environment it last spoke of.
-  QString pairingUrl;
-  QString environment;
 };
 
 FakeAccess& fake(World& world) {
@@ -116,32 +104,6 @@ void answerAccess(FakeMc& mc, const FakeMc::Rpc& rpc) {
       count++;
     }
     mc.reply(rpc, QJsonObject{{QStringLiteral("revokedCount"), count}});
-  } else if (method == QLatin1String("hal-c2.linkEnvironment")) {
-    const QUrl url(rpc.payload.value(QLatin1String("pairingUrl")).toString());
-    const QString token = QUrlQuery(url.fragment()).queryItemValue(QStringLiteral("token"));
-    const QString origin = url.adjusted(QUrl::RemovePath | QUrl::RemoveFragment | QUrl::RemoveQuery).toString();
-    if (url.scheme() != QLatin1String("http") || !access.hosts.contains(url.host())) {
-      mc.refuse(rpc, QStringLiteral("cannot reach %1: connection refused").arg(origin));
-      return;
-    }
-    if (token.isEmpty() || access.usedTokens.contains(token)) {
-      mc.refuse(rpc, QStringLiteral("the pairing link is invalid or expired"));
-      return;
-    }
-    access.usedTokens.insert(token);
-    const QString label = access.hosts.value(url.host());
-    mc.linkLabels.insert(url.host(), label);
-    mc.linkProblems.remove(url.host());
-    mc.link(url.host());
-    mc.reply(rpc, QJsonObject{{QStringLiteral("environmentId"), url.host()}, {QStringLiteral("label"), label}});
-  } else if (method == QLatin1String("hal-c2.unlinkEnvironment")) {
-    const QString id = rpc.payload.value(QLatin1String("environmentId")).toString();
-    if (!mc.linked.contains(id)) {
-      mc.refuse(rpc, QStringLiteral("no link to %1").arg(id));
-      return;
-    }
-    mc.unlink(id);
-    mc.reply(rpc, QJsonValue::Null);
   } else {
     mc.reply(rpc, QJsonValue::Null);
   }
@@ -149,7 +111,7 @@ void answerAccess(FakeMc& mc, const FakeMc::Rpc& rpc) {
 
 const FakeMc::Extension extension([](FakeMc& mc) {
   for (const char* method : {"createPairingLink", "revokePairingLink", "pairingLinks", "clients", "revokeClient",
-                             "revokeOtherClients", "linkEnvironment", "unlinkEnvironment"}) {
+                             "revokeOtherClients"}) {
     mc.onRpc(QStringLiteral("hal-c2.") + QLatin1String(method), [&mc](const FakeMc::Rpc& rpc) { answerAccess(mc, rpc); });
   }
   mc.onShape(QStringLiteral("authAccess"), [&mc](int id, const QJsonObject&) {
@@ -174,13 +136,6 @@ QString hostOf(const QString& label) {
 QVariantMap connections(World& world) {
   world.sync();
   return world.state(QStringLiteral("connections")).toMap();
-}
-
-QVariantMap linkRow(World& world, const QString& label) {
-  for (const QVariant& row : connections(world).value(QStringLiteral("links")).toList()) {
-    if (row.toMap().value(QStringLiteral("label")) == label) return row.toMap();
-  }
-  return {};
 }
 
 QVariantList listed(World& world, const QString& list) {
@@ -211,18 +166,6 @@ void openConnections(World& world) {
   world.sync();
   const QVariant route = world.state(QStringLiteral("route"));
   expect(at(route, QStringLiteral("section")) == QStringLiteral("/settings/connections"), QStringLiteral("the route is %1").arg(show(route)));
-}
-
-// The environment is linked and listed, whatever the scenario did before.
-void ensureListed(World& world, const QString& label) {
-  const QString host = hostOf(label);
-  fake(world).hosts.insert(host, label);
-  fake(world).environment = label;
-  if (!world.mc.linked.contains(host)) {
-    world.mc.linkLabels.insert(host, label);
-    world.mc.link(host);
-  }
-  expect(!linkRow(world, label).isEmpty(), QStringLiteral("the Connections page is %1").arg(show(connections(world))));
 }
 
 void createLink(World& world, const QString& label, const QStringList& scopes) {
@@ -420,124 +363,9 @@ const Steps steps([] {
            QStringLiteral("the Connections page is %1").arg(show(page)));
   });
 
-  // Other environments.
-  step(QStringLiteral("the user adds an environment with a host and pairing code"), [](World& world, const Captures&, const Table&) {
-    fake(world).hosts.insert(QStringLiteral("build-box"), QStringLiteral("Build box"));
-    fake(world).environment = QStringLiteral("Build box");
-    world.bridge().dispatch(QStringLiteral("connections.link"),
-                            QVariantMap{{QStringLiteral("host"), QStringLiteral("build-box:3780")}, {QStringLiteral("code"), QStringLiteral("code-1")}});
-  });
-  // A host typed without a scheme is tried over HTTPS first, so its answer
-  // comes after a second call.
-  const auto settled = [](World& world) {
-    world.waitFor([&world] { return !connections(world).value(QStringLiteral("notice")).isNull(); },
-                  [&world] { return QStringLiteral("a notice on %1").arg(show(connections(world))); });
-  };
-  step(QStringLiteral("the environment is connected and listed"), [settled](World& world, const Captures&, const Table&) {
-    settled(world);
-    const QVariantMap row = linkRow(world, fake(world).environment);
-    expect(row.value(QStringLiteral("online")).toBool() && row.value(QStringLiteral("status")) == QLatin1String("Connected"),
-           QStringLiteral("the Connections page is %1").arg(show(connections(world))));
-  });
-  step(QStringLiteral("the user is told the environment connected"), [](World& world, const Captures&, const Table&) {
-    const QString label = fake(world).environment;
-    expectNotice(world, QStringLiteral("success"), [&label](const QString& text) { return text == label + QStringLiteral(" is linked."); });
-  });
-  step(QStringLiteral("the host does not answer"), [](World& world, const Captures&, const Table&) {
-    fake(world).environment = QStringLiteral("Build box");
-  });
-  step(QStringLiteral("the user adds an environment with that host"), [](World& world, const Captures&, const Table&) {
-    world.bridge().dispatch(QStringLiteral("connections.link"),
-                            QVariantMap{{QStringLiteral("host"), QStringLiteral("build-box:3780")}, {QStringLiteral("code"), QStringLiteral("code-1")}});
-  });
-  step(QStringLiteral("the user is told the backend could not be added"), [settled](World& world, const Captures&, const Table&) {
-    settled(world);
-    expectNotice(world, QStringLiteral("error"), [](const QString& text) { return text.startsWith(QLatin1String("Could not add the environment: cannot reach")); });
-    expect(world.mc.linked.isEmpty(), QStringLiteral("the MC is linked to %1").arg(world.mc.linked.join(u", ")));
-  });
-  step(QStringLiteral("a pairing link from %1 that was already used").arg(q), [](World& world, const Captures& c, const Table&) {
-    fake(world).hosts.insert(hostOf(c[0]), c[0]);
-    fake(world).usedTokens.insert(QStringLiteral("used-1"));
-    fake(world).pairingUrl = QStringLiteral("http://%1:3780/pair#token=used-1").arg(hostOf(c[0]));
-  });
-  step(QStringLiteral("the user adds an environment with that link"), [](World& world, const Captures&, const Table&) {
-    world.bridge().dispatch(QStringLiteral("connections.link"), QVariantMap{{QStringLiteral("pairingUrl"), fake(world).pairingUrl}});
-  });
-  step(QStringLiteral("the user is told to ask for a fresh pairing link"), [](World& world, const Captures&, const Table&) {
-    expectNotice(world, QStringLiteral("error"), [](const QString& text) { return text.endsWith(QLatin1String("Ask for a fresh link.")); });
-  });
-  step(QStringLiteral("no environment is added"), [](World& world, const Captures&, const Table&) {
-    expect(world.mc.linked.isEmpty() && connections(world).value(QStringLiteral("links")).toList().isEmpty(),
-           QStringLiteral("the Connections page is %1").arg(show(connections(world))));
-  });
-  step(QStringLiteral("%1 is linked and has revoked this machine's access").arg(q), [](World& world, const Captures& c, const Table&) {
-    ensureListed(world, c[0]);
-    world.mc.linkProblems.insert(hostOf(c[0]), QStringLiteral("refused"));
-    world.mc.sendLinks();
-  });
-  step(QStringLiteral("%1 is linked and stops answering").arg(q), [](World& world, const Captures& c, const Table&) {
-    ensureListed(world, c[0]);
-    world.mc.linkProblems.insert(hostOf(c[0]), QStringLiteral("unreachable"));
-    world.mc.sendLinks();
-  });
-  step(QStringLiteral("its row reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QVariantMap row = linkRow(world, fake(world).environment);
-    expect(row.value(QStringLiteral("status")) == c[0], QStringLiteral("the Connections page is %1").arg(show(connections(world))));
-  });
-  step(QStringLiteral("the user adds %1 again from a fresh pairing link").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.bridge().dispatch(QStringLiteral("connections.link"),
-                            QVariantMap{{QStringLiteral("pairingUrl"), QStringLiteral("http://%1:3780/pair#token=fresh-1").arg(hostOf(c[0]))}});
-  });
-  step(QStringLiteral("the user removes %1 from this device and confirms").arg(q), [](World& world, const Captures& c, const Table&) {
-    ensureListed(world, c[0]);
-    world.bridge().dispatch(QStringLiteral("connections.unlink.request"), QVariantMap{{QStringLiteral("environmentId"), hostOf(c[0])}});
-    world.bridge().dispatch(QStringLiteral("connections.unlink"), QVariantMap{{QStringLiteral("environmentId"), hostOf(c[0])}});
-  });
-  step(QStringLiteral("its pairing, credentials and cached threads are forgotten here"), [](World& world, const Captures&, const Table&) {
-    const QString label = fake(world).environment;
-    expect(called(world, QStringLiteral("hal-c2.unlinkEnvironment")) && !world.mc.linked.contains(hostOf(label)),
-           QStringLiteral("the MC is linked to %1").arg(world.mc.linked.join(u", ")));
-    expectNotice(world, QStringLiteral("success"), [&label](const QString& text) { return text == label + QStringLiteral(" was removed."); });
-  });
-  step(QStringLiteral("%1 is no longer listed").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(linkRow(world, c[0]).isEmpty(), QStringLiteral("the Connections page is %1").arg(show(connections(world))));
-  });
-  step(QStringLiteral("the user starts removing %1 and cancels").arg(q), [](World& world, const Captures& c, const Table&) {
-    ensureListed(world, c[0]);
-    world.bridge().dispatch(QStringLiteral("connections.unlink.request"), QVariantMap{{QStringLiteral("environmentId"), hostOf(c[0])}});
-    const QVariantMap page = connections(world);
-    expect(page.value(QStringLiteral("removing")) == hostOf(c[0]), QStringLiteral("the Connections page is %1").arg(show(page)));
-    world.bridge().dispatch(QStringLiteral("connections.unlink.cancel"), {});
-  });
-  step(QStringLiteral("%1 is still listed").arg(q), [](World& world, const Captures& c, const Table&) {
-    if (world.expectStillListed) return world.expectStillListed(c[0]);
-    const QVariantMap page = connections(world);
-    expect(!linkRow(world, c[0]).isEmpty() && page.value(QStringLiteral("removing")).isNull() &&
-               !called(world, QStringLiteral("hal-c2.unlinkEnvironment")),
-           QStringLiteral("the Connections page is %1").arg(show(page)));
-  });
-
-  // connections/links.feature: the MC links from the desktop's settings.
-  step(QStringLiteral("another MC %1 outside the MC's cluster").arg(q), [](World& world, const Captures& c, const Table&) {
-    fake(world).hosts.insert(c[0], c[0]);
-  });
-  step(QStringLiteral("the user has a pairing link from %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    fake(world).pairingUrl = QStringLiteral("http://%1:3780/pair#token=pair-1").arg(c[0]);
-  });
-  step(QStringLiteral("the user adds it as a linked environment in the connection settings"), [](World& world, const Captures&, const Table&) {
-    openConnections(world);
-    world.bridge().dispatch(QStringLiteral("connections.link"), QVariantMap{{QStringLiteral("pairingUrl"), fake(world).pairingUrl}});
-  });
-  step(QStringLiteral("the connection settings list %1 as linked and online").arg(q), [](World& world, const Captures& c, const Table&) {
-    fake(world).environment = c[0];
-    const QVariantMap row = linkRow(world, c[0]);
-    expect(row.value(QStringLiteral("online")).toBool(), QStringLiteral("the Connections page is %1").arg(show(connections(world))));
-  });
-  step(QStringLiteral("the user can remove the link there"), [](World& world, const Captures&, const Table&) {
-    const QString environment = fake(world).environment;
-    world.bridge().dispatch(QStringLiteral("connections.unlink"), QVariantMap{{QStringLiteral("environmentId"), environment}});
-    expect(linkRow(world, environment).isEmpty() && !world.mc.linked.contains(environment),
-           QStringLiteral("the Connections page is %1").arg(show(connections(world))));
+  // Other machines.
+  step(QStringLiteral("the user goes on to this machine's cluster"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("cluster.open"), {});
   });
 });
 

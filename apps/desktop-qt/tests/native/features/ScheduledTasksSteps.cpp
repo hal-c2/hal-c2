@@ -30,12 +30,18 @@ QString environmentOf(const FakeMc& mc, const FakeMc::Rpc& rpc) {
   return rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
 }
 
-// The MC's own list to its watchers, as HalC2.ScheduledTasks broadcasts it.
-void broadcast(FakeMc& mc) {
+// The environment a `scheduledTasks` shape follows: its `mc`'s.
+QString environmentOf(const FakeMc& mc, const QJsonObject& shape) {
+  return mc.peers.key(shape.value(QLatin1String("mc")).toString(), mc.environmentId);
+}
+
+// An environment's list to its watchers, as HalC2.ScheduledTasks broadcasts it.
+void broadcast(FakeMc& mc, const QString& environment) {
   for (const int id : mc.subscribers(QStringLiteral("scheduledTasks"))) {
+    if (environmentOf(mc, mc.shapeOf(id)) != environment) continue;
     mc.send({{QStringLiteral("t"), QStringLiteral("scheduledTasks")},
                {QStringLiteral("id"), id},
-               {QStringLiteral("tasks"), mc.part<FakeTasks>().tasks.value(mc.environmentId)}});
+               {QStringLiteral("tasks"), mc.part<FakeTasks>().tasks.value(environment)}});
   }
 }
 
@@ -52,10 +58,6 @@ void answer(FakeMc& mc, const FakeMc::Rpc& rpc) {
     QJsonArray& tasks = fake.tasks[environment];
     const QString id = rpc.payload.value(QLatin1String("id")).toString();
     const qsizetype at = indexOf(tasks, id);
-    if (rpc.method == QLatin1String("scheduledTasks.list")) {
-      mc.reply(rpc, QJsonObject{{QStringLiteral("tasks"), tasks}});
-      return;
-    }
     if (rpc.method == QLatin1String("scheduledTasks.upsert")) {
       QJsonObject task = rpc.payload;
       if (at < 0 && task.value(QLatin1String("requireExisting")).toBool()) {
@@ -87,14 +89,14 @@ void answer(FakeMc& mc, const FakeMc::Rpc& rpc) {
     } else {
       mc.reply(rpc, QJsonObject{});
     }
-    if (environment == mc.environmentId) broadcast(mc);
+    broadcast(mc, environment);
 }
 
 const FakeMc::Extension scheduled([](FakeMc& mc) {
-  mc.onShape(QStringLiteral("scheduledTasks"), [&mc](int id, const QJsonObject&) {
+  mc.onShape(QStringLiteral("scheduledTasks"), [&mc](int id, const QJsonObject& shape) {
     mc.send({{QStringLiteral("t"), QStringLiteral("scheduledTasks")},
                {QStringLiteral("id"), id},
-               {QStringLiteral("tasks"), mc.part<FakeTasks>().tasks.value(mc.environmentId)}});
+               {QStringLiteral("tasks"), mc.part<FakeTasks>().tasks.value(environmentOf(mc, shape))}});
   });
   mc.onRpc(QStringLiteral("scheduledTasks."), [&mc](const FakeMc::Rpc& rpc) {
     // A held save is answered once released, late.
@@ -298,12 +300,11 @@ const Steps steps([] {
          expect(stored(world).isEmpty(), QStringLiteral("nothing to be saved"));
        });
   step(QStringLiteral("the user saves a task on an environment that is disconnected"), [](World& world, const Captures&, const Table&) {
-    // The editor is open on another machine when its link drops.
+    // The editor is open on another machine when that machine goes offline.
     const QString laptop = QStringLiteral("Laptop");
     fakeConfig(world.mc).elsewhere.insert(laptop, QJsonObject{});
     documentOf(world.mc, laptop);
-    world.mc.linkLabels.insert(laptop, laptop);
-    world.mc.link(laptop);
+    world.mc.join(laptop);
     openTasks(world);
     world.bridge().dispatch(QStringLiteral("settingsScope.environment"), QVariantMap{{QStringLiteral("id"), choose(world, QStringLiteral("environments"), laptop)}});
     world.waitFor([&] { return environment(world, laptop).value(QStringLiteral("status")) == QLatin1String("ready"); },
@@ -314,7 +315,7 @@ const Steps steps([] {
     QVariantMap draft = editor(world).value(QStringLiteral("draft")).toMap();
     draft.insert(QStringLiteral("title"), QStringLiteral("Check Sentry"));
     draft.insert(QStringLiteral("prompt"), QStringLiteral("Look at the new Sentry issues."));
-    world.mc.setLinkProblem(laptop, QStringLiteral("unreachable"));
+    world.mc.setOnline(laptop, false);
     world.waitFor([&] { return !editor(world).value(QStringLiteral("connected")).toBool(); },
                   [&] { return QStringLiteral("the editor to see the disconnect; it is %1").arg(show(editor(world))); });
     save(world, draft);
@@ -397,9 +398,8 @@ const Steps steps([] {
   step(QStringLiteral("the environment %1 is disconnected").arg(q), [](World& world, const Captures& c, const Table&) {
     fakeConfig(world.mc).elsewhere.insert(c[0], QJsonObject{});
     documentOf(world.mc, c[0]);
-    world.mc.linkLabels.insert(c[0], c[0]);
-    world.mc.link(c[0]);
-    world.mc.setLinkProblem(c[0], QStringLiteral("unreachable"));
+    world.mc.join(c[0]);
+    world.mc.setOnline(c[0], false);
   });
   step(QStringLiteral("the user opens scheduled tasks for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     openTasks(world);
@@ -518,7 +518,7 @@ const Steps steps([] {
     world.waitFor([&] { return editor(world).value(QStringLiteral("editing")).toBool(); },
                   [&] { return QStringLiteral("the editor to open; the section is %1").arg(show(section(world))); });
     world.mc.part<FakeTasks>().tasks[world.mc.environmentId] = QJsonArray();
-    broadcast(world.mc);
+    broadcast(world.mc, world.mc.environmentId);
   });
   step(QStringLiteral("the editor says the task no longer exists"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return editor(world).value(QStringLiteral("missing")).toBool(); },

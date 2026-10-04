@@ -94,6 +94,15 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
           client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
           [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this),
       m_devices(client, this) {
+  // The pages this device opened from a browser tab, kept with its preferences.
+  m_previews.setRecents(
+      [this] {
+        const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+        return settings ? settings->deviceValue(QStringLiteral("previewRecentPages")).toStringList() : QStringList();
+      },
+      [this](const QStringList& urls) {
+        if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) settings->writeDevice(QStringLiteral("previewRecentPages"), urls);
+      });
   // A note on the diff's lines joins the prompt and is said to have.
   connect(&m_diff, &ThreadDiff::commentRequested, this, [this](const QVariantMap& comment) {
     m_bridge->dispatch(QStringLiteral("composer.reviewComment.add"), comment);
@@ -278,6 +287,14 @@ void RightPanelController::retarget() {
     m_files.setTimeline(timeline);
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
+    // The project's own preview addresses (its scripts' previewUrl).
+    QStringList configured;
+    const QJsonObject project = m_store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString());
+    for (const QJsonValue& script : project.value(QLatin1String("scripts")).toArray()) {
+      const QString url = script.toObject().value(QLatin1String("previewUrl")).toString();
+      if (!url.isEmpty()) configured.append(url);
+    }
+    m_previews.setConfigured(configured);
     m_devices.setThread(environmentId, threadId, m_store->mcServing(environmentId));
     openProactively();
   }
@@ -460,12 +477,20 @@ void RightPanelController::closeTab(const QString& id) {
   if (!m_onThread) return;
   Panel& state = panel();
   const QString closing = id.isEmpty() ? (state.open ? state.active : QString()) : id;
-  if (closing.isEmpty() || !removeTab(state, closing)) return;
-  if (kindOf(closing) == QLatin1String("terminal")) {
-    // Its terminals go too, as the web's closeTerminalSurface.
-    if (auto* terminals = NativeShell::of(this)->controller<TerminalController>()) terminals->closeGroup(closing.mid(kTerminalTab.size()));
+  if (closing.isEmpty() || !state.tabs.contains(closing)) return;
+  auto* terminals = kindOf(closing) == QLatin1String("terminal") ? NativeShell::of(this)->controller<TerminalController>() : nullptr;
+  if (!terminals) {
+    if (removeTab(state, closing)) update();
+    return;
   }
-  update();
+  // Its terminals go too, as the web's closeTerminalSurface: asked once for all of them.
+  const QString group = closing.mid(kTerminalTab.size());
+  const QString thread = m_thread;
+  terminals->confirmClose(terminals->groupTerminals(group), [this, terminals, thread, closing, group] {
+    if (!m_onThread || thread != m_thread || !removeTab(panel(), closing)) return;
+    terminals->closeGroup(group);
+    update();
+  });
 }
 
 void RightPanelController::addTab(const QString& kind) {
@@ -475,6 +500,12 @@ void RightPanelController::addTab(const QString& kind) {
     auto* terminals = NativeShell::of(this)->controller<TerminalController>();
     const QString group = terminals && terminals->threadKey() == m_thread ? terminals->addPanelGroup() : QString();
     if (!group.isEmpty()) showTab(kTerminalTab + group);
+    return;
+  }
+  if (kind == QLatin1String("browser")) {
+    // A new browser tab: an empty one on the MC, filled from the Previews tab.
+    showTab(QStringLiteral("previews"));
+    m_previews.newTab();
     return;
   }
   if (kind == QLatin1String("pull-request")) {
@@ -624,7 +655,7 @@ void RightPanelController::publish() {
   for (const QString& id : state.tabs) {
     tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id, m_devices)}});
   }
-  // Terminals need the thread's place on an environment the MC reaches.
+  // Terminals need the thread's place.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
   const bool canTerminal = terminals && terminals->available() && terminals->threadKey() == m_thread;
   m_bridge->publish(QStringLiteral("panel"),

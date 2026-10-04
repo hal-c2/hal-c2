@@ -93,10 +93,7 @@ QString SettingsScopeController::label(const QString& environmentId) const {
 // The environments the scope can choose: this machine first, the others by name.
 QStringList SettingsScopeController::listed() const {
   const QString local = m_client->environment();
-  QStringList ids;
-  for (const QString& environmentId : m_store->environments()) {
-    if (environmentId == local || m_store->reaches(environmentId)) ids.append(environmentId);
-  }
+  QStringList ids = m_store->environments();
   ids.removeDuplicates();
   std::sort(ids.begin(), ids.end(), [this, &local](const QString& a, const QString& b) {
     if ((a == local) != (b == local)) return a == local;
@@ -204,11 +201,6 @@ QString SettingsScopeController::disabledReason() const {
   const Resolved resolved = resolve();
   if (resolved.kind == QLatin1String("unavailable")) return resolved.message;
   if (targets().isEmpty()) return QStringLiteral("Reconnect the selected environment to change this setting.");
-  for (const QString& environmentId : targets()) {
-    if (!m_store->mayOperate(environmentId)) {
-      return QStringLiteral("This session can view %1's settings but can't change them.").arg(label(environmentId));
-    }
-  }
   return {};
 }
 

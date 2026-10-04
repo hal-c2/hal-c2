@@ -42,12 +42,14 @@ ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
 ```
 
 `Features` runs the `@desktop` and `@shared` scenarios in the feature files `tst_Features.cpp`
-lists (`features/desktop/native-*.feature`, cluster, links, pairing, Connections settings and more)
+lists (`features/desktop/native-*.feature`, cluster, pairing, Connections settings and more)
 against a fake MC, skipping `@backlog`,
 `@backlog-desktop` and `@dropped`; `HAL_C2_FEATURES="threads/thread-list.feature"` narrows it, and
 `HAL_C2_BACKLOG=1` runs only the backlog ones instead, to see what each still lacks.
 Its steps live in `tests/native/features/`, one self-registering file per domain, each with its
 own part of the fake MC (`FakeMc::Extension`).
+One scenario runs the built app itself (a screenshot of a start that fails), so build it first:
+`mise run desktop:build`, or point `HAL_C2_DESKTOP_BINARY` at one.
 `ShellRuntime` covers reload and theme ownership. `ShellExamples` loads all
 the examples at 640, 1000, and 1400 pixels (including `glass-macos` on macOS), checking header text and dashboard
 card bounds, long branch names, clipped icons, and scrolling to the last card. It uses a local

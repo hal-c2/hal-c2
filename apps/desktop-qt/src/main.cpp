@@ -22,6 +22,7 @@
 #include "NativeNotifications.h"
 #include "NativeShell.h"
 #include "QuitController.h"
+#include "PluginController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
@@ -178,6 +179,7 @@ int main(int argc, char* argv[]) {
   native.setStoreDirs(storage.state, storage.data);
   LayoutController::setSystemReducedMotion(systemReducedMotion());
   native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
+  native.controller<PluginController>()->setConfigDir(configDir);
   ThemeStore theme(configDir);
   // ThemeController's resolved theme is the palette under theme.json.
   theme.applyBaseTheme(bridge.state()->value(QStringLiteral("theme")));
@@ -245,8 +247,8 @@ int main(int argc, char* argv[]) {
   if (!storage.root.isEmpty()) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
   }
-  // Attach mode: the host starts no MC; it pairs the shell with the linked
-  // MC, and fails for a URL that is not one.
+  // Attach mode: the host starts no MC; it pairs the shell with the MC the
+  // link names, and fails for a URL that is not one.
   if (parser.isSet(urlOption)) {
     backendOptions.hostArguments.prepend(
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));

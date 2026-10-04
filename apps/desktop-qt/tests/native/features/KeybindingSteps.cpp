@@ -525,7 +525,8 @@ const Steps steps([] {
 
   // Pressing keys.
   step(QStringLiteral("the user presses ([^ ]+)(?: again)?"), [](World& world, const Captures& c, const Table&) {
-    press(world, c[0]);
+    // A feature may quote the chord.
+    press(world, QString(c[0]).remove(QLatin1Char('"')));
   });
   step(QStringLiteral("the user presses (Command|Ctrl|Control|Super) and ([A-Z])"), [](World& world, const Captures& c, const Table&) {
     press(world, modifierToken(keys(world).mac, c[0]) + QLatin1Char('+') + c[1].toLower());
@@ -577,6 +578,10 @@ const Steps steps([] {
     expect(!ran(world, QStringLiteral("diff.toggle")), describePress(world));
   });
   step(QStringLiteral("the focused terminal closes"), [](World& world, const Captures&, const Table&) {
+    // The chord asks first, as every close of a terminal the user makes (terminal/tabs.feature).
+    world.waitFor([&world] { return world.state(QStringLiteral("confirmation")).typeId() == QMetaType::QVariantMap; }, [&world] { return describePress(world); });
+    world.bridge().dispatch(QStringLiteral("confirmation.answer"),
+                            QVariantMap{{QStringLiteral("requestId"), at(world.state(QStringLiteral("confirmation")), QStringLiteral("requestId"))}, {QStringLiteral("accepted"), true}});
     world.waitFor([&world] { return terminals(world)->tabs()->rowCount() == 0 || !terminals(world)->isOpen(); },
                   [&world] { return describePress(world); });
   });
@@ -913,7 +918,7 @@ const Steps fileSteps([] {
   step(QStringLiteral("two environments are connected"), [](World& world, const Captures&, const Table&) {
     if (connectSecondComposerEnvironment(world)) return;
     ensureShell(world);
-    world.mc.link(QStringLiteral("env-b"));
+    world.mc.join(QStringLiteral("env-b"));
     world.sync();
     world.waitFor([&] { return world.native().store()->environmentOnline(QStringLiteral("env-b")); }, QStringLiteral("the second environment"));
   });

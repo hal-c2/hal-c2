@@ -10,7 +10,7 @@
 //   keywords   what the native search matches, beside the label
 //   rows       the section's settingsRows.js rows, each found by its title and description
 //   settings   other settings on the page the search finds: {title, targetId, keywords,
-//              requires (shell state the search needs before it finds it, by dotted path)}
+//              requires (shell state the setting needs before it is found)}
 var sections = [
     { to: "/settings/general", label: "General", brick: "GeneralSettings", rows: Rows.general,
       keywords: "project grouping auto-resume snooze limited threads auto-settle merged inactive notifications time format response streaming whitespace diff layout proactive panels skills slash rich text composer collapse send shortcut follow-up provider update checks continue restarts origin worktree add project unpin archive delete confirmation quit text generation model legacy plan context window sidebar" },
@@ -28,6 +28,9 @@ var sections = [
       keywords: "project projects name rename title icon emoji favicon checkout checkouts remove delete default model permissions runtime mode workspace worktree submodules new threads" },
     { to: "/settings/keybindings", label: "Keybindings", brick: "KeybindingsSettings", action: "keybindings.open",
       detail: "Shortcuts and when they apply", keywords: "keybindings shortcuts keys hotkeys conditions when recorder" },
+    { to: "/settings/plugins", label: "Plugins", brick: "PluginsSettings", requires: "plugins",
+      detail: "Add-ons for the sidebar, composer and status bar",
+      keywords: "plugins plugin extensions add-ons addons installed disable enable remove load url unsigned errors failed slots" },
     { to: "/settings/snap-shot", label: "SnapShots", brick: "SnapShotSettings",
       detail: "Capture a window into your draft",
       keywords: "snapshot snapshots snap shot capture screenshot window shortcut sound flash animation portal accessibility" },
@@ -47,26 +50,15 @@ var sections = [
       detail: "Worktree, artifact and log cleanup",
       keywords: "storage cleanup disk worktrees delete inactive merged unchanged browser artifacts captures rotated logs retention days" },
     { to: "/settings/connections", label: "Connections", brick: "ConnectionsSettings", action: "connections.open",
-      requires: "connections", detail: "Environments, pairing links and clients",
-      settings: [{ title: "Load balancing", targetId: "loadBalancing", requires: "connections.balancing",
-                   keywords: "load balancing balance machines automatic new threads cpu memory prefer manual" }],
-      keywords: "connections environments pairing link code clients revoke access remote" },
+      requires: "connections", detail: "Pairing links and clients",
+      settings: [{ title: "Load balancing", targetId: "load-balancing", requires: "loadBalancing",
+                   keywords: "automatic machine environment resources cpu memory capacity preference weight shared projects" }],
+      keywords: "connections pairing link code clients revoke access remote" },
     { to: "/settings/archived", label: "Archive", brick: "ArchivedThreads", requires: "archivedThreads",
       detail: "Archived threads, unarchived or deleted", keywords: "archive archived threads unarchive restore delete" },
     { to: "/settings/cluster", label: "Cluster", brick: "ClusterSettings", action: "cluster.open", requires: "cluster",
       detail: "Machines, invites and joining", keywords: "cluster machines invite join remove tailscale" },
 ];
-
-// Whether the shell state has what `path` names ("connections.balancing").
-function present(state, path) {
-    var value = state;
-    var parts = path.split(".");
-    for (var i = 0; i < parts.length; ++i) {
-        if (value === undefined || value === null) return false;
-        value = value[parts[i]];
-    }
-    return value !== undefined && value !== null;
-}
 
 // The section a settings route shows: bare /settings opens General.
 function resolve(section) {
@@ -122,7 +114,7 @@ function paletteEntries(os) {
     sections.forEach(function (section) {
         entries.push({ to: section.to, label: section.label, keywords: section.keywords || "", requires: section.requires || "" });
         settingsOf(section, os).forEach(function (setting) {
-            entries.push({ to: section.to, label: setting.title, keywords: setting.keywords || "", requires: section.requires || "",
+            entries.push({ to: section.to, label: setting.title, keywords: setting.keywords || "", requires: setting.requires || section.requires || "",
                            targetId: setting.targetId, detail: section.label });
         });
     });
@@ -160,8 +152,9 @@ function searchRows(query, state, bindings) {
     available(state).forEach(function (section) {
         add(section, section.label, section.keywords || "", false);
         // Rows this platform does not show are not found.
-        settingsOf(section, Qt.platform.os).forEach(function (setting) {
-            if (setting.requires && !present(state, setting.requires)) return;
+        settingsOf(section, Qt.platform.os).filter(function (setting) {
+            return !setting.requires || (state[setting.requires] !== undefined && state[setting.requires] !== null);
+        }).forEach(function (setting) {
             add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title, setting.keywords, false);
         });
     });

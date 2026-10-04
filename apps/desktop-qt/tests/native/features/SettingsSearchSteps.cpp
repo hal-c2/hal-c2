@@ -245,10 +245,12 @@ const Steps steps([] {
     expect(!inView(world, target), QStringLiteral("%1 is still in view").arg(target));
   });
   step(QStringLiteral("the user opens the search result %1(?: again)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("openResult"))) return world.onSettingsPage.value(QStringLiteral("openResult"))(c);
     openResult(world, c[0]);
     world.mc.part<Opened>().target = at(world.state(QStringLiteral("route")), QStringLiteral("target")).toString();
   });
   step(QStringLiteral("the page brings the setting into view"), [](World& world, const Captures&, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("inView"))) return world.onSettingsPage.value(QStringLiteral("inView"))({});
     const QString target = world.mc.part<Opened>().target;
     expect(!target.isEmpty(), QStringLiteral("no result was opened; the route is %1").arg(show(world.state(QStringLiteral("route")))));
     world.waitFor([&] { return inView(world, target); }, [&] {

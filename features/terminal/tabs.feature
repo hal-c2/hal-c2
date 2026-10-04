@@ -126,7 +126,7 @@ Feature: Terminal tabs and splits
       Then the user cannot split that group again
       And the user is told the limit is 4 per group
 
-    @backlog @desktop
+    @desktop
     Scenario: Closing a terminal asks before stopping its process
       Given the terminal "Terminal 2" is running
       When the user closes it
@@ -134,18 +134,18 @@ Feature: Terminal tabs and splits
       When the user confirms
       Then its process stops and its history is deleted
 
-    @backlog @desktop
+    @desktop
     Scenario: Declining the close confirmation keeps the terminal
       Given the terminal "Terminal 2" is running
       When the user closes it and declines the confirmation
       Then "Terminal 2" keeps running with its history
 
-    @backlog @desktop
+    @desktop
     Scenario: Closing several terminals asks once for all of them
       When the user closes a split group of three terminals
       Then the user is asked once to close 3 terminals, naming each of them
 
-    @backlog @desktop
+    @desktop
     Scenario: Recently visited threads keep their terminals ready
       Given the user has visited ten threads with open terminals
       When the user returns to one of them

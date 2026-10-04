@@ -10,6 +10,7 @@ qt_add_qml_module(hal_c2_bricks
   QML_FILES
     ClusterSettings.qml
     ConnectionsSettings.qml
+    LoadBalancingGroup.qml
     Composer.qml
     ComposerAttachment.qml
     ModelPicker.qml
@@ -29,7 +30,6 @@ qt_add_qml_module(hal_c2_bricks
     UsageModelPrices.qml
     ProviderModelList.qml
     ComposerUsageLimits.qml
-    LoadBalancingSettings.qml
     ConnectionStatusRow.qml
     ShellButton.qml
     ShellCard.qml
@@ -90,16 +90,24 @@ qt_add_qml_module(hal_c2_bricks
     ThreadView.qml
     js/centreViews.js
     js/panelTabs.js
+    js/terminalLinks.js
     js/scheduledTasks.js
+    js/usageChart.js
     RevertDialog.qml
     TerminalSplits.qml
+    TerminalMenu.qml
+    Plugin.qml
+    Contribution.qml
+    PluginSlot.qml
+    PluginRegistry.qml
+    PluginsSettings.qml
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml
     PreviewsPanel.qml
     ThreadDetailsPanel.qml
     CommandPalette.qml
-    PullRequestsPage.qml HomePage.qml UsagePage.qml
+    PullRequestsPage.qml HomePage.qml UsagePage.qml UsageChart.qml
     ProvidersSettings.qml
     ProviderAuthTerminal.qml
     ProviderCustomModels.qml
@@ -122,5 +130,6 @@ qt_add_qml_module(hal_c2_bricks
     js/markdown.js
   RESOURCES
     qmldir
+    plugin/Text.qml
     icons/antigravity.png
 )

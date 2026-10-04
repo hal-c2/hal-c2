@@ -1,5 +1,5 @@
-// Connecting the shell to its MC, who owns what once it has, and the
-// environments the MC is linked to (features/desktop/native-connection.feature).
+// Connecting the shell to its MC, who owns what once it has, and the MCs
+// clustered with it (features/desktop/native-connection.feature).
 
 #include <QGuiApplication>
 #include <QImage>
@@ -35,13 +35,6 @@ const Steps steps([] {
   step(QStringLiteral("the MC is clustered with %1, which serves %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.mc.join(c[0], c[1]);
     world.sync();
-  });
-  step(QStringLiteral("the MC is linked to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.mc.link(c[0]);
-    world.sync();
-  });
-  step(QStringLiteral("the MC is not linked to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(!world.mc.linked.contains(c[0]), QStringLiteral("the MC is linked to %1").arg(world.mc.linked.join(u", ")));
   });
 
   // Connecting.

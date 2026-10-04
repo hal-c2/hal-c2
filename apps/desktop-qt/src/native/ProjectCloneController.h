@@ -31,7 +31,7 @@ class ShellStore;
 // background, and the new project's draft opens.
 //
 // Every clone the MC reports (the `projectClones` shape of each online
-// environment, in the cluster or linked) has one toast, changed in place as
+// environment of the cluster) has one toast, changed in place as
 // git moves on: running (Cancel), done (Open project), failed or cancelled
 // (Retry, Remove project).
 class ProjectCloneController : public QObject, public NativeController {

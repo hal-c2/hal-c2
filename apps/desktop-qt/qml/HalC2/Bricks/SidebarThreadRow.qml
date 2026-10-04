@@ -55,6 +55,9 @@ Item {
     // The thread's environment is unreachable: the row stays, says so, and
     // recedes until the environment comes back.
     readonly property bool offline: item.offline === true
+    // The thread is on its way to another machine: the row says where to
+    // until it is listed there.
+    readonly property string movingTo: item.movingTo ?? ""
     readonly property bool canSettle: !draft && !parked && item.canSettle === true
     readonly property bool canSnooze: !draft && !parked && item.canSnooze === true
     readonly property bool hasActions: !offline && (parked || canSettle || canSnooze)
@@ -65,8 +68,8 @@ Item {
         if (row.offline) {
             return qsTr("Offline");
         }
-        if (item.movingTo) {
-            return qsTr("Moving");
+        if (row.movingTo.length > 0) {
+            return qsTr("Moving to %1").arg(row.movingTo);
         }
         switch (item.status) {
         case "working":
@@ -94,6 +97,9 @@ Item {
         if (row.offline) {
             return "";
         }
+        if (row.movingTo.length > 0) {
+            return "arrow-right-left";
+        }
         switch (item.status) {
         case "working":
             return "circle-dashed";
@@ -110,7 +116,7 @@ Item {
         return "";
     }
     readonly property color statusColor: {
-        if (row.offline) {
+        if (row.offline || row.movingTo.length > 0) {
             return row.secondaryColor;
         }
         switch (item.status) {

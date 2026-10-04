@@ -20,8 +20,8 @@ namespace {
 const QString kViewer = QStringLiteral("sam");
 
 // The pull requests the MC lists, as apps/server-ex HalC2.PullRequests
-// answers `pullRequests.*` for its own environment. A linked environment has
-// none of them.
+// answers `pullRequests.*` for its own environment. Another member has none
+// of them.
 struct FakePullRequests {
   QJsonArray entries;
   QString refusal;

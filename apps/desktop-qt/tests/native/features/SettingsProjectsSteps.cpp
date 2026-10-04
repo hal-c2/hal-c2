@@ -57,11 +57,11 @@ const Steps steps([] {
   step(QStringLiteral("the user asked to remove %1 from the folder explorer").arg(q), [](World& world, const Captures& c, const Table&) {
     removeFromExplorer(world, c[0]);
     expect(removal(world).value(QStringLiteral("title")) == c[0], QStringLiteral("the confirmation is %1").arg(show(removal(world))));
-    world.expectStillListed = [&world](const QString& project) {
-      world.sync();
-      expect(removal(world).isEmpty() && listed(world, project) && world.mc.projects.contains(project) && world.mc.commands.isEmpty(),
-             QStringLiteral("the confirmation is %1; the MC has %2").arg(show(removal(world)), world.describeCommands()));
-    };
+  });
+  step(QStringLiteral("%1 is still listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(removal(world).isEmpty() && listed(world, c[0]) && world.mc.projects.contains(c[0]) && world.mc.commands.isEmpty(),
+           QStringLiteral("the confirmation is %1; the MC has %2").arg(show(removal(world)), world.describeCommands()));
   });
   step(QStringLiteral("the user cancels the removal in settings"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("project.remove.cancel"), QVariantMap());

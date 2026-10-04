@@ -271,7 +271,7 @@ const Steps steps([] {
   // Several environments.
   step(QStringLiteral("their default actions differ"), [](World& world, const Captures&, const Table&) {
     saveOn(world.mc, world.mc.environmentId, kScripts, kDev);
-    saveOn(world.mc, world.mc.linked.first(), kScripts, QJsonArray{script(QStringLiteral("Test"), QStringLiteral("bun test"))});
+    saveOn(world.mc, world.mc.members.first(), kScripts, QJsonArray{script(QStringLiteral("Test"), QStringLiteral("bun test"))});
   });
   step(QStringLiteral("the user opens the Actions settings"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return panel(world).value(QStringLiteral("settings")).toBool(); }, [&] { return describe(world); });
@@ -317,11 +317,10 @@ const Steps steps([] {
     FakeConfig& fake = fakeConfig(world.mc);
     fake.elsewhere.insert(c[0], withCapabilities({}, false));
     documentOf(world.mc, c[0]);
-    world.mc.linkLabels.insert(c[0], c[0]);
-    world.mc.link(c[0]);
+    world.mc.join(c[0]);
     QJsonObject remote = local;
     remote.insert(QStringLiteral("id"), QStringLiteral("shop-server"));
-    world.mc.sendLinkRow(c[0], QStringLiteral("shop-server"), remote, QStringLiteral("project"));
+    world.mc.sendPeerRow(c[0], QStringLiteral("shop-server"), remote, QStringLiteral("project"));
     world.sync();
   });
   step(QStringLiteral("the user picks %1 in the Actions settings").arg(q), [](World& world, const Captures& c, const Table&) {

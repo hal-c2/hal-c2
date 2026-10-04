@@ -69,22 +69,66 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+## Cluster your machines
+
+Machines that run HAL-C2 can join one cluster. A client connected to any of them then
+shows every machine's projects and threads in one sidebar, and threads can move between
+them.
+
+On a machine already in the cluster (or the first one), open **Settings → Cluster** in
+the desktop app and make an invite. On the machine that joins, open the same page and
+paste the link. In the terminal client the command palette has **Invite a machine to this
+cluster** and **Join another machine's cluster…**. The link works once, for five minutes,
+and the joining machine has to reach the address in it: a LAN or tailnet address, not a
+loopback one. From a command line:
+
+```bash
+hal-c2-service cluster invite      # prints the link
+hal-c2-service cluster join LINK   # on the machine that joins
+```
+
+Every machine of a cluster runs the same HAL-C2 version. A machine on another version
+stays listed but does not connect until it is updated. Removing a machine from the
+Cluster page stops every member from admitting it, and its projects and threads leave
+the sidebar.
+
+### Move a thread to another machine
+
+Choose **Move to another machine** in a thread's menu or the command palette, then the
+machine. The thread keeps its conversation, attachments and checkpoints, and continues in
+that machine's checkout of the same repository; a thread working in a worktree gets a
+worktree there. HAL-C2 asks which project to use when several fit, and tells you what
+stays behind when none is the same repository.
+
+A thread whose agent is working is stopped first, if you agree. While it moves it says
+where it is going and takes no messages. A move that is cut off leaves the thread where it
+was; if the other machine had already started taking it, the thread stays read-only until
+that machine is reachable again and says whether it has it. Once moved, the agent continues its own session
+when the provider can carry it, and otherwise gets the conversation handed over as after a
+[provider switch](./portable-handoffs.md). Running terminals stay on the machine the thread
+left and are closed. Notifications from before the move open the thread where it lives now,
+and so do links to it in the desktop app.
+
+To copy a thread between machines that are not in one cluster, see
+[Copying a thread to another machine](./thread-migration.md#copying-a-thread-to-another-machine).
+
 ### Balance new threads across machines
 
-Auto balance is off by default. On web and desktop, enable it in
-**Settings → Connections → Load balancing** to automatically choose a machine for
-new threads in projects grouped across connected environments. The section
-appears once two or more machines are switched on.
+Load balancing is off by default. Once the cluster has two or more machines, turn it on
+in **Settings → Connections → Load balancing** in the desktop app, or with **Turn on load
+balancing** in the terminal client's command palette.
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
 memory available, **Less often** to reduce its share, or **Manual only** to exclude
 it from automatic selection. These are preferences, not fixed traffic percentages.
-Preferences are saved separately in each client.
+They are saved on the machine your client is connected to, so every client connected to
+it balances the same way, and turning load balancing off keeps them.
 
-The composer checks eligible machines when choosing a draft's environment, then keeps
-that choice stable. Choose **Auto balance** again to check current resources, or choose
-a specific machine to override it. Choosing a branch or worktree also keeps the draft
-on that machine. Existing threads stay where they started. If resource checks are
-unavailable or all eligible machines are full, choose a machine manually to continue.
+When you send a new thread's first message, HAL-C2 starts it on the machine with the most
+free CPU and memory among those that have a checkout of the project's repository and the
+chosen provider signed in. A machine that is offline, nearly out of CPU or memory, or slow
+to answer is passed over, and the thread starts where you picked when no other machine has
+more room. Choosing a branch or worktree for the draft keeps it on that machine. Existing
+threads stay where they are; [move one](#move-a-thread-to-another-machine) yourself.
 Mobile keeps its manual environment selection.
 
 ### Tailscale HTTPS

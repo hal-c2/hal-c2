@@ -66,10 +66,6 @@ defmodule HalC2.Application do
           HalC2.Acp.UrlAuth,
           HalC2.Acp.Antigravity.Installation,
           Supervisor.child_spec({Task, &HalC2.Acp.load/0}, id: :acp_models),
-          # Environments outside the cluster this MC was paired with.
-          {Registry, keys: :unique, name: HalC2.Links.Registry},
-          {DynamicSupervisor, name: HalC2.Links.Supervisor, strategy: :one_for_one},
-          HalC2.Links,
           HalC2.Web,
           # server-runtime.json, once the listener is bound; removed first on the way down.
           HalC2.RuntimeRecord,
@@ -108,5 +104,8 @@ defmodule HalC2.Application do
        do: HalC2.Migration.run(opts)
 
     HalC2.Paths.ensure!()
+    # The tokens of the environments an MC linked to outside its cluster, before MCs
+    # connected only by clustering.
+    HalC2.Connect.Secrets.delete("environment-links")
   end
 end

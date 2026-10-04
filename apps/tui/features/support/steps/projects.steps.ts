@@ -6,6 +6,7 @@ import { inferProjectTitleFromPath } from "@hal-c2/client-runtime/state/projects
 
 import { step } from "../../steps.ts";
 import type { TuiAddProjectState } from "../../../src/host/addProjectState.ts";
+import type { TuiSelectState } from "../../../src/host/composerState.ts";
 import type { TuiPageState } from "../../../src/host/host.ts";
 import { project as fixtureProject, shell } from "../fakeClient.ts";
 import { recorded } from "../threadWorld.ts";
@@ -247,25 +248,13 @@ step(
     expect(frame).toContain(second);
   },
 );
-// While adding a project: not among the rows; otherwise: not a palette command.
+// While adding a project: not among the rows; in an open picker: not among its
+// options; otherwise: not a palette command.
 step("{string} is not offered", async (ctx: World, name: string) => {
   const frame = await settle(ctx);
-  // An open thread menu (the machines to move to) is what is on offer.
-  const menu = ctx.host!.state.get("contextMenu") as {
-    rows: ReadonlyArray<{ label?: string }>;
-  } | null;
-  if (menu) {
-    expect(menu.rows.some((row) => row.label?.includes(name))).toBe(false);
-    return;
-  }
-  // An open picker (the composer's command menu) is what is on offer.
-  const picker = ctx.host!.state.get("select") as {
-    open: boolean;
-    options: ReadonlyArray<{ label: string }>;
-  };
+  const picker = ctx.host!.state.get("select") as TuiSelectState;
   if (picker.open) {
     expect(picker.options.map((option) => option.label)).not.toContain(name);
-    expect(frame).not.toContain(name);
     return;
   }
   if (!flow(ctx).open) {

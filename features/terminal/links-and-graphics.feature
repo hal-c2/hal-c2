@@ -80,7 +80,7 @@ Feature: Links and rendering inside terminals
       When the user follows "https://example.com/docs" in the terminal
       Then the address opens in a browser tab beside the thread
 
-    @backlog @desktop
+    @desktop
     Scenario: Following a link opens the system browser when that is the chosen target
       Given the user's links open in the system browser
       When the user follows "http://localhost:5173" in the terminal
@@ -99,7 +99,7 @@ Feature: Links and rendering inside terminals
       Then the address opens in the system browser
       And the failure is recorded with its cause
 
-    @backlog @desktop
+    @desktop
     Scenario: A file path in the output opens in the editor
       Given the shell prints "src/app.ts:12:4"
       When the user follows that path
@@ -108,13 +108,13 @@ Feature: Links and rendering inside terminals
 
   Rule: The web terminal renders like a native terminal
 
-    @backlog @desktop
+    @desktop
     Scenario: The web terminal follows the app's theme and font
       Given the user switches the app to a dark theme
       Then the terminal's colours and selection follow the dark theme
       And the terminal uses the app's terminal font
 
-    @backlog @desktop
+    @desktop
     Scenario: Programs that ask for enhanced keyboard reporting receive it
       Given a program turns on the Kitty keyboard protocol
       When the user presses a key with modifiers

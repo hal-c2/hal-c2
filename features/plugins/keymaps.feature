@@ -191,7 +191,7 @@ Feature: Keymaps
     When the user opens the keybinding reference
     Then "ctrl+n" is flagged as a conflict naming both keymaps
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Resetting keybindings removes every override
     Given the user has several keybinding overrides
     When the user resets keybindings to the defaults

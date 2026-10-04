@@ -767,7 +767,6 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
            snoozed && thread.snoozedUntil && input.describeWake ? QVariant(input.describeWake(*thread.snoozedUntil))
                                                                 : QVariant::fromValue(nullptr)},
           {QStringLiteral("workingLabel"), workingLabel(thread, nowMs)},
-          {QStringLiteral("movingTo"), nullable(thread.movingTo)},
           {QStringLiteral("selected"), input.selectedKeys.contains(thread.key())},
           {QStringLiteral("jumpLabel"), input.showJumpHints && place < input.jumpLabels.size() ? QVariant(input.jumpLabels.at(place))
                                                                                                 : QVariant::fromValue(nullptr)},
@@ -779,6 +778,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
                                                                         : QStringLiteral("Active ") + ago(thread.updatedAt)}}},
           {QStringLiteral("wokeAt"), nullable(visibleWokeAt(thread, nowMs))},
           {QStringLiteral("offline"), offline},
+          {QStringLiteral("movingTo"), nullable(thread.movingTo)},
           {QStringLiteral("canSettle"), !offline && capabilities.settlement},
           {QStringLiteral("canSnooze"), !offline && capabilities.snooze && canSnooze(thread, nowMs)},
       });

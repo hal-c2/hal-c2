@@ -52,6 +52,8 @@ class KeybindingController : public QObject, public NativeController {
   // defaultWhen, conflicts (command labels), canReset, canRemove, search}.
   Q_PROPERTY(QVariantList bindings READ bindings NOTIFY bindingsChanged)
   // A save or removal is on its way to the MC.
+  // How many rules the user's keybindings.json holds over the defaults.
+  Q_PROPERTY(int customCount READ customCount NOTIFY bindingsChanged)
   Q_PROPERTY(bool saving READ saving NOTIFY savingChanged)
   Q_PROPERTY(bool modelPickerOpen READ modelPickerOpen WRITE setModelPickerOpen NOTIFY modelPickerOpenChanged)
   // Where the MC keeps keybindings.json, or empty before it says.
@@ -110,6 +112,10 @@ public:
   Q_INVOKABLE void remove(const QVariantMap& row);
   // Puts a custom row back to its command's default.
   Q_INVOKABLE void reset(const QVariantMap& row);
+  // Takes every rule of the user's away, once they say so: only the built-in
+  // bindings apply after (`keybindings.resetAll` as an action).
+  Q_INVOKABLE void resetAll();
+  int customCount() const { return int(m_rules.size()); }
   // Opens keybindings.json on the MC in the editor last used there, else the
   // first it has; says so when it cannot (`keybindings.openFile` as an action).
   Q_INVOKABLE void openFile();

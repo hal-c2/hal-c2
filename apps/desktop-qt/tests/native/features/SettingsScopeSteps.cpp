@@ -71,7 +71,7 @@ void offer(World& world, const QString& environment, const QStringList& models) 
 void offerEverywhere(World& world, const QStringList& models) {
   if (fakeConfig(world.mc).config.contains(QLatin1String("providers"))) return;
   offer(world, world.mc.environmentId, models);
-  for (const QString& environment : world.mc.linked) offer(world, environment, models);
+  for (const QString& environment : world.mc.members) offer(world, environment, models);
 }
 
 QJsonObject& settingsOf(World& world, const QString& environment) {
@@ -94,7 +94,7 @@ void setOverride(World& world, const QString& project, const QString& environmen
 
 QString describeDocuments(World& world) {
   QStringList lines{QStringLiteral("this machine holds %1").arg(show(fakeConfig(world.mc).settings.toVariantMap()))};
-  for (const QString& environment : world.mc.linked) {
+  for (const QString& environment : world.mc.members) {
     lines.append(QStringLiteral("%1 holds %2").arg(environment, show(documentOf(world.mc, environment).settings.toVariantMap())));
   }
   return lines.join(QStringLiteral("; "));
@@ -188,13 +188,13 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 overrides the default model on each environment with a checkout of it").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
-      return std::all_of(world.mc.linked.cbegin(), world.mc.linked.cend(),
+      return std::all_of(world.mc.members.cbegin(), world.mc.members.cend(),
                          [&](const QString& environment) { return overrideOn(world, c[0], environment) == QJsonValue(selection(QStringLiteral("opus"))); });
     }, [&] { return describeDocuments(world); });
   });
   step(QStringLiteral("other projects keep the environment's default model"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    for (const QString& environment : world.mc.linked) {
+    for (const QString& environment : world.mc.members) {
       const QJsonObject settings = documentOf(world.mc, environment).settings;
       expect(!settings.contains(kModel) && settings.value(QLatin1String("projectSettingsOverrides")).toObject().size() == 1, describeDocuments(world));
     }
@@ -236,7 +236,7 @@ const Steps steps([] {
   // Overrides.
   step(QStringLiteral("%1 overrides the default model").arg(q), [](World& world, const Captures& c, const Table&) {
     // The environments default to Opus; the project keeps Sonnet.
-    for (const QString& environment : world.mc.linked) {
+    for (const QString& environment : world.mc.members) {
       settingsOf(world, environment).insert(kModel, selection(QStringLiteral("opus")));
       setOverride(world, c[0], environment, selection(QStringLiteral("sonnet")));
     }
@@ -248,7 +248,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 no longer overrides the default model").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
-      return std::all_of(world.mc.linked.cbegin(), world.mc.linked.cend(),
+      return std::all_of(world.mc.members.cbegin(), world.mc.members.cend(),
                          [&](const QString& environment) { return overrideOn(world, c[0], environment).isUndefined(); });
     }, [&] { return describeDocuments(world); });
   });
@@ -260,7 +260,7 @@ const Steps steps([] {
   // Where a value comes from.
   step(QStringLiteral("%1 does not override the default model").arg(q), [](World& world, const Captures& c, const Table&) {
     // The environments set one; the project sets none.
-    for (const QString& environment : world.mc.linked) {
+    for (const QString& environment : world.mc.members) {
       expect(overrideOn(world, c[0], environment).isUndefined(), describeDocuments(world));
       saveOn(world.mc, environment, kModel, selection(QStringLiteral("opus")));
     }
@@ -332,7 +332,7 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("projectSettings.model"), QVariantMap{{QStringLiteral("key"), kProvider + QStringLiteral(":opus")}});
   });
   step(QStringLiteral("every environment uses that model"), [](World& world, const Captures&, const Table&) {
-    QStringList environments = world.mc.linked;
+    QStringList environments = world.mc.members;
     environments.append(world.mc.environmentId);
     world.waitFor([&] {
       return std::all_of(environments.cbegin(), environments.cend(),
@@ -344,7 +344,7 @@ const Steps steps([] {
   step(QStringLiteral("the model %1 is only available on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // Of the feature's two machines; this one offers it too.
     offer(world, world.mc.environmentId, {QStringLiteral("Sonnet"), c[0]});
-    for (const QString& environment : world.mc.linked) {
+    for (const QString& environment : world.mc.members) {
       offer(world, environment, environment == c[1] ? QStringList{QStringLiteral("Sonnet"), c[0]} : QStringList{QStringLiteral("Sonnet")});
     }
   });

@@ -34,6 +34,7 @@ QtObject {
             options: [],
             attachments: [],
             terminalContexts: [],
+            citations: [],
             placeholder: qsTr("Send a message"),
             editorDisabled: false,
             canSend: true,

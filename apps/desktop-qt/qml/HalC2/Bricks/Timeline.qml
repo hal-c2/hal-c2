@@ -6,7 +6,7 @@ import HalC2.Shell
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
 // model with its roles (rowId, kind, author, text, streaming, title, status,
 // statusLabel, marker, entries, hiddenCount, expanded, files, time, icon,
-// intent, attribution, meta, and optionally summary and summaryFailed).
+// intent, attribution, meta, attachments, and optionally summary and summaryFailed).
 //
 //   Timeline { anchors.fill: parent; model: Threads.timeline }
 //
@@ -84,6 +84,12 @@ Item {
         next[rowId] = full;
         root.fullMessages = next;
     }
+    // The user cited a selection of a reply: an AssistantCitation's selector
+    // {text, start, end, prefix, suffix}.
+    signal cited(string messageId, var selector)
+
+    // Whether a selection in a reply offers "Cite".
+    property bool citable: false
 
     // Whether the model can put a message on the clipboard (copy(rowId)).
     readonly property bool canCopy: root.model !== null && typeof root.model.copy === "function"
@@ -387,6 +393,8 @@ Item {
             required property var meta
             // Roles a model may leave out (summary, summaryFailed).
             required property var model
+            required property var messageId
+            required property var attachments
             // The tool calls whose details are open, by id.
             property var openCalls: ({})
             // Whether the row's time and actions show: only this row's
@@ -491,11 +499,76 @@ Item {
                             ToolTip.text: row.marker ?? ""
                         }
                     }
+                    // The images sent with it, loaded from the MC once
+                    // the model has their addresses.
+                    Flow {
+                        id: images
+                        visible: root.list(row.attachments).length > 0
+                        anchors.right: parent.right
+                        width: Math.round(parent.width * 0.8)
+                        layoutDirection: Qt.RightToLeft
+                        spacing: 8
+                        Repeater {
+                            model: root.list(row.attachments)
+                            delegate: Rectangle {
+                                id: attachment
+
+                                required property var modelData
+                                readonly property bool pictured: picture.status === Image.Ready
+
+                                objectName: "attachment-" + modelData.id
+                                Accessible.role: Accessible.Graphic
+                                Accessible.name: modelData.name ?? ""
+                                // As wide as the picture is at this height; a square until it loads.
+                                width: pictured ? Math.min(images.width, Math.round(height * picture.implicitWidth / picture.implicitHeight)) : height
+                                height: 200
+                                radius: 2
+                                color: root.messageColor
+                                border.color: root.borderColor
+
+                                Component.onCompleted: if (root.model !== null && typeof root.model.loadAttachment === "function")
+                                    root.model.loadAttachment(modelData.id)
+
+                                Image {
+                                    id: picture
+                                    anchors.fill: parent
+                                    anchors.margins: 1
+                                    source: attachment.modelData.url ?? ""
+                                    // Decoded at twice the height shown, for dense screens.
+                                    sourceSize.height: 400
+                                    fillMode: Image.PreserveAspectFit
+                                }
+                                Column {
+                                    visible: !attachment.pictured
+                                    anchors.centerIn: parent
+                                    width: parent.width - 16
+                                    spacing: 6
+                                    ShellIcon {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        name: "image"
+                                        size: 20
+                                        color: root.iconColor
+                                    }
+                                    RowText {
+                                        width: parent.width
+                                        horizontalAlignment: Text.AlignHCenter
+                                        text: attachment.modelData.name ?? ""
+                                        color: root.mutedColor
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        wrapMode: Text.NoWrap
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Rectangle {
                         id: bubble
                         readonly property bool collapsible: root.collapsible(row.text ?? "")
                         readonly property bool collapsed: collapsible && root.fullMessages[row.rowId] !== true
                         objectName: "userMessageBody"
+                        // A message of images alone has no bubble.
+                        visible: (row.text ?? "").length > 0
                         anchors.right: parent.right
                         width: Math.min(parent.width * 0.8, userText.implicitWidth + 24)
                         // The web's max-h-44.
@@ -577,10 +650,16 @@ Item {
                     topPadding: 2
                     bottomPadding: 2
                     Markdown {
+                        // Over the row's files and actions, for "Cite".
+                        z: 1
                         width: parent.width - 8
                         text: row.text ?? ""
                         streaming: row.streaming ?? false
+                        citable: root.citable && row.streaming !== true && !!row.messageId
                         onLinkActivated: link => root.linkActivated(link)
+                        onCited: selector => root.cited(row.messageId, selector)
+                        // "Cite" under a short reply's last line reaches over the next row.
+                        onSelectionChanged: row.z = selection !== null ? 1 : 0
                     }
                     // The files the reply's turn changed (ChangedFilesCard).
                     Item {

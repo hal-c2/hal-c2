@@ -60,8 +60,8 @@ const Steps steps([] {
   const QString q = kQuoted;
 
   step(QStringLiteral("the environment %1 has the thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.mc.link(c[0]);
-    world.mc.sendLinkRow(c[0], QStringLiteral("thread-linked"), thread(QStringLiteral("thread-linked"), c[1], QStringLiteral("admin")));
+    world.mc.join(c[0]);
+    world.mc.sendPeerRow(c[0], QStringLiteral("thread-linked"), thread(QStringLiteral("thread-linked"), c[1], QStringLiteral("admin")));
     world.sync();
   });
   step(QStringLiteral("the user searches threads for %1").arg(q), [](World& world, const Captures& c, const Table&) { search(world, c[0]); });

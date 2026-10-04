@@ -12,7 +12,7 @@
 #   apps/tui/src/components/MessagesTimeline.tsx
 #   apps/tui/src/components/WorkingIndicator.tsx
 #   apps/server-ex/lib/hal_c2/web/socket.ex (stream snapshot after a reconnect, resync, unknown MC)
-#   apps/server-ex/lib/hal_c2/web/protocol.ex (stream shape by environment, through a link)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (stream shape by environment)
 #   apps/desktop-qt/src/native/ThreadStore.cpp (reload, retrying a thread its MC stopped sending)
 
 Feature: Streaming the agent's reply
@@ -166,7 +166,8 @@ Feature: Streaming the agent's reply
     Then the thread follows its MC again
     And the answer "Use the tax table." is still shown
 
-  @shared @backlog-mobile @backlog-tui
+  # MCs join only by clustering; the scenario above is the one way to another machine.
+  @dropped @shared
   Scenario: A thread on an environment the MC is linked to says so while the link is down
     Given the user is looking at a thread on an environment the MC is linked to
     And the agent has answered "Deploy when green."

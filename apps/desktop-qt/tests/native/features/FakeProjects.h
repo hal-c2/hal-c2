@@ -7,7 +7,7 @@
 
 // What the fake MC's `projects.mutate` saw (ProjectSteps.cpp), and the
 // error it answers with: `refusal` everywhere, `refusedOn` on one
-// environment. Linked environments' projects are their link rows.
+// environment. Other members' projects are their rows.
 struct FakeProjects {
   QList<QJsonObject> mutations;
   QString refusal;

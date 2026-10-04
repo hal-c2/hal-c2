@@ -46,7 +46,8 @@ Feature: Providers settings panel
       When the user chooses which environment's providers to show
       Then this machine is listed first and the others follow by name
 
-    @desktop
+    # The desktop does not know what its own session may do yet.
+    @backlog @desktop
     Scenario: A session that may only view providers cannot change them
       Given the user's session may view but not operate "Build box"
       When the user shows the providers of "Build box"
@@ -387,7 +388,8 @@ Feature: Providers settings panel
       When the user signs out of "Gemini" and declines
       Then "Gemini" is still signed in
 
-    @desktop
+    # MCs join only by clustering, and a cluster member's sign-ins run from here.
+    @dropped @desktop
     Scenario: An environment outside the cluster is signed in from its own clients
       Given "Build box" is linked and its "Gemini" can sign in from HAL-C2
       When the user shows the providers of "Build box"

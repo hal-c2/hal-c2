@@ -316,6 +316,16 @@ export const ShellComposerState = Schema.Struct({
       lineEnd: Schema.Number,
     }),
   ),
+  /** Quoted assistant replies on the draft, each with the user's comment on it. */
+  citations: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        text: Schema.String,
+        comment: Schema.NullOr(Schema.String),
+      }),
+    ),
+  ),
   placeholder: Schema.String,
   editorDisabled: Schema.Boolean,
   canSend: Schema.Boolean,

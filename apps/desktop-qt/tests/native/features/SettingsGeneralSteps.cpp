@@ -162,8 +162,8 @@ const Steps steps([] {
     // The same repository checked out on this machine and on a linked one.
     world.mc.projects.insert(kProject, projectRow(kProject));
     world.mc.sendRow(kProject, world.mc.projects.value(kProject), QStringLiteral("project"));
-    world.mc.link(kPeerEnvironment);
-    world.mc.sendLinkRow(kPeerEnvironment, kProject, projectRow(kProject), QStringLiteral("project"));
+    world.mc.join(kPeerEnvironment);
+    world.mc.sendPeerRow(kPeerEnvironment, kProject, projectRow(kProject), QStringLiteral("project"));
     world.waitFor([&] {
       const QVariantList projects = sidebarProjects(world);
       return projects.size() == 1 && settingOn(world, QStringLiteral("sidebarProjectGroupingMode"));

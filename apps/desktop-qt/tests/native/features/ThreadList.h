@@ -23,12 +23,3 @@ void updateThreadRow(World& world, const QString& id, const std::function<void(Q
 // The MC's rows follow the thread commands it accepts (pin, settle, snooze,
 // visit...), as the real projection does.
 void projectThreadCommands(World& world);
-// What the MC's `hal-c2.moveDestinations` answers.
-void offerMoveDestinations(World& world, const QJsonArray& destinations);
-// Runs when the MC accepts a `hal-c2.moveThread`, before it answers: the rows
-// that follow the move, and what the answer says besides `status`.
-void onThreadMoved(World& world, std::function<void(const QJsonObject& input, QJsonObject& answer)> moved);
-// How the MC answers the next moves instead of moving: an error saying `refusal`.
-void refuseThreadMoves(World& world, const QString& refusal);
-// Every `hal-c2.moveThread` the MC was asked.
-QList<QJsonObject> threadMovesAsked(World& world);

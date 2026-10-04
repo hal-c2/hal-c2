@@ -3,6 +3,7 @@ FolderExplorer 1.0 FolderExplorer.qml
 FolderOperationDialog 1.0 FolderOperationDialog.qml
 ClusterSettings 1.0 ClusterSettings.qml
 ConnectionsSettings 1.0 ConnectionsSettings.qml
+LoadBalancingGroup 1.0 LoadBalancingGroup.qml
 Composer 1.0 Composer.qml
 ComposerAttachment 1.0 ComposerAttachment.qml
 ModelPicker 1.0 ModelPicker.qml
@@ -20,7 +21,6 @@ ConnectionNotice 1.0 ConnectionNotice.qml
 UsageModelPrices 1.0 UsageModelPrices.qml
 ProviderModelList 1.0 ProviderModelList.qml
 ComposerUsageLimits 1.0 ComposerUsageLimits.qml
-LoadBalancingSettings 1.0 LoadBalancingSettings.qml
 ConnectionStatusRow 1.0 ConnectionStatusRow.qml
 ShellTextField 1.0 ShellTextField.qml
 ShellWindow 1.0 ShellWindow.qml
@@ -76,6 +76,7 @@ EnvironmentIconPicker 1.0 EnvironmentIconPicker.qml
 AgentsPanel 1.0 AgentsPanel.qml
 RevertDialog 1.0 RevertDialog.qml
 TerminalSplits 1.0 TerminalSplits.qml
+TerminalMenu 1.0 TerminalMenu.qml
 TerminalPanel 1.0 TerminalPanel.qml
 PullRequestsPanel 1.0 PullRequestsPanel.qml
 PullRequestReviewPanel 1.0 PullRequestReviewPanel.qml
@@ -85,6 +86,7 @@ CommandPalette 1.0 CommandPalette.qml
 PullRequestsPage 1.0 PullRequestsPage.qml
 HomePage 1.0 HomePage.qml
 UsagePage 1.0 UsagePage.qml
+UsageChart 1.0 UsageChart.qml
 ProvidersSettings 1.0 ProvidersSettings.qml
 ArchivedThreads 1.0 ArchivedThreads.qml
 ProviderAuthTerminal 1.0 ProviderAuthTerminal.qml
@@ -104,3 +106,8 @@ WelcomeWizard 1.0 WelcomeWizard.qml
 OnboardingTerminal 1.0 OnboardingTerminal.qml
 SnapShotSettings 1.0 SnapShotSettings.qml
 Markdown 1.0 Markdown.qml
+Plugin 1.0 Plugin.qml
+Contribution 1.0 Contribution.qml
+PluginSlot 1.0 PluginSlot.qml
+singleton PluginRegistry 1.0 PluginRegistry.qml
+PluginsSettings 1.0 PluginsSettings.qml

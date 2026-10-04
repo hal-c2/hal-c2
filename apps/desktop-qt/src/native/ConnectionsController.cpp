@@ -4,13 +4,10 @@
 #include <QGuiApplication>
 #include <QUrl>
 
-#include "DraftController.h"
 #include "NativeShell.h"
-#include "SettingsController.h"
 #include "NavigationController.h"
 #include "McClient.h"
 #include "ShellBridge.h"
-#include "ShellStore.h"
 
 namespace {
 
@@ -32,51 +29,29 @@ QVariant null() {
   return QVariant::fromValue(nullptr);
 }
 
-// A pairing link as the web app's code field takes it: a host (with or
-// without a scheme) and the code.
-QString pairingUrl(const QString& host, const QString& code) {
-  return host + QStringLiteral("/pair#token=") + code;
-}
-
-// A saved weight as one of the four preferences (loadPreferenceForWeight):
-// older builds kept a slider's value.
-QPair<int, QString> preferenceFor(const QVariant& saved) {
-  bool ok = false;
-  const double weight = saved.toDouble(&ok);
-  if (!saved.isValid() || !ok || weight == 50) return {50, QStringLiteral("Normal")};
-  if (weight <= 0) return {0, QStringLiteral("Manual only")};
-  return weight < 50 ? QPair<int, QString>{25, QStringLiteral("Less often")} : QPair<int, QString>{100, QStringLiteral("Prefer")};
+// The link a client pairs with: this MC's origin and the code.
+QString pairingUrl(const QString& origin, const QString& code) {
+  return origin + QStringLiteral("/pair#token=") + code;
 }
 
 }  // namespace
 
-ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
+ConnectionsController::ConnectionsController(ShellBridge* bridge, McClient* client, QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
       m_client(client),
-      m_store(store),
       m_state{
-          {QStringLiteral("links"), QVariantList()},
           {QStringLiteral("access"), null()},
           {QStringLiteral("accessError"), null()},
           {QStringLiteral("busy"), false},
           {QStringLiteral("notice"), null()},
           {QStringLiteral("created"), null()},
-          {QStringLiteral("removing"), null()},
-          {QStringLiteral("balancing"), null()},
       } {}
 
 void ConnectionsController::activate() {
   if (m_active) return;
   m_active = true;
-  updateLinks();
-  updateBalancing();
   publish();
-  connect(m_store, &ShellStore::changed, this, &ConnectionsController::updateLinks);
-  connect(m_store, &ShellStore::changed, this, &ConnectionsController::updateBalancing);
-  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
-    connect(settings, &SettingsController::deviceChanged, this, &ConnectionsController::updateBalancing);
-  }
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
   auto opened = [navigation] {
     return navigation->route() == NavigationController::Route::settings(NavigationController::kConnectionsSection);
@@ -92,37 +67,6 @@ bool ConnectionsController::handle(const QString& action, const QVariant& payloa
   const QVariantMap input = payload.toMap();
   if (action == QLatin1String("connections.refresh")) {
     watchAccess();
-  } else if (action == QLatin1String("connections.link")) {
-    const QString url = input.value(QStringLiteral("pairingUrl")).toString().trimmed();
-    const QString host = input.value(QStringLiteral("host")).toString().trimmed();
-    const QString code = input.value(QStringLiteral("code")).toString().trimmed();
-    if (!url.isEmpty()) {
-      link(url, {});
-    } else if (host.isEmpty() || code.isEmpty()) {
-      setNotice(QStringLiteral("error"), QStringLiteral("Enter a pairing link, or a host and its pairing code."));
-    } else if (host.contains(QLatin1String("://"))) {
-      link(pairingUrl(host, code), {});
-    } else {
-      // A host without a scheme: HTTPS first, then plain HTTP when that cannot connect.
-      link(pairingUrl(QStringLiteral("https://") + host, code), pairingUrl(QStringLiteral("http://") + host, code));
-    }
-  } else if (action == QLatin1String("connections.balancing.enabled")) {
-    NativeShell::of(this)->controller<SettingsController>()->set(QStringLiteral("loadBalancingEnabled"), input.value(QStringLiteral("enabled")).toBool());
-  } else if (action == QLatin1String("connections.balancing.preference")) {
-    auto* settings = NativeShell::of(this)->controller<SettingsController>();
-    const QString id = input.value(QStringLiteral("environmentId")).toString();
-    if (id.isEmpty() || !settings->setting(QStringLiteral("loadBalancingEnabled")).toBool()) return true;
-    QVariantMap weights = settings->setting(QStringLiteral("loadBalancingWeights")).toMap();
-    weights.insert(id, preferenceFor(input.value(QStringLiteral("weight"))).first);
-    settings->set(QStringLiteral("loadBalancingWeights"), weights);
-  } else if (action == QLatin1String("connections.unlink.request")) {
-    set(QStringLiteral("removing"), input.value(QStringLiteral("environmentId")).toString());
-  } else if (action == QLatin1String("connections.unlink.cancel")) {
-    set(QStringLiteral("removing"), null());
-  } else if (action == QLatin1String("connections.unlink")) {
-    const QString id = input.value(QStringLiteral("environmentId")).toString();
-    m_state.insert(QStringLiteral("removing"), null());
-    if (!id.isEmpty()) unlink(id);
   } else if (action == QLatin1String("connections.pairingLink.create")) {
     createPairingLink(input);
   } else if (action == QLatin1String("connections.pairingLink.copy")) {
@@ -181,7 +125,6 @@ void ConnectionsController::setOpen(bool open) {
   if (open == m_open) return;
   m_open = open;
   m_state.insert(QStringLiteral("notice"), null());
-  m_state.insert(QStringLiteral("removing"), null());
   if (open) {
     watchAccess();
     return;
@@ -251,104 +194,6 @@ void ConnectionsController::publishAccess() {
                                             {QStringLiteral("clients"), m_clients.toVariantList()}});
 }
 
-// Every machine a new thread could start on, with this device's preference for it.
-void ConnectionsController::updateBalancing() {
-  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
-  const QStringList ids = m_store->environments();
-  QVariant balancing = null();
-  // One machine has nothing to balance against.
-  if (settings && ids.size() >= 2) {
-    const QVariantMap weights = settings->setting(QStringLiteral("loadBalancingWeights")).toMap();
-    QVariantList environments;
-    for (const QString& id : ids) {
-      const auto [weight, preference] = preferenceFor(weights.value(id));
-      const QString label = m_store->environment(id).value(QLatin1String("label")).toString();
-      environments.append(QVariantMap{{QStringLiteral("environmentId"), id},
-                                      {QStringLiteral("label"), label.isEmpty() ? (id == m_client->environment() ? QStringLiteral("This machine") : id) : label},
-                                      {QStringLiteral("weight"), weight},
-                                      {QStringLiteral("preference"), preference}});
-    }
-    std::sort(environments.begin(), environments.end(), [](const QVariant& a, const QVariant& b) {
-      return a.toMap().value(QStringLiteral("label")).toString() < b.toMap().value(QStringLiteral("label")).toString();
-    });
-    balancing = QVariantMap{{QStringLiteral("enabled"), settings->setting(QStringLiteral("loadBalancingEnabled")).toBool()},
-                            {QStringLiteral("environments"), environments}};
-  }
-  if (balancing != m_state.value(QStringLiteral("balancing"))) set(QStringLiteral("balancing"), balancing);
-}
-
-// The MC's links, from the shell shape, with what each row says.
-void ConnectionsController::updateLinks() {
-  QVariantList links;
-  for (const QJsonValue& value : m_store->links()) {
-    const QJsonObject link = value.toObject();
-    const QJsonObject environment = link.value(QLatin1String("environment")).toObject();
-    const QString id = environment.value(QLatin1String("environmentId")).toString();
-    const QString problem = link.value(QLatin1String("problem")).toString();
-    const bool online = link.value(QLatin1String("online")).toBool();
-    QString status = QStringLiteral("Connecting");
-    if (online) {
-      status = QStringLiteral("Connected");
-    } else if (problem == QLatin1String("refused")) {
-      status = QStringLiteral("Access refused: pair it again");
-    } else if (problem == QLatin1String("unreachable")) {
-      status = QStringLiteral("Offline");
-    }
-    links.append(QVariantMap{
-        {QStringLiteral("environmentId"), id},
-        {QStringLiteral("label"), environment.value(QLatin1String("label")).toString(id)},
-        {QStringLiteral("origin"), link.value(QLatin1String("origin")).toString()},
-        {QStringLiteral("online"), online},
-        {QStringLiteral("problem"), problem.isEmpty() ? null() : QVariant(problem)},
-        {QStringLiteral("status"), status},
-    });
-  }
-  if (links == m_state.value(QStringLiteral("links")).toList()) return;
-  set(QStringLiteral("links"), links);
-}
-
-// Pairs the MC with the environment behind `pairingUrl`, or behind
-// `fallbackUrl` when the first cannot be reached.
-void ConnectionsController::link(const QString& pairingUrl, const QString& fallbackUrl) {
-  set(QStringLiteral("busy"), true);
-  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.linkEnvironment"),
-                 QJsonObject{{QStringLiteral("pairingUrl"), pairingUrl}},
-                 [this, fallbackUrl](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (error && !fallbackUrl.isEmpty() && error->startsWith(QLatin1String("cannot reach"))) {
-                     link(fallbackUrl, {});
-                     return;
-                   }
-                   m_state.insert(QStringLiteral("busy"), false);
-                   if (error) {
-                     QString text = QStringLiteral("Could not add the environment: %1").arg(explain(*error));
-                     if (error->contains(QLatin1String("invalid or expired"))) text += QStringLiteral(". Ask for a fresh link.");
-                     setNotice(QStringLiteral("error"), text);
-                     return;
-                   }
-                   const QJsonObject descriptor = result.toObject();
-                   const QString label = descriptor.value(QLatin1String("label"))
-                                             .toString(descriptor.value(QLatin1String("environmentId")).toString());
-                   setNotice(QStringLiteral("success"), QStringLiteral("%1 is linked.").arg(label));
-                 });
-}
-
-void ConnectionsController::unlink(const QString& environmentId) {
-  const QString label = labelOf(environmentId);
-  change(QStringLiteral("hal-c2.unlinkEnvironment"), {{QStringLiteral("environmentId"), environmentId}},
-         [this, label, environmentId](const QJsonObject&) {
-           // Nothing written for it is kept: its rows go with the link, its drafts here.
-           if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
-             QStringList ids;
-             for (const DraftController::Draft& draft : drafts->drafts()) {
-               if (draft.environmentId == environmentId) ids.append(draft.id);
-             }
-             for (const QString& id : std::as_const(ids)) drafts->remove(id);
-           }
-           setNotice(QStringLiteral("success"), QStringLiteral("%1 was removed.").arg(label));
-         },
-         QStringLiteral("Could not remove %1").arg(label));
-}
-
 void ConnectionsController::createPairingLink(const QVariantMap& input) {
   const QStringList scopes = input.value(QStringLiteral("scopes")).toStringList();
   if (scopes.isEmpty()) {
@@ -384,15 +229,6 @@ void ConnectionsController::change(const QString& method, const QJsonObject& pay
                    }
                    done(result.toObject());
                  });
-}
-
-QString ConnectionsController::labelOf(const QString& environmentId) const {
-  for (const QVariant& link : m_state.value(QStringLiteral("links")).toList()) {
-    if (link.toMap().value(QStringLiteral("environmentId")) == environmentId) {
-      return link.toMap().value(QStringLiteral("label")).toString();
-    }
-  }
-  return environmentId;
 }
 
 void ConnectionsController::setNotice(const QString& kind, const QString& text) {

@@ -49,7 +49,7 @@ struct FakeHealth {
   QString callError;
   QHash<QString, int> offsets;  // each followed thread's last offset
   QString thread;  // the thread the scenario is about
-  QString savedEnvironment;  // the linked environment the scenario removes
+  QString savedEnvironment;  // the cluster member the scenario removes
   qsizetype rowsBefore = 0;
 };
 
@@ -218,9 +218,9 @@ void foreground(World&) {
 bool removeSavedEnvironment(World& world) {
   const QString environment = fake(world).savedEnvironment;
   if (environment.isEmpty()) return false;
-  const QVariantMap payload{{QStringLiteral("environmentId"), environment}};
-  world.bridge().dispatch(QStringLiteral("connections.unlink.request"), payload);
-  world.bridge().dispatch(QStringLiteral("connections.unlink"), payload);
+  // From Cluster settings; the MC then drops the member for every client.
+  world.bridge().dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), environment}});
+  world.mc.remove(environment);
   return true;
 }
 
@@ -354,27 +354,6 @@ const Steps steps([] {
            QStringLiteral("the window shows %1: %2").arg(store(world)->activeThread(), describe(timeline(world))));
   });
 
-  // Two environments.
-  step(QStringLiteral("two paired environments"), [](World& world, const Captures&, const Table&) {
-    world.mc.link(QStringLiteral("Build box"));
-    world.mc.link(QStringLiteral("Laptop"));
-    world.sync();
-  });
-  step(QStringLiteral("one of them revoked this client"), [](World& world, const Captures&, const Table&) {
-    world.mc.setLinkProblem(QStringLiteral("Build box"), QStringLiteral("refused"));
-  });
-  step(QStringLiteral("the client connects to both"), [](World& world, const Captures&, const Table&) { world.sync(); });
-  step(QStringLiteral("the other environment stays connected"), [](World& world, const Captures&, const Table&) {
-    QHash<QString, QString> status;
-    for (const QVariant& link : world.state(QStringLiteral("connections")).toMap().value(QStringLiteral("links")).toList()) {
-      status.insert(link.toMap().value(QStringLiteral("label")).toString(), link.toMap().value(QStringLiteral("status")).toString());
-    }
-    expect(status.value(QStringLiteral("Build box")) == QLatin1String("Access refused: pair it again") &&
-               status.value(QStringLiteral("Laptop")) == QLatin1String("Connected") && phase(world) == QLatin1String("connected") &&
-               world.native().store()->environmentOnline(QStringLiteral("Laptop")) && !world.native().store()->environmentOnline(QStringLiteral("Build box")),
-           QStringLiteral("the links are %1").arg(show(world.state(QStringLiteral("connections")))));
-  });
-
   // Coming to the foreground.
   step(QStringLiteral("the client is waiting to retry"), [](World& world, const Captures&, const Table&) {
     goDown(world, {600000});
@@ -486,12 +465,12 @@ const Steps steps([] {
   step(QStringLiteral("a saved environment with cached threads and drafts"), [](World& world, const Captures&, const Table&) {
     const QString environment = QStringLiteral("Build box");
     const QString thread = QStringLiteral("thread-ops");
-    world.mc.link(environment);
-    world.mc.sendLinkRow(environment, QStringLiteral("ops"),
+    world.mc.join(environment);
+    world.mc.sendPeerRow(environment, QStringLiteral("ops"),
                          {{QStringLiteral("id"), QStringLiteral("ops")}, {QStringLiteral("title"), QStringLiteral("ops")},
                           {QStringLiteral("workspaceRoot"), QStringLiteral("/work/ops")}, {QStringLiteral("scripts"), QJsonArray()}},
                          QStringLiteral("project"));
-    world.mc.sendLinkRow(environment, thread,
+    world.mc.sendPeerRow(environment, thread,
                          {{QStringLiteral("id"), thread}, {QStringLiteral("title"), QStringLiteral("Deploy")}, {QStringLiteral("projectId"), QStringLiteral("ops")},
                           {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
     world.sync();
@@ -508,18 +487,18 @@ const Steps steps([] {
   });
   step(QStringLiteral("its credential, cached data and drafts are cleared"), [](World& world, const Captures&, const Table&) {
     const QString environment = QStringLiteral("Build box");
-    world.waitFor([&] { return !world.native().store()->reaches(environment); }, QStringLiteral("the environment to go"));
+    world.waitFor([&] { return !world.native().store()->servesEnvironment(environment); }, QStringLiteral("the environment to go"));
     world.sync();
-    // The credential is the MC's, which is told to forget its link.
+    // The credential is the MC's, which is told to drop the member.
     bool forgotten = false;
     for (const FakeMc::Rpc& rpc : world.mc.calls) {
-      if (rpc.method == QLatin1String("hal-c2.unlinkEnvironment") && rpc.payload.value(QLatin1String("environmentId")) == environment) forgotten = true;
+      if (rpc.method == QLatin1String("cluster.remove") && rpc.payload.value(QLatin1String("id")) == environment) forgotten = true;
     }
     QStringList drafts;
     for (const DraftController::Draft& draft : world.native().controller<DraftController>()->drafts()) {
       if (draft.environmentId == environment) drafts.append(draft.text);
     }
-    expect(forgotten && !world.mc.linked.contains(environment), QStringLiteral("the MC still holds the link's credential"));
+    expect(forgotten && !world.mc.members.contains(environment), QStringLiteral("the MC still holds the member"));
     expect(!world.native().store()->thread(fake(world).thread).has_value() && world.native().store()->projectRows(environment).isEmpty() &&
                !store(world)->timeline(fake(world).thread) && !store(world)->openThreads().contains(fake(world).thread),
            QStringLiteral("its threads are still kept"));

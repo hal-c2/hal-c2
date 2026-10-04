@@ -69,6 +69,10 @@ defmodule HalC2.Rpc do
 
   def handle("hal-c2.locateThread", %{"threadId" => id}), do: HalC2.ThreadMove.locate(id)
 
+  # Which machine of the cluster a new thread starts on (`HalC2.LoadBalancing`).
+  def handle("hal-c2.placeThread", %{"environmentId" => _, "projectId" => _} = input),
+    do: HalC2.LoadBalancing.place(input)
+
   # Settings → Connections over the socket: the twins of `/api/auth/pairing-token` and
   # `/api/auth/pairing-links*`, with the HTTP routes' bodies and replies.
   def handle("hal-c2.createPairingLink", input),
@@ -225,15 +229,6 @@ defmodule HalC2.Rpc do
   def handle("terminal.restart", input), do: HalC2.Terminal.restart(input)
   def handle("terminal.close", input), do: HalC2.Terminal.close(input)
   def handle("terminal.list", input), do: HalC2.Terminal.list(input)
-  def handle("hal-c2.environmentLinks", _), do: {:ok, HalC2.Links.list()}
-
-  def handle("hal-c2.linkEnvironment", %{"pairingUrl" => url}) when is_binary(url),
-    do: HalC2.Links.add(url)
-
-  def handle("hal-c2.unlinkEnvironment", %{"environmentId" => id}) when is_binary(id) do
-    with :ok <- HalC2.Links.remove(id), do: {:ok, nil}
-  end
-
   def handle("cloud.getRelayClientStatus", _), do: {:ok, HalC2.Connect.RelayClient.resolve()}
   # This machine's cluster (`HalC2.Cluster`); a client joins it to another with an invite.
   def handle("cluster.status", _input), do: {:ok, HalC2.Cluster.status()}
@@ -294,7 +289,7 @@ defmodule HalC2.Rpc do
     orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
     orchestration.searchThreads orchestration.getArchivedShellSnapshot
     orchestration.getThreadProjection server.getSettings hal-c2.readSettings hal-c2.threadRows
-    hal-c2.environmentLinks
+    hal-c2.placeThread
     server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
     server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
     server.getResourceTelemetryHistory server.getUsageSummary server.refreshUsageRates
@@ -313,10 +308,6 @@ defmodule HalC2.Rpc do
   @spec required_scope(String.t()) :: String.t()
   def required_scope("terminal." <> _), do: "terminal:operate"
   def required_scope("review." <> _), do: "review:write"
-  # A link hands this MC's clients whatever its pairing grants on the other side.
-  def required_scope("hal-c2." <> m) when m in ~w(linkEnvironment unlinkEnvironment),
-    do: "access:write"
-
   # The access list, as `/api/auth/*` guards it.
   def required_scope("hal-c2." <> m) when m in ~w(pairingLinks clients), do: "access:read"
 

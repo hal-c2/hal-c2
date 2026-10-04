@@ -179,7 +179,7 @@ bool DraftController::handle(const QString& action, const QVariant& payload) {
     return true;
   }
   if (action == QLatin1String("draft.project")) {
-    moveTo(map.value(QStringLiteral("draftId")).toString(), map.value(QStringLiteral("projectKey")).toString());
+    openProjects(map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble());
     return true;
   }
   if (action == QLatin1String("draft.menu")) {
@@ -321,30 +321,6 @@ void DraftController::setText(const QString& id, const QString& text) {
 
 // A background send took the draft's thread id: the draft stays for the next
 // prompt under a fresh one, so the launched thread's row does not end it.
-void DraftController::moveTo(const QString& id, const QString& projectKey) {
-  const sidebar::ProjectGroup* group = NativeShell::of(this)->sidebar()->group(projectKey);
-  const auto moving = draft(id);
-  if (!group || !moving || group->members.isEmpty()) return;
-  const sidebar::Project* target = &group->members.constFirst();
-  for (const sidebar::Project& member : group->members) {
-    if (member.environmentId == moving->environmentId) target = &member;
-  }
-  if (target->environmentId == moving->environmentId && target->id == moving->projectId) return;
-  for (const Draft& other : std::as_const(m_drafts)) {
-    if (other.id != id && other.environmentId == target->environmentId && other.projectId == target->id) {
-      NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::draft(other.id));
-      return;
-    }
-  }
-  for (Draft& kept : m_drafts) {
-    if (kept.id != id) continue;
-    kept.environmentId = target->environmentId;
-    kept.projectId = target->id;
-    save();
-    changedEverywhere();
-  }
-}
-
 void DraftController::renew(const QString& id) {
   for (Draft& draft : m_drafts) {
     if (draft.id != id) continue;
@@ -360,6 +336,39 @@ void DraftController::openMenu(const QString& id, double x, double y) {
   MenuController::Item remove{QStringLiteral("delete"), QStringLiteral("Delete draft"), QStringLiteral("trash")};
   remove.destructive = true;
   NativeShell::of(this)->controller<MenuController>()->open(x, y, {remove}, [this, id](const QString&) { this->remove(id); });
+}
+
+// The sidebar's projects, the open draft's ticked; picking another moves the draft (moveTo).
+void DraftController::openProjects(double x, double y) {
+  auto* shell = NativeShell::of(this);
+  auto* navigation = shell->controller<NavigationController>();
+  if (navigation->route().kind != QLatin1String("draft")) return;
+  SidebarController* sidebar = shell->sidebar();
+  const auto shown = shownProject();
+  const auto current = shown ? sidebar->logicalProjectKey(shown->first, shown->second) : std::nullopt;
+  QList<MenuController::Item> items;
+  for (const sidebar::ProjectGroup& group : sidebar->groups()) {
+    MenuController::Item item{group.key, group.summary.value(QStringLiteral("displayName")).toString(), {}};
+    item.checked = current == group.key;
+    items.append(item);
+  }
+  shell->controller<MenuController>()->open(x, y, items, [this, from = navigation->route().draftId](const QString& key) { moveTo(from, key); });
+}
+
+void DraftController::moveTo(const QString& from, const QString& projectKey) {
+  const sidebar::ProjectGroup* group = NativeShell::of(this)->sidebar()->group(projectKey);
+  const auto left = draft(from);
+  if (!group || !left) return;
+  startIn(*group);
+  const QString to = NativeShell::of(this)->controller<NavigationController>()->route().draftId;
+  const auto opened = draft(to);
+  if (to == from || !opened || !opened->text.isEmpty() || left->text.isEmpty()) return;
+  // Through the composer, which the window now shows `to` in, so the caret
+  // lands after the text.
+  m_bridge->dispatch(QStringLiteral("composer.text.set"),
+                     QVariantMap{{QStringLiteral("target"), to}, {QStringLiteral("text"), left->text}, {QStringLiteral("cursor"), left->text.size()}});
+  setText(from, {});
+  changedEverywhere();
 }
 
 void DraftController::reconcile() {
