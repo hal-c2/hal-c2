@@ -79,7 +79,7 @@ Feature: Stacked pull requests
     When the user chooses to rebase the stack
     Then the user is warned that branch history is rewritten and checks may restart
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The thread's pull request shows its stack
     Given pull request 42 is linked to "Tax work"
     When the user looks at "Tax work"

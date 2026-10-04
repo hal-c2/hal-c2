@@ -182,6 +182,12 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     toggleDetails();
   } else if (action == QLatin1String("rightPanel.review")) {
     reviewPullRequest(map.value(QStringLiteral("key")).toString());
+  } else if (action == QLatin1String("rightPanel.linkPullRequest")) {
+    // A pull request a message mentions: the tab shows it once it is linked.
+    if (m_onThread) {
+      showTab(QStringLiteral("pull-requests"));
+      m_pullRequests.link(map.value(QStringLiteral("url")).toString());
+    }
   } else if (action == QLatin1String("rightPanel.openThread")) {
     openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {

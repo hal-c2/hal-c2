@@ -143,7 +143,7 @@ Feature: Threads that work on or link pull requests
     When the user asks which threads are linked to pull request 42
     Then both "Tax work" and "Old tax" are listed
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Linking from a pull request link in the conversation
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user links that pull request from the mention
@@ -203,7 +203,7 @@ Feature: Threads that work on or link pull requests
     When the environment of "Tax work" is reachable again
     Then the user can link, unlink and refresh pull requests
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Opening the thread's pull request from the composer
     Given pull request 42 is the branch's pull request of "Tax work"
     When the user opens the pull request from the thread

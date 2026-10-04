@@ -70,6 +70,9 @@ public:
     SourceLabelRole,
     // "Unlink from thread", or "Dismiss from thread" for a stack layer.
     UnlinkLabelRole,
+    // Where it sits in its host's stack, bottom first: "Layer 2 of 3"; empty
+    // outside a stack.
+    StackLabelRole,
   };
 
   using Notify = std::function<void(const QString& type, const QString& title, const QString& description)>;

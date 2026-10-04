@@ -25,6 +25,27 @@ QString stateLabel(const QJsonObject& detail) {
   return detail.value(QLatin1String("isDraft")).toBool() ? QStringLiteral("Draft") : QStringLiteral("Open");
 }
 
+// allowedPullRequestMergeMethods: what the host offers, narrowed to what the
+// repository allows (one that says nothing allows them all).
+QStringList mergeMethods(const QJsonObject& detail) {
+  const QJsonObject allowed = detail.value(QLatin1String("mergeCapabilities")).toObject();
+  QStringList methods;
+  for (const QJsonValue& method : detail.value(QLatin1String("capabilities")).toObject().value(QLatin1String("mergeMethods")).toArray()) {
+    if (allowed.isEmpty() || allowed.value(method.toString()).toBool()) methods.append(method.toString());
+  }
+  return methods;
+}
+
+// The host can merge and this viewer may (a permission the host says nothing
+// of is granted): an open pull request that is not a draft.
+bool canMerge(const QJsonObject& detail) {
+  if (text(detail, QLatin1String("state")) != QLatin1String("open") || detail.value(QLatin1String("isDraft")).toBool()) return false;
+  const auto offers = [](const QJsonValue& actions) { return actions.toArray().contains(QStringLiteral("merge")); };
+  if (!offers(detail.value(QLatin1String("capabilities")).toObject().value(QLatin1String("actions")))) return false;
+  const QJsonValue permissions = detail.value(QLatin1String("viewerPermissions"));
+  return !permissions.isObject() || offers(permissions.toObject().value(QLatin1String("actions")));
+}
+
 QVariantMap detailOf(const QJsonObject& detail) {
   QVariantList checks;
   for (const QJsonValue& value : detail.value(QLatin1String("checks")).toArray()) {
@@ -53,6 +74,8 @@ QVariantMap detailOf(const QJsonObject& detail) {
       {QStringLiteral("mergeability"), text(detail, QLatin1String("mergeability"))},
       {QStringLiteral("behindBy"), detail.value(QLatin1String("behindBy")).toInt()},
       {QStringLiteral("checks"), checks},
+      {QStringLiteral("canMerge"), canMerge(detail)},
+      {QStringLiteral("mergeMethods"), mergeMethods(detail)},
   };
 }
 
@@ -279,6 +302,26 @@ bool PullRequestReview::comment(const QString& body) {
   QJsonObject input = reference();
   input.insert(QStringLiteral("body"), body);
   return change(QStringLiteral("pullRequests.comment"), input, QStringLiteral("Could not comment"));
+}
+
+bool PullRequestReview::merge(const QString& method) {
+  if (!m_detail.value(QStringLiteral("canMerge")).toBool()) {
+    setProblem(QStringLiteral("This pull request cannot be merged from here."));
+    return false;
+  }
+  const QStringList methods = m_detail.value(QStringLiteral("mergeMethods")).toStringList();
+  const QString chosen = method.isEmpty() ? methods.value(0) : method;
+  if (!chosen.isEmpty() && !methods.contains(chosen)) {
+    setProblem(QStringLiteral("This repository does not allow that merge method."));
+    return false;
+  }
+  QJsonObject input = reference();
+  input.insert(QStringLiteral("action"), QStringLiteral("merge"));
+  // No method leaves it to the host's default.
+  if (!chosen.isEmpty()) input.insert(QStringLiteral("mergeMethod"), chosen);
+  return change(QStringLiteral("pullRequests.runAction"), input, QStringLiteral("Could not merge the pull request"), [this] {
+    m_notify(QStringLiteral("success"), QStringLiteral("Merged"), QStringLiteral("#%1").arg(m_number));
+  });
 }
 
 bool PullRequestReview::submitReview(const QString& verdict, const QString& body) {

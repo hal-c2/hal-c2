@@ -811,7 +811,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {FilesRole, "files"},      {TimeRole, "time"},         {IconRole, "icon"},
       {IntentRole, "intent"},    {AttributionRole, "attribution"}, {MetaRole, "meta"},
       {SummaryRole, "summary"},  {SummaryFailedRole, "summaryFailed"}, {ThreadRole, "thread"},
-      {ModelRole, "agentModel"},
+      {ModelRole, "agentModel"}, {PullRequestUrlRole, "pullRequestUrl"},
   };
 }
 
@@ -968,6 +968,14 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         return text(item, QLatin1String("senderThreadId"));
       }
       return QString();
+    case PullRequestUrlRole: {
+      if (row.kind != QLatin1String("message")) return QString();
+      // packages/shared changeRequestUrl: GitHub and Forgejo pulls, GitLab
+      // merge requests, Bitbucket and Azure pull requests.
+      static const QRegularExpression address(
+          QStringLiteral("https?://[^\\s<>()\\[\\]\"']+/(?:pull|pulls|merge_requests|pull-requests|pullrequest)/\\d+"));
+      return address.match(text(item, QLatin1String("text"))).captured(0);
+    }
     case ModelRole:
       if (row.kind != QLatin1String("subagent")) return QString();
       return text(entity(QStringLiteral("subagent"), text(item, QLatin1String("subagentId"))), QLatin1String("model"));

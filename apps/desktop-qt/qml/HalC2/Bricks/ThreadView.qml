@@ -140,6 +140,9 @@ Item {
         onLinkActivated: link => view.openLink(link)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
         onRevertRequested: rowId => view.askRevert(rowId)
+        onPullRequestLinkRequested: url => Shell.dispatch("rightPanel.linkPullRequest", {
+                url: url
+            })
         // Another thread of this one's environment.
         onThreadActivated: threadId => Shell.dispatch("rightPanel.openThread", {
                 threadKey: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":") + 1) + threadId

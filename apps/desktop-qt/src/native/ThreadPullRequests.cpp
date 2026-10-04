@@ -359,6 +359,15 @@ QVariant ThreadPullRequests::data(const QModelIndex& index, int role) const {
       if (source == QLatin1String("stack")) return QStringLiteral("Found in the stack");
       return QString();
     }
+    case StackLabelRole: {
+      const QJsonArray layers = link.value(QLatin1String("stack")).toObject().value(QLatin1String("layers")).toArray();
+      for (qsizetype layer = 0; layer < layers.size(); ++layer) {
+        if (layers.at(layer).toObject().value(QLatin1String("number")).toInt() == link.value(QLatin1String("number")).toInt()) {
+          return QStringLiteral("Layer %1 of %2").arg(layer + 1).arg(layers.size());
+        }
+      }
+      return QString();
+    }
     case UnlinkLabelRole:
       return text(link, QLatin1String("source")) == QLatin1String("stack") ? QStringLiteral("Dismiss from thread")
                                                                              : QStringLiteral("Unlink from thread");
@@ -389,5 +398,6 @@ QHash<int, QByteArray> ThreadPullRequests::roleNames() const {
       {SourceRole, "source"},
       {SourceLabelRole, "sourceLabel"},
       {UnlinkLabelRole, "unlinkLabel"},
+      {StackLabelRole, "stackLabel"},
   };
 }

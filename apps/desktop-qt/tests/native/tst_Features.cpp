@@ -562,6 +562,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:The thread details panel leads to the thread it was forked from"),
     QStringLiteral("source-control/pull-request-threads.feature"),
     QStringLiteral("source-control/pull-request-review.feature"),
+    QStringLiteral("source-control/pull-request-actions.feature"),
+    QStringLiteral("source-control/stacked-pull-requests.feature"),
     QStringLiteral("preview/surfaces.feature"),
     QStringLiteral("navigation/layout.feature:Showing the terminal from the header"),
     QStringLiteral("navigation/layout.feature:Hiding the terminal"),

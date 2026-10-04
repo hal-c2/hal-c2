@@ -55,6 +55,18 @@ Item {
     // A thread to open: a subagent's own, or the one a message came from
     // (the model's `thread` role, an id in this thread's environment).
     signal threadActivated(string threadId)
+    // The pull request a message mentions is to be linked to the thread.
+    signal pullRequestLinkRequested(string url)
+
+    // Links the pull request a message mentions (the web's link action on a mention).
+    component LinkPullRequestButton: IconButton {
+        property string url
+        objectName: "linkPullRequest"
+        visible: url.length > 0
+        icon: "git-pull-request"
+        tip: qsTr("Link this pull request to the thread")
+        onClicked: root.pullRequestLinkRequested(url)
+    }
 
     // The user's long messages shown in full, by row id; kept here so a row
     // scrolled away and back stays as the user left it.
@@ -535,6 +547,9 @@ Item {
                             rowId: row.rowId
                             text: row.time ?? ""
                         }
+                        LinkPullRequestButton {
+                            url: row.model.pullRequestUrl ?? ""
+                        }
                         CopyButton {
                             rowId: row.rowId
                         }
@@ -742,6 +757,9 @@ Item {
                             textColor: root.mutedColor
                             mono: root.monoFamily
                             border.color: Qt.alpha(root.borderColor, 0.7)
+                        }
+                        LinkPullRequestButton {
+                            url: row.model.pullRequestUrl ?? ""
                         }
                         CopyButton {
                             rowId: row.rowId

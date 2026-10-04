@@ -157,7 +157,7 @@ Feature: Acting on a pull request
     When the user wants to edit it
     Then the user is sent to Azure DevOps to change it
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Merging from the review
     When the user merges pull request 42 from its review with the default merge method
     Then the review shows pull request 42 as merged

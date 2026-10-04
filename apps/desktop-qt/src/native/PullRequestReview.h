@@ -25,6 +25,7 @@ class McClient;
 // Changes go to the same environment and read the pull request again once
 // they land: comment(body) (`pullRequests.comment`), submitReview(verdict,
 // body) (`pullRequests.submitReview`: comment, approve or request-changes),
+// merge(method) (`pullRequests.runAction`; no method is the default one),
 // setThreadResolved(id, resolved) (`pullRequests.setThreadResolution`), and
 // setViewed(path, viewed) (`pullRequests.setFilesViewed`; a viewed file
 // collapses, and the mark is taken back when the host refuses it). While the
@@ -41,7 +42,10 @@ class PullRequestReview : public QObject {
   Q_PROPERTY(QString message READ message NOTIFY stateChanged)
   // {title, body, url, author, state, stateLabel, branches, labels [name],
   //  reviewers [login], mergeability, behindBy, checks [{name, status,
-  //  description, url}]}, empty until read.
+  //  description, url}], canMerge, mergeMethods [merge|squash|rebase]}, empty
+  //  until read. `canMerge` is an open, ready pull request on a host that
+  //  merges, for a viewer who may; `mergeMethods` are the ones the host and
+  //  the repository both allow, the default first.
   Q_PROPERTY(QVariantMap detail READ detail NOTIFY detailChanged)
   // [{id, kind, author, body, createdAt, reviewState, path}], oldest first.
   Q_PROPERTY(QVariantList conversation READ conversation NOTIFY detailChanged)
@@ -95,6 +99,8 @@ public:
   // False (with `problem`) when there is nothing to send or nowhere to send it.
   Q_INVOKABLE bool comment(const QString& body);
   Q_INVOKABLE bool submitReview(const QString& verdict, const QString& body);
+  // Merges it with `method`, or with the first of `mergeMethods`.
+  Q_INVOKABLE bool merge(const QString& method = {});
   Q_INVOKABLE void setThreadResolved(const QString& threadId, bool resolved);
   Q_INVOKABLE void setViewed(const QString& path, bool viewed);
   Q_INVOKABLE bool isViewed(const QString& path) const { return m_viewed.contains(path); }

@@ -8,6 +8,11 @@
 #include <QJsonObject>
 #include <QSet>
 
+#include <QQuickItem>
+#include <QTest>
+#include <memory>
+
+#include "Brick.h"
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "PullRequestReview.h"
@@ -39,6 +44,9 @@ struct FakePullRequests {
   };
   QString thread;
   QList<QJsonObject> invalidated;
+  // The host's stack: its base and its layers' numbers, bottom first.
+  QString stackBase;
+  QList<int> stack;
 };
 
 QString hostKey(const QJsonObject& reference) {
@@ -54,6 +62,17 @@ void syncLinks(FakeMc& mc, const QString& threadId) {
     QJsonObject link = value.toObject();
     const QJsonObject snapshot = mc.part<FakePullRequests>().host.value(hostKey(link));
     link.insert(QStringLiteral("snapshot"), snapshot.isEmpty() ? QJsonValue() : QJsonValue(snapshot));
+    // A layer of the host's stack carries the stack (pull_requests/sync.ex).
+    const FakePullRequests& fake = mc.part<FakePullRequests>();
+    if (fake.stack.contains(link.value(QLatin1String("number")).toInt())) {
+      QJsonArray layers;
+      for (const int number : fake.stack) {
+        layers.append(QJsonObject{{QStringLiteral("number"), number}, {QStringLiteral("headBranch"), QStringLiteral("stack/%1").arg(number)}, {QStringLiteral("state"), QStringLiteral("open")}});
+      }
+      link.insert(QStringLiteral("stack"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("native")}, {QStringLiteral("id"), QStringLiteral("stack-1")},
+                                                       {QStringLiteral("number"), 1}, {QStringLiteral("url"), QStringLiteral("https://github.com/acme/shop/stacks/1")},
+                                                       {QStringLiteral("base"), fake.stackBase}, {QStringLiteral("layers"), layers}});
+    }
     links.append(link);
   }
   row.insert(QStringLiteral("pullRequests"), links);
@@ -351,6 +370,11 @@ struct FakeReview {
   // Every change asked of the host, by method.
   QStringList sent;
   int slices = 0;
+  // What the host says of the pull request, and whether the viewer may merge it.
+  QString state = QStringLiteral("open");
+  bool writeAccess = false;
+  // Every `pullRequests.runAction` input.
+  QList<QJsonObject> actions;
 };
 
 const QString kCartPatch = QStringLiteral(
@@ -373,8 +397,13 @@ void serveReview(FakeMc& mc) {
                         {QStringLiteral("body"), QStringLiteral("Rounds the tax line.")},
                         {QStringLiteral("url"), QStringLiteral("https://github.com/acme/shop/pull/42")},
                         {QStringLiteral("author"), actor(fake.author)},
-                        {QStringLiteral("state"), QStringLiteral("open")},
+                        {QStringLiteral("state"), fake.state},
                         {QStringLiteral("isDraft"), false},
+                        // GitHub merges three ways; the repository allows them all.
+                        {QStringLiteral("capabilities"), QJsonObject{{QStringLiteral("actions"), QJsonArray{QStringLiteral("merge"), QStringLiteral("close")}},
+                                                                     {QStringLiteral("mergeMethods"), QJsonArray{QStringLiteral("merge"), QStringLiteral("squash"), QStringLiteral("rebase")}}}},
+                        {QStringLiteral("mergeCapabilities"), QJsonObject{{QStringLiteral("merge"), true}, {QStringLiteral("squash"), true}, {QStringLiteral("rebase"), true}}},
+                        {QStringLiteral("viewerPermissions"), QJsonObject{{QStringLiteral("actions"), fake.writeAccess ? QJsonArray{QStringLiteral("merge"), QStringLiteral("close")} : QJsonArray()}}},
                         {QStringLiteral("mergeability"), QStringLiteral("mergeable")},
                         {QStringLiteral("headBranch"), QStringLiteral("feature/tax")},
                         {QStringLiteral("baseBranch"), QStringLiteral("main")},
@@ -441,6 +470,17 @@ void serveReview(FakeMc& mc) {
                                      {QStringLiteral("reviewState"), verdict == QLatin1String("approve") ? QStringLiteral("APPROVED")
                                                                      : verdict == QLatin1String("request-changes") ? QStringLiteral("CHANGES_REQUESTED")
                                                                                                                    : QStringLiteral("COMMENTED")}});
+    mc.reply(rpc, QJsonValue::Null);
+  });
+  mc.onRpc(QStringLiteral("pullRequests.runAction"), [&mc](const FakeMc::Rpc& rpc) {
+    FakeReview& fake = mc.part<FakeReview>();
+    fake.sent.append(rpc.method);
+    fake.actions.append(rpc.payload);
+    if (!fake.writeAccess) {
+      mc.refuse(rpc, QStringLiteral("You do not have permission to merge this pull request."));
+      return;
+    }
+    if (rpc.payload.value(QLatin1String("action")) == QLatin1String("merge")) fake.state = QStringLiteral("merged");
     mc.reply(rpc, QJsonValue::Null);
   });
   mc.onRpc(QStringLiteral("pullRequests.setThreadResolution"), [&mc](const FakeMc::Rpc& rpc) {
@@ -511,8 +551,8 @@ QVariantMap reviewThread(World& world) {
 const Steps reviewSteps([] {
   const QString q = kQuoted;
 
-  step(QStringLiteral("the open pull request (\\d+) by %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.mc.part<FakeReview>().author = c[1];
+  step(QStringLiteral("the open pull request (\\d+)(?: by %1)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<FakeReview>().author = c.value(1).isEmpty() ? QStringLiteral("octocat") : c.value(1);
     world.mc.part<FakeReview>().comments = QJsonArray{
         QJsonObject{{QStringLiteral("id"), QStringLiteral("c1")}, {QStringLiteral("kind"), QStringLiteral("comment")},
                     {QStringLiteral("author"), actor(QStringLiteral("ada"))}, {QStringLiteral("body"), QStringLiteral("Why round up?")},
@@ -530,6 +570,109 @@ const Steps reviewSteps([] {
     syncLinks(world.mc, kThread);
     world.sync();
     waitForRow(world, c[0].toInt(), true);
+  });
+  // A pull request a message mentions, linked from that message.
+  step(QStringLiteral("a message in %1 mentions %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[0]);
+    startRun(world, 30);
+    addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("I opened %1 for the tax line.").arg(c[1])}});
+    settleRun(world, QStringLiteral("completed"), 30);
+    waitForRow(world, 42, false);
+  });
+  step(QStringLiteral("the user links that pull request from the mention"), [](World& world, const Captures&, const Table&) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nThreadView {}\n", QSize(820, 700));
+    Brick& brick = *world.brick;
+    QQuickItem* button = nullptr;
+    const std::function<void(QQuickItem*)> find = [&](QQuickItem* item) {
+      if (item->objectName() == QLatin1String("linkPullRequest") && item->isVisible()) button = item;
+      for (QQuickItem* child : item->childItems()) find(child);
+    };
+    world.waitFor([&] {
+      find(brick.window().contentItem());
+      return button != nullptr;
+    }, QStringLiteral("the message to offer linking its pull request"));
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(button));
+    world.sync();
+  });
+  step(QStringLiteral("%1 lists pull request (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForRow(world, c[1].toInt(), true);
+    const int row = rowOf(world, c[1].toInt());
+    expect(model(world).value(row, ThreadPullRequests::TitleRole) == QLatin1String("Tax line fix"), describe(world));
+  });
+
+  // A stack of pull requests on the host (stacked-pull-requests.feature).
+  step(QStringLiteral("the stack onto %1 of pull requests (\\d+), (\\d+) and (\\d+), bottom to top").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakePullRequests& fake = world.mc.part<FakePullRequests>();
+    fake.stackBase = c[0];
+    fake.stack = {c[1].toInt(), c[2].toInt(), c[3].toInt()};
+  });
+  step(QStringLiteral("the user looks at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[0]);
+    expect(world.mc.threads.value(kThread).value(QLatin1String("title")) == c[0], QStringLiteral("the thread shown is not %1").arg(c[0]));
+  });
+  step(QStringLiteral("its pull request shows it is layer (\\d+) of (\\d+)"), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = QStringLiteral("Layer %1 of %2").arg(c[0], c[1]);
+    world.waitFor([&] { return model(world).rowCount() == 1 && model(world).value(0, ThreadPullRequests::StackLabelRole) == wanted; },
+                  [&] { return QStringLiteral("%1; the stack reads \"%2\"").arg(describe(world), model(world).rowCount() > 0 ? model(world).value(0, ThreadPullRequests::StackLabelRole).toString() : QString()); });
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nPullRequestsPanel { source: Panel.pullRequests }\n", QSize(420, 500));
+    world.waitFor([&] { return world.brick->shows(QStringLiteral("acme/shop #42 · feature/tax → main · ") + wanted); }, QStringLiteral("the tab to draw the layer"));
+  });
+
+  // The branch's own pull request, from the composer's chip.
+  step(QStringLiteral("pull request (\\d+) is the branch's pull request of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString url = QStringLiteral("https://github.com/acme/shop/pull/") + c[0];
+    world.mc.checkouts.insert(QStringLiteral("/work/") + kProject, [number = c[0].toInt(), url] {
+      return QJsonObject{{QStringLiteral("local"), QJsonObject{{QStringLiteral("isRepo"), true}, {QStringLiteral("refName"), QStringLiteral("feature/tax")}}},
+                         {QStringLiteral("remote"), QJsonObject{{QStringLiteral("hasUpstream"), true},
+                                                                {QStringLiteral("pr"), QJsonObject{{QStringLiteral("number"), number}, {QStringLiteral("title"), QStringLiteral("Tax line fix")},
+                                                                                                   {QStringLiteral("url"), url}, {QStringLiteral("state"), QStringLiteral("open")}}}}}};
+    });
+    lookAt(world, c[1]);
+    // The checkout is already followed (the landing draft's): the MC says what it found.
+    const QJsonObject status = world.mc.checkouts.value(QStringLiteral("/work/") + kProject)();
+    for (const int id : world.mc.subscribers(QStringLiteral("vcs"))) {
+      if (world.mc.shapeOf(id).value(QLatin1String("cwd")) != QStringLiteral("/work/") + kProject) continue;
+      world.mc.send({{QStringLiteral("t"), QStringLiteral("vcs")}, {QStringLiteral("id"), id},
+                     {QStringLiteral("event"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("localUpdated")}, {QStringLiteral("local"), status.value(QLatin1String("local"))}}}});
+      world.mc.send({{QStringLiteral("t"), QStringLiteral("vcs")}, {QStringLiteral("id"), id},
+                     {QStringLiteral("event"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("remoteUpdated")}, {QStringLiteral("remote"), status.value(QLatin1String("remote"))}}}});
+    }
+    world.sync();
+    world.waitFor([&] { return at(world.state(QStringLiteral("workspace")), QStringLiteral("git.pullRequest.number")).toInt() == c[0].toInt(); },
+                  [&] { return QStringLiteral("the composer to name the pull request; the workspace is %1").arg(show(world.state(QStringLiteral("workspace")))); });
+  });
+  step(QStringLiteral("the user opens the pull request from the thread"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("workspace.openPullRequest"));
+    world.sync();
+  });
+  step(QStringLiteral("pull request (\\d+) opens"), [](World& world, const Captures& c, const Table&) {
+    expect(world.openedUrls == QList<QUrl>{QUrl(QStringLiteral("https://github.com/acme/shop/pull/") + c[0])},
+           QStringLiteral("the browser opened %1").arg(world.openedUrls.size()));
+  });
+
+  // Merging (pull-request-actions.feature), from the review's Overview.
+  step(QStringLiteral("the user has write access to %1").arg(q), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakeReview>().writeAccess = true;
+  });
+  step(QStringLiteral("the user merges pull request (\\d+) from its review with the default merge method"), [](World& world, const Captures& c, const Table&) {
+    openReview(world, c[0].toInt());
+    expect(review(world).detail().value(QStringLiteral("canMerge")).toBool(), QStringLiteral("merging is not offered: %1").arg(show(review(world).detail())));
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nPullRequestReviewPanel { source: Panel.review }\n", QSize(700, 800));
+    world.waitFor([&] { return world.brick->item(QStringLiteral("reviewMerge"))->isVisible(); }, QStringLiteral("the review to offer Merge"));
+    world.brick->click(QStringLiteral("reviewMerge"));
+    world.sync();
+  });
+  step(QStringLiteral("the review shows pull request (\\d+) as merged"), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return review(world).detail().value(QStringLiteral("stateLabel")) == QLatin1String("Merged") && !review(world).busy(); },
+                  [&] { return QStringLiteral("%1; the host was asked %2 actions; the detail is %3").arg(describeReview(world)).arg(world.mc.part<FakeReview>().actions.size()).arg(show(review(world).detail())); });
+    const QList<QJsonObject> actions = world.mc.part<FakeReview>().actions;
+    // The default method: the first the repository allows.
+    expect(actions.size() == 1 && actions.first().value(QLatin1String("action")) == QLatin1String("merge") &&
+               actions.first().value(QLatin1String("mergeMethod")) == QLatin1String("merge") && actions.first().value(QLatin1String("number")).toInt() == c[0].toInt(),
+           QStringLiteral("the host was asked %1").arg(actions.isEmpty() ? QStringLiteral("nothing") : show(actions.first().toVariantMap())));
+    // A merged pull request offers no merge.
+    expect(!review(world).detail().value(QStringLiteral("canMerge")).toBool(), describeReview(world));
+    world.waitFor([&] { return !world.brick->item(QStringLiteral("reviewMerge"))->isVisible(); }, QStringLiteral("Merge to go away"));
   });
   step(QStringLiteral("%1 is marked viewed in pull request (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
     world.mc.part<FakeReview>().viewed.insert(c[0]);

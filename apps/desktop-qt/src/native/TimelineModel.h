@@ -89,6 +89,9 @@ public:
     ThreadRole,
     // The model a subagent runs on (its `subagent` entity's), or empty.
     ModelRole,
+    // The first pull (or merge) request address a message mentions, for
+    // linking it to the thread; empty when it mentions none.
+    PullRequestUrlRole,
   };
 
   // Calls shown per collapsed work group.

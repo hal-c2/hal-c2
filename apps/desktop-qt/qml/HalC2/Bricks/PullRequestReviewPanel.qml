@@ -238,6 +238,50 @@ Rectangle {
                     width: parent.width - 24
                     spacing: 10
 
+                    // Merging, where the host and the viewer's rights allow it:
+                    // the default method, or another the repository allows.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: root.detail.canMerge === true
+                        spacing: 6
+
+                        ShellButton {
+                            objectName: "reviewMerge"
+                            primary: true
+                            text: root.source?.busy ? qsTr("Merging…") : qsTr("Merge pull request")
+                            enabled: root.online && !(root.source?.busy ?? false)
+                            onClicked: root.source.merge("")
+                        }
+                        ShellButton {
+                            objectName: "reviewMergeMethod"
+                            visible: (root.detail.mergeMethods ?? []).length > 1
+                            chevron: true
+                            text: qsTr("Method")
+                            enabled: root.online && !(root.source?.busy ?? false)
+                            onClicked: mergeMethods.open()
+
+                            ShellMenu {
+                                id: mergeMethods
+
+                                y: parent.height
+
+                                Instantiator {
+                                    model: root.detail.mergeMethods ?? []
+                                    delegate: ShellMenuItem {
+                                        required property string modelData
+
+                                        text: modelData === "squash" ? qsTr("Squash and merge") : modelData === "rebase" ? qsTr("Rebase and merge") : qsTr("Create a merge commit")
+                                        onTriggered: root.source.merge(modelData)
+                                    }
+                                    onObjectAdded: (index, object) => mergeMethods.insertItem(index, object)
+                                    onObjectRemoved: (index, object) => mergeMethods.removeItem(object)
+                                }
+                            }
+                        }
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                    }
                     Text {
                         Layout.fillWidth: true
                         visible: (root.detail.behindBy ?? 0) > 0
