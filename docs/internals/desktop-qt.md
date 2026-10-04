@@ -61,8 +61,10 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   each socket it reads the MC's descriptor and stays blocked on a protocol it
   does not speak; a drop is retried with growing delays, waits for the network
   when a remote MC's device is offline, and stops on a credential the MC
-  refuses (it asks `/api/auth/session`, since a failed handshake does not say
-  why) until the user pairs again. A thread's stream resubscribes from the
+  refuses until the user pairs again. A failed handshake does not say why, so
+  the client asks for a socket ticket: the MC's own token opens the socket
+  directly, a paired session's token only through a ticket, and a token the MC
+  no longer knows gets neither. A thread's stream resubscribes from the
   offset its last whole snapshot or event reached; every other shape is sent
   whole. `ConnectionHealthController` turns the phases into `connection`, which
   is not `connected` until the shell snapshot lands on that socket. Controllers

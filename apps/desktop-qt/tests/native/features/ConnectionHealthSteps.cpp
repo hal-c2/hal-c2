@@ -38,6 +38,7 @@ struct FakeHealth {
   int protocol = McClient::kProtocol;
   QString serverVersion;
   QSet<QString> revoked;
+  QStringList tickets;  // socket tickets it issued
   // Pairing tokens it takes at `/oauth/token`, and the session each buys.
   QHash<QString, QString> pairingTokens;
   // What the scenario watches.
@@ -77,10 +78,17 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     if (!health.serverVersion.isEmpty()) descriptor.insert(QStringLiteral("serverVersion"), health.serverVersion);
     answer(socket, 200, json(descriptor));
   });
-  mc.onRaw(QStringLiteral("/api/auth/session"), [&mc](QTcpSocket* socket, const QByteArray& head) {
+  // A socket ticket for a credential the MC knows (router.ex `/api/auth/websocket-ticket`).
+  mc.onRaw(QStringLiteral("/api/auth/websocket-ticket"), [&mc](QTcpSocket* socket, const QByteArray& head) {
     static const QRegularExpression bearer(QStringLiteral("[Aa]uthorization: Bearer ([^\\r\\n]+)"));
     const QString token = bearer.match(QString::fromUtf8(head)).captured(1);
-    answer(socket, 200, json({{QStringLiteral("authenticated"), !mc.part<FakeHealth>().revoked.contains(token)}}));
+    FakeHealth& health = mc.part<FakeHealth>();
+    if (health.revoked.contains(token)) {
+      answer(socket, 401, json({{QStringLiteral("_tag"), QStringLiteral("EnvironmentAuthInvalidError")}, {QStringLiteral("reason"), QStringLiteral("invalid_credential")}}));
+      return;
+    }
+    health.tickets.append(QStringLiteral("ticket-%1").arg(health.tickets.size() + 1));
+    answer(socket, 200, json({{QStringLiteral("ticket"), health.tickets.last()}}));
   });
 });
 
@@ -322,6 +330,8 @@ const Steps steps([] {
       };
       if (!exchange()) QObject::connect(socket, &QTcpSocket::readyRead, socket, exchange);
     });
+    // A session's token does not open the socket itself, as on the real MC: it buys a ticket.
+    world.mc.onRaw(QStringLiteral("/ws?token=session-2"), [](QTcpSocket* socket, const QByteArray&) { answer(socket, 401, "unauthorized", "text/plain"); });
     fake(world).connectionsBefore = world.mc.connections.size();
     Brick& shown = notice(world);
     shown.item(QStringLiteral("connectionPairingLink"))->setProperty("text", world.mc.origin().toString() + QStringLiteral("/pair#token=fresh-1"));
@@ -329,9 +339,11 @@ const Steps steps([] {
   });
   step(QStringLiteral("it reconnects with a new session"), [](World& world, const Captures&, const Table&) {
     waitForReconnect(world, fake(world).connectionsBefore + 1);
-    const QString token = QUrlQuery(world.mc.connections.last()).queryItemValue(QStringLiteral("token"));
-    expect(token == QLatin1String("session-2") && !connection(world).value(QStringLiteral("needsPairing")).toBool(),
-           QStringLiteral("it connected with \"%1\"; the connection is %2").arg(token, show(connection(world))));
+    // The new session was bought with the link, and its ticket opened the socket.
+    const QString ticket = QUrlQuery(world.mc.connections.last()).queryItemValue(QStringLiteral("wsTicket"));
+    expect(fake(world).pairingTokens.value(QStringLiteral("fresh-1")) == QLatin1String("session-2") && !ticket.isEmpty() &&
+               fake(world).tickets.contains(ticket) && !connection(world).value(QStringLiteral("needsPairing")).toBool(),
+           QStringLiteral("it connected to %1; the connection is %2").arg(world.mc.connections.last().toString(), show(connection(world))));
   });
   step(QStringLiteral("keeps its local view of the environment"), [](World& world, const Captures&, const Table&) {
     // The thread it showed is still the one it shows, with what it held, and live again.

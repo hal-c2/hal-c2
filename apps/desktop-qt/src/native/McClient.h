@@ -26,8 +26,11 @@ class QWebSocket;
 // (`/.well-known/hal-c2/environment`) and stays blocked on a protocol it does
 // not speak. A socket that drops is retried with growing delays; without a
 // network it waits for one, and a credential the MC refuses waits for the
-// user (phase()). wake() cuts a waiting retry short and checks a connection
-// that looks healthy.
+// user (phase()). The MC's own access token opens the socket as `?token=`; a
+// paired session's token does not, so a handshake that fails asks the MC for a
+// socket ticket (`/api/auth/websocket-ticket`): it either gets one and opens
+// with `?wsTicket=` from then on, or learns the credential is refused. wake()
+// cuts a waiting retry short and checks a connection that looks healthy.
 class McClient : public QObject {
   Q_OBJECT
 
@@ -124,7 +127,10 @@ signals:
 
 private:
   void connectSocket();
-  void openSocket();
+  void openSocket(const QString& ticket = {});
+  // Asks the MC for a socket ticket and opens with it; a credential it does
+  // not know is refused, and anything else is retried.
+  void openWithTicket();
   void ping();
   void drop(const QString& reason);
   void failed(const QString& reason, bool wasReady);
@@ -172,6 +178,8 @@ private:
   // Bumped by every attempt: an answer to an older one is ignored.
   quint64 m_generation = 0;
   bool m_online = true;
+  // The token is a paired session's: every socket needs a ticket.
+  bool m_ticketed = false;
   QString m_mc;
   QString m_environment;
   int m_nextId = 1;

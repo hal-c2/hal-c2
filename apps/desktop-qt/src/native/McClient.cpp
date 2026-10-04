@@ -49,6 +49,7 @@ void McClient::open(const QUrl& origin, const QString& token) {
   m_failure.clear();
   m_failureTraceId.clear();
   m_blockedProtocol = 0;
+  m_ticketed = false;
   connectSocket();
 }
 
@@ -280,17 +281,50 @@ void McClient::connectSocket() {
       return;
     }
     // An MC that does not describe itself is left to the socket to refuse.
-    openSocket();
+    if (m_ticketed) {
+      openWithTicket();
+    } else {
+      openSocket();
+    }
   });
 }
 
-void McClient::openSocket() {
+void McClient::openWithTicket() {
+  const quint64 generation = m_generation;
+  QNetworkRequest ticket = request(QStringLiteral("/api/auth/websocket-ticket"));
+  ticket.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+  ticket.setTransferTimeout(5000);
+  QNetworkReply* answer = m_http->post(ticket, QByteArrayLiteral("{}"));
+  connect(answer, &QNetworkReply::finished, this, [this, answer, generation] {
+    answer->deleteLater();
+    if (generation != m_generation || m_closed) return;
+    const int status = answer->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QString issued = QJsonDocument::fromJson(answer->readAll()).object().value(QLatin1String("ticket")).toString();
+    if (status == 401) {
+      // The MC no longer knows this credential: no retry mends that.
+      setPhase(Phase::Refused);
+    } else if (status == 200 && !issued.isEmpty()) {
+      m_ticketed = true;
+      openSocket(issued);
+    } else {
+      scheduleRetry();
+    }
+  });
+}
+
+void McClient::openSocket(const QString& ticket) {
   auto* socket = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
   m_socket = socket;
   connect(socket, &QWebSocket::textMessageReceived, this, &McClient::onMessage);
   connect(socket, &QWebSocket::disconnected, this, [this, socket] { onClosed(socket); });
   connect(socket, &QWebSocket::errorOccurred, this, [this, socket] { onClosed(socket); });
-  QNetworkRequest handshake(m_url);
+  QUrl url = m_url;
+  if (!ticket.isEmpty()) {
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("wsTicket"), ticket);
+    url.setQuery(query);
+  }
+  QNetworkRequest handshake(url);
   handshake.setRawHeader("traceparent", QStringLiteral("00-%1-%2-01").arg(m_traceId, m_traceId.left(16)).toLatin1());
   socket->open(handshake);
 }
@@ -390,28 +424,16 @@ void McClient::onClosed(QWebSocket* socket) {
 }
 
 // A socket that never got its hello may have been turned away for its
-// credential, which no retry mends: the MC says whether it still knows it.
+// credential. With the bare token that is either a paired session's token,
+// which needs a ticket, or one the MC refuses: asking for a ticket tells which.
+// A ticketed socket that failed is retried like any other.
 void McClient::failed(const QString& reason, bool wasReady) {
   Q_UNUSED(reason);
-  if (wasReady) {
+  if (wasReady || m_ticketed) {
     scheduleRetry();
     return;
   }
-  const quint64 generation = m_generation;
-  QNetworkRequest session = request(QStringLiteral("/api/auth/session"));
-  session.setTransferTimeout(5000);
-  QNetworkReply* answer = m_http->get(session);
-  connect(answer, &QNetworkReply::finished, this, [this, answer, generation] {
-    answer->deleteLater();
-    if (generation != m_generation || m_closed) return;
-    const QJsonDocument document = QJsonDocument::fromJson(answer->readAll());
-    const QJsonValue authenticated = document.object().value(QLatin1String("authenticated"));
-    if (answer->error() == QNetworkReply::NoError && authenticated.isBool() && !authenticated.toBool()) {
-      setPhase(Phase::Refused);
-      return;
-    }
-    scheduleRetry();
-  });
+  openWithTicket();
 }
 
 void McClient::scheduleRetry() {
