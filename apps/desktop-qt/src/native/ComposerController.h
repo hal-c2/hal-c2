@@ -85,7 +85,7 @@ class TimelineModel;
 // {entries: [{id, snippet, createdAt}], open, shortcut}, `open` being this
 // window's.
 //
-// A terminal excerpt is a chip on the draft (`composer.excerpts`), as
+// A terminal excerpt is a chip on the draft (`composer.terminalContexts`), as
 // the web's terminal context; a send appends an inline context link for each
 // to the text and carries the excerpts as the message's `context` records,
 // which the MC hands the provider (HalC2.ComposerContext).
