@@ -292,6 +292,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("preview/remote.feature"),
     QStringLiteral("plugins/ui-plugins.feature"),
     QStringLiteral("plugins/plugin-catalog.feature"),
+    QStringLiteral("plugins/keymaps.feature"),
     QStringLiteral("navigation/qt-shell-backlog.feature:A device tab streams a device screen"),
     QStringLiteral("navigation/qt-shell-backlog.feature:Opening a folder*"),
     QStringLiteral("desktop/shell-host.feature:A screenshot taken without a display shows the app's window"),

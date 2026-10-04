@@ -10,6 +10,8 @@ QtObject {
     property var shortcuts: []
     property var bindings: []
     property bool saving: false
+    property int customCount: 0
+    function resetAll() {}
     property var pressed: []
     property var saved: []
     // The commands the shell runs (CommandRegistry): add and run by id.
