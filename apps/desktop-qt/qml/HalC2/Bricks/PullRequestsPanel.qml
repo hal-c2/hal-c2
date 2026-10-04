@@ -222,7 +222,8 @@ Rectangle {
             required property bool conflicting
             required property string branches
             required property string sourceLabel
-            required property string stackLabel
+            // A role a model may leave out (stackLabel).
+            required property var model
             required property string unlinkLabel
 
             objectName: "pullRequestRow-" + number
@@ -278,7 +279,7 @@ Rectangle {
                 anchors.right: menuButton.left
                 anchors.rightMargin: 4
                 y: 25
-                text: [qsTr("%1 #%2").arg(row.repository).arg(row.number), row.branches, row.stackLabel].filter(part => part.length > 0).join(" · ")
+                text: [qsTr("%1 #%2").arg(row.repository).arg(row.number), row.branches, row.model.stackLabel ?? ""].filter(part => part.length > 0).join(" · ")
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.muted
