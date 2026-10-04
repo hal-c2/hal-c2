@@ -46,7 +46,7 @@ Rectangle {
             implicitHeight: 24
             iconName: "git-fork"
             iconSize: 12
-            text: bar.lineage?.parent?.missing === true ? (bar.lineage?.parent?.title ?? "") : qsTr("Forked from %1").arg(bar.lineage?.parent?.title ?? "")
+            text: bar.lineage?.parent?.missing === true ? (bar.lineage?.parent?.title ?? "") : bar.lineage?.parent?.subagent === true ? qsTr("Subagent of %1").arg(bar.lineage?.parent?.title ?? "") : qsTr("Forked from %1").arg(bar.lineage?.parent?.title ?? "")
             onClicked: Shell.dispatch("lineage.open", {
                 key: bar.lineage.parent.key
             })
@@ -71,7 +71,7 @@ Rectangle {
 
         ShellButton {
             objectName: "lineageMergeBack"
-            visible: (bar.lineage?.parent ?? null) !== null && bar.lineage?.parent?.missing !== true
+            visible: (bar.lineage?.parent ?? null) !== null && bar.lineage?.parent?.missing !== true && bar.lineage?.parent?.subagent !== true
             enabled: bar.lineage?.canMerge === true
             subtle: true
             implicitHeight: 24

@@ -99,6 +99,10 @@ Feature: Pushing, pulling and guarding the default branch
       | Push              |
       | Create PR         |
       | Commit & push     |
+
+    @backlog-desktop
+    Examples:
+      | action            |
       | Commit, push & PR |
 
   @desktop

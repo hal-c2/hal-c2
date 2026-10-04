@@ -74,6 +74,9 @@ class TimelineModel;
 // questionId, files}, composer.question.attachment.remove {id},
 // composer.terminalContext.add {terminalId, terminalLabel, lineStart, lineEnd,
 // text}, composer.terminalContext.remove {id},
+// composer.reviewComment.add {filePath, lineStart, lineEnd, text, diff,
+// startIndex, endIndex, rangeLabel, sectionId, sectionTitle},
+// composer.reviewComment.remove {id},
 // composer.approval.respond {requestId, decision},
 // composer.question.answer {requestId, answers}, composer.question.dismiss
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
@@ -89,6 +92,11 @@ class TimelineModel;
 // brings back the only entry, or opens the list. Publishes `composerStash`:
 // {entries: [{id, snippet, createdAt}], open, shortcut}, `open` being this
 // window's.
+//
+// A note on a diff's lines is a chip too (`composer.reviewComments`: {id,
+// label "src/cart.ts L10-12", filePath, lineStart, lineEnd, text}); a send
+// names it in the text and carries it as a `review-comment` context record
+// (packages/contracts/src/composerContext.ts).
 //
 // A terminal excerpt is a chip on the draft (`composer.terminalContexts`), as
 // the web's terminal context; a send appends an inline context link for each
@@ -130,6 +138,9 @@ public:
                    const QJsonObject& source = {});
   // The draft's images: {id, name, mimeType, sizeBytes, source}.
   QVariantList attachments(const QString& target) const;
+  // Whether `target`'s draft has files still on their way to the MC, or a
+  // send in flight that carries the draft's attachments.
+  bool attachmentsPending(const QString& target) const;
   // Adds `text` after the route's draft, a space apart from what is there
   // (the Files tab's Add to chat); false with no thread or draft open.
   bool insertAtEnd(const QString& text);
@@ -186,6 +197,10 @@ private:
     int lineStart = 1;
     int lineEnd = 1;
     QString text;
+    // Set for a note on lines of a diff instead (a `review-comment` record):
+    // {filePath, sectionId, sectionTitle, startIndex, endIndex, rangeLabel,
+    // diff}; `text` is then the note and the lines are the file's.
+    QJsonObject review;
   };
   struct Draft {
     QString text;  // a new thread's is DraftController's
@@ -250,6 +265,8 @@ private:
   bool attach(const QVariantList& files);
   // A terminal selection joins the route's draft; blank ones are dropped.
   bool addTerminalContext(const QVariantMap& selection);
+  // A note on lines of a diff joins the route's draft (ThreadDiff::comment).
+  bool addReviewComment(const QVariantMap& comment);
   // The message text with a context link per excerpt, and their records as
   // its `context`.
   static void withTerminalContexts(QJsonObject& message, const QList<TerminalContext>& contexts);

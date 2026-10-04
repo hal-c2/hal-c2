@@ -2,6 +2,7 @@
 
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QJsonDocument>
 #include <QRegularExpression>
 
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <utility>
 
 #include "SidebarModel.h"
+#include "TimelineSummary.h"
 
 namespace {
 
@@ -69,6 +71,7 @@ QString iconOf(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
   if (type == QLatin1String("command_execution")) return QStringLiteral("terminal");
   if (type == QLatin1String("file_change")) return QStringLiteral("square-pen");
+  if (timeline::isFileRead(item)) return QStringLiteral("eye");
   if (type == QLatin1String("file_search")) return QStringLiteral("search");
   if (type == QLatin1String("web_search")) return QStringLiteral("globe");
   if (type == QLatin1String("dynamic_tool")) return QStringLiteral("wrench");
@@ -363,7 +366,13 @@ void TimelineModel::events(const QJsonArray& events) {
   }
   if (m_turnTouched) emit turnChanged();
   if (m_checkpointsTouched) emit checkpointsChanged();
-  if (m_agentsTouched) emit agentsChanged();
+  if (m_agentsTouched) {
+    emit agentsChanged();
+    // A subagent's row shows its entity's model.
+    for (int row = 0; row < m_rows.size(); ++row) {
+      if (m_rows.at(row).kind == QLatin1String("subagent")) emit dataChanged(index(row), index(row), {ModelRole});
+    }
+  }
   if (m_workspaceTouched) emit workspaceChanged();
   if (structural) {
     restructure(changed, false);
@@ -585,6 +594,8 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     for (const QString& id : turn.items) {
       if (id == turn.terminal) continue;
       const Kind kind = classify(text(items.value(id), QLatin1String("type")));
+      // Work a turn left running (a background command) stays in view.
+      if (kind == Kind::Work && text(items.value(id), QLatin1String("status")) == QLatin1String("running")) continue;
       if (kind == Kind::Work || kind == Kind::Message) hidden.append(id);
     }
     if (hidden.isEmpty()) continue;
@@ -610,7 +621,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     } else {
       label = elapsed ? QStringLiteral("Worked for %1").arg(formatDuration(*elapsed)) : QStringLiteral("Worked");
     }
-    const bool open = m_expandedFolds.contains(runId);
+    const bool open = m_expandedFolds.contains(runId) != m_keptOpen.contains(runId);
     // The web's turn fold reads the user's message's time, else its first item's.
     const QDateTime at = turn.boundary.isValid() ? turn.boundary : itemTime(items.value(turn.items.first()));
     foldAt.insert(turn.items.first(), {runId, label, int(hidden.size()), open, at});
@@ -646,6 +657,8 @@ QList<TimelineModel::Row> TimelineModel::project() const {
         if (callKind != Kind::Work || folded.contains(callId) || text(call, QLatin1String("runId")) != runId) break;
         row.items.append(callId);
       }
+      row.summarized = row.items.size() > 1 && kSettled.contains(text(runs.value(runId), QLatin1String("status")));
+      row.startsOpen = m_keptOpen.contains(runId);
       rows.append(row);
       i = next;
       continue;
@@ -728,6 +741,12 @@ void TimelineModel::updateWorking() {
   emit workingChanged();
 }
 
+void TimelineModel::keepOpen(const QString& runId) {
+  if (runId.isEmpty() || m_keptOpen.contains(runId)) return;
+  m_keptOpen.insert(runId);
+  restructure({}, false);
+}
+
 void TimelineModel::toggle(const QString& rowId) {
   if (rowId.startsWith(QLatin1String("fold:"))) {
     const QString runId = rowId.mid(5);
@@ -738,7 +757,7 @@ void TimelineModel::toggle(const QString& rowId) {
   const int row = indexOf(rowId);
   if (row < 0 || m_rows.at(row).kind != QLatin1String("work")) return;
   if (!m_expandedGroups.remove(rowId)) m_expandedGroups.insert(rowId);
-  emit dataChanged(index(row), index(row), {EntriesRole, ExpandedRole});
+  emit dataChanged(index(row), index(row), {EntriesRole, HiddenCountRole, ExpandedRole});
 }
 
 int TimelineModel::indexOf(const QString& rowId) const {
@@ -764,6 +783,40 @@ QString TimelineModel::finishedRunOf(const QString& rowId) const {
   if (text(item, QLatin1String("type")) != QLatin1String("assistant_message")) return {};
   const QString runId = text(item, QLatin1String("runId"));
   return text(entity(QStringLiteral("run"), runId), QLatin1String("status")) == QLatin1String("completed") ? runId : QString();
+}
+
+QVariantMap TimelineModel::rewindPointOf(const QString& rowId) const {
+  const int at = indexOf(rowId);
+  if (at < 0) return {};
+  const Row& row = m_rows.at(at);
+  if (row.kind != QLatin1String("message") || row.items.isEmpty()) return {};
+  const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.constFirst());
+  if (text(item, QLatin1String("type")) != QLatin1String("user_message")) return {};
+  const QString runId = text(item, QLatin1String("runId"));
+  const auto runs = m_entities.value(QStringLiteral("run"));
+  const auto checkpoints = m_entities.value(QStringLiteral("checkpoint"));
+  // The turn's number: its checkpoint's, else its place among the runs still shown.
+  int turn = 0;
+  for (const QJsonObject& checkpoint : checkpoints) {
+    if (text(checkpoint, QLatin1String("runId")) == runId) turn = checkpoint.value(QLatin1String("appRunOrdinal")).toInt();
+  }
+  if (turn <= 0) {
+    const double ordinal = runs.value(runId).value(QLatin1String("ordinal")).toDouble();
+    for (const QJsonObject& other : runs) {
+      if (other.value(QLatin1String("ordinal")).toDouble() <= ordinal && text(other, QLatin1String("status")) != QLatin1String("rolled_back")) ++turn;
+    }
+  }
+  QVariantMap point{{QStringLiteral("turn"), turn},
+                    {QStringLiteral("text"), text(item, QLatin1String("text"))},
+                    {QStringLiteral("attachments"), item.value(QLatin1String("attachments")).toArray().toVariantList()}};
+  for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
+    if (text(*it, QLatin1String("status")) != QLatin1String("ready") || it->value(QLatin1String("appRunOrdinal")).toInt() != turn - 1) continue;
+    // Before the first turn it is the thread's baseline, which has no turn.
+    if (turn == 1 && (it->value(QLatin1String("appRunOrdinal")).isDouble() || text(*it, QLatin1String("runId")) != runId)) continue;
+    point.insert(QStringLiteral("checkpointId"), it.key());
+    point.insert(QStringLiteral("scopeId"), text(*it, QLatin1String("scopeId")));
+  }
+  return point;
 }
 
 QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
@@ -809,6 +862,8 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {EntriesRole, "entries"},  {HiddenCountRole, "hiddenCount"}, {ExpandedRole, "expanded"},
       {FilesRole, "files"},      {TimeRole, "time"},         {IconRole, "icon"},
       {IntentRole, "intent"},    {AttributionRole, "attribution"}, {MetaRole, "meta"},
+      {SummaryRole, "summary"},  {SummaryFailedRole, "summaryFailed"}, {ThreadRole, "thread"},
+      {ModelRole, "agentModel"}, {PullRequestUrlRole, "pullRequestUrl"},
   };
 }
 
@@ -842,11 +897,22 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
     entry.insert(QStringLiteral("path"), text(item, QLatin1String("fileName")));
     detail = QStringLiteral("+%1 -%2").arg(item.value(QLatin1String("additions")).toInt()).arg(item.value(QLatin1String("deletions")).toInt());
   } else if (type == QLatin1String("file_search")) {
-    label = QStringLiteral("Searched files");
+    // What it looked for; a read's file (an ACP agent's `read`).
+    label = timeline::isFileRead(item) ? QStringLiteral("Read file") : QStringLiteral("Searched files");
+    detail = text(item, QLatin1String("pattern"));
   } else if (type == QLatin1String("web_search")) {
     label = QStringLiteral("Searched the web");
+    QStringList patterns;
+    for (const QJsonValue& pattern : item.value(QLatin1String("patterns")).toArray()) patterns.append(pattern.toString());
+    detail = patterns.join(QLatin1Char('\n'));
   } else if (type == QLatin1String("dynamic_tool")) {
     label = item.value(QLatin1String("toolName")).toString(QStringLiteral("Used tool"));
+    // Its input; a result's body is not shown (docs/user/activity-log.md).
+    if (const QJsonValue input = item.value(QLatin1String("input")); input.isObject() && !input.toObject().isEmpty()) {
+      detail = QString::fromUtf8(QJsonDocument(input.toObject()).toJson(QJsonDocument::Indented)).trimmed();
+    } else if (input.isString()) {
+      detail = input.toString();
+    }
   } else if (type == QLatin1String("approval_request") || type == QLatin1String("user_input_request")) {
     // Answered in the composer (ComposerController); the row records the ask.
     const bool approval = type == QLatin1String("approval_request");
@@ -903,14 +969,23 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     return {};
   }
   if (row.kind == QLatin1String("work")) {
-    const bool expanded = m_expandedGroups.contains(row.id);
+    const bool expanded = m_expandedGroups.contains(row.id) != row.startsOpen;
+    // A summarized group collapses into its summary alone.
+    const int shown = row.summarized ? 0 : visibleWorkEntries;
     if (role == ExpandedRole) return expanded;
-    if (role == HiddenCountRole) return std::max<int>(0, int(row.items.size()) - visibleWorkEntries);
+    if (role == HiddenCountRole) return std::max<int>(0, int(row.items.size()) - shown);
     if (role == EntriesRole) {
       QVariantList entries;
-      const qsizetype first = expanded ? 0 : std::max<qsizetype>(0, row.items.size() - visibleWorkEntries);
+      const qsizetype first = expanded ? 0 : std::max<qsizetype>(0, row.items.size() - shown);
       for (qsizetype i = first; i < row.items.size(); ++i) entries.append(entry(entity(QStringLiteral("turn-item"), row.items.at(i))));
       return entries;
+    }
+    if (role == SummaryRole || role == SummaryFailedRole) {
+      if (!row.summarized) return role == SummaryRole ? QVariant(QString()) : QVariant(false);
+      QList<QJsonObject> calls;
+      for (const QString& id : row.items) calls.append(entity(QStringLiteral("turn-item"), id));
+      const timeline::GroupSummary summary = timeline::summarize(calls);
+      return role == SummaryRole ? QVariant(summary.text) : QVariant(summary.failed);
     }
     return {};
   }
@@ -933,8 +1008,29 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       // apps/web/src/components/chat/MessagesTimeline.tsx UserMessageTimelineRow.
       if (type != QLatin1String("user_message")) return QString();
       if (!text(item, QLatin1String("scheduledTaskId")).isEmpty()) return QStringLiteral("Sent by automation");
-      if (text(item, QLatin1String("createdBy")) == QLatin1String("agent")) return QStringLiteral("Sent by another agent");
+      if (text(item, QLatin1String("createdBy")) == QLatin1String("agent")) {
+        const QString sender = text(item, QLatin1String("senderThreadId"));
+        const QString title = sender.isEmpty() || !m_threadTitle ? QString() : m_threadTitle(sender);
+        return title.isEmpty() ? QStringLiteral("Sent by another agent") : QStringLiteral("From %1").arg(title);
+      }
       return QString();
+    case ThreadRole:
+      if (row.kind == QLatin1String("subagent")) return text(item, QLatin1String("childThreadId"));
+      if (type == QLatin1String("user_message") && text(item, QLatin1String("createdBy")) == QLatin1String("agent")) {
+        return text(item, QLatin1String("senderThreadId"));
+      }
+      return QString();
+    case PullRequestUrlRole: {
+      if (row.kind != QLatin1String("message")) return QString();
+      // packages/shared changeRequestUrl: GitHub and Forgejo pulls, GitLab
+      // merge requests, Bitbucket and Azure pull requests.
+      static const QRegularExpression address(
+          QStringLiteral("https?://[^\\s<>()\\[\\]\"']+/(?:pull|pulls|merge_requests|pull-requests|pullrequest)/\\d+"));
+      return address.match(text(item, QLatin1String("text"))).captured(0);
+    }
+    case ModelRole:
+      if (row.kind != QLatin1String("subagent")) return QString();
+      return text(entity(QStringLiteral("subagent"), text(item, QLatin1String("subagentId"))), QLatin1String("model"));
     case MetaRole:
       return row.meta;
     case IconRole:

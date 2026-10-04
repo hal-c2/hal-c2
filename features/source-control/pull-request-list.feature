@@ -209,7 +209,7 @@ Feature: Browsing pull requests
     When the user opens #12 on GitHub from the pull requests page
     Then the browser opens "https://github.com/acme/shop/pull/12"
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request list beside the thread
     When the user adds a pull requests tab to the right panel
     Then the open pull requests of the project are listed

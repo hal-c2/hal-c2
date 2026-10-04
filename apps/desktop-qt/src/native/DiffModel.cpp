@@ -1,5 +1,8 @@
 #include "DiffModel.h"
 
+#include <QMap>
+#include <QVariantMap>
+
 #include <algorithm>
 
 namespace {
@@ -246,6 +249,71 @@ QStringList DiffModel::paths() const {
     out.append(file.path);
   }
   return out;
+}
+
+QVariantList DiffModel::tree() const {
+  struct Node {
+    QMap<QString, Node> folders;
+    QMap<QString, int> files;  // name -> file index
+  };
+  Node root;
+  for (int file = 0; file < fileCount(); ++file) {
+    const QStringList parts = m_files[file].path.split(QLatin1Char('/'));
+    Node* node = &root;
+    for (qsizetype i = 0; i + 1 < parts.size(); ++i) node = &node->folders[parts.at(i)];
+    node->files.insert(parts.last(), file);
+  }
+  QVariantList rows;
+  const auto walk = [&](auto&& self, const Node& node, const QString& prefix, int depth) -> void {
+    for (auto it = node.folders.cbegin(); it != node.folders.cend(); ++it) {
+      const QString path = prefix + it.key();
+      rows.append(QVariantMap{{QStringLiteral("kind"), QStringLiteral("folder")}, {QStringLiteral("name"), it.key()},
+                              {QStringLiteral("path"), path}, {QStringLiteral("depth"), depth}});
+      self(self, *it, path + QLatin1Char('/'), depth + 1);
+    }
+    for (auto it = node.files.cbegin(); it != node.files.cend(); ++it) {
+      const File& file = m_files[*it];
+      rows.append(QVariantMap{{QStringLiteral("kind"), QStringLiteral("file")}, {QStringLiteral("name"), it.key()},
+                              {QStringLiteral("path"), file.path}, {QStringLiteral("depth"), depth}, {QStringLiteral("file"), *it},
+                              {QStringLiteral("additions"), file.additions}, {QStringLiteral("deletions"), file.deletions}});
+    }
+  };
+  walk(walk, root, QString(), 0);
+  return rows;
+}
+
+QVariantMap DiffModel::excerpt(int file, const QString& side, int first, int last) {
+  if (file < 0 || file >= fileCount() || first <= 0) return {};
+  if (last < first) std::swap(first, last);
+  File& entry = m_files[size_t(file)];
+  ensureLines(entry);
+  const bool old = side == QLatin1String("old");
+  QStringList picked;
+  int startIndex = -1, endIndex = -1, index = -1;
+  QChar sameSide;
+  bool mixed = false;
+  for (const Line& line : entry.lines) {
+    if (line.sign == '@' || line.sign == '\\') continue;
+    ++index;
+    const int number = old ? line.oldLine : line.newLine;
+    if ((old ? line.sign != '-' : line.sign == '-') || number < first || number > last) continue;
+    if (startIndex < 0) startIndex = index;
+    endIndex = index;
+    const QChar sign = QLatin1Char(line.sign);
+    if (picked.isEmpty()) {
+      sameSide = sign;
+    } else if (sign != sameSide) {
+      mixed = true;
+    }
+    picked.append(m_patch.mid(line.offset, line.length));
+  }
+  if (picked.isEmpty()) return {};
+  const QString marker = mixed || sameSide == QLatin1Char(' ') ? QString() : QString(sameSide);
+  return {{QStringLiteral("startIndex"), startIndex},
+          {QStringLiteral("endIndex"), endIndex},
+          {QStringLiteral("diff"), picked.join(QLatin1Char('\n'))},
+          {QStringLiteral("rangeLabel"), first == last ? marker + QString::number(first)
+                                                      : QStringLiteral("%1%2 to %1%3").arg(marker).arg(first).arg(last)}};
 }
 
 int DiffModel::rowOfFile(int file) const {

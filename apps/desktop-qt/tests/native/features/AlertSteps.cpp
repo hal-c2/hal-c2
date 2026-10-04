@@ -40,6 +40,8 @@ struct FakeAlerts {
   QStringList delivered;
   QStringList closed;
   QStringList sounds;
+  // What the dock or taskbar badge counts; -1 before it was ever set.
+  int badge = -1;
   QMap<QString, Tracked> threads;  // by title
   QString current;                 // the title the last steps were about
   QString lastToast;               // the title of the last in-app alert
@@ -73,6 +75,7 @@ AlertController& alerts(World& world) {
           state.shown.clear();
         },
         [&state](const QString& kind) { state.sounds.append(kind); },
+        [&state](int count) { state.badge = count; },
   });
   controller->setFocused(state.focused);
   return *controller;
@@ -226,6 +229,58 @@ void toggleMuteFromPalette(World& world, const QString& title, bool mute) {
 
 const Steps steps([] {
   const QString q = kQuoted;
+
+  // The shell's own alerts with the window out of focus (timeline/qt-shell-backlog.feature).
+  // AlertController hands them to the desktop's notification service and the
+  // dock or taskbar badge itself (the Presenter): nothing else is installed.
+  const auto inBackground = [](World& world) {
+    if (world.shellSubscriptions() == 0) {
+      world.mc.projects.insert(QStringLiteral("shop"), {{QStringLiteral("id"), QStringLiteral("shop")}, {QStringLiteral("title"), QStringLiteral("shop")},
+                                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")}, {QStringLiteral("scripts"), QJsonArray()}});
+      world.connect();
+      world.sync();
+    }
+    setMode(world, QStringLiteral("notifications"));
+    fake(world).focused = false;
+    alerts(world);
+  };
+  step(QStringLiteral("the native desktop shell has no notification extension installed"), [](World& world, const Captures&, const Table&) {
+    // Nothing but the shell's own presenter is there to deliver a notification.
+    expect(fake(world).shown.isEmpty() && fake(world).delivered.isEmpty(), QStringLiteral("a notification is already shown: %1").arg(describe(world)));
+  });
+  step(QStringLiteral("the app is in the background"), [inBackground](World& world, const Captures&, const Table&) { inBackground(world); });
+  step(QStringLiteral("a turn finishes"), [](World& world, const Captures&, const Table&) {
+    change(world, working(world, QStringLiteral("Tax fix")), QStringLiteral("completes"));
+  });
+  step(QStringLiteral("an operating system notification arrives"), [](World& world, const Captures&, const Table&) {
+    const FakeAlerts& state = fake(world);
+    const QString key = keyOf(world, state.threads.value(QStringLiteral("Tax fix")));
+    expect(state.shown.value(key) == QStringList{QStringLiteral("Thread completed"), QStringLiteral("Tax fix")} && toasts(world).isEmpty(),
+           QStringLiteral("the user sees %1").arg(describe(world)));
+  });
+  const auto twoFinish = [](World& world) {
+    change(world, working(world, QStringLiteral("Tax fix")), QStringLiteral("completes"));
+    change(world, working(world, QStringLiteral("Cart tests")), QStringLiteral("completes"));
+  };
+  step(QStringLiteral("two turns finish"), [twoFinish](World& world, const Captures&, const Table&) { twoFinish(world); });
+  step(QStringLiteral("the dock or taskbar badge shows (\\d+)"), [inBackground, twoFinish](World& world, const Captures& c, const Table&) {
+    // As a precondition: that many turns finished while the app was away.
+    if (!world.checking) {
+      inBackground(world);
+      twoFinish(world);
+    }
+    expect(fake(world).badge == c[0].toInt(), QStringLiteral("the badge shows %1").arg(fake(world).badge));
+  });
+  step(QStringLiteral("the user returns to the app"), [](World& world, const Captures&, const Table&) {
+    fake(world).focused = true;
+    alerts(world);
+  });
+  step(QStringLiteral("the badge is cleared"), [](World& world, const Captures&, const Table&) {
+    expect(fake(world).badge == 0, QStringLiteral("the badge shows %1").arg(fake(world).badge));
+    // A turn that finishes while the user is here is not counted.
+    change(world, working(world, QStringLiteral("Docs")), QStringLiteral("completes"));
+    expect(fake(world).badge == 0, QStringLiteral("the badge shows %1 with the window in front").arg(fake(world).badge));
+  });
 
   step(QStringLiteral("the user has alerts turned on"), [](World& world, const Captures&, const Table&) {
     auto* settings = world.native().controller<SettingsController>();

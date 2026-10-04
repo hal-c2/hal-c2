@@ -78,6 +78,10 @@ Window {
 
     CustomSnoozeDialog {}
 
+    PullRequestThreadDialog {}
+
+    EditFromHereDialog {}
+
     ProjectActionEditor {}
 
     ProjectIconPicker {}

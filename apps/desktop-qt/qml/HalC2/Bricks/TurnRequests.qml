@@ -6,7 +6,8 @@ import HalC2.Shell
 
 // What the open thread's turn waits on from the user, which the Composer
 // stacks on top of its prompt: the pending approval (one at a time, with its position), the
-// agent's question, the proposed plan once the turn is over, and the queued
+// agent's question, the proposed plan once the turn is over (with its other
+// actions: a new thread, copy, download, save to the workspace), and the queued
 // follow-ups. Rendered from Shell.state.turn (ComposerController) for the
 // thread the composer shows; every answer is a composer.* action the shell
 // sends to the MC.
@@ -425,11 +426,126 @@ Item {
                 }
 
                 ShellButton {
+                    objectName: "planMore"
+                    implicitHeight: 28
+                    implicitWidth: 28
+                    subtle: true
+                    iconName: "ellipsis"
+                    iconSize: 14
+                    Accessible.name: qsTr("More plan actions")
+                    onClicked: planMenu.open()
+
+                    ShellMenu {
+                        id: planMenu
+
+                        y: -height - 4
+
+                        ShellMenuItem {
+                            objectName: "planNewThread"
+                            text: qsTr("Implement in a new thread")
+                            iconName: "message-square-plus"
+                            onTriggered: Shell.dispatch("plan.implementInNewThread", {})
+                        }
+                        ShellMenuItem {
+                            objectName: "planCopy"
+                            text: qsTr("Copy plan")
+                            iconName: "copy"
+                            onTriggered: Shell.dispatch("plan.copy", {})
+                        }
+                        ShellMenuItem {
+                            objectName: "planDownload"
+                            text: qsTr("Download as Markdown")
+                            iconName: "download"
+                            onTriggered: Shell.dispatch("plan.download", {})
+                        }
+                        ShellMenuItem {
+                            objectName: "planSave"
+                            text: qsTr("Save to workspace…")
+                            iconName: "save"
+                            onTriggered: planSaveDialog.open()
+                        }
+                    }
+                }
+
+                ShellButton {
                     objectName: "planImplement"
                     implicitHeight: 28
                     primary: true
                     text: qsTr("Implement")
                     onClicked: Shell.dispatch("composer.plan.implement", {})
+                }
+
+                // Where in the workspace the plan is saved; empty takes the
+                // plan's own file name.
+                Popup {
+                    id: planSaveDialog
+                    objectName: "planSaveDialog"
+
+                    parent: Overlay.overlay
+                    scale: Shell.state.layout?.zoom ?? 1
+                    transformOrigin: Item.TopLeft
+                    x: Math.round((parent.width - width * scale) / 2)
+                    y: Math.round((parent.height - height * scale) / 2)
+                    width: 380
+                    modal: true
+                    padding: 16
+                    onOpened: {
+                        planSavePath.text = "";
+                        planSavePath.forceActiveFocus();
+                    }
+
+                    background: Rectangle {
+                        radius: Theme.radius
+                        color: Theme.palette.color("surfaceOverlay", "#18181b")
+                        border.color: Theme.palette.color("border", "#27272a")
+                        border.width: 1
+                    }
+
+                    contentItem: ColumnLayout {
+                        spacing: 10
+
+                        Text {
+                            text: qsTr("Save plan to workspace")
+                            color: requests.foreground
+                            font.family: requests.uiFont
+                            font.pixelSize: Math.round(15 * Theme.fontScale)
+                            font.bold: true
+                        }
+                        ShellTextField {
+                            id: planSavePath
+
+                            objectName: "planSavePath"
+                            Layout.fillWidth: true
+                            placeholderText: qsTr("Path in the workspace, e.g. docs/plan.md")
+                            Accessible.name: qsTr("Workspace path")
+                            onAccepted: planSaveConfirm.clicked()
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                            ShellButton {
+                                text: qsTr("Cancel")
+                                onClicked: planSaveDialog.close()
+                            }
+                            ShellButton {
+                                id: planSaveConfirm
+
+                                objectName: "planSaveConfirm"
+                                primary: true
+                                text: qsTr("Save")
+                                onClicked: {
+                                    Shell.dispatch("plan.save", {
+                                        path: planSavePath.text.trim()
+                                    });
+                                    planSaveDialog.close();
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

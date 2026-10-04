@@ -649,7 +649,7 @@ Rectangle {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.topMargin: 12
-                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0)
+                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0)
                     spacing: 6
 
                     Repeater {
@@ -666,6 +666,27 @@ Rectangle {
                                 id: modelData.id
                             })
                             onOpenRequested: Shell.dispatch("attachment.view", {
+                                id: modelData.id
+                            })
+                        }
+                    }
+
+                    // Notes on a diff's lines; a click takes one off the prompt.
+                    Repeater {
+                        model: composer.ready ? composer.model.reviewComments ?? [] : []
+
+                        delegate: ShellButton {
+                            required property var modelData
+
+                            objectName: "reviewComment-" + modelData.id
+                            implicitHeight: 24
+                            iconName: "message-square"
+                            text: modelData.label
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            Accessible.name: qsTr("Remove the comment on %1").arg(text)
+                            ToolTip.visible: hovered
+                            ToolTip.text: modelData.text
+                            onClicked: Shell.dispatch("composer.reviewComment.remove", {
                                 id: modelData.id
                             })
                         }
@@ -1168,6 +1189,23 @@ Rectangle {
                     Accessible.name: qsTr("Switch branch")
                     onClicked: branchPicker.open()
 
+                    // The web's "Copy branch name", on the secondary button.
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        onTapped: branchMenu.popup()
+                    }
+                    ShellMenu {
+                        id: branchMenu
+
+                        ShellMenuItem {
+                            objectName: "copyBranchName"
+                            text: qsTr("Copy branch name")
+                            iconName: "copy"
+                            enabled: contextStrip.wsReady && (contextStrip.ws.branch ?? "").length > 0
+                            onTriggered: Shell.dispatch("workspace.branch.copy")
+                        }
+                    }
+
                     Popup {
                         id: branchPicker
                         objectName: "branchPicker"
@@ -1256,8 +1294,25 @@ Rectangle {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
+                                // Where the list was when it asked for more, so
+                                // the longer list opens at the same place.
+                                property real keptY: -1
+
                                 boundsBehavior: Flickable.StopAtBounds
                                 model: contextStrip.wsReady ? contextStrip.ws.branches : []
+                                // The end of a list with more to it loads the next page.
+                                onAtYEndChanged: {
+                                    if (atYEnd && count > 0 && contextStrip.wsReady && contextStrip.ws.branchesTotal > count) {
+                                        keptY = contentY;
+                                        Shell.dispatch("workspace.branch.more");
+                                    }
+                                }
+                                onCountChanged: {
+                                    if (keptY >= 0) {
+                                        contentY = keptY;
+                                        keptY = -1;
+                                    }
+                                }
 
                                 delegate: Rectangle {
                                     id: branchRow
