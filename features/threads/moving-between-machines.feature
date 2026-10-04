@@ -369,6 +369,14 @@ Feature: Moving a thread and its agent to another machine
       Then the running turn of "Alpha" is interrupted
       And "Alpha" moves to "desktop"
 
+    # The MC refuses a thread whose turn is starting as it does a running one.
+    @tui
+    Scenario: A thread whose turn is still starting is stopped and moved the same way
+      Given the agent in "Alpha" is still starting
+      When the user moves "Alpha" to "desktop" and chooses to stop it first
+      Then the running turn of "Alpha" is interrupted
+      And "Alpha" moves to "desktop"
+
     @shared @backlog-mobile
     Scenario: A message cannot be sent while the thread is moving
       Given "Alpha" is moving to "desktop"

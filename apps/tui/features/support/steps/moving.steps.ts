@@ -167,6 +167,10 @@ step(
 
 // --- Moving --------------------------------------------------------------------
 
+step("the agent in {string} is still starting", (ctx: World, title: string) => {
+  threadNamed(ctx, title).session = { status: "starting" };
+});
+
 step("the user chooses where to move {string}", askWhereToMove);
 
 step("the user moves {string} to {string}", async (ctx: World, title: string, machine: string) => {

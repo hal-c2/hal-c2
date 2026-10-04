@@ -63,7 +63,11 @@ export function createMoveController(ctx: {
 
   const shellThread = (id: string) =>
     store.getState().shell?.threads.find((thread) => thread.id === id);
-  const running = (id: string) => shellThread(id)?.session?.status === "running";
+  // The MC refuses a thread whose turn is starting as it does one that is running.
+  const running = (id: string) => {
+    const status = shellThread(id)?.session?.status;
+    return status === "running" || status === "starting";
+  };
 
   const move = (
     thread: MoveThread,
