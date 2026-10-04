@@ -1,9 +1,11 @@
 #include "ComposerController.h"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocale>
 #include <QRegularExpression>
 #include <QStringList>
 #include <QUuid>
@@ -104,7 +106,8 @@ QString imagesSignature(const QJsonObject& targets) {
   QStringList signature;
   for (auto it = targets.begin(); it != targets.end(); ++it) {
     for (const QJsonValue& image : it.value().toArray()) {
-      signature.append(it.key() + u'/' + image.toObject().value(QLatin1String("id")).toString());
+      signature.append(it.key() + u'/' + image.toObject().value(QLatin1String("id")).toString() + u'/' +
+                       image.toObject().value(QLatin1String("remoteId")).toString() + image.toObject().value(QLatin1String("upload")).toString());
     }
   }
   return signature.join(u'\n');
@@ -116,6 +119,22 @@ QString newId() {
 
 // apps/web/src/promptStashStore.ts MAX_STASH_ENTRIES.
 constexpr qsizetype kMaxStashEntries = 20;
+// packages/contracts/src/chatAttachment.ts PROVIDER_SEND_TURN_MAX_INPUT_CHARS.
+constexpr qsizetype kMaxPromptChars = 120000;
+// apps/web/src/components/chat/composerPromptHistory.ts CLAUDE_ULTRATHINK_PREFIX.
+const QString kUltrathinkPrefix = QStringLiteral("Ultrathink:\n");
+
+// What the user typed of a sent message (the web's recallableComposerPrompt):
+// without the Ultrathink prefix and the context links a send appends; a plan
+// the app asked to implement is not a prompt.
+QString recallable(QString prompt) {
+  static const QRegularExpression contextLink(QStringLiteral(" ?\\[[^\\]]*\\]\\(hal-c2-context://[^)]*\\)"));
+  prompt = prompt.trimmed();
+  if (prompt.startsWith(kUltrathinkPrefix)) prompt = prompt.mid(kUltrathinkPrefix.size());
+  prompt.remove(contextLink);
+  prompt = prompt.trimmed();
+  return prompt.startsWith(kImplementPrefix.trimmed()) ? QString() : prompt;
+}
 
 }  // namespace
 
@@ -181,8 +200,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     publish();
     return true;
   }
-  // Prompt history is not the shell's yet.
-  if (action == QLatin1String("composer.history.step")) return true;
+  if (action == QLatin1String("composer.history.step")) {
+    if (!target.isEmpty()) stepHistory(target, map.value(QStringLiteral("direction")).toString() != QLatin1String("forward"));
+    return true;
+  }
   if (action == QLatin1String("composer.terminalContext.add")) return addTerminalContext(map);
   if (action == QLatin1String("composer.terminalContext.remove")) {
     if (target.isEmpty()) return true;
@@ -196,6 +217,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (!target.isEmpty()) {
       selectModel(target, map.value(QStringLiteral("instanceId")).toString(), map.value(QStringLiteral("model")).toString());
     }
+    return true;
+  }
+  if (action == QLatin1String("composer.model.multiple.toggle")) {
+    if (!target.isEmpty()) toggleMultipleModel(target, map.value(QStringLiteral("instanceId")).toString(), map.value(QStringLiteral("model")).toString());
     return true;
   }
   if (action == QLatin1String("composer.model.favorite.toggle")) {
@@ -249,14 +274,43 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
 
   if (action == QLatin1String("composer.interrupt")) return interrupt();
   if (action == QLatin1String("composer.submit")) return submit(map);
-  if (action == QLatin1String("composer.attach")) return attach(map.value(QStringLiteral("files")).toList());
-  if (action == QLatin1String("composer.attachment.remove")) {
+  if (action == QLatin1String("composer.attach")) {
     if (target.isEmpty()) return true;
-    QList<Attachment>& attachments = m_drafts[target].attachments;
+    const QVariantList folders = map.value(QStringLiteral("folders")).toList();
+    if (!folders.isEmpty()) attachFolders(target, folders);
+    const QVariantList files = map.value(QStringLiteral("files")).toList();
+    if (files.isEmpty()) return true;
+    // While the agent waits on an answer, files are the answer's.
+    const QVariantList questions = turnState().value(QStringLiteral("questions")).toList();
+    if (!questions.isEmpty()) return attachToAnswer(questions.constFirst().toMap().value(QStringLiteral("requestId")).toString(), {}, files);
+    return attach(files);
+  }
+  if (action == QLatin1String("composer.question.attach")) {
+    return attachToAnswer(map.value(QStringLiteral("requestId")).toString(), map.value(QStringLiteral("questionId")).toString(),
+                          map.value(QStringLiteral("files")).toList());
+  }
+  if (action == QLatin1String("composer.attachment.remove") || action == QLatin1String("composer.question.attachment.remove")) {
     const QString id = map.value(QStringLiteral("id")).toString();
-    if (attachments.removeIf([&](const Attachment& attachment) { return attachment.id == id; }) > 0) {
-      save();
-      publish();
+    const Attachment* found = findAttachment(id);
+    if (!found) return true;
+    // An upload no message took is the MC's to drop.
+    if (!found->remoteId.isEmpty()) {
+      m_client->call(this, found->environmentId, QStringLiteral("attachments.delete"),
+                     QJsonObject{{QStringLiteral("attachmentId"), found->remoteId}}, [](const QJsonValue&, const std::optional<QString>&) {});
+    }
+    const auto matches = [&](const Attachment& attachment) { return attachment.id == id; };
+    for (Draft& draft : m_drafts) draft.attachments.removeIf(matches);
+    for (auto& questions : m_answerFiles) {
+      for (QList<Attachment>& files : questions) files.removeIf(matches);
+    }
+    save();
+    publish();
+    return true;
+  }
+  if (action == QLatin1String("composer.attachment.retry")) {
+    const QString id = map.value(QStringLiteral("id")).toString();
+    if (const Attachment* found = findAttachment(id); found && found->file && found->upload == QLatin1String("failed")) {
+      uploadFile(id, found->environmentId.isEmpty() ? environmentOf(m_thread) : found->environmentId);
     }
     return true;
   }
@@ -266,9 +320,17 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
                    QStringLiteral("Failed to submit approval decision."));
   }
   if (action == QLatin1String("composer.question.answer")) {
-    return respond(map.value(QStringLiteral("requestId")).toString(),
-                   {{QStringLiteral("answers"), QJsonObject::fromVariantMap(map.value(QStringLiteral("answers")).toMap())}},
-                   QStringLiteral("Failed to submit answers."));
+    const QString requestId = map.value(QStringLiteral("requestId")).toString();
+    QJsonObject fields{{QStringLiteral("answers"), QJsonObject::fromVariantMap(map.value(QStringLiteral("answers")).toMap())}};
+    QJsonObject files;
+    const QHash<QString, QList<Attachment>> attached = m_answerFiles.value(requestId);
+    for (auto it = attached.cbegin(); it != attached.cend(); ++it) {
+      if (it->isEmpty()) continue;
+      if (filesBlock(*it, QStringLiteral("answering"))) return true;
+      files.insert(it.key(), fileRecords(*it));
+    }
+    if (!files.isEmpty()) fields.insert(QStringLiteral("attachmentsByQuestionId"), files);
+    return respond(requestId, fields, QStringLiteral("Failed to submit answers."));
   }
   if (action == QLatin1String("composer.question.dismiss")) {
     return respond(map.value(QStringLiteral("requestId")).toString(), {}, QStringLiteral("Failed to dismiss the question."));
@@ -297,6 +359,56 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
   return false;
 }
 
+void ComposerController::stepHistory(const QString& target, bool backward) {
+  if (!m_timeline || target != m_thread) return;
+  const Draft kept = m_drafts.value(target);
+  const QString current = draft(target);
+  // Oldest first; a prompt sent twice in a row is one entry, its newest.
+  QList<std::pair<QString, QString>> entries;
+  for (const QJsonObject& item : itemsOf(m_timeline->entities(QStringLiteral("turn-item")), QStringLiteral("user_message"))) {
+    const QString prompt = recallable(str(item, QLatin1String("text")));
+    if (prompt.isEmpty()) continue;
+    if (!entries.isEmpty() && entries.constLast().second == prompt) entries.removeLast();
+    entries.append({str(item, QLatin1String("id")), prompt});
+  }
+  qsizetype active = -1;
+  if (m_recall && m_recall->target == target && m_recall->recalled == current) {
+    for (qsizetype i = 0; i < entries.size(); ++i) {
+      if (entries.at(i).first == m_recall->entryId) active = i;
+    }
+    for (qsizetype i = entries.size() - 1; active < 0 && i >= 0; --i) {
+      if (entries.at(i).second == current) active = i;
+    }
+  }
+  qsizetype next = -1;
+  if (backward) {
+    // Only an empty composer starts a recall: attachments count as content.
+    if (active < 0 && (!current.isEmpty() || !kept.attachments.isEmpty() || !kept.terminalContexts.isEmpty())) return;
+    next = active < 0 ? entries.size() - 1 : active - 1;
+    if (next < 0) return;
+  } else {
+    if (active < 0) return;
+    next = active + 1;
+  }
+  if (next >= entries.size()) {
+    m_recall.reset();
+    setText(target, QString(), 0);
+    return;
+  }
+  m_recall = Recall{target, entries.at(next).first, entries.at(next).second};
+  setText(target, entries.at(next).second, int(entries.at(next).second.size()));
+}
+
+// apps/web/src/components/chat/composerSubmission.ts
+// getComposerPromptLengthValidationMessage.
+QString ComposerController::promptProblem(const QString& text) {
+  const qsizetype excess = text.trimmed().size() - kMaxPromptChars;
+  if (excess <= 0) return {};
+  const QLocale english(QLocale::English, QLocale::UnitedStates);
+  return QStringLiteral("Prompt is %1 %2 over the %3-character limit. Shorten or split it before sending.")
+      .arg(english.toString(excess), excess == 1 ? QStringLiteral("character") : QStringLiteral("characters"), english.toString(kMaxPromptChars));
+}
+
 // The web's stashCurrentPrompt: the draft goes to the stash and the composer
 // empties; an empty draft brings back the only entry, or opens the list.
 // Nothing while an approval waits; a question waiting opens the list instead.
@@ -309,6 +421,10 @@ bool ComposerController::stash(const QString& target) {
     return true;
   }
   Draft& kept = m_drafts[target];
+  if (std::any_of(kept.attachments.cbegin(), kept.attachments.cend(), [](const Attachment& a) { return a.upload == QLatin1String("uploading"); })) {
+    NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Wait for file uploads before stashing this prompt"), {});
+    return true;
+  }
   const QString text = draft(target).trimmed();
   if (text.isEmpty() && kept.attachments.isEmpty() && kept.terminalContexts.isEmpty()) {
     if (m_kept.stash.size() == 1) {
@@ -418,6 +534,10 @@ bool ComposerController::submit(const QVariantMap& payload) {
   // The submit is the brick's newest edit, so it takes the cleared (or
   // restored) text as the answer to it.
   setText(target, text, int(text.size()), payload.value(QStringLiteral("edit")));
+  if (const QString problem = promptProblem(text); !problem.isEmpty()) {
+    toast(QStringLiteral("Message not sent"), problem);
+    return true;
+  }
   if (m_queuedEdit && m_queuedEdit->thread == target) return saveQueuedEdit(target, text);
   if (slashMode(target, text)) return true;
   if (!m_draftId.isEmpty()) return submitDraft(target, payload);
@@ -446,6 +566,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
         QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
     return true;
   }
+  if (fromDraft && filesBlock(m_drafts.value(target).attachments, QStringLiteral("sending"))) return true;
   // A thread on its way to another machine is read-only until it arrives.
   if (thread->movingTo) {
     NativeShell::of(this)->controller<ToastController>()->show(
@@ -497,6 +618,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   };
   const QJsonObject modelSelection = selection(target);
   if (!modelSelection.isEmpty()) message.insert(QStringLiteral("modelSelection"), modelSelection);
+  rememberModel(modelSelection);
   if (implement) {
     message.insert(QStringLiteral("sourcePlanRef"),
                    QJsonObject{{QStringLiteral("threadId"), thread->id}, {QStringLiteral("planId"), str(plan, QLatin1String("id"))}});
@@ -556,6 +678,15 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
     return true;
   }
 
+  // A file sent to another machine before the draft moved goes up again.
+  bool moved = false;
+  for (const Attachment& attachment : std::as_const(attachments)) {
+    if (!attachment.file || attachment.upload != QString() || attachment.environmentId == where.environmentId) continue;
+    moved = true;
+    uploadFile(attachment.id, where.environmentId);
+  }
+  if (moved) attachments = m_drafts.value(draftId).attachments;
+  if (filesBlock(attachments, QStringLiteral("sending"))) return true;
   const QString trimmed = text.trimmed();
   const QJsonObject modelSelection = selection(draftId);
   QJsonObject input{
@@ -573,12 +704,16 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                                                      {QStringLiteral("attachments"), QJsonArray()}}},
   };
   if (!modelSelection.isEmpty()) input.insert(QStringLiteral("modelSelection"), modelSelection);
+  rememberModel(modelSelection);
   if (!contexts.isEmpty()) {
     QJsonObject initial = input.value(QLatin1String("initialMessage")).toObject();
     withTerminalContexts(initial, contexts);
     input.insert(QStringLiteral("initialMessage"), initial);
   }
 
+  if (const auto models = m_drafts.value(draftId).multipleModels) {
+    return submitToModels(draftId, *models, input, where.strategy, where.environmentId, text, attachments, contexts);
+  }
   if (background) {
     // The thread is on its way; the draft takes the next prompt under a new
     // thread id, so the launched thread's row does not end it.
@@ -605,12 +740,19 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                      }
                    });
   };
-  if (attachments.isEmpty()) {
+  const QJsonArray files = fileRecords(attachments);
+  if (std::all_of(attachments.cbegin(), attachments.cend(), [](const Attachment& a) { return a.file; })) {
+    if (!files.isEmpty()) {
+      QJsonObject initial = input.value(QLatin1String("initialMessage")).toObject();
+      initial.insert(QStringLiteral("attachments"), files);
+      input.insert(QStringLiteral("initialMessage"), initial);
+    }
     start(input);
     return true;
   }
   QJsonArray images;
   for (const Attachment& attachment : attachments) {
+    if (attachment.file) continue;
     QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
                       {QStringLiteral("name"), attachment.name},
                       {QStringLiteral("mimeType"), attachment.mimeType},
@@ -624,7 +766,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                  QJsonObject{{QStringLiteral("threadId"), kept->threadId},
                              {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                              {QStringLiteral("attachments"), images}},
-                 [this, draftId, input, message, start, background, text, attachments, contexts](
+                 [this, draftId, input, message, start, background, text, attachments, contexts, files](
                      const QJsonValue& result, const std::optional<QString>& error) mutable {
                    if (error) {
                      if (background) {
@@ -634,10 +776,145 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                      }
                      return;
                    }
-                   message.insert(QStringLiteral("attachments"), result.toObject().value(QLatin1String("attachments")));
+                   QJsonArray stored = result.toObject().value(QLatin1String("attachments")).toArray();
+                   for (const QJsonValue& file : files) stored.append(file);
+                   message.insert(QStringLiteral("attachments"), stored);
                    input.insert(QStringLiteral("initialMessage"), message);
                    start(input);
                  });
+  return true;
+}
+
+// A started thread, or a model with one sibling, is one model's; a new
+// thread's draft may name several.
+bool ComposerController::toggleMultipleModel(const QString& target, const QString& instanceId, const QString& model) {
+  if (m_draftId.isEmpty() || target != m_draftId) return false;
+  const composer::Instance* instance = composer::find(m_catalogue, instanceId);
+  if (!instance || !instance->ready() || composer::findModel(*instance, model).isEmpty()) return false;
+  Draft& kept = m_drafts[target];
+  QList<QJsonObject> models = kept.multipleModels.value_or(QList<QJsonObject>{selection(target)});
+  const auto same = [&](const QJsonObject& chosen) {
+    return chosen.value(QLatin1String("instanceId")) == instanceId && chosen.value(QLatin1String("model")) == model;
+  };
+  if (models.removeIf(same) == 0) models.append({{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}});
+  if (models.size() <= 1) {
+    // One model left is the draft's model again.
+    if (!models.isEmpty()) kept.modelSelection = models.constFirst();
+    kept.multipleModels.reset();
+  } else {
+    // Each model's thread starts in a worktree of its own.
+    if (!kept.multipleModels) m_bridge->dispatch(QStringLiteral("workspace.envMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("worktree")}});
+    m_drafts[target].multipleModels = models;
+  }
+  save();
+  publish();
+  return true;
+}
+
+// As the web's send to multiple models: each gets a thread of its own, in a
+// new worktree off the draft's branch, and the draft is ready for the next
+// prompt. A thread that fails to start says so; if none starts the prompt
+// comes back.
+bool ComposerController::submitToModels(const QString& draftId, const QList<QJsonObject>& models, const QJsonObject& input,
+                                        const QJsonObject& strategy, const QString& environmentId, const QString& text,
+                                        const QList<Attachment>& attachments, const QList<TerminalContext>& contexts) {
+  auto* shell = NativeShell::of(this);
+  const QString type = str(strategy, QLatin1String("type"));
+  const QString base = type == QLatin1String("worktree") ? str(strategy, QLatin1String("baseRef"))
+                       : type == QLatin1String("root")   ? str(strategy, QLatin1String("branch"))
+                                                         : QString();
+  if (base.isEmpty()) {
+    shell->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("Choose models and a base branch"),
+        QStringLiteral("Multiple models need a new thread in a Git project. Each gets its own worktree."));
+    return true;
+  }
+  QJsonObject worktree{{QStringLiteral("type"), QStringLiteral("worktree")}, {QStringLiteral("baseRef"), base}};
+  if (strategy.value(QLatin1String("startFromOrigin")).toBool()) worktree.insert(QStringLiteral("startFromOrigin"), true);
+
+  m_drafts[draftId].attachments.clear();
+  m_drafts[draftId].terminalContexts.clear();
+  shell->controller<DraftController>()->renew(draftId);
+  setText(draftId, QString(), 0);
+
+  struct Progress {
+    qsizetype pending = 0;
+    qsizetype started = 0;
+    QString first;
+  };
+  const auto progress = std::make_shared<Progress>();
+  progress->pending = models.size();
+  const auto settled = [this, progress, draftId, text, attachments, contexts](const QString& model, const QString& threadKey,
+                                                                               const std::optional<QString>& error) {
+    auto* shell = NativeShell::of(this);
+    if (error) {
+      toast(tr("Could not start a thread on %1").arg(model), *error);
+    } else if (progress->started++ == 0) {
+      progress->first = threadKey;
+    }
+    if (--progress->pending > 0) return;
+    if (progress->started > 0) {
+      auto* navigation = shell->controller<NavigationController>();
+      const QString first = progress->first;
+      shell->controller<ToastController>()->show(
+          QStringLiteral("success"), tr("Started %n thread(s) in background", nullptr, int(progress->started)), {},
+          ToastController::Action{QStringLiteral("Open"), [navigation, first] { navigation->open(NavigationController::Route::thread(first)); }});
+      return;
+    }
+    // Nothing started: the prompt goes back into an untouched draft.
+    if (!shell->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty()) return;
+    m_drafts[draftId].attachments = attachments;
+    m_drafts[draftId].terminalContexts = contexts;
+    setText(draftId, text, int(text.size()));
+  };
+
+  QJsonArray images;
+  for (const Attachment& attachment : attachments) {
+    if (attachment.file) continue;
+    QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")}, {QStringLiteral("name"), attachment.name},
+                      {QStringLiteral("mimeType"), attachment.mimeType}, {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                      {QStringLiteral("dataUrl"), attachment.dataUrl}};
+    if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+    images.append(image);
+  }
+  const QJsonArray files = fileRecords(attachments);
+  for (const QJsonObject& model : models) {
+    QJsonObject launch = input;
+    QJsonObject message = launch.value(QLatin1String("initialMessage")).toObject();
+    const QString threadId = newId();
+    message.insert(QStringLiteral("messageId"), newId());
+    message.insert(QStringLiteral("attachments"), files);
+    launch.insert(QStringLiteral("commandId"), newId());
+    launch.insert(QStringLiteral("threadId"), threadId);
+    launch.insert(QStringLiteral("modelSelection"), model);
+    launch.insert(QStringLiteral("workspaceStrategy"), worktree);
+    launch.insert(QStringLiteral("initialMessage"), message);
+    const QString name = str(model, QLatin1String("model"));
+    const QString threadKey = environmentId + QLatin1Char(':') + threadId;
+    const auto start = [this, environmentId, name, threadKey, settled](const QJsonObject& launch) {
+      m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), launch,
+                     [name, threadKey, settled](const QJsonValue&, const std::optional<QString>& error) { settled(name, threadKey, error); });
+    };
+    if (images.isEmpty()) {
+      start(launch);
+      continue;
+    }
+    m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
+                   QJsonObject{{QStringLiteral("threadId"), threadId}, {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
+                               {QStringLiteral("attachments"), images}},
+                   [launch, message, files, start, name, threadKey, settled](const QJsonValue& result, const std::optional<QString>& error) mutable {
+                     if (error) {
+                       settled(name, threadKey, error);
+                       return;
+                     }
+                     QJsonArray stored = result.toObject().value(QLatin1String("attachments")).toArray();
+                     for (const QJsonValue& file : files) stored.append(file);
+                     message.insert(QStringLiteral("attachments"), stored);
+                     launch.insert(QStringLiteral("initialMessage"), message);
+                     start(launch);
+                   });
+  }
+  publish();
   return true;
 }
 
@@ -741,12 +1018,20 @@ void ComposerController::sendNext(const QString& target) {
       sendNext(target);
     }
   };
-  if (send.attachments.isEmpty()) {
-    dispatchAll(send, 0, finish);
+  const QJsonArray files = fileRecords(send.attachments);
+  if (std::all_of(send.attachments.cbegin(), send.attachments.cend(), [](const Attachment& a) { return a.file; })) {
+    Send ready = send;
+    if (!files.isEmpty()) {
+      QJsonObject message = ready.commands.constLast();
+      message.insert(QStringLiteral("attachments"), files);
+      ready.commands.last() = message;
+    }
+    dispatchAll(ready, 0, finish);
     return;
   }
   QJsonArray images;
   for (const Attachment& attachment : send.attachments) {
+    if (attachment.file) continue;
     QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
                       {QStringLiteral("name"), attachment.name},
                       {QStringLiteral("mimeType"), attachment.mimeType},
@@ -760,12 +1045,14 @@ void ComposerController::sendNext(const QString& target) {
                  QJsonObject{{QStringLiteral("threadId"), send.threadId},
                              {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                              {QStringLiteral("attachments"), images}},
-                 [this, send, message, finish](const QJsonValue& result, const std::optional<QString>& error) mutable {
+                 [this, send, message, finish, files](const QJsonValue& result, const std::optional<QString>& error) mutable {
                    if (error) {
                      finish(error);
                      return;
                    }
-                   message.insert(QStringLiteral("attachments"), result.toObject().value(QLatin1String("attachments")));
+                   QJsonArray carried = result.toObject().value(QLatin1String("attachments")).toArray();
+                   for (const QJsonValue& file : files) carried.append(file);
+                   message.insert(QStringLiteral("attachments"), carried);
                    Send stored = send;
                    stored.commands.last() = message;
                    dispatchAll(stored, 0, finish);
@@ -784,23 +1071,265 @@ void ComposerController::dispatchAll(const Send& send, qsizetype index,
                             });
 }
 
-// Images the brick read from disk ({name, mimeType, base64}) join the route
-// thread's draft.
+// What the brick read from disk or the clipboard joins the route's draft: an
+// image as its bytes, any other file by its path, a pasted text as itself.
+// Files go to the MC at once.
 bool ComposerController::attach(const QVariantList& files) {
   const QString target = this->target();
   if (target.isEmpty()) return true;
-  QList<Attachment>& attachments = m_drafts[target].attachments;
+  const QString environmentId = environmentOf(target);
+  QStringList added;
   for (const QVariant& value : files) {
     const QVariantMap file = value.toMap();
-    const QString base64 = file.value(QStringLiteral("base64")).toString();
+    const QString name = file.value(QStringLiteral("name")).toString();
     const QString mimeType = file.value(QStringLiteral("mimeType")).toString();
-    attachments.append({newId(), file.value(QStringLiteral("name")).toString(),
-                        mimeType, QByteArray::fromBase64(base64.toLatin1()).size(),
-                        QStringLiteral("data:%1;base64,%2").arg(mimeType, base64)});
+    QList<Attachment>& attachments = m_drafts[target].attachments;
+    if (file.contains(QStringLiteral("base64"))) {
+      const QString base64 = file.value(QStringLiteral("base64")).toString();
+      attachments.append({newId(), name, mimeType, QByteArray::fromBase64(base64.toLatin1()).size(),
+                          QStringLiteral("data:%1;base64,%2").arg(mimeType, base64)});
+      continue;
+    }
+    Attachment attachment{newId(), name, mimeType.isEmpty() ? QStringLiteral("application/octet-stream") : mimeType};
+    attachment.file = true;
+    if (file.contains(QStringLiteral("text"))) {
+      attachment.content = file.value(QStringLiteral("text")).toString().toUtf8();
+      attachment.pastedText = true;
+      attachment.mimeType = QStringLiteral("text/plain");
+      attachment.sizeBytes = attachment.content.size();
+      // nextPastedTextFileName: pasted-text.txt, then pasted-text-2.txt, ...
+      const auto taken = [&](const QString& candidate) {
+        return std::any_of(attachments.cbegin(), attachments.cend(), [&](const Attachment& other) { return other.name.compare(candidate, Qt::CaseInsensitive) == 0; });
+      };
+      attachment.name = QStringLiteral("pasted-text.txt");
+      for (int n = 2; taken(attachment.name); ++n) attachment.name = QStringLiteral("pasted-text-%1.txt").arg(n);
+      NativeShell::of(this)->controller<ToastController>()->show(
+          QStringLiteral("info"), tr("Large paste attached as %1").arg(attachment.name),
+          tr("%1 · Use %2 to keep a large paste inline.")
+              .arg(QLocale(QLocale::English, QLocale::UnitedStates).formattedDataSize(attachment.sizeBytes, 1, QLocale::DataSizeIecFormat),
+                   NativeShell::of(this)->controller<KeybindingController>()->mac() ? QStringLiteral("⌘⇧V") : QStringLiteral("Ctrl+Shift+V")));
+    } else {
+      attachment.path = file.value(QStringLiteral("path")).toString();
+      attachment.sizeBytes = QFileInfo(attachment.path).size();
+    }
+    attachments.append(attachment);
+    added.append(attachment.id);
   }
   save();
   publish();
+  for (const QString& id : std::as_const(added)) uploadFile(id, environmentId);
   return true;
+}
+
+// The same for the answer to a question: `questionId`, else the first of the
+// request that takes a typed answer. A question of fixed choices takes none.
+bool ComposerController::attachToAnswer(const QString& requestId, QString questionId, const QVariantList& files) {
+  const QVariantList pending = turnState().value(QStringLiteral("questions")).toList();
+  const auto request = std::find_if(pending.cbegin(), pending.cend(), [&](const QVariant& entry) {
+    return entry.toMap().value(QStringLiteral("requestId")) == requestId;
+  });
+  if (request == pending.cend()) return true;
+  bool accepts = false;
+  for (const QVariant& entry : request->toMap().value(QStringLiteral("questions")).toList()) {
+    const QVariantMap question = entry.toMap();
+    if (!question.value(QStringLiteral("allowCustomAnswer")).toBool()) continue;
+    if (questionId.isEmpty()) questionId = question.value(QStringLiteral("id")).toString();
+    if (questionId == question.value(QStringLiteral("id")).toString()) accepts = true;
+  }
+  if (!accepts) {
+    toast(QStringLiteral("This question cannot accept attachments."), {});
+    return true;
+  }
+  const QString environmentId = environmentOf(m_thread);
+  QStringList added;
+  for (const QVariant& value : files) {
+    const QVariantMap file = value.toMap();
+    Attachment attachment{newId(), file.value(QStringLiteral("name")).toString(), file.value(QStringLiteral("mimeType")).toString()};
+    if (attachment.mimeType.isEmpty()) attachment.mimeType = QStringLiteral("application/octet-stream");
+    attachment.file = true;
+    if (file.contains(QStringLiteral("base64"))) {
+      attachment.content = QByteArray::fromBase64(file.value(QStringLiteral("base64")).toString().toLatin1());
+      attachment.sizeBytes = attachment.content.size();
+    } else if (file.contains(QStringLiteral("text"))) {
+      attachment.content = file.value(QStringLiteral("text")).toString().toUtf8();
+      attachment.sizeBytes = attachment.content.size();
+    } else {
+      attachment.path = file.value(QStringLiteral("path")).toString();
+      attachment.sizeBytes = QFileInfo(attachment.path).size();
+    }
+    m_answerFiles[requestId][questionId].append(attachment);
+    added.append(attachment.id);
+  }
+  publish();
+  for (const QString& id : std::as_const(added)) uploadFile(id, environmentId);
+  return true;
+}
+
+// apps/web ChatComposer addDroppedFolders: a folder is named by its path,
+// which only means something where the MC shares this machine's disk.
+bool ComposerController::attachFolders(const QString& target, const QVariantList& folders) {
+  if (!m_bridge->localFolders() || environmentOf(target) != m_client->environment()) {
+    toast(QStringLiteral("Folders can't be dropped into remote environments"), QStringLiteral("Type the folder path with @ instead."));
+    return true;
+  }
+  QString text = draft(target);
+  for (const QVariant& folder : folders) {
+    if (!text.isEmpty() && !text.back().isSpace()) text += u' ';
+    text += composer::pathLink(folder.toString());
+  }
+  setText(target, text, int(text.size()));
+  return true;
+}
+
+ComposerController::Attachment* ComposerController::findAttachment(const QString& id) {
+  for (Draft& draft : m_drafts) {
+    for (Attachment& attachment : draft.attachments) {
+      if (attachment.id == id) return &attachment;
+    }
+  }
+  for (auto& questions : m_answerFiles) {
+    for (QList<Attachment>& files : questions) {
+      for (Attachment& attachment : files) {
+        if (attachment.id == id) return &attachment;
+      }
+    }
+  }
+  return nullptr;
+}
+
+QString ComposerController::environmentOf(const QString& target) const {
+  if (const auto thread = m_store->thread(target)) return thread->environmentId;
+  auto* shell = NativeShell::of(this);
+  if (!shell->controller<DraftController>()->draft(target)) return {};
+  return shell->controller<WorkspaceController>()->launch(target).environmentId;
+}
+
+// `attachments.createUploadUrl`, then the bytes to the URL it answers with;
+// the message later names the upload, and the MC moves it into the thread.
+void ComposerController::uploadFile(const QString& id, const QString& environmentId) {
+  Attachment* attachment = findAttachment(id);
+  if (!attachment) return;
+  const auto failed = [this, id](const QString& why) {
+    if (Attachment* found = findAttachment(id)) {
+      found->upload = QStringLiteral("failed");
+      found->error = why;
+    }
+    save();
+    publish();
+  };
+  attachment->upload = QStringLiteral("uploading");
+  attachment->error.clear();
+  attachment->remoteId.clear();
+  attachment->environmentId = environmentId;
+  QByteArray bytes = attachment->content;
+  if (!attachment->path.isEmpty()) {
+    QFile file(attachment->path);
+    if (!file.open(QIODevice::ReadOnly)) {
+      failed(tr("%1 could not be read.").arg(attachment->name));
+      return;
+    }
+    bytes = file.readAll();
+  }
+  const QString mimeType = attachment->mimeType;
+  publish();
+  m_client->call(this, environmentId, QStringLiteral("attachments.createUploadUrl"),
+                 QJsonObject{{QStringLiteral("type"), QStringLiteral("file")},
+                             {QStringLiteral("name"), attachment->name},
+                             {QStringLiteral("mimeType"), mimeType},
+                             {QStringLiteral("sizeBytes"), bytes.size()}},
+                 [this, id, bytes, mimeType, failed](const QJsonValue& result, const std::optional<QString>& error) {
+                   const QString url = result.toObject().value(QLatin1String("relativeUrl")).toString();
+                   const QString remoteId = result.toObject().value(QLatin1String("attachmentId")).toString();
+                   if (error || url.isEmpty() || remoteId.isEmpty()) {
+                     failed(error.value_or(tr("The environment did not take the upload.")));
+                     return;
+                   }
+                   m_client->upload(this, url, bytes, mimeType, [this, id, remoteId, failed](const QJsonValue&, const std::optional<QString>& error) {
+                     if (error) {
+                       failed(*error);
+                       return;
+                     }
+                     if (Attachment* found = findAttachment(id)) {
+                       found->upload.clear();
+                       found->remoteId = remoteId;
+                     }
+                     save();
+                     publish();
+                   });
+                 });
+}
+
+// The web's send guards (ChatView): nothing leaves while a file is still on
+// its way, or after one failed.
+bool ComposerController::filesBlock(const QList<Attachment>& attachments, const QString& what) {
+  bool uploading = false, failed = false;
+  for (const Attachment& attachment : attachments) {
+    uploading = uploading || attachment.upload == QLatin1String("uploading");
+    failed = failed || attachment.upload == QLatin1String("failed");
+  }
+  if (failed) {
+    toast(tr("Retry or remove failed uploads before %1.").arg(what), {});
+  } else if (uploading) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), tr("Wait for attachments to finish uploading, or remove failed uploads."), {});
+  }
+  return failed || uploading;
+}
+
+// ChatFileAttachment for each uploaded file.
+QJsonArray ComposerController::fileRecords(const QList<Attachment>& attachments) {
+  QJsonArray files;
+  for (const Attachment& attachment : attachments) {
+    if (!attachment.file) continue;
+    QJsonObject file{{QStringLiteral("type"), QStringLiteral("file")},
+                     {QStringLiteral("id"), attachment.remoteId},
+                     {QStringLiteral("name"), attachment.name},
+                     {QStringLiteral("mimeType"), attachment.mimeType},
+                     {QStringLiteral("sizeBytes"), attachment.sizeBytes}};
+    if (attachment.pastedText) file.insert(QStringLiteral("source"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("pasted-text")}});
+    files.append(file);
+  }
+  return files;
+}
+
+// What the composer shows of each: {id, name, kind, status, error, source};
+// `source` is a Snap Shot's {appName, windowTitle, accessibility}, the
+// last being what its window said of itself, in the web's words
+// (SnapShotAttachmentDetails.tsx).
+QVariantList ComposerController::shownAttachments(const QList<Attachment>& attachments) {
+  QVariantList shown;
+  for (const Attachment& attachment : attachments) {
+    QVariant source = QVariant::fromValue(nullptr);
+    if (str(attachment.source, QLatin1String("kind")) == QLatin1String("snap-shot")) {
+      // SnapShotAttachmentDetails.tsx: the text the window said of itself,
+      // else its element tree when any element has a name or value.
+      const QJsonObject accessibility = attachment.source.value(QLatin1String("accessibility")).toObject();
+      QString said = str(accessibility, QLatin1String("format")) == QLatin1String("flat-text") ? str(accessibility, QLatin1String("text")).trimmed()
+                                                                                             : str(attachment.source, QLatin1String("accessibleText")).trimmed();
+      const std::function<bool(const QJsonObject&)> readable = [&readable](const QJsonObject& node) {
+        if (!str(node, QLatin1String("name")).isEmpty() || !str(node, QLatin1String("value")).isEmpty()) return true;
+        const QJsonArray children = node.value(QLatin1String("children")).toArray();
+        return std::any_of(children.begin(), children.end(), [&](const QJsonValue& child) { return readable(child.toObject()); });
+      };
+      if (said.isEmpty() && readable(accessibility.value(QLatin1String("root")).toObject())) {
+        said = QString::fromUtf8(QJsonDocument(accessibility).toJson(QJsonDocument::Indented));
+      }
+      if (said.isEmpty()) {
+        said = accessibility.isEmpty() ? QStringLiteral("The app or capture backend did not provide verified accessibility data.")
+                                       : QStringLiteral("Structured accessibility elements were included, but they have no readable names or values.");
+      }
+      source = QVariantMap{{QStringLiteral("appName"), str(attachment.source, QLatin1String("appName"))},
+                           {QStringLiteral("windowTitle"), str(attachment.source, QLatin1String("windowTitle"))},
+                           {QStringLiteral("accessibility"), said}};
+    }
+    shown.append(QVariantMap{{QStringLiteral("id"), attachment.id},
+                             {QStringLiteral("name"), attachment.name},
+                             {QStringLiteral("kind"), attachment.file ? QStringLiteral("file") : QStringLiteral("image")},
+                             {QStringLiteral("status"), attachment.upload},
+                             {QStringLiteral("error"), attachment.error},
+                             {QStringLiteral("source"), source}});
+  }
+  return shown;
 }
 
 void ComposerController::attachImage(const QString& target, const QString& name, const QString& mimeType,
@@ -924,6 +1453,7 @@ bool ComposerController::respond(const QString& requestId, const QJsonObject& fi
   m_client->dispatchCommand(this, thread->environmentId, command,
                             [this, requestId, failure](const QJsonValue&, const std::optional<QString>& error) {
                               m_responding.remove(requestId);
+                              if (!error) m_answerFiles.remove(requestId);
                               if (error && staleRequest(*error)) {
                                 m_closed.insert(requestId);
                               } else if (error) {
@@ -1052,6 +1582,14 @@ QJsonObject ComposerController::baseSelection(const QString& key) const {
     selection = m_store->projectRow(kept->environmentId, kept->projectId).value(QLatin1String("defaultModelSelection")).toObject();
   }
   if (selection.isEmpty()) selection = setting(QStringLiteral("defaultModelSelection"));
+  // Then the model last sent with, while its provider can still run it.
+  if (selection.isEmpty()) {
+    const QJsonObject last = m_kept.lastModels.value(m_kept.lastInstance);
+    const composer::Instance* instance = instanceOf(last);
+    if (instance && instance->ready() && !composer::findModel(*instance, last.value(QLatin1String("model")).toString()).isEmpty()) {
+      selection = last;
+    }
+  }
   return selection;
 }
 
@@ -1181,7 +1719,15 @@ QVariantMap ComposerController::turnState() const {
   for (const QJsonObject& item : itemsOf(items, QStringLiteral("user_input_request"))) {
     QVariantMap question;
     if (!pending(item, question, false)) continue;
-    question.insert(QStringLiteral("questions"), item.value(QLatin1String("questions")).toArray().toVariantList());
+    // Each question with the files attached to its answer.
+    const QHash<QString, QList<Attachment>> files = m_answerFiles.value(question.value(QStringLiteral("requestId")).toString());
+    QVariantList asked;
+    for (const QJsonValue& value : item.value(QLatin1String("questions")).toArray()) {
+      QVariantMap one = value.toObject().toVariantMap();
+      one.insert(QStringLiteral("attachments"), shownAttachments(files.value(one.value(QStringLiteral("id")).toString())));
+      asked.append(one);
+    }
+    question.insert(QStringLiteral("questions"), asked);
     questions.append(question);
   }
   state.insert(QStringLiteral("questions"), questions);
@@ -1301,6 +1847,13 @@ void ComposerController::setInteractionMode(const QString& target, const QString
   publish();
 }
 
+void ComposerController::rememberModel(const QJsonObject& selection) {
+  const QString instanceId = selection.value(QLatin1String("instanceId")).toString();
+  if (instanceId.isEmpty() || (m_kept.lastInstance == instanceId && m_kept.lastModels.value(instanceId) == selection)) return;
+  m_kept.lastInstance = instanceId;
+  m_kept.lastModels.insert(instanceId, selection);
+}
+
 // As the web's handleModelSelect: a started thread keeps its provider, and a
 // model its session cannot switch to says why instead.
 bool ComposerController::selectModel(const QString& target, const QString& instanceId, const QString& model) {
@@ -1327,6 +1880,7 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
     chosen.insert(QStringLiteral("options"), current.value(QLatin1String("options")));
   }
   kept.modelSelection = chosen;
+  kept.multipleModels.reset();
   save();
   publish();
   return true;
@@ -1339,6 +1893,27 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
   const QJsonArray descriptors =
       composer::descriptors(composer::findModel(*instance, chosen.value(QLatin1String("model")).toString()),
                             chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
+  // A choice the provider takes from the prompt (Claude's ultrathink) is put
+  // there instead (the web's TraitsPicker); any other choice takes it out.
+  static const QRegularExpression prefix(QStringLiteral("^Ultrathink:\\s*"), QRegularExpression::CaseInsensitiveOption);
+  static const QRegularExpression slashCommand(QStringLiteral("^/[^\\s/]+(?:\\s|$)"));
+  for (const QJsonValue& entry : descriptors) {
+    const QJsonObject descriptor = entry.toObject();
+    const QJsonArray injected = descriptor.value(QLatin1String("promptInjectedValues")).toArray();
+    if (str(descriptor, QLatin1String("id")) != id || injected.isEmpty()) continue;
+    const QString text = draft(target).trimmed();
+    if (injected.contains(QJsonValue::fromVariant(value))) {
+      if (!text.startsWith(kUltrathinkPrefix.trimmed()) && !slashCommand.match(text).hasMatch()) {
+        const QString next = kUltrathinkPrefix + text;
+        setText(target, next, int(next.size()));
+      }
+      return true;
+    }
+    if (prefix.match(text).hasMatch()) {
+      const QString next = QString(text).remove(prefix);
+      setText(target, next, int(next.size()));
+    }
+  }
   const std::optional<QJsonArray> options = composer::applyOption(descriptors, id, value);
   if (!options) return false;
   chosen.insert(QStringLiteral("options"), *options);
@@ -1452,6 +2027,16 @@ bool ComposerController::planModeOn(const composer::Instance* instance) const {
 QString ComposerController::runtimeModeOf(const QString& target) const {
   if (const QString mode = m_drafts.value(target).runtimeMode; !mode.isEmpty()) return mode;
   if (const auto thread = m_store->thread(target); thread && !thread->runtimeMode.isEmpty()) return thread->runtimeMode;
+  // A new thread: its project's default permissions, else the default for
+  // new threads (Settings → Project defaults).
+  auto* shell = NativeShell::of(this);
+  const auto* settings = shell->controller<SettingsController>();
+  if (const auto kept = shell->controller<DraftController>()->draft(target); kept && settings) {
+    for (const QString& path : {QStringLiteral("projectSettingsOverrides.%1.defaultRuntimeMode").arg(kept->projectId),
+                                QStringLiteral("defaultRuntimeMode")}) {
+      if (const QString mode = settings->value(path).toString(); !mode.isEmpty()) return mode;
+    }
+  }
   return QStringLiteral("full-access");
 }
 
@@ -1495,10 +2080,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
     if (!waiting && !composer::emptyText(trigger->kind).isEmpty()) emptyText = composer::emptyText(trigger->kind);
   }
 
-  QVariantList attachments;
-  for (const Attachment& attachment : kept.attachments) {
-    attachments.append(QVariantMap{{QStringLiteral("id"), attachment.id}, {QStringLiteral("name"), attachment.name}});
-  }
+  const QVariantList attachments = shownAttachments(kept.attachments);
   QVariantList terminalContexts;
   for (const TerminalContext& context : kept.terminalContexts) {
     terminalContexts.append(QVariantMap{{QStringLiteral("id"), context.id},
@@ -1551,6 +2133,18 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       instance ? composer::shellOptions(composer::descriptors(composer::findModel(*instance, selectedModel),
                                                               chosen.value(QLatin1String("options")).toArray(), planOn))
                : QVariantList();
+  // An effort the prompt asks for (Ultrathink) is the one shown.
+  QVariantList shownOptions = options;
+  if (instance && text.trimmed().startsWith(kUltrathinkPrefix.trimmed())) {
+    const QJsonArray described = composer::descriptors(composer::findModel(*instance, selectedModel), chosen.value(QLatin1String("options")).toArray(), planOn);
+    for (qsizetype i = 0; i < described.size() && i < shownOptions.size(); ++i) {
+      const QJsonArray injected = described.at(i).toObject().value(QLatin1String("promptInjectedValues")).toArray();
+      if (injected.isEmpty()) continue;
+      QVariantMap option = shownOptions.at(i).toMap();
+      option.insert(QStringLiteral("value"), injected.first().toVariant());
+      shownOptions[i] = option;
+    }
+  }
   const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
   return QVariantMap{
       {QStringLiteral("target"), target},
@@ -1584,7 +2178,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("showPlanFollowUpPrompt"), showPlanFollowUp},
       {QStringLiteral("selectedInstanceId"), orNull(selectedInstance)},
       {QStringLiteral("selectedModel"), orNull(selectedModel)},
-      {QStringLiteral("options"), options},
+      {QStringLiteral("options"), shownOptions},
       {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},
       {QStringLiteral("interactionMode"), interactionModeOf(target)},
@@ -1619,6 +2213,16 @@ QVariantMap ComposerController::pickerState() const {
                                  current.value(QLatin1String("instanceId")).toString(),
                                  current.value(QLatin1String("model")).toString())},
       {QStringLiteral("locked"), lock.has_value()},
+      // A new thread may go to several models: [{instanceId, model}] once
+      // more than one is chosen.
+      {QStringLiteral("supportsMultiple"), !m_draftId.isEmpty() && target == m_draftId},
+      {QStringLiteral("multiple"), [&]() -> QVariant {
+         const auto models = m_drafts.value(target).multipleModels;
+         if (!models) return QVariant::fromValue(nullptr);
+         QVariantList list;
+         for (const QJsonObject& model : *models) list.append(model.toVariantMap());
+         return list;
+       }()},
       {QStringLiteral("shortcut"),
        toggle.isNull() ? QVariant::fromValue(nullptr) : toggle.toMap().value(QStringLiteral("label"))},
       {QStringLiteral("previousProvider"), key(QStringLiteral("modelPicker.previousProvider"))},
@@ -1628,6 +2232,49 @@ QVariantMap ComposerController::pickerState() const {
 }
 
 // --- Keeping drafts ---------------------------------------------------------------
+
+// An attachment as the drafts' file keeps it: an image with its bytes
+// (`dataUrl`), a file with its path or pasted text and what the MC knows it as.
+QJsonObject ComposerController::attachmentJson(const Attachment& attachment) {
+  QJsonObject kept{{QStringLiteral("id"), attachment.id},
+                   {QStringLiteral("name"), attachment.name},
+                   {QStringLiteral("mimeType"), attachment.mimeType},
+                   {QStringLiteral("sizeBytes"), double(attachment.sizeBytes)},
+                   {QStringLiteral("dataUrl"), attachment.dataUrl}};
+  if (!attachment.source.isEmpty()) kept.insert(QStringLiteral("source"), attachment.source);
+  if (attachment.file) {
+    kept.insert(QStringLiteral("file"), true);
+    kept.insert(QStringLiteral("path"), attachment.path);
+    kept.insert(QStringLiteral("dataUrl"), QStringLiteral("data:;base64,") + QString::fromLatin1(attachment.content.toBase64()));
+    kept.insert(QStringLiteral("pastedText"), attachment.pastedText);
+    kept.insert(QStringLiteral("remoteId"), attachment.remoteId);
+    kept.insert(QStringLiteral("environmentId"), attachment.environmentId);
+    kept.insert(QStringLiteral("upload"), attachment.upload);
+  }
+  return kept;
+}
+
+std::optional<ComposerController::Attachment> ComposerController::attachmentOf(const QJsonObject& kept) {
+  const QString dataUrl = kept.value(QLatin1String("dataUrl")).toString();
+  const bool file = kept.value(QLatin1String("file")).toBool();
+  if (!file && !dataUrl.startsWith(QLatin1String("data:image/"))) return std::nullopt;
+  Attachment attachment{kept.value(QLatin1String("id")).toString(), kept.value(QLatin1String("name")).toString(),
+                        kept.value(QLatin1String("mimeType")).toString(), qint64(kept.value(QLatin1String("sizeBytes")).toDouble()),
+                        file ? QString() : dataUrl, kept.value(QLatin1String("source")).toObject()};
+  if (!file) return attachment;
+  attachment.file = true;
+  attachment.path = kept.value(QLatin1String("path")).toString();
+  attachment.content = QByteArray::fromBase64(dataUrl.section(u',', 1).toLatin1());
+  attachment.pastedText = kept.value(QLatin1String("pastedText")).toBool();
+  attachment.remoteId = kept.value(QLatin1String("remoteId")).toString();
+  attachment.environmentId = kept.value(QLatin1String("environmentId")).toString();
+  // An upload this shell did not see end has to go again.
+  if (attachment.remoteId.isEmpty()) {
+    attachment.upload = QStringLiteral("failed");
+    attachment.error = tr("The upload was interrupted.");
+  }
+  return attachment;
+}
 
 // Each target's text and choices, as {targets: {<target>: {text, modelSelection,
 // runtimeMode, interactionMode}}, stash: [{id, createdAt, text, attachments,
@@ -1646,10 +2293,7 @@ void ComposerController::setStorePath(const QString& path) {
                     {},
                     {}};
     for (const QJsonValue& image : entry.value(QLatin1String("attachments")).toArray()) {
-      const QJsonObject a = image.toObject();
-      kept.attachments.append({str(a, QLatin1String("id")), str(a, QLatin1String("name")), str(a, QLatin1String("mimeType")),
-                               qint64(a.value(QLatin1String("sizeBytes")).toDouble()), str(a, QLatin1String("dataUrl")),
-                               a.value(QLatin1String("source")).toObject()});
+      if (const auto attachment = attachmentOf(image.toObject())) kept.attachments.append(*attachment);
     }
     for (const QJsonValue& context : entry.value(QLatin1String("terminalContexts")).toArray()) {
       const QJsonObject t = context.toObject();
@@ -1659,6 +2303,9 @@ void ComposerController::setStorePath(const QString& path) {
     }
     if (!kept.id.isEmpty()) m_kept.stash.append(kept);
   }
+  m_kept.lastInstance = str(stored, QLatin1String("lastInstance"));
+  const QJsonObject lastModels = stored.value(QLatin1String("lastModels")).toObject();
+  for (auto it = lastModels.begin(); it != lastModels.end(); ++it) m_kept.lastModels.insert(it.key(), it.value().toObject());
   const QJsonObject targets = stored.value(QLatin1String("targets")).toObject();
   for (auto it = targets.begin(); it != targets.end(); ++it) {
     const QJsonObject entry = it.value().toObject();
@@ -1678,13 +2325,7 @@ void ComposerController::setStorePath(const QString& path) {
     for (auto it = kept.begin(); it != kept.end(); ++it) {
       QList<Attachment>& attachments = m_drafts[it.key()].attachments;
       for (const QJsonValue& value : it.value().toArray()) {
-        const QJsonObject image = value.toObject();
-        const QString dataUrl = image.value(QLatin1String("dataUrl")).toString();
-        if (!dataUrl.startsWith(QLatin1String("data:image/"))) continue;
-        attachments.append({image.value(QLatin1String("id")).toString(), image.value(QLatin1String("name")).toString(),
-                            image.value(QLatin1String("mimeType")).toString(),
-                            qint64(image.value(QLatin1String("sizeBytes")).toDouble()), dataUrl,
-                            image.value(QLatin1String("source")).toObject()});
+        if (const auto attachment = attachmentOf(value.toObject())) attachments.append(*attachment);
       }
     }
     m_kept.images = imagesSignature(kept);
@@ -1724,13 +2365,7 @@ void ComposerController::save() const {
   QJsonArray stash;
   for (const StashEntry& entry : m_kept.stash) {
     QJsonArray images;
-    for (const Attachment& a : entry.attachments) {
-      QJsonObject image{{QStringLiteral("id"), a.id}, {QStringLiteral("name"), a.name},
-                        {QStringLiteral("mimeType"), a.mimeType}, {QStringLiteral("sizeBytes"), double(a.sizeBytes)},
-                        {QStringLiteral("dataUrl"), a.dataUrl}};
-      if (!a.source.isEmpty()) image.insert(QStringLiteral("source"), a.source);
-      images.append(image);
-    }
+    for (const Attachment& a : entry.attachments) images.append(attachmentJson(a));
     QJsonArray contexts;
     for (const TerminalContext& t : entry.terminalContexts) {
       contexts.append(QJsonObject{{QStringLiteral("id"), t.id}, {QStringLiteral("terminalId"), t.terminalId},
@@ -1747,21 +2382,19 @@ void ComposerController::save() const {
   if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     QJsonObject stored{{QStringLiteral("targets"), targets}};
     if (!stash.isEmpty()) stored.insert(QStringLiteral("stash"), stash);
+    if (!m_kept.lastInstance.isEmpty()) {
+      QJsonObject lastModels;
+      for (auto it = m_kept.lastModels.cbegin(); it != m_kept.lastModels.cend(); ++it) lastModels.insert(it.key(), it.value());
+      stored.insert(QStringLiteral("lastInstance"), m_kept.lastInstance);
+      stored.insert(QStringLiteral("lastModels"), lastModels);
+    }
     file.write(QJsonDocument(stored).toJson(QJsonDocument::Compact));
   }
   // The drafts' images, apart: rewritten only when they change.
   QJsonObject images;
   for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
     QJsonArray list;
-    for (const Attachment& attachment : it.value().attachments) {
-      QJsonObject image{{QStringLiteral("id"), attachment.id},
-                        {QStringLiteral("name"), attachment.name},
-                        {QStringLiteral("mimeType"), attachment.mimeType},
-                        {QStringLiteral("sizeBytes"), attachment.sizeBytes},
-                        {QStringLiteral("dataUrl"), attachment.dataUrl}};
-      if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
-      list.append(image);
-    }
+    for (const Attachment& attachment : it.value().attachments) list.append(attachmentJson(attachment));
     if (!list.isEmpty()) images.insert(it.key(), list);
   }
   const QString joined = imagesSignature(images);

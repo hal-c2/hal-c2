@@ -120,6 +120,34 @@ void McClient::post(QObject* context, const QString& path, const QJsonObject& bo
   });
 }
 
+void McClient::upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply) {
+  if (m_closed || !m_origin.isValid()) {
+    QTimer::singleShot(0, context, [reply = std::move(reply)] { reply(QJsonValue(), QStringLiteral("not connected")); });
+    return;
+  }
+  if (!m_http) m_http = new QNetworkAccessManager(this);
+  QUrl url = m_origin;
+  url.setPath(relativeUrl, QUrl::TolerantMode);
+  QNetworkRequest request(url);
+  request.setHeader(QNetworkRequest::ContentTypeHeader, mimeType.isEmpty() ? QStringLiteral("application/octet-stream") : mimeType);
+  QNetworkReply* answer = m_http->post(request, bytes);
+  connect(answer, &QNetworkReply::finished, this, [answer, context = QPointer<QObject>(context), reply = std::move(reply)] {
+    answer->deleteLater();
+    if (!context) return;
+    const int status = answer->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (status >= 200 && status < 300) {
+      reply(QJsonValue(), std::nullopt);
+      return;
+    }
+    // The MC answers a refused upload in plain words.
+    const QJsonDocument document = QJsonDocument::fromJson(answer->peek(4096));
+    QString error = document.object().value(QLatin1String("message")).toString();
+    if (error.isEmpty() && !document.isObject()) error = QString::fromUtf8(answer->readAll()).trimmed();
+    if (error.isEmpty()) error = status > 0 ? QStringLiteral("HTTP %1").arg(status) : answer->errorString();
+    reply(QJsonValue(), error);
+  });
+}
+
 QNetworkRequest McClient::request(const QString& path, const QString& query, bool socket) const {
   QUrl url = m_origin;
   if (socket) url.setScheme(m_origin.scheme() == QLatin1String("https") ? QStringLiteral("wss") : QStringLiteral("ws"));

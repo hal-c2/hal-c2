@@ -25,15 +25,15 @@ defmodule HalC2.ProviderUsageLimits.Claude do
     "seven_day" => {"weekly", "Weekly", @week}
   }
 
-  def command,
+  def command(instance \\ "claudeAgent"),
     do:
       HalC2.Settings.instance_command(
-        "claudeAgent",
+        instance,
         Application.get_env(:hal_c2, :claude_command, ["claude"])
       )
 
-  def installed? do
-    case command() do
+  def installed?(instance \\ "claudeAgent") do
+    case command(instance) do
       [executable | _] -> System.find_executable(executable) != nil
       _ -> false
     end
@@ -110,20 +110,24 @@ defmodule HalC2.ProviderUsageLimits.Claude do
   @doc """
   Asks a short-lived `claude` session for `get_usage`. The session never gets a
   prompt, so nothing reaches the model, and it runs without the user's hooks or MCP
-  servers since it recurs every few minutes.
+  servers since it recurs every few minutes. It is `instance`'s own `claude`, with the
+  variables its account lives under.
   """
-  def probe(checked_at) do
+  def probe(checked_at, instance \\ "claudeAgent") do
     Process.flag(:trap_exit, true)
 
     opts = [
       handler: self(),
-      command: command() ++ ["--settings", ~s({"disableAllHooks":true}), "--strict-mcp-config"],
+      command:
+        command(instance) ++ ["--settings", ~s({"disableAllHooks":true}), "--strict-mcp-config"],
       persist_session: false,
-      env: [
-        {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
-        {"CLAUDE_CODE_AUTO_CONNECT_IDE", "0"},
-        {"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1"}
-      ]
+      env:
+        Enum.to_list(HalC2.Settings.instance_env(instance)) ++
+          [
+            {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
+            {"CLAUDE_CODE_AUTO_CONNECT_IDE", "0"},
+            {"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "1"}
+          ]
     ]
 
     with {:ok, session} <- Session.start_link(opts) do
@@ -137,8 +141,8 @@ defmodule HalC2.ProviderUsageLimits.Claude do
         # The initialize reply came first; it names the account.
         receive do
           {:claude, ^session, {:initialized, {:ok, init}}} ->
-            Limits.remember_account("claudeAgent", account(init["account"]))
-            Limits.remember_commands("claudeAgent", commands(init["commands"]))
+            Limits.remember_account(instance, account(init["account"]))
+            Limits.remember_commands(instance, commands(init["commands"]))
         after
           1_000 -> :ok
         end

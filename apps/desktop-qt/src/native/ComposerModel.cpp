@@ -294,10 +294,6 @@ QString fileLink(const QString& path) {
 
 }  // namespace
 
-QString mention(const QString& path) {
-  return fileLink(path).chopped(1);
-}
-
 QList<Instance> instances(const QJsonArray& providers) {
   QList<Instance> list;
   for (const QJsonValue& value : providers) {
@@ -801,6 +797,10 @@ QList<Suggestion> pathItems(const QList<std::pair<QString, bool>>& entries) {
                   slash < 0 ? QString() : path.left(slash), fileLink(path)});
   }
   return items;
+}
+
+QString pathLink(const QString& path) {
+  return fileLink(path);
 }
 
 QString emptyText(const QString& kind) {

@@ -296,19 +296,23 @@ defmodule HalC2.Test.Machines do
   Makes the fake ACP agent (`fake_acp.py`) this MC's `instance`, enabled, with each
   prompt it is sent logged to `acp-inputs.jsonl` and every message to
   `acp-trace.jsonl` in `dir`. With `agent_id` the
-  instance is an ACP registry agent's.
+  instance is an ACP registry agent's. `script` is another fake of `test/support`
+  to run in its place, with `env` (`NAME=value`) set for it: `fake_gemini.py` keeps
+  its chats under `FAKE_GEMINI_HOME`.
   """
-  def install_acp(dir, instance, agent_id \\ nil) do
+  def install_acp(dir, instance, agent_id \\ nil, script \\ "fake_acp.py", env \\ []) do
     File.mkdir_p!(dir)
 
-    command = [
-      "env",
-      "FAKE_ACP_INPUT_LOG=" <> Path.join(dir, "acp-inputs.jsonl"),
-      "FAKE_ACP_TRACE=" <> Path.join(dir, "acp-trace.jsonl"),
-      "python3",
-      "-u",
-      Path.join(@support, "fake_acp.py")
-    ]
+    command =
+      ["env"] ++
+        env ++
+        [
+          "FAKE_ACP_INPUT_LOG=" <> Path.join(dir, "acp-inputs.jsonl"),
+          "FAKE_ACP_TRACE=" <> Path.join(dir, "acp-trace.jsonl"),
+          "python3",
+          "-u",
+          Path.join(@support, script)
+        ]
 
     commands = Application.get_env(:hal_c2, :acp_commands, %{})
     Application.put_env(:hal_c2, :acp_commands, Map.put(commands, instance, command))

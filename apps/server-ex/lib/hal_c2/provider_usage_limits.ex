@@ -529,20 +529,42 @@ defmodule HalC2.ProviderUsageLimits do
     end)
   end
 
-  defp probe_instance("codex", checked_at), do: Codex.probe(checked_at)
-  defp probe_instance("claudeAgent", checked_at), do: Claude.probe(checked_at)
-  defp probe_instance(instance, checked_at), do: Acp.probe(instance, checked_at)
+  # Each Codex and Claude instance is read through its own executable and variables.
+  defp probe_instance(instance, checked_at) do
+    case driver(instance) do
+      "codex" -> Codex.probe(checked_at, instance)
+      "claudeAgent" -> Claude.probe(checked_at, instance)
+      _acp -> Acp.probe(instance, checked_at)
+    end
+  end
 
   # ACP agents in `all/0` are enabled already.
-  defp probed?("codex"), do: enabled?("codex") and Codex.installed?()
-  defp probed?("claudeAgent"), do: enabled?("claudeAgent") and Claude.installed?()
-  defp probed?(_acp), do: true
+  defp probed?(instance) do
+    case driver(instance) do
+      "codex" ->
+        HalC2.Settings.instance_enabled?(instance, "codex") and Codex.installed?(instance)
 
-  defp enabled?(instance),
-    do: get_in(HalC2.Settings.settings(), ["providers", instance, "enabled"]) != false
+      "claudeAgent" ->
+        HalC2.Settings.instance_enabled?(instance, "claudeAgent") and Claude.installed?(instance)
 
-  # Codex and Claude, and the enabled ACP agents whose vendors publish quota.
-  defp all, do: @instances ++ Acp.instances()
+      _acp ->
+        true
+    end
+  end
+
+  # Codex or Claude for their built-in instance and the ones settings add; nil for an ACP agent.
+  defp driver(instance) do
+    Enum.find(@instances, fn driver ->
+      instance == driver or instance in HalC2.Settings.instances_of(driver)
+    end)
+  end
+
+  # Codex and Claude with the instances settings add for them, and the enabled ACP
+  # agents whose vendors publish quota.
+  defp all do
+    @instances ++
+      Enum.flat_map(@instances, &HalC2.Settings.instances_of/1) ++ Acp.instances()
+  end
 
   defp publish(instance, limits) do
     if limits != get(instance) do

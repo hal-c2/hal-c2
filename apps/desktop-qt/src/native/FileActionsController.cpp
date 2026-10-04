@@ -74,13 +74,13 @@ bool FileActionsController::handle(const QString& action, const QVariant& payloa
                     reveal ? tr("This environment has no file manager.") : tr("This environment has no editor."));
     }
   } else if (action == QLatin1String("files.copyMention")) {
-    if (m_writeClipboard(composer::mention(path))) {
+    if (m_writeClipboard(composer::pathLink(path).chopped(1))) {
       toasts->show(QStringLiteral("success"), tr("Mention copied"), path);
     } else {
       toasts->error(tr("Failed to copy mention"));
     }
   } else if (action == QLatin1String("files.addToChat")) {
-    if (!shell->controller<ComposerController>()->insertAtEnd(composer::mention(path) + QLatin1Char(' '))) {
+    if (!shell->controller<ComposerController>()->insertAtEnd(composer::pathLink(path))) {
       toasts->error(tr("Unable to add to chat"), tr("Open a chat for this project and try again."));
     }
   } else {
