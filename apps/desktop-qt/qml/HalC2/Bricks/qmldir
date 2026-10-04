@@ -59,6 +59,7 @@ CommandPalette 1.0 CommandPalette.qml
 PullRequestsPage 1.0 PullRequestsPage.qml
 HomePage 1.0 HomePage.qml
 UsagePage 1.0 UsagePage.qml
+UsageChart 1.0 UsageChart.qml
 ProvidersSettings 1.0 ProvidersSettings.qml
 ArchivedThreads 1.0 ArchivedThreads.qml
 ProviderAuthTerminal 1.0 ProviderAuthTerminal.qml
