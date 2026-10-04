@@ -222,6 +222,31 @@ Item {
             verify(!visibleIn(findChild(view, "threadTimeline")), "a draft has no conversation yet");
         }
 
+        function test_aNewThreadsOpeningLineOffersItsProjects() {
+            Shell.state = Object.assign({}, Shell.state, {
+                workspace: {
+                    projectTitle: "shop"
+                }
+            });
+            route("draft");
+            const view = createTemporaryObject(viewComponent, root);
+            mouseClick(placeholder(view));
+            compare(dispatched("draft.project").length, 1);
+            // The keyboard reaches it too.
+            verify(placeholder(view).activeFocusOnTab);
+            placeholder(view).forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            keyClick(Qt.Key_Space);
+            compare(dispatched("draft.project").length, 3);
+        }
+
+        function test_aThreadsPlaceholderIsNotAButton() {
+            const view = openThread();
+            verify(!placeholder(view).activeFocusOnTab);
+            mouseClick(placeholder(view));
+            compare(dispatched("draft.project").length, 0);
+        }
+
         function test_aThreadWhoseMcCannotBeReachedOffersARetry() {
             rows.status = "unreachable";
             rows.problem = "stream closed";

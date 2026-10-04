@@ -5,7 +5,7 @@ import HalC2.Shell
 
 // The centre for a thread or draft route (js/centreViews.js): the route's
 // thread from Threads (ThreadStore), or a draft's opening line with where it
-// will run. Loading says so without moving; a thread whose MC stopped
+// will run; clicking that line offers the other projects (`draft.project`). Loading says so without moving; a thread whose MC stopped
 // sending it says why and offers Retry.
 //
 // Web links open in the system browser; file links and files the agent
@@ -156,6 +156,35 @@ Item {
                     return project ? qsTr("What should we build in %1?").arg(project) : qsTr("Add a project to start");
                 }
                 return view.loading ? qsTr("Loading…") : qsTr("Send a message to start the conversation.");
+            }
+
+            // A draft's opening line picks its project: a click, or Enter or
+            // Space once Tab has reached it.
+            function pickProject(x, y) {
+                const p = mapToItem(null, x, y);
+                Shell.dispatch("draft.project", {
+                    x: p.x,
+                    y: p.y
+                });
+            }
+
+            activeFocusOnTab: view.draft
+            font.underline: view.draft && activeFocus
+            Accessible.role: view.draft ? Accessible.Button : Accessible.StaticText
+            Accessible.name: view.draft ? qsTr("%1 Change project").arg(text) : text
+            Accessible.onPressAction: if (view.draft)
+                pickProject(width / 2, height / 2)
+            Keys.onReturnPressed: pickProject(width / 2, height / 2)
+            Keys.onEnterPressed: pickProject(width / 2, height / 2)
+            Keys.onSpacePressed: pickProject(width / 2, height / 2)
+
+            HoverHandler {
+                enabled: view.draft
+                cursorShape: Qt.PointingHandCursor
+            }
+            TapHandler {
+                enabled: view.draft
+                onTapped: eventPoint => parent.pickProject(eventPoint.position.x, eventPoint.position.y)
             }
         }
         Label {
