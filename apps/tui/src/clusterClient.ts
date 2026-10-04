@@ -44,7 +44,10 @@ export function makeClusterClient(
   let stopHome: (() => void) | null = null;
   let stopConnection: (() => void) | null = null;
 
-  /** The machine a thread lives on. Mid-move both ends list it: the one it is leaving still owns it. */
+  /**
+   * The machine a thread lives on. Late in a move both ends list it: the one it is
+   * going to holds it by then, whether or not the one it is leaving is still there to let go.
+   */
   const clientForThread = (threadId: string): TuiClient => {
     const rows = [{ client: home, shell: homeShell }, ...members.values()].flatMap(
       ({ client, shell }) => {
@@ -52,7 +55,7 @@ export function makeClusterClient(
         return thread ? [{ client, thread }] : [];
       },
     );
-    return (rows.find(({ thread }) => thread.moving) ?? rows[0])?.client ?? home;
+    return (rows.find(({ thread }) => !thread.moving) ?? rows[0])?.client ?? home;
   };
   const clientForProject = (projectId: string): TuiClient => {
     for (const machine of members.values()) {
@@ -97,8 +100,9 @@ export function makeClusterClient(
       for (const thread of shell.threads) {
         // The row a machine keeps for a thread that left only says where it went.
         if (thread.movedTo) continue;
-        // Mid-move both ends may list it: the one it is leaving still owns it.
-        if (threads.has(thread.id) && !thread.moving) continue;
+        // Late in a move both ends list it: it lives on the one it is going to (clientForThread).
+        const listed = threads.get(thread.id);
+        if (listed && (thread.moving || !listed.moving)) continue;
         threads.set(thread.id, { ...thread, machine: label });
       }
     }

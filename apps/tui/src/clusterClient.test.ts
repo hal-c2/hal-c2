@@ -158,11 +158,11 @@ describe("makeClusterClient", () => {
     ]);
   });
 
-  it("Given a thread on its way to another machine, when both list it, then it is shown once where it still lives", async () => {
+  it("Given a thread on its way to another machine, when only the one it is leaving lists it, then it is shown there as moving", async () => {
     const { laptop, desktop, client, last } = await clustered();
     const moving = { label: "laptop", environmentId: "env-laptop" };
 
-    laptop.pushShell(shell([], [{ id: "alpha" }]));
+    laptop.pushShell(shell([], []));
     desktop.pushShell(shell([], [{ id: "alpha", moving }]));
 
     expect(rows(last())).toEqual(["alpha@desktop"]);
@@ -170,6 +170,27 @@ describe("makeClusterClient", () => {
     await client.interrupt("alpha" as Parameters<TuiClient["interrupt"]>[0]);
     expect(desktop.calls).toEqual(["interrupt alpha"]);
   });
+
+  it.each([
+    ["the one it is going to answers first", true],
+    ["the one it is leaving answers first", false],
+  ])(
+    "Given a thread the machine it is going to already holds, when the one it is leaving has not let go and %s, then it lives where it went",
+    async (_order, destinationFirst) => {
+      const { laptop, desktop, client, last } = await clustered();
+      const moving = { label: "laptop", environmentId: "env-laptop" };
+      const arrive = () => laptop.pushShell(shell([], [{ id: "alpha" }]));
+      const leave = () => desktop.pushShell(shell([], [{ id: "alpha", moving }]));
+
+      for (const push of destinationFirst ? [arrive, leave] : [leave, arrive]) push();
+
+      expect(rows(last())).toEqual(["alpha@laptop"]);
+      expect(last().threads[0]!.moving).toBeUndefined();
+      await client.interrupt("alpha" as Parameters<TuiClient["interrupt"]>[0]);
+      expect(laptop.calls).toEqual(["interrupt alpha"]);
+      expect(desktop.calls).toEqual([]);
+    },
+  );
 
   it("Given a thread that moved, when the machine it left keeps a forwarding row, then it is listed on the machine it moved to", async () => {
     const { laptop, desktop, last } = await clustered();
