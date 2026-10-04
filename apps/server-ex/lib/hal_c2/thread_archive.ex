@@ -1010,9 +1010,20 @@ defmodule HalC2.ThreadArchive do
   # A carried file that was made for the archive (`discard/1`).
   defp made(name, path), do: name |> carried(path) |> Map.put("temporary", true)
 
-  @doc "A carried file's bytes."
-  def bytes(%{"data" => data}), do: data
-  def bytes(%{"path" => path}), do: File.read!(path)
+  @doc """
+  Runs `fun` with carried files as `[{name, path}]` on this machine's disk, so what
+  places them copies from disk to disk instead of holding a file in memory.
+  """
+  def files_on_disk(files, fun), do: files_on_disk(files, [], fun)
+
+  defp files_on_disk([], paths, fun), do: fun.(Enum.reverse(paths))
+
+  defp files_on_disk([%{"fileName" => name} = file | files], paths, fun),
+    do: on_disk(file, &files_on_disk(files, [{name, &1} | paths], fun))
+
+  # A carried file's bytes: only for what is kept small (a terminal's scrollback).
+  defp bytes(%{"data" => data}), do: data
+  defp bytes(%{"path" => path}), do: File.read!(path)
 
   # Writes a carried file to `path`.
   defp put(%{"data" => data}, path), do: File.write!(path, data)

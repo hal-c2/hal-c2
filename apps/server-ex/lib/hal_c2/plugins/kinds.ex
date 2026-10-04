@@ -57,7 +57,8 @@ defmodule HalC2.Plugins.ProviderAdapter do
     * `session_files(native_id, cwd)`: the files of the session it keeps as
       `native_id` for work in `cwd`, as `[{name, path}]` with the main file first,
       each named relative to where `place_session/3` puts it.
-    * `place_session(files, from, to)`: places a copy of `[{name, data}]` for the
+    * `place_session(files, from, to)`: places a copy of `[{name, path}]` (each file
+      as it arrived on this machine's disk, which is not the plugin's to keep) for the
       project at `to` (the session recorded `from`), never replacing a file already
       there, and answers `{:ok, native_id}`. The thread's next run there gets
       `fork: %{thread: native_id, carried: true, fallback: context}` and branches a
@@ -89,7 +90,11 @@ defmodule HalC2.Plugins.ProviderAdapter do
   @callback rollback(thread_id :: String.t(), plan :: map) :: {:ok, map} | {:error, String.t()}
   @callback providers(settings :: map) :: [map]
   @callback session_files(native_id :: String.t(), cwd :: String.t()) :: [{String.t(), Path.t()}]
-  @callback place_session(files :: [{String.t(), binary}], from :: String.t(), to :: String.t()) ::
+  @callback place_session(
+              files :: [{String.t(), Path.t()}],
+              from :: String.t(),
+              to :: String.t()
+            ) ::
               {:ok, String.t()} | {:error, String.t()}
   @optional_callbacks interrupt: 2,
                       steer: 3,

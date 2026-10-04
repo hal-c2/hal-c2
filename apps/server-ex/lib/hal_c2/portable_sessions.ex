@@ -114,12 +114,14 @@ defmodule HalC2.PortableSessions do
 
   # The plugin places the copy itself; the next run continues from the id it answers.
   defp place_plugin(module, %{"driver" => driver} = session, root, archive) do
-    files =
-      for %{"fileName" => name} = file <- session["files"],
-          safe?(name),
-          do: {name, HalC2.ThreadArchive.bytes(file)}
+    files = for %{"fileName" => name} = file <- session["files"], safe?(name), do: file
 
-    case plugin_call(fn -> module.place_session(files, session["cwd"], root) end) do
+    placed =
+      plugin_call(fn ->
+        HalC2.ThreadArchive.files_on_disk(files, &module.place_session(&1, session["cwd"], root))
+      end)
+
+    case placed do
       {:ok, native_id} when is_binary(native_id) ->
         {%{
            "providerThreadId" => session["providerThreadId"],
