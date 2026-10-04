@@ -91,10 +91,30 @@ void announceOverrides(World& world) {
   world.sync();
 }
 
+// The page's own words, as the brick draws them.
+QQuickItem* drawn(World& world, const QString& name) {
+  Brick& brick = settingsShell(world, QSize(900, 2000));
+  brick.grab();
+  return brick.item(name);
+}
+
 // Settings → Project, on all projects or on `project`.
 void openActions(World& world, const QString& project = {}) {
+  // FilesActionsSteps' words for the thread's details, as this page shows them.
+  world.onSettingsPage.insert(QStringLiteral("hasAction"), [&world](const QStringList& c) {
+    world.waitFor([&] {
+      const QJsonArray own = overrideOf(fakeConfig(world.mc).settings, c[0]);
+      return names(own) == QStringList{c[1]} && own.first().toObject().value(QLatin1String("command")) == QLatin1String("bun lint") &&
+             names(panel(world).value(QStringLiteral("scripts")).toList()) == QStringList{c[1]} && panel(world).value(QStringLiteral("imports")).toList().isEmpty();
+    }, [&] { return describe(world); });
+  });
+  world.onSettingsPage.insert(QStringLiteral("invalidProjectFile"), [&world](const QStringList&) {
+    world.waitFor([&] { return panel(world).value(QStringLiteral("file")) == QLatin1String("invalid"); }, [&] { return describe(world); });
+    const QQuickItem* note = drawn(world, QStringLiteral("invalidFile"));
+    expect(note->isVisible() && note->property("text").toString().startsWith(QLatin1String("hal-c2.json is invalid")), QStringLiteral("the page does not warn"));
+  });
   world.native().controller<NavigationController>()->open(NavigationController::Route::settings(QStringLiteral("/settings/projects")));
-  world.waitFor([&] { return panel(world).value(QStringLiteral("open")).toBool() && !scopeState(world).isEmpty(); }, [&] { return describe(world); });
+  world.waitFor([&] { return panel(world).value(QStringLiteral("settings")).toBool() && !scopeState(world).isEmpty(); }, [&] { return describe(world); });
   announceOverrides(world);
   QString key;
   if (!project.isEmpty()) {
@@ -151,13 +171,6 @@ void expectTold(World& world, const QString& title) {
                 [&] { return QStringLiteral("\"%1\"; the shell shows %2").arg(title, show(world.state(QStringLiteral("toasts")))); });
 }
 
-// The page's own words, as the brick draws them.
-QQuickItem* drawn(World& world, const QString& name) {
-  Brick& brick = settingsShell(world, QSize(900, 2000));
-  brick.grab();
-  return brick.item(name);
-}
-
 const QJsonArray kDev{script(QStringLiteral("Dev"), QStringLiteral("bun dev"))};
 
 const Steps steps([] {
@@ -169,7 +182,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user opens the Actions settings for all projects"), [](World& world, const Captures&, const Table&) { openActions(world); });
   step(QStringLiteral("the user is told no actions are configured"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return panel(world).value(QStringLiteral("actions")).toList().isEmpty(); }, [&] { return describe(world); });
+    world.waitFor([&] { return panel(world).value(QStringLiteral("scripts")).toList().isEmpty(); }, [&] { return describe(world); });
     expect(drawn(world, QStringLiteral("noActions"))->isVisible() && settingsShell(world).shows(QStringLiteral("No actions configured.")),
            QStringLiteral("the page does not say so"));
   });
@@ -211,7 +224,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user resets the actions of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     openActions(world, c[0]);
-    world.waitFor([&] { return panel(world).value(QStringLiteral("own")).toBool() && names(panel(world).value(QStringLiteral("actions")).toList()) == QStringList{QStringLiteral("Lint")}; },
+    world.waitFor([&] { return panel(world).value(QStringLiteral("own")).toBool() && names(panel(world).value(QStringLiteral("scripts")).toList()) == QStringList{QStringLiteral("Lint")}; },
                   [&] { return describe(world); });
     world.bridge().dispatch(QStringLiteral("projectActions.reset"), QVariantMap());
   });
@@ -227,7 +240,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user opens the Actions settings for %1").arg(q), [](World& world, const Captures& c, const Table&) { openActions(world, c[0]); });
   step(QStringLiteral("%1 is marked as the setup action").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return names(panel(world).value(QStringLiteral("actions")).toList()).contains(c[0]); }, [&] { return describe(world); });
+    world.waitFor([&] { return names(panel(world).value(QStringLiteral("scripts")).toList()).contains(c[0]); }, [&] { return describe(world); });
     const QQuickItem* row = drawn(world, QStringLiteral("action:") + c[0].toLower());
     const QQuickItem* tag = row->findChild<QQuickItem*>(QStringLiteral("setup"));
     expect(tag && tag->isVisible() && tag->property("text") == QLatin1String("setup"), QStringLiteral("%1 has no setup mark").arg(c[0]));
@@ -248,23 +261,11 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user imports the actions of %1 from hal-c2.json").arg(q), [](World& world, const Captures& c, const Table&) {
     openActions(world, c[0]);
-    world.waitFor([&] { return names(panel(world).value(QStringLiteral("importable")).toList()) == QStringList{QStringLiteral("Lint")}; }, [&] { return describe(world); });
+    world.waitFor([&] { return names(panel(world).value(QStringLiteral("imports")).toList()) == QStringList{QStringLiteral("Lint")}; }, [&] { return describe(world); });
     world.bridge().dispatch(QStringLiteral("projectActions.import"), QVariantMap{{QStringLiteral("name"), QStringLiteral("Lint")}});
-  });
-  step(QStringLiteral("%1 has the action %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] {
-      const QJsonArray own = overrideOf(fakeConfig(world.mc).settings, c[0]);
-      return names(own) == QStringList{c[1]} && own.first().toObject().value(QLatin1String("command")) == QLatin1String("bun lint") &&
-             names(panel(world).value(QStringLiteral("actions")).toList()) == QStringList{c[1]} && panel(world).value(QStringLiteral("importable")).toList().isEmpty();
-    }, [&] { return describe(world); });
   });
   step(QStringLiteral("the checkout's hal-c2.json is invalid"), [](World& world, const Captures&, const Table&) {
     fakeFiles(world.mc).files.insert(QStringLiteral("hal-c2.json"), QStringLiteral("{ \"scripts\": [ { \"name\": \"Lint\" "));
-  });
-  step(QStringLiteral("the user is warned that hal-c2.json is invalid"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return panel(world).value(QStringLiteral("fileInvalid")).toBool(); }, [&] { return describe(world); });
-    const QQuickItem* note = drawn(world, QStringLiteral("invalidFile"));
-    expect(note->isVisible() && note->property("text").toString().startsWith(QLatin1String("hal-c2.json is invalid")), QStringLiteral("the page does not warn"));
   });
 
   // Several environments.
@@ -273,7 +274,7 @@ const Steps steps([] {
     saveOn(world.mc, world.mc.linked.first(), kScripts, QJsonArray{script(QStringLiteral("Test"), QStringLiteral("bun test"))});
   });
   step(QStringLiteral("the user opens the Actions settings"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return panel(world).value(QStringLiteral("open")).toBool(); }, [&] { return describe(world); });
+    world.waitFor([&] { return panel(world).value(QStringLiteral("settings")).toBool(); }, [&] { return describe(world); });
   });
   step(QStringLiteral("the user is told the environments have different actions"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return panel(world).value(QStringLiteral("mixed")).toBool(); }, [&] { return describe(world); });
@@ -291,7 +292,7 @@ const Steps steps([] {
     world.waitFor([&] { return !panel(world).value(QStringLiteral("available"), true).toBool(); }, [&] { return describe(world); });
   });
   step(QStringLiteral("the user adds a default action"), [](World& world, const Captures&, const Table&) {
-    if (!panel(world).value(QStringLiteral("open")).toBool()) openActions(world);
+    if (!panel(world).value(QStringLiteral("settings")).toBool()) openActions(world);
     add(world, QStringLiteral("Dev"), QStringLiteral("bun dev"));
   });
   step(QStringLiteral("the user is told the actions were not saved"), [](World& world, const Captures&, const Table&) {
@@ -303,7 +304,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user is told the project actions failed to save"), [](World& world, const Captures&, const Table&) {
     expectTold(world, QStringLiteral("Failed to save project actions"));
-    expect(!fakeConfig(world.mc).settings.contains(kScripts) && panel(world).value(QStringLiteral("actions")).toList().isEmpty(), describe(world));
+    expect(!fakeConfig(world.mc).settings.contains(kScripts) && panel(world).value(QStringLiteral("scripts")).toList().isEmpty(), describe(world));
   });
 
   // An environment too old for project overrides.

@@ -3,15 +3,15 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// Settings → Project, Actions (ProjectActionsController's `projectActions`):
+// Settings → Project, Actions (ProjectActionsController's `projectActions` in settings):
 // the actions every project on the selected environments starts with, or the
 // picked project's own list, with adding one, importing hal-c2.json's, and
 // resetting a project to its environment's defaults.
 ColumnLayout {
     id: section
 
-    readonly property var model: Shell.state.projectActions ?? null
-    readonly property var actions: model?.actions ?? []
+    readonly property var model: Shell.state.projectActions?.settings === true ? Shell.state.projectActions : null
+    readonly property var actions: model?.scripts ?? []
     readonly property bool editable: (Shell.state.settingsScope?.editable ?? false) && (model?.available ?? false)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
@@ -19,7 +19,7 @@ ColumnLayout {
 
     objectName: "projectActions"
     Layout.fillWidth: true
-    visible: model?.open ?? false
+    visible: model !== null
     spacing: 8
 
     component Note: Label {
@@ -129,7 +129,7 @@ ColumnLayout {
                 enabled: section.editable
                 text: qsTr("Remove")
                 Accessible.name: qsTr("Remove %1").arg(action.modelData.name)
-                onClicked: Shell.dispatch("projectActions.remove", { id: action.modelData.id })
+                onClicked: Shell.dispatch("projectActions.delete", { scriptId: action.modelData.id })
             }
         }
     }
@@ -169,7 +169,7 @@ ColumnLayout {
     }
 
     Repeater {
-        model: section.model?.importable ?? []
+        model: section.model?.imports ?? []
 
         delegate: RowLayout {
             id: found
@@ -196,7 +196,7 @@ ColumnLayout {
 
     Note {
         objectName: "invalidFile"
-        visible: section.model?.fileInvalid ?? false
+        visible: section.model?.file === "invalid"
         color: section.warning
         text: qsTr("hal-c2.json is invalid. A hal-c2.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values.")
     }

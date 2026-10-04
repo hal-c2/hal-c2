@@ -837,24 +837,29 @@ void WorkspaceController::rename(const QString& title) {
 }
 
 void WorkspaceController::openInEditor(const QString& editorId) {
-  if (!m_place) return;
-  const QString cwd = m_place->cwd();
-  if (cwd.isEmpty()) return;
+  if (m_place) openInEditor(editorId, m_place->cwd());
+}
+
+bool WorkspaceController::openInEditor(const QString& editorId, const QString& path, bool reveal) {
+  if (!m_place || path.isEmpty()) return false;
   const QJsonArray available = editors();
-  const QString editor = editorId.isEmpty() ? preferredEditor(available) : editorId;
+  const QString editor = reveal ? QStringLiteral("file-manager") : editorId.isEmpty() ? preferredEditor(available) : editorId;
   bool known = false;
   for (const QJsonValue& value : available) known = known || text(value.toObject(), "id") == editor;
-  if (!known) return;
-  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
-    settings->writeDevice(kLastEditor, editor);
+  if (!known) return false;
+  // Showing a file in its folder is not choosing an editor.
+  if (!reveal) {
+    if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) settings->writeDevice(kLastEditor, editor);
   }
+  QJsonObject payload{{QStringLiteral("cwd"), path}, {QStringLiteral("editor"), editor}};
+  if (reveal) payload.insert(QStringLiteral("reveal"), true);
   auto* toasts = NativeShell::of(this)->controller<ToastController>();
-  m_client->call(this, m_place->environmentId, QStringLiteral("shell.openInEditor"),
-                 QJsonObject{{QStringLiteral("cwd"), cwd}, {QStringLiteral("editor"), editor}},
+  m_client->call(this, m_place->environmentId, QStringLiteral("shell.openInEditor"), payload,
                  [toasts](const QJsonValue&, const std::optional<QString>& error) {
                    if (error) toasts->error(QStringLiteral("Failed to open in editor."), *error);
                  });
   publish();
+  return true;
 }
 
 // In the thread's terminal drawer; the one run last is offered first next time.

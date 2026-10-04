@@ -257,6 +257,7 @@ QString DraftController::start(const QString& environmentId, const QString& proj
     changedEverywhere();
   }
   NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::draft(id));
+  emit started(id);
   return id;
 }
 

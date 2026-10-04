@@ -140,6 +140,9 @@ signals:
   // After a snapshot, or events that touched subagents, runs or commands
   // starting and settling: what the Agents tab lists.
   void agentsChanged();
+  // After a snapshot, or a command or file change starting or settling: the
+  // workspace's files may have changed (WorkspaceFiles lists them again).
+  void workspaceChanged();
 
 private:
   struct Row {
@@ -195,6 +198,7 @@ private:
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;
   bool m_agentsTouched = false;
+  bool m_workspaceTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   QString m_timestampFormat = QStringLiteral("locale");
   QLocale m_locale;

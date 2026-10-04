@@ -110,11 +110,11 @@ const FakeMc::Extension extension([](FakeMc& mc) {
   mc.onRpc(QStringLiteral("projects.readFile"), [&mc](const FakeMc::Rpc& rpc) {
     FakeFiles& fake = fakeFiles(mc);
     const QString path = rpc.payload.value(QLatin1String("relativePath")).toString();
-    if (fake.readFailsOnce.remove(path) || !fake.files.contains(path)) {
+    if (fake.readFailsOnce.remove(path) || (!fake.files.contains(path) && !fake.outside.contains(path))) {
       mc.refuse(rpc, QStringLiteral("Could not read %1.").arg(path));
       return;
     }
-    const QString contents = fake.files.value(path);
+    const QString contents = fake.files.contains(path) ? fake.files.value(path) : fake.outside.value(path);
     mc.reply(rpc, QJsonObject{{QStringLiteral("contents"), contents},
                                 {QStringLiteral("byteLength"), double(fake.truncated.value(path, contents.toUtf8().size()))},
                                 {QStringLiteral("truncated"), fake.truncated.contains(path)}});

@@ -147,14 +147,14 @@ Feature: Adding projects
 
   Rule: Dropping a folder on the desktop app
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Dragging a single local folder over the window offers to open it as a project
       Given the desktop app is connected to its own local environment
       When the user drags the folder "/home/sam/shop" over the window
       Then the user is told the folder opens as a project
       And the user is told no files will be moved or deleted
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: Drops that are not a single local folder are refused
       Given the desktop app is connected to its own local environment
       When the user drags <items> over the window
@@ -166,7 +166,7 @@ Feature: Adding projects
         | two folders                 |
         | a link to a remote location |
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Folder drops are refused when the app shows a remote environment
       Given the desktop app shows an environment on another machine
       When the user drags a local folder over the window

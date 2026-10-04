@@ -123,6 +123,10 @@ public:
   // (SettingsController::config()), or the one watched on the linked
   // environment the route is on (empty until it arrives).
   QJsonObject environmentConfig() const;
+  // Opens `path` on the route's environment in `editorId` (the preferred one
+  // when empty), or shows it in the file manager (`reveal`). False when the
+  // environment has no such editor.
+  bool openInEditor(const QString& editorId, const QString& path, bool reveal = false);
 
 signals:
   // The route's thread, its root or worktree changed.

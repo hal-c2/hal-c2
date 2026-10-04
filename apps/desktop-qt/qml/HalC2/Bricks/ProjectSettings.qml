@@ -162,6 +162,23 @@ SettingsPage {
             description: page.state?.icon?.custom ? qsTr("Current: %1").arg(page.state.icon.label)
                                                   : qsTr("Automatic, from the project's favicon when it has one.")
 
+            ProjectIcon {
+                objectName: "preview"
+                size: 20
+                icon: Shell.state.projectIcons?.[page.state?.checkouts?.[0]?.key ?? ""] ?? null
+            }
+
+            ShellButton {
+                objectName: "choose"
+                enabled: page.editable
+                subtle: true
+                text: qsTr("Choose…")
+                onClicked: Shell.dispatch("projectIcon.open", {
+                    projectKey: page.state?.checkouts?.[0]?.key ?? "",
+                    name: page.state?.name ?? ""
+                })
+            }
+
             TextField {
                 objectName: "emoji"
                 implicitWidth: 64

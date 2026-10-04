@@ -49,12 +49,43 @@ bool occupied(const QString& path) {
   return info.exists() || info.isSymLink() || info.isJunction();
 }
 
+std::function<bool(const QString&)>& trash() {
+  static std::function<bool(const QString&)> move = [](const QString& path) { return QFile::moveToTrash(path); };
+  return move;
+}
+
 }  // namespace
+
+void LocalFolderModel::setTrash(std::function<bool(const QString& path)> move) {
+  trash() = std::move(move);
+}
+
+bool LocalFolderModel::holdsProject(const QString& path) const {
+  if (!m_enabled || m_rootPath.isEmpty()) return false;
+  const auto directory = plainDirectory(path);
+  return !directory.isEmpty() && within(directory, m_rootPath) && containsProject(directory);
+}
 
 LocalFolderModel::LocalFolderModel(QObject* parent) : QFileSystemModel(parent) {
   setOptions(DontWatchForChanges | DontResolveSymlinks | DontUseCustomDirectoryIcons);
   setReadOnly(true);
   setFilter(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot | QDir::NoSymLinks);
+  connect(&m_rootWatcher, &QFileSystemWatcher::directoryChanged, this, &LocalFolderModel::checkRoot);
+}
+
+void LocalFolderModel::watchRoot() {
+  if (const QStringList watched = m_rootWatcher.directories(); !watched.isEmpty()) m_rootWatcher.removePaths(watched);
+  if (m_enabled && !m_rootPath.isEmpty()) m_rootWatcher.addPath(QFileInfo(m_rootPath).absolutePath());
+}
+
+void LocalFolderModel::checkRoot() {
+  if (!m_enabled || m_rootPath.isEmpty() || !plainDirectory(m_rootPath).isEmpty()) return;
+  beginResetModel();
+  m_rootPath.clear();
+  endResetModel();
+  watchRoot();
+  setError(tr("The selected root is no longer a plain local folder."));
+  emit rootChanged();
 }
 
 void LocalFolderModel::setEnabled(bool enabled) {
@@ -64,6 +95,7 @@ void LocalFolderModel::setEnabled(bool enabled) {
   endResetModel();
   setOption(DontWatchForChanges, !enabled);
   if (enabled) activateRoot();
+  watchRoot();
   emit enabledChanged();
   emit rootChanged();
 }
@@ -80,6 +112,7 @@ void LocalFolderModel::setBrowseRootPath(const QString& path) {
     m_rootPath = directory;
   }
   if (m_enabled) activateRoot();
+  watchRoot();
   emit rootChanged();
 }
 
@@ -260,7 +293,7 @@ bool LocalFolderModel::trashFolder(const QString& path, const QString& confirmat
     setError(tr("Confirm by entering the exact full folder path."));
     return false;
   }
-  if (!QFile::moveToTrash(source)) {
+  if (!trash()(source)) {
     setError(tr("The folder could not be moved to the system trash. It has not been permanently deleted."));
     return false;
   }

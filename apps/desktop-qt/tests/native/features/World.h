@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
 #include <QJsonObject>
 #include <QList>
 #include <QQmlPropertyMap>
@@ -58,6 +59,9 @@ public:
   std::function<void(bool accepted)> answerQuestion;
   // What else a page tells the user in place (an inline error), for "the user is told".
   std::function<QStringList()> toldInPlace;
+  // Steps two pages share the words of: what they check on the settings page, by a name the two files agree on
+  // ("hasAction", "invalidProjectFile"), set while a scenario is on that page.
+  QHash<QString, std::function<void(const QStringList& captures)>> onSettingsPage;
   // What "the thread starts on <machine>" checks in a scenario of load balancing's own (SettingsLoadBalancingSteps).
   std::function<void(const QString& machine)> expectStartsOn;
   // What "<name> is still listed" checks when the scenario is not about the Connections page's environments.
