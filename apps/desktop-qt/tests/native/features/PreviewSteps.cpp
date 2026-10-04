@@ -26,6 +26,8 @@ struct FakePreviews {
   QList<QJsonObject> tabs;
   bool refuseClose = false;
   bool holdClose = false;
+  bool holdList = false;
+  int lists = 0;
   bool looking = false;
 };
 
@@ -64,11 +66,18 @@ const FakeMc::Extension previews([](FakeMc& mc) {
   mc.onShape(QStringLiteral("preview"), [](int, const QJsonObject&) {});
   mc.onRpc(QStringLiteral("preview.list"), [&mc](const FakeMc::Rpc& rpc) {
     FakePreviews& fake = mc.part<FakePreviews>();
+    ++fake.lists;
     QJsonArray sessions;
     for (const QJsonObject& tab : std::as_const(fake.tabs)) {
       if (tab.value(QLatin1String("threadId")) == rpc.payload.value(QLatin1String("threadId"))) sessions.append(tab);
     }
-    mc.reply(rpc, QJsonObject{{QStringLiteral("sessions"), sessions}, {QStringLiteral("serverEpoch"), fake.epoch}, {QStringLiteral("revision"), fake.revision}});
+    // The list as it is now; a held answer arrives after whatever changes next.
+    const QJsonObject list{{QStringLiteral("sessions"), sessions}, {QStringLiteral("serverEpoch"), fake.epoch}, {QStringLiteral("revision"), fake.revision}};
+    if (fake.holdList) {
+      mc.defer([&mc, rpc, list] { mc.reply(rpc, list); });
+      return;
+    }
+    mc.reply(rpc, list);
   });
   mc.onRpc(QStringLiteral("preview.close"), [&mc](const FakeMc::Rpc& rpc) {
     auto answer = [&mc, rpc] {
@@ -204,6 +213,65 @@ const Steps steps([] {
     FakePreviews& fake = world.mc.part<FakePreviews>();
     emitEvent(world.mc, fake.tabs.takeAt(indexOfTab(fake.tabs, tabIdOf(world, c[0]))), QStringLiteral("closed"));
     world.sync();
+  });
+
+  // Across an MC restart and out-of-order answers (preview/remote.feature).
+  step(QStringLiteral("the client shows a thread's browser tabs"), [](World& world, const Captures&, const Table&) {
+    haveTabs(world, {QStringLiteral("http://localhost:5173"), QStringLiteral("http://localhost:6006")});
+    showPreviews(world);
+    waitForUrls(world, {QStringLiteral("http://localhost:5173"), QStringLiteral("http://localhost:6006")});
+  });
+  step(QStringLiteral("the MC restarts and a tab change arrives with a new run number"), [](World& world, const Captures&, const Table&) {
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    // A new run keeps none of the old tabs and counts its changes from the start.
+    fake.epoch = QStringLiteral("epoch-2");
+    fake.revision = 0;
+    fake.tabs.clear();
+    fake.lists = 0;
+    fake.tabs.append(tabAt(QStringLiteral("http://localhost:3000"), 9));
+    emitEvent(world.mc, fake.tabs.last(), QStringLiteral("opened"), {{QStringLiteral("snapshot"), fake.tabs.last()}});
+    world.sync();
+  });
+  step(QStringLiteral("the client lists the thread's tabs again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.mc.part<FakePreviews>().lists == 1; },
+                  [&] { return QStringLiteral("one new preview.list; the MC got %1").arg(world.mc.part<FakePreviews>().lists); });
+  });
+  step(QStringLiteral("it shows only the tabs the restarted MC has"), [](World& world, const Captures&, const Table&) {
+    waitForUrls(world, {QStringLiteral("http://localhost:3000")});
+    // And follows the new run's changes from there.
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    fake.tabs.append(tabAt(QStringLiteral("http://localhost:3001"), 10));
+    emitEvent(world.mc, fake.tabs.last(), QStringLiteral("opened"), {{QStringLiteral("snapshot"), fake.tabs.last()}});
+    waitForUrls(world, {QStringLiteral("http://localhost:3000"), QStringLiteral("http://localhost:3001")});
+  });
+  step(QStringLiteral("the client has seen a tab change with a newer change number"), [](World& world, const Captures&, const Table&) {
+    haveTabs(world, {QStringLiteral("http://localhost:5173")});
+    showPreviews(world);
+    waitForUrls(world, {QStringLiteral("http://localhost:5173")});
+    // The user reloads the list; the MC's answer, read now, is on its way...
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    fake.holdList = true;
+    fake.lists = 0;
+    model(world).reload();
+    world.waitFor([&] { return fake.lists == 1; }, QStringLiteral("the list to be asked for"));
+    // ...when the agent opens another tab, which the client hears of first.
+    fake.tabs.append(tabAt(QStringLiteral("http://localhost:6006"), 2));
+    emitEvent(world.mc, fake.tabs.last(), QStringLiteral("opened"), {{QStringLiteral("snapshot"), fake.tabs.last()}});
+    waitForUrls(world, {QStringLiteral("http://localhost:5173"), QStringLiteral("http://localhost:6006")});
+  });
+  step(QStringLiteral("an older tab list arrives"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakePreviews>().holdList = false;
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the client keeps the newer tab state"), [](World& world, const Captures&, const Table&) {
+    expect(urls(world) == QStringList{QStringLiteral("http://localhost:5173"), QStringLiteral("http://localhost:6006")} &&
+               model(world).status() == QLatin1String("ready"),
+           describe(world));
+    // The next change still counts from the newer one.
+    FakePreviews& fake = world.mc.part<FakePreviews>();
+    emitEvent(world.mc, fake.tabs.takeAt(0), QStringLiteral("closed"));
+    waitForUrls(world, {QStringLiteral("http://localhost:6006")});
   });
 
   // Closing.

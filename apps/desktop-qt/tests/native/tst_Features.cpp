@@ -289,6 +289,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:A thread's provider is locked*"),
     QStringLiteral("navigation/toasts.feature"),
     QStringLiteral("preview/devices.feature"),
+    QStringLiteral("preview/remote.feature"),
     QStringLiteral("navigation/qt-shell-backlog.feature:A device tab streams a device screen"),
     QStringLiteral("navigation/qt-shell-backlog.feature:Opening a folder*"),
     QStringLiteral("desktop/shell-host.feature:A screenshot taken without a display shows the app's window"),

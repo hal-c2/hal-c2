@@ -83,6 +83,12 @@ void ThreadPreviews::reload() {
                      return;
                    }
                    const QJsonObject list = result.toObject();
+                   // A list read before a change this client has already
+                   // seen (the same MC run, an older revision) is stale.
+                   if (m_status == QLatin1String("ready") && list.value(QLatin1String("serverEpoch")).toString() == m_epoch &&
+                       list.value(QLatin1String("revision")).toInteger(-1) < m_revision) {
+                     return;
+                   }
                    QList<QJsonObject> rows;
                    for (const QJsonValue& session : list.value(QLatin1String("sessions")).toArray()) {
                      const QJsonObject snapshot = session.toObject();
