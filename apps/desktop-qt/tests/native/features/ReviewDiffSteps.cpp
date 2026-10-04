@@ -284,6 +284,89 @@ const Steps steps([] {
            describeDiff(world));
   });
 
+  // A note on lines of the diff, for the prompt.
+  const auto commentOn = [](World& world, const QString& note, int first, int last, const QString& path) {
+    Brick& brick = panel(world);
+    // The line's own button, shown while the pointer is over the line.
+    QQuickItem* button = nullptr;
+    const std::function<void(QQuickItem*)> find = [&](QQuickItem* item) {
+      if (item->objectName() == QLatin1String("diffLineComment")) {
+        QObject* line = item->property("row").value<QObject*>();
+        if (line && line->property("newLine").toInt() == first && line->property("sign").toString() == QLatin1String("+") &&
+            diff(world).model()->path(line->property("file").toInt()) == path) {
+          button = item;
+        }
+      }
+      for (QQuickItem* child : item->childItems()) find(child);
+    };
+    world.waitFor([&] {
+      brick.grab();
+      find(brick.window().contentItem());
+      return button != nullptr;
+    }, QStringLiteral("line %1 of %2 to be shown").arg(first).arg(path));
+    // The row is as wide as the longest line: its start is what is in view.
+    const QPoint onLine = button->parentItem()->mapToScene(QPointF(60, button->parentItem()->height() / 2)).toPoint();
+    QTest::mouseMove(&brick.window(), onLine + QPoint(40, 0));
+    QTest::mouseMove(&brick.window(), onLine);
+    world.waitFor([&] { return button->isVisible(); }, QStringLiteral("the line to offer a comment"));
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(button));
+    QQuickItem* lastLine = brick.item(QStringLiteral("diffCommentLast"));
+    world.waitFor([&] { return lastLine->isVisible(); }, QStringLiteral("the comment box to open"));
+    lastLine->setProperty("text", QString::number(last));
+    brick.click(QStringLiteral("diffCommentNote"));
+    for (const QChar ch : note) QTest::keyClick(&brick.window(), ch.toLatin1());
+    brick.click(QStringLiteral("diffCommentAdd"));
+    world.sync();
+  };
+  const auto comments = [](World& world) { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("reviewComments")).toList(); };
+  // What a send of "Please fix this" carries to the MC.
+  const auto sent = [](World& world) {
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), QStringLiteral("Please fix this")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+    QJsonObject message;
+    for (const QJsonObject& command : std::as_const(world.mc.commands)) {
+      if (command.value(QLatin1String("type")) == QLatin1String("message.dispatch")) message = command;
+    }
+    expect(!message.isEmpty(), QStringLiteral("no message was sent; the MC has %1").arg(world.describeCommands()));
+    return message;
+  };
+  step(QStringLiteral("the user comments %1 on lines (\\d+) to (\\d+) of %1").arg(q), [commentOn](World& world, const Captures& c, const Table&) {
+    commentOn(world, c[0], c[1].toInt(), c[2].toInt(), c[3]);
+  });
+  step(QStringLiteral("the user commented on lines (\\d+) to (\\d+) of %1").arg(q), [commentOn](World& world, const Captures& c, const Table&) {
+    commentOn(world, QStringLiteral("Use the tax table"), c[0].toInt(), c[1].toInt(), c[2]);
+  });
+  step(QStringLiteral("the composer carries that comment with the file and line range"), [comments, sent](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return comments(world).size() == 1; }, [&] { return QStringLiteral("the comment; the composer is %1").arg(show(world.state(QStringLiteral("composer")))); });
+    const QVariantMap chip = comments(world).first().toMap();
+    expect(chip.value(QStringLiteral("label")) == QLatin1String("src/cart.ts L10-12") && chip.value(QStringLiteral("text")) == QLatin1String("Use the tax table"),
+           QStringLiteral("the composer carries %1").arg(show(chip)));
+    // Sent, the message names the chip and carries the note, the file and the lines.
+    const QJsonObject message = sent(world);
+    const QJsonArray records = message.value(QLatin1String("context")).toObject().value(QLatin1String("records")).toArray();
+    const QJsonObject record = records.first().toObject();
+    const QString reference = QStringLiteral("[src/cart.ts L10-12](hal-c2-context://v1/review-comment/%1)").arg(record.value(QLatin1String("contextId")).toString());
+    expect(message.value(QLatin1String("text")).toString() == QStringLiteral("Please fix this\n\n") + reference, QStringLiteral("the message reads %1").arg(message.value(QLatin1String("text")).toString()));
+    expect(records.size() == 1 && record.value(QLatin1String("kind")) == QLatin1String("review-comment") && record.value(QLatin1String("filePath")) == QLatin1String("src/cart.ts") &&
+               record.value(QLatin1String("rangeLabel")) == QLatin1String("+10 to +12") && record.value(QLatin1String("text")) == QLatin1String("Use the tax table") &&
+               record.value(QLatin1String("diff")) == QLatin1String("+export const rate9 = 9;\n+export const rate10 = 10;\n+export const rate11 = 11;") &&
+               record.value(QLatin1String("endIndex")).toInt() - record.value(QLatin1String("startIndex")).toInt() == 2,
+           QStringLiteral("the message carries %1").arg(show(records.toVariantList())));
+    expect(comments(world).isEmpty(), QStringLiteral("the sent comment is still on the draft"));
+  });
+  step(QStringLiteral("the user deletes that comment"), [comments](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return comments(world).size() == 1; }, QStringLiteral("the comment to be on the draft"));
+    // The comment's chip on the composer.
+    world.bridge().dispatch(QStringLiteral("composer.reviewComment.remove"), QVariantMap{{QStringLiteral("id"), comments(world).first().toMap().value(QStringLiteral("id"))}});
+    world.sync();
+  });
+  step(QStringLiteral("the composer no longer carries it"), [comments, sent](World& world, const Captures&, const Table&) {
+    expect(comments(world).isEmpty(), QStringLiteral("the composer carries %1").arg(show(comments(world))));
+    const QJsonObject message = sent(world);
+    expect(message.value(QLatin1String("text")) == QLatin1String("Please fix this") && !message.contains(QLatin1String("context")),
+           QStringLiteral("the message carries %1").arg(show(message.toVariantMap())));
+  });
+
   // The user's editor.
   step(QStringLiteral("no editor is available on this environment"), [](World& world, const Captures&, const Table&) {
     fake(world).noEditor = true;

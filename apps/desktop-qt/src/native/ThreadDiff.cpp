@@ -304,6 +304,27 @@ void ThreadDiff::focusFile(const QString& path) {
   emit focusChanged();
 }
 
+bool ThreadDiff::comment(const QString& path, const QString& side, int first, int last, const QString& note) {
+  const QString text = note.trimmed();
+  if (text.isEmpty() || m_status != QLatin1String("ready")) return false;
+  if (last < first) std::swap(first, last);
+  QVariantMap comment = m_model.excerpt(m_model.fileOf(path), side, first, last);
+  if (comment.isEmpty()) return false;
+  // What is being reviewed, as the picker names it.
+  QString section;
+  for (const QVariant& choice : choices()) {
+    if (choice.toMap().value(QStringLiteral("value")).toInt() == effectiveSelection()) section = choice.toMap().value(QStringLiteral("label")).toString();
+  }
+  comment.insert(QStringLiteral("sectionTitle"), section.isEmpty() ? QStringLiteral("Diff") : section);
+  comment.insert(QStringLiteral("sectionId"), QStringLiteral("diff:%1").arg(effectiveSelection()));
+  comment.insert(QStringLiteral("filePath"), path);
+  comment.insert(QStringLiteral("lineStart"), first);
+  comment.insert(QStringLiteral("lineEnd"), last);
+  comment.insert(QStringLiteral("text"), text);
+  emit commentRequested(comment);
+  return true;
+}
+
 void ThreadDiff::showAllFiles() {
   focusFile({});
 }

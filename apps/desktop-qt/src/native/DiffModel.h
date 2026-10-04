@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 
 #include <vector>
 
@@ -78,9 +79,15 @@ public:
   // file (a file's index), additions, deletions}].
   Q_INVOKABLE QVariantList tree() const;
   // The file's path, and whether it is expanded.
-  QString path(int file) const { return file >= 0 && file < fileCount() ? m_files[file].path : QString(); }
+  Q_INVOKABLE QString path(int file) const { return file >= 0 && file < fileCount() ? m_files[file].path : QString(); }
   bool expanded(int file) const { return file >= 0 && file < fileCount() && m_files[file].expanded; }
   // The header row of `file`, or -1.
+  // The lines `first` to `last` of one side of `file` ("old": removed lines
+  // by their old numbers; else added and unchanged lines by their new ones),
+  // for a comment on them: {startIndex, endIndex (among the file's lines),
+  // diff (the lines with their signs), rangeLabel ("+10 to +12", the sign
+  // when every line has the same)}. Empty when the file shows none of them.
+  Q_INVOKABLE QVariantMap excerpt(int file, const QString& side, int first, int last);
   Q_INVOKABLE int rowOfFile(int file) const;
   Q_INVOKABLE int fileOf(const QString& path) const;
   Q_INVOKABLE void toggle(int file);

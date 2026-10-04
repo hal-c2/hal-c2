@@ -26,6 +26,9 @@ Rectangle {
     readonly property bool split: model?.split ?? false
     // One file of the selection is shown alone (ThreadDiff.focusPath).
     readonly property bool focused: (source?.focusPath ?? "").length > 0
+    // Lines can be commented on for the prompt (a thread's diff; a pull
+    // request's code has the host's own review).
+    readonly property bool canComment: source?.reviewing !== undefined
     // The branch is what is reviewed, against `source.comparedBase`.
     readonly property bool comparing: (source?.reviewing ?? false) && source.selection === -3
     // Whether the changed files are listed as a tree beside the diff.
@@ -535,6 +538,24 @@ Rectangle {
                 sign: parent.row.sign
                 text: root.lineText(parent.row.text)
             }
+            // A note on this line (and the ones after it) for the prompt.
+            HoverHandler {
+                id: lineHover
+            }
+            ShellButton {
+                readonly property var row: parent.row
+                objectName: "diffLineComment"
+                x: 2
+                width: 16
+                height: Math.min(parent.height, 18)
+                visible: root.canComment && row.sign !== "\\" && (lineHover.hovered || hovered)
+                subtle: true
+                iconName: "message-square-plus"
+                iconSize: 11
+                iconTint: root.muted
+                Accessible.name: qsTr("Comment on this line")
+                onClicked: commentPopup.ask(root.model.path(row.file), row.sign === "-" ? "old" : "new", row.sign === "-" ? row.oldLine : row.newLine)
+            }
         }
     }
 
@@ -588,5 +609,109 @@ Rectangle {
     RevertDialog {
         id: confirm
         source: root.source
+    }
+
+    // A note on lines of the diff, added to the prompt as review context.
+    Popup {
+        id: commentPopup
+        objectName: "diffCommentPopup"
+
+        property string path: ""
+        property string side: "new"
+        property int first: 0
+
+        function ask(path, side, line) {
+            commentPopup.path = path;
+            commentPopup.side = side;
+            commentPopup.first = line;
+            commentLast.text = String(line);
+            commentNote.text = "";
+            open();
+            commentNote.forceActiveFocus();
+        }
+        function submit() {
+            const last = Math.max(commentPopup.first, parseInt(commentLast.text) || commentPopup.first);
+            if (root.source.comment(commentPopup.path, commentPopup.side, commentPopup.first, last, commentNote.text))
+                close();
+        }
+
+        parent: Overlay.overlay
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
+        x: Math.round((parent.width - width * scale) / 2)
+        y: Math.round((parent.height - height * scale) / 2)
+        width: 380
+        modal: true
+        padding: 14
+
+        background: Rectangle {
+            radius: Theme.radius
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: root.border
+            border.width: 1
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 8
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Comment on %1").arg(commentPopup.path)
+                color: root.foreground
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.weight: Font.DemiBold
+                elide: Text.ElideMiddle
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Text {
+                    text: qsTr("From line %1 to").arg(commentPopup.first)
+                    color: root.muted
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                }
+                ShellTextField {
+                    id: commentLast
+
+                    objectName: "diffCommentLast"
+                    Layout.preferredWidth: 70
+                    implicitHeight: 26
+                    inputMethodHints: Qt.ImhDigitsOnly
+                    Accessible.name: qsTr("Last line")
+                }
+                Item {
+                    Layout.fillWidth: true
+                }
+            }
+            ShellTextField {
+                id: commentNote
+
+                objectName: "diffCommentNote"
+                Layout.fillWidth: true
+                placeholderText: qsTr("What should change here?")
+                Accessible.name: qsTr("Comment")
+                onAccepted: commentPopup.submit()
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Item {
+                    Layout.fillWidth: true
+                }
+                ShellButton {
+                    text: qsTr("Cancel")
+                    onClicked: commentPopup.close()
+                }
+                ShellButton {
+                    objectName: "diffCommentAdd"
+                    primary: true
+                    text: qsTr("Add to prompt")
+                    enabled: commentNote.text.trim().length > 0
+                    onClicked: commentPopup.submit()
+                }
+            }
+        }
     }
 }

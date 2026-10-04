@@ -122,6 +122,11 @@ public:
   // change leaves every file shown.
   Q_INVOKABLE void focusFile(const QString& path);
   Q_INVOKABLE void showAllFiles();
+  // A note on lines `first` to `last` of `path` as the diff shows them
+  // (`side` "old" for removed lines), for the prompt: commentRequested carries
+  // it as a review comment (the composer's `composer.reviewComment.add`).
+  // False when the diff shows no such lines or the note is blank.
+  Q_INVOKABLE bool comment(const QString& path, const QString& side, int first, int last, const QString& note);
 
   bool canRevert() const;
   int revertTurn() const { return m_revertTurn; }
@@ -137,6 +142,7 @@ signals:
   void statusChanged();
   void optionsChanged();
   void focusChanged();
+  void commentRequested(const QVariantMap& comment);
   void reviewChanged();
   void revertChanged();
   // The view should show `row` of the model at its top.

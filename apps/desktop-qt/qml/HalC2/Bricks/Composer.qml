@@ -649,7 +649,7 @@ Rectangle {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.topMargin: 12
-                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0)
+                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0)
                     spacing: 6
 
                     Repeater {
@@ -666,6 +666,27 @@ Rectangle {
                                 id: modelData.id
                             })
                             onOpenRequested: Shell.dispatch("attachment.view", {
+                                id: modelData.id
+                            })
+                        }
+                    }
+
+                    // Notes on a diff's lines; a click takes one off the prompt.
+                    Repeater {
+                        model: composer.ready ? composer.model.reviewComments ?? [] : []
+
+                        delegate: ShellButton {
+                            required property var modelData
+
+                            objectName: "reviewComment-" + modelData.id
+                            implicitHeight: 24
+                            iconName: "message-square"
+                            text: modelData.label
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            Accessible.name: qsTr("Remove the comment on %1").arg(text)
+                            ToolTip.visible: hovered
+                            ToolTip.text: modelData.text
+                            onClicked: Shell.dispatch("composer.reviewComment.remove", {
                                 id: modelData.id
                             })
                         }

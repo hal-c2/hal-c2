@@ -282,6 +282,40 @@ QVariantList DiffModel::tree() const {
   return rows;
 }
 
+QVariantMap DiffModel::excerpt(int file, const QString& side, int first, int last) {
+  if (file < 0 || file >= fileCount() || first <= 0) return {};
+  if (last < first) std::swap(first, last);
+  File& entry = m_files[size_t(file)];
+  ensureLines(entry);
+  const bool old = side == QLatin1String("old");
+  QStringList picked;
+  int startIndex = -1, endIndex = -1, index = -1;
+  QChar sameSide;
+  bool mixed = false;
+  for (const Line& line : entry.lines) {
+    if (line.sign == '@' || line.sign == '\\') continue;
+    ++index;
+    const int number = old ? line.oldLine : line.newLine;
+    if ((old ? line.sign != '-' : line.sign == '-') || number < first || number > last) continue;
+    if (startIndex < 0) startIndex = index;
+    endIndex = index;
+    const QChar sign = QLatin1Char(line.sign);
+    if (picked.isEmpty()) {
+      sameSide = sign;
+    } else if (sign != sameSide) {
+      mixed = true;
+    }
+    picked.append(m_patch.mid(line.offset, line.length));
+  }
+  if (picked.isEmpty()) return {};
+  const QString marker = mixed || sameSide == QLatin1Char(' ') ? QString() : QString(sameSide);
+  return {{QStringLiteral("startIndex"), startIndex},
+          {QStringLiteral("endIndex"), endIndex},
+          {QStringLiteral("diff"), picked.join(QLatin1Char('\n'))},
+          {QStringLiteral("rangeLabel"), first == last ? marker + QString::number(first)
+                                                      : QStringLiteral("%1%2 to %1%3").arg(marker).arg(first).arg(last)}};
+}
+
 int DiffModel::rowOfFile(int file) const {
   if (file < 0 || file >= fileCount()) {
     return -1;

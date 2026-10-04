@@ -126,12 +126,12 @@ Feature: Reviewing working tree and branch changes
     When the user turns on line wrapping in the diff
     Then long lines wrap instead of scrolling sideways
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario: Commenting on lines adds review context to the composer
     When the user comments "Use the tax table" on lines 10 to 12 of "src/cart.ts"
     Then the composer carries that comment with the file and line range
 
-  @backlog @desktop
+  @desktop
   Scenario: Removing a line comment before sending
     Given the user commented on lines 10 to 12 of "src/cart.ts"
     When the user deletes that comment

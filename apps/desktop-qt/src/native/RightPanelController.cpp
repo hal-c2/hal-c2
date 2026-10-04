@@ -94,6 +94,10 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
           client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
           [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this),
       m_devices(client, this) {
+  // A note on the diff's lines joins the prompt and is said to have.
+  connect(&m_diff, &ThreadDiff::commentRequested, this, [this](const QVariantMap& comment) {
+    m_bridge->dispatch(QStringLiteral("composer.reviewComment.add"), comment);
+  });
   connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
   connect(&m_devices, &ThreadDevices::closed, this, &RightPanelController::closeTabIn);
   connect(&m_devices, &ThreadDevices::namesChanged, this, &RightPanelController::publish);
