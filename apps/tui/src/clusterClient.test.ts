@@ -284,4 +284,16 @@ describe("makeClusterClient", () => {
     expect(rows(last())).toEqual(["alpha@laptop"]);
     expect(desktop.calls).toEqual(["dispose"]);
   });
+
+  it("Given a member that was renamed, when the cluster is read again, then its rows carry the new name", async () => {
+    const { laptop, desktop, client, last, setStatus } = await clustered();
+    laptop.pushShell(shell([], []));
+    desktop.pushShell(shell([{ id: "p-desktop" }], [{ id: "beta" }]));
+
+    setStatus(cluster([member("env-desktop", "workstation", true)]));
+    await client.clusterStatus();
+
+    expect(rows(last())).toEqual(["beta@workstation"]);
+    expect(last().projects.map((project) => project.machine)).toEqual(["workstation"]);
+  });
 });

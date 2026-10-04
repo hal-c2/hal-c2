@@ -7,7 +7,6 @@ type ThreadId = Parameters<TuiClient["interrupt"]>[0];
 
 interface Machine {
   readonly id: string;
-  readonly label: string;
   readonly client: TuiClient;
   shell: Shell | null;
   readonly stop: () => void;
@@ -91,9 +90,11 @@ export function makeClusterClient(
     if (status === null || status.members.length === 0) return homeShell;
     const parts = [
       { id: status.id, label: status.label, shell: homeShell },
-      ...[...members.values()].flatMap((machine) =>
-        machine.shell ? [{ id: machine.id, label: machine.label, shell: machine.shell }] : [],
-      ),
+      // Named as the cluster names them now: a machine can be renamed.
+      ...status.members.flatMap(({ id, label }) => {
+        const shell = members.get(id)?.shell;
+        return shell ? [{ id, label, shell }] : [];
+      }),
     ];
     const threads = new Map<string, Shell["threads"][number]>();
     for (const { label, shell } of parts) {
@@ -147,7 +148,6 @@ export function makeClusterClient(
       const client = connect(member.id);
       const machine: Machine = {
         id: member.id,
-        label: member.label,
         client,
         shell: null,
         stop: client.subscribeShell((snapshot) => {
