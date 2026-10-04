@@ -38,8 +38,9 @@ export function makeClusterClient(
     client: TuiClient;
     stop: () => void;
   }>();
-  /** The machine of the thread last opened: where a path that exists on several is meant. */
-  let current: TuiClient = home;
+  /** What is on screen: the thread last opened, and the project of a draft open over it. */
+  let viewedThread: string | null = null;
+  let viewedProject: string | null = null;
   let stopHome: (() => void) | null = null;
   let stopConnection: (() => void) | null = null;
 
@@ -61,6 +62,12 @@ export function makeClusterClient(
     }
     return home;
   };
+  /** The machine of the thread on screen, wherever it has moved to since it was opened. */
+  const threadClient = (): TuiClient =>
+    viewedThread === null ? home : clientForThread(viewedThread);
+  /** The machine of what is on screen: where a path that exists on several is meant. */
+  const current = (): TuiClient =>
+    viewedProject === null ? threadClient() : clientForProject(viewedProject);
   const hasPath = (shell: Shell | null, cwd: string) =>
     shell !== null &&
     (shell.projects.some((project) => project.workspaceRoot === cwd) ||
@@ -73,7 +80,7 @@ export function makeClusterClient(
         .filter((machine) => hasPath(machine.shell, cwd))
         .map((m) => m.client),
     ];
-    return owners.length === 1 ? owners[0]! : current;
+    return owners.length === 1 ? owners[0]! : current();
   };
 
   const merged = (): Shell | null => {
@@ -177,7 +184,7 @@ export function makeClusterClient(
     },
     subscribeThread: (threadId, onThread) => {
       const client = clientForThread(threadId);
-      current = client;
+      viewedThread = threadId;
       const subscription = {
         threadId,
         onThread,
@@ -230,9 +237,12 @@ export function makeClusterClient(
       clientForThread(threadId).terminalClose(threadId, terminalId),
     listTerminalIds: (threadId) => clientForThread(threadId).listTerminalIds(threadId),
     // An attachment belongs to the thread on screen.
-    getAttachmentUrl: (attachmentId) => current.getAttachmentUrl(attachmentId),
+    getAttachmentUrl: (attachmentId) => threadClient().getAttachmentUrl(attachmentId),
     getAttachmentImage: (attachmentId, resolvedUrl) =>
-      current.getAttachmentImage(attachmentId, resolvedUrl),
+      threadClient().getAttachmentImage(attachmentId, resolvedUrl),
+    viewProject: (projectId) => {
+      viewedProject = projectId;
+    },
     browseFilesystem: (partialPath, cwd) => clientForPath(cwd).browseFilesystem(partialPath, cwd),
     subscribeVcsStatus: (cwd, onStatus) => clientForPath(cwd).subscribeVcsStatus(cwd, onStatus),
     runGitStackedAction: (input) => clientForPath(input.cwd).runGitStackedAction(input),

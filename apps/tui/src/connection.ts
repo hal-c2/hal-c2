@@ -494,6 +494,12 @@ export interface TuiClient {
   readonly subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => () => void;
   /** Told when a machine of this machine's cluster joins, leaves, goes offline or comes back. */
   readonly subscribeCluster: (onChange: () => void) => () => void;
+  /**
+   * Says which project the draft on screen is in, null once it closes. In a
+   * cluster a checkout path several machines have is then read on that
+   * project's machine (clusterClient.ts).
+   */
+  readonly viewProject: (projectId: string | null) => void;
   readonly browseFilesystem: (partialPath: string, cwd?: string) => Promise<FilesystemBrowseResult>;
   readonly discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
   readonly lookupRepository: (
@@ -911,6 +917,8 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
     },
     subscribeCluster: (onChange) =>
       drainStreamUntilUnsubscribe(mcMembers.pipe(Stream.tap(() => Effect.sync(onChange)))),
+    // One machine: every path is its own.
+    viewProject: () => {},
     subscribeShell: (onSnapshot) => {
       shellWarm ??= startWarmSubscriptionRef(makeEnvironmentShellState());
       return subscribeToWarmRef(shellWarm, (state) => {

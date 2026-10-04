@@ -236,6 +236,20 @@ describe("makeClusterClient", () => {
     await client.listRefs("/src/shop");
     expect(desktop.calls).toEqual(["listRefs /src/docs", "listRefs /src/shop"]);
     expect(laptop.calls).toEqual([]);
+
+    // A draft opened in the laptop's project over that thread means the laptop's checkout.
+    client.viewProject("p-laptop");
+    await client.listRefs("/src/shop");
+    expect(laptop.calls).toEqual(["listRefs /src/shop"]);
+    // Closed again, the path is the open thread's machine's once more.
+    client.viewProject(null);
+    await client.listRefs("/src/shop");
+    expect(desktop.calls).toEqual([
+      "listRefs /src/docs",
+      "listRefs /src/shop",
+      "listRefs /src/shop",
+    ]);
+    expect(laptop.calls).toEqual(["listRefs /src/shop"]);
   });
 
   it("Given a member that left the cluster, when the cluster is read again, then its rows and its client go", async () => {

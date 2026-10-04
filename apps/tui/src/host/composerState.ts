@@ -1267,12 +1267,15 @@ export function createComposer(options: ComposerOptions): Composer {
     options.setMode("newThread");
     publish();
     options.onDraftChange?.();
+    // Its branches and files are this project's machine's, whatever thread was open before.
+    client.viewProject(project?.id ?? null);
     if (project) void loadRefs(newDraft.draftId, project.workspaceRoot);
   };
 
   const closeNewThread = () => {
     if (!newDraft) return;
     newDraft = null;
+    client.viewProject(null);
     switchToken += 1;
     switchPending = false;
     drafts.delete(NEW_TARGET);

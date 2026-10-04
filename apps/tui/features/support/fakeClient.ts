@@ -149,6 +149,7 @@ export interface FakeClientCall {
 const UNRECORDED = new Set([
   "subscribeConnection",
   "subscribeCluster",
+  "viewProject",
   "subscribeShell",
   "subscribeThread",
   "peekThread",
@@ -408,6 +409,7 @@ export function fakeClient({
         clusterSubscribers.delete(onChange);
       };
     },
+    viewProject: () => {},
     browseFilesystem,
     discoverSourceControl,
     clusterStatus: async () => clusterStatus(),
