@@ -87,13 +87,13 @@ int placeOf(const QJsonObject& bucket, const QJsonObject& window, bool hourly) {
   return since.isValid() && day.isValid() && day >= since ? int(since.daysTo(day)) : -1;
 }
 
-// `2 PM` in local time. An hour the clocks repeat when they fall back says its
+// `2 PM` in `zone`. An hour the clocks repeat when they fall back says its
 // zone too, as the web's formatHourShort.
-QString hourName(const QDateTime& instant) {
-  const QDateTime local = instant.toLocalTime();
+QString hourName(const QDateTime& instant, const QTimeZone& zone) {
+  const QDateTime local = instant.toTimeZone(zone);
   const QString name = english().toString(local.time(), QStringLiteral("h AP"));
   for (const int away : {-60 * 60, 60 * 60}) {
-    const QDateTime other = instant.addSecs(away).toLocalTime();
+    const QDateTime other = instant.addSecs(away).toTimeZone(zone);
     if (other.date() == local.date() && other.time().hour() == local.time().hour()) {
       return QStringLiteral("%1 %2").arg(name, local.timeZoneAbbreviation());
     }
@@ -253,7 +253,8 @@ QString UsageController::label(const QString& environmentId) const {
 // or the past 24 hours to the minute, bucketed by hour.
 QJsonObject UsageController::window() const {
   const QDateTime now = m_now().toUTC();
-  QJsonObject window{{QStringLiteral("timeZone"), QString::fromUtf8(QTimeZone::systemTimeZoneId())}};
+  const QTimeZone zone = m_zone();
+  QJsonObject window{{QStringLiteral("timeZone"), QString::fromUtf8(zone.id())}};
   if (m_windowDays == 1) {
     QDateTime until = now;
     until.setTime(QTime(now.time().hour(), now.time().minute()));
@@ -261,11 +262,11 @@ QJsonObject UsageController::window() const {
     window.insert(QStringLiteral("resolution"), QStringLiteral("hour"));
     window.insert(QStringLiteral("sinceTime"), since.toString(Qt::ISODateWithMs));
     window.insert(QStringLiteral("untilTime"), until.toString(Qt::ISODateWithMs));
-    window.insert(QStringLiteral("sinceDay"), since.toLocalTime().date().toString(Qt::ISODate));
-    window.insert(QStringLiteral("untilDay"), until.toLocalTime().date().toString(Qt::ISODate));
+    window.insert(QStringLiteral("sinceDay"), since.toTimeZone(zone).date().toString(Qt::ISODate));
+    window.insert(QStringLiteral("untilDay"), until.toTimeZone(zone).date().toString(Qt::ISODate));
     return window;
   }
-  const QDate today = now.toLocalTime().date();
+  const QDate today = now.toTimeZone(zone).date();
   window.insert(QStringLiteral("resolution"), QStringLiteral("day"));
   window.insert(QStringLiteral("sinceDay"), today.addDays(-(m_windowDays - 1)).toString(Qt::ISODate));
   window.insert(QStringLiteral("untilDay"), today.toString(Qt::ISODate));
@@ -527,8 +528,9 @@ QVariantMap UsageController::summary(QStringList& notices) const {
                                  {QStringLiteral("totalTokens"), sum.tokens},
                                  {QStringLiteral("unpriced"), sum.records > 0 && sum.unpriced >= sum.records}});
   }
-  const auto name = [hourly](const QString& period) {
-    if (hourly) return hourName(QDateTime::fromString(period, Qt::ISODateWithMs));
+  const QTimeZone zone = m_zone();
+  const auto name = [hourly, &zone](const QString& period) {
+    if (hourly) return hourName(QDateTime::fromString(period, Qt::ISODateWithMs), zone);
     return english().toString(QDate::fromString(period, Qt::ISODate), QStringLiteral("MMM d"));
   };
   QVariantList periodRows;
@@ -556,7 +558,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
     }
   }
   // An hour is read out against the day the window ends on (formatRelativeHourShort).
-  const QDate today = QDateTime::fromString(text(window, "untilTime"), Qt::ISODateWithMs).toLocalTime().date();
+  const QDate today = QDateTime::fromString(text(window, "untilTime"), Qt::ISODateWithMs).toTimeZone(zone).date();
   QVariantList chartRows;
   for (qsizetype place = 0; place < charted.size(); ++place) {
     const QString& period = charted[place];
@@ -569,7 +571,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
     const QString label = name(period);
     QString heading = label;
     if (hourly) {
-      const QDateTime hour = QDateTime::fromString(period, Qt::ISODateWithMs).toLocalTime();
+      const QDateTime hour = QDateTime::fromString(period, Qt::ISODateWithMs).toTimeZone(zone);
       const qint64 daysAgo = hour.date().daysTo(today);
       heading = daysAgo == 0   ? QStringLiteral("%1 today").arg(label)
                 : daysAgo == 1 ? QStringLiteral("%1 yesterday").arg(label)
@@ -877,7 +879,7 @@ void UsageController::publish() {
   } else if (merged.value(QStringLiteral("periods")).toList().isEmpty()) {
     message = QStringLiteral("No activity in this window.");
   }
-  const QDateTime now = m_now().toLocalTime();
+  const QDateTime now = m_now().toTimeZone(m_zone());
   QString windowLabel;
   if (m_windowDays == 1) {
     windowLabel = QStringLiteral("%1 to %2").arg(english().toString(now.addSecs(-24 * 60 * 60), QStringLiteral("MMM d, h AP")),

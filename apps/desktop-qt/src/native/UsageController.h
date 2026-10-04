@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QSet>
+#include <QTimeZone>
 #include <QVariantMap>
 
 #include <functional>
@@ -60,6 +61,8 @@ public:
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  // The zone the window's days and the labels of its hours are read in.
+  void setZone(std::function<QTimeZone()> zone) { m_zone = std::move(zone); }
 
 private:
   struct Answer {
@@ -92,6 +95,7 @@ private:
   McClient* m_client;
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
+  std::function<QTimeZone()> m_zone = [] { return QTimeZone::systemTimeZone(); };
   bool m_active = false;
   bool m_open = false;
   QString m_metric = QStringLiteral("limits");

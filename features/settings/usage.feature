@@ -225,6 +225,12 @@ Feature: Usage and limits
       And the user refreshes usage
       Then the chart still draws Codex and Claude
 
+    @desktop
+    Scenario: An hour the clocks repeat says which of the two it is
+      Given the user is in "America/New_York" on the night its clocks fall back
+      When the user views cost for the past 24 hours
+      Then the chart tells the two hours labelled 1 AM apart
+
     @desktop @backlog-desktop
     Scenario: Each model shows its share of the cost
       Given the user views cost for the past 7 days

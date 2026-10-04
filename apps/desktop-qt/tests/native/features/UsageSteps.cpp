@@ -7,11 +7,13 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QTimeZone>
 
 #include "FakeConfig.h"
 #include "Harness.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "UsageController.h"
 #include "World.h"
 
 namespace {
@@ -337,6 +339,26 @@ const Steps steps([] {
       claude += cost.value(1).toDouble();
     }
     expect(codex > 0 && claude > 0, QStringLiteral("both providers on the chart; the page is %1").arg(show(usage(world))));
+  });
+  // 1 AM comes twice there on 1 November 2026; it is half past three, after both.
+  step(QStringLiteral("the user is in %1 on the night its clocks fall back").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QTimeZone zone(c[0].toUtf8());
+    expect(zone.isValid(), QStringLiteral("the zone %1 to be known").arg(c[0]));
+    world.native().controller<UsageController>()->setZone([zone] { return zone; });
+    world.setTime(QDateTime(QDate(2026, 11, 1), QTime(8, 30), QTimeZone::UTC));
+  });
+  step(QStringLiteral("the chart tells the two hours labelled 1 AM apart"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return at(usage(world), QStringLiteral("summary.chart")).toList().size() == 24; },
+                  [&] { return QStringLiteral("a chart of 24 hours; the page is %1").arg(show(usage(world))); });
+    QStringList labels, headings;
+    for (const QVariant& value : at(usage(world), QStringLiteral("summary.chart")).toList()) {
+      const QVariantMap hour = value.toMap();
+      if (!hour.value(QStringLiteral("label")).toString().startsWith(QLatin1String("1 AM"))) continue;
+      labels.append(hour.value(QStringLiteral("label")).toString());
+      headings.append(hour.value(QStringLiteral("heading")).toString());
+    }
+    expect(labels.size() == 2 && labels[0] != labels[1], QStringLiteral("two different 1 AM labels; they are %1").arg(labels.join(QStringLiteral(", "))));
+    expect(headings.size() == 2 && headings[0] != headings[1], QStringLiteral("two different 1 AM headings; they are %1").arg(headings.join(QStringLiteral(", "))));
   });
   step(QStringLiteral("the user hovers a day"), [](World& world, const Captures&, const Table&) {
     fake(world).hoveredDay = world.now().toLocalTime().date().toString(Qt::ISODate);
