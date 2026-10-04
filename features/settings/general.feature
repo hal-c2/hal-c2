@@ -39,7 +39,7 @@ Feature: General settings
       When the user turns project grouping on again
       Then projects are grouped by repository again
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario Outline: A thread stopped by a usage limit follows the limit settings
       Given "<setting>" is on for the environment
       When a thread stops because the provider's usage limit was reached
@@ -50,7 +50,7 @@ Feature: General settings
         | Auto-resume limited threads | is scheduled to continue          |
         | Snooze limited threads      | is snoozed until it wakes         |
 
-    @backlog @desktop
+    @desktop
     Scenario: A scheduled continuation can be cancelled from the thread
       Given "Auto-resume limited threads" is on
       And a limited thread is scheduled to continue at its reset time
