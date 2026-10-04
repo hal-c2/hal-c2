@@ -772,8 +772,8 @@ void ComposerController::dispatchAll(const Send& send, qsizetype index,
                             });
 }
 
-// A draft image scaled down to what the composer shows of it, as a PNG data
-// URL: the full image would be compared and handed to QML on every
+// What the composer shows of a draft image, its middle square scaled down, as
+// a PNG data URL: the full image would be compared and handed to QML on every
 // keystroke. Empty when Qt cannot read the image.
 QString ComposerController::thumbnail(const QString& dataUrl) {
   constexpr int kSide = 128;
@@ -782,8 +782,10 @@ QString ComposerController::thumbnail(const QString& dataUrl) {
   QImageReader reader(&source);
   reader.setAutoTransform(true);
   const QSize size = reader.size();
-  if (size.width() > kSide && size.height() > kSide) {
-    reader.setScaledSize(size.scaled(kSide, kSide, Qt::KeepAspectRatioByExpanding));
+  const int side = std::min(size.width(), size.height());
+  if (side > 0) {
+    reader.setClipRect(QRect((size.width() - side) / 2, (size.height() - side) / 2, side, side));
+    if (side > kSide) reader.setScaledSize(QSize(kSide, kSide));
   }
   const QImage image = reader.read();
   QByteArray png;

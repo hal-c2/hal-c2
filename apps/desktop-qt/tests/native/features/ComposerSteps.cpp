@@ -178,8 +178,8 @@ const Steps steps([] {
       if (attachment.toMap().value(QStringLiteral("name")) != c[0]) continue;
       const QString preview = attachment.toMap().value(QStringLiteral("preview")).toString();
       const QImage thumbnail = QImage::fromData(QByteArray::fromBase64(preview.section(QLatin1Char(','), 1).toLatin1()));
-      // The 400x200 picture, scaled down keeping its shape.
-      expect(preview.startsWith(QLatin1String("data:image/png;base64,")) && thumbnail.size() == QSize(256, 128),
+      // The middle square of the 400x200 picture, scaled down.
+      expect(preview.startsWith(QLatin1String("data:image/png;base64,")) && thumbnail.size() == QSize(128, 128),
              QStringLiteral("the thumbnail is %1x%2").arg(thumbnail.width()).arg(thumbnail.height()));
       return;
     }

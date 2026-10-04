@@ -640,6 +640,7 @@ Rectangle {
                             ToolTip.delay: 500
                             ToolTip.text: attachment.modelData.name
                             ShellButton {
+                                id: removeAttachment
                                 anchors.top: parent.top
                                 anchors.right: parent.right
                                 anchors.margins: 2
@@ -651,6 +652,8 @@ Rectangle {
                                 background: Rectangle {
                                     radius: 9
                                     color: Qt.alpha(composer.canvas, 0.8)
+                                    border.color: removeAttachment.focusRing
+                                    border.width: removeAttachment.visualFocus ? 1 : 0
                                 }
                                 onClicked: Shell.dispatch("composer.attachment.remove", {
                                     id: attachment.modelData.id
