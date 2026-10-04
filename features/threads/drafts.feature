@@ -123,6 +123,19 @@ Feature: Drafts on the desktop
       And the composer's caret follows "Fix the build"
 
     @desktop
+    Scenario: A moved draft leaves its attachments where they were added
+      Given the user starts a new thread in "proj-1"
+      And the user types "Fix the build" into the new thread
+      And the user attaches the image "cart.png"
+      When the user moves the draft to "proj-2"
+      Then the sidebar lists the draft reading "1 attachment"
+      And the window shows a new draft in "proj-2"
+      And the new thread still reads "Fix the build"
+      And the composer lists no attachments
+      When the user starts a new thread in "proj-1"
+      Then the composer lists the attachment "cart.png"
+
+    @desktop
     Scenario: A draft moved onto a project with its own draft opens that draft
       Given the user starts a new thread in "proj-2"
       And the user types "Ship it" into the new thread
