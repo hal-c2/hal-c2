@@ -105,11 +105,32 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
-  step "the user joins the second with a standard pairing link from the first", context do
+  step "the user joins the second with a standard pairing link from the first that names the first's certificate",
+       context do
     %{a: a, b: b} = context.machines
     store = :peer.call(a.peer, HalC2.Store, :home_path, [])
     token = :peer.call(a.peer, HalC2.Auth, :create_pairing_token, [store])
+    link = "#{origin(a)}/?token=#{token}#fingerprint=#{fingerprint(a)}"
+    Map.put(context, :joined, command(b, ["join", link]))
+  end
+
+  step "the user joins the second with an admin pairing link from the first that names no certificate",
+       context do
+    %{a: a, b: b} = context.machines
+
+    {:ok, %{"credential" => token}} =
+      auth(a, :create_pairing_link, [%{"scopes" => ["access:write"], "label" => "Admin"}])
+
     Map.put(context, :joined, command(b, ["join", "#{origin(a)}/?token=#{token}"]))
+  end
+
+  step "the join is refused because the link is not a cluster invite", context do
+    %{a: a, b: b} = context.machines
+    assert {:error, message} = context.joined
+    assert message =~ "not a cluster invite"
+    assert status(a)["members"] == []
+    assert status(b)["members"] == []
+    context
   end
 
   step "the first makes a cluster invite", context do

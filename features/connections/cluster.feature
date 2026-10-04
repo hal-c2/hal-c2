@@ -19,7 +19,7 @@
 #   packages/client-runtime/src/connection/compatibility.ts (descriptorServesEnvironment)
 
 Feature: Clustering one person's machines
-  MCs on one person's machines form a cluster. A machine joins with a pairing link from
+  MCs on one person's machines form a cluster. A machine joins with an invite from
   any member, over whatever network reaches it: a LAN, a tailnet, another VPN. Members pin
   each other's certificates and talk over mutually authenticated TLS, and a client paired
   with any member reaches every member's environment through that one connection. Nobody
@@ -43,7 +43,7 @@ Feature: Clustering one person's machines
   @mc
   Scenario: Joining needs a link that grants access
     Given two MCs that are not clustered
-    When the user joins the second with a standard pairing link from the first
+    When the user joins the second with a standard pairing link from the first that names the first's certificate
     Then the join is refused because the link does not grant access:write
     And neither lists the other
 
@@ -52,6 +52,14 @@ Feature: Clustering one person's machines
     Given two MCs that are not clustered
     When the first makes a cluster invite
     Then the invite carries the fingerprint of the first's certificate
+
+  # A link that names no certificate gives the joining machine nothing to check the answer
+  # against, so whoever answers it could name any machines as members.
+  @mc
+  Scenario: Only a cluster invite joins a cluster
+    Given two MCs that are not clustered
+    When the user joins the second with an admin pairing link from the first that names no certificate
+    Then the join is refused because the link is not a cluster invite
 
   @mc
   Scenario: A machine that answers an invite in another's place is not trusted
@@ -436,12 +444,6 @@ Feature: Clustering one person's machines
     When the second joins with it
     Then the second talks only to a machine holding the certificate the invite names
     And a machine answering in the first's place learns nothing about the second
-
-  @backlog @mc
-  Scenario: Only a cluster invite joins a cluster
-    Given two MCs that are not clustered
-    When the user joins the second with an admin pairing link from the first that names no certificate
-    Then the join is refused because the link is not a cluster invite
 
   @backlog @mc
   Scenario: Members on one network find each other without being told where

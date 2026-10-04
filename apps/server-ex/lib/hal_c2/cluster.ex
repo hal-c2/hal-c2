@@ -90,10 +90,9 @@ defmodule HalC2.Cluster do
   def remove(id), do: GenServer.call(__MODULE__, {:remove, id})
 
   @doc """
-  Joins the cluster of the machine a link is from: an invite (`invite/1`), or a
-  pairing link that grants `access:write` (an admin link from Settings → Connections),
-  which names no fingerprint, so the members are taken from the answer as it came.
-  Waits up to 15 s to connect and returns `status/0`.
+  Joins the cluster of the machine an invite (`invite/1`) is from. A pairing link that
+  names no fingerprint is refused whatever it grants: nothing in it says whose
+  certificate to trust. Waits up to 15 s to connect and returns `status/0`.
   """
   def join(link) do
     with {:ok, entry} <- GenServer.call(__MODULE__, :entry),
@@ -176,6 +175,10 @@ defmodule HalC2.Cluster do
 
   def describe(:link_invalid), do: "The pairing link was used already or has expired."
   def describe(:invalid_link), do: "That is not a pairing link."
+
+  def describe(:not_an_invite),
+    do: "That pairing link is not a cluster invite; make a cluster invite on the other machine."
+
   def describe(:cannot_remove_self), do: "A machine cannot remove itself from its cluster."
   def describe(:not_a_member), do: "That machine is not a member of this cluster."
   def describe(:invalid_member), do: "The joining machine sent an invalid description."
@@ -197,7 +200,7 @@ defmodule HalC2.Cluster do
 
   # Reasons that crossed the wire as strings.
   @reasons ~w(not_booted_for_clustering link_lacks_access link_invalid invalid_link
-    cannot_remove_self not_a_member invalid_member wrong_machine
+    cannot_remove_self not_a_member invalid_member wrong_machine not_an_invite
     other_version)a
   defp describe_string(reason) do
     case Enum.find(@reasons, &(Atom.to_string(&1) == reason)) do
@@ -717,13 +720,18 @@ defmodule HalC2.Cluster do
     uri = URI.parse(String.trim(link))
     params = Map.merge(URI.decode_query(uri.fragment || ""), URI.decode_query(uri.query || ""))
 
-    pin = params["fingerprint"]
-
     case params do
       %{"token" => token} when uri.scheme in ["http", "https"] and is_binary(uri.host) ->
-        if pin == nil or Regex.match?(@fingerprint, pin),
-          do: {:ok, "#{uri.scheme}://#{uri.authority}", token, pin},
-          else: {:error, :invalid_link}
+        case params["fingerprint"] do
+          # Any other pairing link: it names no certificate to trust.
+          nil ->
+            {:error, :not_an_invite}
+
+          pin ->
+            if Regex.match?(@fingerprint, pin),
+              do: {:ok, "#{uri.scheme}://#{uri.authority}", token, pin},
+              else: {:error, :invalid_link}
+        end
 
       _ ->
         {:error, :invalid_link}
@@ -733,8 +741,6 @@ defmodule HalC2.Cluster do
   # What a joining machine takes from the inviter's answer. An invite names the
   # inviter's fingerprint, so only the inviter is pinned, with that fingerprint, and
   # the other members come from it over the cluster connection the pin authenticates.
-  defp trusted(members, _inviter, nil), do: {:ok, members}
-
   defp trusted(members, inviter, pin) do
     case members do
       %{^inviter => %{"fingerprint" => ^pin} = entry} -> {:ok, %{inviter => entry}}
