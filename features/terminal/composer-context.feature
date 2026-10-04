@@ -56,7 +56,7 @@ Feature: Adding terminal output to a message
     Then the draft no longer holds it
     And the rest of the draft is unchanged
 
-  @backlog @desktop
+  @desktop
   Scenario: An excerpt whose text is gone is dropped when the message is sent
     Given a restored draft holds a terminal excerpt with no text left
     When the user sends the message

@@ -270,6 +270,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("terminal/composer-context.feature:The user removes a terminal excerpt*"),
     QStringLiteral("terminal/composer-context.feature:Adding to chat is not offered*"),
     QStringLiteral("terminal/composer-context.feature:The terminal's menu offers*"),
+    QStringLiteral("terminal/composer-context.feature:An excerpt whose text is gone*"),
     QStringLiteral("composer/drafting-and-sending.feature:Each thread keeps its own draft*"),
     QStringLiteral("composer/drafting-and-sending.feature:Sending while disconnected*"),
     QStringLiteral("composer/drafting-and-sending.feature:A send the MC rejects*"),

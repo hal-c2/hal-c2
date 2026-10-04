@@ -844,6 +844,19 @@ void WorkspaceController::openInEditor(const QString& editorId) {
   publish();
 }
 
+bool WorkspaceController::openPath(const QString& target) {
+  if (!m_place || target.isEmpty()) return false;
+  const QString editor = preferredEditor(editors());
+  if (editor.isEmpty()) return false;
+  auto* toasts = NativeShell::of(this)->controller<ToastController>();
+  m_client->call(this, m_place->environmentId, QStringLiteral("shell.openInEditor"),
+                 QJsonObject{{QStringLiteral("cwd"), target}, {QStringLiteral("editor"), editor}},
+                 [toasts](const QJsonValue&, const std::optional<QString>& error) {
+                   if (error) toasts->error(QStringLiteral("Failed to open in editor."), *error);
+                 });
+  return true;
+}
+
 // In the thread's terminal drawer; the one run last is offered first next time.
 void WorkspaceController::runScript(const QString& scriptId) {
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();

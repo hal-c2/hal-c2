@@ -82,6 +82,9 @@ public:
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
+  // Opens a file of the thread's environment, `path[:line[:column]]`, in the
+  // editor the header would open; false when the environment has none.
+  bool openPath(const QString& target);
 
   const std::optional<Place>& place() const { return m_place; }
   // The route's checkout status; none while unknown or not followed (a linked

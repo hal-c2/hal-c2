@@ -71,6 +71,7 @@ qt_add_qml_module(hal_c2_bricks
     ThreadView.qml
     js/centreViews.js
     js/panelTabs.js
+    js/terminalLinks.js
     js/scheduledTasks.js
     RevertDialog.qml
     TerminalSplits.qml

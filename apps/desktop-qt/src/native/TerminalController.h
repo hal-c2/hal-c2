@@ -291,6 +291,7 @@ private:
   QString nextTerminalId() const;
   TerminalSession* session(const QString& terminalId) const;
   void toast(const QString& title, const QString& description);
+  void followLink(const QString& kind, const QString& text, const QString& reportedCwd);
   void save();
 
   ShellBridge* m_bridge;

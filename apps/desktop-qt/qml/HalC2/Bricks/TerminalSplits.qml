@@ -1,6 +1,7 @@
 import QtQuick
 import Ghostty
 import HalC2.Shell
+import "js/terminalLinks.js" as TerminalLinks
 
 // One place's terminals (the drawer's, or the right panel's), drawn by
 // qml-ghostty's Terminal from the `Terminals` controller's sessions: the
@@ -128,6 +129,30 @@ FocusScope {
                         lineEnd: lineStart + body.split("\n").length - 1,
                         text: selected
                     };
+                }
+
+                // A click on a web address or a file path follows it
+                // (terminal.followLink): the address in the browser, the
+                // path in the editor, from the folder the shell says it is
+                // in. A drag still selects, and a program that tracks the
+                // mouse keeps its clicks.
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton
+                    acceptedModifiers: Qt.KeyboardModifierMask
+                    onTapped: eventPoint => {
+                        const column = Math.floor((eventPoint.position.x - terminal.padding) / terminal.cellWidth);
+                        const row = Math.floor((eventPoint.position.y - terminal.padding) / terminal.cellHeight);
+                        if (column < 0 || column >= terminal.columns || row < 0 || row >= terminal.rows)
+                            return;
+                        const link = TerminalLinks.linkAt(terminal.text(), terminal.columns, Math.round(terminal.scrollOffset) + row, column);
+                        if (link !== null)
+                            Shell.dispatch("terminal.followLink", {
+                                terminalId: cell.terminalId,
+                                kind: link.kind,
+                                text: link.text,
+                                cwd: terminal.workingDirectory
+                            });
+                    }
                 }
 
                 // Right-click: the terminal's menu (TerminalMenu).

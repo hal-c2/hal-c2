@@ -1417,6 +1417,8 @@ void ComposerController::withTerminalContexts(QJsonObject& message, const QList<
   QStringList links;
   QJsonArray records;
   for (const TerminalContext& context : contexts) {
+    // An excerpt whose text is gone (the web's expired context) has nothing to send.
+    if (context.text.trimmed().isEmpty()) continue;
     const QString range = context.lineStart == context.lineEnd
                               ? QStringLiteral("line %1").arg(context.lineStart)
                               : QStringLiteral("lines %1-%2").arg(context.lineStart).arg(context.lineEnd);
@@ -1436,6 +1438,7 @@ void ComposerController::withTerminalContexts(QJsonObject& message, const QList<
         {QStringLiteral("text"), context.text},
     });
   }
+  if (records.isEmpty()) return;
   const QString text = message.value(QLatin1String("text")).toString();
   const QString joined = links.join(QLatin1Char(' '));
   message.insert(QStringLiteral("text"), text.isEmpty() ? joined : text + QStringLiteral("\n\n") + joined);

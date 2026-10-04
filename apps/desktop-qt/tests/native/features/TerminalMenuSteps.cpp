@@ -7,10 +7,13 @@
 #include <QClipboard>
 #include <QFont>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QTest>
 
 #include "Brick.h"
+#include "FakeConfig.h"
 #include "FakeTerminals.h"
 #include "Harness.h"
 #include "SettingsController.h"
@@ -220,6 +223,72 @@ const Steps steps([] {
       const QFont font = terminal->property("font").value<QFont>();
       return QStringLiteral("the terminal in Courier at 15; it is in %1 at %2").arg(font.family()).arg(font.pixelSize());
     });
+  });
+
+  // Links in the output (TerminalSplits follows the one under a click).
+  const auto follow = [](World& world, const QString& printed, const QString& link, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    QQuickItem* terminal = drawnTerminal(world);
+    print(world.mc, shownThread(world), QStringLiteral("term-1"), printed + QStringLiteral("\r\n"));
+    world.waitFor([&] { return call(terminal, "text").contains(link); }, [&] { return QStringLiteral("the terminal to draw \"%1\"").arg(printed); });
+    const QStringList lines = call(terminal, "text").split(QLatin1Char('\n'));
+    int row = -1;
+    for (int at = 0; at < lines.size(); ++at) {
+      if (lines.at(at).contains(link)) row = at;
+    }
+    const int column = int(lines.at(row).indexOf(link)) + int(link.size()) / 2;
+    const double cell = terminal->property("cellWidth").toDouble();
+    const double height = terminal->property("cellHeight").toDouble();
+    const double padding = terminal->property("padding").toDouble();
+    const QPoint origin = world.brick->at(terminal, 0, 0);
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, modifiers,
+                      QPoint(origin.x() + int(padding + cell * (column + 0.5)), origin.y() + int(padding + height * (row + 0.5))));
+    world.sync();
+  };
+  step(QStringLiteral("the user's links open in the system browser"), [](World& world, const Captures&, const Table&) {
+    // The setting's default (BrowserLinkTarget "system").
+    drawnTerminal(world);
+    const QJsonObject settings = world.native().controller<SettingsController>()->settings();
+    expect(settings.value(QLatin1String("browserLinkTarget")).toString(QStringLiteral("system")) == QLatin1String("system"),
+           QStringLiteral("links open in %1").arg(settings.value(QLatin1String("browserLinkTarget")).toString()));
+  });
+  step(QStringLiteral("the user follows %1 in the terminal").arg(q), [follow](World& world, const Captures& c, const Table&) {
+    follow(world, QStringLiteral("Server ready at %1 (press h for help)").arg(c[0]), c[0]);
+  });
+  step(QStringLiteral("the address opens in the system browser"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.openedUrls == QList<QUrl>{QUrl(QStringLiteral("http://localhost:5173"))}; },
+                  [&] { return QStringLiteral("the browser to open the address; it opened %1 addresses").arg(world.openedUrls.size()); });
+    // The click went to the link, not the shell, and selected nothing.
+    QQuickItem* terminal = world.brick->item(QStringLiteral("HalC2Terminal"));
+    expect(terminalWrites(world, QStringLiteral("term-1")).isEmpty() && !terminal->property("hasSelection").toBool(),
+           QStringLiteral("the MC got %1").arg(describeTerminalCalls(world)));
+  });
+  step(QStringLiteral("the shell prints \"src/app.ts:12:4\""), [](World& world, const Captures&, const Table&) {
+    // An environment with an editor, and a thread in /work/p1.
+    fakeConfig(world.mc).config.insert(QStringLiteral("availableEditors"), QJsonArray{QStringLiteral("zed")});
+    QQuickItem* terminal = drawnTerminal(world);
+    print(world.mc, shownThread(world), QStringLiteral("term-1"), QStringLiteral("error TS2322 at src/app.ts:12:4.\r\n"));
+    world.waitFor([&] { return call(terminal, "text").contains(QLatin1String("src/app.ts:12:4")); }, QStringLiteral("the terminal to draw the path"));
+  });
+  step(QStringLiteral("the user follows that path"), [follow](World& world, const Captures&, const Table&) {
+    follow(world, QStringLiteral("(1 error)"), QStringLiteral("src/app.ts:12:4"));
+  });
+  const auto editorCall = [](World& world) -> QJsonObject {
+    for (const FakeMc::Rpc& rpc : world.mc.calls) {
+      if (rpc.method == QLatin1String("shell.openInEditor")) return rpc.payload;
+    }
+    return {};
+  };
+  step(QStringLiteral("\"src/app.ts\" opens in the user's editor at line 12, column 4"), [editorCall](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !editorCall(world).isEmpty(); }, QStringLiteral("the editor to be asked for the file"));
+    const QJsonObject asked = editorCall(world);
+    expect(asked.value(QLatin1String("editor")) == QLatin1String("zed") && asked.value(QLatin1String("cwd")).toString().endsWith(QLatin1String("/src/app.ts:12:4")),
+           QStringLiteral("the editor was asked for %1").arg(QString::fromUtf8(QJsonDocument(asked).toJson(QJsonDocument::Compact))));
+    expect(world.openedUrls.isEmpty(), QStringLiteral("the browser was opened"));
+  });
+  step(QStringLiteral("the path is resolved against the terminal's folder"), [editorCall](World& world, const Captures&, const Table&) {
+    const QString folder = terminalAttach(world, shownThread(world), QStringLiteral("term-1"))->value(QLatin1String("cwd")).toString();
+    expect(!folder.isEmpty() && editorCall(world).value(QLatin1String("cwd")) == folder + QStringLiteral("/src/app.ts:12:4"),
+           QStringLiteral("the terminal runs in %1; the editor was asked for %2").arg(folder, editorCall(world).value(QLatin1String("cwd")).toString()));
   });
 
   step(QStringLiteral("a program turns on the Kitty keyboard protocol"), [](World& world, const Captures&, const Table&) {

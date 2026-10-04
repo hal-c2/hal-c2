@@ -80,7 +80,7 @@ Feature: Links and rendering inside terminals
       When the user follows "https://example.com/docs" in the terminal
       Then the address opens in a browser tab beside the thread
 
-    @backlog @desktop
+    @desktop
     Scenario: Following a link opens the system browser when that is the chosen target
       Given the user's links open in the system browser
       When the user follows "http://localhost:5173" in the terminal
@@ -99,7 +99,7 @@ Feature: Links and rendering inside terminals
       Then the address opens in the system browser
       And the failure is recorded with its cause
 
-    @backlog @desktop
+    @desktop
     Scenario: A file path in the output opens in the editor
       Given the shell prints "src/app.ts:12:4"
       When the user follows that path

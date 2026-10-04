@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QSaveFile>
+#include <QUrl>
 #include <QQmlPropertyMap>
 #include <QRegularExpression>
 
@@ -489,6 +490,11 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
     if (m_place && terminalIds().contains(terminalId)) openTerminal(terminalId);
     return true;
   }
+  if (action == QLatin1String("terminal.followLink")) {
+    followLink(args.value(QStringLiteral("kind")).toString(), args.value(QStringLiteral("text")).toString(),
+               args.value(QStringLiteral("cwd")).toString());
+    return true;
+  }
   if (action == QLatin1String("terminal.close")) {
     if (!m_place) return true;
     // A keybinding's is the focused terminal's, the drawer's or a panel tab's.
@@ -896,6 +902,36 @@ void TerminalController::closeTerminal(const QString& terminalId) {
     emit focusRequested(next);
   } else if (!panel && m_ui[threadKey].open) {
     emit focusRequested(activeTerminalId());
+  }
+}
+
+// A link the user followed in a terminal, as the web's handleLinkActivate: a
+// web address goes to the browser (the desktop draws no pages itself), a file
+// path to the editor, resolved against the folder the shell reported (OSC 7)
+// or the one the terminal started in.
+void TerminalController::followLink(const QString& kind, const QString& text, const QString& reportedCwd) {
+  if (!m_place || text.isEmpty()) return;
+  if (kind == QLatin1String("url")) {
+    const QUrl url(text);
+    if (url.isValid() && (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https"))) m_bridge->openExternal(url);
+    return;
+  }
+  static const QRegularExpression position(QStringLiteral("^(.*?)((?::\\d+){0,2})$"));
+  const QRegularExpressionMatch match = position.match(text);
+  QString path = match.captured(1);
+  QString cwd = reportedCwd.startsWith(QLatin1String("file://")) ? QUrl(reportedCwd).path() : reportedCwd;
+  if (cwd.isEmpty()) cwd = m_place->cwd;
+  static const QRegularExpression home(QStringLiteral("^(/Users/[^/]+|/home/[^/]+)"));
+  if (path.startsWith(QLatin1String("~/"))) {
+    // The home the folder sits in, as the web's inferHomeFromCwd.
+    const QRegularExpressionMatch found = home.match(cwd);
+    if (found.hasMatch()) path = found.captured(1) + path.mid(1);
+  } else if (!path.startsWith(QLatin1Char('/'))) {
+    path = QDir::cleanPath(cwd + QLatin1Char('/') + path);
+  }
+  auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
+  if (!workspace || !workspace->openPath(path + match.captured(2))) {
+    toast(QStringLiteral("Unable to open path"), QStringLiteral("This environment has no editor to open %1 in.").arg(path));
   }
 }
 
