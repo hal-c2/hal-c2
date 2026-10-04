@@ -1052,6 +1052,11 @@ Rectangle {
                     }
                 }
 
+                ProviderModelList {
+                    Layout.fillWidth: true
+                    provider: card.provider
+                }
+
                 ProviderCustomModels {
                     Layout.fillWidth: true
                     visible: card.provider.takesModels ?? false

@@ -17,6 +17,7 @@ RightPanel 1.0 RightPanel.qml
 SettingsNav 1.0 SettingsNav.qml
 ShellErrorOverlay 1.0 ShellErrorOverlay.qml
 ConnectionNotice 1.0 ConnectionNotice.qml
+ProviderModelList 1.0 ProviderModelList.qml
 ComposerUsageLimits 1.0 ComposerUsageLimits.qml
 LoadBalancingSettings 1.0 LoadBalancingSettings.qml
 ConnectionStatusRow 1.0 ConnectionStatusRow.qml

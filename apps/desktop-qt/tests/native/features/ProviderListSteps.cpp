@@ -7,10 +7,15 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include <QJsonDocument>
+
+#include "Brick.h"
 #include "FakeConfig.h"
 #include "Harness.h"
+#include "SharedSteps.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "SettingsController.h"
 #include "World.h"
 
 namespace {
@@ -20,6 +25,7 @@ struct ProviderList {
   QString environment;
   // The instance whose headline the scenario reads.
   QString instanceId;
+  bool hidModel = false;
 };
 
 QVariantMap panel(World& world) {
@@ -74,6 +80,46 @@ QStringList listed(World& world) {
   }
   return names;
 }
+
+// Claude with four models, as the environment lists them.
+void offerClaude(World& world) {
+  QJsonArray models;
+  for (const QString& name : {QStringLiteral("Opus"), QStringLiteral("Sonnet"), QStringLiteral("Haiku"), QStringLiteral("Fable")}) {
+    models.append(QJsonObject{{QStringLiteral("slug"), name.toLower()}, {QStringLiteral("name"), name}});
+  }
+  QJsonObject claude = provider(QStringLiteral("claudeAgent"), QStringLiteral("Claude"), {{QStringLiteral("models"), models}});
+  claude.insert(QStringLiteral("driver"), QStringLiteral("claudeAgent"));
+  publishProviders(world.mc, {claude});
+  world.openDraft(QStringLiteral("shop"));
+  openPanel(world);
+  world.waitFor([&] { return listed(world) == QStringList{QStringLiteral("Claude")}; },
+                [&] { return QStringLiteral("Claude to be listed; the panel is %1").arg(show(panel(world))); });
+}
+
+// The models the picker offers for Claude, by name, in order.
+QStringList picked(World& world) {
+  QStringList names;
+  for (const QVariant& instance : world.state(QStringLiteral("modelPicker")).toMap().value(QStringLiteral("instances")).toList()) {
+    if (instance.toMap().value(QStringLiteral("instanceId")) != QLatin1String("claudeAgent")) continue;
+    for (const QVariant& model : instance.toMap().value(QStringLiteral("models")).toList()) names.append(model.toMap().value(QStringLiteral("name")).toString());
+  }
+  return names;
+}
+
+void hide(World& world, const QString& name, bool hidden) {
+  world.bridge().dispatch(QStringLiteral("providerSettings.modelHidden"),
+                          QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("slug"), name.toLower()}, {QStringLiteral("hidden"), hidden}});
+}
+
+}  // namespace
+
+bool expectModelOffered(World& world, const QString& name) {
+  if (!world.mc.part<ProviderList>().hidModel) return false;
+  world.waitFor([&] { return picked(world).contains(name); }, [&] { return QStringLiteral("%1 in the picker; it offers %2").arg(name, picked(world).join(u", ")); });
+  return true;
+}
+
+namespace {
 
 const Steps steps([] {
   const QString q = kQuoted;
@@ -144,6 +190,55 @@ const Steps steps([] {
     const QString said = panel(world).value(QStringLiteral("readOnlyDescription")).toString();
     expect(said == QLatin1String("This session can view Build box's providers but can't change their settings."),
            QStringLiteral("the read-only note; it says \"%1\"").arg(said));
+  });
+
+  // Which models this device's picker offers (providers/models.feature).
+  step(QStringLiteral("the user hid the model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    offerClaude(world);
+    world.mc.part<ProviderList>().hidModel = true;
+    hide(world, c[0], true);
+    world.waitFor([&] { return !picked(world).contains(c[0]); }, [&] { return QStringLiteral("%1 to leave the picker; it offers %2").arg(c[0], picked(world).join(u", ")); });
+  });
+  step(QStringLiteral("the user shows %1 in the picker again").arg(q), [](World& world, const Captures& c, const Table&) {
+    // From the provider's card, where the hidden model is still listed.
+    world.brick = std::make_unique<Brick>(world, QByteArrayLiteral("import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\n"
+                                                                    "ProviderModelList { width: 500; provider: Shell.state.providerSettings.providers[0] }\n"),
+                                          QSize(500, 300));
+    expect(world.brick->shows(QStringLiteral("Show")), QStringLiteral("the card does not offer to show a model"));
+    world.brick->click(QStringLiteral("modelHidden-") + c[0].toLower());
+  });
+  step(QStringLiteral("the user favourites one model, hides another and moves a third up"), [](World& world, const Captures&, const Table&) {
+    offerClaude(world);
+    world.bridge().dispatch(QStringLiteral("composer.model.favorite.toggle"),
+                            QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), QStringLiteral("sonnet")}});
+    hide(world, QStringLiteral("Haiku"), true);
+    // Fable is listed last: up past Haiku, Sonnet and Opus.
+    for (int step = 0; step < 3; ++step) {
+      world.bridge().dispatch(QStringLiteral("providerSettings.modelMove"),
+                              QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("slug"), QStringLiteral("fable")}, {QStringLiteral("by"), -1}});
+    }
+  });
+  step(QStringLiteral("the model picker on this device reflects those choices"), [](World& world, const Captures&, const Table&) {
+    // The favourite leads, the one moved up comes before Opus, and Haiku is gone.
+    const QStringList expected{QStringLiteral("Sonnet"), QStringLiteral("Fable"), QStringLiteral("Opus")};
+    world.waitFor([&] { return picked(world) == expected; }, [&] { return QStringLiteral("the picker to offer %1; it offers %2").arg(expected.join(u", "), picked(world).join(u", ")); });
+    // And they outlive the app.
+    world.restart();
+    world.connect();
+    world.sync();
+    publishProviders(world.mc, fakeConfig(world.mc).config.value(QLatin1String("providers")).toArray());
+    world.waitFor([&] { return picked(world) == expected; }, [&] { return QStringLiteral("the same after a restart; the picker offers %1").arg(picked(world).join(u", ")); });
+  });
+  step(QStringLiteral("other devices keep their own choices"), [](World& world, const Captures&, const Table&) {
+    // Kept in this device's preferences: nothing of them was saved on the environment.
+    for (const QJsonObject& write : fakeConfig(world.mc).writes) {
+      const QString saved = QString::fromUtf8(QJsonDocument(write).toJson());
+      expect(!saved.contains(QLatin1String("hiddenModels")) && !saved.contains(QLatin1String("favorites")) && !saved.contains(QLatin1String("modelOrder")),
+             QStringLiteral("the choices were saved on the environment: %1").arg(saved));
+    }
+    const QJsonObject device = world.native().controller<SettingsController>()->deviceSettings();
+    expect(device.contains(QLatin1String("providerModelPreferences")) && device.contains(QLatin1String("favorites")),
+           QStringLiteral("this device keeps %1").arg(show(device.toVariantMap())));
   });
 
   // Status headlines.

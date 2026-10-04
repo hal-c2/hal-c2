@@ -11,6 +11,7 @@
 #include "ComposerBrick.h"
 #include "FakeConfig.h"
 #include "Harness.h"
+#include "SharedSteps.h"
 #include "ThemeLibrary.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -1892,7 +1893,8 @@ const Steps customModelSteps([] {
       return saved.size() == 1 && saved.first().toObject().contains(QLatin1String("capabilities"));
     }, [&] { return QStringLiteral("my-model to be saved with its option; Codex holds %1").arg(show(savedModels(world).toVariantList())); });
   });
-  step(QStringLiteral("%1 is offered in the model picker").arg(q), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("%1 is offered in the model picker").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (expectModelOffered(world, c[0])) return;
     chooseCustomModel(world);
   });
   step(QStringLiteral("the composer offers (\\w+) and (\\w+) reasoning for it"), [](World& world, const Captures& c, const Table&) {

@@ -126,13 +126,13 @@ Feature: Models
     When the user removes the custom model "my-model"
     Then it is no longer offered or listed as a favourite
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: Favourite, hidden and ordered models are remembered on the device
     When the user favourites one model, hides another and moves a third up
     Then the model picker on this device reflects those choices
     And other devices keep their own choices
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: A hidden model can be shown again
     Given the user hid the model "Haiku"
     When the user shows "Haiku" in the picker again
