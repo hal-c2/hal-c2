@@ -45,7 +45,8 @@ QJsonObject provider(const QString& auth) {
           {QStringLiteral("models"), QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("sonnet")}, {QStringLiteral("name"), QStringLiteral("Sonnet")}}}}};
 }
 
-const FakeMc::Extension hosts([](FakeMc& mc) {
+// Over ComposerWorkspaceSteps' fake of the same calls, for the scenarios here.
+void answerForMachines(FakeMc& mc) {
   mc.onRpc(QStringLiteral("server.getHostResources"), [&mc](const FakeMc::Rpc& rpc) {
     FakeHosts& fake = mc.part<FakeHosts>();
     const QString machine = rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
@@ -58,7 +59,7 @@ const FakeMc::Extension hosts([](FakeMc& mc) {
     const QString machine = rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
     mc.reply(rpc, machine == mc.environmentId ? config.config : config.elsewhere.value(machine));
   });
-});
+}
 
 FakeHosts& hostsOf(World& world) {
   return world.mc.part<FakeHosts>();
@@ -100,26 +101,6 @@ void addCheckout(World& world, const QString& machine, const QString& project) {
                        QStringLiteral("project"));
 }
 
-// "laptop" and "server", both connected, both idle, each with a checkout of "api" and of "docs".
-void twoMachines(World& world) {
-  FakeHosts& fake = hostsOf(world);
-  if (fake.set) return;
-  fake.set = true;
-  for (const QString& machine : {kLaptop, kServer}) {
-    setProviders(world, machine, QStringLiteral("authenticated"));
-    documentOf(world.mc, machine);
-    world.mc.linkLabels.insert(machine, machine);
-    world.mc.link(machine);
-    for (const QString& project : {QStringLiteral("api"), QStringLiteral("docs")}) addCheckout(world, machine, project);
-    fake.resources.insert(machine, host(0.1, 0.8));
-  }
-  if (world.shellSubscriptions() == 0) world.connect();
-  world.sync();
-  controller(world);
-  world.waitFor([&] { return balancing(world).toMap().value(QStringLiteral("machines")).toList().size() == 3; },  // with this machine
-                [&] { return QStringLiteral("the machines to be connected; load balancing is %1").arg(show(balancing(world))); });
-}
-
 void startThreadIn(World& world, const QString& project) {
   world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(project)}});
   expect(!world.draftId.isEmpty(), QStringLiteral("no draft opened for %1; the route is %2").arg(project, show(world.state(QStringLiteral("route")))));
@@ -159,6 +140,32 @@ void expectLaunchOn(World& world, const QString& machine) {
   expect(launchedOn == machine, QStringLiteral("the thread started on %1; %2").arg(launchedOn, describe(world)));
 }
 
+// "laptop" and "server", both connected, both idle, each with a checkout of "api" and of "docs".
+void twoMachines(World& world) {
+  FakeHosts& fake = hostsOf(world);
+  if (fake.set) return;
+  fake.set = true;
+  answerForMachines(world.mc);
+  world.expectStartsOn = [&world](const QString& machine) {
+    // A draft the user tied to a machine was never balanced.
+    if (checkout(world).selection != QLatin1String("manual")) expectBalancedTo(world, machine);
+    expectLaunchOn(world, machine);
+  };
+  for (const QString& machine : {kLaptop, kServer}) {
+    setProviders(world, machine, QStringLiteral("authenticated"));
+    documentOf(world.mc, machine);
+    world.mc.linkLabels.insert(machine, machine);
+    world.mc.link(machine);
+    for (const QString& project : {QStringLiteral("api"), QStringLiteral("docs")}) addCheckout(world, machine, project);
+    fake.resources.insert(machine, host(0.1, 0.8));
+  }
+  if (world.shellSubscriptions() == 0) world.connect();
+  world.sync();
+  controller(world);
+  world.waitFor([&] { return balancing(world).toMap().value(QStringLiteral("machines")).toList().size() == 3; },  // with this machine
+                [&] { return QStringLiteral("the machines to be connected; load balancing is %1").arg(show(balancing(world))); });
+}
+
 void turnOn(World& world) {
   twoMachines(world);
   world.bridge().dispatch(QStringLiteral("loadBalancing.enable"), QVariantMap{{QStringLiteral("enabled"), true}});
@@ -196,12 +203,6 @@ const Steps steps([] {
     hostsOf(world).resources.insert(c[0], host(0.9, 0.2));
     hostsOf(world).resources.insert(c[1], host(0.05, 0.9));
   });
-  step(QStringLiteral("the thread starts on %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    // A draft the user tied to a machine was never balanced.
-    if (checkout(world).selection != QLatin1String("manual")) expectBalancedTo(world, c[0]);
-    expectLaunchOn(world, c[0]);
-  });
-
   // A machine that cannot take work, where it would otherwise win: it has the most room.
   step(QStringLiteral("\"server\" (is set to manual only|reported its resources over 15s ago|is at 95% CPU|has 5% of memory free|does not have the chosen provider signed in)"),
        [](World& world, const Captures& c, const Table&) {
@@ -270,6 +271,7 @@ const Steps steps([] {
 
   // One machine.
   step(QStringLiteral("only one machine is connected"), [](World& world, const Captures&, const Table&) {
+    answerForMachines(world.mc);
     if (world.shellSubscriptions() == 0) world.connect();
     world.sync();
     controller(world);

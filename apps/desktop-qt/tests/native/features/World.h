@@ -58,6 +58,8 @@ public:
   std::function<void(bool accepted)> answerQuestion;
   // What else a page tells the user in place (an inline error), for "the user is told".
   std::function<QStringList()> toldInPlace;
+  // What "the thread starts on <machine>" checks in a scenario of load balancing's own (SettingsLoadBalancingSteps).
+  std::function<void(const QString& machine)> expectStartsOn;
   // What "<name> is still listed" checks when the scenario is not about the Connections page's environments.
   std::function<void(const QString& name)> expectStillListed;
 
