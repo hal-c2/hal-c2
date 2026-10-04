@@ -263,8 +263,9 @@ Item {
         }
 
         // A sent quote reads as a quote with the user's comment under it.
+        // An escaped key (`%63omment`) is the key it spells, as the MC reads it.
         function test_citationLinkReadsAsAQuote() {
-            const md = make("Why? [Assistant quote](hal-c2-citation://v1/env/thread/msg?text=cache+%5Bkeys%5D&start=0&end=12&prefix=&suffix=&comment=too+slow%3F) Thanks.", { lineBreaks: true });
+            const md = make("Why? [Assistant quote](hal-c2-citation://v1/env/thread/msg?text=cache+%5Bkeys%5D&start=0&end=12&prefix=&suffix=&%63omment=too+slow%3F) Thanks.", { lineBreaks: true });
             const segments = segmentsOf(md);
             compare(segments.map(s => s.kind), ["prose", "quote", "prose"]);
             const quoted = findChild(segments[1], "markdownProse");

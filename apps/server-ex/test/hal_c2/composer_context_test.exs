@@ -139,7 +139,11 @@ defmodule HalC2.ComposerContextTest do
             "hal-c2-citation://v1/env/thread/%20?text=a&start=0&end=1&prefix=&suffix=",
             "hal-c2-citation://v1/env/thread/msg?text=%ZZ&start=0&end=1&prefix=&suffix=",
             "hal-c2-citation://v1/env/thread/msg?text=%FF&start=0&end=1&prefix=&suffix=",
-            "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=9007199254740992&prefix=&suffix="
+            "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=9007199254740992&prefix=&suffix=",
+            "hal-c2-citation://v1/%FF/thread/msg?text=a&start=0&end=1&prefix=&suffix=",
+            # 17 emoji are 34 UTF-16 code units, past the 32 a prefix may hold.
+            "hal-c2-citation://v1/env/thread/msg?text=a&start=0&end=1&suffix=&prefix=" <>
+              String.duplicate("%F0%9F%98%80", 17)
           ] do
         text = "See [Assistant quote](#{href})"
         assert ComposerContext.for_provider(text, nil) == text

@@ -883,7 +883,7 @@ function citation(href) {
         }
         for (var i = 0; i < pairs.length; ++i) {
             var eq = pairs[i].indexOf("=");
-            var key = eq < 0 ? pairs[i] : pairs[i].slice(0, eq);
+            var key = decodeURIComponent((eq < 0 ? pairs[i] : pairs[i].slice(0, eq)).replace(/\+/g, " "));
             if (eq < 0 || CITATION_FIELDS.indexOf(key) < 0 || fields[key] !== undefined)
                 return null;
             fields[key] = decodeURIComponent(pairs[i].slice(eq + 1).replace(/\+/g, " "));

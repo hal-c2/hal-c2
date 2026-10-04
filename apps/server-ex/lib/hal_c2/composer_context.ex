@@ -124,13 +124,12 @@ defmodule HalC2.ComposerContext do
          false <- Regex.match?(~r/%(?![0-9A-Fa-f]{2})/, href),
          [environment, thread, message] <-
            path |> String.split("/") |> Enum.map(&String.trim(URI.decode(&1))),
-         true <-
-           Enum.all?([environment, thread, message], &(&1 != "" and String.length(&1) <= 512)),
          pairs = URI.query_decoder(query) |> Enum.to_list(),
          params = Map.new(pairs),
          true <- map_size(params) == length(pairs),
          # An escape that is not text would not encode as JSON.
          true <- Enum.all?([environment, thread, message | Map.values(params)], &String.valid?/1),
+         true <- Enum.all?([environment, thread, message], &(&1 != "" and units(&1) <= 512)),
          [] <- Map.keys(params) -- ~w(text start end prefix suffix comment),
          %{"text" => quoted, "start" => from, "end" => to, "prefix" => prefix, "suffix" => suffix} <-
            params,
@@ -139,10 +138,10 @@ defmodule HalC2.ComposerContext do
          comment = params["comment"],
          true <-
            to > from and to <= @citation_offset_max and String.trim(quoted) != "" and
-             String.length(quoted) <= @citation_max and
-             String.length(comment || "") <= @citation_max and
-             String.length(prefix) <= @citation_context_max and
-             String.length(suffix) <= @citation_context_max do
+             units(quoted) <= @citation_max and
+             units(comment || "") <= @citation_max and
+             units(prefix) <= @citation_context_max and
+             units(suffix) <= @citation_context_max do
       base = %{
         "version" => 1,
         "environmentId" => environment,
@@ -160,6 +159,9 @@ defmodule HalC2.ComposerContext do
       _ -> nil
     end
   end
+
+  # A length as the contract counts it, in UTF-16 code units.
+  defp units(text), do: div(byte_size(:unicode.characters_to_binary(text, :utf8, :utf16)), 2)
 
   @doc "Points image and file records at the ids their uploads were claimed under."
   def remap_attachments(nil, _before, _after), do: nil
