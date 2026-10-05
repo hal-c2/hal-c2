@@ -17,8 +17,11 @@ mise run release:macos   # the same, plus release/hal-c2-qt-<version>-darwin-<ar
 The macOS app is signed ad hoc, not with a Developer ID: it runs on the Mac that built it, and
 Gatekeeper refuses it on a Mac that downloaded it.
 
-A local build is versioned `<package version>-local.<UTC timestamp>` unless `HAL_C2_MC_VERSION`
-names one, because a single-file MC only unpacks a version it has not installed before.
+A local build is versioned `<package version>-local.<commit time>.g<commit>` unless
+`HAL_C2_MC_VERSION` names one, so machines that build the same commit run the same version and
+can join one cluster. A checkout with uncommitted changes gets `-local.<UTC timestamp>` instead:
+a single-file MC only unpacks a version it has not installed before, and that build clusters with
+no other.
 
 `mise run release:install` builds and installs it for your user. The MC becomes the systemd user
 unit `hal-c2.service`, or on macOS the launch agent `io.github.halc2.service`
