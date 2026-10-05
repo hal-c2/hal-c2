@@ -41,6 +41,38 @@ defmodule HalC2.ClusterTest do
 
   defp code_path_args, do: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
 
+  test "a subscriber on another MC is fed through a relay, which the stream never waits for",
+       %{b: b} do
+    alias HalC2.Streams
+
+    thread = [{"thread", "local-th", %{"s" => %{"id" => "local-th", "title" => "On a"}}}]
+    {:ok, _} = Streams.commit("local-th", :thread, thread)
+
+    # A process on MC b that passes what it is sent on to this test.
+    subscriber = Node.spawn(b, Streams.Relay, :loop, [self()])
+    :ok = Streams.subscribe("local-th", subscriber, nil)
+    assert_receive {:hal_c2_stream, "local-th", {:snapshot, seq, _at, [_thread], :done}}, 1_000
+    assert_receive {:hal_c2_stream, "local-th", {:live, ^seq}}, 1_000
+
+    %{relays: %{^subscriber => relay}} = :sys.get_state(Streams.ensure("local-th"))
+
+    # A connection that takes nothing more stops the relay, as a busy one does a sender.
+    true = :erlang.suspend_process(relay)
+    item = fn text -> [{"turn-item", "i1", %{"a" => %{"text" => text}}}] end
+    {:ok, first} = Streams.commit("local-th", :thread, item.("one"))
+    {:ok, second} = Streams.commit("local-th", :thread, item.("two"))
+    assert Streams.Server.state(Streams.ensure("local-th")).seq == second
+
+    true = :erlang.resume_process(relay)
+    assert_receive {:hal_c2_stream, "local-th", {:events, [%{seq: ^first}]}}, 1_000
+    assert_receive {:hal_c2_stream, "local-th", {:events, [%{seq: ^second}]}}, 1_000
+
+    ref = Process.monitor(relay)
+    :ok = Streams.unsubscribe("local-th", subscriber)
+    assert_receive {:DOWN, ^ref, :process, ^relay, _}, 1_000
+    assert :sys.get_state(Streams.ensure("local-th")).relays == %{}
+  end
+
   test "one socket sees and follows threads on every MC", %{port: port, peer: peer, b: b} do
     b_name = Atom.to_string(b)
     {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
