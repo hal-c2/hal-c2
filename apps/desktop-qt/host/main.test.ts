@@ -353,6 +353,31 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
     });
   });
 
+  describe("Starting the desktop app starts its MC and connects to it", () => {
+    it("An MC already running on the desktop's files is used instead of starting another", async () => {
+      const mc = await runningMc();
+      const data = temporaryDirectory();
+      const state = temporaryDirectory();
+      // Where the installed MC keeps its files: the hal-c2 profile's elixir level.
+      const dirs = {
+        data: NodePath.join(data, "hal-c2", "elixir"),
+        state: NodePath.join(state, "hal-c2", "elixir"),
+      };
+      NodeFS.mkdirSync(dirs.data, { recursive: true });
+      NodeFS.mkdirSync(dirs.state, { recursive: true });
+      writeRuntimeRecord(dirs.state, mc.origin);
+      NodeFS.writeFileSync(NodePath.join(dirs.data, "access-token"), "service-mc-token\n");
+      const release = fakeRelease();
+      const host = startHost({
+        env: { HAL_C2_MC_RELEASE: release, XDG_DATA_HOME: data, XDG_STATE_HOME: state },
+      });
+
+      expect(await ready(host)).toEqual({ origin: mc.origin, token: "service-mc-token" });
+      expect(readRecord(release)).toBeUndefined();
+      await host.quit();
+    });
+  });
+
   describe("Starting again reuses the environment", () => {
     it("Restarting the desktop app connects to the same environment again", async () => {
       const home = temporaryDirectory();
