@@ -136,10 +136,7 @@ jobs:
 
       - name: Package (macOS app bundle)
         if: runner.os == 'macOS'
-        run: |
-          node apps/desktop-qt/scripts/stage-runtime.mjs apps/desktop-qt/build/release/hal-c2-qt.app/Contents/Resources/hal-c2
-          "${QT_ROOT_DIR}/bin/macdeployqt" apps/desktop-qt/build/release/hal-c2-qt.app -qmldir=apps/desktop-qt/qml
-          ditto -c -k --keepParent apps/desktop-qt/build/release/hal-c2-qt.app apps/desktop-qt/build/release/hal-c2-qt-macos.zip
+        run: apps/desktop-qt/scripts/package-macos.sh apps/desktop-qt/build/release
 
       - uses: actions/upload-artifact@v4
         with:
