@@ -12,10 +12,11 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   from a peer that already has it. MCs must run a release under `bin/hal-c2-service` for changes that
   need a restart.
 
-  With `--dev`, compiles and has MCs started from this checkout (`mix run`)
-  load what changed. Without MC names that is the MC `mix hal_c2.server` runs
-  here (`mise run mc:reload`), reached over its HTTP port with its access token, so
-  it needs no distribution.
+  With `--dev`, compiles and has MCs run from source (`mix run`) load what
+  changed. Without MC names that is the MC `mix hal_c2.server` runs on this machine
+  (`mise run mc:reload`), reached over its HTTP port with its access token, so it
+  needs no distribution; it loads this checkout's build even when it was started
+  from another checkout or worktree.
 
   Named MCs are reached from a hidden short-name node started with `--cookie`, so
   they must run with plain distribution (`elixir --sname ... -S mix hal_c2.server`).
@@ -88,7 +89,12 @@ defmodule Mix.Tasks.HalC2.Upgrade do
           Mix.raise("No MC has run from #{HalC2.Paths.data_dir()}; start one with `mise run mc`")
       end
 
-    request = {~c"#{base}/api/dev/reload", [{~c"authorization", ~c"Bearer #{token}"}], ~c"", ""}
+    # This checkout's build, so an MC started from another checkout moves to it.
+    body = JSON.encode!(%{"build" => Mix.Project.build_path()})
+
+    request =
+      {~c"#{base}/api/dev/reload", [{~c"authorization", ~c"Bearer #{token}"}],
+       ~c"application/json", body}
 
     case :httpc.request(:post, request, [timeout: 60_000], body_format: :binary) do
       {:ok, {{_, 200, _}, _, body}} ->

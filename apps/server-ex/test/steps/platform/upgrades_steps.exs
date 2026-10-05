@@ -469,6 +469,51 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
+  step "another checkout holds edited code the MC was not started from", context do
+    System.delete_env("RELEASE_ROOT")
+    build = Path.join([Mc.tmp_dir(context.mc, "worktree"), "_build", "dev"])
+    ebin = Path.join([build, "lib", "hal_c2", "ebin"])
+    File.mkdir_p!(ebin)
+    Code.ensure_loaded!(HalC2.Patch)
+
+    for {mod, beam} <- [Mc.variant(HalC2.Patch), Mc.variant(HalC2.Streams)] do
+      Mc.remember_module(mod)
+      File.write!(Path.join(ebin, "#{mod}.beam"), beam)
+    end
+
+    ExUnit.Callbacks.on_exit(fn -> :code.del_path(String.to_charlist(ebin)) end)
+    Map.put(context, :other_build, build)
+  end
+
+  step "a developer reloads the local MC from that checkout", context do
+    assert {200, _, body} =
+             Mc.request(context.mc, :post, "/api/dev/reload",
+               bearer: HalC2.Web.token(),
+               json: %{"build" => context.other_build}
+             )
+
+    modules = &Enum.map(body[&1], fn name -> Module.concat([name]) end)
+    report = %{changed: modules.("changed"), needs_restart: modules.("needsRestart")}
+    Map.put(context, :report, {:ok, report})
+  end
+
+  step "a developer reloads the local MC from a directory with no build", context do
+    Map.put(
+      context,
+      :refused,
+      Mc.request(context.mc, :post, "/api/dev/reload",
+        bearer: HalC2.Web.token(),
+        json: %{"build" => Mc.tmp_dir(context.mc, "empty")}
+      )
+    )
+  end
+
+  step "the developer is told it holds no compiled MC", context do
+    assert {409, _, %{"reason" => reason}} = context.refused
+    assert reason =~ "holds no compiled MC"
+    context
+  end
+
   step "a developer reloads them after editing code", context do
     Map.put(context, :report, Upgrade.reload_checkout())
   end

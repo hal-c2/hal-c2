@@ -493,7 +493,13 @@ defmodule HalC2.Web.Router do
         send_resp(conn, 401, "")
 
       true ->
-        case HalC2.Upgrade.reload_checkout() do
+        build =
+          case json_body(conn) do
+            {:ok, %{"build" => build}} when is_binary(build) -> build
+            _ -> nil
+          end
+
+        case HalC2.Upgrade.reload_checkout(build) do
           {:ok, report} ->
             names = &Enum.map(&1, fn mod -> inspect(mod) end)
 
@@ -504,7 +510,9 @@ defmodule HalC2.Web.Router do
             })
 
           {:error, reason} ->
-            json(conn, 409, %{"reason" => inspect(reason)})
+            json(conn, 409, %{
+              "reason" => if(is_binary(reason), do: reason, else: inspect(reason))
+            })
         end
     end
   end

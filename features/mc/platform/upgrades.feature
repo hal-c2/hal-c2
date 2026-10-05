@@ -154,6 +154,19 @@ Feature: MC self-update and hot upgrades
     And the report lists modules that need a restart
 
   @mc
+  Scenario: A developer reloads the MC from a checkout it was not started from
+    Given another checkout holds edited code the MC was not started from
+    When a developer reloads the local MC from that checkout
+    Then only modules whose code changed are loaded
+    And the report lists modules that need a restart
+
+  @mc
+  Scenario: A reload from a directory without a build is refused
+    Given MCs started from a checkout
+    When a developer reloads the local MC from a directory with no build
+    Then the developer is told it holds no compiled MC
+
+  @mc
   Scenario: Only the MC's own access token reloads it
     Given MCs started from a checkout
     When someone asks the local MC to reload with another token

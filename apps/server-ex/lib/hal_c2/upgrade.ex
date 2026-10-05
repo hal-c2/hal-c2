@@ -94,11 +94,34 @@ defmodule HalC2.Upgrade do
   end
 
   @doc """
-  Loads what changed in this MC's own checkout after `mix compile`, for MCs run
-  from source (`mix hal_c2.upgrade --dev`). Supervisors are left alone: they only take
+  Loads what changed after `mix compile`, for MCs run from source
+  (`mix hal_c2.upgrade --dev`). Supervisors are left alone: they only take
   effect at start, so they are reported to restart for instead.
+
+  `build` is the build directory (`_build/dev`) of the checkout that asks. When it is
+  not the one this MC started from, a worktree's say, the MC moves to that build: its
+  directories go to the front of the code path, so modules new there load from it too.
   """
-  def reload_checkout do
+  def reload_checkout(build \\ nil) do
+    with :ok <- adopt_build(build), do: reload_code_path()
+  end
+
+  defp adopt_build(nil), do: :ok
+
+  defp adopt_build(build) do
+    lib = Path.join(build, "lib")
+    # Consolidated protocols last, so they end up first and shadow the plain builds.
+    dirs = Path.wildcard(Path.join(lib, "*/ebin")) ++ [Path.join(lib, "hal_c2/consolidated")]
+
+    if File.dir?(Path.join(lib, "hal_c2/ebin")) do
+      for dir <- dirs, File.dir?(dir), do: :code.add_patha(String.to_charlist(dir))
+      :ok
+    else
+      {:error, "#{build} holds no compiled MC"}
+    end
+  end
+
+  defp reload_code_path do
     dirs =
       for path <- :code.get_path(),
           path = to_string(path),
