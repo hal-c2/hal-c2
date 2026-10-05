@@ -334,6 +334,31 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
           homeDir: "/home/user",
         }),
       ).toBe("/xdg/data/hal-c2/elixir");
+
+      // A source MC does not read HAL_C2_HOME; a release, HAL_C2_MC_HOME and the desktop's home do count.
+      const ambient = { ...env, HAL_C2_HOME: "/srv/hal-c2" };
+      expect(mcDataDir({ launch, home: undefined, env: ambient, homeDir: "/home/user" })).toBe(
+        "/xdg/data/hal-c2-dev/elixir",
+      );
+      expect(
+        mcDataDir({
+          launch: { command: "/release/bin/hal_c2", args: ["start"] },
+          home: undefined,
+          env: ambient,
+          homeDir: "/home/user",
+        }),
+      ).toBe("/srv/hal-c2/data/elixir");
+      expect(
+        mcDataDir({
+          launch,
+          home: undefined,
+          env: { ...ambient, HAL_C2_MC_HOME: "/srv/mc" },
+          homeDir: "/home/user",
+        }),
+      ).toBe("/srv/mc/data");
+      expect(mcDataDir({ launch, home: "/tmp/sandbox", env: ambient, homeDir: "/home/user" })).toBe(
+        "/tmp/sandbox/data/elixir",
+      );
     });
 
     it("The MC's JavaScript sidecars run on the desktop app's Node", async () => {

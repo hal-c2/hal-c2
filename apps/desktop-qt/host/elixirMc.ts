@@ -96,7 +96,7 @@ export async function mcPort(env: NodeJS.ProcessEnv): Promise<number> {
  * The MC's data directory, resolved the way `HalC2.Paths` resolves it for this
  * launch: the desktop's HAL-C2 home, `HAL_C2_MC_HOME`, else HAL-C2's XDG data
  * directory, in the `hal-c2-dev` profile for an MC run from a checkout
- * (config/config.exs).
+ * (config/config.exs), which does not read `HAL_C2_HOME` (config/runtime.exs).
  */
 export function mcDataDir(input: {
   readonly launch: McLaunch;
@@ -123,11 +123,12 @@ function mcDirs(input: {
   if (mcHome) {
     return { data: NodePath.join(mcHome, "data"), state: NodePath.join(mcHome, "state") };
   }
+  const fromSource = input.launch.cwd !== undefined;
   const dirs = resolveHalC2Dirs({
-    env: input.env,
+    env: fromSource ? { ...input.env, HAL_C2_HOME: undefined } : input.env,
     homeDir: input.homeDir ?? NodeOS.homedir(),
     platform: hostPlatform,
-    profile: input.launch.cwd === undefined ? HAL_C2_APP_DIR : HAL_C2_DEV_APP_DIR,
+    profile: fromSource ? HAL_C2_DEV_APP_DIR : HAL_C2_APP_DIR,
   });
   return {
     data: NodePath.join(dirs.data, "elixir"),
