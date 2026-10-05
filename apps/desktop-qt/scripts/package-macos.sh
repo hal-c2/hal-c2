@@ -15,10 +15,14 @@ mv "${package_dir}/hal-c2-qt.app" "${app}"
 
 node "$(dirname "$0")/stage-runtime.mjs" "${app}/Contents/Resources/hal-c2"
 
-# QT_ROOT_DIR is where CI's Qt is (install-qt-action); else the Qt qmake6 belongs to.
-qt_bins="${QT_ROOT_DIR:+${QT_ROOT_DIR}/bin}"
-qt_bins="${qt_bins:-$("${QMAKE:-qmake6}" -query QT_INSTALL_BINS)}"
-"${qt_bins}/macdeployqt" "${app}" -qmldir="$(cd "$(dirname "$0")/.." && pwd)/qml"
+# The macdeployqt of the Qt this build was configured with, which Qt's own CMake files
+# record: whichever Qt dev-qt.mjs or CI found, not whichever is first on the PATH.
+macdeployqt="$(sed -n 's/^MACDEPLOYQT_EXECUTABLE:[A-Z]*=//p' "${build_dir}/CMakeCache.txt")"
+[ -x "${macdeployqt}" ] || {
+  echo "${build_dir}/CMakeCache.txt names no macdeployqt; is it a configured build directory?" >&2
+  exit 1
+}
+"${macdeployqt}" "${app}" -qmldir="$(cd "$(dirname "$0")/.." && pwd)/qml"
 
 # A Qt with every module installed (Homebrew's) has plugins for modules the app does
 # not link (PDF, 3D, the virtual keyboard). macdeployqt copies those plugins without
