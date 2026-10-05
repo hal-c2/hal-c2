@@ -164,7 +164,9 @@ defmodule Mix.Tasks.HalC2.Upgrade do
           Mix.raise("#{base}: #{JSON.decode!(body)["reason"]}")
 
         {:ok, {{_, 404, _}, _, _}} ->
-          Mix.raise("The MC at #{base} runs from a checkout, or a release too old to update this way")
+          Mix.raise(
+            "The MC at #{base} runs from a checkout, or a release too old to update this way"
+          )
 
         {:ok, {{_, status, _}, _, _}} ->
           Mix.raise("#{base} answered #{status}; is it an MC from another home?")
