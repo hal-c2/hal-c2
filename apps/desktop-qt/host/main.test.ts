@@ -15,7 +15,7 @@ import * as NodeReadline from "node:readline";
 import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { mcDataDir, resolveMcLaunch } from "./elixirMc.ts";
+import { mcDataDir, resolveMcLaunch, startMc } from "./elixirMc.ts";
 
 const hostEntry = NodeURL.fileURLToPath(new URL("./main.ts", import.meta.url));
 const nodeBin = process.execPath;
@@ -338,6 +338,18 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
         args: ["hal_c2.server"],
         cwd: "/checkout/apps/server-ex",
       });
+    });
+
+    it("An MC run from source runs in the development environment", async () => {
+      const launch = {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write(`MIX_ENV=${process.env.MIX_ENV}`)"],
+        cwd: temporaryDirectory(),
+      };
+      const mc = startMc({ launch, port: 0, home: undefined, env: { MIX_ENV: "prod" } });
+
+      await mc.exited;
+      expect(mc.output()).toBe("MIX_ENV=dev");
     });
 
     it("An MC run from source keeps its access token in the development profile", () => {

@@ -64,6 +64,12 @@ Feature: The desktop app runs its own MC
       Then the MC runs from the checkout's source
 
     @desktop
+    Scenario: An MC run from source runs in the development environment
+      Given "MIX_ENV" is "prod" where the desktop app starts
+      When the desktop app starts its MC from a checkout
+      Then that MC runs with "MIX_ENV" set to "dev"
+
+    @desktop
     Scenario: An MC run from source keeps its access token in the development profile
       Given no HAL-C2 home is set for the desktop app
       When the desktop app starts its MC from a checkout

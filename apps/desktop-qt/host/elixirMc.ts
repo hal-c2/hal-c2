@@ -289,6 +289,9 @@ export function startMc(input: {
       HAL_C2_BOOTSTRAP_STDIN: "1",
       // JavaScript sidecars run on the Node that runs this host.
       HAL_C2_NODE_COMMAND: process.execPath,
+      // An MC run from source is the development one, whatever MIX_ENV the desktop
+      // app inherited: any other environment keeps its files somewhere else.
+      ...(input.launch.cwd === undefined ? {} : { MIX_ENV: "dev" }),
     },
     stdio: ["pipe", "pipe", "pipe"],
     // Its own process group, so stop() reaches the BEAM behind mix or the release script.
