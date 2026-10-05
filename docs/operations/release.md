@@ -11,17 +11,27 @@ with its workflows; `git log -- .github/workflows/release.yml` has it.
 ```sh
 mise run release:mc      # release/hal-c2-mc-<version>-<platform>: the single-file MC, and its .tar.gz upgrade bundle
 mise run release:linux   # the same, plus release/hal-c2-qt-<version>-linux-x64.AppImage
+mise run release:macos   # the same, plus release/hal-c2-qt-<version>-darwin-<arch>.zip, holding HAL-C2.app
 ```
+
+The macOS app is signed ad hoc, not with a Developer ID: it runs on the Mac that built it, and
+Gatekeeper refuses it on a Mac that downloaded it.
 
 A local build is versioned `<package version>-local.<UTC timestamp>` unless `HAL_C2_MC_VERSION`
 names one, because a single-file MC only unpacks a version it has not installed before.
 
 `mise run release:install` builds and installs it for your user. The MC becomes the systemd user
-unit `hal-c2.service` ([Running HAL-C2 in the background](../user/background-service.md)),
+unit `hal-c2.service`, or on macOS the launch agent `io.github.halc2.service`
+([Running HAL-C2 in the background](../user/background-service.md)),
 unpacked into `~/.local/share/hal-c2/elixir/release`. It listens on 3781 and keeps its files in the
 `hal-c2` profile, so the dev MC (3780, `hal-c2-dev`) can stay up beside it. On x86_64 Linux the
-desktop AppImage goes to `~/.local/bin/hal-c2` with a launcher entry. It uses the service's MC
-rather than starting the one it carries, because that MC already runs on the same files.
+desktop AppImage goes to `~/.local/bin/hal-c2` with a launcher entry, and on macOS the app to
+`~/Applications/HAL-C2.app`. It uses the service's MC rather than starting the one it carries,
+because that MC already runs on the same files.
+
+The installed MC's cluster is managed through
+`~/.local/share/hal-c2/elixir/release/bin/hal-c2-service cluster` (`invite`, `join LINK`,
+`remove MEMBER`), as `mise run mc:cluster` does for the dev MC.
 
 Once the service runs, `mise run mc:reload --release` builds this checkout and moves the service to
 it, in place when the change allows and through a restart when it does not.
@@ -39,7 +49,8 @@ a `version` (defaulting to `apps/server/package.json`). MCs fetch from that rele
 
 `.github/workflows/desktop-qt.yml` builds and tests an unsigned Linux AppImage on every change to
 `main` and every pull request that touches the desktop, and keeps it as a workflow artifact. The
-macOS app bundle is built only when the workflow is dispatched by hand with `macos` checked, since
+macOS app bundle (`apps/desktop-qt/scripts/package-macos.sh`, as `release:macos` builds it) is
+built only when the workflow is dispatched by hand with `macos` checked, since
 macOS runners are expensive. Nothing publishes either yet.
 
 ## HAL-C2 Connect relay

@@ -1129,7 +1129,7 @@ X11 `WM_CLASS`, so compositor rules can target the window — on Hyprland:
 `.github/workflows/desktop-qt.yml` builds Release binaries on Linux and
 macOS with the official Qt 6.9 binaries (`jurplel/install-qt-action`) and
 packages an AppImage (`scripts/package-linux.sh`, linuxdeploy + its Qt
-plugin) and a macOS bundle (`macdeployqt`). `scripts/stage-runtime.mjs` stages
+plugin) and a macOS bundle (`scripts/package-macos.sh`, `macdeployqt`). `scripts/stage-runtime.mjs` stages
 the host's TypeScript, the MC release
 (`hal-c2-mc/`, from `mix release`) and the Node executable that runs the
 host and the MC's sidecars. The Linux path was

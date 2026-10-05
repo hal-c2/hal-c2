@@ -28,7 +28,8 @@ mise run desktop:build     # build only (--release for a Release build)
 mise run tui               # bundle apps/tui and open it on the running MC
 mise run tui:build         # the TUI bundle; tui depends on it
 mise run release:linux     # the MC and the desktop AppImage in release/ (release:mc for the MC alone)
-mise run release:install   # build and install: the MC as this user's background service, the desktop as a launcher entry
+mise run release:macos     # the MC and the zipped desktop app in release/
+mise run release:install   # build and install: the MC as this user's background service, the desktop as a launcher entry or in ~/Applications
 ```
 
 Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Build the macOS release into release/: the MC (release:mc) and the zipped Qt desktop app that carries it"
+#MISE dir="{{config_root}}"
+#MISE depends=["release:mc"]
+set -euo pipefail
+
+[[ $(uname -s) == Darwin ]] || {
+  echo "release:macos builds on macOS only (apps/desktop-qt/scripts/package-macos.sh)." >&2
+  exit 1
+}
+
+node apps/desktop-qt/scripts/dev-qt.mjs --configure-only --release
+# package-macos.sh stages the MC release:mc just built (apps/server-ex/_build/prod/rel/hal_c2).
+apps/desktop-qt/scripts/package-macos.sh apps/desktop-qt/build/release
+
+read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
+# Named for the machine it was built on, as the MC beside it is (darwin-arm64).
+arch="$(uname -m)"
+out="release/hal-c2-qt-$version-darwin-${arch/x86_64/x64}.zip"
+cp apps/desktop-qt/build/release/hal-c2-qt-macos.zip "$out"
+echo "$out"
