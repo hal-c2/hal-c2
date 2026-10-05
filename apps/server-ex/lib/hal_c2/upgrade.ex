@@ -73,6 +73,19 @@ defmodule HalC2.Upgrade do
   end
 
   @doc """
+  Updates to `version` from its bundle archive at `path` on this machine
+  (`mix hal_c2.upgrade --release`), as `update/2` does from a fetched one.
+  """
+  def update_from(path, version) do
+    if File.regular?(path) do
+      :ok = HalC2.Upgrade.Source.put(version, platform(), path)
+      update(%{"targetVersion" => version})
+    else
+      failure("#{path} is not a bundle.")
+    end
+  end
+
+  @doc """
   `server.updateServerWithProgress`: runs `update/2` off the caller and sends `pid`
   `{:hal_c2_server_update, mc, event}` with `ServerSelfUpdateProgressEvent`s, ending
   with `complete`, or `{:error, ServerSelfUpdateError}`.

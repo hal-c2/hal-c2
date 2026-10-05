@@ -167,6 +167,13 @@ Feature: MC self-update and hot upgrades
     Then the developer is told it holds no compiled MC
 
   @mc
+  Scenario: A developer moves the installed MC to a bundle built on its machine
+    Given a bundle on this machine the MC has not seen
+    When a developer reloads the local MC with that bundle
+    Then the MC loads the changed modules in place
+    And the MC reports the new version
+
+  @mc
   Scenario: Only the MC's own access token reloads it
     Given MCs started from a checkout
     When someone asks the local MC to reload with another token

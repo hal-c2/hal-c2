@@ -497,6 +497,20 @@ defmodule HalC2.Steps.Platform.Upgrades do
     Map.put(context, :report, {:ok, report})
   end
 
+  step "a bundle on this machine the MC has not seen", context do
+    bundle(context, %{}, [Mc.variant(HalC2.JsonRpc.Connection)], false)
+  end
+
+  step "a developer reloads the local MC with that bundle", context do
+    assert {200, _, result} =
+             Mc.request(context.mc, :post, "/api/dev/reload",
+               bearer: HalC2.Web.token(),
+               json: %{"bundle" => context.archive, "version" => context.target}
+             )
+
+    Map.put(context, :reply, {:ok, result})
+  end
+
   step "a developer reloads the local MC from a directory with no build", context do
     Map.put(
       context,
