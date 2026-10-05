@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Show, invite to, join or leave the running MC's cluster (mix hal_c2.cluster [invite [BASE_URL] [--tailscale] | join LINK | remove MEMBER])"
+#MISE dir="{{config_root}}/apps/server-ex"
+set -euo pipefail
+exec mix hal_c2.cluster "$@"

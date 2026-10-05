@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Link the running MC to an environment outside its cluster (mix hal_c2.link PAIRING_URL, no args lists, --remove ENVIRONMENT)"
-#MISE dir="{{config_root}}/apps/server-ex"
-set -euo pipefail
-exec mix hal_c2.link "$@"
