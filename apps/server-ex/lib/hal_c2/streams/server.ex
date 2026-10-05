@@ -211,7 +211,10 @@ defmodule HalC2.Streams.Server do
 
     case replay do
       events when is_list(events) and length(events) <= @max_replay ->
-        send(pid, {:hal_c2_stream, state.id, {:events, Enum.reverse(events)}})
+        # Counted before the events that change nothing are left out, or a replay cut
+        # short by the limit could pass for a whole one.
+        events = events |> Enum.reject(&StreamState.void?/1) |> Enum.reverse()
+        send(pid, {:hal_c2_stream, state.id, {:events, events}})
 
       _ ->
         send_snapshot(state, pid)

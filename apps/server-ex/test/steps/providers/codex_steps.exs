@@ -371,6 +371,61 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  # The Node server named a question's node and item after the provider's item, not
+  # after the request as this MC does.
+  step "a thread imported with a Codex question that is not answered yet", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")
+
+    World.await_running(context, @thread)
+    request_id = "runtime-request:provider:codex:native-request:async%3Acall_1"
+    native = "provider:codex:native-item:call_1"
+
+    request = %{
+      "id" => request_id,
+      "nodeId" => "node:" <> native,
+      "kind" => "user_input",
+      "status" => "pending",
+      "responseCapability" => %{"type" => "message"},
+      "resolvedAt" => nil
+    }
+
+    context
+    |> World.put_entity(@thread, "turn-item", "turn-item:" <> native, %{
+      "s" => %{
+        "id" => "turn-item:" <> native,
+        "type" => "user_input_request",
+        "status" => "waiting",
+        "requestId" => request_id,
+        "questions" => []
+      }
+    })
+    |> World.put_entity(@thread, "runtime-request", request_id, %{"s" => request})
+    |> Map.put(:request, request)
+  end
+
+  step "the user dismisses it", context do
+    assert {:ok, _} =
+             HalC2.Orchestration.dispatch(%{
+               "type" => "thread.user-input.dismiss",
+               "threadId" => World.thread_id(context, @thread),
+               "requestId" => context.request["id"]
+             })
+
+    context
+  end
+
+  step "the question is closed without an answer", context do
+    assert %{"status" => "cancelled"} = request_now(context)
+
+    assert [%{"status" => "cancelled"}] =
+             World.stream(context, @thread)
+             |> StreamState.list("turn-item")
+             |> Enum.filter(&(&1["requestId"] == context.request["id"]))
+
+    context
+  end
+
   step "Codex asked a question that is not answered yet", context do
     context =
       context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait for me")

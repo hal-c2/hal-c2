@@ -26,11 +26,26 @@ defmodule HalC2.StreamState do
   @spec new() :: t
   def new, do: %__MODULE__{}
 
+  @doc """
+  Whether an event changes nothing. Logs hold a few patches that set nothing
+  (`"s": null`), written when a question whose item was missing got answered. A
+  stream holding one must still load, and no client is sent it.
+  """
+  @spec void?(HalC2.Store.event()) :: boolean
+  def void?(%{patch: %{"s" => nil} = patch}) when map_size(patch) == 1, do: true
+  def void?(_event), do: false
+
   @spec apply_event(t, HalC2.Store.event()) :: t
   def apply_event(
         %__MODULE__{} = state,
         %{seq: seq, kind: kind, entity: id, patch: patch} = event
       ) do
+    if void?(event),
+      do: %{state | seq: seq},
+      else: apply_change(state, seq, kind, id, patch, event)
+  end
+
+  defp apply_change(state, seq, kind, id, patch, event) do
     by_id = Map.get(state.entities, kind, %{})
     updated_at = if patch["q"] == true, do: state.updated_at, else: event[:at] || state.updated_at
     state = %{state | seq: seq, updated_at: updated_at}
