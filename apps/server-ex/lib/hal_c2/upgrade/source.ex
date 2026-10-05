@@ -9,9 +9,12 @@ defmodule HalC2.Upgrade.Source do
        one-time link the peer hands out over distribution (bundles never travel
        over distribution itself, which a large message would stall);
     3. the release artifact at `HAL_C2_UPGRADE_URL` (`{version}` and `{platform}` are
-       filled in), with its `.sha256` beside it.
+       filled in), with its `.sha256` beside it;
+    4. its cache or a peer again, for a bundle of any platform.
 
-  Bundles are per platform, since native libraries and ERTS are.
+  Bundles are per platform, since native libraries and ERTS are. HAL-C2's own code in
+  one is not, and is all a version that changes nothing else is installed from, so
+  another platform's bundle is better than none.
   """
 
   require Logger
@@ -22,16 +25,22 @@ defmodule HalC2.Upgrade.Source do
   @doc "The file name of a version's bundle for a platform."
   def file_name(version, platform), do: "hal-c2-mc-#{version}-#{platform}.tar.gz"
 
-  @doc "The unpacked bundle directory: `{:ok, dir}` or `{:error, ServerSelfUpdateError}`."
+  @doc """
+  The unpacked bundle directory, of `platform` when there is one:
+  `{:ok, dir}` or `{:error, ServerSelfUpdateError}`.
+  """
   def fetch(version, platform) do
-    archive = archive_path(version, platform)
+    found =
+      with {:error, _} <- cached(version, platform),
+           {:error, _} <- from_peers(version, platform),
+           {:error, reason} <- from_url(version, platform),
+           {:error, _} <- cached(version, :any),
+           {:error, _} <- from_peers(version, :any),
+           do: {:error, reason}
 
-    with {:error, _} <- cached(version, platform),
-         {:error, _} <- from_peers(version, platform, archive),
-         {:error, reason} <- from_url(version, platform, archive) do
-      {:error, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}}
-    else
-      {:ok, _} -> unpack(version, platform)
+    case found do
+      {:ok, platform} -> unpack(version, platform)
+      {:error, reason} -> {:error, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}}
     end
   end
 
@@ -81,8 +90,13 @@ defmodule HalC2.Upgrade.Source do
 
   @doc """
   Offered to a peer over distribution: a one-time HTTP link to this MC's copy of
-  the bundle, with its SHA-256, or nil when it has none.
+  the bundle, with its SHA-256, or nil when it has none. `:any` offers the bundle of
+  whichever platform it has.
   """
+  def offer(version, :any) do
+    with [platform | _] <- platforms(version), do: offer(version, platform), else: (_ -> nil)
+  end
+
   def offer(version, platform) do
     path = archive_path(version, platform)
 
@@ -93,7 +107,8 @@ defmodule HalC2.Upgrade.Source do
       %{
         "port" => HalC2.Web.port(),
         "path" => "/api/upgrade/#{token}",
-        "sha256" => String.trim(sum)
+        "sha256" => String.trim(sum),
+        "platform" => platform
       }
     else
       _ -> nil
@@ -114,27 +129,45 @@ defmodule HalC2.Upgrade.Source do
 
   # --- sources -------------------------------------------------------------------
 
+  # Each source answers `{:ok, platform}`, the platform of the bundle now in the cache.
+  defp cached(version, :any) do
+    Enum.find_value(platforms(version), {:error, "not cached"}, fn platform ->
+      with {:error, _} <- cached(version, platform), do: nil
+    end)
+  end
+
   defp cached(version, platform) do
     path = archive_path(version, platform)
 
     with {:ok, sum} <- File.read(path <> ".sha256"),
          true <- File.regular?(path) and sha256(path) == String.trim(sum) do
-      {:ok, path}
+      {:ok, platform}
     else
       _ -> {:error, "not cached"}
     end
   end
 
-  defp from_peers(version, platform, archive) do
+  # The platforms this MC has an archive of `version` for.
+  defp platforms(version) do
+    [prefix, suffix] = String.split(file_name(version, "{platform}"), "{platform}")
+
+    for name <- File.ls(cache_dir(version)) |> elem(1) |> List.wrap(),
+        is_binary(name) and String.starts_with?(name, prefix) and String.ends_with?(name, suffix),
+        do: name |> String.replace_prefix(prefix, "") |> String.replace_suffix(suffix, "")
+  end
+
+  defp from_peers(version, platform) do
     Enum.reduce_while(Node.list(), {:error, "no peer has it"}, fn peer, acc ->
-      with %{"port" => port, "path" => path, "sha256" => sum} <-
+      with %{"port" => port, "path" => path, "sha256" => sum} = offer <-
              safe_erpc(peer, __MODULE__, :offer, [version, platform]),
+           platform when is_binary(platform) <- offer["platform"] || platform,
+           archive = archive_path(version, platform),
            host = peer_host(peer),
            :ok <- download("http://#{host}:#{port}#{path}", archive),
            true <- sha256(archive) == sum || {:error, "the copy from #{peer} does not match"} do
         File.write!(archive <> ".sha256", sum)
         Logger.info("upgrade bundle #{version} came from #{peer}")
-        {:halt, {:ok, archive}}
+        {:halt, {:ok, platform}}
       else
         {:error, reason} ->
           Logger.warning("upgrade bundle from #{peer} failed: #{inspect(reason)}")
@@ -146,7 +179,9 @@ defmodule HalC2.Upgrade.Source do
     end)
   end
 
-  defp from_url(version, platform, archive) do
+  defp from_url(version, platform) do
+    archive = archive_path(version, platform)
+
     url =
       (System.get_env("HAL_C2_UPGRADE_URL") ||
          Application.get_env(:hal_c2, :upgrade_url, @default_url))
@@ -158,7 +193,7 @@ defmodule HalC2.Upgrade.Source do
          sum = sum |> String.split() |> List.first(),
          true <- sha256(archive) == sum || {:error, "#{url} does not match its checksum"} do
       File.write!(archive <> ".sha256", sum)
-      {:ok, archive}
+      {:ok, platform}
     else
       {:error, reason} ->
         File.rm(archive)

@@ -104,11 +104,11 @@ defmodule HalC2.MixProject do
   end
 
   # What a running MC compares with a new release to decide whether it can load
-  # the new code in place (`HalC2.Upgrade`): the runtime, applications, native
-  # libraries and configuration, each of which only a restart can change.
+  # the new code in place (`HalC2.Upgrade`): which applications are HAL-C2's own code,
+  # and what that code runs on, each part of which only a restart can change.
   defp write_upgrade_manifest(release) do
-    lib = Path.join(release.path, "lib")
     rel = Path.join([release.path, "releases", release.version])
+    own = Path.join([release.path, "lib", "hal_c2-#{release.version}"])
 
     digest = fn paths ->
       paths
@@ -123,24 +123,29 @@ defmodule HalC2.MixProject do
     end
 
     # From the release itself: `lib/` can hold other versions' directories.
-    apps =
-      for {name, properties} <- release.applications,
+    versions = fn apps ->
+      for {name, properties} <- apps,
           into: %{},
           do: {to_string(name), to_string(properties[:vsn])}
+    end
 
     manifest = %{
       "version" => release.version,
       "otpRelease" => to_string(:erlang.system_info(:otp_release)),
       "erts" => release.erts_version |> to_string(),
       "platform" => platform(),
-      "applications" => apps,
-      "nifs" =>
-        for {name, vsn} <- apps, into: %{} do
-          libs =
-            Path.wildcard(Path.join([lib, "#{name}-#{vsn}", "priv", "**", "*.{so,dylib,dll}"]))
-
-          {name, digest.(libs)}
-        end,
+      "applications" => versions.(release.applications),
+      "code" => ["hal_c2"],
+      # Erlang's own applications come with the runtime, whose patch releases the
+      # code does not depend on.
+      "dependencies" =>
+        versions.(
+          for {name, properties} = app <- release.applications,
+              name != :hal_c2 and not properties[:otp_app?],
+              do: app
+        ),
+      # Packages installed for the build machine's platform, which no other can use.
+      "packages" => digest.([Path.join(own, "priv/cursor-acp/package.json")]),
       "config" =>
         digest.(
           for f <- ~w(sys.config runtime.exs vm.args),

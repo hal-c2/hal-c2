@@ -114,17 +114,17 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   step ~r/^a bundle that changes (?<what>.+)$/, %{args: [what]} = context do
     case what do
-      "the Erlang runtime" ->
-        bundle(context, %{"erts" => "18.0"})
-
       "the OTP release" ->
         bundle(context, %{"otpRelease" => "30"})
 
-      "the set of applications" ->
-        bundle(context, %{"applications" => %{"hal_c2" => "x", "more" => "1"}})
+      "a dependency" ->
+        bundle(context, %{"dependencies" => %{"exqlite" => "0.42.0"}})
 
-      "a native library" ->
-        bundle(context, %{"nifs" => %{"hal_c2" => "hal_c2_nif.so"}})
+      "the set of dependencies" ->
+        bundle(context, %{"dependencies" => %{"exqlite" => "0.41.0", "more" => "1"}})
+
+      "the platform's packages" ->
+        bundle(context, %{"packages" => "q"})
 
       "the configuration" ->
         bundle(context, %{"config" => "d"})
@@ -164,7 +164,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   step "a bundle that needs a restart", context do
-    bundle(context, %{"erts" => "18.0"})
+    bundle(context, %{"otpRelease" => "30"})
   end
 
   step "the update fails saying the MC was not started by the service wrapper", context do
@@ -502,7 +502,46 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   step "a bundle on this machine the MC has not seen that needs a restart", context do
-    bundle(context, %{"erts" => "18.0"}, [], false)
+    bundle(context, %{"otpRelease" => "30"}, [], false)
+  end
+
+  # --- code alone -------------------------------------------------------------------------
+
+  step "a code-only bundle built with another patch of the Erlang runtime", context do
+    bundle(context, %{"erts" => "17.0.6"}, [Mc.variant(HalC2.JsonRpc.Connection)])
+  end
+
+  # The bundle's own runtime is neither installed nor named for the next start.
+  step "its next start uses the Erlang runtime it already has", context do
+    data = Path.join([context.root, "releases", "start_erl.data"])
+    assert File.read!(data) == "17.0.5 #{context.target}\n"
+    assert %{"erts" => "17.0.5", "version" => version} = installed_manifest(context)
+    assert version == context.target
+    context
+  end
+
+  step ~r/^the only bundle at hand is another platform's, (?<kind>changing only code|needing a restart)$/,
+       %{args: [kind]} = context do
+    upgrade_url(@unreachable)
+
+    {changes, modules} =
+      case kind do
+        "changing only code" -> {%{}, [Mc.variant(HalC2.JsonRpc.Connection)]}
+        "needing a restart" -> {%{"otpRelease" => "30"}, []}
+      end
+
+    context = bundle(context, Map.put(changes, "platform", "plan9-mips"), modules, false)
+    :ok = Source.put(context.target, "plan9-mips", context.archive)
+    context
+  end
+
+  step "the update fails saying a restart takes this platform's release", context do
+    assert {:error, _, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} = context.reply
+    assert reason =~ "takes the #{Upgrade.platform()} release"
+    assert reason =~ "only the plan9-mips one was found"
+    assert Upgrade.version() != context.target
+    refute_received {:hal_c2_restart, _}
+    context
   end
 
   step "a developer reloads the local MC with that bundle", context do
@@ -649,6 +688,12 @@ defmodule HalC2.Steps.Platform.Upgrades do
     archive = Mc.bundle(context.mc, target, changes, modules)
     if cache?, do: :ok = Source.put(target, Upgrade.platform(), archive)
     Map.merge(context, %{target: target, archive: archive})
+  end
+
+  defp installed_manifest(context) do
+    Path.join([context.root, "releases", context.target, "upgrade.json"])
+    |> File.read!()
+    |> JSON.decode!()
   end
 
   defp cached(%{home: home}, target),

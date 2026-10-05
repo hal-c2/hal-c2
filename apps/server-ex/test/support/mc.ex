@@ -664,8 +664,10 @@ defmodule HalC2.Test.Mc do
       "otpRelease" => "29",
       "erts" => "17.0.5",
       "platform" => HalC2.Upgrade.platform(),
-      "applications" => %{"hal_c2" => version},
-      "nifs" => %{},
+      "applications" => %{"hal_c2_bundle" => version, "exqlite" => "0.41.0"},
+      "code" => ["hal_c2_bundle"],
+      "dependencies" => %{"exqlite" => "0.41.0"},
+      "packages" => "p",
       "config" => "c"
     }
   end

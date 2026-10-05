@@ -12,8 +12,7 @@ defmodule HalC2.Steps.Plugins.Release do
   @manifest %{
     "otpRelease" => "29",
     "erts" => "17.0.5",
-    "applications" => %{"hal_c2_fixture" => "1"},
-    "nifs" => %{},
+    "code" => ["hal_c2_fixture"],
     "config" => "c"
   }
 
@@ -84,7 +83,12 @@ defmodule HalC2.Steps.Plugins.Release do
 
     File.write!(
       Path.join(dir, "upgrade.json"),
-      JSON.encode!(Map.put(@manifest, "version", version))
+      JSON.encode!(
+        Map.merge(@manifest, %{
+          "version" => version,
+          "applications" => %{"hal_c2_fixture" => version}
+        })
+      )
     )
   end
 end

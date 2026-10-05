@@ -1,6 +1,7 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/upgrade.ex (plan, hot load, restart with exit 75, outcome)
 #   apps/server-ex/lib/hal_c2/upgrade/source.ex (cache, cluster peer, release URL, SHA-256)
+#   apps/server-ex/lib/hal_c2/upgrade/code.ex (a code-only version's release, on the running runtime)
 #   apps/server-ex/lib/hal_c2/hot.ex (md5 skip, code_change, soft purge, lingering modules)
 #   apps/server-ex/lib/mix/tasks/hal_c2.upgrade.ex, hal_c2.bundle.ex
 #   apps/server-ex/lib/hal_c2/web/router.ex (GET /api/upgrade/:token, POST /api/dev/reload)
@@ -43,12 +44,32 @@ Feature: MC self-update and hot upgrades
 
     Examples:
       | what                       |
-      | the Erlang runtime         |
       | the OTP release            |
-      | the set of applications    |
-      | a native library           |
+      | a dependency               |
+      | the set of dependencies    |
+      | the platform's packages    |
       | the configuration          |
       | a supervisor module        |
+
+  @mc
+  Scenario: A code-only update keeps the Erlang runtime the MC runs
+    Given a code-only bundle built with another patch of the Erlang runtime
+    When a client asks the MC to update to it
+    Then the MC loads the changed modules in place
+    And its next start uses the Erlang runtime it already has
+
+  @mc
+  Scenario: A code-only update loads from a bundle built for another platform
+    Given the only bundle at hand is another platform's, changing only code
+    When a client asks the MC to update to it
+    Then the MC loads the changed modules in place
+    And the MC reports the new version
+
+  @mc
+  Scenario: An update that needs a restart is refused from another platform's bundle
+    Given the only bundle at hand is another platform's, needing a restart
+    When a client asks the MC to update to it
+    Then the update fails saying a restart takes this platform's release
 
   @mc
   Scenario: An MC not started by the service wrapper refuses a restart update
