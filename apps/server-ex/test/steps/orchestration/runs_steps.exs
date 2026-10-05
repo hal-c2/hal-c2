@@ -861,7 +861,12 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
     assert status != "running"
 
-    assert %{"text" => "Half an ans", "streaming" => false, "role" => "assistant", "runId" => ^run} =
+    assert %{
+             "text" => "Half an ans",
+             "streaming" => false,
+             "role" => "assistant",
+             "runId" => ^run
+           } =
              state.entities["message"]["message:codex:msg-partial"]
 
     # A client's transcript still shows it.

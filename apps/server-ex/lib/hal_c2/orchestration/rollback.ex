@@ -48,7 +48,10 @@ defmodule HalC2.Orchestration.Rollback do
   defp undo(plan, ref) do
     with {:error, reason} <- HalC2.Checkpoint.restore(plan.cwd, ref) do
       require Logger
-      Logger.warning("rewind of #{plan.thread_id} could not put its files back: #{inspect(reason)}")
+
+      Logger.warning(
+        "rewind of #{plan.thread_id} could not put its files back: #{inspect(reason)}"
+      )
     end
 
     HalC2.Checkpoint.delete_ref(plan.cwd, ref)

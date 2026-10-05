@@ -272,7 +272,11 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
       "turn" => %{"id" => state.turn.native_turn_id, "status" => "failed", "error" => error}
     })
     |> tap(fn context ->
-      World.await_state(context, thread, &(&1.entities["run"][context.running]["status"] == "failed"))
+      World.await_state(
+        context,
+        thread,
+        &(&1.entities["run"][context.running]["status"] == "failed")
+      )
     end)
   end
 

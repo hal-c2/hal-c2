@@ -1293,6 +1293,17 @@ defmodule HalC2.Acp.ThreadRuntime do
       Enum.any?([input["subagent_type"], input["subagentType"]], &(is_binary(&1) and &1 != ""))
   end
 
+  # Cursor's and OpenCode's `task` tool runs a subagent to its end inside the tool
+  # call: cursor-acp names the call after the SDK's tool, and OpenCode's input names
+  # the subagent it picked.
+  defp subagent_call?(call, %{turn: %{ids: %{driver: driver}}}) do
+    input = call["rawInput"] || %{}
+
+    HalC2.Acp.driver(driver) in ["cursor", "opencode"] and
+      (String.downcase(call["title"] || "") == "task" or
+         (is_binary(input["subagent_type"]) and input["subagent_type"] != ""))
+  end
+
   # Cursor's `createPlan` tool hands the user a plan (cursor-acp names the call after
   # the SDK's tool and repeats its input when it ends). It is a proposed plan once
   # the tool has finished, never a tool call in the timeline.
@@ -1315,17 +1326,6 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp plan_call(state, _id, _call), do: state
-
-  # Cursor's and OpenCode's `task` tool runs a subagent to its end inside the tool
-  # call: cursor-acp names the call after the SDK's tool, and OpenCode's input names
-  # the subagent it picked.
-  defp subagent_call?(call, %{turn: %{ids: %{driver: driver}}}) do
-    input = call["rawInput"] || %{}
-
-    HalC2.Acp.driver(driver) in ["cursor", "opencode"] and
-      (String.downcase(call["title"] || "") == "task" or
-         (is_binary(input["subagent_type"]) and input["subagent_type"] != ""))
-  end
 
   # The subagent's own session streams under another session id: its answer goes to
   # its child thread. Updates for a session no subagent has named yet wait for it.

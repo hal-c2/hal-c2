@@ -262,7 +262,12 @@ defmodule HalC2.Steps.Orchestration.Projections do
         "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
       })
 
-    World.await_state(context, thread, &(&1.entities["run"][context.running]["status"] == "completed"))
+    World.await_state(
+      context,
+      thread,
+      &(&1.entities["run"][context.running]["status"] == "completed")
+    )
+
     context
   end
 

@@ -368,7 +368,9 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
     assert {:ok, _} = context.reply
     assert %{"status" => "waiting"} = run(World.state(context, "t1"), 3)
     # The copied run is finished history in the fork, so nothing waits behind it...
-    assert Enum.map(World.runs(context, fork), & &1["status"]) == ~w(completed completed completed)
+    assert Enum.map(World.runs(context, fork), & &1["status"]) ==
+             ~w(completed completed completed)
+
     # ...and the fork's first message starts at once instead of queueing.
     context = World.send_turn(context, fork, "write #{fork}-first.txt")
     statuses = Enum.map(World.runs(context, fork), & &1["status"])

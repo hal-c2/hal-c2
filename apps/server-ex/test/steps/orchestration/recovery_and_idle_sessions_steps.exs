@@ -523,7 +523,12 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     )
 
     # The exit wakes the thread with a turn of its own; steps go on once it has run.
-    World.await_run(context, context.thread, &(&1["ordinal"] == 3 and &1["status"] == "completed"))
+    World.await_run(
+      context,
+      context.thread,
+      &(&1["ordinal"] == 3 and &1["status"] == "completed")
+    )
+
     World.await_row(World.thread_id(context, context.thread), &(&1["activeRunId"] == nil))
     context
   end
@@ -589,6 +594,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     run = state.entities["run"][run_id]
     assert run["ordinal"] == context.settled_run["ordinal"] + 1
     assert run["modelSelection"] == context.settled_run["modelSelection"]
+
     assert World.state(context, thread).entities["run"][context.settled_run["id"]]["status"] ==
              "completed"
 

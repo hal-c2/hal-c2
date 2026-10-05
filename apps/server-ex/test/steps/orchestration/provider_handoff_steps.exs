@@ -135,7 +135,10 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     # Nothing in the model change or the new run's start touched it...
     refute Enum.any?(World.events(context, thread), fn event ->
              event.kind == "provider-thread" and
-               match?(%{"contextUsage" => usage} when usage != context.usage_before, event.patch["s"])
+               match?(
+                 %{"contextUsage" => usage} when usage != context.usage_before,
+                 event.patch["s"]
+               )
            end)
 
     # ...and it moves when Codex reports usage on the new model.
@@ -186,7 +189,12 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
       }
     })
 
-    World.await_state(context, thread, &(&1.entities["run"][context.running]["status"] == "failed"))
+    World.await_state(
+      context,
+      thread,
+      &(&1.entities["run"][context.running]["status"] == "failed")
+    )
+
     [provider_thread] = World.entities(context, thread, "provider-thread")
     assert %{"nativeId" => "native-thread-1"} = provider_thread["nativeThreadRef"]
     context |> Map.delete(:reply) |> Map.put(:failed_run, context.running)
@@ -220,7 +228,9 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     assert "turn-item:codex:cmd-failed" in shown
     assert "turn-item:codex:msg-failed" in shown
     # The run on the new provider came after it, as run 4.
-    assert %{"ordinal" => 4, "providerInstanceId" => "claudeAgent"} = World.latest_run(context, thread)
+    assert %{"ordinal" => 4, "providerInstanceId" => "claudeAgent"} =
+             World.latest_run(context, thread)
+
     context
   end
 
@@ -458,7 +468,12 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
         "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
       })
 
-    World.await_state(context, thread, &(&1.entities["run"][context.running]["status"] == "completed"))
+    World.await_state(
+      context,
+      thread,
+      &(&1.entities["run"][context.running]["status"] == "completed")
+    )
+
     Map.delete(context, :reply)
   end
 
