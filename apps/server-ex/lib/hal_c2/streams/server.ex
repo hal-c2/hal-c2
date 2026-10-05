@@ -204,19 +204,17 @@ defmodule HalC2.Streams.Server do
     replay =
       if is_integer(offset) and offset <= state.stream.seq,
         do:
-          Store.reduce_stream(
-            state.path,
-            state.id,
-            offset,
-            [],
-            &if(StreamState.void?(&1), do: &2, else: [&1 | &2]),
+          Store.reduce_stream(state.path, state.id, offset, [], &[&1 | &2],
             limit: @max_replay + 1
           ),
         else: :none
 
     case replay do
       events when is_list(events) and length(events) <= @max_replay ->
-        send(pid, {:hal_c2_stream, state.id, {:events, Enum.reverse(events)}})
+        # Counted before the events that change nothing are left out, or a replay cut
+        # short by the limit could pass for a whole one.
+        events = events |> Enum.reject(&StreamState.void?/1) |> Enum.reverse()
+        send(pid, {:hal_c2_stream, state.id, {:events, events}})
 
       _ ->
         send_snapshot(state, pid)

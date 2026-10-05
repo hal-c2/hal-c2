@@ -35,6 +35,20 @@ defmodule HalC2.StreamsTest do
     assert_receive {:hal_c2_stream, "th-1", {:live, 3}}
   end
 
+  test "a patch that sets nothing still counts toward a replay being too long" do
+    changes =
+      thread("th-1") ++
+        [{"turn-item", "item-0", %{"s" => nil}}] ++ for(_ <- 1..2_000, do: hd(append("x")))
+
+    {:ok, last} = HalC2.Store.append([{:thread, "th-1", changes}])
+
+    # 2,001 events are behind the client, one more than a replay carries.
+    :ok = Streams.subscribe("th-1", self(), 1)
+    assert_receive {:hal_c2_stream, "th-1", {:snapshot, ^last, _at, _rows, :done}}
+    assert_receive {:hal_c2_stream, "th-1", {:live, ^last}}
+    refute_received {:hal_c2_stream, "th-1", {:events, _}}
+  end
+
   test "subscribers get the current state, then live events" do
     {:ok, _} = Streams.commit("th-1", :thread, thread("th-1"))
     :ok = Streams.subscribe("th-1", self(), nil)
