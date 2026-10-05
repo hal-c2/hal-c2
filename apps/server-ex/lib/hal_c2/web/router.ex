@@ -313,10 +313,13 @@ defmodule HalC2.Web.Router do
   defp cluster_answer(:ok), do: {200, %{}}
   defp cluster_answer({:ok, body}), do: {200, body}
 
-  defp cluster_answer({:error, reason}),
-    do:
-      {409,
-       %{"reason" => HalC2.Cluster.reason(reason), "message" => HalC2.Cluster.describe(reason)}}
+  defp cluster_answer({:error, reason}) do
+    {409,
+     Map.merge(
+       %{"reason" => HalC2.Cluster.reason(reason), "message" => HalC2.Cluster.describe(reason)},
+       HalC2.Cluster.detail(reason)
+     )}
+  end
 
   # The session a socket opens for, or nil for one opened with the MC's own token.
   defp socket_session(%{"wsTicket" => ticket}), do: HalC2.Auth.take_ticket(ticket)

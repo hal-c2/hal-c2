@@ -351,6 +351,9 @@ defmodule HalC2.Steps.Connections.Cluster do
   step "the join is refused because the machines run different versions", context do
     assert {:error, message} = context.joined
     assert message =~ "different HAL-C2 versions"
+    # It names both, so the user sees which machine to update.
+    assert message =~ "the joining machine runs #{@other_version}"
+    assert message =~ "the inviting one runs #{HalC2.Upgrade.version()}"
     context
   end
 

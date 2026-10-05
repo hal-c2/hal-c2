@@ -186,6 +186,15 @@ defmodule HalC2.Cluster do
   def describe(:other_version),
     do: "The two machines run different HAL-C2 versions; update both to the same one."
 
+  # A join the inviting machine refused: both versions, so the user sees which to update.
+  # An MC from before versions were checked sends none.
+  def describe({:other_version, joining, inviting}) do
+    joining = joining || "a version too old to say (update it first)"
+
+    "The two machines run different HAL-C2 versions: the joining machine runs #{joining}, " <>
+      "the inviting one runs #{inviting}. Update both to the same one."
+  end
+
   def describe(:wrong_machine),
     do: "The machine that answered is not the one the invite is from."
 
@@ -211,9 +220,16 @@ defmodule HalC2.Cluster do
 
   @doc "A cluster error's reason as the `ClusterError` contract carries it."
   def reason({:refused, reason}), do: reason(reason)
+  def reason({:other_version, _joining, _inviting}), do: "other_version"
   def reason({:unreachable, _}), do: "unreachable"
   def reason({:tailscale, _}), do: "tailscale"
   def reason(reason), do: to_string(reason)
+
+  @doc "What a refusal says beyond its reason, for the machine that asked."
+  def detail({:other_version, joining, inviting}),
+    do: %{"versions" => %{"joining" => joining, "inviting" => inviting}}
+
+  def detail(_reason), do: %{}
 
   @doc """
   Merges member tables: for each id, the latest `admittedAt` and `removedAt`, and the
@@ -424,8 +440,11 @@ defmodule HalC2.Cluster do
        {:ok, %{"id" => state.id, "port" => Epmd.listen_port(), "members" => state.members}},
        state}
     else
-      {:version, false} -> {:reply, {:error, :other_version}, state}
-      _ -> {:reply, {:error, :invalid_member}, state}
+      {:version, false} ->
+        {:reply, {:error, {:other_version, entry["version"], HalC2.Upgrade.version()}}, state}
+
+      _ ->
+        {:reply, {:error, :invalid_member}, state}
     end
   end
 
@@ -770,10 +789,21 @@ defmodule HalC2.Cluster do
 
   defp ask_admission(base, access, entry) do
     case request(base <> "/api/cluster/members", access, "application/json", JSON.encode!(entry)) do
-      {:ok, 200, answer} -> {:ok, answer}
-      {:ok, 409, %{"reason" => reason}} -> {:error, {:refused, reason}}
-      {:ok, status, _} -> {:error, {:refused, status}}
-      error -> error
+      {:ok, 200, answer} ->
+        {:ok, answer}
+
+      {:ok, 409,
+       %{"reason" => "other_version", "versions" => %{"inviting" => inviting} = versions}} ->
+        {:error, {:refused, {:other_version, versions["joining"], inviting}}}
+
+      {:ok, 409, %{"reason" => reason}} ->
+        {:error, {:refused, reason}}
+
+      {:ok, status, _} ->
+        {:error, {:refused, status}}
+
+      error ->
+        error
     end
   end
 
