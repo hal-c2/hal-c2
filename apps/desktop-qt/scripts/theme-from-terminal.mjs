@@ -6,6 +6,7 @@
 // theme.json into the shell config dir:
 //
 //   vp run theme:qt                        # the shell's config dir, ~/.config/hal-c2/shell
+//   vp run theme:qt --dev                  # the shell `mise run desktop` runs, ~/.config/hal-c2-dev/shell
 //   vp run theme:qt ~/.config/hal-c2/shell # or any directory (or a .json path)
 //
 // Run it inside the terminal whose colours you want; there is nothing to
@@ -17,9 +18,7 @@ import * as NodePath from "node:path";
 import * as NodeTty from "node:tty";
 import * as NodeURL from "node:url";
 
-import { resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
-
-import { resolveWorktreeHome } from "./worktreeHome.mjs";
+import { HAL_C2_DEV_APP_DIR, resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
 
 const ANSI_NAMES = [
   "Black",
@@ -265,45 +264,43 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
   };
 };
 
-// The shell config dir the Qt shell reads: `<config>/shell`, where config is under
-// the worktree's own .hal-c2 when run from a linked worktree (what `vp run dev:qt`
-// hands the shell), else HAL_C2_HOME's, else the XDG config directory. A directory
-// argument gets theme.json inside it; a .json argument is the file itself. A null
-// `root` means no worktree root.
-export const resolveOutput = (
-  argument,
-  env = process.env,
-  root = resolveWorktreeHome(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url))),
-) => {
+// The shell config dir the Qt shell reads: `<config>/shell`, where config is
+// HAL_C2_HOME's, else the XDG config directory. `dev` is the shell started with
+// --dev (`mise run desktop`): the hal-c2-dev profile, which does not read
+// HAL_C2_HOME. A directory argument gets theme.json inside it; a .json argument is
+// the file itself.
+export const resolveOutput = (argument, env = process.env, dev = false) => {
   if (argument && NodePath.extname(argument) === ".json") return NodePath.resolve(argument);
   const { config } = resolveHalC2Dirs({
-    env,
+    env: dev ? { ...env, HAL_C2_HOME: undefined } : env,
     homeDir: NodeOS.homedir(),
     // oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone script has no Effect runtime.
     platform: NodeOS.platform(),
-    root,
+    profile: dev ? HAL_C2_DEV_APP_DIR : undefined,
   });
   const shellDir = argument ?? NodePath.join(config, "shell");
   return NodePath.join(NodePath.resolve(shellDir), "theme.json");
 };
 
-const USAGE = `usage: vp run theme:qt [shell-dir | theme.json]
+const USAGE = `usage: vp run theme:qt [--dev] [shell-dir | theme.json]
 
 Asks the terminal it runs in for its colours (OSC 10/11/12/17 and 4;n) and
 writes theme.json for the Qt shell. Without an argument the file goes to the
-shell's config dir (~/.config/hal-c2/shell, or <worktree>/.hal-c2/config/shell in
-a worktree); a directory or a .json path picks the spot.`;
+shell's config dir (~/.config/hal-c2/shell, or with --dev the one \`mise run
+desktop\` uses, ~/.config/hal-c2-dev/shell); a directory or a .json path picks the spot.`;
 
 const main = async () => {
-  const [argument, ...rest] = process.argv.slice(2);
-  if (argument === "--help" || argument === "-h") {
+  const args = process.argv.slice(2);
+  if (args.includes("--help") || args.includes("-h")) {
     console.log(USAGE);
     return;
   }
+  const dev = args.includes("--dev");
+  const [argument, ...rest] = args.filter((arg) => arg !== "--dev");
   if (rest.length > 0 || argument?.startsWith("-")) {
     throw new Error(`unknown option ${argument?.startsWith("-") ? argument : rest[0]}\n${USAGE}`);
   }
-  const output = resolveOutput(argument);
+  const output = resolveOutput(argument, process.env, dev);
   const found = await queryTerminal();
   if (!found.background || !found.foreground) {
     throw new Error(

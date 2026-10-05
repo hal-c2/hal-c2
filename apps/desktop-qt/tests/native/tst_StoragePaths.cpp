@@ -73,6 +73,25 @@ private slots:
     QCOMPARE(paths.cache, QStringLiteral("/tmp/sandbox/cache"));
   }
 
+  void theDevelopmentProfileIsItsOwnXdgDirectoriesAndIgnoresHalC2Home() {
+    const StoragePaths paths = resolveStoragePaths(
+        QString(), environment({{"HAL_C2_HOME", "/srv/hal-c2"}, {"XDG_DATA_HOME", "/xdg/data"}}),
+        QStringLiteral("/home/me"), StoragePlatform::Unix, StorageProfile::Development);
+    QVERIFY(paths.root.isEmpty());
+    QCOMPARE(paths.config, QStringLiteral("/home/me/.config/hal-c2-dev"));
+    QCOMPARE(paths.data, QStringLiteral("/xdg/data/hal-c2-dev"));
+    QCOMPARE(paths.state, QStringLiteral("/home/me/.local/state/hal-c2-dev"));
+    QCOMPARE(paths.cache, QStringLiteral("/home/me/.cache/hal-c2-dev"));
+  }
+
+  void homeDirIsARootInTheDevelopmentProfileToo() {
+    const StoragePaths paths =
+        resolveStoragePaths(QStringLiteral("/tmp/sandbox"), environment({}), QStringLiteral("/home/me"),
+                            StoragePlatform::Unix, StorageProfile::Development);
+    QCOMPARE(paths.root, QStringLiteral("/tmp/sandbox"));
+    QCOMPARE(paths.data, QStringLiteral("/tmp/sandbox/data"));
+  }
+
   void windowsUsesAppDataForConfigAndLocalAppDataForTheRest() {
     const StoragePaths paths = resolveStoragePaths(
         QString(),

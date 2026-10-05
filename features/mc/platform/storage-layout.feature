@@ -11,7 +11,8 @@
 #   apps/server-ex/config/runtime.exs (HAL_C2_MC_HOME, HAL_C2_HOME)
 #   apps/server-ex/rel/env.sh.eex (the release's home)
 #   apps/server-ex/README.md (Run, Release: where the MC keeps its state)
-#   apps/desktop-qt/src/StoragePaths.cpp, apps/desktop-qt/src/main.cpp (--home-dir, shell config dir, web profile, --base-dir for the hosted server)
+#   apps/desktop-qt/src/StoragePaths.cpp, apps/desktop-qt/src/main.cpp (--home-dir, --dev, shell config dir, web profile, --base-dir for the hosted server)
+#   apps/desktop-qt/scripts/dev-qt.mjs (`mise run desktop` starts the shell with --dev)
 #   packages/shared/src/desktopAppControlSocket.ts, apps/desktop/src/app/DesktopAppActivation.ts (desktop app control socket)
 #   apps/desktop/src/wsl/DesktopWslEnvironment.ts (wsl-runtime inside a distro)
 #   apps/tui/src/shellConfigDir.ts (HAL_C2_TUI_SHELL_DIR, config/shell/tui)
@@ -185,6 +186,19 @@ Feature: Where HAL-C2 keeps its files
         | data   | ~/.local/share/hal-c2-dev | ~/.local/share/hal-c2 |
         | state  | ~/.local/state/hal-c2-dev | ~/.local/state/hal-c2 |
         | cache  | ~/.cache/hal-c2-dev       | ~/.cache/hal-c2       |
+
+    # `mise run desktop` starts the shell this way from every checkout and worktree.
+    @desktop
+    Scenario: The desktop app a developer builds uses the development profile
+      Given HAL_C2_HOME is "/srv/hal-c2" in the developer's shell
+      When a developer starts the desktop app from a linked git worktree with --dev
+      Then the desktop app keeps its files in:
+        | kind   | path                      |
+        | config | ~/.config/hal-c2-dev      |
+        | data   | ~/.local/share/hal-c2-dev |
+        | state  | ~/.local/state/hal-c2-dev |
+        | cache  | ~/.cache/hal-c2-dev       |
+      And the server it hosts is given no root
 
     @mc
     Scenario Outline: Under an explicit root there is one profile

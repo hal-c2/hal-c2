@@ -35,8 +35,12 @@ Arguments pass straight through (`mise run desktop -- --help` for the Qt script'
 flags). The build tasks declare their sources, so a dependent task skips them while nothing
 changed. The Qt shell pairs with the MC on
 `HAL_C2_MC_PORT` (default 3780); `--url` takes a pairing link for another MC, and
-`--standalone` starts the shell's own MC from source, as the installed app does, so do not
-combine it with `mise run mc` on the same home.
+`--standalone` starts the shell's own MC from source, as the installed app does; without
+`--home-dir` that is the dev profile's MC, so do not combine it with `mise run mc`.
+
+The Qt shell `mise run desktop` builds keeps its files in the XDG `hal-c2-dev` profile, beside
+the dev MC's (`~/.config/hal-c2-dev/shell` for the rice, and so on), not in the checkout;
+`--home-dir <dir>` gives one run a root of its own.
 
 Every checkout and worktree shares the one dev MC, because its files are in the XDG `hal-c2-dev`
 profile. `mise run mc:reload` therefore moves that MC to the build of the checkout it is run from,

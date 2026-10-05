@@ -5,7 +5,10 @@
 
 namespace {
 
-const QString kAppDir = QStringLiteral("hal-c2");
+QString appDirFor(StorageProfile profile) {
+  return profile == StorageProfile::Development ? QStringLiteral("hal-c2-dev")
+                                                : QStringLiteral("hal-c2");
+}
 
 bool isAbsoluteFor(const QString& path, StoragePlatform platform) {
   if (platform == StoragePlatform::Windows) {
@@ -51,14 +54,17 @@ StoragePaths under(const QString& root) {
 StoragePaths resolveStoragePaths(const QString& homeDirOverride,
                                  const QProcessEnvironment& env,
                                  const QString& userHome,
-                                 StoragePlatform platform) {
+                                 StoragePlatform platform,
+                                 StorageProfile profile) {
   if (!homeDirOverride.trimmed().isEmpty()) {
     return under(QDir(homeDirOverride.trimmed()).absolutePath());
   }
   const QString fromEnv = absoluteEnv(env, QStringLiteral("HAL_C2_HOME"), platform);
-  if (!fromEnv.isEmpty() && !isLegacyHome(fromEnv, userHome, platform)) {
+  if (profile == StorageProfile::Installed && !fromEnv.isEmpty() &&
+      !isLegacyHome(fromEnv, userHome, platform)) {
     return under(fromEnv);
   }
+  const QString appDir = appDirFor(profile);
 
   const auto base = [&](const char* variable, const QString& fallback) {
     const QString value = absoluteEnv(env, QString::fromLatin1(variable), platform);
@@ -73,8 +79,8 @@ StoragePaths resolveStoragePaths(const QString& homeDirOverride,
         base("LOCALAPPDATA", join(userHome, QStringLiteral("AppData/Local")));
     const auto kind = [&](const char* variable, const QString& fallback, const QString& name) {
       const QString configured = absoluteEnv(env, QString::fromLatin1(variable), platform);
-      return configured.isEmpty() ? join(join(fallback, kAppDir), name)
-                                  : join(configured, kAppDir);
+      return configured.isEmpty() ? join(join(fallback, appDir), name)
+                                  : join(configured, appDir);
     };
     return {QString(), kind("XDG_CONFIG_HOME", appData, QStringLiteral("config")),
             kind("XDG_DATA_HOME", localAppData, QStringLiteral("data")),
@@ -82,7 +88,7 @@ StoragePaths resolveStoragePaths(const QString& homeDirOverride,
             kind("XDG_CACHE_HOME", localAppData, QStringLiteral("cache"))};
   }
   const auto kind = [&](const char* variable, const QString& fallback) {
-    return join(base(variable, join(userHome, fallback)), kAppDir);
+    return join(base(variable, join(userHome, fallback)), appDir);
   };
   return {QString(), kind("XDG_CONFIG_HOME", QStringLiteral(".config")),
           kind("XDG_DATA_HOME", QStringLiteral(".local/share")),
@@ -90,12 +96,12 @@ StoragePaths resolveStoragePaths(const QString& homeDirOverride,
           kind("XDG_CACHE_HOME", QStringLiteral(".cache"))};
 }
 
-StoragePaths resolveStoragePaths(const QString& homeDirOverride) {
+StoragePaths resolveStoragePaths(const QString& homeDirOverride, StorageProfile profile) {
 #ifdef Q_OS_WIN
   constexpr StoragePlatform platform = StoragePlatform::Windows;
 #else
   constexpr StoragePlatform platform = StoragePlatform::Unix;
 #endif
   return resolveStoragePaths(homeDirOverride, QProcessEnvironment::systemEnvironment(),
-                             QDir::homePath(), platform);
+                             QDir::homePath(), platform, profile);
 }

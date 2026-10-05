@@ -116,6 +116,9 @@ int main(int argc, char* argv[]) {
       QStringLiteral("home-dir"),
       QStringLiteral("One root for the shell's and its MC's files (<dir>/config, data, state, cache)."),
       QStringLiteral("dir"));
+  const QCommandLineOption devOption(
+      QStringLiteral("dev"),
+      QStringLiteral("Keep the shell's files in the development profile (hal-c2-dev), beside a dev MC's."));
   const QCommandLineOption qmlDirOption(
       QStringLiteral("qml-dir"),
       QStringLiteral("Load the built-in bricks from this directory instead of the binary."),
@@ -140,7 +143,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("Press a key chord once the MC's first snapshot is in, e.g. Ctrl+1 (portable QKeySequence "
                      "names). Repeatable; runs in command-line order together with --action."),
       QStringLiteral("chord"));
-  parser.addOptions({urlOption, configDirOption, homeDirOption, qmlDirOption, hostEntryOption,
+  parser.addOptions({urlOption, configDirOption, homeDirOption, devOption, qmlDirOption, hostEntryOption,
                      nodeOption, screenshotOption, actionOption, keyOption, localFolderImportOption,
                      appIdOption});
   parser.process(app);
@@ -148,7 +151,9 @@ int main(int argc, char* argv[]) {
     QGuiApplication::setDesktopFileName(parser.value(appIdOption).trimmed());
   }
 
-  const StoragePaths storage = resolveStoragePaths(parser.value(homeDirOption));
+  const StoragePaths storage = resolveStoragePaths(
+      parser.value(homeDirOption),
+      parser.isSet(devOption) ? StorageProfile::Development : StorageProfile::Installed);
   const QString configDir = resolveConfigDir(parser.value(configDirOption), storage);
   // Created up front so the shell and theme watchers are live from the start: when
   // the MC migrates an old home, the user's shell lands here and reloads.
