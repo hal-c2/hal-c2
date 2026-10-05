@@ -88,6 +88,12 @@ const Steps steps([] {
   const QString q = kQuoted;
 
   step(QStringLiteral("the app is running"), [](World& world, const Captures&, const Table&) { run(world); });
+  // A launch that names no folder asks nobody (main.cpp) and goes straight to
+  // listening: it must find the running app's socket taken and leave it alone.
+  step(QStringLiteral("the user launches the app again without a folder"), [](World& world, const Captures&, const Table&) {
+    SingleInstance later(stateDir(world));
+    expect(!later.listen([](const QStringList&) {}), QStringLiteral("the later launch took the running app's socket"));
+  });
   step(QStringLiteral("the user launches the app again with a folder path"), [](World& world, const Captures&, const Table&) {
     launchAgain(world, folder(world, QStringLiteral("shop")));
   });

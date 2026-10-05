@@ -52,8 +52,12 @@ bool SingleInstance::forward(const QString& stateDir, const QStringList& folders
 }
 
 bool SingleInstance::listen(std::function<void(const QStringList&)> open) {
-  // A socket left by a run that crashed is in the way; one that answers is
-  // another app, and forward() would have reached it.
+  // A socket left by a run that crashed is in the way and is removed. One that
+  // still takes connections belongs to a running app (a launch that names no
+  // folder never asked it): that app keeps its socket, and this one has none.
+  QLocalSocket probe;
+  probe.connectToServer(m_name);
+  if (probe.waitForConnected(kTimeoutMs)) return false;
   QLocalServer::removeServer(m_name);
   if (QDir::isAbsolutePath(m_name)) QDir().mkpath(QFileInfo(m_name).absolutePath());
   connect(&m_server, &QLocalServer::newConnection, this, [this, open = std::move(open)] {

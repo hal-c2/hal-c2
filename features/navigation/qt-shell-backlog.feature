@@ -123,6 +123,13 @@ Feature: Desktop shell gaps
       And no second server starts
 
     @desktop
+    Scenario: Opening a folder still reaches the running window after a launch without one
+      Given the app is running
+      When the user launches the app again without a folder
+      And the user launches the app again with a folder path
+      Then the running window adds the folder as a project and opens a new thread there
+
+    @desktop
     Scenario: Opening a folder that is already a project reuses it
       Given "~/code/api" is already a project
       When the user launches the app again with "~/code/api"

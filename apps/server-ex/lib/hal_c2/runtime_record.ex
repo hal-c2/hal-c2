@@ -54,7 +54,15 @@ defmodule HalC2.RuntimeRecord do
 
   # A record outlives an MC that was killed; its process does not.
   defp alive?(pid) do
-    match?({_, 0}, System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true))
+    case HalC2.Paths.platform() do
+      :windows ->
+        # tasklist exits 0 either way; a pid that is gone gets a line of prose instead.
+        {out, 0} = System.cmd("tasklist", ["/FI", "PID eq #{pid}", "/FO", "CSV", "/NH"])
+        String.contains?(out, ",\"#{pid}\",")
+
+      :unix ->
+        match?({_, 0}, System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true))
+    end
   rescue
     _ -> false
   end
