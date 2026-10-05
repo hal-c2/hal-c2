@@ -34,6 +34,7 @@ defmodule HalC2.Upgrade do
   # `bin/hal-c2-service` starts the MC again when it exits with this status. The exit
   # itself is `:restart_exit` in the app env (`System.stop/1` unless a test swaps it).
   @restart_status 75
+  @members_timeout :timer.minutes(5)
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -96,8 +97,12 @@ defmodule HalC2.Upgrade do
 
   # A member that moved to the new version drops its connections, this one among
   # them, so its going down counts as the end of its update too.
+  #
+  # They all get `@members_timeout` between them, which leaves this MC's own update
+  # its time within what `mix hal_c2.upgrade --release` waits for an answer.
   defp update_members(input) do
     members = Node.list()
+    deadline = System.monotonic_time(:millisecond) + @members_timeout
     for mc <- members, do: Node.monitor(mc, true)
     started = :erpc.multicall(members, __MODULE__, :start, [input, self()], 15_000)
 
@@ -109,7 +114,7 @@ defmodule HalC2.Upgrade do
             {:hal_c2_server_update, ^mc, {:error, %{"reason" => reason}}} -> reason
             {:nodedown, ^mc} -> "left to run it"
           after
-            :timer.minutes(10) -> "did not finish"
+            max(deadline - System.monotonic_time(:millisecond), 0) -> "has not finished"
           end
         else
           _ -> "cannot be updated from another MC"
@@ -341,8 +346,15 @@ defmodule HalC2.Upgrade do
 
   defp run(_input, _progress), do: failure("No target version was given.")
 
-  defp install({:hot, _modules}, bundle, root, _target),
-    do: HalC2.Upgrade.Code.install(bundle, root, running_manifest(), manifest(bundle))
+  defp install({:hot, _modules}, bundle, root, target) do
+    case manifest(bundle) do
+      %{"version" => ^target} = manifest ->
+        HalC2.Upgrade.Code.install(bundle, root, running_manifest(), manifest)
+
+      _ ->
+        {:error, "the bundle is not #{target}"}
+    end
+  end
 
   defp install({:restart, reasons}, bundle, root, target) do
     mine = platform()

@@ -66,6 +66,12 @@ Feature: MC self-update and hot upgrades
     And the MC reports the new version
 
   @mc
+  Scenario: A bundle that is not the version asked for is refused
+    Given the bundle cached for the target version is another version's
+    When a client asks the MC to update to it
+    Then the update fails saying the bundle is not that version
+
+  @mc
   Scenario: An update that needs a restart is refused from another platform's bundle
     Given the only bundle at hand is another platform's, needing a restart
     When a client asks the MC to update to it

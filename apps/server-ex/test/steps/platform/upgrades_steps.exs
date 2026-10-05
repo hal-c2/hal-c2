@@ -535,6 +535,21 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
+  step "the bundle cached for the target version is another version's", context do
+    context = bundle(context, %{}, [Mc.variant(HalC2.JsonRpc.Connection)], false)
+    asked = target()
+    :ok = Source.put(asked, Upgrade.platform(), context.archive)
+    %{context | target: asked}
+  end
+
+  step "the update fails saying the bundle is not that version", context do
+    assert {:error, _, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} = context.reply
+    assert reason =~ "the bundle is not #{context.target}"
+    assert Upgrade.version() != context.target
+    assert start_version(context) != context.target
+    context
+  end
+
   step "the update fails saying a restart takes this platform's release", context do
     assert {:error, _, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} = context.reply
     assert reason =~ "takes the #{Upgrade.platform()} release"
