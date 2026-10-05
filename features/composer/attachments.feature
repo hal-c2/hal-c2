@@ -1,7 +1,7 @@
 # Sources:
 #   docs/user/composer.md (attachments, large pastes, images, prompt stash files)
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URL, claim, size limits, pending expiry)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, file drop, attachment removal)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, file drop, clipboard paste, attachment removal)
 #   apps/tui/src/composerAttachments.ts (image paths in prompts and editor output)
 #   apps/tui/src/components/ChatView.tsx (clipboard image paste, image-only prompts, files browser attach)
 #   apps/web/src/chatAttachment.ts (message and attachment limits)
@@ -54,6 +54,11 @@ Feature: Attaching images and files to a message
     Given the terminal can read images from the clipboard
     When the user pastes an image
     Then a clipboard image is attached to the draft
+
+  @desktop
+  Scenario: A copied picture pasted into the prompt is attached
+    When the user pastes a copied picture into the prompt
+    Then the draft carries "image.png"
 
   @tui
   Scenario Outline: An image that cannot be attached is refused with a reason

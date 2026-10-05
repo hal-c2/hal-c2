@@ -69,6 +69,10 @@ public:
   Q_INVOKABLE QStringList directoryPaths(const QList<QUrl>& urls) const;
   // The clipboard's text, for the composer's own paste.
   Q_INVOKABLE QString clipboardText() const;
+  // The files the clipboard holds, for the composer's own paste: copied files
+  // as readAttachmentFiles has them, else a copied picture as "image.png"
+  // ({name, mimeType, base64}); empty when it holds neither.
+  Q_INVOKABLE QVariantList clipboardFiles() const;
   // Whether pasting `text` into a prompt of `promptLength` characters makes
   // it a text file instead (packages/client-runtime textPaste.ts): 32 KiB or
   // more, or more than the prompt can hold.

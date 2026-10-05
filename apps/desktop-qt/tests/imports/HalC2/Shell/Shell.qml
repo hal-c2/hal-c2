@@ -146,6 +146,10 @@ QtObject {
         return [];
     }
 
+    function clipboardFiles() {
+        return [];
+    }
+
     function clipboardText() {
         return "";
     }

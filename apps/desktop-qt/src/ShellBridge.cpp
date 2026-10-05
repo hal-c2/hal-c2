@@ -1,10 +1,13 @@
 #include "ShellBridge.h"
 
+#include <QBuffer>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QDesktopServices>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
+#include <QMimeData>
 #include <QMimeDatabase>
 #include <QtLogging>
 
@@ -130,6 +133,26 @@ QStringList ShellBridge::directoryPaths(const QList<QUrl>& urls) const {
 
 QString ShellBridge::clipboardText() const {
   return QGuiApplication::clipboard()->text();
+}
+
+QVariantList ShellBridge::clipboardFiles() const {
+  constexpr qsizetype kMaxBytes = 10 * 1024 * 1024;
+  const QMimeData* data = QGuiApplication::clipboard()->mimeData();
+  if (!data) return {};
+  if (const QVariantList files = readAttachmentFiles(data->urls()); !files.isEmpty()) return files;
+  if (!data->hasImage()) return {};
+  QByteArray png;
+  QBuffer buffer(&png);
+  buffer.open(QIODevice::WriteOnly);
+  if (!qvariant_cast<QImage>(data->imageData()).save(&buffer, "PNG") || png.size() > kMaxBytes) {
+    qInfo().noquote() << "[shell] skipping pasted image (too large or unreadable)";
+    return {};
+  }
+  return {QVariantMap{
+      {QStringLiteral("name"), QStringLiteral("image.png")},
+      {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+      {QStringLiteral("base64"), QString::fromLatin1(png.toBase64())},
+  }};
 }
 
 bool ShellBridge::pasteAttaches(const QString& text, int promptLength) const {

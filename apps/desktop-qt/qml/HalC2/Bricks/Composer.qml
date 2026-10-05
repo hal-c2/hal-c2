@@ -242,10 +242,19 @@ Rectangle {
         });
     }
 
-    // A paste too large for the prompt becomes a text file; Paste as Text
+    // A copied picture is attached, and so are copied files when there is no
+    // text to paste instead (the web's shouldHandleComposerAttachmentPaste). A
+    // paste too large for the prompt becomes a text file; Paste as Text
     // (mod+shift+V) keeps it in the editor.
     function paste(asText) {
         const text = Shell.clipboardText();
+        const files = asText ? [] : Shell.clipboardFiles();
+        if (files.some(file => (file.mimeType ?? "").startsWith("image/")) || (files.length > 0 && text.length === 0)) {
+            Shell.dispatch("composer.attach", {
+                files: files
+            });
+            return true;
+        }
         if (text.length === 0) return false;
         const selected = input.selectionEnd - input.selectionStart;
         if (!asText && Shell.pasteAttaches(text, input.length - selected)) {
