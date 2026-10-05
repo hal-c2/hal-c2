@@ -401,38 +401,59 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     File.cp!(Path.join(project_dir(), "rel/overlays/bin/hal-c2-service"), wrapper)
     File.chmod!(wrapper, 0o755)
     log = Path.join(bin, "starts.log")
-    ready = Path.join(bin, "ready")
-    {_, 0} = System.cmd("mkfifo", [ready])
+    [ready, stopping, release] = for name <- ~w(ready stopping release), do: Path.join(bin, name)
+    {_, 0} = System.cmd("mkfifo", [ready, stopping, release])
 
-    # A stand-in for bin/hal_c2 that says when it is up and takes a moment to stop,
-    # as an MC closing its threads does.
+    # A stand-in for bin/hal_c2 that says when it is up and when it was told to stop,
+    # and then stops only once it is let go, as an MC closing its threads takes a while.
     File.write!(Path.join(bin, "hal_c2"), """
     #!/bin/sh
-    trap 'echo stopping >> "#{log}"; echo stopped >> "#{log}"; exit 0' TERM
+    trap 'echo told > "#{stopping}"; read _ < "#{release}"; echo stopped >> "#{log}"; exit 0' TERM
     echo up > "#{ready}"
     while :; do sleep 1 & wait $!; done
     """)
 
     File.chmod!(Path.join(bin, "hal_c2"), 0o755)
-    Map.put(context, :wrapper, %{path: wrapper, log: log, ready: ready})
+
+    Map.put(context, :wrapper, %{
+      path: wrapper,
+      log: log,
+      ready: ready,
+      stopping: stopping,
+      release: release
+    })
   end
 
-  # systemd and launchd signal the process they started, which is the wrapper.
+  # systemd and launchd signal the process they started, which is the wrapper. Says
+  # whether the wrapper was still there while the MC was stopping, then its exit status.
   step "the service manager stops the wrapper", %{wrapper: wrapper} = context do
+    script = """
+    "$0" & pid=$!
+    read _ < "$1"
+    kill -TERM "$pid"
+    read _ < "$2"
+    case "$(ps -o stat= -p "$pid")" in ""|Z*) waited=no ;; *) waited=yes ;; esac
+    echo go > "$3"
+    wait "$pid"
+    echo "$waited $?"
+    """
+
     {out, 0} =
       System.cmd("sh", [
         "-c",
-        ~s("$0" & pid=$!; read _ < "$1"; kill -TERM "$pid"; wait "$pid"; echo "$?"),
+        script,
         wrapper.path,
-        wrapper.ready
+        wrapper.ready,
+        wrapper.stopping,
+        wrapper.release
       ])
 
-    Map.put(context, :wrapper_status, out |> String.trim() |> String.to_integer())
+    Map.put(context, :wrapper_stop, String.trim(out))
   end
 
   step "the MC is told to stop and the wrapper waits for it", context do
-    assert context.wrapper_status == 0
-    assert File.read!(context.wrapper.log) == "stopping\nstopped\n"
+    assert context.wrapper_stop == "yes 0"
+    assert File.read!(context.wrapper.log) == "stopped\n"
     context
   end
 

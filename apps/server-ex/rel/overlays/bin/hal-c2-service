@@ -27,6 +27,8 @@ trap 'stopping=1; [ -n "$child" ] && kill -TERM "$child" 2>/dev/null' TERM INT
 while :; do
   "$here/hal_c2" start "$@" &
   child=$!
+  # A signal that arrived before this MC had a pid to send it to.
+  [ -n "$stopping" ] && kill -TERM "$child" 2>/dev/null
   # A trapped signal interrupts `wait`; wait again until the MC itself has exited.
   while :; do
     wait "$child"
