@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-#MISE description="Bring other machines' checkouts and dev MCs to this checkout's commit over SSH, then reload this one (mc:update-cluster [--restart] [--force] [--dir PATH] [--dry-run] SSH_TARGET ...)"
+#MISE description="Bring other machines' checkouts and dev MCs to this checkout's commit over SSH, then reload this one"
 #MISE dir="{{config_root}}"
+#USAGE flag "--restart" help="Restart a machine's MC when a change cannot be loaded in place, unless it has agents or terminals running"
+#USAGE flag "--force" help="With --restart, restart an MC even when it has agents or terminals running"
+#USAGE flag "--dir <path>" help="The checkout on the other machines, relative to the home directory or absolute (default: where this one is under yours)"
+#USAGE flag "--dry-run" help="Say what would be done and do nothing"
+#USAGE arg "[target]" var=#true help="SSH targets of the other machines, e.g. olafura@ai-beast"
 set -euo pipefail
 
-# For machines whose MC runs from a checkout (`mise run mc`). Each SSH_TARGET, e.g.
-# olafura@ai-beast, gets this checkout's HEAD as a fast-forward and loads what changed
-# into its running MC (mc:reload). A change the MC cannot load in place needs a restart:
-# --restart stops that MC and starts it again in a tmux session called hal-c2-mc, unless
-# it has agents or terminals running (--force restarts it anyway). This machine's MC is
-# reloaded last and never restarted: a restart ends whatever runs on it, this task's own
-# session included.
+# For machines whose MC runs from a checkout (`mise run mc`). Each target gets this
+# checkout's HEAD as a fast-forward and loads what changed into its running MC
+# (mc:reload). A restarted MC comes back in a tmux session called hal-c2-mc. This
+# machine's MC is reloaded last and never restarted: a restart ends whatever runs on
+# it, this task's own session included.
 
-restart=false force=false dry=false dir="" targets=()
+restart=${usage_restart:-false} force=${usage_force:-false} dry=${usage_dry_run:-false} dir=${usage_dir:-}
+# mise passes the arguments through as well as naming them; the targets are what is left.
+targets=()
 while (($#)); do
   case "$1" in
-    --restart) restart=true ;;
-    --force) force=true ;;
-    --dry-run) dry=true ;;
-    --dir) dir="${2:?--dir needs a path}"; shift ;;
-    -h | --help) sed -n '6,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    -*) echo "mc:update-cluster: unknown option $1" >&2; exit 2 ;;
+    --dir) shift ;;
+    -*) ;;
     *) targets+=("$1") ;;
   esac
   shift

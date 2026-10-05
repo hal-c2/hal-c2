@@ -1,26 +1,14 @@
 #!/usr/bin/env bash
-#MISE description="Run the MC in the foreground, ready to cluster (mc [--host ADDRESS] [--port PORT] [--home DIR])"
+#MISE description="Run the MC in the foreground, ready to cluster"
 #MISE dir="{{config_root}}/apps/server-ex"
+#USAGE flag "--host <address>" help="Address to listen on (HAL_C2_MC_HOST). A LAN or tailnet address, or 0.0.0.0, lets other machines reach it; the default is this machine only"
+#USAGE flag "--port <port>" help="HTTP port (HAL_C2_MC_PORT, default 3780)"
+#USAGE flag "--home <dir>" help="A root for all its files (HAL_C2_MC_HOME) instead of the hal-c2-dev profile, for a second MC on one machine"
 set -euo pipefail
 
-# --host: the address the MC listens on (HAL_C2_MC_HOST); a LAN or tailnet address, or
-#         0.0.0.0, lets other machines reach it. The default is this machine only.
-# --port: its HTTP port (HAL_C2_MC_PORT, default 3780).
-# --home: a root for all its files (HAL_C2_MC_HOME) instead of the hal-c2-dev profile,
-#         for a second MC on one machine.
-while (($#)); do
-  case "$1" in
-    --host) export HAL_C2_MC_HOST="${2:?--host needs an address}"; shift ;;
-    --host=*) export HAL_C2_MC_HOST="${1#*=}" ;;
-    --port) export HAL_C2_MC_PORT="${2:?--port needs a number}"; shift ;;
-    --port=*) export HAL_C2_MC_PORT="${1#*=}" ;;
-    --home) export HAL_C2_MC_HOME="${2:?--home needs a directory}"; shift ;;
-    --home=*) export HAL_C2_MC_HOME="${1#*=}" ;;
-    -h | --help) sed -n '6,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "mc: unknown argument $1 (--host, --port, --home)" >&2; exit 2 ;;
-  esac
-  shift
-done
+[[ -n ${usage_host:-} ]] && export HAL_C2_MC_HOST="$usage_host"
+[[ -n ${usage_port:-} ]] && export HAL_C2_MC_PORT="$usage_port"
+[[ -n ${usage_home:-} ]] && export HAL_C2_MC_HOME="$usage_home"
 
 # The MC starts TLS distribution itself (HalC2.Cluster) and writes its options here.
 optfile="$(mktemp -t hal-c2-dist.XXXXXX)"
