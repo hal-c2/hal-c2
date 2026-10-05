@@ -19,7 +19,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   needs no distribution; it loads this checkout's build even when it was started
   from another checkout or worktree.
 
-  With `--release`, builds the prod release under a version of its own and has the
+  With `--release`, builds the prod release under this commit's local version and has the
   installed MC on this machine update to it (`mise run mc:reload --release`), over
   its HTTP port with its access token as well. That MC is the one in the user's
   `hal-c2` profile, or in `HAL_C2_MC_HOME` when that is set.
@@ -43,9 +43,10 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
     cond do
       opts[:release] && mcs == [] ->
-        # A version of its own: an MC refuses the version it already runs.
-        stamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
-        build("#{Mix.Project.config()[:version]}-local.#{stamp}")
+        # The commit's version, as `mise run release:mc` builds it: an MC refuses the
+        # version it already runs, and clusters only with MCs on its own.
+        {version, 0} = System.cmd("scripts/local-version", [])
+        build(String.trim(version))
         local_release(Mix.Tasks.HalC2.Bundle.bundle())
 
       opts[:dev] && mcs == [] ->

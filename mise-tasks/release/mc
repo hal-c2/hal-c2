@@ -5,10 +5,9 @@
 set -euo pipefail
 # install:js: the release bundles the Cursor sidecar with packages/cursor-acp's esbuild.
 
-# A single-file MC unpacks only a version it has not installed yet, so a local build
-# gets a version of its own each time. A published release sets HAL_C2_MC_VERSION.
-package_version="$(node -p 'require("../server/package.json").version')"
-export HAL_C2_MC_VERSION="${HAL_C2_MC_VERSION:-$package_version-local.$(date -u +%Y%m%d%H%M%S)}"
+# A local build is versioned by its commit (scripts/local-version). A single-file MC
+# unpacks only a version it has not installed yet. A published release sets HAL_C2_MC_VERSION.
+export HAL_C2_MC_VERSION="${HAL_C2_MC_VERSION:-$(scripts/local-version)}"
 export MIX_ENV=prod
 
 mix local.hex --force --if-missing
