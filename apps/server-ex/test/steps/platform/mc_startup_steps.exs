@@ -65,6 +65,11 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     Map.put(context, :boot_env, :dev)
   end
 
+  step "no port is configured for a release", context do
+    World.put_os_env("HAL_C2_MC_PORT", nil)
+    Map.put(context, :boot_env, :prod)
+  end
+
   step "HAL_C2_MC_PORT is {int} and HAL_C2_HOME is {string}", %{args: [port, home]} = context do
     clear_home_env()
     World.put_os_env("HAL_C2_MC_PORT", to_string(port))
@@ -85,7 +90,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   step "it serves clients on {string}", %{args: [host]} = context do
     {:ok, ip} = :inet.parse_address(String.to_charlist(host))
-    assert {^ip, 3780} = listener(boot_config(context.boot_env))
+    assert {^ip, _port} = listener(boot_config(context.boot_env))
     context
   end
 

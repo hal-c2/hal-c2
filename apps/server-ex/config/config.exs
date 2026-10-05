@@ -6,7 +6,8 @@ import Config
 # installed app's files; tests stay in the checkout's .hal-c2. A dev MC never
 # migrates from an old home (`HalC2.Migration`).
 if config_env() == :prod do
-  config :hal_c2, start_mc: true
+  # 3781, beside an MC run from a checkout on 3780, so a developer runs both.
+  config :hal_c2, start_mc: true, port: 3781
 else
   home =
     if config_env() == :dev,
