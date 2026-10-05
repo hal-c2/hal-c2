@@ -68,6 +68,18 @@ private:
 
   static QString environmentOf(const QString& key) { return key.left(key.indexOf(QLatin1Char(':'))); }
 
+  // Where the relative `id` of a thread on `environmentId` is now. A move keeps
+  // a thread's id, so a relative that moved (or was left behind when this one
+  // moved) is the thread with that id on another machine.
+  QString relativeKey(const QString& environmentId, const QString& id) const {
+    const QString key = m_store->located(environmentId + QLatin1Char(':') + id);
+    if (m_store->thread(key)) return key;
+    for (const sidebar::Thread& other : m_store->threads()) {
+      if (other.id == id) return other.key();
+    }
+    return key;
+  }
+
   // The thread a fork came from: where it was forked (`forkedFrom`), else its lineage's parent.
   static QString parentId(const QJsonObject& row) {
     const QJsonObject lineage = row.value(QLatin1String("lineage")).toObject();
@@ -90,7 +102,8 @@ private:
     const auto thread = m_store->thread(key);
     const QString parent = parentId(m_store->threadRow(key));
     if (!thread || parent.isEmpty() || !thread->latestRun || thread->latestRun->status != QLatin1String("completed")) return;
-    const QString parentKey = thread->environmentId + QLatin1Char(':') + parent;
+    const QString parentKey = relativeKey(thread->environmentId, parent);
+    if (environmentOf(parentKey) != thread->environmentId) return;
     m_client->dispatchCommand(this, thread->environmentId,
                               {{QStringLiteral("type"), QStringLiteral("thread.merge_back")},
                                {QStringLiteral("createdBy"), QStringLiteral("user")},
@@ -167,10 +180,13 @@ private:
     const QString shownParent = parent.isEmpty() ? subagentParentId(row) : parent;
     QVariant parentState = QVariant::fromValue(nullptr);
     QString parentTitle;
+    bool parentHere = true;
     int runningCount = 0;
     if (!shownParent.isEmpty()) {
-      const QString parentKey = thread->environmentId + QLatin1Char(':') + shownParent;
+      const QString parentKey = relativeKey(thread->environmentId, shownParent);
       const auto parentThread = m_store->thread(parentKey);
+      // Merging back is a command to one machine: both threads have to be on it.
+      parentHere = environmentOf(parentKey) == thread->environmentId;
       parentTitle = parentThread ? parentThread->title : QString();
       if (parentThread && running(*parentThread)) ++runningCount;
       parentState = QVariantMap{{QStringLiteral("key"), parentKey},
@@ -181,7 +197,7 @@ private:
     }
     QVariantList forks;
     for (const sidebar::Thread& other : m_store->threads()) {
-      if (other.environmentId != thread->environmentId || other.archivedAt) continue;
+      if (other.archivedAt) continue;
       if (parentId(m_store->threadRow(other.key())) != thread->id) continue;
       if (running(other)) ++runningCount;
       forks.append(QVariantMap{{QStringLiteral("key"), other.key()}, {QStringLiteral("title"), other.title}, {QStringLiteral("running"), running(other)}});
@@ -191,7 +207,7 @@ private:
       return;
     }
     const bool finished = thread->latestRun && thread->latestRun->status == QLatin1String("completed");
-    const bool canMerge = !parent.isEmpty() && !parentTitle.isEmpty() && finished;
+    const bool canMerge = !parent.isEmpty() && !parentTitle.isEmpty() && finished && parentHere;
     m_bridge->publish(QStringLiteral("lineage"),
                       QVariantMap{{QStringLiteral("threadKey"), key},
                                   {QStringLiteral("title"), runningCount > 0 ? QStringLiteral("Lineage · %1 running").arg(runningCount) : QStringLiteral("Lineage")},
@@ -201,6 +217,7 @@ private:
                                   {QStringLiteral("canMerge"), canMerge},
                                   {QStringLiteral("mergeHint"), parent.isEmpty() ? QString()
                                                                 : !finished      ? QStringLiteral("Complete a run in this fork before merging it back")
+                                                                : !parentHere    ? QStringLiteral("Move this fork to the machine its source is on to merge it back")
                                                                 : parentTitle.isEmpty() ? QStringLiteral("Merge this conversation back into its source")
                                                                                         : QStringLiteral("Merge this conversation back into %1").arg(parentTitle)}});
   }
