@@ -16,6 +16,7 @@ defmodule HalC2.Steps.Connections.Cluster do
   alias HalC2.Test.{Mc, WsClient}
   alias HalC2.Test.Mc.World
 
+  @tailnet_name "box.tail5e3a.ts.net"
   @other_version "999.0.0"
 
   @simulator %{
@@ -135,6 +136,36 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   step "the first makes a cluster invite", context do
     Map.put(context, :invite, invite(context.machines.a))
+  end
+
+  step "Tailscale serves the second at the machine's tailnet HTTPS name", context do
+    serve = %{"#{@tailnet_name}:443" => origin(context.machines.b)}
+    [_, "FAKE_TAILSCALE_STATE=" <> state, _] = context.machines.a.tailscale
+
+    File.write!(
+      state,
+      JSON.encode!(%{"self" => %{"DNSName" => @tailnet_name <> "."}, "serve" => serve})
+    )
+
+    Map.put(context, :tailscale_state, state)
+  end
+
+  step "the first makes a cluster invite over Tailscale", context do
+    assert {:ok, text} = command(context.machines.a, ["invite", "--tailscale"])
+    [_, link] = Regex.run(~r/cluster join (\S+)/, text)
+    Map.put(context, :invite, link)
+  end
+
+  step "the invite points at the tailnet name on the first's own port", context do
+    port = URI.parse(origin(context.machines.a)).port
+    assert String.starts_with?(context.invite, "https://#{@tailnet_name}:#{port}/?token=")
+    assert served(context)["#{@tailnet_name}:#{port}"] == "http://127.0.0.1:#{port}"
+    context
+  end
+
+  step "the tailnet HTTPS name still reaches the second", context do
+    assert served(context)["#{@tailnet_name}:443"] == origin(context.machines.b)
+    context
   end
 
   step "the invite carries the fingerprint of the first's certificate", context do
@@ -927,6 +958,9 @@ defmodule HalC2.Steps.Connections.Cluster do
     cert = X509.Certificate.from_pem!(File.read!(Path.join(dir, "mc.pem")))
     HalC2.Cluster.fingerprint(cert)
   end
+
+  defp served(context),
+    do: context.tailscale_state |> File.read!() |> JSON.decode!() |> Map.fetch!("serve")
 
   defp origin(machine) do
     path = :peer.call(machine.peer, HalC2.RuntimeRecord, :path, [])

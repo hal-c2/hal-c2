@@ -21,6 +21,27 @@ defmodule HalC2.TailscaleServe do
     with {:ok, name} <- magic_dns_name(),
          :ok <- claim(name, serve_port, "http://127.0.0.1:#{local_port}") do
       {:ok, base_url(name, serve_port)}
+    else
+      {:taken, message} -> {:error, message}
+      error -> error
+    end
+  end
+
+  @doc """
+  As `publish/2` on the default port, or on HTTPS `local_port` when something else
+  holds the default: for a caller with no port to ask its user for, so that two MCs
+  on one machine are both reachable.
+  """
+  @spec publish_free(pos_integer) :: {:ok, String.t()} | {:error, String.t()}
+  def publish_free(local_port) do
+    target = "http://127.0.0.1:#{local_port}"
+
+    with {:ok, name} <- magic_dns_name(),
+         {:taken, _} <- claim(name, @default_port, target) do
+      publish(local_port, local_port)
+    else
+      :ok -> publish(local_port)
+      error -> error
     end
   end
 
@@ -60,7 +81,7 @@ defmodule HalC2.TailscaleServe do
             if id == HalC2.Environment.id(),
               do: :ok,
               else:
-                {:error,
+                {:taken,
                  "Tailscale Serve on HTTPS port #{port} already fronts a different HAL-C2 server. Pass --tailscale-serve-port to publish this one on another port."}
 
           _ ->
@@ -74,7 +95,7 @@ defmodule HalC2.TailscaleServe do
 
   defp occupied(port),
     do:
-      {:error,
+      {:taken,
        "HTTPS port #{port} on the tailnet already serves something that is not a HAL-C2 server. Pass --tailscale-serve-port to publish this one on another port."}
 
   defp mapping(name, port) do
