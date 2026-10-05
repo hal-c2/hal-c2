@@ -28,6 +28,11 @@ defmodule HalC2.StreamsTest do
     assert state.seq == 2
     assert HalC2.StreamState.get(state, "turn-item") == %{}
     assert {:ok, 3} = Streams.commit("th-1", :thread, append("more"))
+
+    # A client catching up from before it is sent only the events that change something.
+    :ok = Streams.subscribe("th-1", self(), 1)
+    assert_receive {:hal_c2_stream, "th-1", {:events, [%{seq: 3, entity: "item-1"}]}}
+    assert_receive {:hal_c2_stream, "th-1", {:live, 3}}
   end
 
   test "subscribers get the current state, then live events" do

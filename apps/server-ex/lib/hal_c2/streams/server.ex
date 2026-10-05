@@ -204,7 +204,12 @@ defmodule HalC2.Streams.Server do
     replay =
       if is_integer(offset) and offset <= state.stream.seq,
         do:
-          Store.reduce_stream(state.path, state.id, offset, [], &[&1 | &2],
+          Store.reduce_stream(
+            state.path,
+            state.id,
+            offset,
+            [],
+            &if(StreamState.void?(&1), do: &2, else: [&1 | &2]),
             limit: @max_replay + 1
           ),
         else: :none
