@@ -71,6 +71,13 @@ Read ports from the `[dev-runner]` output. Worktrees derive stable preferences f
 but occupied ports can shift them. `HAL_C2_PORT_OFFSET` or `HAL_C2_DEV_INSTANCE` can select a
 different preference when needed.
 
+### Importing threads from T3 Code or the Node server
+
+`mise run threads:import` lists the threads of the T3 Code and Node HAL-C2 installs on this machine
+and imports the ones you pick into the running MC, each with its subagent threads, attachments and
+terminal scrollback. The install is only read, so its server can stay up. An MC started before this
+command existed needs `mise run mc:reload` first.
+
 ### Moving a thread between data directories
 
 `vp run thread:export --source <dir> --thread-id <id> --output <archive.json>` exports one thread

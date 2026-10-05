@@ -97,7 +97,8 @@ defmodule HalC2.Cluster.Command do
 
   # --- the running MC ----------------------------------------------------------
 
-  defp request(method, path, body \\ nil) do
+  @doc "Asks this machine's running MC over HTTP: `{:ok, answer}` or `{:error, message}`."
+  def request(method, path, body \\ nil, timeout \\ 30_000) do
     {:ok, _} = Application.ensure_all_started(:inets)
 
     with {:ok, token} <- token() do
@@ -109,7 +110,7 @@ defmodule HalC2.Cluster.Command do
           do: {url, headers},
           else: {url, headers, ~c"application/json", JSON.encode!(body)}
 
-      case :httpc.request(method, request, [timeout: 30_000], body_format: :binary) do
+      case :httpc.request(method, request, [timeout: timeout], body_format: :binary) do
         {:ok, {{_, 200, _}, _, answer}} ->
           {:ok, JSON.decode!(answer)}
 

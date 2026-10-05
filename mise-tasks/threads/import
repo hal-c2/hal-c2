@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Pick threads from T3 Code or an older HAL-C2 on this machine and import them into the running MC (mix hal_c2.threads.import)"
+#MISE dir="{{config_root}}/apps/server-ex"
+set -euo pipefail
+exec mix hal_c2.threads.import "$@"
