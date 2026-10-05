@@ -321,7 +321,14 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
       const release = fakeRelease();
       const home = temporaryDirectory();
 
-      for (const mcHome of ["scratch/mc", NodePath.join(home, ".t3", "elixir")]) {
+      const refused = [
+        "scratch/mc",
+        " ",
+        NodePath.join(home, ".t3", "elixir"),
+        NodePath.join(home, ".t3", "..scratch"),
+      ];
+
+      for (const mcHome of refused) {
         const host = startHost({
           env: { HAL_C2_MC_RELEASE: release, HOME: home, HAL_C2_MC_HOME: mcHome },
         });

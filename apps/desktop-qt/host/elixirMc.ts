@@ -126,14 +126,16 @@ function mcDirs(input: {
     };
   }
   const homeDir = input.homeDir ?? NodeOS.homedir();
-  const mcHome = input.env.HAL_C2_MC_HOME?.trim();
+  // Blank counts as set, as it does for the MC (config/runtime.exs).
+  const mcHome = input.env.HAL_C2_MC_HOME;
   if (mcHome) {
     // The MC ignores such a root and opens the installed app's files instead
     // (`HalC2.Paths.root?/4`), so the desktop app does not start it there.
     const root = absoluteEnvPath(mcHome, hostPlatform);
     const inOldHome = LEGACY_HOME_DIR_NAMES.some((name) => {
       const within = NodePath.relative(NodePath.join(homeDir, name), root ?? "");
-      return !within.startsWith("..") && !NodePath.isAbsolute(within);
+      const outside = within === ".." || within.startsWith(`..${NodePath.sep}`);
+      return !outside && !NodePath.isAbsolute(within);
     });
     if (root === undefined || inOldHome) {
       throw new HostError(
