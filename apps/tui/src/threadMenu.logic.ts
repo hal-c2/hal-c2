@@ -7,6 +7,8 @@ import type { Row } from "./components/Sidebar.logic.ts";
 export type ThreadContextMenuAction =
   | "settle"
   | "unsettle"
+  | "snooze"
+  | "unsnooze"
   | "rename"
   | "copy-path"
   | "copy-branch"
@@ -21,11 +23,21 @@ export function buildThreadContextMenuItems(input: {
   readonly row: Pick<Extract<Row, { kind: "thread" }>, "section" | "thread">;
   readonly settlementSupported: boolean;
   readonly hasWorkspacePath: boolean;
+  /** Whether the thread may be snoozed now; omitted by a host that cannot snooze. */
+  readonly canSnooze?: boolean;
   /** The cluster has another machine the thread could move to. */
   readonly canMove?: boolean;
 }): ReadonlyArray<ContextMenuItem<ThreadContextMenuAction>> {
   const { row } = input;
   const settled = row.section === "settled";
+  const snooze =
+    input.canSnooze === undefined
+      ? []
+      : [
+          row.section === "snoozed"
+            ? { id: "unsnooze" as const, label: "Wake thread" }
+            : { id: "snooze" as const, label: "Snooze", disabled: !input.canSnooze },
+        ];
   return [
     ...(input.settlementSupported
       ? [
@@ -40,6 +52,7 @@ export function buildThreadContextMenuItems(input: {
       label: "Rename thread",
       separatorBefore: input.settlementSupported,
     },
+    ...snooze,
     {
       id: "copy-path",
       label: "Copy path",

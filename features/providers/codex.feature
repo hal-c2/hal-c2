@@ -99,7 +99,7 @@ Feature: Codex
     Then the task list shows each step and its status
     And the finished plan is shown as a proposed plan
 
-  @shared @backlog
+  @shared @backlog-mobile
   Scenario: A plan Codex marked finished can still be implemented
     Given Codex proposed a plan and marked it finished
     Then the plan is offered for implementation
@@ -121,7 +121,6 @@ Feature: Codex
     When the user sends a message to a Codex thread
     Then the turn fails saying the launch arguments have a quote that is never closed
 
-  @backlog
   Scenario Outline: Codex launch arguments apply wherever Codex is started
     Given the Codex instance has launch arguments configured
     When <occasion>
@@ -137,7 +136,6 @@ Feature: Codex
     When the user reverts to the end of the first turn
     Then Codex's own thread is rolled back to that point
 
-  @backlog
   Scenario: Reverting a Codex turn works after Codex restarts
     Given a Codex thread with three turns
     And Codex's app-server restarted after the first turn
@@ -166,7 +164,6 @@ Feature: Codex
     When a commit needs a message
     Then Codex writes it in a read-only sandbox
 
-  @backlog
   Scenario: Several Codex accounts share one Codex home
     Given a shared Codex home and a second Codex instance with its own shadow home
     When the user signs in to the second instance
@@ -187,25 +184,21 @@ Feature: Codex
     When the user opens the model picker in an existing Codex thread
     Then that instance is not offered for the thread
 
-  @backlog
   Scenario: Answering a question while Codex keeps working
     Given Codex asked a question and kept working
     When the user answers it
     Then the answer reaches the running turn as a new message
 
-  @backlog
   Scenario: An answer after Codex finished starts a new turn
     Given Codex asked a question and then finished the turn
     When the user answers it
     Then the answer starts a new turn
 
-  @backlog
   Scenario: Unanswered Codex questions survive a reconnect
     Given Codex asked a question that is not answered yet
     When the client reconnects to the MC
     Then the question is still waiting for an answer
 
-  @backlog
   Scenario Outline: Codex tools can ask for access to another app
     Given a Codex tool asks for access to "Linear"
     When the user grants access <scope>
@@ -217,7 +210,6 @@ Feature: Codex
       | for this session      |
       | permanently           |
 
-  @backlog
   Scenario: Declining an app access request lets the tool continue without it
     Given a Codex tool asks for access to "Linear"
     When the user declines
@@ -247,7 +239,6 @@ Feature: Codex
       | reasoning    | none, minimal, low, medium, high, extra high, max     |
       | service tier | standard or fast                                      |
 
-  @backlog
   Scenario: Codex subagents appear as child threads
     When Codex starts a subagent
     Then the subagent's work is shown as a child of the turn

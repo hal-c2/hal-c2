@@ -289,10 +289,11 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
   } else if (type == QLatin1String("unsub")) {
     m_live.remove(id);
   } else if (type == QLatin1String("ping")) {
-    send({{QStringLiteral("t"), QStringLiteral("pong")}});
+    if (answerPings) send({{QStringLiteral("t"), QStringLiteral("pong")}});
   } else if (type == QLatin1String("rpc")) {
     const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket,
                   message.value(QLatin1String("environment")).toString()};
+    calls.append(rpc);
     if (down(rpc.environment, {})) {
       refuse(rpc, kUnavailable);
       return;
@@ -314,7 +315,10 @@ void FakeMc::dispatchCommand(const Rpc& rpc) {
   commands.append(rpc.payload);
   commandEnvironments.append(rpc.environment);
   const QString type = rpc.payload.value(QLatin1String("type")).toString();
-  auto answer = [this, rpc, known = refusals.contains(type), refusal = refusals.value(type)] {
+  // A refusal is for every command of a type, or (`type:threadId`) one thread's.
+  const QString one = type + QLatin1Char(':') + rpc.payload.value(QLatin1String("threadId")).toString();
+  const QString refused = refusals.contains(one) ? one : type;
+  auto answer = [this, rpc, known = refusals.contains(refused), refusal = refusals.value(refused)] {
     if (known) {
       refuse(rpc, refusal);
     } else {

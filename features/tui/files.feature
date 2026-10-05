@@ -98,7 +98,7 @@ Feature: Browsing workspace files and projects in the terminal
       | the workspace cannot be listed | the user browses files      | failed to list files |
       | "secret.bin" cannot be read    | the user opens "secret.bin" | failed to read file  |
 
-  @backlog @tui
+  @tui
   Scenario: The user attaches an image by picking it from the workspace
     When the user chooses "Attach image" from the command palette
     Then the file browser opens and says Enter attaches the selection
@@ -115,7 +115,7 @@ Feature: Browsing workspace files and projects in the terminal
     Given the workspace listing uses backslash separators
     Then the tree groups them into the same folders as forward slashes
 
-  @backlog @tui
+  @tui
   Scenario: The user renames a project or changes its default model
     When the user renames the project "shop" to "storefront"
     Then the project is listed as "storefront"
@@ -125,19 +125,19 @@ Feature: Browsing workspace files and projects in the terminal
     Given the project "shop" exists on two environments
     Then the thread list groups both under one "shop"
 
-  @backlog @tui
+  @tui
   Scenario: The user removes a project
     When the user removes the project "shop"
     Then "shop" and its threads leave the thread list
     And the project folder on disk is untouched
 
-  @backlog @tui
+  @tui
   Scenario: The user runs the project's preferred script
     Given "shop" has the preferred script "dev"
     When the user runs the project script
     Then "dev" runs in a terminal and its progress shows there
 
-  @backlog @tui
+  @tui
   Scenario: The user picks another project script
     Given "shop" has the scripts "dev", "test" and "lint"
     When the user runs "test"
@@ -148,41 +148,41 @@ Feature: Browsing workspace files and projects in the terminal
     When a project script exits with an error
     Then the terminal shows the failure and the status line reports it
 
-  @backlog @tui
+  @tui
   Scenario: The user adds or edits a project script
     When the user adds the script "build" to "shop"
     Then "build" is offered with the other scripts
 
-  @backlog @tui
+  @tui
   Scenario: Image and Markdown files preview in the browser
     When the user opens "README.md" in the file browser
     Then it is shown as rendered Markdown
 
-  @backlog @tui
+  @tui
   Scenario: The user edits and saves a file with conflict handling
     Given the user is editing "src/app.ts"
     And the file changed on disk since it was opened
     When the user saves
     Then the client warns about the conflict instead of overwriting
 
-  @backlog @tui
+  @tui
   Scenario: The user opens a file in their editor
     When the user opens "src/app.ts" in their editor
     Then the file opens in the user's editor
 
-  @backlog @tui
+  @tui
   Scenario: The user lists and opens preview URLs
     Given the dev server announced "http://localhost:5173"
     When the user opens the preview list
     Then "http://localhost:5173" is listed and can be opened or copied
 
-  @backlog @tui
+  @tui
   Scenario: The user refreshes and closes a preview
     Given a preview is open
     When the user closes it
     Then it leaves the preview list
 
-  @backlog @tui
+  @tui
   Scenario: A script's auto-open URL appears as a preview
     Given a project script is set to open its URL
     When the script prints its URL

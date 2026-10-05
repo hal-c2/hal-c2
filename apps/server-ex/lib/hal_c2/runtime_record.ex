@@ -29,6 +29,44 @@ defmodule HalC2.RuntimeRecord do
     |> then(&if(host, do: Map.put(&1, "host", host), else: &1))
   end
 
+  @doc """
+  The MC running with no HAL-C2 home configured, for a tool started with none either
+  (`own` is its `:home`, `nil` or `:dev`): `{home, record}` of the profile that has a
+  live record, the tool's own profile first, or nil when neither runs. So
+  `mix hal_c2.pair` from a checkout finds the installed MC, and the other way round.
+  """
+  def locate(own) when own in [nil, :dev] do
+    Enum.find_value([own | [nil, :dev] -- [own]], fn home ->
+      state = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home()).state
+
+      with {:ok, text} <- File.read(Path.join(state, "server-runtime.json")),
+           {:ok, %{"pid" => pid, "origin" => origin} = record} when is_integer(pid) <-
+             JSON.decode(text),
+           true <- is_binary(origin) and alive?(pid) do
+        {home, record}
+      else
+        _ -> nil
+      end
+    end)
+  end
+
+  def locate(_own), do: nil
+
+  # A record outlives an MC that was killed; its process does not.
+  defp alive?(pid) do
+    case HalC2.Paths.platform() do
+      :windows ->
+        # tasklist exits 0 either way; a pid that is gone gets a line of prose instead.
+        {out, 0} = System.cmd("tasklist", ["/FI", "PID eq #{pid}", "/FO", "CSV", "/NH"])
+        String.contains?(out, ",\"#{pid}\",")
+
+      :unix ->
+        match?({_, 0}, System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true))
+    end
+  rescue
+    _ -> false
+  end
+
   @impl true
   def init(_opts) do
     Process.flag(:trap_exit, true)

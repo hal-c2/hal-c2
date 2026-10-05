@@ -522,6 +522,158 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
       &(&1["pendingBackgroundTasks"] == [])
     )
 
+    # The exit wakes the thread with a turn of its own; steps go on once it has run.
+    World.await_run(
+      context,
+      context.thread,
+      &(&1["ordinal"] == 3 and &1["status"] == "completed")
+    )
+
+    World.await_row(World.thread_id(context, context.thread), &(&1["activeRunId"] == nil))
+    context
+  end
+
+  step "{string} runs a turn telling Codex the background command finished",
+       %{args: [thread]} = context do
+    text = "The background command `npm run dev` exited with code 0."
+    state = World.state(context, thread)
+
+    # One new run, started by the MC for the agent, whose message Codex was sent.
+    assert [%{"ordinal" => 1}, %{"ordinal" => 2}, %{"ordinal" => 3} = run] =
+             Enum.sort_by(HalC2.StreamState.list(state, "run"), & &1["ordinal"])
+
+    assert %{"status" => "completed", "providerInstanceId" => "codex"} = run
+
+    assert %{
+             "role" => "user",
+             "text" => ^text,
+             "createdBy" => "agent",
+             "creationSource" => "provider"
+           } = state.entities["message"][run["userMessageId"]]
+
+    assert %{"threadId" => "native-thread-1", "input" => [%{"text" => ^text} | _]} =
+             List.last(World.codex_requests(context, "turn/start"))
+
+    # The command it reports is the one run 2 left behind, ended with its output.
+    assert %{"status" => "completed", "output" => "bye", "runId" => left_by} =
+             state.entities["turn-item"]["turn-item:codex:cmd-bg"]
+
+    assert left_by != run["id"]
+    context
+  end
+
+  # --- continuing after a restart ended background work ---------------------------------
+
+  # The turn completed with its dev server still running; the provider process then
+  # dies with the MC, with no time to end the command itself.
+  step "thread {string} finished its turn and left a command running in the background",
+       %{args: [thread]} = context do
+    context = idle_turn(context, thread)
+    context = World.dispatch_message(context, thread, "Start the dev server in the background")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    run = World.await_run(context, thread, &(&1["ordinal"] == 2 and &1["status"] == "completed"))
+    context = await_background(context)
+    Process.exit(context.runtime, :kill)
+    assert_receive {:DOWN, _, :process, _, :killed}
+    assert length(World.row(context, thread)["pendingBackgroundTasks"]) == 1
+    Map.put(context, :settled_run, run)
+  end
+
+  step "{string} receives one continuation turn", %{args: [thread]} = context do
+    continuations =
+      for %{"creationSource" => "server", "role" => "user"} = message <-
+            World.entities(context, thread, "message"),
+          do: message
+
+    assert [%{"createdBy" => "agent", "runId" => run_id} = message] = continuations
+
+    # A run of its own after the settled one, on the same model, sent to the provider.
+    state =
+      World.await_state(context, thread, &(&1.entities["run"][run_id]["status"] in @started))
+
+    run = state.entities["run"][run_id]
+    assert run["ordinal"] == context.settled_run["ordinal"] + 1
+    assert run["modelSelection"] == context.settled_run["modelSelection"]
+
+    assert World.state(context, thread).entities["run"][context.settled_run["id"]]["status"] ==
+             "completed"
+
+    Map.put(context, :continuation_message, message)
+  end
+
+  step "the continuation names the background command the restart ended", context do
+    text = context.continuation_message["text"]
+    assert text =~ "restarted"
+    assert text =~ "`npm run dev`"
+
+    # The command itself was ended as interrupted, and Codex was sent the message.
+    assert %{"status" => "interrupted"} =
+             World.state(context, context.thread).entities["turn-item"]["turn-item:codex:cmd-bg"]
+
+    assert Enum.any?(
+             World.codex_requests(context, "turn/start"),
+             &match?(%{"input" => [%{"text" => ^text} | _]}, &1)
+           )
+
+    context
+  end
+
+  # --- native subagents ------------------------------------------------------------------
+
+  # Claude's own subagent (its Agent tool), running in the background when the provider
+  # process dies with the MC. Its work shows in a child thread of its own.
+  step "a native provider subagent thread of {string} was running when the MC stopped",
+       %{args: [thread]} = context do
+    context = background_turn(context, thread)
+
+    assert %{"status" => "running", "childThreadId" => child, "id" => id} =
+             Enum.find(
+               World.entities(context, thread, "subagent"),
+               &(&1["origin"] == "provider_native")
+             )
+
+    World.await_row(child, &(&1["lineage"]["relationshipToParent"] == "subagent"))
+    Process.exit(context.runtime, :kill)
+    assert_receive {:DOWN, _, :process, _, :killed}
+
+    context
+    |> put_in([:threads, "subagent"], child)
+    |> Map.merge(%{thread: thread, native_subagent: id})
+  end
+
+  step "the subagent thread is settled or interrupted", context do
+    state = World.state(context, context.thread)
+    id = context.native_subagent
+    child = World.thread_id(context, "subagent")
+
+    assert %{"status" => "interrupted", "completedAt" => at, "childThreadId" => ^child} =
+             state.entities["subagent"][id]
+
+    assert is_binary(at)
+    assert %{"status" => "interrupted"} = state.entities["node"][id]
+    assert %{"status" => "interrupted"} = state.entities["turn-item"]["turn-item:subagent:#{id}"]
+    context
+  end
+
+  step "it is not left running", context do
+    child = World.thread_id(context, "subagent")
+    active = ~w(preparing queued starting running waiting pending)
+
+    # Neither the child thread nor its parent shows work in progress to a client.
+    for id <- [child, World.thread_id(context, context.thread)] do
+      row = World.await_row(id, &(&1["pendingBackgroundTasks"] == []))
+      assert row["activeRunId"] == nil
+      refute row["status"] in active
+      refute row["activityRunStatus"] in active
+    end
+
+    state = World.state(context, "subagent")
+
+    for kind <- ~w(run node turn-item subagent), entity <- HalC2.StreamState.list(state, kind) do
+      refute entity["status"] in active, "#{kind} #{entity["id"]} is #{entity["status"]}"
+    end
+
+    refute Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["streaming"] == true))
     context
   end
 

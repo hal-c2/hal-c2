@@ -938,8 +938,18 @@ defmodule HalC2.ThreadArchive do
 
   defp session(state, thread, cwd) do
     with %{"files" => files} = session <- PortableSessions.export(state, thread, cwd),
-         do: %{session | "files" => for({name, path} <- files, do: carried(name, path))}
+         do: %{session | "files" => for({name, source} <- files, do: session_file(name, source))}
   end
+
+  # What a provider's own export printed goes to disk like the rest an archive makes.
+  defp session_file(name, {:data, data}) do
+    path = scratch()
+    File.write!(path, data)
+    File.chmod(path, 0o600)
+    made(name, path)
+  end
+
+  defp session_file(name, path), do: carried(name, path)
 
   defp place_session(%{"session" => nil}, _root, _opts), do: {nil, []}
 

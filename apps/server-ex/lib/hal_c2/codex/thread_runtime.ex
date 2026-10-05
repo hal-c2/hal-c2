@@ -149,7 +149,12 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   @impl true
   def handle_call({:start_turn, turn}, _from, state) do
+    # A thread saved under an older model name runs on the model it names today.
+    turn = %{turn | model: HalC2.Codex.Provider.current_slug(turn.model)}
     state = %{state | turn: turn, items: %{}, failure: nil, running: %{}}
+    # The threads this turn's subagents run in (`spawnAgent`): native thread id ->
+    # `%{sub: NativeSubagent handle, done: bool}`.
+    state = Map.put(state, :subagents, %{})
 
     case begin_turn(state, turn) do
       {:ok, state} ->
@@ -269,6 +274,13 @@ defmodule HalC2.Codex.ThreadRuntime do
         state = resolve_request(%{state | requests: requests}, request_id, response, status)
         {:reply, :ok, state}
 
+      {{:elicitation, rpc_id, params}, requests} ->
+        decision = response["decision"] || "decline"
+        answer = HalC2.Codex.Elicitation.response(params, decision)
+        Connection.respond(state.conn, rpc_id, {:ok, answer})
+        state = resolve_request(%{state | requests: requests}, request_id, decision)
+        {:reply, :ok, state}
+
       {rpc_id, requests} ->
         decision = response["decision"] || "decline"
         # Codex has no "always"; the closest is for the rest of the session.
@@ -334,6 +346,42 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:noreply, %{state | requests: Map.put(state.requests, request_id, {:question, id, ids})}}
   end
 
+  # A tool asking for access to another app: an approval naming the app, with the
+  # scopes the request offers. One the user's decision could not answer is declined.
+  def handle_info(
+        {:json_rpc, conn, {:request, id, "mcpServer/elicitation/request", params}},
+        %{turn: turn} = state
+      ) do
+    if turn == nil or HalC2.Codex.Elicitation.response(params, "accept")["action"] != "accept" do
+      Connection.respond(conn, id, {:ok, %{"action" => "decline"}})
+      {:noreply, state}
+    else
+      native =
+        if params["mode"] == "url",
+          do: params["elicitationId"] || "request-#{id}",
+          else: "mcp-elicitation:#{params["serverName"]}"
+
+      %{app: app, options: options} = HalC2.Codex.Elicitation.describe(params)
+
+      {state, request_id} =
+        open_request(flush(state), native, "mcp-elicitation", params["message"])
+
+      commit(state, fn stream ->
+        [
+          Orchestration.upsert(
+            stream,
+            "turn-item",
+            "turn-item:approval:#{native}",
+            &Map.merge(&1, %{"appName" => app, "options" => options})
+          )
+        ]
+      end)
+
+      request = {:elicitation, id, params}
+      {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
+    end
+  end
+
   # Other requests are not wired up yet; refuse rather than hang the turn.
   def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state) do
     Connection.respond(
@@ -362,7 +410,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   # stopping; the next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do
-    end_background(%{state | conn: nil}, "interrupted")
+    unless HalC2.Orchestration.Recovery.stopping?(),
+      do: end_background(%{state | conn: nil}, "interrupted")
+
     :ok
   catch
     _, _ -> :ok
@@ -515,10 +565,13 @@ defmodule HalC2.Codex.ThreadRuntime do
         Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
       )
 
-    # The instance's variables in settings (such as CODEX_HOME) reach Codex.
+    # The instance's variables in settings (such as CODEX_HOME) reach Codex, over the
+    # home its settings name (`HalC2.Codex.Home`).
     env = if instance, do: Enum.to_list(HalC2.Settings.instance_env(instance)), else: []
 
     with {:ok, args} <- launch_args(instance),
+         {:ok, home} <- HalC2.Codex.Home.env(instance),
+         env = home ++ env,
          {:ok, conn} <-
            Connection.start_link(
              cmd: cmd ++ args,
@@ -548,12 +601,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp connect(state, _turn), do: {:ok, state}
 
-  # The instance's launch arguments follow `app-server`, split as a shell would.
-  defp launch_args(instance) do
-    {:ok, OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")}
-  rescue
-    RuntimeError -> {:error, "the launch arguments in settings have a quote that is never closed"}
-  end
+  # The instance's launch arguments follow `app-server`.
+  defp launch_args(instance), do: HalC2.Codex.Provider.launch_args(instance)
 
   # A session carried from another machine that this Codex cannot open (a newer
   # Codex wrote it, say) starts a new thread with the handoff instead, and the user
@@ -730,6 +779,39 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp notification(_method, _params, %{turn: nil} = state), do: state
 
+  # A subagent's own thread reports under its thread id: its answer goes to its child
+  # thread, and nothing it says (its `turn/completed` least of all) is this turn's.
+  defp notification(method, %{"threadId" => thread} = params, %{subagents: subagents} = state)
+       when is_map_key(subagents, thread) do
+    entry = subagents[thread]
+
+    sub =
+      case {method, params} do
+        {"item/agentMessage/delta", %{"delta" => delta}} when is_binary(delta) ->
+          HalC2.Orchestration.NativeSubagent.append(entry.sub, delta)
+
+        {"item/completed", %{"item" => %{"type" => "agentMessage", "text" => text}}}
+        when is_binary(text) and entry.sub.text == "" ->
+          HalC2.Orchestration.NativeSubagent.append(entry.sub, text)
+
+        _ ->
+          entry.sub
+      end
+
+    %{state | subagents: Map.put(subagents, thread, %{entry | sub: sub})}
+  end
+
+  # Codex's `spawnAgent` tool: each thread it starts is a subagent of this turn.
+  defp notification(
+         "item/" <> event,
+         %{"item" => %{"type" => "collabAgentToolCall"} = item},
+         state
+       )
+       when event in ["started", "completed"] do
+    state = spawned(flush(state), item)
+    if event == "completed", do: subagent_states(state, item), else: state
+  end
+
   # Another turn's item that is not running any more (a command stopped with its
   # turn, say) is not this turn's.
   defp notification(
@@ -810,16 +892,98 @@ defmodule HalC2.Codex.ThreadRuntime do
          |> ensure_item(native, :command, %{"input" => "", "output" => ""})
          |> buffer(native, "output", delta)
 
+  # A question Codex asks without waiting for the answer (`delivery: "async"`): there
+  # is no call to answer, so the user's answer goes back as a message
+  # (`HalC2.Orchestration`'s `runtime-request.respond`).
+  defp notification(
+         "item/completed",
+         %{
+           "item" =>
+             %{"type" => "agentMessage", "delivery" => "async", "questions" => [_ | _] = asked} =
+               item
+         },
+         state
+       ) do
+    questions =
+      for {question, index} <- Enum.with_index(asked) do
+        %{
+          "id" => Integer.to_string(index),
+          "header" => "Question",
+          "question" => text(question["title"], "Choose an answer."),
+          "options" =>
+            for(
+              label <- question["options"] || [],
+              is_binary(label),
+              do: %{"label" => label, "description" => ""}
+            )
+        }
+      end
+
+    {state, _request_id} = open_async_question(flush(state), "async:#{item["id"]}", questions)
+    state
+  end
+
   defp notification("item/completed", %{"item" => item}, state),
     do: complete_item(flush(state), item)
+
+  # How full the conversation's context is, for the context meter. It belongs to the
+  # provider thread, so it outlives the run, and a model change, until Codex says more.
+  defp notification(
+         "thread/tokenUsage/updated",
+         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage},
+         state
+       )
+       when is_integer(used) do
+    counts =
+      for {key, field} <- [
+            {"inputTokens", "inputTokens"},
+            {"cachedInputTokens", "cachedInputTokens"},
+            {"outputTokens", "outputTokens"},
+            {"reasoningOutputTokens", "reasoningOutputTokens"}
+          ],
+          is_integer(last[field]),
+          into: %{"usedTokens" => max(used, 0)},
+          do: {key, max(last[field], 0)}
+
+    window = usage["modelContextWindow"]
+
+    snapshot =
+      if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(
+          stream,
+          "provider-thread",
+          state.turn.ids.provider_thread,
+          &Map.put(&1, "contextUsage", snapshot)
+        )
+      ]
+    end)
+
+    state
+  end
 
   defp notification("error", %{"error" => error} = params, state) do
     cond do
       params["willRetry"] == true ->
         retry_item(state, error)
 
+      # A structured `usage_limit` failure, as Claude's: the thread reads its error class
+      # and reset from it, and its queue waits (`TurnWriter.finish/3`).
       error_code(error["codexErrorInfo"]) in ["usageLimitExceeded", "rateLimitExceeded"] ->
-        %{state | failure: usage_limit_message(Map.get(state, :rate_limits), DateTime.utc_now())}
+        snapshot = Map.get(state, :rate_limits)
+        at = DateTime.utc_now()
+
+        failure = %{
+          "class" => "usage_limit",
+          "message" => usage_limit_message(snapshot, at),
+          "code" => error_code(error["codexErrorInfo"]),
+          "retryable" => nil,
+          "resetAt" => usage_limit_reset(snapshot, at)
+        }
+
+        %{state | failure: failure}
 
       true ->
         %{state | failure: error["message"] || "Codex reported an error"}
@@ -948,20 +1112,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # that simply ran out): the used-up window resetting last, and what to do next.
   defp usage_limit_message(snapshot, at) do
     reset =
-      (snapshot || %{})
-      |> HalC2.ProviderUsageLimits.Codex.windows()
-      |> Enum.flat_map(fn window ->
-        with true <- window["usedPercent"] >= 100,
-             {:ok, resets, _} <- DateTime.from_iso8601(window["resetsAt"] || ""),
-             wait when wait > 0 <- DateTime.diff(resets, at, :millisecond),
-             do: [{wait, window["kind"]}],
-             else: (_ -> [])
-      end)
-      |> Enum.max_by(&elem(&1, 0), fn -> nil end)
-
-    reset =
-      case reset do
-        {wait, kind} -> " The #{kind} limit resets in #{wait_text(wait)}."
+      case used_up_window(snapshot, at) do
+        {wait, kind, _resets} -> " The #{kind} limit resets in #{wait_text(wait)}."
         nil -> ""
       end
 
@@ -985,6 +1137,28 @@ defmodule HalC2.Codex.ThreadRuntime do
       end
 
     "Codex usage limit reached." <> reset <> next
+  end
+
+  # When the used-up window resetting last resets (ISO), or nil when Codex did not say.
+  defp usage_limit_reset(snapshot, at) do
+    case used_up_window(snapshot, at) do
+      {_wait, _kind, resets} -> resets
+      nil -> nil
+    end
+  end
+
+  # The used-up window that resets last: `{ms to wait, kind, resetsAt}`.
+  defp used_up_window(snapshot, at) do
+    (snapshot || %{})
+    |> HalC2.ProviderUsageLimits.Codex.windows()
+    |> Enum.flat_map(fn window ->
+      with true <- window["usedPercent"] >= 100,
+           {:ok, resets, _} <- DateTime.from_iso8601(window["resetsAt"] || ""),
+           wait when wait > 0 <- DateTime.diff(resets, at, :millisecond),
+           do: [{wait, window["kind"], window["resetsAt"]}],
+           else: (_ -> [])
+    end)
+    |> Enum.max_by(&elem(&1, 0), fn -> nil end)
   end
 
   # Coarse remaining wait, as the usage rows read: `5d 5h`, `3h 20m`, `12m`.
@@ -1035,7 +1209,49 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp background_done(state, native, item) do
     {%{item: %{id: item_id, node: node_id}}, background} = Map.pop(state.background, native)
     end_command(state, item_id, node_id, command_status(item), &command_result(&1, item))
-    %{state | background: background}
+    state = %{state | background: background}
+    # Between turns Codex does not hear of it by itself: the thread tells it.
+    if state.turn == nil, do: wake(state.thread_id, item)
+    state
+  end
+
+  # A turn telling Codex that a command it left in the background ended, queued like
+  # any message. Off this process, since starting the run calls back into it. An
+  # archived or deleted thread is left alone.
+  defp wake(thread_id, item) do
+    Task.start(fn ->
+      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+      thread = HalC2.StreamState.get(stream, "thread")[thread_id] || %{}
+
+      latest =
+        stream |> HalC2.StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
+
+      message_id = Entities.new_id("message")
+
+      ended =
+        case item["exitCode"] do
+          code when is_integer(code) -> "exited with code #{code}"
+          _ -> "ended (#{command_status(item)})"
+        end
+
+      if thread["archivedAt"] == nil and thread["deletedAt"] == nil do
+        with {:error, reason} <-
+               Orchestration.dispatch(%{
+                 "type" => "message.dispatch",
+                 "commandId" => "command:codex-background:#{message_id}",
+                 "threadId" => thread_id,
+                 "messageId" => message_id,
+                 "text" => "The background command `#{item["command"]}` #{ended}.",
+                 "attachments" => [],
+                 "modelSelection" => latest["modelSelection"],
+                 "dispatchMode" => %{"type" => "queue_after_active"},
+                 "createdBy" => "agent",
+                 "creationSource" => "provider"
+               }) do
+          Logger.warning("codex background wake in #{thread_id} has no run: #{inspect(reason)}")
+        end
+      end
+    end)
   end
 
   # Stops every background command, and ends its item as `status`.
@@ -1158,6 +1374,54 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp complete_item(state, _item), do: state
+
+  defp spawned(state, %{"tool" => "spawnAgent", "id" => id} = item) do
+    known = Map.get(state, :subagents, %{})
+
+    subagents =
+      for thread <- item["receiverThreadIds"] || [],
+          is_binary(thread) and not is_map_key(known, thread),
+          into: known do
+        sub =
+          HalC2.Orchestration.NativeSubagent.start(state.turn.ids, "#{id}:#{thread}", %{
+            "prompt" => item["prompt"] || "",
+            "title" => nil,
+            "model" => if(item["model"] in [nil, ""], do: nil, else: item["model"])
+          })
+
+        {thread, %{sub: sub, done: false}}
+      end
+
+    Map.put(state, :subagents, subagents)
+  end
+
+  defp spawned(state, _item), do: Map.put_new(state, :subagents, %{})
+
+  @agent_status %{
+    "interrupted" => "interrupted",
+    "completed" => "completed",
+    "errored" => "failed",
+    "shutdown" => "cancelled",
+    "notFound" => "failed"
+  }
+
+  # Where each agent of a collab tool call stands; one that ended ends its subagent
+  # with what it said last.
+  defp subagent_states(state, item) do
+    subagents =
+      for {thread, agent} <- item["agentsStates"] || %{}, reduce: state.subagents do
+        subagents ->
+          with %{done: false, sub: sub} = entry <- subagents[thread],
+               status when is_binary(status) <- @agent_status[agent["status"]] do
+            sub = HalC2.Orchestration.NativeSubagent.finish(sub, status, agent["message"])
+            Map.put(subagents, thread, %{entry | sub: sub, done: true})
+          else
+            _ -> subagents
+          end
+      end
+
+    %{state | subagents: subagents}
+  end
 
   # What a web search looked for, as the Node server lists it.
   defp web_patterns(item) do

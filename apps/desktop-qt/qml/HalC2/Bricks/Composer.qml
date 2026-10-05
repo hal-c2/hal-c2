@@ -35,6 +35,32 @@ Rectangle {
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
+    // Vim keys (Settings → General): Escape leaves insert mode.
+    readonly property bool vimKeys: {
+        Settings.device;
+        return Settings.setting("composerVimKeys") === true;
+    }
+    readonly property alias vim: vim
+    // Rich text (Settings → General): the draft's Markdown reads as formatted.
+    readonly property bool richText: {
+        Settings.device;
+        return Settings.setting("composerRichTextEnabled") !== false;
+    }
+
+    // Collapse on scroll (Settings → General): while the user scrolls an
+    // existing thread's conversation (the layout says so), a one-line prompt
+    // rests as a single line without its context strip; focusing the editor or
+    // typing brings it back.
+    property bool conversationScrolled: false
+    readonly property bool collapseOnScroll: {
+        Settings.device;
+        return Settings.setting("composerCollapseOnScroll") !== false;
+    }
+    property bool scrollCollapsed: false
+    readonly property bool resting: scrollCollapsed && collapseOnScroll && ready && model.routeKind !== "draft" && !/[\r\n]/.test(input.text)
+
+    onConversationScrolledChanged: scrollCollapsed = conversationScrolled
+
     // Opt-in input plugins share the same draft synchronization as typing.
     property alias editor: input
     property alias editorActions: editorActions.data
@@ -93,6 +119,9 @@ Rectangle {
                 // The stash takes the text as typed, not as last debounced.
                 composer.flushText();
                 Shell.dispatch("composer.stash");
+            } else if (action === "composer.submit.key") {
+                // composer.sendAlternate or sendBackground bound to another key.
+                composer.submit(payload.intent);
             } else if (action === "composer.focus") {
                 // A dismissed command palette hands the keyboard back.
                 composer.focusInput();
@@ -135,8 +164,8 @@ Rectangle {
     }
 
     // Up on the editor's first line recalls the thread's earlier prompts and
-    // Down on its last steps back. ComposerController keeps no prompt history
-    // yet and drops the step (features/composer/context-references.feature).
+    // Down on its last steps forward again; ComposerController decides whether
+    // the draft is one a recall may replace.
     function stepPromptHistory(direction) {
         const caret = input.positionToRectangle(input.cursorPosition).y;
         const edge = input.positionToRectangle(direction === "backward" ? 0 : input.length).y;
@@ -199,14 +228,33 @@ Rectangle {
         });
     }
 
+    // Files join the draft (or the answer the agent waits on); a folder is
+    // named by its path.
     function attach(urls) {
-        const files = Shell.readImageFiles(urls);
-        if (files.length === 0) {
+        const files = Shell.readAttachmentFiles(urls);
+        const folders = Shell.directoryPaths(urls);
+        if (files.length === 0 && folders.length === 0) {
             return;
         }
         Shell.dispatch("composer.attach", {
-            files: files
+            files: files,
+            folders: folders
         });
+    }
+
+    // A paste too large for the prompt becomes a text file; Paste as Text
+    // (mod+shift+V) keeps it in the editor.
+    function paste(asText) {
+        const text = Shell.clipboardText();
+        if (text.length === 0) return false;
+        const selected = input.selectionEnd - input.selectionStart;
+        if (!asText && Shell.pasteAttaches(text, input.length - selected)) {
+            Shell.dispatch("composer.attach", {
+                files: [{ name: "pasted-text.txt", text: text }]
+            });
+            return true;
+        }
+        return composer.insertText(text);
     }
 
     // What Enter with these modifiers sends, as the controller resolves it from the
@@ -282,7 +330,25 @@ Rectangle {
         }
     }
 
+    // A draft already there when the composer is built keeps its caret.
+    Component.onCompleted: input.cursorPosition = Math.min(publishedCursor, input.length)
+
     onSuggestionsChanged: suggestionList.currentIndex = suggestions.length > 0 ? 0 : -1
+
+    ComposerVimKeys {
+        id: vim
+        objectName: "vimKeys"
+
+        composer: composer
+        vimEnabled: composer.vimKeys
+    }
+
+    ComposerHighlighter {
+        document: input.textDocument
+        rich: composer.richText
+        markerColor: Qt.alpha(composer.muted, 0.6)
+        codeFont: Theme.fontMono
+    }
 
     Timer {
         id: textDebounce
@@ -295,6 +361,7 @@ Rectangle {
     // that hosts the composer can answer it.
     TurnRequests {
         id: turnRequests
+        objectName: "turnRequests"
 
         anchors.top: parent.top
         anchors.left: parent.left
@@ -366,7 +433,7 @@ Rectangle {
                         Text {
                             text: suggestion.modelData.label
                             color: composer.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                             elide: Text.ElideMiddle
@@ -377,7 +444,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: suggestion.modelData.description
                             color: composer.muted
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                             elide: Text.ElideMiddle
                         }
@@ -389,9 +456,15 @@ Rectangle {
                     visible: suggestionList.count === 0
                     text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
                     color: composer.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
             }
+        }
+
+        ComposerUsageLimits {
+            Layout.fillWidth: true
+            Layout.leftMargin: 22
+            Layout.rightMargin: 22
         }
 
         // The stash (composer.stash), on the card's top edge like the
@@ -430,14 +503,14 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Stash")
                     color: composer.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 }
 
                 Text {
                     text: composer.stashEntries.length
                     color: composer.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 ShellButton {
@@ -501,7 +574,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: stashRow.modelData.snippet
                             color: composer.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                             elide: Text.ElideRight
                             Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
@@ -529,7 +602,7 @@ Rectangle {
                         ? qsTr("Nothing stashed yet. Press %1 with a prompt in the composer to stash it.").arg(Shell.state.composerStash.shortcut)
                         : qsTr("Nothing stashed yet.")
                     color: composer.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
             }
         }
@@ -578,7 +651,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: qsTr("Editing a queued message")
                         color: composer.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                     }
 
@@ -597,69 +670,46 @@ Rectangle {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.topMargin: 12
-                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || composer.citations.length > 0)
+                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || composer.citations.length > 0)
                     spacing: 6
 
                     Repeater {
                         model: composer.attachments
 
-                        // The image's thumbnail (model.preview), or an icon
-                        // for one Qt cannot read.
-                        delegate: Rectangle {
-                            id: attachment
-
+                        delegate: ComposerAttachment {
                             required property var modelData
-                            readonly property bool pictured: thumbnail.status === Image.Ready
 
-                            objectName: "attachment-" + modelData.id
-                            width: 64
-                            height: 64
-                            radius: 2
-                            color: Qt.alpha(composer.foreground, 0.04)
-                            border.color: Qt.alpha(composer.foreground, 0.12)
+                            attachment: modelData
+                            onRemoveRequested: Shell.dispatch("composer.attachment.remove", {
+                                id: modelData.id
+                            })
+                            onRetryRequested: Shell.dispatch("composer.attachment.retry", {
+                                id: modelData.id
+                            })
+                            onOpenRequested: Shell.dispatch("attachment.view", {
+                                id: modelData.id
+                            })
+                        }
+                    }
 
-                            Image {
-                                id: thumbnail
-                                objectName: "attachmentThumbnail"
-                                anchors.fill: parent
-                                anchors.margins: 1
-                                source: attachment.modelData.preview ?? ""
-                                fillMode: Image.PreserveAspectCrop
-                                clip: true
-                            }
-                            ShellIcon {
-                                visible: !attachment.pictured
-                                anchors.centerIn: parent
-                                name: "image"
-                                size: 20
-                                color: composer.iconMuted
-                            }
-                            HoverHandler {
-                                id: attachmentHover
-                            }
-                            ToolTip.visible: attachmentHover.hovered
-                            ToolTip.delay: 500
-                            ToolTip.text: attachment.modelData.name
-                            ShellButton {
-                                id: removeAttachment
-                                anchors.top: parent.top
-                                anchors.right: parent.right
-                                anchors.margins: 2
-                                implicitWidth: 18
-                                implicitHeight: 18
-                                iconName: "x"
-                                iconSize: 12
-                                Accessible.name: qsTr("Remove %1").arg(attachment.modelData.name)
-                                background: Rectangle {
-                                    radius: 9
-                                    color: Qt.alpha(composer.canvas, 0.8)
-                                    border.color: removeAttachment.focusRing
-                                    border.width: removeAttachment.visualFocus ? 1 : 0
-                                }
-                                onClicked: Shell.dispatch("composer.attachment.remove", {
-                                    id: attachment.modelData.id
-                                })
-                            }
+                    // Notes on a diff's lines; a click takes one off the prompt.
+                    Repeater {
+                        model: composer.ready ? composer.model.reviewComments ?? [] : []
+
+                        delegate: ShellButton {
+                            required property var modelData
+
+                            objectName: "reviewComment-" + modelData.id
+                            implicitHeight: 24
+                            iconName: "message-square"
+                            text: modelData.label
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            Accessible.name: qsTr("Remove the comment on %1").arg(text)
+                            ToolTip.visible: hovered
+                            ToolTip.text: modelData.text
+                            onClicked: Shell.dispatch("composer.reviewComment.remove", {
+                                id: modelData.id
+                            })
                         }
                     }
 
@@ -673,7 +723,7 @@ Rectangle {
                             implicitHeight: 24
                             iconName: "terminal"
                             text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             Accessible.name: qsTr("Remove terminal selection %1").arg(text)
                             onClicked: Shell.dispatch("composer.terminalContext.remove", {
                                 id: modelData.id
@@ -705,7 +755,7 @@ Rectangle {
                             implicitHeight: 24
                             iconName: modelData.comment === null ? "quote" : "pencil"
                             text: preview.length > 40 ? preview.slice(0, 40) + "\u2026" : preview
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             Accessible.name: qsTr("Assistant quote: %1").arg(preview)
                             onClicked: citationEditor.open()
 
@@ -740,7 +790,7 @@ Rectangle {
                                         maximumLineCount: 6
                                         elide: Text.ElideRight
                                         color: composer.muted
-                                        font.pixelSize: 12
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
                                         font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                                     }
 
@@ -765,7 +815,7 @@ Rectangle {
                                             implicitHeight: 24
                                             subtle: true
                                             text: qsTr("Remove quote")
-                                            font.pixelSize: 12
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
                                             onClicked: {
                                                 const id = citationChip.modelData.id;
                                                 citationEditor.close();
@@ -784,7 +834,7 @@ Rectangle {
                                             implicitHeight: 24
                                             primary: true
                                             text: qsTr("Save")
-                                            font.pixelSize: 12
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
                                             onClicked: citationChip.saveComment()
                                         }
                                     }
@@ -800,12 +850,19 @@ Rectangle {
                     Layout.rightMargin: 16
                     Layout.topMargin: 16
                     Layout.bottomMargin: 8
-                    Layout.preferredHeight: Math.min(Math.max(input.implicitHeight, 54), 184)
+                    Layout.preferredHeight: composer.resting ? Math.min(input.implicitHeight, 24) : Math.min(Math.max(input.implicitHeight, 54), 184)
                     clip: true
 
                     TextArea {
                         id: input
                         objectName: "input"
+
+                        // ShellWindow reads it for the keymap's composerFocus.
+                        readonly property bool composerInput: true
+
+                        // A resting composer comes back when the user turns to it.
+                        onActiveFocusChanged: if (activeFocus) composer.scrollCollapsed = false
+                        onPressed: composer.scrollCollapsed = false
 
                         padding: 0
                         enabled: composer.ready && !composer.model.editorDisabled
@@ -815,8 +872,9 @@ Rectangle {
                         wrapMode: TextEdit.Wrap
                         selectByMouse: true
                         background: null
-                        font.pixelSize: 14
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        // The prompt has its own font and size (Settings → Appearance).
+                        font.pixelSize: Theme.fontSizePrompt
+                        font.family: Theme.fontPrompt.length > 0 ? Theme.fontPrompt : Qt.application.font.family
                         Accessible.name: qsTr("Message")
                         onTextChanged: {
                             if (text !== composer.lastSentText) {
@@ -830,9 +888,14 @@ Rectangle {
                                 && composer.enterIntent(event.modifiers) !== "";
                         }
                         Keys.onPressed: event => {
+                            composer.scrollCollapsed = false;
                             event.accepted = false;
                             composer.editorKeyPressed(event);
                             if (event.accepted) return;
+                            if (event.key === Qt.Key_V && (event.modifiers & ~Qt.ShiftModifier) === Qt.ControlModifier) {
+                                event.accepted = composer.paste((event.modifiers & Qt.ShiftModifier) !== 0);
+                                if (event.accepted) return;
+                            }
                             if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
                                 if (event.key === Qt.Key_Escape) {
                                     event.accepted = true;
@@ -904,15 +967,15 @@ Rectangle {
                         iconTint: composer.iconMuted
                         Layout.leftMargin: -10
                         enabled: composer.ready && !composer.model.editorDisabled
-                        Accessible.name: qsTr("Attach image")
+                        Accessible.name: qsTr("Attach files")
                         onClicked: imagePicker.open()
 
                         FileDialog {
                             id: imagePicker
 
-                            title: qsTr("Attach images")
+                            title: qsTr("Attach files")
                             fileMode: FileDialog.OpenFiles
-                            nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif)")]
+                            nameFilters: [qsTr("All files (*)"), qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif)")]
                             onAccepted: composer.attach(selectedFiles)
                         }
                     }
@@ -981,7 +1044,7 @@ Rectangle {
                         iconTint: checked ? composer.foreground : composer.secondary
                         tint: checked ? composer.foreground : composer.secondary
                         text: checked ? qsTr("Plan") : qsTr("Build")
-                        font.pixelSize: 14
+                        font.pixelSize: Math.round(14 * Theme.fontScale)
                         leftPadding: 10
                         rightPadding: 10
                         onClicked: Shell.dispatch("composer.interactionMode.set", {
@@ -993,6 +1056,16 @@ Rectangle {
                         Layout.fillWidth: true
                     }
 
+                    Text {
+                        objectName: "vimMode"
+                        visible: composer.vimKeys
+                        text: vim.modeLabel
+                        color: composer.muted
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        Accessible.name: qsTr("Vim mode: %1").arg(text)
+                    }
+
                     // The stash's count, which opens and closes its list.
                     ShellButton {
                         objectName: "stashBadge"
@@ -1002,7 +1075,7 @@ Rectangle {
                         iconSize: 14
                         iconTint: composer.iconMuted
                         text: composer.stashEntries.length
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         Accessible.name: qsTr("Stashed prompts: %1. Open stash.").arg(composer.stashEntries.length)
                         onClicked: Shell.dispatch("composer.stash.menu")
                     }
@@ -1017,11 +1090,11 @@ Rectangle {
                         readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0 && composer.attachments.length === 0
                         // A send during a turn joins it or waits behind it, per the
                         // follow-up setting; the button says which before the click.
-                        readonly property string followUp: composer.model.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
+                        readonly property string followUp: composer.model?.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
 
                         implicitWidth: 32
                         implicitHeight: 32
-                        enabled: composer.ready && (stopMode || composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
+                        enabled: composer.ready && (stopMode || composer.model?.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
                         hoverEnabled: true
                         opacity: enabled ? 1 : 0.3
                         scale: down ? 0.97 : hovered ? 1.05 : 1
@@ -1083,8 +1156,18 @@ Rectangle {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.bottomMargin: visible ? 16 : 0
-                    visible: children.length > 0
+                    // A layout's own controls, or a plugin's.
+                    visible: children.length > 1 || actionsSlot.shown.length > 0
                     spacing: 6
+
+                    PluginSlot {
+                        id: actionsSlot
+
+                        objectName: "composerActionsSlot"
+                        name: "composer.actions"
+                        mode: "append"
+                        visible: shown.length > 0
+                    }
                 }
             }
         }
@@ -1103,7 +1186,7 @@ Rectangle {
             Layout.rightMargin: 22
             Layout.topMargin: -16
             implicitHeight: 16 + 4 + 24 + 4
-            visible: wsReady
+            visible: wsReady && (composer.model?.showContextStrip ?? true) && !composer.resting
 
             Rectangle {
                 anchors.fill: parent
@@ -1132,7 +1215,7 @@ Rectangle {
                     rightPadding: 7 + chevronSize + 4
                     iconSize: 12
                     chevronSize: 12
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     iconName: "monitor"
                     enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
                     model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
@@ -1156,7 +1239,7 @@ Rectangle {
                     rightPadding: 7 + chevronSize + 4
                     iconSize: 12
                     chevronSize: 12
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     iconName: contextStrip.envModeIcon
                     id: envModePicker
                     objectName: "envModePicker"
@@ -1190,7 +1273,7 @@ Rectangle {
                     Text {
                         text: contextStrip.wsReady ? contextStrip.ws.envModeLabel : ""
                         color: composer.secondary
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
                         font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                     }
@@ -1225,7 +1308,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: parent.pr ? "#" + parent.pr.number : ""
                         color: parent.prColor
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                         font.weight: Font.Medium
                         font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                     }
@@ -1233,6 +1316,7 @@ Rectangle {
 
                 ShellButton {
                     id: branchButton
+                    objectName: "branchButton"
 
                     visible: contextStrip.wsReady && (contextStrip.ws.branch !== null || contextStrip.ws.branchChangeable)
                     enabled: contextStrip.wsReady && contextStrip.ws.branchChangeable && !contextStrip.ws.branchSwitchPending
@@ -1247,10 +1331,27 @@ Rectangle {
                     tint: branchButton.hovered ? Qt.alpha(composer.foreground, 0.8) : composer.branchColor
                     chevron: contextStrip.wsReady && contextStrip.ws.branchChangeable
                     chevronSize: 12
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     text: contextStrip.wsReady ? (contextStrip.ws.branch ?? qsTr("Pick branch")) : ""
                     Accessible.name: qsTr("Switch branch")
                     onClicked: branchPicker.open()
+
+                    // The web's "Copy branch name", on the secondary button.
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        onTapped: branchMenu.popup()
+                    }
+                    ShellMenu {
+                        id: branchMenu
+
+                        ShellMenuItem {
+                            objectName: "copyBranchName"
+                            text: qsTr("Copy branch name")
+                            iconName: "copy"
+                            enabled: contextStrip.wsReady && (contextStrip.ws.branch ?? "").length > 0
+                            onTriggered: Shell.dispatch("workspace.branch.copy")
+                        }
+                    }
 
                     Popup {
                         id: branchPicker
@@ -1340,8 +1441,25 @@ Rectangle {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
+                                // Where the list was when it asked for more, so
+                                // the longer list opens at the same place.
+                                property real keptY: -1
+
                                 boundsBehavior: Flickable.StopAtBounds
                                 model: contextStrip.wsReady ? contextStrip.ws.branches : []
+                                // The end of a list with more to it loads the next page.
+                                onAtYEndChanged: {
+                                    if (atYEnd && count > 0 && contextStrip.wsReady && contextStrip.ws.branchesTotal > count) {
+                                        keptY = contentY;
+                                        Shell.dispatch("workspace.branch.more");
+                                    }
+                                }
+                                onCountChanged: {
+                                    if (keptY >= 0) {
+                                        contentY = keptY;
+                                        keptY = -1;
+                                    }
+                                }
 
                                 delegate: Rectangle {
                                     id: branchRow
@@ -1378,7 +1496,7 @@ Rectangle {
                                             Layout.fillWidth: true
                                             text: branchRow.modelData.name
                                             color: branchRow.modelData.isRemote ? composer.muted : composer.foreground
-                                            font.pixelSize: 13
+                                            font.pixelSize: Math.round(13 * Theme.fontScale)
                                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                                             elide: Text.ElideMiddle
                                         }
@@ -1387,7 +1505,7 @@ Rectangle {
                                             visible: branchRow.badge.length > 0
                                             text: branchRow.badge
                                             color: Qt.alpha(composer.muted, 0.45)
-                                            font.pixelSize: 10
+                                            font.pixelSize: Math.round(10 * Theme.fontScale)
                                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                                         }
                                     }
@@ -1398,7 +1516,7 @@ Rectangle {
                                     visible: branchList.count === 0
                                     text: contextStrip.wsReady && contextStrip.ws.branchesLoading ? qsTr("Loading refs…") : qsTr("No matching refs — Enter creates one")
                                     color: composer.muted
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                 }
                             }
 
@@ -1409,7 +1527,7 @@ Rectangle {
                                 visible: contextStrip.wsReady && contextStrip.ws.branchesTotal > contextStrip.ws.branches.length
                                 text: contextStrip.wsReady ? qsTr("Showing %1 of %2 refs — type to narrow").arg(contextStrip.ws.branches.length).arg(contextStrip.ws.branchesTotal) : ""
                                 color: composer.muted
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
                         }
                     }

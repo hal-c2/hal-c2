@@ -18,13 +18,16 @@ Timeline 1.0 Timeline.qml
 TimelineLine 1.0 TimelineLine.qml
 WorkingIndicator 1.0 WorkingIndicator.qml
 Approvals 1.0 Approvals.qml
+PlanStatus 1.0 PlanStatus.qml
 PendingUserInput 1.0 PendingUserInput.qml
 RevertPicker 1.0 RevertPicker.qml
 DiffViewer 1.0 DiffViewer.qml
 Notifications 1.0 Notifications.qml
+UpdateNotice 1.0 UpdateNotice.qml
 RightPanel 1.0 RightPanel.qml
 GitActions 1.0 GitActions.qml
 SettingsPage 1.0 SettingsPage.qml
+SettingsSection 1.0 SettingsSection.qml
 TerminalDrawer 1.0 TerminalDrawer.qml
 FilesPanel 1.0 FilesPanel.qml
 FileViewer 1.0 FileViewer.qml

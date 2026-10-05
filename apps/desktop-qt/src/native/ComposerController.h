@@ -65,11 +65,20 @@ class TimelineModel;
 // composer.suggest.select {id}, composer.suggest.dismiss,
 // composer.model.select {instanceId, model},
 // composer.model.favorite.toggle {instanceId, model},
+// composer.model.multiple.toggle {instanceId, model} (a new thread's prompt
+// goes to each model so chosen),
 // composer.option.set {id, value}, composer.runtimeMode.set {mode},
 // composer.interactionMode.set {mode}, composer.submit {text, intent, edit},
-// composer.interrupt, composer.attach {files}, composer.attachment.remove {id},
+// composer.interrupt, composer.attach {files, folders} (a file is {name,
+// mimeType, base64} for an image, {name, mimeType, path} for any other file,
+// {name, text} for a pasted text), composer.attachment.remove {id},
+// composer.attachment.retry {id}, composer.question.attach {requestId,
+// questionId, files}, composer.question.attachment.remove {id},
 // composer.terminalContext.add {terminalId, terminalLabel, lineStart, lineEnd,
 // text}, composer.terminalContext.remove {id},
+// composer.reviewComment.add {filePath, lineStart, lineEnd, text, diff,
+// startIndex, endIndex, rangeLabel, sectionId, sectionTitle},
+// composer.reviewComment.remove {id},
 // composer.citation.add {messageId, text, start, end, prefix, suffix},
 // composer.citation.comment {id, comment}, composer.citation.remove {id},
 // composer.approval.respond {requestId, decision},
@@ -78,7 +87,8 @@ class TimelineModel;
 // composer.queue.steer {runId?} (the first queued without one),
 // composer.queue.edit {runId?} (the last queued without one),
 // composer.queue.edit.cancel, composer.stash, composer.stash.restore {id},
-// composer.stash.delete {id}, composer.stash.menu {open?} (toggles without).
+// composer.stash.delete {id}, composer.stash.menu {open?} (toggles without),
+// composer.history.step {direction: "backward" | "forward"}.
 //
 // The stash (the web's promptStashStore) is this machine's, not a thread's:
 // the prompts set aside with composer.stash, newest first, at most 20, kept
@@ -86,6 +96,11 @@ class TimelineModel;
 // brings back the only entry, or opens the list. Publishes `composerStash`:
 // {entries: [{id, snippet, createdAt}], open, shortcut}, `open` being this
 // window's.
+//
+// A note on a diff's lines is a chip too (`composer.reviewComments`: {id,
+// label "src/cart.ts L10-12", filePath, lineStart, lineEnd, text}); a send
+// names it in the text and carries it as a `review-comment` context record
+// (packages/contracts/src/composerContext.ts).
 //
 // A terminal excerpt is a chip on the draft (`composer.excerpts`), as
 // the web's terminal context; a send appends an inline context link for each
@@ -110,6 +125,8 @@ class ComposerController : public QObject, public NativeController {
 public:
   ComposerController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
+  // The model the window's thread or draft will send with: {instanceId, model}, empty with none ready.
+  QJsonObject currentSelection() const { return selection(target()); }
   void activate() override;
   bool isActive() const { return m_active; }
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
@@ -133,6 +150,16 @@ public:
                    const QJsonObject& source = {});
   // The draft's images: {id, name, mimeType, sizeBytes, source}.
   QVariantList attachments(const QString& target) const;
+  // Whether `target`'s draft has files still on their way to the MC, or a
+  // send in flight that carries the draft's attachments.
+  bool attachmentsPending(const QString& target) const;
+  // Adds `text` after the route's draft, a space apart from what is there
+  // (the Files tab's Add to chat); false with no thread or draft open.
+  bool insertAtEnd(const QString& text);
+  // A draft's attachment as this machine holds it, for a viewer: {id, name,
+  // mimeType, url (an image's bytes as a data URL), text (a file's, when it
+  // is text this machine can read)}; empty when it is gone.
+  QVariantMap attachmentPreview(const QString& id);
 
 private:
   struct Attachment {
@@ -142,7 +169,40 @@ private:
     qint64 sizeBytes = 0;
     QString dataUrl;
     QJsonObject source;
+    // A file (not an image) goes to the MC when it is added and the message
+    // names the upload (`attachments.createUploadUrl`); an image goes with
+    // its message (`assets.persistChatAttachments`).
+    bool file = false;
+    // Where a file's bytes are: a path on this machine, or a pasted text.
+    QString path;
+    QByteArray content;
+    bool pastedText = false;
+    // A file's upload: "uploading", "failed" (why, in `error`), or empty once
+    // the MC has it as `remoteId` on `environmentId`.
+    QString upload;
+    QString error;
+    QString remoteId;
+    QString environmentId;
   };
+  // The attachment `id` of any draft or answer; null when it is gone.
+  Attachment* findAttachment(const QString& id);
+  // Sends a file's bytes to the environment `target` runs on.
+  void uploadFile(const QString& id, const QString& environmentId);
+  // The environment a thread's or a new thread's files go to.
+  QString environmentOf(const QString& target) const;
+  // Why the files keep a send (or `what`) waiting, toasted; false when none do.
+  bool filesBlock(const QList<Attachment>& attachments, const QString& what);
+  static QJsonArray fileRecords(const QList<Attachment>& attachments);
+  static QJsonObject attachmentJson(const Attachment& attachment);
+  static std::optional<Attachment> attachmentOf(const QJsonObject& kept);
+  // What the composer shows of attachments; `previews` adds each image's
+  // thumbnail (thumbnail(), kept in m_previews).
+  QVariantList shownAttachments(const QList<Attachment>& attachments, bool previews = false) const;
+  // A dropped folder becomes a path the prompt names, where the MC shares
+  // this machine's folders.
+  bool attachFolders(const QString& target, const QVariantList& folders);
+  // Files for the answer to one question of a pending request.
+  bool attachToAnswer(const QString& requestId, QString questionId, const QVariantList& files);
   // A terminal selection on the draft (apps/web/src/lib/terminalContext.ts),
   // or with `citation` a quoted reply (AssistantCitation in
   // packages/contracts/src/assistantCitations.ts) and nothing else.
@@ -154,6 +214,10 @@ private:
     int lineEnd = 1;
     QString text;
     QJsonObject citation;
+    // Set for a note on lines of a diff instead (a `review-comment` record):
+    // {filePath, sectionId, sectionTitle, startIndex, endIndex, rangeLabel,
+    // diff}; `text` is then the note and the lines are the file's.
+    QJsonObject review;
   };
   struct Draft {
     QString text;  // a new thread's is DraftController's
@@ -166,6 +230,9 @@ private:
     std::optional<QJsonObject> modelSelection;
     QString runtimeMode;
     QString interactionMode;
+    // A new thread's prompt goes to each of these instead: one thread per
+    // model, each in its own worktree (the web's multiple models).
+    std::optional<QList<QJsonObject>> multipleModels;
     QList<Attachment> attachments;
     QList<Excerpt> excerpts;
   };
@@ -199,6 +266,12 @@ private:
   void place(const QString& environmentId, const QString& projectId, bool tied, const QString& instanceId,
              std::function<void(const QString& environmentId, const QString& projectId)> then);
   void launched(const QString& draftId, const QString& threadKey, const std::optional<QString>& error);
+  // The prompt to every chosen model: `input` is the launch for one, less
+  // its thread, model and checkout.
+  bool submitToModels(const QString& draftId, const QList<QJsonObject>& models, const QJsonObject& input,
+                      const QJsonObject& strategy, const QString& environmentId, const QString& text,
+                      const QList<Attachment>& attachments, const QList<Excerpt>& contexts);
+  bool toggleMultipleModel(const QString& target, const QString& instanceId, const QString& model);
   // A background send's answer: a toast that opens the thread, or one that
   // gives the prompt back.
   void launchedInBackground(const QString& draftId, const QString& text, const QList<Attachment>& attachments,
@@ -214,11 +287,19 @@ private:
   static QString thumbnail(const QString& dataUrl);
   // A terminal selection joins the route's draft; blank ones are dropped.
   bool addTerminalContext(const QVariantMap& selection);
+  // A note on lines of a diff joins the route's draft (ThreadDiff::comment).
+  bool addReviewComment(const QVariantMap& comment);
   // A selection of one of the route thread's replies joins its draft.
   bool addCitation(const QVariantMap& selection);
-  // The message text with a link per excerpt and quote, and the excerpts'
-  // records as its `context`.
+  // The message text with a link per excerpt, note and quote, and the
+  // excerpts' and notes' records as its `context`.
   static void withExcerpts(QJsonObject& message, const QList<Excerpt>& contexts);
+  // Up and Down on the editor's edge lines walk the thread's sent prompts,
+  // text only (the web's composerPromptHistory): back from an empty draft,
+  // forward past the newest to an empty one. An edited recall is a draft.
+  void stepHistory(const QString& target, bool backward);
+  // Why the prompt cannot be sent as it is, or nothing: its length.
+  static QString promptProblem(const QString& text);
   bool stash(const QString& target);
   void restoreStash(const QString& target, const QString& id);
   void setStashOpen(bool open);
@@ -245,8 +326,17 @@ private:
   void setText(const QString& target, const QString& text, int cursor, const QVariant& edit = {});
   // A standalone "/plan" or "/default": the mode changes and the text goes.
   bool slashMode(const QString& target, const QString& text);
+  // A standalone "/usage-limits" on a provider that offers it: the provider's
+  // limits show above the composer (`composer.usageLimits`) from what the
+  // environment last reported, and nothing is sent to the agent.
+  bool slashUsageLimits(const QString& target, const QString& text);
+  // The limits "/usage-limits" opened, by thread or draft, until the next
+  // message or `composer.usageLimits.dismiss`.
+  QHash<QString, QVariantMap> m_usageLimits;
   void setInteractionMode(const QString& target, const QString& mode);
   bool selectModel(const QString& target, const QString& instanceId, const QString& model);
+  // A send used this model: new threads start from it.
+  void rememberModel(const QJsonObject& selection);
   bool setOption(const QString& target, const QString& id, const QVariant& value);
   bool selectSuggestion(const QString& target, const QString& id);
   // The suggestions for the caret, with the trigger they answer.
@@ -290,6 +380,10 @@ private:
     QHash<QString, Draft> drafts;
     // Newest first.
     QList<StashEntry> stash;
+    // The model last sent with on each provider instance, and the instance
+    // last sent with: a new thread starts from them (the web's sticky model).
+    QHash<QString, QJsonObject> lastModels;
+    QString lastInstance;
     QString path;
     // The images last written beside the drafts (imagesPath), so a keystroke
     // does not rewrite them.
@@ -307,6 +401,9 @@ private:
   QString m_draftId;
   QPointer<TimelineModel> m_timeline;
   QMetaObject::Connection m_timelineConnection;
+  // The files attached to each question's answer, by request id then
+  // question id; they go with the answer and stay out of the thread's draft.
+  QHash<QString, QHash<QString, QList<Attachment>>> m_answerFiles;
   // Requests answered and waiting for the MC, and ones it said are gone.
   QSet<QString> m_responding;
   QSet<QString> m_closed;
@@ -341,4 +438,11 @@ private:
     bool saving = false;
   };
   std::optional<QueuedEdit> m_queuedEdit;
+  // The sent prompt the composer is showing again: its message and text.
+  struct Recall {
+    QString target;
+    QString entryId;
+    QString recalled;
+  };
+  std::optional<Recall> m_recall;
 };

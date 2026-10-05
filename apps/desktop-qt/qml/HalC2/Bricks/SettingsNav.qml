@@ -15,6 +15,10 @@ Rectangle {
     readonly property var route: Shell.state.route ?? null
     readonly property string currentSection: Pages.current(route !== null && route.kind === "settings" ? route.section : "")
     readonly property string query: search.text.trim().toLowerCase()
+    // A query set from elsewhere (settings.search); the field follows each asking.
+    readonly property int searchSeq: route !== null ? (route.searchSeq ?? 0) : 0
+
+    onSearchSeqChanged: search.text = route !== null ? (route.search ?? "") : ""
     // Every row says whether it is a search result, so a row never reads the
     // other shape while the query and the rows change together.
     readonly property var rows: {
@@ -111,6 +115,7 @@ Rectangle {
             Layout.rightMargin: 10
             Layout.bottomMargin: 6
             placeholderText: qsTr("Search settings")
+            text: nav.route !== null ? (nav.route.search ?? "") : ""
             Keys.onEscapePressed: text = ""
         }
 
@@ -178,7 +183,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: row.isResult ? row.modelData.title : row.modelData.label
                         color: nav.foreground
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         elide: Text.ElideRight
                     }
 
@@ -187,7 +192,7 @@ Rectangle {
                         visible: row.isResult
                         text: row.isResult ? row.modelData.sectionLabel : ""
                         color: nav.muted
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                         elide: Text.ElideRight
                     }
                 }
@@ -199,7 +204,7 @@ Rectangle {
                 visible: list.searching && list.count === 0
                 text: qsTr("No matching settings")
                 color: nav.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
         }
     }
@@ -227,7 +232,7 @@ Rectangle {
             text: restoreDialog.title
             padding: 20
             bottomPadding: 4
-            font.pixelSize: 17
+            font.pixelSize: Math.round(17 * Theme.fontScale)
             font.weight: Font.DemiBold
             color: Theme.palette.color("text", "#e4e4e7")
         }
@@ -239,7 +244,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("This will reset: %1.").arg(nav.changedLabels.join(", "))
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 

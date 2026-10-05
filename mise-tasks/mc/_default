@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-#MISE description="Run the MC in the foreground (mix hal_c2.server), ready to cluster"
+#MISE description="Run the MC in the foreground, ready to cluster"
 #MISE dir="{{config_root}}/apps/server-ex"
+#USAGE flag "--host <address>" help="Address to listen on (HAL_C2_MC_HOST). A LAN or tailnet address, or 0.0.0.0, lets other machines reach it; the default is this machine only"
+#USAGE flag "--port <port>" help="HTTP port (HAL_C2_MC_PORT, default 3780)"
+#USAGE flag "--home <dir>" help="A root for all its files (HAL_C2_MC_HOME) instead of the hal-c2-dev profile, for a second MC on one machine"
 set -euo pipefail
+
+[[ -n ${usage_host:-} ]] && export HAL_C2_MC_HOST="$usage_host"
+[[ -n ${usage_port:-} ]] && export HAL_C2_MC_PORT="$usage_port"
+[[ -n ${usage_home:-} ]] && export HAL_C2_MC_HOME="$usage_home"
+
 # The MC starts TLS distribution itself (HalC2.Cluster) and writes its options here.
 optfile="$(mktemp -t hal-c2-dist.XXXXXX)"
 export ELIXIR_ERL_OPTIONS="${ELIXIR_ERL_OPTIONS:-} -proto_dist inet_tls -ssl_dist_optfile $optfile -setcookie hal_c2"
-exec mix hal_c2.server "$@"
+exec mix hal_c2.server

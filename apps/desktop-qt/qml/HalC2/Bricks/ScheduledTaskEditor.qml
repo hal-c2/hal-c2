@@ -67,14 +67,14 @@ Dialog {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: 17
+        font.pixelSize: Math.round(17 * Theme.fontScale)
         font.weight: Font.DemiBold
         color: dialog.foreground
     }
 
     component Caption: Label {
         color: dialog.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
     }
 
     contentItem: Flickable {
@@ -96,7 +96,7 @@ Dialog {
                 visible: dialog.editor !== null && !dialog.editor.connected
                 text: qsTr("Reconnect this environment before saving.")
                 color: Theme.palette.color("warning", "#fbbf24")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -107,7 +107,7 @@ Dialog {
                 text: dialog.editor?.error ? dialog.editor.error
                     : dialog.editor?.missing ? qsTr("This scheduled task no longer exists.") : ""
                 color: Theme.palette.color("error", "#ef4444")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -142,7 +142,7 @@ Dialog {
                 text: dialog.draft.prompt ?? ""
                 wrapMode: TextEdit.Wrap
                 color: dialog.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 placeholderText: qsTr("What should the agent do each run?")
                 placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
                 background: Rectangle {

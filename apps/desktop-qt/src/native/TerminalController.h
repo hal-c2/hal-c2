@@ -12,6 +12,7 @@
 #include <QStringList>
 #include <QVariant>
 
+#include <functional>
 #include <optional>
 
 #include "NativeController.h"
@@ -66,6 +67,8 @@ signals:
   void resized(QSize size);
   // The MC closed the terminal (from this or another client).
   void closed();
+  // Its shell ended on its own.
+  void exited();
   // The first snapshot arrived: the shell is running.
   void attached();
   // The MC refused to open the terminal.
@@ -149,6 +152,8 @@ public:
   void insert(int index, const Row& row);
   // Deletes the row's session.
   void remove(int index);
+  // Empties the model and hands its sessions over, alive, by terminal id.
+  QHash<QString, TerminalSession*> take();
   // Everything but the session.
   void update(int index, const Row& row);
   void clear();
@@ -166,7 +171,8 @@ private:
 // project root, worktree and scripts are WorkspaceController's place; the
 // terminals come from the MC. They are attached the first time the drawer
 // opens on that thread (or a panel tab does) and stay attached while the
-// thread is on screen, so hiding the drawer keeps their output.
+// thread is on screen, so hiding the drawer keeps their output, and for the
+// last few threads the user left (maxParkedThreads), so does coming back.
 //
 // Terminals split into groups as the web's drawer does: `terminal.split` and
 // `terminal.splitVertical {terminalId?}` add a terminal beside or under one
@@ -190,12 +196,20 @@ public:
   static constexpr int maxTerminals = 6;
   static constexpr int maxPerGroup = 4;
   static constexpr int minimumHeight = 180;
+  // Threads the user left whose terminals stay attached (the web's
+  // MAX_HIDDEN_MOUNTED_TERMINAL_THREADS): coming back shows what they printed
+  // meanwhile, with no new attach.
+  static constexpr int maxParkedThreads = 10;
 
   TerminalController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
   bool isActive() const { return m_active; }
   bool handle(const QString& action, const QVariant& payload) override;
+
+  // Where the drawer's height and, per thread, whether it is open and on
+  // which terminal are kept across restarts; read at once.
+  void setStorePath(const QString& path);
 
   bool available() const { return m_place.has_value(); }
   bool isOpen() const;
@@ -217,6 +231,12 @@ public:
   QStringList panelGroups(const QString& threadKey) const;
   // Closes every terminal of the group (deleting their history).
   void closeGroup(const QString& group);
+  // Asks before the user's own close of `ids`, as the web's
+  // confirmTerminalClose: one question naming every terminal. `accepted` runs
+  // on yes; with nothing to close it runs at once.
+  void confirmClose(const QStringList& ids, std::function<void()> accepted);
+  // The terminals of a split or panel group.
+  QStringList groupTerminals(const QString& group) const;
   // As the web app's runProjectScript: in the active terminal, or a new one when
   // that one is busy. False without a place or such a script.
   bool runScript(const QString& scriptId);
@@ -249,6 +269,9 @@ private:
     QSet<QString> local;
     // Closed here; ignored until the MC confirms.
     QSet<QString> closing;
+    // Read from the store and not yet checked against the MC's terminals:
+    // the drawer waits for the list rather than open on a terminal that is gone.
+    bool restored = false;
   };
 
   std::optional<TerminalPlace> placeOfWorkspace() const;
@@ -268,6 +291,8 @@ private:
   QString nextTerminalId() const;
   TerminalSession* session(const QString& terminalId) const;
   void toast(const QString& title, const QString& description);
+  void followLink(const QString& kind, const QString& text, const QString& reportedCwd);
+  void save();
 
   ShellBridge* m_bridge;
   McClient* m_client;
@@ -288,4 +313,18 @@ private:
   // The terminal that last had the keyboard.
   QString m_focused;
   int m_groupCount = 0;
+  // The attached sessions of threads the user left, and where they ran.
+  struct Parked {
+    QString cwd;
+    QHash<QString, TerminalSession*> sessions;
+  };
+  QHash<QString, Parked> m_parked;
+  // Oldest first.
+  QStringList m_parkedOrder;
+  void park(const QString& threadKey, const QString& cwd);
+  void dropParked(const QString& threadKey);
+  QString m_storePath;
+  QByteArray m_saved;
+  // Threads in the order their drawers were last used, oldest first.
+  QStringList m_recent;
 };

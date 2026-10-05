@@ -40,7 +40,7 @@ SettingsPage {
                     Layout.fillWidth: true
                     text: task.modelData.title
                     color: tasks.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                     elide: Text.ElideRight
                 }
@@ -50,7 +50,7 @@ SettingsPage {
                     visible: text.length > 0
                     text: task.modelData.lastRun ?? ""
                     color: task.modelData.lastRunStatus === "failed" ? tasks.danger : tasks.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                     leftPadding: 6
                     rightPadding: 6
                     topPadding: 1
@@ -68,7 +68,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: task.modelData.prompt
                 color: tasks.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
                 elide: Text.ElideRight
@@ -79,7 +79,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: task.modelData.schedule + " · " + task.modelData.when
                 color: tasks.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             Label {
@@ -88,7 +88,7 @@ SettingsPage {
                 visible: task.modelData.lastRunStatus === "failed"
                 text: qsTr("Last run failed: %1").arg(task.modelData.lastRunError || qsTr("unknown error"))
                 color: tasks.danger
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
         }
@@ -135,7 +135,7 @@ SettingsPage {
             Layout.fillWidth: true
             text: qsTr("Prompts sent to a project on a timer. The environment runs them while no client is open.")
             color: tasks.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
 
@@ -164,7 +164,7 @@ SettingsPage {
                 visible: environment.modelData.heading
                 text: environment.modelData.label
                 color: tasks.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -189,7 +189,7 @@ SettingsPage {
                             return environment.modelData.linkMissing ? qsTr("Task unavailable") : qsTr("No scheduled tasks");
                         }
                         color: tasks.foreground
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
 
@@ -203,7 +203,7 @@ SettingsPage {
                                 : qsTr("No tasks match this environment and project selection.");
                         }
                         color: tasks.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         wrapMode: Text.Wrap
                     }
                 }

@@ -10,7 +10,9 @@ defmodule HalC2.Orchestration.Recovery do
   server's effect outbox replays pending provider work.
 
   Work a provider left running in the background after its turn (a subagent, a
-  background command) died with the process too, and is ended the same way. A
+  background command) died with the process too, and is ended the same way; a thread
+  that had finished its turn is then told which background commands the restart
+  ended (`continue/0`), where its project continues threads after a restart. A
   task the thread delegated runs in its own thread and is left to settle when
   that ends (`Delegation.finished/3`).
 
@@ -58,21 +60,60 @@ defmodule HalC2.Orchestration.Recovery do
       for({thread_id, :requeued} <- settled, do: thread_id)
     )
 
+    :persistent_term.put(
+      {__MODULE__, :background},
+      for({thread_id, {:background, run, commands}} <- settled, do: {thread_id, run, commands})
+    )
+
     if settled != [], do: Logger.info("settled interrupted turns in #{length(settled)} threads")
     Enum.map(settled, &elem(&1, 0))
   end
 
   @doc """
-  Settles one thread's interrupted turn: `{entities changed, run}`, where `run` is
-  the one that was mid-turn on a provider thread that can resume, or nil.
+  Settles one thread's interrupted turn: `{entities changed, what}`, where `what` is
+  the run that was mid-turn on a provider thread that can resume, `:requeued` for a
+  run that goes back to the queue, `{:background, run, commands}` when the thread's
+  turn had finished and only the commands it left running in the background were
+  ended (`run` is that turn's), or nil.
   """
   def settle(thread_id) do
     HalC2.Streams.transact(thread_id, :thread, fn state ->
       changes = changes(state, Entities.now())
       requeued? = Enum.any?(StreamState.list(state, "run"), &unstarted?(state, &1))
-      {changes, {length(changes), if(requeued?, do: :requeued, else: continuable(state))}}
+
+      what =
+        if requeued?, do: :requeued, else: continuable(state) || ended_background(state)
+
+      {changes, {length(changes), what}}
     end)
   end
+
+  # The background commands of the thread's finished latest run that are still marked
+  # active: they ran in the provider process, which is gone.
+  defp ended_background(state) do
+    with %{"status" => "completed"} = run <-
+           state |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> nil end),
+         %{"nativeThreadRef" => %{}} <-
+           StreamState.get(state, "provider-thread")[run["providerThreadId"]],
+         [_ | _] = commands <-
+           for(
+             %{"type" => "command_execution", "input" => input} = item <-
+               StreamState.list(state, "turn-item"),
+             item["status"] in @active and item["runId"] == run["id"] and is_binary(input),
+             do: input
+           ) do
+      {:background, run, commands}
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Whether the MC itself is stopping. A provider runtime that ends then leaves the
+  background work it ran marked as it is, so the next boot ends it here and can ask
+  the thread to continue; ended by the runtime it would look like work the user stopped.
+  """
+  def stopping?, do: match?({:stopping, _}, :init.get_status())
 
   # Accepted, but the provider never got the turn: no attempt reached it.
   defp unstarted?(state, run) do
@@ -93,30 +134,61 @@ defmodule HalC2.Orchestration.Recovery do
     requeued = :persistent_term.get({__MODULE__, :requeued}, [])
     :persistent_term.erase({__MODULE__, :requeued})
 
+    background = :persistent_term.get({__MODULE__, :background}, [])
+    :persistent_term.erase({__MODULE__, :background})
+
     for thread_id <- requeued, do: HalC2.Orchestration.start_next(thread_id)
 
     for {thread_id, run} <- runs,
-        {"thread", thread} <- [HalC2.Shell.row(node(), thread_id)],
-        thread["archivedAt"] == nil and thread["deletedAt"] == nil,
-        HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
-          true,
-        latest?(thread_id, run) do
-      HalC2.Orchestration.dispatch(%{
-        "type" => "message.dispatch",
-        "commandId" => "command:restart-continuation:#{run["id"]}",
-        "threadId" => thread_id,
-        "messageId" => "message:restart-continuation:#{run["id"]}",
-        "text" => "Continue where you left off.",
-        "attachments" => [],
-        "modelSelection" => run["modelSelection"],
-        "dispatchMode" => %{"type" => "start_immediately"},
-        "createdBy" => "agent",
-        "creationSource" => "server"
-      })
-    end
+        continue?(thread_id, run),
+        do: continuation(thread_id, run, "Continue where you left off.")
+
+    # A thread whose turn had finished hears which of its background commands the
+    # restart ended, so its agent can start them again rather than wait on them.
+    for {thread_id, run, commands} <- background,
+        continue?(thread_id, run),
+        do: continuation(thread_id, run, background_text(commands))
 
     :ok
   end
+
+  defp continue?(thread_id, run) do
+    case HalC2.Shell.row(node(), thread_id) do
+      {"thread", thread} ->
+        thread["archivedAt"] == nil and thread["deletedAt"] == nil and
+          HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
+            true and latest?(thread_id, run)
+
+      _ ->
+        false
+    end
+  end
+
+  defp continuation(thread_id, run, text) do
+    HalC2.Orchestration.dispatch(%{
+      "type" => "message.dispatch",
+      "commandId" => "command:restart-continuation:#{run["id"]}",
+      "threadId" => thread_id,
+      "messageId" => "message:restart-continuation:#{run["id"]}",
+      "text" => text,
+      "attachments" => [],
+      "modelSelection" => run["modelSelection"],
+      "dispatchMode" => %{"type" => "start_immediately"},
+      "createdBy" => "agent",
+      "creationSource" => "server"
+    })
+  end
+
+  defp background_text([command]),
+    do:
+      "The server restarted, which stopped the background command `#{command}`. " <>
+        "Start it again if you still need it, then continue where you left off."
+
+  defp background_text(commands),
+    do:
+      "The server restarted, which stopped these background commands: " <>
+        Enum.map_join(commands, ", ", &"`#{&1}`") <>
+        ". Start them again if you still need them, then continue where you left off."
 
   # A message the user sent since takes precedence.
   defp latest?(thread_id, run) do
@@ -152,6 +224,13 @@ defmodule HalC2.Orchestration.Recovery do
           into: MapSet.new(),
           do: id
 
+    # Questions answered with a message need no provider: they stay open.
+    asked =
+      for {id, request} <- StreamState.get(state, "runtime-request"),
+          HalC2.Orchestration.TurnWriter.message_request?(request),
+          into: MapSet.new(),
+          do: id
+
     for {kind, fun} <- [
           {"run",
            fn run ->
@@ -173,7 +252,9 @@ defmodule HalC2.Orchestration.Recovery do
              do: Map.merge(&1, Map.put(done, "updatedAt", at))
            )},
           {"turn-item",
-           &if(&1["status"] in @active and &1["nodeId"] not in delegated,
+           &if(
+             &1["status"] in @active and &1["nodeId"] not in delegated and
+               &1["requestId"] not in asked,
              do:
                Map.merge(&1, %{
                  "status" => "interrupted",
@@ -188,7 +269,7 @@ defmodule HalC2.Orchestration.Recovery do
            )},
           # The provider that asked is gone, so nobody can answer the request now.
           {"runtime-request",
-           &if(&1["status"] == "pending",
+           &if(&1["status"] == "pending" and &1["id"] not in asked,
              do:
                Map.merge(&1, %{
                  "status" => "expired",

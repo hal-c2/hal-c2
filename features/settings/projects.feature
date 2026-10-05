@@ -97,12 +97,12 @@ Feature: Projects settings panel
     Then the confirmation names 3 threads, the folder and "laptop"
     And the confirmation says conversation history is cleared permanently
 
-  @backlog @desktop
+  @desktop
   Scenario: Removing from the desktop folder explorer opens the removal in settings
     When the user removes a registered folder from HAL-C2 in the folder explorer
     Then the Projects settings open with the removal confirmation for that project
 
-  @backlog @desktop
+  @desktop
   Scenario: Cancelling a removal requested from the folder explorer leaves the project
     Given the user asked to remove "shop" from the folder explorer
     When the user cancels the removal in settings

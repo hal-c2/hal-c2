@@ -15,6 +15,7 @@ import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
 } from "@hal-c2/client-runtime/state/thread-execution";
+import { derivePendingBackgroundWork } from "@hal-c2/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 // The TUI still uses its compact legacy-shaped presentation model. Keep that
@@ -226,17 +227,98 @@ function itemStatus(item: OrchestrationV2TurnItem): string {
   }
 }
 
+/** The MC projects a read as a search for the one file it read (acp/thread_runtime.ex). */
+function isFileRead(item: Extract<OrchestrationV2TurnItem, { type: "file_search" }>): boolean {
+  return item.results?.length === 1 && item.results[0]?.fileName === item.pattern;
+}
+
+/** How a subagent stands, as the web's lifecycle row words it (V2LifecycleRow STATUS_VISUALS). */
+function subagentStatusLabel(status: OrchestrationV2TurnItem["status"]): string {
+  switch (status) {
+    case "idle":
+      return "Idle · resumable";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+    case "interrupted":
+      return "Stopped";
+    default:
+      return "Working";
+  }
+}
+
+/** Reasoning reads "Thinking" while it is written and "Thought" once it is done. */
+function reasoningLabel(item: Extract<OrchestrationV2TurnItem, { type: "reasoning" }>): string {
+  return item.streaming || item.status === "running" ? "Thinking" : "Thought";
+}
+
+/** How an answered approval ended, as its row's status (a pending one carries none). */
+function approvalOutcome(
+  request: OrchestrationV2ThreadProjection["runtimeRequests"][number] | undefined,
+): { status?: string } {
+  if (!request || request.status === "pending") return {};
+  if (request.decision === "decline") return { status: "declined" };
+  if (request.decision === "cancel" || request.status !== "resolved") return { status: "stopped" };
+  return { status: "completed" };
+}
+
+/**
+ * A file change's diff: the provider's patch, or, for an agent that only named the
+ * text it replaced and the text it wrote (ACP), a hunk made of the two.
+ */
+function fileChangeDiff(
+  item: Extract<OrchestrationV2TurnItem, { type: "file_change" }>,
+): string | null {
+  if (item.diffStr !== undefined && item.diffStr.trim().length > 0) return item.diffStr;
+  if (item.oldStr === undefined && item.newStr === undefined) return null;
+  const lines = (text: string | undefined) =>
+    text === undefined || text.length === 0 ? [] : text.replace(/\n$/, "").split("\n");
+  const removed = lines(item.oldStr);
+  const added = lines(item.newStr);
+  if (removed.length + added.length === 0) return null;
+  return [
+    `--- a/${item.fileName}`,
+    `+++ b/${item.fileName}`,
+    `@@ -1,${removed.length} +1,${added.length} @@`,
+    ...removed.map((text) => `-${text}`),
+    ...added.map((text) => `+${text}`),
+  ].join("\n");
+}
+
+/** "+3 -1": the lines a diff adds and removes. */
+function diffStatLabel(diff: string): string {
+  let added = 0;
+  let removed = 0;
+  for (const text of diff.split("\n")) {
+    if (/^\+(?!\+\+ )/.test(text)) added += 1;
+    else if (/^-(?!-- )/.test(text)) removed += 1;
+  }
+  return `+${added} -${removed}`;
+}
+
+/** "attempt 2 of 5", as far as the provider says. */
+function retryLabel(
+  retry: NonNullable<Extract<OrchestrationV2TurnItem, { type: "error" }>["retry"]>,
+) {
+  return retry.maxAttempts === null
+    ? `attempt ${retry.attempt}`
+    : `attempt ${retry.attempt} of ${retry.maxAttempts}`;
+}
+
 function itemSummary(item: OrchestrationV2TurnItem): string {
+  if (item.type === "reasoning") return reasoningLabel(item);
+  // A request the provider is trying again is a retry, not the turn's failure.
+  if (item.type === "error" && item.retry) return "Provider retry";
   if (item.title?.trim()) return item.title.trim();
   switch (item.type) {
-    case "reasoning":
-      return "Thinking";
     case "command_execution":
       return "Ran command";
     case "file_change":
       return `Changed ${item.fileName}`;
     case "file_search":
-      return "Searched files";
+      return isFileRead(item) ? "Read file" : "Searched files";
     case "web_search":
       return "Searched the web";
     case "approval_request":
@@ -250,15 +332,15 @@ function itemSummary(item: OrchestrationV2TurnItem): string {
     case "notification":
       return item.summary;
     case "subagent":
-      return item.progress ?? item.result ?? "Subagent work";
+      return "Subagent";
     case "dynamic_tool":
       return item.toolName ?? "Used tool";
     case "compaction":
-      return "Compacted context";
+      return "Context compacted";
     case "handoff":
-      return "Transferred context";
+      return "Context handoff";
     case "fork":
-      return "Forked thread";
+      return "Conversation fork";
     case "thread_created":
       return "Created thread";
     case "run_interrupt_request":
@@ -283,7 +365,7 @@ function itemPayload(
   const status = itemStatus(item);
   switch (item.type) {
     case "reasoning":
-      return { title: "Thinking", detail: item.text, status };
+      return { title: reasoningLabel(item), detail: item.text, status };
     case "command_execution":
       return {
         title: itemSummary(item),
@@ -292,26 +374,58 @@ function itemPayload(
         status,
         data: { item: { command: item.input, result: { output: item.output } } },
       };
-    case "file_change":
+    case "file_change": {
+      const diff = fileChangeDiff(item);
       return {
         title: itemSummary(item),
-        detail: item.diffStr,
+        // The row says how much changed; the lines themselves open in the diff viewer.
+        detail: diff === null ? undefined : diffStatLabel(diff),
         itemType: item.type,
         status,
         data: { item: { path: item.fileName } },
+        ...(diff === null ? {} : { diff }),
       };
+    }
     case "file_search":
+      return {
+        title: itemSummary(item),
+        detail: item.pattern,
+        icon: isFileRead(item) ? "fileRead" : "fileSearch",
+        status,
+      };
     case "web_search":
-      return { title: itemSummary(item), itemType: item.type, status, data: item };
+      return {
+        title: itemSummary(item),
+        itemType: item.type,
+        detail: item.patterns?.join(", "),
+        status,
+      };
     case "dynamic_tool":
       return {
         title: item.toolName ?? "Used tool",
         itemType: "dynamic_tool_call",
+        // The web's work entries show a tool the provider did not classify as a wrench.
+        icon: "mcp",
         status,
         data: { item: { input: item.input, result: item.output } },
       };
-    case "subagent":
-      return { title: itemSummary(item), detail: item.progress ?? item.result, status, data: item };
+    case "subagent": {
+      // The model is the subagent's own, never the parent thread's.
+      const model = projection.subagents.find((entry) => entry.id === item.subagentId)?.model;
+      const detail = [model, item.progress ?? item.result ?? item.prompt]
+        .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+        .join(" · ");
+      return {
+        title: itemSummary(item),
+        detail,
+        icon: "subagent",
+        // An idle subagent waits to be resumed: nothing is running.
+        status: item.status === "idle" ? "stopped" : status,
+        statusLabel: subagentStatusLabel(item.status),
+        childThreadId: item.childThreadId,
+        ...(model ? { model } : {}),
+      };
+    }
     case "approval_request": {
       const request = projection.runtimeRequests.find(
         (candidate) => candidate.id === item.requestId,
@@ -320,15 +434,43 @@ function itemPayload(
         requestId: item.requestId,
         requestKind: item.requestKind,
         detail: item.prompt,
-        status: request?.status ?? item.status,
+        ...approvalOutcome(request),
+        ...(item.options ? { options: item.options } : {}),
+        ...(item.appName ? { appName: item.appName } : {}),
+        // The provider process that asked is gone: nothing can take the answer.
+        ...(request?.responseCapability.type === "not_resumable" ? { notResumable: true } : {}),
+      };
+    }
+    case "todo_list": {
+      const plan = projection.plans.find((candidate) => candidate.id === item.planId);
+      return {
+        explanation: plan?.kind === "todo_list" ? (plan.explanation ?? null) : null,
+        plan:
+          plan?.kind === "todo_list"
+            ? plan.steps.map((step) => ({
+                step: step.text,
+                status: step.status === "running" ? "inProgress" : step.status,
+              }))
+            : [],
       };
     }
     case "user_input_request":
       return {
         requestId: item.requestId,
-        questions: item.questions.map((question) => ({ ...question, multiSelect: false })),
+        questions: item.questions.map((question) => ({
+          ...question,
+          multiSelect: question.multiSelect === true,
+        })),
       };
     case "error":
+      if (item.retry) {
+        return {
+          title: "Provider retry",
+          detail: `${retryLabel(item.retry)} · ${item.failure.message}`,
+          status,
+          data: item,
+        };
+      }
       return { title: "Error", detail: item.failure.message, status: "failed", data: item };
     default:
       return { title: itemSummary(item), status, data: item };
@@ -340,9 +482,9 @@ function itemActivityKind(
   projection: OrchestrationV2ThreadProjection,
 ): string | null {
   if (item.type === "user_message" || item.type === "assistant_message") return null;
-  if (item.type === "checkpoint" || item.type === "proposed_plan" || item.type === "todo_list") {
-    return null;
-  }
+  if (item.type === "checkpoint" || item.type === "proposed_plan") return null;
+  // The agent's own step list, as the plan progress reads it (the work log skips it).
+  if (item.type === "todo_list") return "turn.plan.updated";
   if (item.type === "reasoning") {
     return item.status === "running" ? "task.progress" : "task.completed";
   }
@@ -372,7 +514,7 @@ function presentActivity(
   return {
     id: item.id as unknown as OrchestrationThreadActivity["id"],
     tone:
-      item.type === "error"
+      item.type === "error" && !item.retry
         ? "error"
         : item.type === "approval_request" || item.type === "user_input_request"
           ? "approval"
@@ -388,10 +530,53 @@ function presentActivity(
   };
 }
 
+/** What the adapter adds to the legacy thread shape for the terminal's timeline. */
+export interface TuiThreadExtras {
+  /** Work the provider still runs after the turn settled (monitors, background commands). */
+  readonly pendingBackgroundTasks?: ReadonlyArray<{
+    readonly taskId: string;
+    readonly description?: string;
+    readonly taskType?: string;
+  }>;
+}
+
+/** A queued run's place in line, on its user message. */
+export interface TuiQueuedMessage {
+  readonly position: number | null;
+  /** The queue waits for the user (after a restart, or a usage limit). */
+  readonly held: boolean;
+}
+
 export function presentTuiThread(projection: OrchestrationV2ThreadProjection): OrchestrationThread {
   const thread = projection.thread;
-  const latestRun = deriveLatestThreadRun(projection);
-  const runtime = deriveThreadRuntime(projection);
+  const queuedRuns = new Map(
+    projection.runs
+      .filter((run) => run.status === "queued")
+      .map((run) => [run.id as string, run] as const),
+  );
+  // The provider thread carries the context it has used; a model change keeps the thread.
+  const providerThread =
+    projection.providerThreads.find((entry) => entry.id === thread.activeProviderThreadId) ??
+    projection.providerThreads.at(-1);
+  const contextUsage = providerThread?.contextUsage ?? null;
+  const pendingBackgroundTasks = derivePendingBackgroundWork({
+    latestRun: projection.runs.reduce<OrchestrationV2Run | null>(
+      (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
+      null,
+    ),
+    providerThreads: projection.providerThreads,
+    turnItems: projection.turnItems,
+    activeProviderThreadId: thread.activeProviderThreadId,
+    runs: projection.runs,
+  });
+  // A queued message is not a turn yet: the latest turn is the newest run that began.
+  const begun = projection.runs.filter((run) => run.status !== "queued");
+  const settled =
+    begun.length > 0 && begun.length < projection.runs.length
+      ? { ...projection, runs: begun }
+      : projection;
+  const latestRun = deriveLatestThreadRun(settled);
+  const runtime = deriveThreadRuntime(settled);
   const proposedPlans = projection.plans.flatMap((plan) => {
     if (plan.kind !== "proposed_plan") return [];
     const item = projection.turnItems.findLast(
@@ -487,12 +672,41 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
       streaming: message.streaming,
       createdAt: iso(message.createdAt),
       updatedAt: iso(message.updatedAt),
+      // Another agent's thread sent this message (a subagent reporting to its parent).
+      ...(message.senderThreadId ? { senderThreadId: message.senderThreadId } : {}),
+      // Still waiting for its turn.
+      ...(message.runId !== null && queuedRuns.has(message.runId)
+        ? {
+            queued: {
+              position: queuedRuns.get(message.runId)!.queuePosition ?? null,
+              held: queuedRuns.get(message.runId)!.queueHeld === true,
+            } satisfies TuiQueuedMessage,
+          }
+        : {}),
     })),
     proposedPlans,
-    activities: projection.visibleTurnItems.flatMap((item) => {
-      const activity = presentActivity(item, projection);
-      return activity === null ? [] : [activity];
-    }),
+    activities: [
+      ...projection.visibleTurnItems.flatMap((item) => {
+        const activity = presentActivity(item, projection);
+        return activity === null ? [] : [activity];
+      }),
+      // The header's context meter reads the newest of these (src/contextWindow.ts).
+      ...(contextUsage && providerThread
+        ? [
+            {
+              id: `context-usage:${providerThread.id}`,
+              tone: "info",
+              kind: "context-window.updated",
+              summary: "Context window updated",
+              payload: contextUsage,
+              turnId: null,
+              sequence: projection.visibleTurnItems.length,
+              createdAt: iso(providerThread.updatedAt),
+            } as unknown as OrchestrationThreadActivity,
+          ]
+        : []),
+    ],
+    ...(pendingBackgroundTasks.length > 0 ? { pendingBackgroundTasks } : {}),
     checkpoints: deriveThreadCheckpointSummaries(projection).flatMap((checkpoint) =>
       checkpoint.status === "stale"
         ? []

@@ -98,7 +98,6 @@ Feature: Provider capabilities
       | OpenCode | OpenCode writes it with every tool refused         |
       | Cursor   | Cursor writes it with every tool refused           |
 
-  @backlog
   Scenario Outline: Controls a provider does not support are hidden
     Given a <provider> thread
     When the user looks at the composer
@@ -115,7 +114,6 @@ Feature: Provider capabilities
       | Antigravity | forking the thread          |
       | Grok        | rewinding the thread        |
 
-  @backlog
   Scenario Outline: Providers that cannot steer interrupt and restart instead
     Given a <provider> thread with a running turn
     When the user sends a follow-up and asks to steer
@@ -132,7 +130,6 @@ Feature: Provider capabilities
     When the user rewinds to the first turn
     Then the files are restored and the user is told the conversation cannot be rewound
 
-  @backlog
   Scenario Outline: Proposed plans are shown for providers that make them
     Given a <provider> thread in plan mode
     When the provider finishes a plan
@@ -142,9 +139,14 @@ Feature: Provider capabilities
       | provider |
       | Cursor   |
       | Grok     |
+
+    # The OpenCode row is split out: OpenCode's plan agent answers in prose, and neither
+    # server captures a proposed plan from it (OpenCodeAdapterV2.ts emitsProposedPlan: false).
+    @backlog
+    Examples: Not yet on the MC
+      | provider |
       | OpenCode |
 
-  @backlog
   Scenario Outline: Subagent work is shown as child work
     Given a <provider> thread
     When the provider runs a subagent
@@ -153,20 +155,26 @@ Feature: Provider capabilities
     Examples:
       | provider    |
       | Claude      |
-      | Codex       |
       | Cursor      |
       | Grok        |
       | OpenCode    |
       | Antigravity |
 
-  @shared @backlog
+    # The Codex row is split out: the MC does not project Codex's subagents yet
+    # (codex.feature, "Codex subagents appear as child threads").
+    @backlog
+    Examples: Not yet on the MC
+      | provider    |
+      | Codex       |
+
+  @shared @backlog-desktop @backlog-mobile
   Scenario: An ACP subagent's messages stay in its own thread
     Given an ACP agent starts a native child session
     When the child sends messages and a final summary
     Then they appear in the child's thread
     And the parent receives only the child's result
 
-  @shared @backlog
+  @shared @backlog-mc @backlog-desktop @backlog-mobile
   Scenario: An ACP edit carries its replaced lines
     Given an ACP agent edits a file by giving the old text and the new text
     When the user looks at the change

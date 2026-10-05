@@ -5,6 +5,7 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 
 #include <functional>
@@ -24,6 +25,12 @@ class ToastController;
 // the environment's capabilities leave items out and an offline environment
 // turns the ones that need it off. Each action toasts its failure, and the
 // ones that hide a thread (archive, unpin, settle, snooze) offer Undo.
+//
+// With several threads selected (SidebarController::selection), the menu of
+// one of them is the selection's: each action names how many threads it
+// touches, as the web app's sidebar ("Unpin (1)", "Settle (3)", "Delete (3)"),
+// and applies to all of them. Deleting keeps the threads that could not be
+// deleted selected.
 //
 // The route thread's keybinding commands (thread.pin, thread.settle,
 // thread.undo) run here too (KeybindingController), and it registers its own
@@ -63,16 +70,29 @@ public:
 
   // Writes the clipboard, false when it could not; tests make it fail.
   void setClipboardWriter(std::function<bool(const QString& text)> write) { m_writeClipboard = std::move(write); }
+  // Puts `value` on the clipboard and says so, or why not.
+  void copy(const QString& value, const QString& successTitle, const QString& failureTitle);
 
 private:
   void choose(const QString& key, const QString& id, double x, double y);
+  void openSelection(const QStringList& keys, double x, double y);
+  void chooseForSelection(const QStringList& keys, const QString& id);
+  // Sends each thread's command; `done` gets the keys that failed and the
+  // first failure's reason once every answer is in.
+  void commandEach(const QStringList& keys, const std::function<QJsonObject(const QString& threadId)>& make,
+                   std::function<void(const QStringList& failed, const QString& reason)> done);
   void command(const QString& key, QJsonObject command, const QString& failureTitle,
                std::function<void()> onSuccess = {});
   void archive(const QString& key);
+  // Deleting the last thread of a worktree offers to remove the worktree too
+  // (`vcs.removeWorktree`), or removes it unasked when the environment's
+  // cleanup rules say so (storageCleanup.worktreeOnDelete, or the project's own).
   void remove(const QString& key);
+  void removeWith(const QString& key, const QString& worktree);
+  // The thread's worktree when no other thread uses it, else empty.
+  QString orphanedWorktree(const QString& key) const;
   void pin(const QString& key);
   void unpin(const QString& key);
-  void copy(const QString& value, const QString& successTitle, const QString& failureTitle);
   void fork(const QString& key);
   // Where a move's questions are asked: a menu at the point, or the palette.
   struct Asking {

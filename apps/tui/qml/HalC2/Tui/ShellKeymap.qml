@@ -24,6 +24,8 @@ Item {
     }
 
     Keymap { priority: 1; enabled: keys.mode === "compose"; bindings: keys.layers.compose; onActivated: (action, event) => keys.run(action, event) }
+    // The shortcuts the user gave the open thread's project actions.
+    Keymap { enabled: keys.mode === "compose"; bindings: Shell.state.projectActionKeys; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "newThread"; bindings: keys.layers.newThread; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "userInput"; bindings: keys.layers.userInput; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "revert"; bindings: keys.layers.revert; onActivated: (action, event) => keys.run(action, event) }
@@ -33,11 +35,17 @@ Item {
     Keymap { priority: 1; enabled: keys.mode === "contextMenu"; bindings: keys.layers.contextMenu; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "rename"; bindings: keys.layers.rename; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "join"; bindings: keys.layers.join; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { priority: 1; enabled: keys.mode === "ask"; bindings: keys.layers.ask; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { priority: 1; enabled: keys.mode === "leader"; bindings: keys.layers.leader; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "confirmDelete"; bindings: keys.layers.confirmDelete; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "imagePreview"; bindings: keys.layers.imagePreview; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "diff"; bindings: keys.layers.diff; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "files"; bindings: keys.layers.files; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { priority: 1; enabled: keys.mode === "fileEdit"; bindings: keys.layers.fileEdit; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "settings"; bindings: keys.layers.settings; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { priority: 1; enabled: keys.mode === "section"; bindings: keys.layers.section; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { priority: 1; enabled: keys.mode === "sectionInput"; bindings: keys.layers.sectionInput; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { priority: 1; enabled: keys.mode === "sectionConfirm"; bindings: keys.layers.sectionConfirm; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "panel"; bindings: keys.layers.panel; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "commit"; bindings: keys.layers.commit; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "project"; bindings: keys.layers.project; onActivated: (action, event) => keys.run(action, event) }

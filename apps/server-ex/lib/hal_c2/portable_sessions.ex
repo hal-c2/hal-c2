@@ -18,11 +18,19 @@ defmodule HalC2.PortableSessions do
       whose `session_meta` and `turn_context` records carry the cwd.
     * Pi: `<PI_CODING_AGENT_SESSION_DIR or <PI_CODING_AGENT_DIR or ~/.pi/agent>/sessions>
       /--<cwd, slashes as dashes>--/<file>.jsonl`, whose header records the cwd.
+    * Gemini CLI (the ACP registry's `gemini`): one chat file per session,
+      `<GEMINI_CLI_HOME or ~>/.gemini/tmp/<project>/chats/session-<time>-<id, 8
+      characters>.json`, where `<project>` is the SHA-256 of the project's path, or the
+      name `projects.json` gives that path. The file records the project it belongs to.
+    * OpenCode: a store of its own, read with `opencode export <id>` and written with
+      `opencode import <file>` run in the destination project.
     * A provider plugin that declares `native_sessions` says itself, with its
       `session_files/2` and `place_session/3` (`HalC2.Plugins.ProviderAdapter`).
 
   A copy never replaces a file already there: the machine keeps the copy it had, and
-  since the destination branches a new session, no two sessions share an id.
+  since the destination branches a new session, no two sessions share an id. Gemini
+  cannot branch a session, it loads one by its id, so where the destination already
+  holds that session nothing is placed and the thread gets the handoff.
   """
 
   require Logger
@@ -31,12 +39,14 @@ defmodule HalC2.PortableSessions do
   @drivers ~w(claudeAgent codex pi)
 
   @doc "Whether a provider driver's sessions can be carried."
-  def carries?(driver), do: driver in @drivers or plugin(driver) != nil
+  def carries?(driver),
+    do: driver in @drivers or plugin(driver) != nil or gemini?(driver) or opencode?(driver)
 
   @doc """
   The session a thread carries: `%{driver, instanceId, providerThreadId, nativeId,
-  cwd, files}` with each file as `{name, path on this machine}`, or nil when the
-  thread's agent has no session this machine can carry.
+  cwd, files}` with each file as `{name, path on this machine}`, or `{name, {:data,
+  bytes}}` for what a provider's own export printed, or nil when the thread's agent
+  has no session this machine can carry.
   """
   def export(state, thread, cwd) do
     with %{} = provider_thread <- provider_thread(state, thread),
@@ -44,14 +54,14 @@ defmodule HalC2.PortableSessions do
          instance = provider_thread["providerInstanceId"] || driver,
          {native_id, [{_, main} | _] = found} <-
            session_files(driver, instance, provider_thread, cwd),
-         true <- File.regular?(main) do
+         true <- held?(main) do
       %{
         "driver" => driver,
         "instanceId" => instance,
         "providerThreadId" => provider_thread["id"],
         "nativeId" => native_id,
         "cwd" => recorded_cwd(provider_thread, cwd),
-        "files" => Enum.filter(found, fn {_name, path} -> File.regular?(path) end)
+        "files" => Enum.filter(found, fn {_name, source} -> held?(source) end)
       }
     else
       _ -> nil
@@ -67,11 +77,240 @@ defmodule HalC2.PortableSessions do
     cond do
       module = plugin(driver) -> place_plugin(module, session, root, archive)
       driver in @drivers -> place_own(session, root, archive)
+      gemini?(session["instanceId"] || driver) -> place_gemini(session, root, archive)
+      opencode?(session["instanceId"] || driver) -> place_opencode(session, root, archive)
       true -> {nil, []}
     end
   end
 
   def place(_session, _root, _archive), do: {nil, []}
+
+  # A session's file is where the provider keeps it, or was handed over by the
+  # provider's own export.
+  defp held?({:data, data}), do: is_binary(data)
+  defp held?(path), do: is_binary(path) and File.regular?(path)
+
+  # A carried file's bytes, for a session that is placed as a whole.
+  defp bytes(%{"data" => data}), do: {:ok, data}
+  defp bytes(%{"path" => path}), do: File.read(path)
+  defp bytes(_file), do: :error
+
+  # --- OpenCode ----------------------------------------------------------------------
+
+  @opencode_file "opencode-session.json"
+
+  defp opencode?(instance), do: is_binary(instance) and HalC2.Acp.driver(instance) == "opencode"
+
+  # `{session id, [{name, {:data, export}}]}`: what `opencode export <id>` prints.
+  defp opencode_source(instance, provider_thread, cwd) do
+    with id when is_binary(id) <-
+           get_in(provider_thread, ["nativeThreadRef", "nativeId"]) ||
+             get_in(provider_thread, ["carriedSession", "nativeId"]),
+         {:ok, export} <- opencode_export(instance, id, cwd) do
+      {id, [{@opencode_file, {:data, export}}]}
+    else
+      _ -> nil
+    end
+  end
+
+  defp opencode_export(instance, id, cwd) do
+    with {out, 0} <- opencode(instance, ["export", id], cwd),
+         {:ok, %{"info" => %{"id" => ^id}}} <- JSON.decode(out) do
+      {:ok, out}
+    else
+      _ -> :error
+    end
+  end
+
+  # OpenCode keeps sessions in a store of its own, so its own import puts the copy
+  # there, run in the destination project so the session belongs to it. A session the
+  # destination already has is its own copy: it stays, and nothing is carried.
+  defp place_opencode(%{"files" => [file | _]} = session, root, archive) do
+    instance = session["instanceId"] || session["driver"]
+    id = session["nativeId"]
+
+    with {:ok, data} <- bytes(file),
+         {:ok, %{"info" => %{"id" => ^id}} = export} <- JSON.decode(data),
+         :error <- opencode_export(instance, id, root),
+         :ok <- opencode_import(instance, rehome(export, session["cwd"], root), root) do
+      {%{
+         "providerThreadId" => session["providerThreadId"],
+         "carriedSession" => %{
+           "driver" => session["driver"],
+           "instanceId" => instance,
+           "nativeId" => id,
+           "path" => nil,
+           "from" => get_in(archive, ["thread", "machine"])
+         }
+       }, []}
+    else
+      _ -> {nil, []}
+    end
+  end
+
+  defp opencode_import(instance, export, root) do
+    file =
+      Path.join(System.tmp_dir!(), "hal-c2-opencode-#{System.unique_integer([:positive])}.json")
+
+    try do
+      File.write!(file, JSON.encode!(export))
+      File.chmod(file, 0o600)
+
+      case opencode(instance, ["import", file], root) do
+        {_out, 0} -> :ok
+        _ -> :error
+      end
+    after
+      File.rm(file)
+    end
+  end
+
+  # The directories the export records (the session's, and each message's) move with it.
+  defp rehome(export, from, to) when is_binary(from) and from != to do
+    path = fn
+      %{} = path ->
+        Map.new(path, fn {key, value} -> {key, moved(value, from, to)} end)
+
+      other ->
+        other
+    end
+
+    export
+    |> update_in(["info"], &Map.replace_lazy(&1, "directory", fn dir -> moved(dir, from, to) end))
+    |> Map.update("messages", [], fn messages ->
+      for message <- messages do
+        case message do
+          %{"info" => %{"path" => _} = info} ->
+            %{message | "info" => Map.update!(info, "path", path)}
+
+          other ->
+            other
+        end
+      end
+    end)
+  end
+
+  defp rehome(export, _from, _to), do: export
+
+  # Runs the instance's `opencode` with `args` in `cwd`: `{stdout, status}`, or nil
+  # when it cannot be run or does not come back (the thread then moves with the handoff).
+  defp opencode(instance, args, cwd) do
+    [program | rest] =
+      case Application.get_env(:hal_c2, :acp_commands, %{})[instance] do
+        [_ | _] = command -> command
+        _ -> [HalC2.Acp.binary_path(instance)]
+      end
+
+    env = HalC2.Acp.instance_env(instance)
+
+    parent = self()
+    ref = make_ref()
+
+    # With nothing to read, so it never waits for input; and in a process of its own,
+    # so one that never answers can be killed.
+    {pid, monitor} =
+      spawn_monitor(fn ->
+        argv = ["-c", ~s(exec "$@" </dev/null), "sh", program | rest ++ args]
+        send(parent, {ref, System.cmd("sh", argv, cd: cwd, env: env)})
+      end)
+
+    receive do
+      {^ref, result} ->
+        Process.demonitor(monitor, [:flush])
+        result
+
+      {:DOWN, ^monitor, :process, _, _} ->
+        nil
+    after
+      30_000 ->
+        Process.exit(pid, :kill)
+        Process.demonitor(monitor, [:flush])
+        nil
+    end
+  end
+
+  # --- Gemini CLI --------------------------------------------------------------------
+
+  # An instance of the ACP registry's Gemini CLI.
+  defp gemini?(instance) when is_binary(instance) do
+    case (HalC2.Settings.settings()["providerInstances"] || %{})[instance] do
+      %{"driver" => "acpRegistry", "config" => %{"agentId" => "gemini"}} -> true
+      _ -> false
+    end
+  end
+
+  defp gemini?(_instance), do: false
+
+  @doc "The Gemini CLI home (the folder holding `.gemini`) an instance keeps its chats in."
+  def gemini_home(instance),
+    do: Path.join(home(instance, "GEMINI_CLI_HOME", ""), ".gemini")
+
+  @doc "Gemini CLI's folder for the chats of the project at `root` under `gemini`."
+  def gemini_folder(gemini, root) do
+    named =
+      with {:ok, text} <- File.read(Path.join(gemini, "projects.json")),
+           {:ok, %{"projects" => %{^root => name}}} when is_binary(name) <- JSON.decode(text),
+           do: name
+
+    project = if is_binary(named), do: named, else: project_hash(root)
+    Path.join([gemini, "tmp", project, "chats"])
+  end
+
+  defp project_hash(root), do: :crypto.hash(:sha256, root) |> Base.encode16(case: :lower)
+
+  # `{session id, [{file name, path}]}`: the chat file named after the id that holds it.
+  defp gemini_source(instance, provider_thread) do
+    with id when is_binary(id) <-
+           get_in(provider_thread, ["nativeThreadRef", "nativeId"]) ||
+             get_in(provider_thread, ["carriedSession", "nativeId"]),
+         [path | _] <-
+           gemini_home(instance)
+           |> Path.join("tmp/*/chats/session-*-#{String.slice(id, 0, 8)}.json")
+           |> Path.wildcard()
+           |> Enum.filter(&gemini_chat?(&1, id)) do
+      {id, [{Path.basename(path), path}]}
+    else
+      _ -> nil
+    end
+  end
+
+  defp gemini_chat?(path, id) do
+    with {:ok, text} <- File.read(path), {:ok, %{"sessionId" => ^id}} <- JSON.decode(text) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  # Gemini loads a session by its id from the project's chats, so the copy goes there
+  # under its own name, saying it belongs to the destination's project. A chat already
+  # there is the machine's own copy of that session: it stays, and nothing is carried.
+  defp place_gemini(%{"files" => [%{"fileName" => name} = file | _]} = session, root, archive) do
+    instance = session["instanceId"] || session["driver"]
+    path = Path.join(gemini_folder(gemini_home(instance), root), name)
+
+    with true <- safe?(name) and Path.basename(name) == name,
+         false <- File.exists?(path),
+         {:ok, data} <- bytes(file),
+         {:ok, %{} = chat} <- JSON.decode(data) do
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, JSON.encode!(Map.put(chat, "projectHash", project_hash(root))))
+      File.chmod(path, 0o600)
+
+      {%{
+         "providerThreadId" => session["providerThreadId"],
+         "carriedSession" => %{
+           "driver" => session["driver"],
+           "instanceId" => instance,
+           "nativeId" => session["nativeId"],
+           "path" => path,
+           "from" => get_in(archive, ["thread", "machine"])
+         }
+       }, []}
+    else
+      _ -> {nil, []}
+    end
+  end
 
   defp place_own(%{"driver" => driver, "files" => files} = session, root, archive) do
     instance = session["instanceId"] || driver
@@ -190,6 +429,12 @@ defmodule HalC2.PortableSessions do
       driver in @drivers ->
         with {id, main} when is_binary(main) <- source(driver, instance, provider_thread, cwd),
              do: {id, files(driver, instance, main)}
+
+      gemini?(instance) ->
+        gemini_source(instance, provider_thread)
+
+      opencode?(instance) ->
+        opencode_source(instance, provider_thread, cwd)
 
       true ->
         nil

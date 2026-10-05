@@ -62,7 +62,7 @@ Feature: Pinning and arranging threads
     When the user undoes the change
     Then "Beta" is restored and opened again
 
-  @backlog @desktop
+  @desktop
   Scenario: The undo shortcut only acts when no text is being edited
     Given the user just unpinned "Beta"
     And the user is typing in the composer
@@ -101,35 +101,35 @@ Feature: Pinning and arranging threads
     When a client moves "Gamma" between "Alpha" and "Beta"
     Then only "Gamma" is changed
 
-  @backlog @desktop
+  @desktop
   Scenario: Moving a thread up or down from its menu
     When the user moves "Beta" up
     Then "Beta" is listed above "Alpha"
 
-  @backlog @desktop
+  @desktop
   Scenario: New threads appear above arranged active threads
     Given the user arranged the active threads by hand
     When a new thread "Delta" is created
     Then "Delta" is listed above the arranged threads
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Activity does not reorder threads
     When the agent finishes work in "Gamma"
     Then the order of the active threads does not change
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Pinning and snoozing keep an active thread's position for later
     Given "Beta" is the second active thread
     When the user pins and then unpins "Beta"
     Then "Beta" is the second active thread again
 
-  @backlog @desktop
+  @desktop
   Scenario: Arranging is unavailable on an environment that needs an update
     Given the environment does not support reordering active threads
     When the user tries to move "Beta"
     Then the user is told "Update this environment's server to reorder active threads."
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Reordering threads by dragging within a section is kept
     Given the <section> threads are "Alpha" then "Beta"
     When the user drags "Beta" above "Alpha"
@@ -141,7 +141,7 @@ Feature: Pinning and arranging threads
       | pinned  |
       | active  |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Dragging a thread between sections
     Given "Beta" is <from>
     When the user drags "Beta" <onto>
@@ -155,18 +155,18 @@ Feature: Pinning and arranging threads
       | settled | into the active section         | un-settled                    |
       | snoozed | into the active section         | woken                         |
 
-  @backlog @desktop
+  @desktop
   Scenario: A thread cannot be dragged into the snoozed shelf
     When the user drags "Beta" onto the snoozed section
     Then nothing happens to "Beta"
 
-  @backlog @desktop
+  @desktop
   Scenario: Dragging to the top pins when nothing is pinned yet
     Given no thread is pinned
     When the user drags "Gamma" to the top of the list
     Then "Gamma" is pinned
 
-  @backlog @desktop
+  @desktop
   Scenario: Dropping files onto a thread attaches them
     When the user drops two files onto "Beta" in the thread list
     Then "Beta" opens

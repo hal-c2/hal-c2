@@ -61,6 +61,15 @@ export interface RpcSession {
    */
   readonly mcCall?: (method: string, payload: unknown) => Effect.Effect<unknown, Error>;
   /**
+   * `mcCall` on the MC serving another environment (a cluster member or a linked
+   * environment), reached through this one. Only protocol-3 sessions have it.
+   */
+  readonly callEnvironment?: (
+    environmentId: string,
+    method: string,
+    payload: unknown,
+  ) => Effect.Effect<unknown, Error>;
+  /**
    * Emits when a machine of the MC's cluster comes, goes or changes, while the shell
    * is subscribed to (the MC says so there). Absent on a TypeScript server's session.
    */

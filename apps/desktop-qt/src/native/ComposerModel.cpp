@@ -320,6 +320,7 @@ QList<Instance> instances(const QJsonArray& providers) {
     }
     instance.models = provider.value(QLatin1String("models")).toArray();
     instance.slashCommands = provider.value(QLatin1String("slashCommands")).toArray();
+    instance.usageLimits = provider.value(QLatin1String("usageLimits")).toObject();
     instance.skills = provider.value(QLatin1String("skills")).toArray();
     list.append(instance);
   }
@@ -797,6 +798,10 @@ QList<Suggestion> pathItems(const QList<std::pair<QString, bool>>& entries) {
                   slash < 0 ? QString() : path.left(slash), fileLink(path)});
   }
   return items;
+}
+
+QString pathLink(const QString& path) {
+  return fileLink(path);
 }
 
 QString emptyText(const QString& kind) {

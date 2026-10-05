@@ -40,7 +40,7 @@ Feature: Picking, switching and creating branches
     When the user opens the branch list
     Then the user is told how many of the 400 refs are shown and to type to narrow them
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Scrolling to the end loads more branches
     Given "shop" has 400 branches
     When the user scrolls to the end of the branch list
@@ -109,12 +109,12 @@ Feature: Picking, switching and creating branches
     When the user looks at the thread list
     Then the thread in "shop" shows the branch "feature/tax"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Copying the branch name
     When the user copies the thread's branch name
     Then "feature/tax" is on the clipboard
 
-  @backlog @tui
+  @tui
   Scenario: Switching and creating branches from the terminal client
     When the user switches the thread to "main" from the terminal client
     Then the checkout is on "main" and the thread's branch reads "main"
@@ -124,7 +124,7 @@ Feature: Picking, switching and creating branches
     When the user switches the thread to "main" from the phone
     Then the checkout is on "main"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The thread's branch follows the checkout
     Given the agent checked out "feature/pay" in the thread's checkout
     When the status updates

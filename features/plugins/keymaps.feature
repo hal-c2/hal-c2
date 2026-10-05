@@ -80,7 +80,7 @@ Feature: Keymaps
       | ctrl++    | control and plus        |
 
   # opentui-qml keymaps accept "hyper" as a modifier (keymap-host MODIFIER_NAMES); only parseKeySequence rejects it.
-  @backlog @tui
+  @tui
   Scenario: A key sequence with an unknown modifier is reported and skipped
     Given a keymap file that binds "hyper+x" to "palette.open"
     When the keymap loads
@@ -160,7 +160,7 @@ Feature: Keymaps
     When a client reads the keybindings
     Then only the valid rule is applied
 
-  @backlog @shared @desktop @mobile @tui
+  @shared @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: One keymap file format works on every surface
     Given a keymap file that binds "ctrl+k" to "palette.open"
     When it is loaded on the desktop app, the mobile app with a hardware keyboard, and the TUI
@@ -191,7 +191,7 @@ Feature: Keymaps
     When the user opens the keybinding reference
     Then "ctrl+n" is flagged as a conflict naming both keymaps
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Resetting keybindings removes every override
     Given the user has several keybinding overrides
     When the user resets keybindings to the defaults

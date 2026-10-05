@@ -1,5 +1,6 @@
 import { TextAttributes, type RGBA, type TextChunk } from "@opentui/core";
 
+import { parseMarkdownTable, type MarkdownTable } from "../markdownTable.ts";
 import type { Palette } from "../theme.ts";
 
 // Styled text for `Shell.state`: a QML `Text { text: line }` renders any
@@ -44,9 +45,22 @@ export const styled = (...chunks: ReadonlyArray<TextChunk | null | false>): Styl
 export const plainText = (text: StyledText): string => text.chunks.map((c) => c.text).join("");
 
 const INLINE =
-  /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\s][^*\n]*)\*|\[([^\]\n]+)\]\(([^)\s]+)\)|<(https?:\/\/[^>\s]+)>/g;
+  /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\s][^*\n]*)\*|(!)?\[([^\]\n]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)|<(https?:\/\/[^>\s]+)>/g;
 
-/** Inline Markdown: code spans, bold, italic, links and autolinks. */
+/**
+ * A link the terminal may open: the web, mail, or a path. A message's text is
+ * untrusted, so any other scheme (`javascript:`, `data:`, `file:`) is no link.
+ */
+export function isSafeLink(url: string): boolean {
+  const scheme = /^\s*([a-z][a-z0-9+.-]*):/i.exec(url)?.[1]?.toLowerCase();
+  return scheme === undefined || scheme === "http" || scheme === "https" || scheme === "mailto";
+}
+
+/**
+ * Inline Markdown: code spans, bold, italic, links and autolinks. An image is
+ * a link to its address (nothing is fetched); a link that is not safe to open
+ * is just its text. HTML is not Markdown here: it shows as it was written.
+ */
 export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle = {}): TextChunk[] {
   const chunks: TextChunk[] = [];
   let last = 0;
@@ -61,10 +75,14 @@ export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle 
     else if (match[3] !== undefined || match[4] !== undefined) {
       push(match[3] ?? match[4]!, { bold: true });
     } else if (match[5] !== undefined) push(match[5], { italic: true });
-    else if (match[6] !== undefined) {
-      push(match[6], { fg: palette.accent, underline: true, link: match[7]! });
-    } else if (match[8] !== undefined) {
-      push(match[8], { fg: palette.accent, underline: true, link: match[8] });
+    else if (match[8] !== undefined) {
+      const url = match[8];
+      const label = match[7] !== "" ? match[7]! : match[6] ? url : "";
+      if (label === "") push(match[0], {});
+      else if (isSafeLink(url)) push(label, { fg: palette.accent, underline: true, link: url });
+      else push(label, {});
+    } else if (match[9] !== undefined) {
+      push(match[9], { fg: palette.accent, underline: true, link: match[9] });
     }
   }
   push(text.slice(last), {});
@@ -77,19 +95,19 @@ const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 const QUOTE = /^[ \t]{0,3}>\s?(.*)$/;
 const RULE = /^[ \t]{0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
-const TABLE_DIVIDER = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
 
-const tableCells = (row: string): string[] =>
-  row
-    .trim()
-    .replace(/^\||\|$/g, "")
-    .split("|")
-    .map((cell) => cell.trim());
-
-/** A pipe table boxed across `width` in equal columns, header cells in the list style. */
-function tableLines(rows: ReadonlyArray<string>, width: number, palette: Palette): StyledText[] {
-  const [head = [], ...body] = rows.filter((row) => !TABLE_DIVIDER.test(row)).map(tableCells);
-  const count = Math.max(1, head.length);
+/**
+ * A pipe table boxed across `width` in equal columns, header cells in the list
+ * style. A cell longer than its column wraps onto more lines of its row, or is
+ * cut to one line when the table's cells are `collapsed`.
+ */
+function tableLines(
+  table: MarkdownTable,
+  width: number,
+  palette: Palette,
+  collapsed: boolean,
+): StyledText[] {
+  const count = Math.max(1, table.head.length);
   const inner = Math.max(count, width - count - 1);
   const widths = Array.from(
     { length: count },
@@ -97,25 +115,57 @@ function tableLines(rows: ReadonlyArray<string>, width: number, palette: Palette
   );
   const border = (left: string, mid: string, right: string) =>
     styled(chunk(left + widths.map((w) => "─".repeat(w)).join(mid) + right, { fg: palette.faint }));
-  const row = (cells: ReadonlyArray<string>, style: ChunkStyle) =>
-    styled(
-      ...widths.flatMap((w, index) => {
-        const text = clipCells(cells[index] ?? "", w);
-        return [
-          chunk("│", { fg: palette.faint }),
-          chunk(text, { fg: palette.text, ...style }),
-          chunk(" ".repeat(Math.max(0, w - Bun.stringWidth(text)))),
-        ];
-      }),
-      chunk("│", { fg: palette.faint }),
+  const row = (cells: ReadonlyArray<string>, style: ChunkStyle): StyledText[] => {
+    const wrapped = widths.map((w, index) =>
+      collapsed ? [clipCells(cells[index] ?? "", w)] : wrapCell(cells[index] ?? "", w),
     );
+    const height = Math.max(1, ...wrapped.map((lines) => lines.length));
+    return Array.from({ length: height }, (_, line) =>
+      styled(
+        ...widths.flatMap((w, index) => {
+          const text = wrapped[index]![line] ?? "";
+          return [
+            chunk("│", { fg: palette.faint }),
+            chunk(text, { fg: palette.text, ...style }),
+            chunk(" ".repeat(Math.max(0, w - Bun.stringWidth(text)))),
+          ];
+        }),
+        chunk("│", { fg: palette.faint }),
+      ),
+    );
+  };
   return [
     border("┌", "┬", "┐"),
-    row(head, { fg: palette.accent, bold: true }),
+    ...row(table.head, { fg: palette.accent, bold: true }),
     border("├", "┼", "┤"),
-    ...body.map((cells) => row(cells, {})),
+    ...table.body.flatMap((cells) => row(cells, {})),
     border("└", "┴", "┘"),
   ];
+}
+
+/** A cell's text on as many lines of `width` as it needs, broken at spaces where it can be. */
+function wrapCell(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let current = "";
+  for (const word of text.split(/\s+/).filter((part) => part.length > 0)) {
+    let rest = word;
+    const joined = current === "" ? rest : `${current} ${rest}`;
+    if (Bun.stringWidth(joined) <= width) {
+      current = joined;
+      continue;
+    }
+    if (current !== "") lines.push(current);
+    // A word wider than the column is cut across lines.
+    while (Bun.stringWidth(rest) > width) {
+      const head = clipCells(rest, width);
+      if (head === "") break;
+      lines.push(head);
+      rest = rest.slice(head.length);
+    }
+    current = rest;
+  }
+  if (current !== "" || lines.length === 0) lines.push(current);
+  return lines;
 }
 
 function clipCells(text: string, width: number): string {
@@ -136,18 +186,67 @@ function clipCells(text: string, width: number): string {
  * bar, rules and tables across `width`, inline emphasis, code spans and links.
  */
 export function markdownLines(markdown: string, palette: Palette, width = 24): StyledText[] {
-  const lines: StyledText[] = [];
-  const blankLast = () => lines.length === 0 || plainText(lines.at(-1)!) === "";
+  return markdownBlockLines(markdown, palette, width).map((entry) => entry.text);
+}
+
+/** A line of rendered Markdown, with the code block or table it belongs to. */
+export interface MarkdownLine {
+  readonly text: StyledText;
+  /** The fenced code block this line is in (counted from 0) and its whole source. */
+  readonly code?: { readonly index: number; readonly source: string };
+  /** The table this line is in (counted from 0). */
+  readonly table?: { readonly index: number; readonly table: MarkdownTable };
+  /** The alert this line titles (`> [!NOTE]`). */
+  readonly alert?: string;
+}
+
+const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i;
+
+/** `markdownLines` with each line's block; `collapsedTables` cuts those tables' cells to a line. */
+export function markdownBlockLines(
+  markdown: string,
+  palette: Palette,
+  width = 24,
+  collapsedTables: (index: number) => boolean = () => false,
+): MarkdownLine[] {
+  const lines: MarkdownLine[] = [];
+  const blankLast = () => lines.length === 0 || plainText(lines.at(-1)!.text) === "";
+  const push = (...texts: StyledText[]) => {
+    for (const text of texts) lines.push({ text });
+  };
   const separate = () => {
-    if (!blankLast()) lines.push(styled(chunk("")));
+    if (!blankLast()) push(styled(chunk("")));
   };
   let fence: string | null = null;
   let afterBlock = false;
   let table: string[] = [];
+  let tableCount = 0;
+  let codeCount = 0;
+  // The open code block's lines: each carries the whole source once the block ends.
+  let codeStart = -1;
+  const closeCode = () => {
+    if (codeStart < 0) return;
+    const block = lines.slice(codeStart);
+    const code = {
+      index: codeCount,
+      source: block.map((entry) => plainText(entry.text)).join("\n"),
+    };
+    block.forEach((entry, offset) => {
+      lines[codeStart + offset] = { text: entry.text, code };
+    });
+    codeCount += 1;
+    codeStart = -1;
+  };
+  let quoteOpen = false;
   const flushTable = () => {
     if (table.length === 0) return;
     separate();
-    lines.push(...tableLines(table, width, palette));
+    const parsed = parseMarkdownTable(table);
+    const block = { index: tableCount, table: parsed };
+    for (const text of tableLines(parsed, width, palette, collapsedTables(tableCount))) {
+      lines.push({ text, table: block });
+    }
+    tableCount += 1;
     table = [];
     afterBlock = true;
   };
@@ -160,12 +259,16 @@ export function markdownLines(markdown: string, palette: Palette, width = 24): S
         fenceMatch[1].length >= fence.length
       ) {
         fence = null;
+        closeCode();
         afterBlock = true;
         continue;
       }
-      lines.push(styled(chunk(raw, { fg: palette.warning })));
+      push(styled(chunk(raw, { fg: palette.warning })));
       continue;
     }
+    const quoted = raw.match(QUOTE);
+    const startsQuote = quoted !== null && !quoteOpen;
+    quoteOpen = quoted !== null;
     if (TABLE_ROW.test(raw)) {
       table.push(raw);
       continue;
@@ -174,11 +277,12 @@ export function markdownLines(markdown: string, palette: Palette, width = 24): S
     if (fenceMatch?.[1]) {
       fence = fenceMatch[1];
       separate();
+      codeStart = lines.length;
       continue;
     }
     if (raw.trim().length === 0) {
       // One blank line between blocks; none leading.
-      if (!blankLast()) lines.push(styled(chunk("")));
+      if (!blankLast()) push(styled(chunk("")));
       afterBlock = false;
       continue;
     }
@@ -186,18 +290,18 @@ export function markdownLines(markdown: string, palette: Palette, width = 24): S
     afterBlock = false;
     const heading = raw.match(HEADING);
     if (heading) {
-      lines.push({
+      push({
         chunks: inlineMarkdown(heading[2] ?? "", palette, { fg: palette.accent, bold: true }),
       });
       continue;
     }
     if (RULE.test(raw)) {
-      lines.push(styled(chunk("─".repeat(Math.max(1, width)), { fg: palette.faint })));
+      push(styled(chunk("─".repeat(Math.max(1, width)), { fg: palette.faint })));
       continue;
     }
     const item = raw.match(LIST_ITEM);
     if (item) {
-      lines.push(
+      push(
         styled(
           item[1] ? chunk(item[1]) : null,
           chunk(item[2]!, { fg: palette.accent, bold: true }),
@@ -207,19 +311,46 @@ export function markdownLines(markdown: string, palette: Palette, width = 24): S
       );
       continue;
     }
-    const quote = raw.match(QUOTE);
-    if (quote) {
-      lines.push(
+    if (quoted) {
+      // GitHub's alerts: a quote that opens with `[!NOTE]` alone on its line is titled by its kind.
+      const alert = startsQuote ? ALERT.exec(quoted[1] ?? "")?.[1] : undefined;
+      if (alert) {
+        const title = alert[0]!.toUpperCase() + alert.slice(1).toLowerCase();
+        lines.push({
+          text: styled(
+            chunk("│ ", { fg: alertColor(title, palette) }),
+            chunk(title, { fg: alertColor(title, palette), bold: true }),
+          ),
+          alert: title,
+        });
+        continue;
+      }
+      push(
         styled(
           chunk("│ ", { fg: palette.faint }),
-          ...inlineMarkdown(quote[1] ?? "", palette, { fg: palette.dim, italic: true }),
+          ...inlineMarkdown(quoted[1] ?? "", palette, { fg: palette.dim, italic: true }),
         ),
       );
       continue;
     }
-    lines.push({ chunks: inlineMarkdown(raw, palette) });
+    push({ chunks: inlineMarkdown(raw, palette) });
   }
+  // A code block still being written is a code block already.
+  closeCode();
   flushTable();
-  while (lines.length > 0 && plainText(lines.at(-1)!) === "") lines.pop();
+  while (lines.length > 0 && plainText(lines.at(-1)!.text) === "") lines.pop();
   return lines;
+}
+
+function alertColor(title: string, palette: Palette): RGBA {
+  switch (title) {
+    case "Tip":
+      return palette.success;
+    case "Warning":
+      return palette.warning;
+    case "Caution":
+      return palette.error;
+    default:
+      return palette.accent;
+  }
 }

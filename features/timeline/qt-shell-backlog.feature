@@ -7,7 +7,7 @@ Feature: Desktop shell gaps: thread notifications
   Operating system notifications the Electron desktop app delivers that the native desktop
   shell does not yet deliver on its own.
 
-  @backlog @desktop
+  @desktop
   Scenario: A turn that finishes in the background notifies without extensions
     Given the native desktop shell has no notification extension installed
     And the app is in the background
@@ -21,13 +21,13 @@ Feature: Desktop shell gaps: thread notifications
     When a thread asks for approval
     Then a native macOS notification arrives
 
-  @backlog @desktop
+  @desktop
   Scenario: The dock or taskbar badge counts unseen completions
     Given the app is in the background
     When two turns finish
     Then the dock or taskbar badge shows 2
 
-  @backlog @desktop
+  @desktop
   Scenario: The badge clears when the user returns
     Given the dock or taskbar badge shows 2
     When the user returns to the app

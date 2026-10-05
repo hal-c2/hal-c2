@@ -172,7 +172,7 @@ Feature: Providers settings panel
       And the agent finishes preparing
       Then the new wizard still asks which agent to add
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A registry agent in the results shows its details
       When the user searches the ACP Registry for "gemini"
       Then each agent shows its icon and description
@@ -503,13 +503,13 @@ Feature: Providers settings panel
 
   Rule: The models list
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A model lists what it can do
       Given Claude reports a model with fast mode, thinking and reasoning options
       When the user opens Claude's models
       Then that model is labelled "Fast mode", "Thinking" and "Reasoning"
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A long models list can be filtered and counted
       Given Codex reports twelve models, two of them favourites and one hidden
       When the user opens Codex's models
@@ -542,7 +542,7 @@ Feature: Providers settings panel
         | a choice list with no choices | needs at least one choice  |
         | the same choice twice         | uses a choice twice        |
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: A custom model id is checked before it is saved
       Given Claude already has the custom model "my-model"
       When the user adds the custom model "<slug>" to Claude

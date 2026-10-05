@@ -30,11 +30,33 @@ Rectangle {
         return null;
     }
 
+    // An opened result is kept in view while the page still lays out (rows
+    // that arrive with its state), until the user scrolls.
+    property bool following: false
+
+    // The folded sections the user, or a search result inside one, opened.
+    property var openFolds: ({})
+
+    function setFold(section, open) {
+        if ((openFolds[section] === true) === open) return;
+        const next = Object.assign({}, openFolds);
+        next[section] = open;
+        openFolds = next;
+    }
+
     // Scrolls the route's target to the top of the page, when it is here.
     function reveal() {
         if (route === null || !route.target) return;
+        const fold = Rows.foldOf(rows, route.target);
+        if (fold.length > 0 && !openFolds[fold]) {
+            // Its rows are made once the fold is open.
+            setFold(fold, true);
+            Qt.callLater(reveal);
+            return;
+        }
         const target = descendant(column, route.target);
         if (target === null) return;
+        following = true;
         const y = target.mapToItem(column, 0, 0).y + column.y - 12;
         flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
     }
@@ -52,21 +74,21 @@ Rectangle {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar {}
+        onMovementStarted: page.following = false
 
         ColumnLayout {
             id: column
+
+            onImplicitHeightChanged: if (page.following) Qt.callLater(page.reveal)
 
             x: 24
             y: 24
             width: Math.min(720, flick.width - 48)
             spacing: 14
 
-            Label {
+            SettingsBreadcrumb {
                 Layout.fillWidth: true
-                text: page.title
-                color: page.foreground
-                font.pixelSize: 18
-                font.weight: Font.DemiBold
+                section: page.title
             }
 
             ColumnLayout {
@@ -77,7 +99,7 @@ Rectangle {
             }
 
             Repeater {
-                model: Rows.visible(page.rows, Qt.platform.os)
+                model: Rows.listed(page.rows, Qt.platform.os, page.openFolds)
 
                 delegate: Loader {
                     id: entry
@@ -85,20 +107,42 @@ Rectangle {
                     required property var modelData
 
                     Layout.fillWidth: true
-                    sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : settingRow
+                    // A row every selected environment must support is listed once they do.
+                    visible: {
+                        Settings.document;
+                        return !modelData.requires || Settings.supports(modelData.requires);
+                    }
+                    sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : modelData.component === "textGeneration" ? textGenerationRow : modelData.component === "backgroundActivity" ? backgroundActivityRow : settingRow
 
                     Component {
                         id: heading
 
                         ColumnLayout {
+                            readonly property bool folded: entry.modelData.folded === true
+                            readonly property bool open: page.openFolds[entry.modelData.section] === true
+
+                            objectName: "settingsSection:" + entry.modelData.section
                             spacing: 6
 
-                            Label {
+                            RowLayout {
                                 Layout.topMargin: 12
-                                text: entry.modelData.section
-                                color: page.foreground
-                                font.pixelSize: 14
-                                font.weight: Font.DemiBold
+                                spacing: 6
+
+                                Label {
+                                    text: entry.modelData.section
+                                    color: page.foreground
+                                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                                    font.weight: Font.DemiBold
+                                }
+
+                                ShellButton {
+                                    objectName: "fold"
+                                    visible: parent.parent.folded
+                                    subtle: true
+                                    text: parent.parent.open ? qsTr("Hide") : qsTr("Show")
+                                    Accessible.name: parent.parent.open ? qsTr("Hide %1").arg(entry.modelData.section) : qsTr("Show %1").arg(entry.modelData.section)
+                                    onClicked: page.setFold(entry.modelData.section, !parent.parent.open)
+                                }
                             }
 
                             Rectangle {
@@ -124,7 +168,7 @@ Rectangle {
                                 Label {
                                     text: entry.modelData.title
                                     color: page.foreground
-                                    font.pixelSize: 13
+                                    font.pixelSize: Math.round(13 * Theme.fontScale)
                                     font.weight: Font.Medium
                                 }
 
@@ -132,7 +176,7 @@ Rectangle {
                                     Layout.fillWidth: true
                                     text: entry.modelData.description ?? ""
                                     color: Theme.palette.color("textMuted", "#a1a1aa")
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                     wrapMode: Text.Wrap
                                 }
                             }
@@ -142,6 +186,22 @@ Rectangle {
                                 text: entry.modelData.button
                                 onClicked: Shell.dispatch("settings.navigate", { to: entry.modelData.link })
                             }
+                        }
+                    }
+
+                    Component {
+                        id: textGenerationRow
+
+                        TextGenerationRow {
+                            spec: entry.modelData
+                        }
+                    }
+
+                    Component {
+                        id: backgroundActivityRow
+
+                        BackgroundActivityRow {
+                            spec: entry.modelData
                         }
                     }
 

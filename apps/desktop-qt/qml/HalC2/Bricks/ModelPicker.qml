@@ -21,7 +21,13 @@ AbstractButton {
     readonly property bool locked: catalogue ? catalogue.locked : false
     readonly property var activeInstance: Picker.findInstance(instances, selectedInstanceId)
     readonly property var activeModel: Picker.findModel(activeInstance, selectedModel)
-    readonly property string triggerTitle: activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
+    // The models a new thread's prompt goes to, once more than one is chosen.
+    readonly property var multiple: catalogue?.multiple ?? null
+    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
+
+    function inMultiple(instanceId, model) {
+        return multiple !== null && multiple.some(entry => entry.instanceId === instanceId && entry.model === model);
+    }
     readonly property string triggerLabel: activeModel && activeModel.isUnavailable ? triggerTitle + qsTr(" (Unavailable)") : triggerTitle
     readonly property bool mac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property alias popup: popup
@@ -182,7 +188,7 @@ AbstractButton {
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : 0.64
     font.family: fontFamily
-    font.pixelSize: 14
+    font.pixelSize: Math.round(14 * Theme.fontScale)
     font.weight: Font.Medium
     Accessible.role: Accessible.ComboBox
     Accessible.name: triggerLabel
@@ -275,6 +281,8 @@ AbstractButton {
             } : {};
             control.view = Picker.initialView(control.instances, control.selectedInstanceId, control.locked);
         }
+        // The keymap's modelPickerOpen.
+        onVisibleChanged: Keybindings.modelPickerOpen = visible
         onOpened: {
             const selected = control.rows.findIndex(row => row.kind === "model" && row.instance.instanceId === control.selectedInstanceId && row.model.slug === control.selectedModel);
             control.highlightedIndex = selected >= 0 ? selected : control.firstSelectableRow(0, 1);
@@ -494,7 +502,7 @@ AbstractButton {
                             placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
                             color: control.foreground
                             font.family: control.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                             selectionColor: Theme.palette.color("accent", "#2563eb")
                             selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
                             text: control.query
@@ -578,7 +586,7 @@ AbstractButton {
                             text: qsTr("No models found")
                             color: control.muted
                             font.family: control.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
                         }
                     }
                 }
@@ -597,7 +605,13 @@ AbstractButton {
             readonly property var model: entry ? entry.model : null
             readonly property var instance: entry ? entry.instance : null
             readonly property string disabledReason: model && model.disabledReason !== null ? model.disabledReason : ""
-            readonly property bool isSelected: instance !== null && model !== null && instance.instanceId === control.selectedInstanceId && model.slug === control.selectedModel
+            readonly property bool isSelected: {
+                if (instance === null || model === null)
+                    return false;
+                if (control.multiple !== null)
+                    return control.multiple.some(picked => picked.instanceId === instance.instanceId && picked.model === model.slug);
+                return instance.instanceId === control.selectedInstanceId && model.slug === control.selectedModel;
+            }
             readonly property bool highlighted: control.highlightedIndex === rowIndex
             readonly property string jumpText: entry ? control.jumpLabel(entry) : ""
 
@@ -615,8 +629,17 @@ AbstractButton {
 
             TapHandler {
                 onTapped: {
-                    if (row.disabledReason.length === 0 && row.model)
-                        control.choose(row.instance.instanceId, row.model.slug);
+                    if (row.disabledReason.length > 0 || !row.model)
+                        return;
+                    // Shift-click is the row's "send to this model too".
+                    if ((point.modifiers & Qt.ShiftModifier) && control.catalogue?.supportsMultiple === true) {
+                        Shell.dispatch("composer.model.multiple.toggle", {
+                            instanceId: row.instance.instanceId,
+                            model: row.model.slug
+                        });
+                        return;
+                    }
+                    control.choose(row.instance.instanceId, row.model.slug);
                 }
             }
 
@@ -645,7 +668,7 @@ AbstractButton {
                             text: row.model ? Picker.displayName(row.model, !control.locked) : ""
                             color: control.foreground
                             font.family: control.fontFamily
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                             elide: Text.ElideRight
                         }
@@ -665,7 +688,7 @@ AbstractButton {
                                 text: qsTr("NEW")
                                 color: Theme.palette.color("updateForeground", "#60a5fa")
                                 font.family: control.fontFamily
-                                font.pixelSize: 10
+                                font.pixelSize: Math.round(10 * Theme.fontScale)
                                 font.bold: true
                                 font.letterSpacing: 0.4
                             }
@@ -697,7 +720,7 @@ AbstractButton {
                             text: row.model && row.instance ? Picker.providerLabel(row.model, row.instance) : ""
                             color: control.fade(control.muted, 0.7)
                             font.family: control.fontFamily
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             elide: Text.ElideRight
                         }
                     }
@@ -718,8 +741,45 @@ AbstractButton {
                         text: row.jumpText
                         color: control.muted
                         font.family: control.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
+                    }
+                }
+
+                // Also send a new thread's prompt to this model.
+                AbstractButton {
+                    id: also
+
+                    readonly property bool chosen: row.instance !== null && row.model !== null && control.inMultiple(row.instance.instanceId, row.model.slug)
+
+                    objectName: row.instance && row.model ? "modelPickerMultiple:" + row.instance.instanceId + ":" + row.model.slug : ""
+                    visible: control.catalogue?.supportsMultiple === true
+                    implicitWidth: 24
+                    implicitHeight: 24
+                    enabled: row.disabledReason.length === 0
+                    hoverEnabled: true
+                    focusPolicy: Qt.NoFocus
+                    Accessible.name: chosen ? qsTr("Stop sending to this model too") : qsTr("Send to this model too")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 0
+                    ToolTip.text: chosen ? qsTr("Stop sending to this model too") : qsTr("Send to this model too: one thread per model, each in its own worktree")
+                    onClicked: Shell.dispatch("composer.model.multiple.toggle", {
+                        instanceId: row.instance.instanceId,
+                        model: row.model.slug
+                    })
+
+                    background: Rectangle {
+                        radius: 4
+                        color: also.hovered ? control.highlight : "transparent"
+                    }
+
+                    contentItem: Item {
+                        ShellIcon {
+                            anchors.centerIn: parent
+                            name: also.chosen ? "check" : "plus"
+                            size: 12
+                            color: also.chosen ? Theme.palette.color("accent", "#2563eb") : control.fade(control.muted, also.hovered ? 1 : 0.72)
+                        }
                     }
                 }
 
@@ -797,7 +857,7 @@ AbstractButton {
                         text: qsTr("Legacy models")
                         color: control.foreground
                         font.family: control.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
 
@@ -805,7 +865,7 @@ AbstractButton {
                         text: legacy.entry ? qsTr("%1 models").arg(legacy.entry.count) : ""
                         color: control.fade(control.muted, 0.7)
                         font.family: control.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                 }
 
@@ -919,7 +979,7 @@ AbstractButton {
             anchors.centerIn: parent
             color: control.muted
             font.family: control.fontFamily
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             font.weight: Font.Medium
         }
     }

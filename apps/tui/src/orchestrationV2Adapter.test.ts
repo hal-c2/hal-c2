@@ -206,10 +206,10 @@ describe("orchestration V2 TUI presentation", () => {
     expect(result.activities).toHaveLength(1);
     expect(result.activities[0]).toMatchObject({
       kind: "task.completed",
-      summary: "Thinking",
+      summary: "Thought",
       sequence: 0,
       payload: {
-        title: "Thinking",
+        title: "Thought",
         detail: "Mapped the turn",
         status: "completed",
       },

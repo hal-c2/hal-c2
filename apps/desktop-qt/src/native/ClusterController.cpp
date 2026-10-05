@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QQmlPropertyMap>
 
+#include "DraftController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "McClient.h"
@@ -130,12 +131,23 @@ void ClusterController::change(const QString& method, const QJsonObject& payload
                                const QString& failure) {
   ++m_generation;
   set(QStringLiteral("busy"), true);
-  call(method, payload, [this, success, failure](const QJsonValue& result, const std::optional<QString>& error) {
+  call(method, payload, [this, method, payload, success, failure](const QJsonValue& result, const std::optional<QString>& error) {
     m_state.insert(QStringLiteral("busy"), false);
     if (error) {
       setNotice(QStringLiteral("error"), QStringLiteral("%1: %2").arg(failure, *error));
       refresh();  // in place of any read this change overtook
       return;
+    }
+    // Nothing written for a removed machine is kept: its rows go with it, its drafts here.
+    if (method == QLatin1String("cluster.remove")) {
+      if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
+        const QString removed = payload.value(QLatin1String("id")).toString();
+        QStringList ids;
+        for (const DraftController::Draft& draft : drafts->drafts()) {
+          if (draft.environmentId == removed) ids.append(draft.id);
+        }
+        for (const QString& id : std::as_const(ids)) drafts->remove(id);
+      }
     }
     m_state.insert(QStringLiteral("status"), result.toObject().toVariantMap());
     m_state.insert(QStringLiteral("error"), QVariant::fromValue(nullptr));

@@ -58,7 +58,7 @@ Feature: Checkpoints and rewinding
     Then turns 2 and 3 are no longer shown
     And the agent no longer remembers turns 2 and 3
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Editing from a message returns the prompt to the composer
     Given the composer holds the draft "also check tax"
     When the user edits from the second message and reverts the files too
@@ -76,13 +76,13 @@ Feature: Checkpoints and rewinding
       | and files restored      | matches the end of turn 1                |
       | without restoring files | keeps every change made by turns 2 and 3 |
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user cancels a rewind
     When the user starts editing from the second message
     And the user cancels
     Then the conversation and the workspace are unchanged
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Rolling back to a checkpoint asks first because it cannot be undone
     When the user rolls back to a checkpoint
     Then the user is asked to confirm that the rollback cannot be undone
@@ -113,7 +113,7 @@ Feature: Checkpoints and rewinding
       | another thread shares the workspace     | File restore requires an isolated worktree. This workspace may contain changes from another thread. Rewind the conversation without restoring files instead. |
       | the thread has no provider conversation | No active provider thread exists for rollback.                                                                                                               |
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: The client explains why it cannot rewind
     Given <situation>
     When the user edits from the second message

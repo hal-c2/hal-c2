@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import HalC2.Shell
 
@@ -23,6 +24,15 @@ Item {
     property double ageNow: Date.now()
 
     signal activated
+    // Ctrl/Cmd+click adds the row to the selection, Shift+click selects the range to it.
+    signal selectionToggled
+    signal rangeSelected
+    // A drag arranges the row: where the pointer is in the window while it
+    // lasts, and whether it ended in a drop.
+    signal dragMoved(real windowY)
+    signal dragEnded(bool dropped)
+    // Image files dropped on the row go to the thread's composer.
+    signal filesDropped(var urls)
     signal menuRequested(real windowX, real windowY)
     signal settleRequested
     signal unsettleRequested
@@ -39,6 +49,7 @@ Item {
     readonly property color indicatorColor: Theme.palette.color("sidebarActiveIndicator", "transparent")
     readonly property color focusColor: Theme.palette.color("focus", "#3b82f6")
     readonly property bool draft: section === "draft"
+    readonly property bool selected: item.selected === true
     readonly property bool woke: item.wokeAt !== null && item.wokeAt !== undefined
     readonly property bool parked: section === "snoozed" || section === "settled"
     // The thread's environment is unreachable: the row stays, says so, and
@@ -62,7 +73,7 @@ Item {
         }
         switch (item.status) {
         case "working":
-            return qsTr("Working");
+            return item.workingLabel ? qsTr("Working %1").arg(item.workingLabel) : qsTr("Working");
         case "waiting":
             return qsTr("Waiting");
         case "approval":
@@ -187,7 +198,7 @@ Item {
         radius: 8
         // Fade alpha without interpolating through black on light themes.
         readonly property color hoverColor: Theme.palette.color("sidebarRowHover", "#1c1c21")
-        color: row.active ? Theme.palette.color("sidebarRowActive", "#2a2a30") : Qt.alpha(hoverColor, hover.hovered ? hoverColor.a : 0)
+        color: row.active || row.selected ? Theme.palette.color("sidebarRowActive", "#2a2a30") : Qt.alpha(hoverColor, hover.hovered ? hoverColor.a : 0)
         border.width: row.focused ? 1 : 0
         border.color: row.focusColor
 
@@ -214,9 +225,89 @@ Item {
         id: hover
     }
 
+    // Resting the pointer on a row previews the thread.
+    ToolTip.visible: hover.hovered && !row.draft && !row.showActions && !!row.item.preview
+    ToolTip.delay: 700
+    ToolTip.text: {
+        const preview = row.item.preview;
+        if (!preview) {
+            return "";
+        }
+        return [row.oneLineTitle, preview.project, preview.branch, preview.activity].filter(line => !!line).join("\n");
+    }
+
+    DropArea {
+        anchors.fill: parent
+        enabled: !row.draft
+        keys: ["text/uri-list"]
+        onDropped: drop => {
+            if (drop.hasUrls) {
+                row.filesDropped(drop.urls);
+                drop.accept(Qt.CopyAction);
+            }
+        }
+    }
+
+    // The key that opens the row, while the jump modifier is held.
+    Rectangle {
+        objectName: "jumpHint"
+        visible: !!row.item.jumpLabel
+        anchors.right: parent.right
+        anchors.rightMargin: 6
+        anchors.verticalCenter: parent.verticalCenter
+        z: 1
+        implicitWidth: jumpText.implicitWidth + 12
+        implicitHeight: 20
+        radius: 10
+        color: Theme.palette.color("surfaceOverlay", "#18181b")
+        border.width: 1
+        border.color: Theme.palette.color("border", "#27272a")
+
+        Text {
+            id: jumpText
+
+            anchors.centerIn: parent
+            text: row.item.jumpLabel ?? ""
+            color: row.textColor
+            font.pixelSize: Math.round(10 * Theme.fontScale)
+            font.weight: Font.Medium
+        }
+    }
+
     TapHandler {
         acceptedButtons: Qt.LeftButton
-        onTapped: row.activated()
+        onTapped: {
+            if (!row.draft && (point.modifiers & (Qt.ControlModifier | Qt.MetaModifier))) {
+                row.selectionToggled();
+            } else if (!row.draft && (point.modifiers & Qt.ShiftModifier)) {
+                row.rangeSelected();
+            } else {
+                row.activated();
+            }
+        }
+    }
+
+    DragHandler {
+        id: drag
+
+        property bool cancelled: false
+
+        target: null
+        enabled: !row.draft && !row.offline
+        acceptedButtons: Qt.LeftButton
+        onActiveChanged: {
+            if (active) {
+                cancelled = false;
+            } else {
+                row.dragEnded(!cancelled);
+            }
+        }
+        onCanceled: cancelled = true
+        onCentroidChanged: {
+            if (active) {
+                row.dragMoved(centroid.scenePosition.y);
+            }
+        }
     }
 
     // The menu opens on press, anywhere on the row, like the web app's.
@@ -269,6 +360,8 @@ Item {
             iconName: "alarm-clock-off"
             objectName: "wakeAction"
             Accessible.name: qsTr("Wake")
+            ToolTip.visible: hovered && !!row.item.wakeDescription
+            ToolTip.text: qsTr("Wakes %1").arg(row.item.wakeDescription ?? "")
             onClicked: row.unsnoozeRequested()
         }
 
@@ -289,7 +382,7 @@ Item {
             rightPadding: 6
             iconName: "alarm-clock"
             iconSize: 12
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             text: qsTr("Woke")
             tint: row.statusColor
             iconTint: row.statusColor
@@ -310,7 +403,7 @@ Item {
             visible: !row.showActions && !row.woke
             text: row.showStatus ? row.statusWord : row.ageLabel
             color: row.showStatus ? row.statusColor : row.secondaryColor
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             font.weight: Font.Medium
             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
         }
@@ -342,7 +435,7 @@ Item {
             Layout.fillWidth: true
             text: row.oneLineTitle
             color: Qt.alpha(row.secondaryColor, 0.7)
-            font.pixelSize: 14
+            font.pixelSize: Math.round(14 * Theme.fontScale)
             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
             elide: Text.ElideRight
         }
@@ -378,7 +471,7 @@ Item {
                 Layout.fillWidth: true
                 text: row.projectName
                 color: row.projectColor
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.weight: Font.Medium
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 elide: Text.ElideRight
@@ -395,7 +488,7 @@ Item {
             objectName: "cardTitle"
             text: row.oneLineTitle
             color: row.recedes ? Qt.alpha(row.textColor, 0.72) : row.textColor
-            font.pixelSize: 14
+            font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: Font.Medium
             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
             elide: Text.ElideRight
@@ -418,7 +511,7 @@ Item {
                 Layout.fillWidth: true
                 text: row.item.branch ?? ""
                 color: row.branchColor
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 elide: Text.ElideRight
             }

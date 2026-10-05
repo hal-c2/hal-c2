@@ -7,6 +7,14 @@
 // `step`, `unit`), text (`placeholder`).
 //
 // Rows that need logic beyond reading and writing the key:
+// A section with `folded` starts closed: its rows are listed once it is opened.
+//
+// Rows of the MC's follow the settings scope (Settings.mixed, Settings.disabledReason):
+//   component         a row of its own drawing (`id` names it): textGeneration, backgroundActivity
+//   requires          a capability every selected environment must have for the row to be listed
+//   needs             one they must have for it to be changed; `unsupported` says so otherwise
+//   mixedDescription  the description while the selected environments disagree
+//
 //   grouping   a switch over sidebarProjectGroupingMode ("separate" is off)
 //   settleDays a switch plus a number: null days is off
 
@@ -22,9 +30,9 @@ var general = [
       description: "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation." },
     { key: "snoozeLimitedThreads", kind: "switch", title: "Snooze limited threads",
       description: "Snooze usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake." },
-    { key: "sidebarAutoSettleOnMerge", kind: "switch", title: "Auto-settle merged threads",
+    { key: "sidebarAutoSettleOnMerge", kind: "switch", title: "Auto-settle merged threads", requires: "threadAutoSettlement",
       description: "Settle a thread when its pull request merges. Closed pull requests still settle automatically." },
-    { key: "sidebarAutoSettleAfterDays", kind: "settleDays", title: "Auto-settle inactive threads",
+    { key: "sidebarAutoSettleAfterDays", kind: "settleDays", title: "Auto-settle inactive threads", requires: "threadAutoSettlement",
       description: "Sidebar threads with no activity for this long settle automatically.",
       daysTitle: "Days of inactivity before auto-settle",
       daysDescription: "Any new activity un-settles a thread automatically.", min: 1, max: 90 },
@@ -40,6 +48,7 @@ var general = [
       description: "System default follows your browser or OS clock preference.",
       options: [option("locale", "System default"), option("12-hour", "12-hour"), option("24-hour", "24-hour")] },
     { key: "responseStreamingMode", kind: "select", title: "Response streaming",
+      mixedDescription: "The selected targets use different streaming modes.",
       descriptions: { turn: "Text appears once the agent finishes its turn.",
                       paragraph: "Each paragraph or code block appears as soon as it is complete." },
       options: [option("paragraph", "Show finished paragraphs"), option("turn", "Wait for the full response")] },
@@ -59,6 +68,8 @@ var general = [
       description: "Show formatted Markdown as you type." },
     { key: "composerCollapseOnScroll", kind: "switch", title: "Collapse composer on scroll",
       description: "Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again." },
+    { key: "composerVimKeys", kind: "switch", title: "Vim keys in the composer",
+      description: "Escape leaves insert mode; h, j, k, l, w, b, 0, $, x and u move and edit, and i, a, I and A insert again." },
     { key: "sendShortcut", kind: "select", title: "Send shortcut",
       description: "Choose when Enter sends a prompt or inserts a new line",
       options: [option("enter", "Enter"), option("mod-enter-multiline", "Ctrl + Enter for multiline prompts"),
@@ -69,7 +80,11 @@ var general = [
     { key: "enableProviderUpdateChecks", kind: "switch", title: "Provider update checks",
       description: "Check installed provider CLIs for newer available versions." },
     { key: "continueThreadsAfterServerUpdate", kind: "switch", title: "Continue threads after restarts",
+      needs: "threadRestartContinuation", unsupported: "All selected connected environments must support restart continuation.",
       description: "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments. Update older servers first." },
+
+    { id: "background-activity", component: "backgroundActivity", title: "Background activity",
+      description: "Gates background work such as Git refreshes and provider health probes on the selected environments. Advanced sets its own intervals." },
 
     { section: "Projects & threads" },
     { key: "newWorktreesStartFromOrigin", kind: "switch", title: "Start from origin",
@@ -88,12 +103,16 @@ var general = [
       description: "Hold mode also quits on two quick presses.",
       options: [option("direct", "Direct"), option("hold", "Hold"), option("double-click", "Double press")] },
 
+    { section: "Text generation" },
+    { id: "text-generation-model", component: "textGeneration", title: "Text generation model",
+      description: "Used for thread titles and other generated text on connected devices with this provider. Source control can override it." },
+
     { section: "Diagnostics" },
     { id: "diagnostics", link: "/settings/diagnostics", button: "View diagnostics", title: "Diagnostics",
       description: "Inspect processes, resource use, and logs on this environment." },
     { id: "open-source-licenses", link: "/settings/open-source-licenses", button: "View licenses", title: "Open source licenses",
       description: "Notices for dependencies, assets, and optional tools used by HAL-C2." },
-    { section: "Legacy features" },
+    { section: "Legacy features", folded: true },
     { key: "planModeEnabled", kind: "switch", title: "Plan mode",
       description: "Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode." },
     { key: "contextWindowMeterEnabled", kind: "switch", title: "Context window indicator",
@@ -142,6 +161,8 @@ var appearance = [
     { section: "Motion" },
     { key: "panelAnimationDurationMs", kind: "number", title: "Panel animations", min: 0, max: 400, step: 50, unit: "ms",
       description: "Set how fast panels open and close." },
+    { key: "reduceMotion", kind: "switch", title: "Reduce motion",
+      description: "Open and close panels at once, whatever the animation speed." },
 ];
 
 function describe(row, value) {
@@ -153,6 +174,28 @@ function visible(rows, platform) {
     return rows.filter(function (row) {
         return !row.macOnly || platform === "osx";
     });
+}
+
+// The rows a page lists: a folded section's only once it is open (`open`, by
+// section title).
+function listed(rows, platform, open) {
+    var hidden = false;
+    return visible(rows, platform).filter(function (row) {
+        if (row.section === undefined) return !hidden;
+        hidden = row.folded === true && !open[row.section];
+        return true;
+    });
+}
+
+// The folded section holding the row named `target` ("settingsRow:<key>"), or "".
+function foldOf(rows, target) {
+    var fold = "";
+    for (var i = 0; i < rows.length; ++i) {
+        var row = rows[i];
+        if (row.section !== undefined) fold = row.folded === true ? row.section : "";
+        else if ("settingsRow:" + (row.key ?? row.id) === target) return fold;
+    }
+    return "";
 }
 
 // The General and Appearance rows restoring defaults resets: each one off its

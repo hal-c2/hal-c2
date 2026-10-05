@@ -58,6 +58,11 @@ public:
   // Whether an MC serving `environmentId` is online.
   bool environmentOnline(const QString& environmentId) const;
   bool synchronized() const { return m_synchronized; }
+  // How many whole snapshots have landed: one per (re)subscription the MC answered.
+  quint64 snapshots() const { return m_snapshots; }
+  // Why the MC turned the shell subscription down (its `error` frame); empty
+  // once a snapshot lands. The rows it had stay as they were.
+  QString problem() const { return m_problem; }
 
 signals:
   void changed();
@@ -82,4 +87,6 @@ private:
 
   QHash<QString, Mc> m_mcs;
   bool m_synchronized = false;
+  quint64 m_snapshots = 0;
+  QString m_problem;
 };

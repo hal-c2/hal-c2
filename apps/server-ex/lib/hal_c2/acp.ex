@@ -711,6 +711,18 @@ defmodule HalC2.Acp do
   defp driver_fields(entry, "antigravity", id, _instance),
     do: HalC2.Acp.Antigravity.entry_fields(entry, id)
 
+  # Cursor has a plan mode of its own, which the thread's plan toggle chooses.
+  defp driver_fields(entry, "cursor", _id, _instance),
+    do: Map.put(entry, "showInteractionModeToggle", true)
+
+  # What a registry agent's running session advertises (`put_commands/2`).
+  defp driver_fields(entry, "acpRegistry", id, _instance) do
+    Map.merge(entry, %{
+      "slashCommands" => :persistent_term.get({__MODULE__, id, :commands}, []),
+      "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
+    })
+  end
+
   defp driver_fields(entry, _driver, _id, _instance), do: entry
 
   defp opencode_version(entry, id, _instance) do
@@ -982,6 +994,54 @@ defmodule HalC2.Acp do
   @doc "The agent capabilities an instance reported when it was last probed, or `nil`."
   def capabilities(id), do: :persistent_term.get({__MODULE__, id, :capabilities}, nil)
 
+  # A `$name` mention: a currency sign and a name, not an amount such as `$20` or `$5k`.
+  @skill_mention ~r/(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/u
+
+  @doc """
+  `text` with each `$name` that mentions one of Cursor's skills in `cwd` written as
+  Cursor takes it, `/name` (`rewriteCursorSkillMentions` in the Node server). Other
+  mentions, and amounts of money, are left as they are.
+  """
+  def cursor_skill_mentions(text, cwd) do
+    names = cursor_skills(cwd)
+
+    Regex.replace(@skill_mention, text, fn match, prefix, name ->
+      if MapSet.member?(names, name), do: prefix <> "/" <> name, else: match
+    end)
+  end
+
+  # The names of the skills Cursor loads in `cwd`: each folder with a SKILL.md under
+  # the project's and the user's `.cursor`, `.agents`, `.codex` and `.claude` skills,
+  # by its frontmatter `name`, else the folder's.
+  defp cursor_skills(cwd) do
+    for base <- [cwd, HalC2.Paths.user_home()],
+        is_binary(base),
+        root <- ~w(.cursor .agents .codex .claude),
+        dir = Path.join([base, root, "skills"]),
+        {:ok, entries} <- [File.ls(dir)],
+        entry <- entries,
+        {:ok, body} <- [File.read(Path.join([dir, entry, "SKILL.md"]))],
+        into: MapSet.new() do
+      case Regex.run(~r/\A---\s*\n.*?^name:\s*["']?([^"'\n]+?)["']?\s*$/ms, body) do
+        [_, name] -> String.trim(name)
+        _ -> entry
+      end
+    end
+  end
+
+  @doc """
+  Whether a registry agent is signed out: one that refused its last check for want of
+  a sign-in is checked again now, since the user may have signed in outside HAL-C2.
+  """
+  def signed_out?(id) do
+    if driver(id) == @registry and :persistent_term.get({__MODULE__, id, :unauthenticated}, false) do
+      reload(id)
+      :persistent_term.get({__MODULE__, id, :unauthenticated}, false)
+    else
+      false
+    end
+  end
+
   @doc "Reads one instance's agent again, now."
   def reload(id) do
     forget(id)
@@ -1028,6 +1088,66 @@ defmodule HalC2.Acp do
     :ok
   end
 
+  @max_commands 200
+
+  @doc """
+  Replaces a registry instance's commands with those its session advertises (ACP's
+  `available_commands_update`), and tells subscribed clients. A name starting with
+  `$` is a skill of the agent's; the rest are its slash commands.
+  """
+  def put_commands(id, commands) when is_list(commands) do
+    if driver(id) == "acpRegistry" do
+      offered =
+        for(%{"name" => name} = command when is_binary(name) <- commands, do: command)
+        |> Enum.map(&Map.put(&1, "name", String.trim(&1["name"])))
+        |> Enum.reject(&(&1["name"] in ["", "$"]))
+        |> Enum.uniq_by(&String.downcase(&1["name"]))
+        |> Enum.take(@max_commands)
+
+      {skills, slash} = Enum.split_with(offered, &String.starts_with?(&1["name"], "$"))
+
+      slash =
+        for command <- slash do
+          %{"name" => command["name"]}
+          |> put_text("description", command["description"])
+          |> then(fn c ->
+            case get_in(command, ["input", "hint"]) do
+              hint when is_binary(hint) and hint != "" ->
+                Map.put(c, "input", %{"hint" => String.trim(hint)})
+
+              _ ->
+                c
+            end
+          end)
+        end
+
+      skills =
+        for %{"name" => "$" <> name} = command <- skills do
+          %{
+            "name" => name,
+            "path" => "acp://skill/" <> URI.encode_www_form(name),
+            "scope" => "agent",
+            "enabled" => true
+          }
+          |> put_text("description", command["description"])
+        end
+
+      changed =
+        :persistent_term.get({__MODULE__, id, :commands}, []) != slash or
+          :persistent_term.get({__MODULE__, id, :skills}, []) != skills
+
+      if changed do
+        :persistent_term.put({__MODULE__, id, :commands}, slash)
+        :persistent_term.put({__MODULE__, id, :skills}, skills)
+        HalC2.Settings.notify_providers()
+      end
+    end
+
+    :ok
+  end
+
+  def put_commands(_id, _commands), do: :ok
+
   # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name",
   # "capabilities"}`) follow the agent's own, skipping any the agent already offers.
   # One without options of its own takes the agent's, which its models share.
@@ -1063,6 +1183,111 @@ defmodule HalC2.Acp do
   @doc "The models a session's `model` config option lists, as provider models."
   def session_models(session), do: models(session)
 
+  @parameter_options %{"context" => "contextWindow", "fast" => "fastMode"}
+  @parameter_order %{
+    "effort" => 0,
+    "reasoning" => 0,
+    "context" => 1,
+    "fast" => 2,
+    "thinking" => 3
+  }
+
+  @doc "The Cursor parameter a model option of HAL-C2's is (`contextWindow` is `context`)."
+  def cursor_parameter(option) do
+    Enum.find_value(@parameter_options, option, fn {parameter, id} ->
+      if id == option, do: parameter
+    end)
+  end
+
+  # The options a model offers, from the parameters the Cursor agent lists for it
+  # (`buildCursorCapabilitiesFromSdkModel` in the Node server): reasoning first, then
+  # context size, fast mode and thinking; a true/false parameter is a switch. The
+  # default is the default variant's value.
+  defp parameter_capabilities(%{"parameters" => [_ | _] = parameters} = meta) do
+    defaults =
+      for variant <- meta["variants"] || [],
+          variant["isDefault"] == true,
+          %{"id" => id, "value" => value} <- variant["params"] || [],
+          into: %{},
+          do: {id, value}
+
+    descriptors =
+      parameters
+      |> Enum.with_index()
+      |> Enum.sort_by(fn {parameter, index} ->
+        {Map.get(@parameter_order, parameter["id"], 4), index}
+      end)
+      |> Enum.flat_map(fn {parameter, _index} -> parameter_descriptor(parameter, defaults) end)
+      |> Enum.uniq_by(& &1["id"])
+
+    if descriptors != [], do: %{"optionDescriptors" => descriptors}
+  end
+
+  defp parameter_capabilities(_meta), do: nil
+
+  defp parameter_descriptor(%{"id" => native, "values" => values} = parameter, defaults)
+       when is_binary(native) and is_list(values) do
+    native = String.trim(native)
+    id = Map.get(@parameter_options, native, native)
+
+    values =
+      for %{"value" => value} = entry when is_binary(value) <- values,
+          value = String.trim(value),
+          value != "",
+          do: {value, text(entry["displayName"]) || value}
+
+    label =
+      text(parameter["displayName"]) ||
+        id
+        |> String.replace(~r/([a-z])([A-Z])/, "\\1 \\2")
+        |> String.split(~r/[\s_-]+/, trim: true)
+        |> Enum.map_join(" ", &String.capitalize/1)
+
+    default = defaults[native]
+
+    cond do
+      native == "" or values == [] ->
+        []
+
+      values |> Enum.map(&String.downcase(elem(&1, 0))) |> Enum.sort() == ["false", "true"] ->
+        [
+          %{"id" => id, "label" => label, "type" => "boolean"}
+          |> then(
+            &if(default in ["true", "false"],
+              do: Map.put(&1, "currentValue", default == "true"),
+              else: &1
+            )
+          )
+        ]
+
+      true ->
+        [
+          %{
+            "id" => id,
+            "label" => label,
+            "type" => "select",
+            "options" =>
+              for {value, name} <- values do
+                %{"id" => value, "label" => name}
+                |> then(&if(value == default, do: Map.put(&1, "isDefault", true), else: &1))
+              end
+          }
+          |> then(&if(default, do: Map.put(&1, "currentValue", default), else: &1))
+        ]
+    end
+  end
+
+  defp parameter_descriptor(_parameter, _defaults), do: []
+
+  defp text(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      value -> value
+    end
+  end
+
+  defp text(_value), do: nil
+
   # "Hugging Face/DeepSeek V3" is the model "DeepSeek V3" of the provider "Hugging Face".
   defp models(session) do
     option = Enum.find(session["configOptions"] || [], &(&1["id"] == "model")) || %{}
@@ -1080,7 +1305,7 @@ defmodule HalC2.Acp do
         "name" => name,
         "isCustom" => false,
         "isDefault" => slug == current,
-        "capabilities" => nil
+        "capabilities" => parameter_capabilities(model["_meta"])
       }
       |> then(&if(sub, do: Map.put(&1, "subProvider", sub), else: &1))
     end

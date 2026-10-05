@@ -18,6 +18,7 @@
 #include <QJsonObject>
 #include <QUrl>
 
+#include "ShellBridge.h"
 #include "McClient.h"
 #include "ProviderDrivers.h"
 #include "ProviderInstances.h"
@@ -80,6 +81,17 @@ void ProviderSettingsController::searchRegistry(const QString& query) {
 
 bool ProviderSettingsController::handleRegistry(const QString& action, const QVariantMap& input) {
   if (!action.startsWith(QLatin1String("providerSettings.registry"))) return false;
+  if (m_wizard && action == QLatin1String("providerSettings.registryAbout")) {
+    // The agent's website, else its repository, in the user's browser.
+    for (const QJsonValue& value : m_wizard->agents.value_or(QJsonArray{})) {
+      const QJsonObject agent = value.toObject();
+      if (agent.value(QLatin1String("id")).toString() != input.value(QStringLiteral("agentId")).toString()) continue;
+      const QString website = agent.value(QLatin1String("website")).toString();
+      const QUrl url(website.isEmpty() ? agent.value(QLatin1String("repository")).toString() : website);
+      if (url.scheme() == QLatin1String("https") || url.scheme() == QLatin1String("http")) m_bridge->openExternal(url);
+    }
+    return true;
+  }
   if (!m_wizard || m_wizard->saving || !m_wizard->preparing.isEmpty()) return true;
   if (action == QLatin1String("providerSettings.registrySearch")) {
     searchRegistry(input.value(QStringLiteral("query")).toString());

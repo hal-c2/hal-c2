@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
 import "js/settingsRows.js" as Rows
@@ -15,8 +16,8 @@ SettingsPage {
     rows: Rows.appearance
 
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    // The theme editor, opened over the window.
-    readonly property alias editor: editor
+    // The collection variants picked to remove together.
+    property var selected: []
     readonly property var modes: [
         { mode: "system", label: qsTr("System") },
         { mode: "light", label: qsTr("Light") },
@@ -49,7 +50,7 @@ SettingsPage {
 
             Layout.topMargin: 12
             color: page.foreground
-            font.pixelSize: 14
+            font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: Font.DemiBold
         }
 
@@ -103,6 +104,15 @@ SettingsPage {
             Layout.fillWidth: true
             spacing: 6
 
+            // A collection's variants are picked to remove several at once.
+            CheckBox {
+                objectName: "select:" + themeRow.modelData.id
+                visible: themeRow.custom && themeRow.modelData.collection.length > 0
+                checked: page.selected.indexOf(themeRow.modelData.id) >= 0
+                Accessible.name: qsTr("Select %1").arg(themeRow.modelData.label)
+                onToggled: page.selected = checked ? page.selected.concat([themeRow.modelData.id]) : page.selected.filter(id => id !== themeRow.modelData.id)
+            }
+
             ShellButton {
                 Layout.fillWidth: true
                 subtle: !themeRow.active
@@ -116,7 +126,14 @@ SettingsPage {
                 text: themeRow.modelData.source === "environment" ? qsTr("From this environment") : themeRow.modelData.appearances.length === 1 ? (themeRow.modelData.appearances[0] === "dark" ? qsTr("Dark only") : qsTr("Light only")) : ""
                 visible: text.length > 0
                 color: page.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+            }
+
+            Label {
+                text: themeRow.modelData.collection ?? ""
+                visible: text.length > 0
+                color: page.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             ShellButton {
@@ -135,7 +152,20 @@ SettingsPage {
                 Accessible.name: qsTr("Edit %1").arg(themeRow.modelData.label)
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Edit")
-                onClicked: editor.edit(Themes.draft(themeRow.modelData.id))
+                onClicked: Themes.edit(Themes.draft(themeRow.modelData.id))
+            }
+
+            ShellButton {
+                subtle: true
+                text: qsTr("Export")
+                Accessible.name: qsTr("Export %1").arg(themeRow.modelData.label)
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Export")
+                onClicked: {
+                    exporter.themeId = themeRow.modelData.id;
+                    exporter.currentFile = exporter.currentFolder + "/" + themeRow.modelData.id + ".json";
+                    exporter.open();
+                }
             }
 
             ShellButton {
@@ -145,11 +175,19 @@ SettingsPage {
                 Accessible.name: qsTr("Remove %1").arg(themeRow.modelData.label)
                 ToolTip.visible: hovered
                 ToolTip.text: qsTr("Remove")
-                onClicked: {
-                    removal.theme = themeRow.modelData;
-                    removal.open();
-                }
+                onClicked: Themes.requestRemove(themeRow.modelData.id)
             }
+        }
+    }
+
+    ShellButton {
+        objectName: "removeSelected"
+        visible: page.selected.length > 0
+        tint: Theme.palette.color("error", "#ef4444")
+        text: qsTr("Remove selected (%1)").arg(page.selected.length)
+        onClicked: {
+            Themes.requestRemoveMany(page.selected);
+            page.selected = [];
         }
     }
 
@@ -162,7 +200,16 @@ SettingsPage {
             const draft = Themes.draft("");
             draft.id = "";
             draft.label = qsTr("%1 copy").arg(draft.label);
-            editor.edit(draft);
+            Themes.edit(draft);
+        }
+    }
+
+    ShellButton {
+        objectName: "importTheme"
+        text: qsTr("Import theme")
+        onClicked: {
+            Themes.clearImport();
+            importer.open();
         }
     }
 
@@ -192,7 +239,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: halfRow.modelData.label
                 color: page.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
             }
 
             ShellComboBox {
@@ -211,38 +258,21 @@ SettingsPage {
         }
     }
 
-    ThemeEditor {
-        id: editor
+    ThemeImportDialog {
+        id: importer
 
         parent: Overlay.overlay
     }
 
-    Dialog {
-        id: removal
+    FileDialog {
+        id: exporter
 
-        property var theme: null
+        property string themeId: ""
 
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        scale: Shell.state.layout?.zoom ?? 1
-        transformOrigin: Item.TopLeft
-        modal: true
-        title: theme ? qsTr("Remove “%1”?").arg(theme.label) : ""
-        onAccepted: Themes.removeCustom(theme.id)
-
-        Label {
-            text: qsTr("This device will no longer offer it.")
-        }
-
-        footer: DialogButtonBox {
-            Button {
-                text: qsTr("Remove")
-                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
-            }
-            Button {
-                text: qsTr("Cancel")
-                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
-            }
-        }
+        title: qsTr("Export theme")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("Theme files (*.json)")]
+        defaultSuffix: "json"
+        onAccepted: Themes.exportTheme(themeId, selectedFile.toString().replace(/^file:\/\//, ""))
     }
 }

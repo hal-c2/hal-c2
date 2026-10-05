@@ -12,6 +12,7 @@ qt_add_qml_module(hal_c2_bricks
     ConnectionsSettings.qml
     LoadBalancingGroup.qml
     Composer.qml
+    ComposerAttachment.qml
     ModelPicker.qml
     ProviderIcon.qml
     ComposerVimKeys.qml
@@ -25,6 +26,11 @@ qt_add_qml_module(hal_c2_bricks
     RightPanel.qml
     SettingsNav.qml
     ShellErrorOverlay.qml
+    ConnectionNotice.qml
+    UsageModelPrices.qml
+    ProviderModelList.qml
+    ComposerUsageLimits.qml
+    ConnectionStatusRow.qml
     ShellButton.qml
     ShellCard.qml
     ShellChevron.qml
@@ -47,14 +53,33 @@ qt_add_qml_module(hal_c2_bricks
     SettingsHost.qml
     SettingsPage.qml
     SettingsRow.qml
+    BackgroundActivityRow.qml
+    TextGenerationRow.qml
+    ProjectActionsSettings.qml
+    SettingsBreadcrumb.qml
     GeneralSettings.qml
     AppearanceSettings.qml
     ThemeEditor.qml
+    ThemeImportDialog.qml
+    ThemeInspector.qml
     TurnRequests.qml
     ProjectRemovalDialog.qml
     ConfirmDialog.qml
+    CustomSnoozeDialog.qml
+    PullRequestThreadDialog.qml
+    EditFromHereDialog.qml
+    WorktreeSetupCard.qml
+    LimitRecoveryBanner.qml
+    ThreadLineage.qml
     DiffPanel.qml
     FilesPanel.qml
+    FileEntryMenu.qml
+    AttachmentViewer.qml
+    FilePathTrail.qml
+    ProjectActionEditor.qml
+    ProjectIcon.qml
+    ProjectIconPicker.qml
+    EnvironmentIconPicker.qml
     AgentsPanel.qml
     js/lucide.js
     js/modelPicker.js
@@ -65,10 +90,17 @@ qt_add_qml_module(hal_c2_bricks
     ThreadView.qml
     js/centreViews.js
     js/panelTabs.js
+    js/terminalLinks.js
     js/scheduledTasks.js
     js/usageChart.js
     RevertDialog.qml
     TerminalSplits.qml
+    TerminalMenu.qml
+    Plugin.qml
+    Contribution.qml
+    PluginSlot.qml
+    PluginRegistry.qml
+    PluginsSettings.qml
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml
@@ -98,5 +130,6 @@ qt_add_qml_module(hal_c2_bricks
     js/markdown.js
   RESOURCES
     qmldir
+    plugin/Text.qml
     icons/antigravity.png
 )

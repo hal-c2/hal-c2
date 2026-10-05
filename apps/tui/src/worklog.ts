@@ -29,6 +29,14 @@ export interface WorkLogEntry {
   readonly requestKind?: "command" | "file-read" | "file-change";
   readonly toolCallId?: string;
   readonly toolLifecycleStatus?: WorkLogStatus;
+  /** The icon the item names, ahead of the one its type implies. */
+  readonly icon?: keyof typeof TOOL_ICONS;
+  /** How the row words its status when the call's own status does not say it (a subagent). */
+  readonly statusLabel?: string;
+  /** The thread a subagent works in; its row opens it. */
+  readonly childThreadId?: string;
+  /** A file change's own diff; its row opens it in the diff viewer. */
+  readonly diff?: string;
   // Internal lifecycle bookkeeping kept for collapsing consecutive updates.
   readonly activityKind: string;
   readonly collapseKey?: string;
@@ -255,12 +263,21 @@ function toEntry(activity: OrchestrationThreadActivity): MutableEntry {
 
   const detail = extractToolDetail(payload, title ?? activity.summary);
   if (detail) entry.detail = detail;
+  if (typeof payload?.diff === "string" && payload.diff.length > 0) entry.diff = payload.diff;
   if (command) entry.command = command;
   if (changedFiles.length > 0) entry.changedFiles = changedFiles;
   if (title) entry.toolTitle = title;
   if (itemType) entry.itemType = itemType;
   if (requestKind) entry.requestKind = requestKind;
   if (toolCallId) entry.toolCallId = toolCallId;
+
+  if (typeof payload?.icon === "string" && payload.icon in TOOL_ICONS) {
+    entry.icon = payload.icon as keyof typeof TOOL_ICONS;
+  }
+  const statusLabel = asTrimmedString(payload?.statusLabel);
+  if (statusLabel) entry.statusLabel = statusLabel;
+  const childThreadId = asTrimmedString(payload?.childThreadId);
+  if (childThreadId) entry.childThreadId = childThreadId;
 
   let status = extractToolLifecycleStatus(payload);
   if (!status && activity.kind === "tool.completed") status = "completed";
@@ -345,7 +362,11 @@ export function deriveWorkLogEntries(
 export function workLogIcon(entry: WorkLogEntry): string {
   if (entry.tone === "thinking") return TOOL_ICONS.thinking.glyph;
   if (entry.tone === "error") return TOOL_ICONS.error.glyph;
-  if (entry.activityKind.startsWith("user-input.")) return TOOL_ICONS.userInput.glyph;
+  // Asking the user, for an answer or for permission, is one icon on the web.
+  if (entry.activityKind.startsWith("user-input.") || entry.activityKind.startsWith("approval.")) {
+    return TOOL_ICONS.userInput.glyph;
+  }
+  if (entry.icon) return TOOL_ICONS[entry.icon].glyph;
   switch (entry.itemType) {
     case "command_execution":
       return TOOL_ICONS.terminal.glyph;
@@ -382,6 +403,27 @@ export function workLogStatusKind(entry: WorkLogEntry): WorkLogStatusKind {
       return "progress";
     default:
       return "neutral";
+  }
+}
+
+/**
+ * How the call ended, in words: nothing once it completed (the check mark
+ * says it) and nothing for reasoning, whose label already does.
+ */
+export function workLogStatusLabel(entry: WorkLogEntry): string | null {
+  if (entry.statusLabel) return entry.statusLabel;
+  if (entry.tone === "thinking") return null;
+  switch (entry.toolLifecycleStatus) {
+    case "inProgress":
+      return "Running";
+    case "failed":
+      return "Failed";
+    case "declined":
+      return "Declined";
+    case "stopped":
+      return "Stopped";
+    default:
+      return null;
   }
 }
 

@@ -8,7 +8,10 @@
 # (--resume-session-at); "usage limit until EPOCH" stops on a usage limit; "in the
 # background" starts a background subagent (task task-agent-N) and a background command
 # (task task-bash-N) and ends the turn while both run, their task_notification left to
-# the test. Rules a
+# the test; "subagent leaves work running" runs a subagent that starts a background
+# command and returns "Dev server started" while the command runs on; "subagent approve
+# run: CMD" runs a subagent that asks permission for CMD and returns "ran CMD" when
+# allowed, "was not allowed to run CMD" otherwise. Rules a
 # permission answer adds for the session (updatedPermissions) let later matching
 # commands run without asking. Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
@@ -81,12 +84,22 @@ if os.environ.get("FAKE_CLAUDE_ARGV_LOG"):
 turn = 0
 session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
+asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
 # classifier approves the command "approve" would otherwise ask about.
 mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
-trace({"argv": sys.argv[1:]})
+# The login is the config directory's, as Claude Code keeps it (`.claude.json`'s
+# oauthAccount); without one the fake is signed in as me@example.com.
+ACCOUNT_EMAIL = "me@example.com"
+try:
+    with open(os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", ""), ".claude.json")) as f:
+        ACCOUNT_EMAIL = json.load(f)["oauthAccount"]["emailAddress"]
+except (OSError, ValueError, KeyError):
+    pass
+# The start also traces where it was pointed: its config directory, its account and any router.
+trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k == "CLAUDE_CONFIG_DIR"}})
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -97,6 +110,15 @@ for line in sys.stdin:
             send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
             continue
         allowed = reply["behavior"] == "allow"
+        if asking_subagent:
+            agent, cmd = asking_subagent
+            asking_subagent = None
+            report = f"ran {cmd}" if allowed else f"was not allowed to run {cmd}"
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+                  "content": [{"type": "text", "text": report}]}]}})
+            send({"type": "assistant", "session_id": session, "message": {"id": "m-sub-perm", "role": "assistant", "content": [{"type": "text", "text": f"The subagent {report}"}]}})
+            send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+            continue
         for update in reply.get("updatedPermissions") or []:
             if update.get("destination") == "session" and update.get("behavior") == "allow":
                 session_rules += [r.get("ruleContent") for r in update.get("rules", []) if r.get("toolName") == "Bash"]
@@ -127,7 +149,7 @@ for line in sys.stdin:
         if sub == "initialize":
             dialogs = msg["request"].get("supportedDialogKinds", [])
         # FAKE_CLAUDE_COMMANDS is a JSON list of the slash command names it reports.
-        reply = {"account": {"email": "me@example.com", "subscriptionType": "max", "tokenSource": "claude.ai"},
+        reply = {"account": {"email": ACCOUNT_EMAIL, "subscriptionType": "max", "tokenSource": "claude.ai"},
                  "commands": [{"name": n, "description": "", "argumentHint": ""} for n in json.loads(os.environ.get("FAKE_CLAUDE_COMMANDS", "[]"))]} if sub == "initialize" else {}
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
         if sub == "interrupt":
@@ -177,6 +199,52 @@ for line in sys.stdin:
         continue
     if "wait" in text:
         continue
+    # "grow the conversation": with an autoCompactWindow in --settings the conversation
+    # outgrows it and Claude compacts (compact_boundary) before it answers.
+    if "grow the conversation" in text:
+        window = json.loads(sys.argv[sys.argv.index("--settings") + 1]).get("autoCompactWindow") if "--settings" in sys.argv else None
+        if window:
+            send({"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": f"compact-{turn}",
+                  "compact_metadata": {"trigger": "auto", "pre_tokens": window + 5000, "post_tokens": 42000}})
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}k", "role": "assistant", "content": [{"type": "text", "text": "It grew"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "It grew", "session_id": session})
+        continue
+    # "start a monitor": the Monitor tool watches a command (task task-mon-N) and the
+    # turn ends while it runs.
+    if "start a monitor" in text:
+        mon = f"mon-{turn}"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": mon, "name": "Monitor", "input": {
+            "command": "tail -f log/dev.log", "description": "Watch the dev log", "persistent": False}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{mon}", "tool_use_id": mon,
+              "description": "Watch the dev log", "task_type": "monitor"})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": mon,
+              "content": f"Monitor started (task task-{mon})", "is_error": False}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Watching the log"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "Watching the log", "session_id": session})
+        continue
+    if text.startswith("subagent "):
+        agent, bash = f"agent-{turn}", f"bash-{turn}"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}s", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+            "description": "Helper", "prompt": text[len("subagent "):], "subagent_type": "general-purpose"}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+              "description": "Helper", "task_type": "local_agent", "prompt": text[len("subagent "):], "is_backgrounded": False})
+        if "approve run: " in text:
+            cmd = text.split("run: ", 1)[1]
+            asking_subagent = (agent, cmd)
+            send({"type": "control_request", "request_id": f"perm-{agent}", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": cmd},
+                  "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": cmd}], "behavior": "allow", "destination": "localSettings"}]}})
+            continue
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": agent, "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "tool_use", "id": bash, "name": "Bash", "input": {
+            "command": "npm run dev", "description": "Dev server", "run_in_background": True}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{bash}", "tool_use_id": bash,
+              "description": "Dev server", "task_type": "local_bash"})
+        send({"type": "user", "session_id": session, "parent_tool_use_id": agent, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": bash,
+              "content": f"Command running in background with ID: task-{bash}", "is_error": False}]}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+              "content": [{"type": "text", "text": "Dev server started"}]}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "The subagent started the dev server"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
     if "in the background" in text:
         agent, bash = f"agent-{turn}", f"bash-{turn}"
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
@@ -214,7 +282,9 @@ for line in sys.stdin:
             send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}r", "role": "assistant", "content": [{"type": "text", "text": f"ran {cmd} without asking"}]}})
             send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
             continue
-        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": cmd},
+        # Claude Code's request ids are unique; a resumed process must not reuse the first's.
+        perm = f"perm-{uuid.uuid4().hex[:8]}" if "--resume" in sys.argv else "perm-1"
+        send({"type": "control_request", "request_id": perm, "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": cmd},
               "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": cmd}], "behavior": "allow", "destination": "localSettings"}]}})
         continue
     # "question first" asks before it plans; the answer brings the plan.

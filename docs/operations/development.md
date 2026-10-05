@@ -17,7 +17,9 @@ manager. Without mise: `vp i` at the root, `mix deps.get` in `apps/server-ex`.
 ## Running the target surfaces
 
 ```sh
-mise run mc              # MC in the foreground, ready to cluster (`mix hal_c2.cluster`)
+mise run mc              # MC in the foreground, ready to cluster (--host, --port, --home)
+mise run mc:cluster      # that MC's cluster: no args lists it; invite, join LINK, remove MEMBER
+mise run mc:update-cluster olafura@ai-beast   # other machines' checkouts and dev MCs to this commit, over SSH
 mise run mc:pair         # one-time pairing URL for that MC (--tailscale to publish it)
 mise run mc:reload       # compile and load what changed into that MC; sockets and agents stay up
 mise run desktop           # build the Qt shell, pair it with the running MC, launch

@@ -9,6 +9,7 @@
 
 #include <memory>
 
+#include "ComposerBrick.h"
 #include "CommandPaletteController.h"
 #include "DraftController.h"
 #include "FakeFiles.h"
@@ -324,6 +325,61 @@ const Steps steps([] {
          }
        });
 
+  step(QStringLiteral("a pull request is linked to an archived thread"), [](World& world, const Captures&, const Table&) {
+    const QJsonObject link{{QStringLiteral("number"), 42},
+                           {QStringLiteral("repository"), QStringLiteral("acme/shop")},
+                           {QStringLiteral("url"), QStringLiteral("https://github.com/acme/shop/pull/42")},
+                           {QStringLiteral("source"), QStringLiteral("manual")},
+                           {QStringLiteral("snapshot"), QJsonObject{{QStringLiteral("title"), QStringLiteral("Ship the cart")}}}};
+    addThread(world, QStringLiteral("First try"), {{QStringLiteral("pullRequests"), QJsonArray{link}}, {QStringLiteral("archivedAt"), iso(stream::now())}});
+    addThread(world, QStringLiteral("Second try"), {{QStringLiteral("pullRequests"), QJsonArray{link}}});
+    // Archived, with no pull request: never listed.
+    addThread(world, QStringLiteral("Old notes #42"), {{QStringLiteral("archivedAt"), iso(stream::now())}});
+  });
+  step(QStringLiteral("the user searches the palette for that pull request"), [](World& world, const Captures&, const Table&) {
+    search(world, QStringLiteral("acme/shop#42"));
+  });
+  step(QStringLiteral("the archived thread is listed as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QList<Listed> listed = rows(world);
+    const int row = indexOf(world, QStringLiteral("First try"), QStringLiteral("thread"));
+    expect(row >= 0 && listed.at(row).description == c[0] && indexOf(world, QStringLiteral("Old notes #42")) < 0, describe(world));
+    // And only for its pull request: by its title it stays out.
+    palette(world).setQuery(QStringLiteral("First try"));
+    expect(indexOf(world, QStringLiteral("First try")) < 0, describe(world));
+    palette(world).setQuery(QStringLiteral("acme/shop#42"));
+  });
+  step(QStringLiteral("live threads are listed as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QList<Listed> listed = rows(world);
+    const int row = indexOf(world, QStringLiteral("Second try"), QStringLiteral("thread"));
+    expect(row >= 0 && listed.at(row).description == c[0], describe(world));
+  });
+  step(QStringLiteral("the user last filtered the pull requests page to their own open pull requests"), [](World& world, const Captures&, const Table&) {
+    const QVariant before = world.state(QStringLiteral("route"));
+    world.bridge().dispatch(QStringLiteral("pullRequests.open"), {});
+    for (const auto& [name, value] : {std::pair{QStringLiteral("involvement"), QStringLiteral("authored")},
+                                      std::pair{QStringLiteral("state"), QStringLiteral("open")}}) {
+      world.bridge().dispatch(QStringLiteral("pullRequestList.filter"), QVariantMap{{QStringLiteral("name"), name}, {QStringLiteral("value"), value}});
+    }
+    world.sync();
+    // And went back to the thread.
+    world.native().controller<NavigationController>()->back();
+    expect(world.state(QStringLiteral("route")) == before, show(world.state(QStringLiteral("route"))));
+  });
+  step(QStringLiteral("the pull requests page opens filtered to the user's own open pull requests"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariantMap page = world.state(QStringLiteral("pullRequestList")).toMap();
+    expect(at(world.state(QStringLiteral("route")), QStringLiteral("kind")) == QLatin1String("pullRequests") && page.value(QStringLiteral("open")).toBool() &&
+               at(page, QStringLiteral("filters.involvement")) == QLatin1String("authored") && at(page, QStringLiteral("filters.state")) == QLatin1String("open"),
+           QStringLiteral("the route is %1, the page %2").arg(show(world.state(QStringLiteral("route"))), show(page.value(QStringLiteral("filters")))));
+    // And the MC is asked for those, not for everyone's.
+    QJsonObject asked;
+    for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+      if (rpc.method == QLatin1String("pullRequests.list")) asked = rpc.payload;
+    }
+    expect(asked.value(QLatin1String("involvement")) == QLatin1String("authored") && asked.value(QLatin1String("state")) == QLatin1String("open"),
+           QStringLiteral("the MC was asked for %1").arg(show(asked.toVariantMap())));
+  });
+
   // Opening and closing.
   step(QStringLiteral("the user presses the (command palette|command|go to file|project search) shortcut"),
        [](World& world, const Captures& c, const Table&) { pressToggle(world, shortcutOf(c[0])); });
@@ -389,6 +445,7 @@ const Steps steps([] {
            describe(world));
   });
   step(QStringLiteral("%1 is not listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (modelPickerLists(world, c[0], false)) return;
     expect(indexOf(world, c[0]) < 0, describe(world));
   });
   step(QStringLiteral("%1 is described with the project %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {

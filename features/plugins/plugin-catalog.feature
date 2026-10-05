@@ -108,7 +108,7 @@ Feature: Plugin catalog
       | a local file                          | local                     |
       | a pasted URL                          | unverified                |
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile
   Scenario: An unverified plugin asks for confirmation before it loads
     When the user installs a plugin from a pasted URL
     Then the user is warned that the plugin is not signed

@@ -27,7 +27,7 @@ Popup {
     padding: 8
     closePolicy: Popup.CloseOnPressOutside
 
-    Component.onCompleted: PaletteModel.setSettingsSections(Pages.sections)
+    Component.onCompleted: PaletteModel.setSettingsSections(Pages.paletteEntries(Qt.platform.os))
 
     Connections {
         target: PaletteModel
@@ -66,7 +66,7 @@ Popup {
             visible: PaletteModel.submenu.length > 0
             text: PaletteModel.submenu
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             font.weight: Font.DemiBold
             leftPadding: 4
         }
@@ -106,6 +106,17 @@ Popup {
             }
         }
 
+        // A thread search names the environments it could not reach.
+        Text {
+            visible: PaletteModel.mode === "command" && text.length > 0
+            Layout.fillWidth: true
+            text: PaletteModel.status
+            color: Theme.palette.color("textMuted", "#a1a1aa")
+            font.pixelSize: Math.round(11 * Theme.fontScale)
+            leftPadding: 4
+            elide: Text.ElideRight
+        }
+
         // Project search: its options and how many matches it found.
         RowLayout {
             visible: PaletteModel.mode === "content"
@@ -116,7 +127,7 @@ Popup {
                 Layout.fillWidth: true
                 text: PaletteModel.status
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
                 leftPadding: 4
                 elide: Text.ElideRight
             }
@@ -136,7 +147,7 @@ Popup {
                     focusPolicy: Qt.NoFocus
                     implicitHeight: 24
                     implicitWidth: 32
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                     ToolTip.visible: hovered
                     ToolTip.text: modelData.tip
                     Accessible.name: modelData.tip
@@ -164,7 +175,7 @@ Popup {
                 leftPadding: 8
                 text: section
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -193,7 +204,7 @@ Popup {
                     Text {
                         text: row.title
                         color: Theme.palette.color("text", "#e4e4e7")
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         elide: Text.ElideRight
                         Layout.maximumWidth: row.width * 0.6
                     }
@@ -201,20 +212,20 @@ Popup {
                         Layout.fillWidth: true
                         text: row.description
                         color: Theme.palette.color("textMuted", "#a1a1aa")
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         elide: Text.ElideRight
                     }
                     Text {
                         visible: row.current
                         text: qsTr("Current")
                         color: Theme.palette.color("textMuted", "#a1a1aa")
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
                     Text {
                         visible: text.length > 0
                         text: row.shortcut
                         color: Theme.palette.color("textMuted", "#a1a1aa")
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
                 }
 
@@ -231,7 +242,7 @@ Popup {
                 visible: list.count === 0
                 text: PaletteModel.emptyText
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
             }
         }
     }

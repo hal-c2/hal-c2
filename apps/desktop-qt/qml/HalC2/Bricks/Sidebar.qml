@@ -20,6 +20,8 @@ Rectangle {
     // shows above its sidebar; a rice with its own title bar leaves it off.
     // When frameless it doubles as the window's drag handle.
     property bool showBrand: false
+    // The build the MC is (StageController): {label, artwork, pill}.
+    readonly property var stage: Shell.state.stage ?? null
     property Window window: null
     readonly property var projects: model ? model.projects : []
     readonly property var projectNames: {
@@ -168,6 +170,35 @@ Rectangle {
             Layout.preferredHeight: 52
             visible: sidebar.showBrand
 
+            // A Nightly MC marks the band (StageController): a night sky, or
+            // a pill by the wordmark, as Environment identification says.
+            Rectangle {
+                objectName: "stageArtwork"
+                anchors.fill: parent
+                visible: sidebar.stage !== null && sidebar.stage.artwork === "nightly"
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0; color: "#121a33" }
+                    GradientStop { position: 0.5; color: "#1b1746" }
+                    GradientStop { position: 1; color: "#2a1a5e" }
+                }
+
+                Repeater {
+                    model: parent.visible ? [[14, 10, 0.85], [38, 22, 0.55], [58, 8, 0.7], [84, 16, 0.5], [104, 7, 0.8], [126, 20, 0.55], [148, 11, 0.7], [170, 24, 0.5], [192, 9, 0.8], [214, 18, 0.55], [236, 8, 0.7]] : []
+
+                    delegate: Rectangle {
+                        required property var modelData
+
+                        x: modelData[0]
+                        y: modelData[1] + 8
+                        width: 2
+                        height: 2
+                        radius: 1
+                        color: Qt.rgba(1, 1, 1, modelData[2])
+                    }
+                }
+            }
+
             DragHandler {
                 enabled: sidebar.window !== null && Theme.frameless
                 target: null
@@ -189,9 +220,33 @@ Rectangle {
             }
 
             HalC2Wordmark {
+                id: wordmark
+
                 x: 52
                 size: 11
                 anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Rectangle {
+                objectName: "stagePill"
+                visible: sidebar.stage !== null && !!sidebar.stage.pill
+                anchors.left: wordmark.right
+                anchors.leftMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                implicitWidth: pillText.implicitWidth + 12
+                implicitHeight: 18
+                radius: 9
+                color: Theme.palette.color("secondary", "#27272a")
+
+                Text {
+                    id: pillText
+
+                    anchors.centerIn: parent
+                    text: sidebar.stage !== null ? (sidebar.stage.pill ?? "") : ""
+                    color: Theme.palette.color("secondaryForeground", "#e4e4e7")
+                    font.pixelSize: Math.round(10 * Theme.fontScale)
+                    font.weight: Font.DemiBold
+                }
             }
         }
 
@@ -216,7 +271,7 @@ Rectangle {
                     tint: sidebar.foreground
                     objectName: "search"
                     text: qsTr("Search")
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     onClicked: PaletteModel.show()
 
                     background: Rectangle {
@@ -263,7 +318,7 @@ Rectangle {
                     iconTint: Qt.alpha(sidebar.muted, 0.8)
                     tint: Qt.alpha(sidebar.muted, 0.8)
                     text: sidebar.scopeLabel
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     Accessible.name: qsTr("Project scope")
                     onClicked: scopeMenu.open()
 
@@ -287,8 +342,19 @@ Rectangle {
                             delegate: ShellMenuItem {
                                 required property var modelData
 
-                                text: modelData.displayName
+                                // The most urgent state among the project's threads.
+                                readonly property string statusWord: ({
+                                        approval: qsTr("Approval"),
+                                        input: qsTr("Input"),
+                                        working: qsTr("Working"),
+                                        waiting: qsTr("Waiting"),
+                                        limited: qsTr("Limited"),
+                                        failed: qsTr("Failed")
+                                    })[modelData.status] ?? ""
+
+                                text: statusWord.length > 0 ? qsTr("%1 · %2").arg(modelData.displayName).arg(statusWord) : modelData.displayName
                                 iconName: "folder"
+                                badge: Shell.state.projectIcons?.[modelData.environmentId + ":" + modelData.projectId] ?? null
                                 current: sidebar.model !== null && sidebar.model.scopeProjectKey === modelData.key
                                 onTriggered: Shell.dispatch("sidebar.scope", {
                                     projectKey: modelData.key
@@ -393,6 +459,80 @@ Rectangle {
                 }
             }
 
+            // A row being dragged, and where it would land: before the row
+            // `dropBeforeKey` of `dropSection` (at its end without one).
+            property string dragKey: ""
+            property string dropSection: ""
+            property var dropBeforeKey: null
+            property real dropLineY: -1
+
+            function sectionKeys(section) {
+                return sidebar.model ? (sidebar.model[section] ?? []).map(item => item.key) : [];
+            }
+
+            function trackDrop(key, windowY) {
+                dragKey = key;
+                const y = mapFromItem(null, 0, windowY).y;
+                const index = indexAt(width / 2, y + contentY);
+                const row = index >= 0 ? sidebar.rows[index] : undefined;
+                const item = index >= 0 ? itemAtIndex(index) : null;
+                dropSection = "";
+                dropBeforeKey = null;
+                dropLineY = -1;
+                if (!row || !item) {
+                    return;
+                }
+                const top = item.y - contentY;
+                const upper = y < top + item.height / 2;
+                if (row.kind === "header") {
+                    dropSection = row.key;
+                    dropLineY = top + item.height;
+                } else if (row.kind === "divider") {
+                    dropSection = "active";
+                    dropBeforeKey = sectionKeys("active")[0] ?? null;
+                    dropLineY = top + item.height;
+                } else if (row.kind === "thread" || row.kind === "slim") {
+                    const keys = sectionKeys(row.section);
+                    const at = keys.indexOf(row.item.key);
+                    // With nothing pinned, the top edge of the list pins.
+                    if (row.section === "active" && at === 0 && sectionKeys("pinned").length === 0 && y < top + 12) {
+                        dropSection = "pinned";
+                        dropLineY = top;
+                        return;
+                    }
+                    dropSection = row.section;
+                    dropBeforeKey = upper ? row.item.key : (keys[at + 1] ?? null);
+                    dropLineY = upper ? top : top + item.height;
+                }
+            }
+
+            function finishDrop(dropped) {
+                if (dropped && dragKey.length > 0 && dropSection.length > 0 && dropBeforeKey !== dragKey) {
+                    Shell.dispatch("thread.drop", {
+                        key: dragKey,
+                        section: dropSection,
+                        beforeKey: dropBeforeKey
+                    });
+                }
+                dragKey = "";
+                dropSection = "";
+                dropBeforeKey = null;
+                dropLineY = -1;
+            }
+
+            // Where the dragged row would land.
+            Rectangle {
+                objectName: "dropLine"
+                parent: list
+                visible: list.dropLineY >= 0
+                x: 6
+                y: list.dropLineY - 1
+                width: list.width - 12
+                height: 2
+                radius: 1
+                color: Theme.palette.color("focus", "#3b82f6")
+            }
+
             function menuAtCursor() {
                 const row = sidebar.rows[cursorIndex];
                 const item = itemAtIndex(cursorIndex);
@@ -451,6 +591,12 @@ Rectangle {
                     break;
                 case Qt.Key_Menu:
                     menuAtCursor();
+                    break;
+                case Qt.Key_Escape:
+                    if (!sidebar.model || sidebar.model.selectedKeys.length === 0) {
+                        return;
+                    }
+                    Shell.dispatch("thread.select.clear", {});
                     break;
                 case Qt.Key_F10:
                     if (!(event.modifiers & Qt.ShiftModifier)) {
@@ -512,7 +658,7 @@ Rectangle {
                         Text {
                             text: entry.kind === "header" ? entry.modelData.label : ""
                             color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : Qt.alpha(sidebar.muted, headerHover.hovered ? 0.8 : 0.5)
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                         }
@@ -534,7 +680,7 @@ Rectangle {
                             visible: entry.kind === "header" && !entry.modelData.open
                             text: entry.kind === "header" ? entry.modelData.count : ""
                             color: Qt.alpha(sidebar.muted, 0.5)
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                         }
 
@@ -571,7 +717,7 @@ Rectangle {
                     visible: entry.kind === "note"
                     text: entry.kind === "note" ? entry.modelData.label : ""
                     color: Qt.alpha(sidebar.muted, 0.6)
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 }
 
@@ -608,6 +754,23 @@ Rectangle {
                                 });
                             }
                         }
+                        onFilesDropped: urls => {
+                            const files = Shell.readImageFiles(urls);
+                            if (files.length > 0) {
+                                Shell.dispatch("thread.attachFiles", {
+                                    key: entry.modelData.item.key,
+                                    files: files
+                                });
+                            }
+                        }
+                        onDragMoved: windowY => list.trackDrop(entry.modelData.item.key, windowY)
+                        onDragEnded: dropped => list.finishDrop(dropped)
+                        onSelectionToggled: Shell.dispatch("thread.select.toggle", {
+                            key: entry.modelData.item.key
+                        })
+                        onRangeSelected: Shell.dispatch("thread.select.range", {
+                            key: entry.modelData.item.key
+                        })
                         onMenuRequested: (windowX, windowY) => {
                             if (entry.kind === "draft") {
                                 Shell.dispatch("draft.menu", {
@@ -651,7 +814,7 @@ Rectangle {
                 visible: list.count === 0
                 text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
                 color: Qt.alpha(sidebar.muted, 0.6)
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
             }
         }
@@ -682,6 +845,14 @@ Rectangle {
 
             Item {
                 Layout.fillWidth: true
+            }
+
+            // What plugins add to the footer (the terminal client's "sidebar.footer").
+            PluginSlot {
+                objectName: "sidebarFooterSlot"
+                name: "sidebar.footer"
+                visible: shown.length > 0
+                Layout.alignment: Qt.AlignVCenter
             }
         }
     }

@@ -10,19 +10,28 @@ MenuItem {
     property string iconName: ""
     // A trailing check mark, for menus that show the current choice.
     property bool current: false
+    // A project's icon (`projectIcons`), drawn in place of `iconName`.
+    property var badge: null
 
     implicitHeight: 28
     leftPadding: 8
     rightPadding: 8
     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
-    font.pixelSize: 14
+    font.pixelSize: Math.round(14 * Theme.fontScale)
     hoverEnabled: true
 
     contentItem: RowLayout {
         spacing: 8
 
+        ProjectIcon {
+            visible: control.badge !== null
+            icon: control.badge
+            size: 16
+            Layout.alignment: Qt.AlignVCenter
+        }
+
         ShellIcon {
-            visible: control.iconName.length > 0
+            visible: control.iconName.length > 0 && control.badge === null
             name: control.iconName
             size: 16
             color: Qt.alpha(Theme.palette.color("textMuted", "#8b8b93"), 0.8)

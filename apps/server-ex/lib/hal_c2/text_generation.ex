@@ -321,8 +321,17 @@ defmodule HalC2.TextGeneration do
       output_path = Path.join(dir, "output.json")
       File.write!(schema_path, JSON.encode!(schema))
 
+      # The instance's config overrides apply to the Codex that writes text too.
+      launch =
+        case HalC2.Codex.Provider.launch_args(selection["instanceId"]) do
+          {:ok, args} -> HalC2.Codex.Provider.exec_args(args)
+          {:error, _} -> []
+        end
+
       args =
-        ~w(exec --ephemeral --skip-git-repo-check -s read-only) ++
+        ["exec"] ++
+          launch ++
+          ~w(--ephemeral --skip-git-repo-check -s read-only) ++
           ["--model", selection["model"] || @default_models["codex"]] ++
           ["--config", ~s(model_reasoning_effort="#{effort}")] ++
           if(is_binary(tier), do: ["--config", ~s(service_tier="#{tier}")], else: []) ++

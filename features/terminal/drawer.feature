@@ -200,15 +200,15 @@ Feature: The desktop's terminal drawer
         | bun test\r |
       And the terminal drawer shows the tabs "Terminal 1, Terminal 2"
 
-  Rule: Not on the desktop yet
+  Rule: The drawer keeps the user's chords and its place
 
-    @backlog @desktop
+    @desktop
     Scenario: The drawer follows the user's own terminal chords
       Given the user bound "terminal.toggle" to "mod+shift+t"
       When the user presses "mod+shift+t"
       Then the terminal drawer opens
 
-    @backlog @desktop
+    @desktop
     Scenario: The drawer's height and open terminals survive a restart
       Given the user dragged the drawer to 400 pixels with "term-2" active
       When the desktop starts again

@@ -96,7 +96,7 @@ Rectangle {
                     text: root.detail.title ?? qsTr("Pull request #%1").arg(root.source?.number ?? 0)
                     elide: Text.ElideRight
                     color: root.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
                 Text {
@@ -104,7 +104,7 @@ Rectangle {
                     text: ["#" + (root.source?.number ?? 0), root.detail.stateLabel ?? "", root.detail.author ?? "", root.detail.branches ?? ""].filter(part => part.length > 0).join(" · ")
                     elide: Text.ElideRight
                     color: root.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
             }
             ShellButton {
@@ -185,7 +185,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("This environment is unreachable. The pull request shows as last read.")
             color: root.warningColor
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Rectangle {
@@ -211,7 +211,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: root.source?.status === "error" ? root.source.message : root.source?.status === "loading" ? qsTr("Loading the pull request…") : ""
                     color: root.source?.status === "error" ? root.errorColor : root.muted
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                 }
                 ShellButton {
                     Layout.alignment: Qt.AlignHCenter
@@ -238,20 +238,127 @@ Rectangle {
                     width: parent.width - 24
                     spacing: 10
 
+                    // The host's stack this pull request is a layer of: where
+                    // it sits, and merging or rebasing the stack, which ask first.
+                    ColumnLayout {
+                        id: stackSection
+
+                        readonly property var stack: root.source?.stack ?? ({})
+                        readonly property bool shown: (stack.size ?? 0) > 0
+
+                        objectName: "reviewStack"
+                        Layout.fillWidth: true
+                        visible: shown
+                        spacing: 6
+
+                        Text {
+                            objectName: "reviewStackTitle"
+                            Layout.fillWidth: true
+                            text: stackSection.shown ? qsTr("Stack #%1 · layer %2 of %3 onto %4").arg(stackSection.stack.number).arg(stackSection.stack.position).arg(stackSection.stack.size).arg(stackSection.stack.base) : ""
+                            color: root.foreground
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.weight: Font.Medium
+                            elide: Text.ElideRight
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: stackSection.stack.stale === true
+                            spacing: 6
+
+                            Text {
+                                objectName: "reviewStackNotice"
+                                Layout.fillWidth: true
+                                text: stackSection.stack.notice ?? ""
+                                color: root.warningColor
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                wrapMode: Text.Wrap
+                            }
+                            ShellButton {
+                                objectName: "reviewStackRetry"
+                                text: qsTr("Retry stack refresh")
+                                onClicked: root.source.retryStack()
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            ShellButton {
+                                objectName: "reviewStackMerge"
+                                text: qsTr("Merge stack (%1)").arg(stackSection.stack.mergeCount ?? 0)
+                                enabled: stackSection.stack.canMerge === true && !(root.source?.busy ?? false)
+                                onClicked: root.source.requestStackMerge("")
+                            }
+                            ShellButton {
+                                objectName: "reviewStackRebase"
+                                text: qsTr("Rebase stack")
+                                enabled: stackSection.stack.canRebase === true && !(root.source?.busy ?? false)
+                                onClicked: root.source.requestStackRebase()
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                        }
+                    }
+
+                    // Merging, where the host and the viewer's rights allow it:
+                    // the default method, or another the repository allows.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: root.detail.canMerge === true
+                        spacing: 6
+
+                        ShellButton {
+                            objectName: "reviewMerge"
+                            primary: true
+                            text: root.source?.busy ? qsTr("Merging…") : qsTr("Merge pull request")
+                            enabled: root.online && !(root.source?.busy ?? false)
+                            onClicked: root.source.merge("")
+                        }
+                        ShellButton {
+                            objectName: "reviewMergeMethod"
+                            visible: (root.detail.mergeMethods ?? []).length > 1
+                            chevron: true
+                            text: qsTr("Method")
+                            enabled: root.online && !(root.source?.busy ?? false)
+                            onClicked: mergeMethods.open()
+
+                            ShellMenu {
+                                id: mergeMethods
+
+                                y: parent.height
+
+                                Instantiator {
+                                    model: root.detail.mergeMethods ?? []
+                                    delegate: ShellMenuItem {
+                                        required property string modelData
+
+                                        text: modelData === "squash" ? qsTr("Squash and merge") : modelData === "rebase" ? qsTr("Rebase and merge") : qsTr("Create a merge commit")
+                                        onTriggered: root.source.merge(modelData)
+                                    }
+                                    onObjectAdded: (index, object) => mergeMethods.insertItem(index, object)
+                                    onObjectRemoved: (index, object) => mergeMethods.removeItem(object)
+                                }
+                            }
+                        }
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                    }
                     Text {
                         Layout.fillWidth: true
                         visible: (root.detail.behindBy ?? 0) > 0
                         wrapMode: Text.Wrap
                         text: qsTr("This branch is %n commit(s) behind its base.", "", root.detail.behindBy ?? 0)
                         color: root.warningColor
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Text {
                         Layout.fillWidth: true
                         visible: root.detail.mergeability === "conflicting"
                         text: qsTr("This branch has conflicts with its base.")
                         color: root.errorColor
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Text {
                         objectName: "reviewDescription"
@@ -260,7 +367,7 @@ Rectangle {
                         textFormat: Text.MarkdownText
                         text: (root.detail.body ?? "").length > 0 ? root.detail.body : qsTr("No description provided.")
                         color: (root.detail.body ?? "").length > 0 ? root.foreground : root.muted
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         linkColor: Theme.link
                         onLinkActivated: link => Qt.openUrlExternally(link)
                     }
@@ -270,7 +377,7 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: qsTr("Labels: %1").arg((root.detail.labels ?? []).join(", "))
                         color: root.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Text {
                         Layout.fillWidth: true
@@ -278,20 +385,20 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: qsTr("Reviewers: %1").arg((root.detail.reviewers ?? []).join(", "))
                         color: root.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Text {
                         Layout.topMargin: 6
                         text: qsTr("Checks")
                         color: root.foreground
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
                     Text {
                         visible: (root.detail.checks ?? []).length === 0
                         text: qsTr("No checks reported.")
                         color: root.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     Repeater {
                         model: root.detail.checks ?? []
@@ -314,12 +421,12 @@ Rectangle {
                                 text: parent.modelData.name
                                 elide: Text.ElideRight
                                 color: root.foreground
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
                             Text {
                                 text: parent.modelData.status
                                 color: root.checkColor(parent.modelData.status)
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
                         }
                     }
@@ -378,7 +485,7 @@ Rectangle {
                                             text: modelData.path + (modelData.line > 0 ? ":" + modelData.line : "") + (modelData.outdated ? qsTr(" · outdated") : "") + (modelData.resolved ? qsTr(" · resolved") : "")
                                             elide: Text.ElideMiddle
                                             color: root.muted
-                                            font.pixelSize: 11
+                                            font.pixelSize: Math.round(11 * Theme.fontScale)
                                         }
                                         ShellButton {
                                             objectName: "reviewThreadResolve"
@@ -399,7 +506,7 @@ Rectangle {
                                             text: "<b>" + modelData.author + "</b> " + modelData.body
                                             textFormat: Text.StyledText
                                             color: root.foreground
-                                            font.pixelSize: 12
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
                                         }
                                     }
                                 }
@@ -419,7 +526,7 @@ Rectangle {
                             text: [modelData.author, modelData.reviewState.length > 0 ? modelData.reviewState.toLowerCase().replace("_", " ") : "", modelData.path].filter(part => part.length > 0).join(" · ")
                             elide: Text.ElideRight
                             color: root.muted
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                         }
                         Text {
                             Layout.fillWidth: true
@@ -428,7 +535,7 @@ Rectangle {
                             textFormat: Text.MarkdownText
                             text: modelData.body
                             color: root.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             linkColor: Theme.link
                             onLinkActivated: link => Qt.openUrlExternally(link)
                         }
@@ -457,7 +564,7 @@ Rectangle {
                         placeholderText: qsTr("Leave a comment")
                         placeholderTextColor: root.muted
                         color: root.foreground
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         background: Rectangle {
                             radius: 6
                             color: "transparent"
@@ -471,7 +578,7 @@ Rectangle {
                         wrapMode: Text.Wrap
                         text: root.source?.problem ?? ""
                         color: root.errorColor
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -529,6 +636,72 @@ Rectangle {
                 anchors.fill: parent
                 visible: root.section === "code"
                 source: code
+            }
+        }
+    }
+
+    // A stack action says what it will do before it does it.
+    Dialog {
+        id: stackConfirm
+
+        readonly property var question: root.source?.stackConfirmation ?? ({})
+        readonly property bool asked: (question.action ?? "").length > 0
+
+        objectName: "reviewStackConfirm"
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
+        width: Math.min(440, (parent?.width ?? 472) / scale - 32)
+        padding: 20
+        closePolicy: Popup.CloseOnEscape
+        onAskedChanged: asked ? open() : close()
+        onRejected: root.source.cancelStack()
+
+        background: Rectangle {
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: Theme.palette.color("border", "#27272a")
+            radius: Math.min(Theme.radius, 16)
+        }
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            Label {
+                objectName: "reviewStackConfirmTitle"
+                Layout.fillWidth: true
+                text: stackConfirm.question.title ?? ""
+                color: root.foreground
+                font.pixelSize: Math.round(17 * Theme.fontScale)
+                font.weight: Font.DemiBold
+                wrapMode: Text.Wrap
+            }
+            Label {
+                objectName: "reviewStackConfirmDescription"
+                Layout.fillWidth: true
+                text: stackConfirm.question.description ?? ""
+                color: Theme.palette.color("textMuted", "#a1a1aa")
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Item {
+                    Layout.fillWidth: true
+                }
+                ShellButton {
+                    objectName: "reviewStackConfirmCancel"
+                    text: qsTr("Cancel")
+                    onClicked: stackConfirm.reject()
+                }
+                ShellButton {
+                    objectName: "reviewStackConfirmAccept"
+                    primary: true
+                    text: stackConfirm.question.confirmLabel ?? qsTr("Confirm")
+                    onClicked: root.source.confirmStack()
+                }
             }
         }
     }

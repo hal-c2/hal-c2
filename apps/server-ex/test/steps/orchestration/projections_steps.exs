@@ -186,6 +186,94 @@ defmodule HalC2.Steps.Orchestration.Projections do
     context
   end
 
+  # Real turns on the fake Codex: "in the background" starts a dev server in a terminal
+  # and ends the turn with it running (`test/support/fake_codex.py`).
+  step "run {int} of {string} started a background shell command",
+       %{args: [1, thread]} = context do
+    context = context |> World.providers() |> Map.put(:thread, thread)
+    context = World.dispatch_message(context, thread, "Start the dev server in the background")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    run = World.await_latest_run(context, thread, "completed")
+
+    assert %{"status" => "running", "runId" => run_id} = background_item(context, thread)
+    assert run_id == run["id"]
+    Map.put(context, :background_run, run["id"])
+  end
+
+  step "run {int} of {string} starts", %{args: [2, thread]} = context do
+    context = World.running_turn(context, thread)
+    assert %{"ordinal" => 2, "status" => "running"} = World.latest_run(context, thread)
+    context
+  end
+
+  step "the command stays attached to run 1", context do
+    # Still running, in the run that started it, with its own node there.
+    assert %{"status" => "running", "runId" => run_id, "nodeId" => node_id} =
+             background_item(context, context.thread)
+
+    assert run_id == context.background_run
+    assert World.state(context, context.thread).entities["node"][node_id]["runId"] == run_id
+
+    refute Enum.any?(
+             World.entities(context, context.thread, "turn-item"),
+             &(&1["runId"] == context.running and &1["type"] == "command_execution")
+           )
+
+    context
+  end
+
+  step "its completion cannot finish run 2", context do
+    thread = context.thread
+    {_pid, runtime} = World.codex_runtime(context, thread)
+    first_turn = World.state(context, thread).entities["run"][context.background_run]
+
+    # Codex reports the command's exit under the turn that started it, mid-run 2.
+    context =
+      World.codex_notify(context, thread, "item/completed", %{
+        "threadId" => runtime.native_thread_id,
+        "turnId" => "native-turn-1",
+        "item" => %{
+          "type" => "commandExecution",
+          "id" => "cmd-bg",
+          "command" => "npm run dev",
+          "status" => "completed",
+          "aggregatedOutput" => "bye",
+          "exitCode" => 0
+        }
+      })
+
+    state =
+      World.await_state(context, thread, fn state ->
+        state.entities["turn-item"]["turn-item:codex:cmd-bg"]["status"] == "completed" && state
+      end)
+
+    item = state.entities["turn-item"]["turn-item:codex:cmd-bg"]
+    assert %{"runId" => run_id, "output" => "bye", "exitCode" => 0} = item
+    assert run_id == context.background_run
+    # Run 1 is as it ended, and run 2 goes on: only its own turn's end finishes it.
+    assert state.entities["run"][context.background_run] == first_turn
+    assert %{"status" => "running", "completedAt" => nil} = state.entities["run"][context.running]
+
+    assert %{"status" => "running"} =
+             state.entities["node"][state.entities["run"][context.running]["rootNodeId"]]
+
+    context =
+      World.codex_notify(context, thread, "turn/completed", %{
+        "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+      })
+
+    World.await_state(
+      context,
+      thread,
+      &(&1.entities["run"][context.running]["status"] == "completed")
+    )
+
+    context
+  end
+
+  defp background_item(context, thread),
+    do: World.state(context, thread).entities["turn-item"]["turn-item:codex:cmd-bg"]
+
   defp background_command(context, thread, run_id) do
     World.add_item(context, thread, "bg-1", "command_execution", run_id, %{
       "status" => "running",

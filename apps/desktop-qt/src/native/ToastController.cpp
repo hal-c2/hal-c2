@@ -68,17 +68,29 @@ QString ToastController::error(const QString& title, const QString& description)
 }
 
 bool ToastController::runAction(const QString& label) {
-  // Newest first.
+  // Newest first: the newest toast offering it, and the ones straight after
+  // it that offer it for the same group.
+  QList<std::pair<QString, QString>> chosen;  // toast id, action id
+  QString group;
   for (const Toast& toast : std::as_const(m_toasts)) {
-    for (qsizetype index = 0; index < toast.actions.size(); ++index) {
-      if (toast.actions.at(index).label != label) continue;
-      handle(QStringLiteral("notification.action"),
-             QVariantMap{{QStringLiteral("id"), toast.id},
-                         {QStringLiteral("actionId"), index == 0 ? QStringLiteral("primary") : QStringLiteral("secondary")}});
-      return true;
+    qsizetype found = -1;
+    for (qsizetype index = 0; index < toast.actions.size() && found < 0; ++index) {
+      if (toast.actions.at(index).label == label) found = index;
     }
+    if (found < 0) {
+      if (chosen.isEmpty()) continue;
+      break;
+    }
+    const QString& its = toast.actions.at(found).group;
+    if (!chosen.isEmpty() && (group.isEmpty() || its != group)) break;
+    group = its;
+    chosen.append({toast.id, found == 0 ? QStringLiteral("primary") : QStringLiteral("secondary")});
   }
-  return false;
+  for (const auto& [id, actionId] : std::as_const(chosen)) {
+    handle(QStringLiteral("notification.action"),
+           QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("actionId"), actionId}});
+  }
+  return !chosen.isEmpty();
 }
 
 void ToastController::dismiss(const QString& id) {

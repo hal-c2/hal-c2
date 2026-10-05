@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QTimeZone>
 #include <QVariantMap>
 
 #include <functional>
@@ -61,6 +62,8 @@ struct Thread {
   Nullable pinOrderKey;
   Nullable activeOrderKey;
   Nullable lastVisitedAt;
+  // The machine the thread is on its way to, while a move is under way.
+  Nullable movingTo;
   Nullable latestRunId;
   Nullable activeRunId;
   Nullable activityRunStatus;
@@ -70,8 +73,6 @@ struct Thread {
   bool hasPendingUserInput = false;
   bool hasActionableProposedPlan = false;
   int pendingBackgroundTasks = 0;
-  // The machine the thread is on its way to, while a move is under way.
-  Nullable movingTo;
 
   QString key() const { return environmentId + QLatin1Char(':') + id; }
 };
@@ -89,6 +90,12 @@ bool effectiveSnoozed(const Thread& thread, qint64 nowMs);
 Nullable wokeAt(const Thread& thread, qint64 nowMs);
 QString wakeLabel(const QString& snoozedUntil, qint64 nowMs);
 QString status(const Thread& thread);
+// The most urgent of `statuses` (approval, input, working, waiting, then the
+// rest), as the web app's resolveProjectStatusIndicator; "ready" when none is.
+QString mostUrgentStatus(const QStringList& statuses);
+// How long a working thread's run has been going ("3m", "1h 5m"); empty
+// under a minute and for a thread that is not working.
+QString workingLabel(const Thread& thread, qint64 nowMs);
 Nullable statusLabel(const Thread& thread);
 bool unread(const Thread& thread);
 Nullable visibleWokeAt(const Thread& thread, qint64 nowMs);
@@ -191,6 +198,15 @@ struct Input {
   QVariantList drafts;
   Nullable activeThreadKey;
   QVariant activeDraftId;
+  // The shortcut labels of the first rows' jump commands (thread.jump.1..9),
+  // in order; each row carries its own while `showJumpHints`.
+  QStringList jumpLabels;
+  bool showJumpHints = false;
+  // The rows selected for a bulk action.
+  QSet<QString> selectedKeys;
+  // A snoozed row's wake time in the user's clock format ("tomorrow 9:00");
+  // the row has none when unset.
+  std::function<QString(const QString& snoozedUntil)> describeWake;
 
   const ProjectGroup* group(const QString& key) const;
 };
@@ -208,12 +224,48 @@ inline constexpr int kSettledLimit = 50;
 View build(const QList<Thread>& threads, const Input& input, const Nullable& scopeProjectKey,
            const CapabilitiesFor& capabilitiesFor, qint64 nowMs);
 
+// The order of the pinned and the active threads is kept as one key per
+// thread (pinOrderKey, activeOrderKey): base-26 strings that sort as text, so
+// moving a thread writes its own key only. A port of client-runtime's
+// state/threadSort.ts (pinOrderKeyBetween, generateSpreadPinOrderKeys,
+// planPinnedReorder).
+//
+// A key strictly between two neighbours; no bound is the section's edge.
+// Nothing when the bounds are corrupt or out of order.
+Nullable orderKeyBetween(const Nullable& before, const Nullable& after);
+// `count` evenly spaced keys, for a section whose threads have none yet.
+QStringList spreadOrderKeys(int count);
+struct OrderAssignment {
+  QString key;  // the thread's key
+  QString orderKey;
+};
+// The writes that put `movedKey` where `orderedKeys` (the section as it
+// should read) has it: one for the moved thread between keyed neighbours, or
+// fresh keys for the whole section when a neighbour has none. `orderKeys`
+// holds every thread of the section, the ones not shown too, whose keys stay.
+QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
+                                   const QString& movedKey);
+
 struct SnoozePreset {
   QString id;
   QString label;
   QString whenLabel;
   QString snoozedUntil;
 };
+
+// A wake time the user wrote: a date and a time of day in `zone`
+// ("2026-09-25", "08:30"), or an amount of minutes, hours or days from now.
+// Nothing for what cannot be read, is not in the future, or is a time of day
+// the zone skips (a daylight saving change). As client-runtime's
+// resolveCustomSnooze.
+struct CustomSnooze {
+  QString mode;  // "date" or "duration"
+  QString date;
+  QString time;
+  QString amount;
+  QString unit;  // "minutes", "hours" or "days"
+};
+Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, const QTimeZone& zone);
 
 // "12-hour", "24-hour" or "locale", as the web app's timestampFormat setting.
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale);

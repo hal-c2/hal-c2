@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+#MISE description="Bring other machines' checkouts and dev MCs to this checkout's commit over SSH, then reload this one"
+#MISE dir="{{config_root}}"
+#USAGE flag "--restart" help="Restart a machine's MC when a change cannot be loaded in place, unless it has agents or terminals running"
+#USAGE flag "--force" help="With --restart, restart an MC even when it has agents or terminals running"
+#USAGE flag "--dir <path>" help="The checkout on the other machines, relative to the home directory or absolute (default: where this one is under yours)"
+#USAGE flag "--dry-run" help="Say what would be done and do nothing"
+#USAGE arg "[target]" var=#true help="SSH targets of the other machines, e.g. olafura@ai-beast"
+set -euo pipefail
+
+# For machines whose MC runs from a checkout (`mise run mc`). Each target gets this
+# checkout's HEAD as a fast-forward and loads what changed into its running MC
+# (mc:reload). A restarted MC comes back in a tmux session called hal-c2-mc. This
+# machine's MC is reloaded last and never restarted: a restart ends whatever runs on
+# it, this task's own session included.
+
+restart=${usage_restart:-false} force=${usage_force:-false} dry=${usage_dry_run:-false} dir=${usage_dir:-}
+# mise passes the arguments through as well as naming them; the targets are what is left.
+targets=()
+while (($#)); do
+  case "$1" in
+    --dir) shift ;;
+    -*) ;;
+    *) targets+=("$1") ;;
+  esac
+  shift
+done
+
+if ((${#targets[@]} == 0)); then
+  echo "mc:update-cluster: name the other machines as SSH targets, e.g. olafura@ai-beast." >&2
+  echo "This machine's cluster:" >&2
+  (cd apps/server-ex && mix hal_c2.cluster 2>/dev/null | sed 's/^/  /' >&2) || true
+  exit 2
+fi
+
+# The main checkout, also when this runs from one of its worktrees.
+root="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+commit="$(git rev-parse HEAD)"
+# The same place under the home directory, unless --dir says otherwise.
+remote_dir="${dir:-${root#"$HOME"/}}"
+ref="refs/hal-c2/update"
+failed=()
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "mc:update-cluster: this checkout has uncommitted changes; they are not sent." >&2
+fi
+echo "Updating to $(git log --oneline -1 "$commit")"
+
+# Runs on the other machine: fast-forward, reload, and restart if asked and needed.
+remote_script() {
+  cat <<'REMOTE'
+set -euo pipefail
+cd "$UPDATE_DIR"
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "its checkout has uncommitted changes; left alone"; exit 3
+fi
+if ! git merge --ff-only --quiet "$UPDATE_REF" 2>/dev/null; then
+  echo "its checkout cannot fast-forward to this commit ($(git rev-parse --short HEAD) there); left alone"; exit 3
+fi
+echo "checkout at $(git log --oneline -1 | cut -c1-72)"
+# New dependencies come with the commit; the reload compiles against them.
+(cd apps/server-ex && mise exec -- mix deps.get >/dev/null 2>&1) || { echo "could not fetch its dependencies"; exit 4; }
+out="$(mise run mc:reload 2>&1)" || { echo "$out" | tail -5; echo "reload failed"; exit 4; }
+echo "$out" | grep -E 'loaded|restart for|nothing' | sed 's/^/  /' || true
+echo "$out" | grep -q 'restart for' || exit 0
+
+if [[ "$UPDATE_RESTART" != true ]]; then
+  echo "needs a restart to finish; run again with --restart"; exit 5
+fi
+record="${XDG_STATE_HOME:-$HOME/.local/state}/hal-c2-dev/elixir/server-runtime.json"
+pid="$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$record" 2>/dev/null || true)"
+if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+  echo "no running MC found to restart"; exit 4
+fi
+# Only the MC that runs from this checkout.
+if [[ -e /proc/$pid/cwd ]]; then cwd="$(readlink "/proc/$pid/cwd")"; else cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"; fi
+if [[ "$cwd" != "$PWD/apps/server-ex" ]]; then
+  echo "the running MC ($pid) is not from this checkout ($cwd); left alone"; exit 4
+fi
+# Agents and terminals are the MC's grandchildren, under erl_child_setup.
+busy=0
+for child in $(pgrep -P "$pid" || true); do
+  busy=$((busy + $(pgrep -P "$child" | wc -l)))
+done
+if ((busy > 0)) && [[ "$UPDATE_FORCE" != true ]]; then
+  echo "its MC has $busy agent or terminal processes running; not restarted (--force restarts it anyway)"; exit 5
+fi
+command -v tmux >/dev/null || { echo "tmux is not installed; restart its MC by hand"; exit 5; }
+kill "$pid"
+for _ in $(seq 1 60); do kill -0 "$pid" 2>/dev/null || break; perl -e 'select(undef,undef,undef,0.5)'; done
+if kill -0 "$pid" 2>/dev/null; then echo "its MC did not stop"; exit 4; fi
+tmux kill-session -t hal-c2-mc 2>/dev/null || true
+tmux new-session -d -s hal-c2-mc "mise run mc 2>&1 | tee -a \"\$HOME/hal-c2-mc.log\""
+for _ in $(seq 1 180); do
+  [[ -f "$record" ]] && new="$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$record")" && [[ -n "$new" && "$new" != "$pid" ]] && kill -0 "$new" 2>/dev/null && { echo "restarted (tmux attach -t hal-c2-mc)"; exit 0; }
+  perl -e 'select(undef,undef,undef,1)'
+done
+echo "its MC did not come back; see ~/hal-c2-mc.log there"; exit 4
+REMOTE
+}
+
+for target in "${targets[@]}"; do
+  echo "== $target"
+  if $dry; then
+    echo "  would send $commit to $target:$remote_dir, fast-forward, reload$($restart && echo ', restart if needed')"
+    continue
+  fi
+  # ssh://… would need an absolute path; scp-style takes one relative to the home directory.
+  if ! git push --quiet "$target:$remote_dir" "$commit:$ref" 2>/tmp/mc-update-cluster.$$; then
+    sed 's/^/  /' /tmp/mc-update-cluster.$$ | tail -3; rm -f /tmp/mc-update-cluster.$$
+    echo "  could not send the commit"; failed+=("$target"); continue
+  fi
+  rm -f /tmp/mc-update-cluster.$$
+  # A login shell, so mise and its tools are on the PATH.
+  if ! remote_script | ssh -o BatchMode=yes "$target" \
+    "UPDATE_DIR=$(printf %q "$remote_dir") UPDATE_REF=$ref UPDATE_RESTART=$restart UPDATE_FORCE=$force bash -l -s" 2>&1 | sed 's/^/  /'; then
+    failed+=("$target")
+  fi
+done
+
+echo "== this machine"
+if $dry; then
+  echo "  would reload the local MC"
+else
+  out="$(mise run mc:reload 2>&1)" || { echo "$out" | tail -5 | sed 's/^/  /'; failed+=("this machine"); out=""; }
+  echo "$out" | grep -E 'loaded|restart for|nothing' | sed 's/^/  /' || true
+  if echo "$out" | grep -q 'restart for'; then
+    echo "  needs a restart to finish: stop \`mise run mc\` here and start it again"
+  fi
+fi
+
+if ((${#failed[@]})); then
+  echo "Not updated: ${failed[*]}" >&2
+  exit 1
+fi

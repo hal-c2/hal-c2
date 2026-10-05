@@ -99,6 +99,10 @@ Feature: Pushing, pulling and guarding the default branch
       | Push              |
       | Create PR         |
       | Commit & push     |
+
+    @backlog-desktop
+    Examples:
+      | action            |
       | Commit, push & PR |
 
   @desktop
@@ -119,7 +123,7 @@ Feature: Pushing, pulling and guarding the default branch
     When the user chooses to create a feature branch and continue
     Then the work is committed on a new branch and pushed there instead of "main"
 
-  @backlog @tui @mobile
+  @tui @mobile @backlog-mobile
   Scenario: The default-branch confirmation on the terminal client and phone
     Given the checkout is on the default branch "main"
     When the user runs "Commit & push"

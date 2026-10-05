@@ -285,3 +285,7 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+QList<QJsonObject> launchCalls(World& world) {
+  return world.mc.part<FakeLaunches>().calls;
+}

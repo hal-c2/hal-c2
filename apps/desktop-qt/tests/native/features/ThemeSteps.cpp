@@ -9,9 +9,13 @@
 #include <QFile>
 #include <QJsonDocument>
 
+#include "ComposerBrick.h"
 #include "FakeConfig.h"
 #include "CommandPaletteController.h"
+#include "FilesIdentity.h"
+#include "FilesViewer.h"
 #include "Harness.h"
+#include "SharedSteps.h"
 #include "Move.h"
 #include "Onboarding.h"
 #include "SettingsController.h"
@@ -261,10 +265,16 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("%1 is not offered").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (checkIconImageOffered(world, c[0], false)) return;
     if (machineNotOffered(world, c[0])) return;
     world.sync();
+    expectCommandNotOffered(world, c[0]);
     for (const QVariant& theme : themes(world)->available()) {
       expect(theme.toMap().value(QStringLiteral("id")) != c[0], QStringLiteral("%1 is offered").arg(c[0]));
+    }
+    // Nor is it a choice of the menu that is open (threads/snooze.feature).
+    for (const QVariant& item : at(world.state(QStringLiteral("menu")), QStringLiteral("items")).toList()) {
+      expect(!item.toMap().value(QStringLiteral("label")).toString().startsWith(c[0]), QStringLiteral("the menu offers %1").arg(show(item)));
     }
   });
 
@@ -350,6 +360,7 @@ const Steps steps([] {
     ensureTheme(world, c[0], {QStringLiteral("dark")});
   });
   step(QStringLiteral("the user chooses %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (modelPickerChooses(world, c[0])) return;
     // The welcome wizard's Select all / Select none.
     if (onboardingChooses(world, c[0])) return;
     // From an open command palette (its Change theme submenu among them): its
@@ -429,6 +440,8 @@ const Steps steps([] {
     blockDevice(world);
   });
   step(QStringLiteral("the user removes it"), [](World& world, const Captures&, const Table&) {
+    if (removeSavedEnvironment(world)) return;
+    if (removeViewedAttachment(world)) return;
     expect(!themes(world)->removeCustom(world.themeDraft.value(QStringLiteral("id")).toString()), QStringLiteral("the theme was removed"));
     expect(offered(world, QStringLiteral("My Theme")).has_value(), QStringLiteral("the theme is no longer offered"));
   });

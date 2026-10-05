@@ -42,7 +42,7 @@ add_test(NAME BackendProcess COMMAND tst_BackendProcess)
 # MC, and one steps file per domain (features/*.cpp, picked up on the next build).
 file(GLOB _feature_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/features/*.h")
 # Windows are closed as the user closes them, through their ShellRuntime.
-add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp ../../src/ShellRuntime.cpp ../../src/ShellWindows.cpp)
+add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp ../../src/ShellRuntime.cpp ../../src/ShellWindows.cpp ../../src/SingleInstance.cpp ../../src/StoragePaths.cpp ../../src/LocalFolderModel.cpp)
 target_compile_definitions(tst_Features PRIVATE
   HAL_C2_APP_VERSION="test"
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"
@@ -51,6 +51,8 @@ target_compile_definitions(tst_Features PRIVATE
 )
 target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::Test)
 hal_c2_target_platform_window(tst_Features)
+# The terminal bricks draw with qml-ghostty's Terminal.
+target_link_libraries(tst_Features PRIVATE qmlghosttyplugin)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 add_executable(tst_LocalTranscriber tst_LocalTranscriber.cpp ../../src/LocalTranscriber.cpp)
@@ -63,8 +65,10 @@ foreach(test_name IN ITEMS ShellRuntime ShellExamples)
     ../../src/ShellRuntime.cpp
     ../../src/ShellBridge.cpp
     ../../src/ThemeStore.cpp
+    # Composer.qml's rich text; it registers itself, as in the app.
+    ../../src/native/ComposerHighlighter.cpp
   )
-  target_include_directories(tst_${test_name} PRIVATE ../../src)
+  target_include_directories(tst_${test_name} PRIVATE ../../src ../../src/native)
   target_compile_definitions(tst_${test_name} PRIVATE
     HAL_C2_APP_VERSION="test"
     HAL_C2_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../.."
@@ -74,7 +78,9 @@ foreach(test_name IN ITEMS ShellRuntime ShellExamples)
   )
   hal_c2_target_platform_window(tst_${test_name})
   add_test(NAME ${test_name} COMMAND tst_${test_name})
-  set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+  # The examples are copied over one shell.qml in turn, and a copy keeps its
+  # source's timestamp: the QML disk cache would hand back the previous one.
+  set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QML_DISABLE_DISK_CACHE=1")
 endforeach()
 
 target_sources(tst_ShellExamples PRIVATE ../../src/LocalFolderModel.cpp)

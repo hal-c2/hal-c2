@@ -9,6 +9,9 @@
 #include "FakeMc.h"
 #include "Harness.h"
 #include "SettingsController.h"
+#include <QTest>
+#include <QQuickItem>
+#include "Brick.h"
 #include "World.h"
 
 namespace {
@@ -38,11 +41,13 @@ QJsonObject processes() {
   };
   return {{QStringLiteral("serverPid"), 4000},
           {QStringLiteral("readAt"), QStringLiteral("2026-01-01T00:00:00.000Z")},
-          {QStringLiteral("processCount"), 2},
+          {QStringLiteral("processCount"), 4},
           {QStringLiteral("totalRssBytes"), 104857600},
           {QStringLiteral("totalCpuPercent"), 5.0},
           {QStringLiteral("processes"),
-           QJsonArray{process(kAgentPid, 4000, QStringLiteral("codex app-server"), 0), process(4210, 4000, QStringLiteral("/bin/zsh -l"), 0)}}};
+           QJsonArray{process(kAgentPid, 4000, QStringLiteral("codex app-server"), 0), process(4210, 4000, QStringLiteral("/bin/zsh -l"), 0),
+                      // What the shell runs, and a helper of the MC's own.
+                      process(4211, 4210, QStringLiteral("bun dev"), 1), process(4300, 4000, QStringLiteral("epmd -daemon"), 0)}}};
 }
 
 const FakeMc::Extension extension([](FakeMc& mc) {
@@ -99,6 +104,72 @@ void setEditors(World& world, const QJsonArray& editors) {
 
 const Steps steps([] {
   const QString q = kQuoted;
+
+  // Process groups (settings/resource-telemetry.feature).
+  const auto groups = [](World& world) { return at(at(diagnostics(world), QStringLiteral("processes")), QStringLiteral("groups")).toList(); };
+  step(QStringLiteral("the user watches the resource monitor"), [](World& world, const Captures&, const Table&) {
+    if (world.shellSubscriptions() == 0) {
+      world.connect();
+      world.sync();
+    }
+    open(world);
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nDiagnosticsSettings {}\n", QSize(900, 1400));
+  });
+  step(QStringLiteral("processes are grouped as server, provider and terminal"), [groups](World& world, const Captures&, const Table&) {
+    QStringList shown;
+    for (const QVariant& group : groups(world)) {
+      QStringList names;
+      for (const QVariant& row : at(group, QStringLiteral("rows")).toList()) names.append(at(row, QStringLiteral("name")).toString());
+      shown.append(QStringLiteral("%1: %2").arg(at(group, QStringLiteral("label")).toString(), names.join(QStringLiteral(", "))));
+    }
+    // A shell's child goes with its terminal.
+    expect(shown == QStringList{QStringLiteral("Server: epmd"), QStringLiteral("Provider: codex"), QStringLiteral("Terminal: zsh, bun")},
+           QStringLiteral("the groups are %1").arg(shown.join(QStringLiteral("; "))));
+    world.brick->grab();
+    for (const QString& id : {QStringLiteral("server"), QStringLiteral("provider"), QStringLiteral("terminal")}) {
+      expect(world.brick->item(QStringLiteral("processGroup:") + id)->isVisible(), QStringLiteral("the page has no %1 group").arg(id));
+    }
+  });
+  step(QStringLiteral("each group can be collapsed and expanded again"), [groups](World& world, const Captures&, const Table&) {
+    const auto listed = [&world](int pid) {
+      world.brick->grab();
+      // Repeater delegates are the item tree's children.
+      const QString name = QStringLiteral("process:%1").arg(pid);
+      std::function<bool(const QQuickItem*)> shown = [&](const QQuickItem* item) {
+        if (item->objectName() == name && item->isVisible()) return true;
+        for (const QQuickItem* child : item->childItems()) {
+          if (shown(child)) return true;
+        }
+        return false;
+      };
+      return shown(world.brick->window().contentItem());
+    };
+    const QHash<QString, int> first{{QStringLiteral("server"), 4300}, {QStringLiteral("provider"), kAgentPid}, {QStringLiteral("terminal"), 4210}};
+    for (auto it = first.cbegin(); it != first.cend(); ++it) {
+      expect(listed(it.value()), QStringLiteral("%1 is not listed").arg(it.value()));
+      const auto foldOf = [&world](const QString& id) {
+        QQuickItem* found = nullptr;
+        std::function<void(QQuickItem*)> find = [&](QQuickItem* item) {
+          if (item->objectName() == QLatin1String("fold")) found = found ? found : item;
+          for (QQuickItem* child : item->childItems()) find(child);
+        };
+        world.brick->grab();
+        find(world.brick->item(QStringLiteral("processGroup:") + id));
+        expect(found != nullptr, QStringLiteral("the %1 group cannot be folded").arg(id));
+        return found;
+      };
+      QQuickItem* fold = foldOf(it.key());
+      QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(fold));
+      expect(!listed(it.value()), QStringLiteral("the %1 group did not collapse").arg(it.key()));
+      // The others stay open.
+      for (auto other = first.cbegin(); other != first.cend(); ++other) {
+        if (other.key() != it.key()) expect(listed(other.value()), QStringLiteral("%1 went with the %2 group").arg(other.value()).arg(it.key()));
+      }
+      fold = foldOf(it.key());
+      QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(fold));
+      expect(listed(it.value()), QStringLiteral("the %1 group did not expand").arg(it.key()));
+    }
+  });
 
   step(QStringLiteral("an MC running a provider session and a terminal"), [](World& world, const Captures&, const Table&) {
     FakeConfig& config = fakeConfig(world.mc);

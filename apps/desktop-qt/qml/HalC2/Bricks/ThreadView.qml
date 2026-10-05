@@ -19,6 +19,8 @@ Item {
     property real radius: 0
     readonly property var route: Shell.state.route ?? null
     readonly property bool draft: route !== null && route.kind === "draft"
+    // The user scrolled a thread's conversation away from its latest output (the composer rests then).
+    readonly property bool scrolledAway: !draft && model !== null && model.count > 0 && !timeline.following
     readonly property var model: draft ? null : Threads.timeline
     readonly property var workspace: Shell.state.workspace ?? null
     readonly property string status: model ? model.status : "loading"
@@ -54,12 +56,15 @@ Item {
         Shell.dispatch("panel.open", options);
     }
 
-    // A reply's changed file opens on that reply's turn in the diff.
+    // A reply's changed file opens alone on that reply's turn in the diff;
+    // "Open diff" (no path) opens every file the turn changed.
     function openFile(path, tab, rowId) {
         const options = {
             tab: tab,
             path: path
         };
+        if (tab === "diff" && path.length > 0)
+            options.only = true;
         const turn = tab === "diff" && view.model ? view.model.checkpointOf(rowId).turn : undefined;
         if (turn !== undefined)
             options.turn = turn;
@@ -88,10 +93,10 @@ Item {
         id: timeline
         objectName: "threadTimeline"
 
-        anchors.top: problemBar.visible ? problemBar.bottom : parent.top
+        anchors.top: lineageBar.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
         visible: !view.draft
         model: view.model
         showStatus: false
@@ -104,6 +109,16 @@ Item {
             messageId: messageId
         }, selector))
         onRevertRequested: rowId => view.askRevert(rowId)
+        onEditRequested: rowId => Shell.dispatch("rewind.request", {
+                rowId: rowId
+            })
+        onPullRequestLinkRequested: url => Shell.dispatch("rightPanel.linkPullRequest", {
+                url: url
+            })
+        // Another thread of this one's environment.
+        onThreadActivated: threadId => Shell.dispatch("rightPanel.openThread", {
+                threadKey: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":") + 1) + threadId
+            })
     }
 
     // Why the thread stopped following its MC, with a way to try again.
@@ -129,7 +144,7 @@ Item {
                 text: qsTr("This thread's MC cannot be reached: %1").arg(view.model ? view.model.problem : "")
                 color: Theme.palette.color("warning", "#f59e0b")
                 font.family: view.uiFamily
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
             ShellButton {
@@ -138,6 +153,39 @@ Item {
                 onClicked: Threads.reload(Threads.activeThread)
             }
         }
+    }
+
+    // Where the thread came from and the forks made of it.
+    ThreadLineage {
+        id: lineageBar
+
+        anchors.top: setupCard.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? implicitHeight : 0
+        visible: lineage !== null && !view.draft
+    }
+
+    // The agent stopped on a usage limit: when it resets and what to do until then.
+    LimitRecoveryBanner {
+        id: limitBanner
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: implicitHeight
+        visible: recovery !== null && !view.draft
+    }
+
+    // How the thread's new worktree is being prepared.
+    WorktreeSetupCard {
+        id: setupCard
+
+        anchors.top: problemBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? implicitHeight : 0
+        visible: setup !== null && !view.draft
     }
 
     // Loading, an empty thread, or a draft's opening line. Static: nothing
@@ -200,7 +248,7 @@ Item {
             visible: view.draft && text.length > 0
             color: view.mutedColor
             font.family: view.uiFamily
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             elide: Text.ElideMiddle
             text: {
                 if (!view.workspace)

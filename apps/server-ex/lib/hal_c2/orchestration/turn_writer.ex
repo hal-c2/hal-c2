@@ -293,6 +293,18 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
   def open_question(state, native, questions), do: open(state, native, {:questions, questions})
 
+  @doc """
+  Opens questions the provider asked without waiting (Codex's async questions): the
+  request is answered with a user message (`responseCapability` `message`), so its
+  node does not hold the run and it stays pending after the turn, the provider or
+  the MC ends. Returns `{state, request_id}`.
+  """
+  def open_async_question(state, native, questions),
+    do: open(state, native, {:async_questions, questions})
+
+  @doc "Whether a runtime request is answered with a message rather than to a live provider."
+  def message_request?(request), do: get_in(request, ["responseCapability", "type"]) == "message"
+
   defp open(state, native, what) do
     ids = state.turn.ids
     driver = Entities.driver(ids)
@@ -313,19 +325,29 @@ defmodule HalC2.Orchestration.TurnWriter do
              else: fields
            )}
 
-        {:questions, questions} ->
+        {tag, questions} when tag in [:questions, :async_questions] ->
           {"user_input_request", "user_input",
            %{"requestId" => request_id, "questions" => questions}}
       end
+
+    async? = match?({:async_questions, _}, what)
 
     commit(state, fn stream ->
       [
         Orchestration.create(
           "node",
           node_id,
-          Entities.node(ids, node_id, node_kind, "waiting", at, %{
-            "runtimeRequestId" => request_id
-          })
+          Entities.node(
+            ids,
+            node_id,
+            node_kind,
+            if(async?, do: "completed", else: "waiting"),
+            at,
+            %{
+              "runtimeRequestId" => request_id
+            }
+          )
+          |> then(&if(async?, do: Map.put(&1, "completedAt", at), else: &1))
         ),
         Orchestration.create("runtime-request", request_id, %{
           "id" => request_id,
@@ -334,10 +356,14 @@ defmodule HalC2.Orchestration.TurnWriter do
           "nativeRequestRef" => Entities.provider_ref(native, driver),
           "kind" => request_kind,
           "status" => "pending",
-          "responseCapability" => %{
-            "type" => "live",
-            "providerSessionId" => "provider-session:#{driver}:#{ids.thread}"
-          },
+          "responseCapability" =>
+            if(async?,
+              do: %{"type" => "message"},
+              else: %{
+                "type" => "live",
+                "providerSessionId" => "provider-session:#{driver}:#{ids.thread}"
+              }
+            ),
           "createdAt" => at,
           "resolvedAt" => nil
         }),
@@ -559,8 +585,19 @@ defmodule HalC2.Orchestration.TurnWriter do
           %{"lastError" => failure_message(failure), "updatedAt" => at}
         ),
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
-    ]
+    ] ++ held_queue(stream, status, failure)
   end
+
+  # A run stopped by a usage limit leaves the queue as it is: the messages behind it
+  # would only hit the same limit, so they wait, in order, until the user resumes the
+  # queue (`queue.resume`), as they do after a restart.
+  defp held_queue(stream, "failed", %{"class" => "usage_limit"}) do
+    for %{"status" => "queued"} = run <- StreamState.list(stream, "run"),
+        run["queueHeld"] != true,
+        do: Orchestration.upsert(stream, "run", run["id"], &Map.put(&1, "queueHeld", true))
+  end
+
+  defp held_queue(_stream, _status, _failure), do: []
 
   # What follows a run ending, once it has.
   defp finished(state, status, failure) do
@@ -667,9 +704,17 @@ defmodule HalC2.Orchestration.TurnWriter do
           into: MapSet.new(),
           do: id
 
+    # Questions answered with a message outlive the run that asked them.
+    asked =
+      for {id, request} <- StreamState.get(stream, "runtime-request"),
+          message_request?(request) and request["status"] == "pending",
+          into: MapSet.new(),
+          do: id
+
     for {kind, open?, changes} <- [
           {"turn-item",
-           &(&1["runId"] == run_id and &1["nodeId"] not in delegated and &1["status"] in @open),
+           &(&1["runId"] == run_id and &1["nodeId"] not in delegated and &1["status"] in @open and
+               &1["requestId"] not in asked),
            %{"status" => status, "streaming" => false, "completedAt" => at, "updatedAt" => at}},
           {"node",
            &(&1["runId"] == run_id and &1["id"] != root and &1["id"] not in delegated and
@@ -680,7 +725,8 @@ defmodule HalC2.Orchestration.TurnWriter do
            %{"status" => status, "completedAt" => at, "updatedAt" => at}},
           {"message", &(&1["runId"] == run_id and &1["streaming"] == true),
            %{"streaming" => false, "updatedAt" => at}},
-          {"runtime-request", &(&1["nodeId"] in nodes and &1["status"] == "pending"),
+          {"runtime-request",
+           &(&1["nodeId"] in nodes and &1["status"] == "pending" and not message_request?(&1)),
            %{"status" => "cancelled", "resolvedAt" => at}}
         ],
         {id, entity} <- StreamState.get(stream, kind),

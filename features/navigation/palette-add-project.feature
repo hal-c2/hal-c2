@@ -22,14 +22,14 @@ Feature: Adding a project from the command palette
     When the user runs "Add project"
     Then the connections settings open
 
-  @backlog @desktop
+  @desktop
   Scenario: The user chooses which environment receives the project
     Given two environments are connected and one is disconnected
     When the user runs "Add project"
     Then the palette lists "This device" and the other connected environment
     And the disconnected environment cannot be chosen
 
-  @backlog @desktop
+  @desktop
   Scenario: An environment that goes away mid-flow is reported
     Given the user chose an environment for a new project
     When that environment disconnects before the project is added
@@ -65,13 +65,13 @@ Feature: Adding a project from the command palette
     When the user adds a project from a Git URL
     Then the destination offered is "~/code/shop"
 
-  @backlog @desktop
+  @desktop
   Scenario: A folder that does not exist yet can be created
     Given the user is browsing for a project folder
     When the user types a path that does not exist
     Then the palette says "Press Enter to create this folder and add it as a project."
 
-  @backlog @desktop
+  @desktop
   Scenario: Relative paths need a current project
     Given no project is active
     When the user types a relative path while adding a project
@@ -93,16 +93,16 @@ Feature: Adding a project from the command palette
       | stage                 | message                    |
       | the clone             | Clone failed               |
       | the repository lookup | Repository lookup failed   |
+      | registration          | Failed to add project      |
 
     @backlog
     Examples:
       | stage                 | message                    |
-      | registration          | Failed to add project      |
       | opening the project   | Failed to open project     |
       | opening the folder    | Failed to open folder      |
       | a WSL folder          | Could not add WSL project  |
 
-  @backlog @desktop
+  @desktop
   Scenario: mod+Enter adds the highlighted folder
     Given the user is browsing for a project folder
     And a folder is highlighted

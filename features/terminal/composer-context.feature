@@ -31,13 +31,13 @@ Feature: Adding terminal output to a message
     When the user selects blank lines in the terminal and adds them to the chat
     Then the draft gains no excerpt
 
-  @backlog @desktop
+  @desktop
   Scenario: Adding to chat is not offered where there is no draft to add to
     Given the terminal is shown somewhere without a message draft
     When the user selects terminal output
     Then the user is offered to copy it but not to add it to the chat
 
-  @backlog @desktop
+  @desktop
   Scenario: The terminal's menu offers selection actions only once something is selected
     Given nothing is selected in the terminal
     When the user opens the terminal's menu
@@ -56,7 +56,7 @@ Feature: Adding terminal output to a message
     Then the draft no longer holds it
     And the rest of the draft is unchanged
 
-  @backlog @desktop
+  @desktop
   Scenario: An excerpt whose text is gone is dropped when the message is sent
     Given a restored draft holds a terminal excerpt with no text left
     When the user sends the message
@@ -69,7 +69,7 @@ Feature: Adding terminal output to a message
     Then each excerpt appears where its placeholder was
     And leftover placeholders disappear
 
-  @backlog @tui
+  @tui
   Scenario: The user adds terminal output to the prompt in the terminal client
     Given the terminal client shows a thread's terminal with output
     When the user adds the selected output to the prompt

@@ -351,6 +351,34 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
     context
   end
 
+  # The run really ran; it is then put back where a run stands between its provider's
+  # last word and the engine settling it (checkpoint capture): "waiting", not completed.
+  step "the provider finished run {int} of {string} but the MC has not settled it yet",
+       %{args: [n, thread]} = context do
+    context = complete_through(context, thread, n)
+    %{"id" => run_id, "rootNodeId" => root} = run(World.state(context, thread), n)
+    unsettled = %{"s" => %{"status" => "waiting", "completedAt" => nil}}
+
+    context
+    |> World.put_entity(thread, "node", root, unsettled)
+    |> World.put_entity(thread, "run", run_id, unsettled)
+  end
+
+  step "{string} has no queued message", %{args: [fork]} = context do
+    assert {:ok, _} = context.reply
+    assert %{"status" => "waiting"} = run(World.state(context, "t1"), 3)
+    # The copied run is finished history in the fork, so nothing waits behind it...
+    assert Enum.map(World.runs(context, fork), & &1["status"]) ==
+             ~w(completed completed completed)
+
+    # ...and the fork's first message starts at once instead of queueing.
+    context = World.send_turn(context, fork, "write #{fork}-first.txt")
+    statuses = Enum.map(World.runs(context, fork), & &1["status"])
+    refute "queued" in statuses
+    assert %{"ordinal" => 4} = World.await_latest_run(context, fork, "completed", 10_000)
+    context
+  end
+
   step "the fork has no queued message", context do
     assert {:ok, _} = context.reply
     refute Enum.any?(World.runs(context, "f1"), &(&1["status"] == "queued"))

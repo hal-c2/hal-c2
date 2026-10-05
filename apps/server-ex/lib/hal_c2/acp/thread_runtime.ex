@@ -188,7 +188,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_call({:start_turn, turn}, _from, state) do
     driver = turn.ids.driver
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{driver}:#{turn.ids.run}")
-    turn = %{turn | ids: ids}
+    turn = carried(%{turn | ids: ids})
     # Subagents still working in the background carry over; the rest were this turn's.
     subagents = Map.filter(state.subagents, fn {_, e} -> background?(e) and not e.done end)
 
@@ -202,10 +202,13 @@ defmodule HalC2.Acp.ThreadRuntime do
     }
 
     with :ok <- Antigravity.check_turn(turn),
+         :ok <- check_signed_in(state, driver),
          {:ok, state} <- ensure_session(state, turn),
+         {state, turn} = settle_carried(state, turn),
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
-         state = set_options(state, turn) do
+         state = set_options(state, turn),
+         state = set_parameters(state, turn) do
       started(state)
       state = %{state | leaf: leaf(state)}
       conn = state.conn
@@ -346,6 +349,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       state.replaying -> {:noreply, state}
       child_session?(params["sessionId"], state) -> {:noreply, child_update(params, state)}
       subagent_ended?(update) -> {:noreply, subagent_ended(state, update)}
+      commands = available_commands(update) -> {:noreply, offer(state, commands)}
       state.turn == nil -> {:noreply, state}
       true -> {:noreply, update(update, state)}
     end
@@ -414,7 +418,18 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:noreply, state}
   end
 
-  # This client offers no file system or terminal; say so rather than hang.
+  # The agent reads text files of the thread's workspace (and the files attached to
+  # its messages) through HAL-C2. A turn waiting on an approval still answers.
+  def handle_info(
+        {:json_rpc, conn, {:request, id, "fs/read_text_file", params}},
+        %{turn: turn} = state
+      )
+      when turn != nil do
+    Connection.respond(conn, id, read_text_file(turn.cwd, params || %{}))
+    {:noreply, state}
+  end
+
+  # This client writes no files and runs no terminal; say so rather than hang.
   def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state) do
     Connection.respond(
       conn,
@@ -524,6 +539,18 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # --- session -------------------------------------------------------------------
 
+  # A signed-out registry agent is not started for a thread: it could only refuse the
+  # session, and the thread says why instead.
+  defp check_signed_in(%{conn: conn}, _instance) when conn != nil, do: :ok
+
+  defp check_signed_in(_state, instance) do
+    if HalC2.Acp.signed_out?(instance),
+      do:
+        {:error,
+         "#{HalC2.Acp.label(instance)} is not signed in. Sign in to it in the provider's settings, then send the message again."},
+      else: :ok
+  end
+
   # The agent's permission mode is set when it starts, so a new mode means a new process.
   defp ensure_session(%{conn: conn, session_id: sid, agent: agent, mode: mode} = state, turn)
        when conn != nil and sid != nil and agent == turn.ids.driver and mode == turn.runtime_mode,
@@ -566,13 +593,17 @@ defmodule HalC2.Acp.ThreadRuntime do
            Connection.call(conn, "initialize", %{
              "protocolVersion" => 1,
              "clientCapabilities" => %{
-               "fs" => %{"readTextFile" => false, "writeTextFile" => false},
+               "fs" => %{"readTextFile" => true, "writeTextFile" => false},
                "terminal" => false,
                # A sign-in page the agent asks for shows on the provider (`HalC2.Acp.UrlAuth`).
                "elicitation" => %{"url" => %{}}
              },
              "clientInfo" => %{"name" => "hal-c2", "version" => "0.1.0"}
            }) do
+      # The thread now runs on the instance's sign-in, which a sign-out closes
+      # (`HalC2.Acp.Antigravity.stop_sessions/2`).
+      Registry.update_value(@registry, state.thread_id, fn _ -> instance end)
+
       {:ok,
        %{
          state
@@ -600,6 +631,31 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp serve(state, plan),
     do: launch(state, plan.instance, state.mode || "approval-required", plan.cwd)
+
+  # A session carried from another machine (`HalC2.PortableSessions`) is the thread's
+  # session here: the agent loads the copy by its id, as it loads any session of its own.
+  defp carried(%{fork: %{carried: true, thread: id}} = turn) when is_binary(id),
+    do: %{turn | native_thread_id: id}
+
+  defp carried(turn), do: turn
+
+  # An agent that could not load the copy has started a new session instead, which
+  # gets the conversation as a transcript.
+  defp settle_carried(state, %{fork: %{carried: true, thread: id} = fork} = turn) do
+    if state.session_id == id do
+      record_session(state, id)
+      turn = %{turn | fork: nil}
+      {%{state | turn: turn}, turn}
+    else
+      text = HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
+      turn = %{turn | fork: nil, text: text}
+      {%{state | turn: turn}, turn}
+    end
+  end
+
+  defp settle_carried(state, turn), do: {state, turn}
+
+  defp fork_first(_state, %{fork: %{carried: true}} = turn), do: {:ok, turn}
 
   # A forked OpenCode thread's first turn opens a fork of the source's session, cut
   # before the source's turn after the fork point.
@@ -738,24 +794,97 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Any other agent with a mode of its own for planning (a mode option offering `plan`
   # or `architect`) runs in it while the thread is in plan mode. HAL-C2 owns only that
   # override: the next turn out of plan mode puts back what the options held before.
+  # What the options held is also kept on the thread's provider thread, since the
+  # agent keeps its mode with the session and this runtime may not live as long.
   defp set_options(%{plan_modes: plan_modes} = state, %{interaction_mode: "plan"}) do
-    Enum.reduce(plan_modes, state, fn {id, plan}, state ->
-      if state.config[id] == plan do
-        state
-      else
-        build_modes = Map.put_new(state.build_modes, id, state.config[id])
-        set_config(%{state | build_modes: build_modes}, id, plan)
-      end
+    before = state.build_modes
+
+    state =
+      Enum.reduce(plan_modes, state, fn {id, plan}, state ->
+        if state.config[id] == plan do
+          state
+        else
+          build_modes = Map.put_new(state.build_modes, id, state.config[id])
+          set_config(%{state | build_modes: build_modes}, id, plan)
+        end
+      end)
+
+    if state.build_modes != before, do: save_build_modes(state, state.build_modes)
+    state
+  end
+
+  defp set_options(state, _turn) do
+    build_modes =
+      if state.build_modes == %{} and planning?(state),
+        do: saved_build_modes(state),
+        else: state.build_modes
+
+    if build_modes != %{}, do: save_build_modes(state, nil)
+
+    Enum.reduce(
+      build_modes,
+      %{state | build_modes: %{}},
+      &set_config(&2, elem(&1, 0), elem(&1, 1))
+    )
+  end
+
+  # The session is in one of the agent's planning modes.
+  defp planning?(state),
+    do: Enum.any?(state.plan_modes, fn {id, plan} -> state.config[id] == plan end)
+
+  defp saved_build_modes(state) do
+    HalC2.Streams.ensure(state.thread_id)
+    |> HalC2.Streams.Server.state()
+    |> HalC2.StreamState.get("provider-thread")
+    |> get_in([state.turn.ids.provider_thread, "buildModes"])
+    |> case do
+      %{} = modes -> modes
+      _ -> %{}
+    end
+  end
+
+  defp save_build_modes(state, modes) do
+    id = state.turn.ids.provider_thread
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "provider-thread", id, fn
+          nil -> nil
+          thread when modes == nil -> Map.delete(thread, "buildModes")
+          thread -> Map.put(thread, "buildModes", modes)
+        end)
+      ]
     end)
   end
 
-  defp set_options(%{build_modes: build_modes} = state, _turn),
-    do:
-      Enum.reduce(
-        build_modes,
-        %{state | build_modes: %{}},
-        &set_config(&2, elem(&1, 0), elem(&1, 1))
-      )
+  # Cursor takes the options picked for a model with the model, as its parameters, so
+  # each turn says both (none picked clears what an earlier turn chose).
+  defp set_parameters(%{agent: agent} = state, turn) do
+    if HalC2.Acp.driver(agent) == "cursor" do
+      params =
+        for {id, value} <- Map.get(turn, :options) || %{}, is_binary(id), value != nil do
+          %{"id" => HalC2.Acp.cursor_parameter(id), "value" => to_string(value)}
+        end
+
+      model = if turn.model in [nil, ""], do: state.model || "default", else: turn.model
+
+      case Connection.call(state.conn, "session/set_config_option", %{
+             "sessionId" => state.session_id,
+             "configId" => "model",
+             "value" => model,
+             "_meta" => %{"params" => Enum.sort_by(params, & &1["id"])}
+           }) do
+        {:ok, _} ->
+          %{state | model: model}
+
+        {:error, reason} ->
+          Logger.warning("could not set Cursor's model options: #{inspect(reason)}")
+          state
+      end
+    else
+      state
+    end
+  end
 
   # The choice of a select option (flat or grouped) that plans, if it has one.
   defp plan_choice(option) do
@@ -907,13 +1036,16 @@ defmodule HalC2.Acp.ThreadRuntime do
        do: subagent_call(state, id, call)
 
   defp update(%{"sessionUpdate" => "tool_call", "toolCallId" => id} = call, state) do
-    if subagent_call?(call, state),
-      do: subagent_call(state, id, call),
-      else: tool(state, id, call)
+    cond do
+      plan_call?(call, state) -> plan_call(state, id, call)
+      subagent_call?(call, state) -> subagent_call(state, id, call)
+      true -> tool(state, id, call)
+    end
   end
 
   defp update(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id} = call, state) do
     cond do
+      plan_call?(call, state) -> plan_call(state, id, call)
       Map.has_key?(state.items, id) -> tool_update(state, id, call)
       subagent_call?(call, state) -> subagent_call(state, id, call)
       true -> tool_update(state, id, call)
@@ -938,6 +1070,27 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
 
     state |> flush() |> write_todo("acp-plan:#{state.turn.ids.run}", steps)
+  end
+
+  # A plan the agent proposes (HAL-C2's own update, which the Cursor agent sends for
+  # Cursor's plan tool): a proposed plan the user can implement once it is whole.
+  defp update(%{"sessionUpdate" => "proposed_plan", "planId" => id} = u, state)
+       when is_binary(id) do
+    native = "plan:#{id}"
+    state = state |> flush() |> ensure_item(native, :plan)
+    markdown = if is_binary(u["markdown"]) and u["markdown"] != "", do: u["markdown"]
+
+    cond do
+      Map.get(state.items[native], :proposed) ->
+        state
+
+      u["status"] == "completed" and markdown != nil ->
+        state = finish_plan(state, native, markdown)
+        %{state | items: Map.update!(state.items, native, &Map.put(&1, :proposed, true))}
+
+      true ->
+        state
+    end
   end
 
   # Models the agent adds or drops mid-session reach the picker without a provider refresh.
@@ -971,7 +1124,75 @@ defmodule HalC2.Acp.ThreadRuntime do
     state
   end
 
+  @max_terminal_bytes 1024 * 1024
+
+  # ACP v2: a command the agent runs in a terminal of its own, told whole
+  # (`terminal_update`) or as output chunks. It is a command of the turn, never a
+  # terminal session, so nobody can type into it.
+  defp update(%{"sessionUpdate" => s, "terminalId" => terminal} = u, state)
+       when s in ["terminal_update", "terminal_output_chunk"] and is_binary(terminal) do
+    native = "acp-agent-terminal:#{terminal}"
+    fields = %{"input" => "Terminal", "output" => ""}
+    state = state |> flush() |> ensure_item(native, :command, fields)
+    item = state.items[native]
+
+    bytes =
+      case u do
+        %{"sessionUpdate" => "terminal_output_chunk", "data" => data} ->
+          Map.get(item, :bytes, "") <> terminal_bytes(data)
+
+        %{"output" => %{"data" => data}} ->
+          terminal_bytes(data)
+
+        _ ->
+          Map.get(item, :bytes, "")
+      end
+
+    bytes =
+      binary_part(
+        bytes,
+        max(byte_size(bytes) - @max_terminal_bytes, 0),
+        min(byte_size(bytes), @max_terminal_bytes)
+      )
+
+    command = if is_binary(u["command"]), do: u["command"], else: item[:command]
+    item = Map.merge(item, %{bytes: bytes, command: command})
+    state = %{state | items: Map.put(state.items, native, item)}
+
+    shown =
+      %{"output" => String.replace_invalid(bytes, "")}
+      |> then(&if(command, do: Map.put(&1, "input", command), else: &1))
+
+    cond do
+      Map.get(item, :exited) ->
+        state
+
+      is_map(u["exitStatus"]) ->
+        code = u["exitStatus"]["exitCode"]
+        status = if code == 0, do: "completed", else: "failed"
+        shown = if is_integer(code), do: Map.put(shown, "exitCode", code), else: shown
+        state = finish_item(state, native, status, &Map.merge(&1, shown))
+        %{state | items: Map.put(state.items, native, Map.put(item, :exited, true))}
+
+      true ->
+        commit(state, fn stream ->
+          [Orchestration.upsert(stream, "turn-item", item.id, &Map.merge(&1, shown))]
+        end)
+
+        state
+    end
+  end
+
   defp update(_update, state), do: state
+
+  defp terminal_bytes(data) when is_binary(data) do
+    case Base.decode64(data) do
+      {:ok, bytes} -> bytes
+      :error -> ""
+    end
+  end
+
+  defp terminal_bytes(_data), do: ""
 
   defp tool(state, id, call) do
     {kind, fields} = tool_shape(call)
@@ -1072,7 +1293,39 @@ defmodule HalC2.Acp.ThreadRuntime do
       Enum.any?([input["subagent_type"], input["subagentType"]], &(is_binary(&1) and &1 != ""))
   end
 
-  defp subagent_call?(_call, _state), do: false
+  # Cursor's and OpenCode's `task` tool runs a subagent to its end inside the tool
+  # call: cursor-acp names the call after the SDK's tool, and OpenCode's input names
+  # the subagent it picked.
+  defp subagent_call?(call, %{turn: %{ids: %{driver: driver}}}) do
+    input = call["rawInput"] || %{}
+
+    HalC2.Acp.driver(driver) in ["cursor", "opencode"] and
+      (String.downcase(call["title"] || "") == "task" or
+         (is_binary(input["subagent_type"]) and input["subagent_type"] != ""))
+  end
+
+  # Cursor's `createPlan` tool hands the user a plan (cursor-acp names the call after
+  # the SDK's tool and repeats its input when it ends). It is a proposed plan once
+  # the tool has finished, never a tool call in the timeline.
+  defp plan_call?(%{"title" => "createPlan"}, %{turn: %{ids: %{driver: driver}}}),
+    do: HalC2.Acp.driver(driver) == "cursor"
+
+  defp plan_call?(_call, _state), do: false
+
+  defp plan_call(state, id, %{"status" => "completed", "rawInput" => %{"plan" => plan}})
+       when is_binary(plan) do
+    native = "plan:#{id}"
+
+    markdown =
+      case String.trim(plan) do
+        "" -> @empty_plan
+        text -> text
+      end
+
+    state |> flush() |> ensure_item(native, :plan) |> finish_plan(native, markdown)
+  end
+
+  defp plan_call(state, _id, _call), do: state
 
   # The subagent's own session streams under another session id: its answer goes to
   # its child thread. Updates for a session no subagent has named yet wait for it.
@@ -1467,7 +1720,16 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp finish_tool(state, id, call) do
     %{kind: kind} = state.items[id]
-    status = if call["status"] == "failed", do: "failed", else: "completed"
+
+    status =
+      cond do
+        call["status"] == "failed" -> "failed"
+        # A command the user's stop cut off was stopped, though its agent reports it
+        # done like any other.
+        kind == :command and state.interrupted -> "interrupted"
+        true -> "completed"
+      end
+
     output = content_text(call["content"]) || raw_output(call["rawOutput"])
 
     finish_item(state, id, status, fn entity ->
@@ -1525,6 +1787,64 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp raw_output(%{"output" => output}) when is_binary(output), do: output
   defp raw_output(_), do: nil
 
+  # The commands and skills a session offers reach the composer as the agent
+  # advertises them, which it may do before or between turns.
+  defp available_commands(%{
+         "sessionUpdate" => "available_commands_update",
+         "availableCommands" => commands
+       })
+       when is_list(commands),
+       do: commands
+
+  defp available_commands(_update), do: nil
+
+  defp offer(state, commands) do
+    HalC2.Acp.put_commands(state.agent, commands)
+    state
+  end
+
+  # --- files ---------------------------------------------------------------------
+
+  # Larger files are not text an agent should take whole.
+  @max_read_bytes 10 * 1024 * 1024
+
+  # ACP's `fs/read_text_file`: an absolute path that stays, once symlinks resolve,
+  # in the workspace or among the uploads, from `line` (1-based) for `limit` lines.
+  defp read_text_file(cwd, %{"path" => path} = params) when is_binary(path) do
+    with true <- Path.type(path) == :absolute,
+         {:ok, real} <- HalC2.Paths.real(path),
+         true <- Enum.any?([cwd, HalC2.Attachments.dir()], &inside?(real, &1)),
+         {:ok, %File.Stat{type: :regular, size: size}} when size <= @max_read_bytes <-
+           File.stat(real),
+         {:ok, text} <- File.read(real),
+         true <- String.valid?(text) do
+      {:ok, %{"content" => lines(text, params["line"], params["limit"])}}
+    else
+      _ ->
+        {:error, %{"code" => -32002, "message" => "#{path} cannot be read from this workspace"}}
+    end
+  end
+
+  defp read_text_file(_cwd, _params),
+    do: {:error, %{"code" => -32602, "message" => "fs/read_text_file needs a path"}}
+
+  defp inside?(real, root) do
+    case HalC2.Paths.real(root) do
+      {:ok, root} -> real == root or String.starts_with?(real, root <> "/")
+      {:error, _} -> false
+    end
+  end
+
+  defp lines(text, line, limit) when is_integer(line) or is_integer(limit) do
+    text
+    |> String.split("\n")
+    |> Enum.drop(max((line || 1) - 1, 0))
+    |> then(&if(is_integer(limit) and limit >= 0, do: Enum.take(&1, limit), else: &1))
+    |> Enum.join("\n")
+  end
+
+  defp lines(text, _line, _limit), do: text
+
   # --- permissions ---------------------------------------------------------------
 
   # Full-access threads allow without asking; others ask the user.
@@ -1562,14 +1882,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   # applies the mode for them: reads go ahead (OpenCode keeps asking about .env
   # files), edits go ahead in auto-accept-edits, and what the user allowed for the
   # session goes ahead again. Pi has no auto; its old auto threads ask as approval
-  # required does.
-  defp allowed?(%{turn: %{runtime_mode: "full-access"}}, _kind, _call, _prompt), do: true
-
+  # required does. Antigravity runs full access as its own mode (`yolo`), so what it
+  # still asks about there is its own question for the user.
   defp allowed?(state, kind, call, prompt) do
     driver = HalC2.Acp.driver(state.agent)
     mode = state.turn.runtime_mode
 
     cond do
+      mode == "full-access" and driver != "antigravity" -> true
       MapSet.member?(state.allowed, {kind, prompt}) -> true
       driver not in @gated -> false
       kind == "file-read" -> not (driver == "opencode" and env_file?(call))
@@ -1664,10 +1984,18 @@ defmodule HalC2.Acp.ThreadRuntime do
     %{state | turn: nil, items: %{}}
   end
 
+  @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
+
   # The message, with where its files are; images inline when the agent takes them.
   defp acp_prompt(turn, capabilities, announce) do
     attachments = Map.get(turn, :attachments, [])
     message = HalC2.Attachments.prompt_text(turn.text, attachments)
+
+    # Cursor invokes a skill by its slash name; HAL-C2's composer mentions one as `$name`.
+    message =
+      if turn.ids.driver == "cursor" and message =~ @skill_mention,
+        do: HalC2.Acp.cursor_skill_mentions(message, turn.cwd),
+        else: message
 
     message =
       if announce,

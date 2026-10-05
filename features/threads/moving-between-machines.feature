@@ -286,6 +286,15 @@ Feature: Moving a thread and its agent to another machine
       When the user sends the first message in "Alpha" since the move
       Then the agent is told the project moved from "~/code/shop" to "~/src/shop-app"
 
+    @desktop
+    Scenario: A fork and its source stay related across machines
+      Given "Beta" on "laptop" is a fork of "Alpha"
+      And "Alpha" has since moved to "desktop"
+      When the user looks at the relatives of "Beta"
+      Then its parent is "Alpha" on "desktop"
+      When the user opens "Alpha" where it lives now
+      Then "Beta" is listed as its fork
+
   Rule: Moving back
 
     @shared @backlog-mobile

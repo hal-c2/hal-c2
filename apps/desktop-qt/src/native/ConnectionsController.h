@@ -18,7 +18,8 @@ class ShellBridge;
 // Cluster page (ClusterController).
 // Publishes `connections`:
 //   {access: {pairingLinks, clients} | null, accessError, busy, notice,
-//    created: {id, label, url, code, expiresAt} | null}
+//    created: {id, label, url, code, expiresAt} | null, revealed (the clipboard
+//    refused the link, which is shown to copy by hand)}
 // The page shows while the route is the settings section
 // "/settings/connections" (NavigationController takes connections.open and
 // connections.close). Managing access needs an administrative session; the
@@ -31,6 +32,9 @@ public:
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
+
+  // Puts text on the clipboard, false when it could not; the system's unless tests say.
+  void setClipboardWriter(std::function<bool(const QString& text)> write) { m_copy = std::move(write); }
 
 private:
   void setOpen(bool open);
@@ -53,4 +57,5 @@ private:
   int m_accessSubscription = -1;
   bool m_active = false;
   bool m_open = false;
+  std::function<bool(const QString& text)> m_copy;
 };

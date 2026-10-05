@@ -154,6 +154,8 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   if (action == QLatin1String("thread.open")) {
     const QString key = map.value(QStringLiteral("key")).toString();
     if (!key.isEmpty()) open(Route::thread(key));
+  } else if (action == QLatin1String("link.open")) {
+    openLink(QUrl(map.value(QStringLiteral("url")).toString()));
   } else if (action == QLatin1String("draft.open")) {
     const QString id = map.value(QStringLiteral("draftId")).toString();
     if (!id.isEmpty()) open(Route::draft(id));
@@ -161,6 +163,12 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     if (m_route.kind != QLatin1String("settings")) open(Route::settings());
   } else if (action == QLatin1String("settings.back")) {
     back();
+  } else if (action == QLatin1String("settings.search")) {
+    // Settings, searching for `query`: its navigation's field follows.
+    if (m_route.kind != QLatin1String("settings")) open(Route::settings());
+    m_search = map.value(QStringLiteral("query")).toString();
+    ++m_searchSeq;
+    publish();
   } else if (action == QLatin1String("pullRequests.open")) {
     open(Route::of(QStringLiteral("pullRequests")));
   } else if (action == QLatin1String("usage.open")) {
@@ -190,6 +198,18 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   return true;
 }
 
+QString NavigationController::threadLink(const QString& key) {
+  const qsizetype colon = key.indexOf(QLatin1Char(':'));
+  return QStringLiteral("hal-c2://thread/%1/%2").arg(key.left(colon), key.mid(colon + 1));
+}
+
+bool NavigationController::openLink(const QUrl& url) {
+  const QStringList parts = url.path().split(QLatin1Char('/'), Qt::SkipEmptyParts);
+  if (url.scheme() != QLatin1String("hal-c2") || url.host() != QLatin1String("thread") || parts.size() != 2) return false;
+  open(Route::thread(parts.at(0) + QLatin1Char(':') + parts.at(1)));
+  return true;
+}
+
 void NavigationController::back() {
   const Route from = m_route;
   go(m_backStack.isEmpty() ? Route() : m_backStack.takeLast(), true);
@@ -213,6 +233,7 @@ void NavigationController::go(const Route& to, bool replace) {
   if (!route.threadKey.isEmpty()) route.threadKey = m_store->located(route.threadKey);
   if (route != m_route) {
     m_target.clear();
+    if (route.kind != QLatin1String("settings")) m_search.clear();
     const bool settingsToSettings =
         route.kind == QLatin1String("settings") && m_route.kind == QLatin1String("settings");
     if (!replace) m_forwardStack.clear();
@@ -248,6 +269,8 @@ void NavigationController::publish() {
   state.insert(QStringLiteral("canGoBack"), !m_backStack.isEmpty());
   state.insert(QStringLiteral("target"), m_target);
   state.insert(QStringLiteral("targetSeq"), m_targetSeq);
+  state.insert(QStringLiteral("search"), m_search);
+  state.insert(QStringLiteral("searchSeq"), m_searchSeq);
   m_bridge->publish(QStringLiteral("route"), state);
 }
 

@@ -1067,7 +1067,71 @@ defmodule HalC2.Steps.Providers.Antigravity do
     paste(context, callback(context.flow, %{"code" => "google-code"}))
   end
 
+  # --- files ----------------------------------------------------------------------
+
+  step "the project has a file whose kind Antigravity does not recognise", context do
+    path = Path.join(World.project(context).root, "schema.xyzzy")
+    File.write!(path, "table users\n")
+    Map.put(context, :asked_path, path)
+  end
+
+  step "Antigravity asks for that file by its path", context do
+    read_turn(context, context.asked_path)
+  end
+
+  step "Antigravity receives the file's contents", context do
+    assert [%{"result" => %{"content" => "table users\n"}}] = FakeAcp.answers(context)
+    context
+  end
+
+  # A readable file beside the project's folder, so only its place refuses it.
+  step "an Antigravity thread works in the project's folder", context do
+    path = Path.join(Mc.tmp_dir(context.mc, "outside"), "secret.txt")
+    File.write!(path, "secret\n")
+    Map.put(context, :asked_path, path)
+  end
+
+  step "Antigravity asks for a path outside that folder", context do
+    context = read_turn(context, context.asked_path)
+
+    # A link inside the folder to that file leaves the folder just the same.
+    link = Path.join(World.project(context).root, "link.txt")
+    File.ln_s!(context.asked_path, link)
+    turn = read_step("read the link", link)
+    FakeAcp.configure(context, &Map.update!(&1, "turns", fn turns -> [turn | turns] end))
+    context = FakeAcp.send_message(context, "read the link")
+    FakeAcp.await_runs(context, 2)
+    context
+  end
+
+  step "the request is refused", context do
+    assert [%{"error" => %{"code" => -32002}}, %{"error" => %{"code" => -32002}}] =
+             answers = FakeAcp.answers(context)
+
+    refute inspect(answers) =~ "secret\\n"
+    context
+  end
+
   # --- helpers --------------------------------------------------------------------
+
+  defp read_step(match, path) do
+    %{
+      "match" => match,
+      "steps" => [
+        %{"request" => %{"method" => "fs/read_text_file", "params" => %{"path" => path}}},
+        %{"text" => "Done."}
+      ]
+    }
+  end
+
+  # A turn in which Antigravity asks HAL-C2 for the text file at `path`.
+  defp read_turn(context, path) do
+    turn = read_step("read it", path)
+    FakeAcp.configure(context, &Map.update!(&1, "turns", fn turns -> [turn | turns] end))
+    context = context |> signed_in() |> FakeAcp.thread("Work") |> FakeAcp.send_message("read it")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
 
   # A release zip of the fake's wrapper and a helper, as Google publishes it.
   defp build_release(context, version) do

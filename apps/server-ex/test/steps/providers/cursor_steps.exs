@@ -368,6 +368,414 @@ defmodule HalC2.Steps.Providers.Cursor do
     Map.put(ctx, :thread, "Cursor")
   end
 
+  # --- an abandoned send -----------------------------------------------------------------
+
+  # The turn's runtime stops without ending it (as when its supervisor shuts it down):
+  # the run's record says running, and no Cursor session is left behind it.
+  step "a message was sent to Cursor but the MC kept only its local run record and no live Cursor session",
+       context do
+    Mc.ensure(HalC2.Orchestration.TurnWatch)
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", "wait")
+    thread = ctx.threads["Cursor"]
+
+    Acp.await_stream(thread, fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+    end)
+
+    [{runtime, _}] = Registry.lookup(HalC2.Acp.Registry, thread)
+    ref = Process.monitor(runtime)
+    :ok = GenServer.stop(runtime, :shutdown)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    Mc.settle_registry(HalC2.Acp.Registry)
+    assert [%{"status" => "running"}] = Acp.runs(thread)
+    assert Registry.lookup(HalC2.Acp.Registry, thread) == []
+    # The sidebar still shows it as the thread's active run, which the check reads.
+    World.await_row(thread, &is_binary(&1["activeRunId"]))
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "the MC checks its Cursor sessions", context do
+    Mc.ensure(HalC2.Orchestration.IdleSessions)
+    HalC2.Orchestration.IdleSessions.check()
+    context
+  end
+
+  step "the send is completed or failed explicitly", context do
+    assert [%{"status" => "failed", "completedAt" => at}] =
+             Acp.await_runs(context.threads["Cursor"], 1)
+
+    assert is_binary(at)
+
+    assert [%{"lastError" => "The provider's session ended unexpectedly."}] =
+             HalC2.StreamState.list(Acp.stream(context.threads["Cursor"]), "provider-session")
+
+    context
+  end
+
+  step "the user's next message starts a new Cursor run", context do
+    Acp.follow_up(context, "Cursor", "hello")
+
+    assert ["failed", "completed"] =
+             Enum.map(Acp.await_runs(context.threads["Cursor"], 2), & &1["status"])
+
+    assert Acp.assistant_text(context.threads["Cursor"]) =~ "Hello from Cursor"
+    context
+  end
+
+  # --- model options ---------------------------------------------------------------------
+
+  # What Cursor's catalog says of GPT-5: its parameters, and the default variant.
+  @parameters [
+    %{"id" => "thinking", "values" => [%{"value" => "true"}, %{"value" => "false"}]},
+    %{
+      "id" => "fast",
+      "displayName" => "Fast",
+      "values" => [%{"value" => "false"}, %{"value" => "true"}]
+    },
+    %{
+      "id" => "context",
+      "values" => [%{"value" => "200k"}, %{"value" => "1m", "displayName" => "1M"}]
+    },
+    %{
+      "id" => "reasoning",
+      "displayName" => "Reasoning",
+      "values" => [
+        %{"value" => "low", "displayName" => "Low"},
+        %{"value" => "medium", "displayName" => "Medium"},
+        %{"value" => "high", "displayName" => "High"}
+      ]
+    }
+  ]
+  @variants [
+    %{
+      "isDefault" => true,
+      "params" => [
+        %{"id" => "reasoning", "value" => "medium"},
+        %{"id" => "context", "value" => "200k"},
+        %{"id" => "fast", "value" => "false"}
+      ]
+    }
+  ]
+
+  step "the user opens the options for a Cursor model", context do
+    sign_in("cursor")
+    ctx = ops(context)
+
+    Acp.control(ctx, "cursor-cursor", %{
+      "parameters" => %{"gpt-5" => @parameters},
+      "variants" => %{"gpt-5" => @variants}
+    })
+
+    {entry, ctx} = enabled(ctx)
+    Map.put(ctx, :cursor_models, entry["models"])
+  end
+
+  step "the reasoning, context size, fast mode and thinking choices Cursor offers for that model are shown",
+       context do
+    model = Enum.find(context.cursor_models, &(&1["slug"] == "gpt-5"))
+
+    assert [
+             %{
+               "id" => "reasoning",
+               "label" => "Reasoning",
+               "type" => "select",
+               "currentValue" => "medium",
+               "options" => [
+                 %{"id" => "low", "label" => "Low"},
+                 %{"id" => "medium", "label" => "Medium", "isDefault" => true},
+                 %{"id" => "high", "label" => "High"}
+               ]
+             },
+             %{
+               "id" => "contextWindow",
+               "label" => "Context Window",
+               "type" => "select",
+               "currentValue" => "200k",
+               "options" => [
+                 %{"id" => "200k", "label" => "200k", "isDefault" => true},
+                 %{"id" => "1m", "label" => "1M"}
+               ]
+             },
+             %{
+               "id" => "fastMode",
+               "label" => "Fast",
+               "type" => "boolean",
+               "currentValue" => false
+             },
+             %{"id" => "thinking", "label" => "Thinking", "type" => "boolean"} = thinking
+           ] = model["capabilities"]["optionDescriptors"]
+
+    refute Map.has_key?(thinking, "currentValue")
+
+    # A model Cursor lists no parameters for has no options.
+    assert Enum.find(context.cursor_models, &(&1["slug"] == "composer-2"))["capabilities"] == nil
+
+    # What the user picks reaches Cursor as the model's parameters.
+    ctx = Acp.launch(context, "Cursor", "cursor", "hello", model: "gpt-5")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+
+    Acp.follow_up(ctx, "Cursor", "hello again", %{
+      "modelSelection" => %{
+        "instanceId" => "cursor",
+        "model" => "gpt-5",
+        "options" => [
+          %{"id" => "reasoning", "value" => "high"},
+          %{"id" => "contextWindow", "value" => "1m"},
+          %{"id" => "fastMode", "value" => true}
+        ]
+      }
+    })
+
+    Acp.await_runs(ctx.threads["Cursor"], 2)
+
+    assert [%{"model" => %{"id" => "gpt-5"} = first}, %{"model" => second}] =
+             Enum.filter(log(ctx), &(&1["event"] == "send"))
+
+    refute Map.has_key?(first, "params")
+
+    assert second == %{
+             "id" => "gpt-5",
+             "params" => [
+               %{"id" => "context", "value" => "1m"},
+               %{"id" => "fast", "value" => "true"},
+               %{"id" => "reasoning", "value" => "high"}
+             ]
+           }
+
+    ctx
+  end
+
+  # --- skills and rules ------------------------------------------------------------------
+
+  defp cursor_skill(context, name) do
+    dir = Path.join([World.project(context).root, ".cursor", "skills", name])
+    File.mkdir_p!(dir)
+
+    File.write!(
+      Path.join(dir, "SKILL.md"),
+      "---\nname: #{name}\ndescription: Ship it\n---\nRun the deploy.\n"
+    )
+  end
+
+  step "the project has the Cursor skill {string}", %{args: [name]} = context do
+    cursor_skill(context, name)
+    context
+  end
+
+  # As the composer writes a skill mention: `$name`.
+  step "the user mentions {string} in a message", %{args: [name]} = context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", "use $#{name} and $other to ship it for $20")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    Map.merge(ctx, %{thread: "Cursor", mentioned: name})
+  end
+
+  step "Cursor receives the skill reference", context do
+    assert [%{"message" => message}] = Enum.filter(log(context), &(&1["event"] == "send"))
+    # The skill is named as Cursor invokes it; what is not a skill is left alone.
+    assert message == "use /#{context.mentioned} and $other to ship it for $20"
+    context
+  end
+
+  step "the project has skills and rules for Cursor", context do
+    cursor_skill(context, "deploy")
+    rules = Path.join([World.project(context).root, ".cursor", "rules"])
+    File.mkdir_p!(rules)
+    File.write!(Path.join(rules, "style.mdc"), "Use tabs.\n")
+    context
+  end
+
+  step "a Cursor turn starts in the project", context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", "hello")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  # The agent of the thread works in the project with Cursor's project settings on,
+  # which is where the SDK reads the rules and skills from.
+  step "Cursor receives the project's skills and rules", context do
+    root = World.project(context).root
+
+    assert [%{"cwd" => ^root, "settingSources" => nil, "loaded" => loaded}] =
+             Enum.filter(agents(context), &(&1["mode"] == "agent" and &1["cwd"] == root))
+
+    assert loaded == ["rules/style.mdc", "skills/deploy"]
+    context
+  end
+
+  # --- plan mode ------------------------------------------------------------------------
+
+  step "the thread is in plan mode on Cursor", context do
+    sign_in("cursor")
+    {entry, ctx} = enabled(context)
+    # Clients offer the plan toggle for Cursor.
+    assert entry["showInteractionModeToggle"] == true
+    ctx
+  end
+
+  step "Cursor finishes planning", context do
+    ctx = Acp.launch(context, "Cursor", "cursor", "make a plan", interaction: "plan")
+    assert [%{"status" => "completed"}] = Acp.await_runs(ctx.threads["Cursor"], 1)
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "the plan is shown as a proposed plan with its task list", context do
+    # Cursor ran in its plan mode.
+    assert [%{"mode" => "plan"}] = Enum.filter(log(context), &(&1["event"] == "send"))
+    plans = HalC2.StreamState.list(Acp.stream(context.threads["Cursor"]), "plan")
+
+    assert [%{"markdown" => "# Plan\n- do it", "status" => "active"}] =
+             Enum.filter(plans, &(&1["kind"] == "proposed_plan"))
+
+    assert [%{"steps" => steps}] = Enum.filter(plans, &(&1["kind"] == "todo_list"))
+
+    assert [
+             %{"text" => "Read the code", "status" => "completed"},
+             %{"text" => "Write the plan", "status" => "running"}
+           ] = steps
+
+    # Neither is shown as a tool call.
+    refute Enum.any?(
+             HalC2.StreamState.list(Acp.stream(context.threads["Cursor"]), "turn-item"),
+             &(&1["type"] == "dynamic_tool")
+           )
+
+    context
+  end
+
+  # --- usage ---------------------------------------------------------------------------
+
+  @usage_path "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
+
+  # The Cursor CLI's own login, kept in a file (where each platform keeps it), and
+  # Cursor's dashboard API played on loopback.
+  step "Cursor is signed in with a file-based login", context do
+    dir = Path.join(context.mc.home, "cursor-login")
+
+    for path <- [".cursor/auth.json", "config/cursor/auth.json"] do
+      File.mkdir_p!(Path.dirname(Path.join(dir, path)))
+      File.write!(Path.join(dir, path), JSON.encode!(%{"accessToken" => "file-token"}))
+    end
+
+    {url, log} =
+      HalC2.Test.FakeHttp.start(%{
+        @usage_path =>
+          {200,
+           %{
+             "billingCycleEnd" => "1790000000000",
+             "planUsage" => %{
+               "totalPercentUsed" => 50,
+               "autoPercentUsed" => 30,
+               "apiPercentUsed" => 20
+             }
+           }}
+      })
+
+    context = Acp.ready(context)
+
+    Acp.put_instance("cursor", %{
+      "driver" => "cursor",
+      "enabled" => true,
+      "config" => %{"apiEndpoint" => url},
+      "environment" =>
+        for(
+          {name, value} <- [
+            {"HOME", dir},
+            {"XDG_CONFIG_HOME", Path.join(dir, "config")},
+            {"AGENT_CLI_CREDENTIAL_STORE", "file"}
+          ],
+          do: %{"name" => name, "value" => value}
+        )
+    })
+
+    Map.put(context, :cursor_usage_log, log)
+  end
+
+  step "Cursor shows its monthly, Auto and API usage with the billing cycle end", context do
+    cursor = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+    limits = cursor["usageLimits"]
+    refute Map.has_key?(limits, "unavailable")
+
+    assert [
+             {"apiPercentUsed", "monthly", "Monthly · API", 20},
+             {"autoPercentUsed", "monthly", "Monthly · Auto", 30},
+             {"totalPercentUsed", "monthly", "Monthly", 50}
+           ] = for(w <- limits["windows"], do: {w["id"], w["kind"], w["label"], w["usedPercent"]})
+
+    # The billing cycle's end is when each window resets.
+    assert Enum.all?(limits["windows"], &(&1["resetsAt"] == "2026-09-21T14:13:20.000Z"))
+
+    # It was read with the login in the file.
+    assert [%{"path" => @usage_path, "authorization" => "Bearer file-token"} | _] =
+             HalC2.Test.FakeHttp.requests(context.cursor_usage_log)
+
+    context
+  end
+
+  # --- commands ------------------------------------------------------------------------
+
+  defp commands(ctx) do
+    Acp.stream(ctx.threads["Cursor"])
+    |> HalC2.StreamState.list("turn-item")
+    |> Enum.filter(&(&1["type"] == "command_execution"))
+  end
+
+  step "Cursor is running a command", context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", "run a command and wait")
+
+    Acp.await_stream(ctx.threads["Cursor"], fn _ ->
+      match?([%{"input" => "npm test", "status" => "running"}], commands(ctx))
+    end)
+
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "the command is shown as interrupted", context do
+    assert [%{"status" => "interrupted"}] = Acp.await_runs(context.threads["Cursor"], 1)
+    assert [%{"input" => "npm test", "status" => "interrupted"}] = commands(context)
+    context
+  end
+
+  # Cursor did report the stopped command as a finished tool call.
+  step "it is not shown as a successful command", context do
+    assert [_] = Enum.filter(log(context), &(&1["event"] == "tool-completed"))
+    refute Enum.any?(commands(context), &(&1["status"] == "completed"))
+    context
+  end
+
+  step "Cursor is running a turn", context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "a shell command Cursor tries fails to start", context do
+    ctx = Acp.launch(context, "Cursor", "cursor", "try a command that cannot start")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the turn keeps going", context do
+    assert [%{"status" => "completed"}] = Acp.runs(context.threads["Cursor"])
+    assert Acp.assistant_text(context.threads["Cursor"]) =~ "That tool is not installed."
+    context
+  end
+
+  step "the command is shown as failed", context do
+    assert [%{"input" => "nosuchtool --version", "status" => "failed", "output" => output}] =
+             commands(context)
+
+    assert output =~ "ENOENT"
+    context
+  end
+
   step "the user sends a message to Cursor", context do
     run_on_cursor(context, "full-access")
   end

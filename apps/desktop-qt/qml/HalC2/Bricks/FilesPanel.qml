@@ -31,25 +31,46 @@ Rectangle {
         id: glyph
 
         font.family: root.mono
-        font.pixelSize: 12
+        font.pixelSize: Theme.fontSizeCode
         text: "M"
+    }
+
+    FileEntryMenu {
+        id: entryMenu
     }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        ShellTextField {
-            id: search
-
-            objectName: "filesSearch"
+        RowLayout {
             Layout.fillWidth: true
             Layout.margins: 8
-            placeholderText: qsTr("Search files")
-            enabled: (root.source?.root ?? "").length > 0
-            text: root.source?.query ?? ""
-            onTextEdited: root.source.query = text
-            Keys.onEscapePressed: root.source.query = ""
+            spacing: 4
+
+            ShellTextField {
+                id: search
+
+                objectName: "filesSearch"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Search files")
+                enabled: (root.source?.root ?? "").length > 0
+                text: root.source?.query ?? ""
+                onTextEdited: root.source.query = text
+                Keys.onEscapePressed: root.source.query = ""
+            }
+            ShellButton {
+                objectName: "filesExpandAll"
+                subtle: true
+                iconName: root.tree?.allExpanded ? "chevron-up" : "chevron-down"
+                iconSize: 13
+                iconTint: root.muted
+                implicitWidth: 26
+                implicitHeight: 26
+                enabled: root.rootStatus === "ready"
+                Accessible.name: root.tree?.allExpanded ? qsTr("Collapse all folders") : qsTr("Expand all folders")
+                onClicked: root.tree.allExpanded ? root.tree.collapseAll() : root.tree.expandAll()
+            }
         }
 
         Text {
@@ -71,7 +92,7 @@ Rectangle {
                 return root.source.searchTruncated ? qsTr("Showing the first matches; refine the search for more.") : "";
             }
             color: root.source?.searchProblem.length > 0 ? root.errorColor : root.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
 
@@ -95,7 +116,7 @@ Rectangle {
                     horizontalAlignment: Text.AlignHCenter
                     text: (root.source?.root ?? "").length === 0 ? qsTr("This thread has no workspace.") : root.tree?.rootProblem ?? ""
                     color: root.rootStatus === "error" ? root.errorColor : root.muted
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     wrapMode: Text.Wrap
                 }
                 ShellButton {
@@ -154,6 +175,14 @@ Rectangle {
                         else if (kind === "error")
                             root.tree.retry(path);
                     }
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        enabled: entry.kind === "file"
+                        onTapped: {
+                            entryMenu.path = entry.path;
+                            entryMenu.popup(entry);
+                        }
+                    }
                     background: Rectangle {
                         color: entry.selected ? Theme.palette.color("sidebarRowSelected", "#25314d") : entry.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                     }
@@ -170,7 +199,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: entry.kind === "loading" ? qsTr("Loading...") : entry.kind === "error" ? qsTr("%1 Click to retry.").arg(entry.problem) : entry.name
                             color: entry.kind === "error" ? root.errorColor : entry.ignored || entry.kind === "loading" ? root.muted : root.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             elide: Text.ElideMiddle
                         }
                     }
@@ -200,13 +229,40 @@ Rectangle {
                 Layout.preferredHeight: 30
                 spacing: 4
 
-                Text {
+                FilePathTrail {
                     Layout.fillWidth: true
-                    text: root.source?.openPath ?? ""
-                    color: root.foreground
-                    font.family: root.mono
-                    font.pixelSize: 12
-                    elide: Text.ElideMiddle
+                    clip: true
+                    source: root.source
+                }
+                ShellButton {
+                    objectName: "fileRender"
+                    subtle: true
+                    visible: (root.source?.renderKind ?? "").length > 0 && !(root.source?.editing ?? false)
+                    text: root.source?.rendered ? qsTr("Source") : qsTr("Rendered")
+                    implicitHeight: 26
+                    onClicked: root.source.rendered = !root.source.rendered
+                }
+                ShellButton {
+                    objectName: "fileEdit"
+                    subtle: true
+                    visible: root.source?.fileStatus === "ready"
+                    enabled: root.source?.editable ?? false
+                    text: root.source?.editing ? qsTr("Done") : qsTr("Edit")
+                    implicitHeight: 26
+                    Accessible.description: root.source?.readOnlyReason ?? ""
+                    onClicked: root.source.editing = !root.source.editing
+                }
+                ShellButton {
+                    objectName: "fileOpenInEditor"
+                    subtle: true
+                    visible: (Shell.state.workspace?.editors ?? []).some(editor => editor.id !== "file-manager")
+                    iconName: "external-link"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    Accessible.name: qsTr("Open in editor")
+                    onClicked: Shell.dispatch("files.openInEditor", {path: root.source.openPath})
                 }
                 ShellButton {
                     objectName: "fileWrap"
@@ -237,13 +293,107 @@ Rectangle {
                 visible: text.length > 0
                 text: root.source?.truncatedNotice ?? ""
                 color: Theme.palette.color("warning", "#f59e0b")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            Text {
+                objectName: "fileNote"
+                Layout.fillWidth: true
+                Layout.leftMargin: 10
+                Layout.rightMargin: 10
+                Layout.bottomMargin: 4
+                visible: text.length > 0
+                // A failed save first; else why the file cannot be edited.
+                text: (root.source?.saveProblem ?? "").length > 0 ? qsTr("Not saved: %1").arg(root.source.saveProblem) : (root.source?.unsaved ?? false) ? qsTr("Saving…") : root.source?.readOnlyReason ?? ""
+                color: (root.source?.saveProblem ?? "").length > 0 ? root.errorColor : root.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
             Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+
+                // The file rendered: Markdown (a CSV file as its table), or an HTML page's text and markup.
+                Flickable {
+                    id: renderedView
+
+                    objectName: "fileRendered"
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    visible: (root.source?.rendered ?? false) && !root.source.fileEmpty
+                    clip: true
+                    contentHeight: renderedBody.item?.implicitHeight ?? 0
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
+
+                    Loader {
+                        id: renderedBody
+
+                        width: renderedView.width
+                        active: renderedView.visible
+                        sourceComponent: root.source?.renderKind === "html" ? renderedPage : renderedMarkdown
+                    }
+                    Component {
+                        id: renderedMarkdown
+
+                        Markdown {
+                            objectName: "fileRenderedMarkdown"
+                            text: root.source?.renderedText ?? ""
+                            onLinkActivated: link => {
+                                if (link.startsWith("task:"))
+                                    root.source.toggleTask(Number(link.slice(5)));
+                                else
+                                    Shell.openExternal(link);
+                            }
+                        }
+                    }
+                    Component {
+                        id: renderedPage
+
+                        Text {
+                            objectName: "fileRenderedPage"
+                            text: root.source?.renderedText ?? ""
+                            textFormat: Text.RichText
+                            color: root.foreground
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            wrapMode: Text.Wrap
+                            onLinkActivated: link => Shell.openExternal(link)
+                        }
+                    }
+                }
+
+                // The file as text the user changes; each change goes to the source, which writes it.
+                ScrollView {
+                    objectName: "fileEditorView"
+                    anchors.fill: parent
+                    visible: root.source?.editing ?? false
+
+                    TextArea {
+                        id: editor
+
+                        objectName: "fileEditor"
+                        color: root.foreground
+                        font.family: root.mono
+                        font.pixelSize: Theme.fontSizeCode
+                        wrapMode: (root.source?.wrap ?? false) ? TextEdit.WrapAnywhere : TextEdit.NoWrap
+                        textFormat: TextEdit.PlainText
+                        selectByMouse: true
+                        background: null
+                        onTextChanged: if (root.source?.editing && text !== root.source.text) root.source.edit(text)
+
+                        Connections {
+                            target: root.source
+                            function onRenderedChanged() {
+                                if (root.source.editing && editor.text !== root.source.text) {
+                                    editor.text = root.source.text;
+                                    editor.forceActiveFocus();
+                                }
+                            }
+                        }
+                    }
+                }
 
                 ColumnLayout {
                     objectName: "fileMessage"
@@ -268,7 +418,7 @@ Rectangle {
                             return "";
                         }
                         color: root.source?.fileStatus === "error" ? root.errorColor : root.muted
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         wrapMode: Text.Wrap
                     }
                     ShellButton {
@@ -285,7 +435,7 @@ Rectangle {
 
                     objectName: "fileLines"
                     anchors.fill: parent
-                    visible: root.source?.fileStatus === "ready" && !root.source.fileEmpty
+                    visible: root.source?.fileStatus === "ready" && !root.source.fileEmpty && !root.source.rendered && !root.source.editing
                     clip: true
                     model: root.source?.lines ?? null
                     reuseItems: true
@@ -326,7 +476,7 @@ Rectangle {
                             text: line.number
                             color: root.muted
                             font.family: root.mono
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSizeCode
                             topPadding: 2
                         }
                         Text {
@@ -337,7 +487,7 @@ Rectangle {
                             text: line.text.length > root.maxLineColumns ? line.text.slice(0, root.maxLineColumns) + "…" : line.text
                             color: root.foreground
                             font.family: root.mono
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontSizeCode
                             textFormat: Text.PlainText
                             wrapMode: lines.wrap ? Text.WrapAnywhere : Text.NoWrap
                             topPadding: 1

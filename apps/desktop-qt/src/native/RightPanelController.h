@@ -48,12 +48,14 @@ class ShellStore;
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,
 // `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.resize
 // {width?}` (no width: the default), `rightPanel.toggleMaximized`,
-// `threadPanel.toggle`, `rightPanel.openThread {threadKey}` (an Agents row's;
+// `threadPanel.toggle`, `rightPanel.reviewProject {key}` (a pull request of
+// the thread's project, from the Pull requests tab), `rightPanel.linkPullRequest {url}` (a message's
+// mention), `rightPanel.openThread {threadKey}` (an Agents row's;
 // the brick's), `rightPanel.review {key}` (a linked pull request's review), and
-// `panel.open {tab: "diff"|"files", path?, line?, turn?, turnId?}` (the
+// `panel.open {tab: "diff"|"files", path?, only?, line?, turn?, turnId?}` (the
 // timeline's "view diff" and file links): opens the panel on that tab, the
-// diff on a turn (its number, or the run it finished) scrolled to `path`, or
-// `path` in the file viewer at `line`. Keybinding commands: rightPanel.toggle,
+// diff on a turn (its number, or the run it finished) scrolled to `path` (or
+// showing `path` alone, with `only`), or `path` in the file viewer at `line`. Keybinding commands: rightPanel.toggle,
 // rightPanel.close (the active tab), rightPanel.toggleMaximized,
 // threadPanel.toggle, diff.toggle, preview.toggle and pullRequest.copyNumber
 // (the reviewed pull request's); palette commands:
@@ -159,6 +161,9 @@ private:
   // The shown thread's terminal groups in the panel.
   QStringList terminalGroups() const;
   void retarget();
+  // Proactive panels (Settings → General): the thread's linked pull requests,
+  // else a large latest turn's diff, open with it.
+  void openProactively();
   // What the palette shows of the thread's pull request commands.
   void presentCommands();
   void update();
@@ -187,10 +192,16 @@ private:
   QString m_thread;
   bool m_onThread = false;
   QHash<QString, Panel> m_panels;
+  // What was last opened proactively for each thread, so a panel the user
+  // closed stays closed until there is something new to show.
+  QHash<QString, QString> m_proactive;
   // Threads by when their panel was last shown, the latest last: the store
   // keeps the latest kStoredThreads.
   QStringList m_recent;
   int m_width = defaultWidth;
   QString m_storePath;
   QByteArray m_saved;
+  // What `panel` last said, to tell a toggle from a thread's own layout.
+  QString m_publishedThread;
+  bool m_publishedOpen = false;
 };

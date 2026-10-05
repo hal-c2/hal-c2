@@ -57,8 +57,11 @@ struct FakeAssets {
   QStringList signedIds;
 };
 
+// Registered for `assets.`: FilesIdentitySteps answers `assets.createUrl` for a
+// project's favicon and passes every other resource on to here.
 const FakeMc::Extension assets([](FakeMc& mc) {
-  mc.onRpc(QStringLiteral("assets.createUrl"), [&mc](const FakeMc::Rpc& rpc) {
+  mc.onRpc(QStringLiteral("assets."), [&mc](const FakeMc::Rpc& rpc) {
+    if (rpc.method != QLatin1String("assets.createUrl")) return mc.reply(rpc, QJsonValue::Null);
     FakeAssets& fake = mc.part<FakeAssets>();
     fake.signedIds.append(rpc.payload.value(QLatin1String("resource")).toObject().value(QLatin1String("attachmentId")).toString());
     mc.reply(rpc, QJsonObject{{QStringLiteral("relativeUrl"), QStringLiteral("/api/assets/token-%1/cart.png").arg(fake.signedIds.size())},

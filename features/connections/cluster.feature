@@ -396,14 +396,14 @@ Feature: Clustering one person's machines
     Then the cluster page closes
     And the window shows the settings section "/settings/general"
 
-  @backlog @shared
+  @shared @backlog-mobile
   Scenario: A member that joins later appears in the client without pairing again
     Given a client paired with a cluster of two machines
     When a third machine joins the cluster
     Then the client lists the third machine's environment within a minute
     And reaches it with the same credential
 
-  @backlog @shared
+  @shared @backlog-mobile
   Scenario: A member that left stays until the user removes it
     Given a client lists a machine that has left the cluster
     Then the machine stays listed

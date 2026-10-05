@@ -27,6 +27,8 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   RuntimeRequestId,
+  type GitActionProgressEvent,
+  type OrchestrationMessageContext,
   type GitRunStackedActionResult,
   type GitStackedAction,
   type FilesystemBrowseResult,
@@ -70,6 +72,8 @@ import {
   setThreadInteractionMode,
   setThreadRuntimeMode,
   settleThread as settleThreadOp,
+  snoozeThread as snoozeThreadOp,
+  unsnoozeThread as unsnoozeThreadOp,
   startThreadTurn,
   revertThreadCheckpoint,
   stopThreadSession,
@@ -92,6 +96,7 @@ import { ShellSnapshotLoader } from "@hal-c2/client-runtime/state/shell";
 import type { RpcSession } from "@hal-c2/client-runtime/rpc";
 import { buildTemporaryWorktreeBranchName } from "@hal-c2/shared/git";
 
+import { makeFeatureClient, type TuiFeatureClient } from "./featureClient.ts";
 import { mergeVcsStatus } from "./gitActions.logic.ts";
 
 import { flattenModelOptions, type ModelOption } from "./models.ts";
@@ -128,6 +133,7 @@ import type { HttpClient } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { createAttachmentImageCache } from "./attachmentImages.ts";
+import { makeTuiSettingsClient, type TuiSettingsClient } from "./settingsClient.ts";
 import type { ImagePreview } from "@hal-c2/opentui-image";
 import {
   presentTuiShell,
@@ -201,6 +207,7 @@ export function buildThreadReplyTurn(input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<UploadChatImageAttachment>;
   readonly modelSelection?: ModelSelection;
+  readonly context?: OrchestrationMessageContext;
 }) {
   return {
     threadId: input.thread.id,
@@ -209,6 +216,7 @@ export function buildThreadReplyTurn(input: {
       role: "user" as const,
       text: input.text,
       attachments: [...input.attachments],
+      ...(input.context ? { context: input.context } : {}),
     },
     runtimeMode: input.thread.runtimeMode,
     interactionMode: input.thread.interactionMode,
@@ -488,7 +496,7 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
 /** Where the loopback connection is: first connect, live, or retrying after a drop. */
 export type TuiConnectionPhase = "connecting" | "connected" | "reconnecting";
 
-export interface TuiClient {
+export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly hostPlatform: NodeJS.Platform;
   /** Live connection phase (emits the current one first). Returns an unsubscribe fn. */
   readonly subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => () => void;
@@ -556,14 +564,28 @@ export interface TuiClient {
       readonly worktreePath: string | null;
       readonly cols: number;
       readonly rows: number;
+      /** What a shell started by this attach finds in its environment. */
+      readonly env?: Readonly<Record<string, string>>;
     },
     onEvent: (event: TerminalAttachStreamEvent) => void,
   ) => () => void;
+  /** Start the terminal's shell (again, when it has ended) so a command can be written to it. */
+  readonly terminalOpen: (input: {
+    readonly threadId: ThreadId;
+    readonly terminalId: string;
+    readonly cwd: string;
+    readonly worktreePath: string | null;
+    readonly cols: number;
+    readonly rows: number;
+    readonly env?: Readonly<Record<string, string>>;
+  }) => Promise<void>;
   readonly sendReply: (
     thread: Pick<OrchestrationThread, "id" | "runtimeMode" | "interactionMode">,
     text: string,
     attachments?: ReadonlyArray<UploadChatImageAttachment>,
     modelSelection?: ModelSelection,
+    /** The typed payloads behind the message's context references (terminal output, diff notes). */
+    context?: OrchestrationMessageContext,
   ) => Promise<void>;
   /** Register a local workspace as a project and return its generated id. */
   readonly createProject: (workspaceRoot: string) => Promise<ProjectId>;
@@ -593,6 +615,9 @@ export interface TuiClient {
   readonly settleThread: (threadId: ThreadId) => Promise<void>;
   /** Return a settled thread to Active, pinned there until real activity clears the pin server-side. */
   readonly unsettleThread: (threadId: ThreadId) => Promise<void>;
+  /** Hide the thread until `snoozedUntil` (ISO); the server refuses one that waits on the user. */
+  readonly snoozeThread: (threadId: ThreadId, snoozedUntil: string) => Promise<void>;
+  readonly unsnoozeThread: (threadId: ThreadId) => Promise<void>;
   readonly stopSession: (threadId: ThreadId) => Promise<void>;
   readonly revertCheckpoint: (threadId: ThreadId, turnCount: number) => Promise<void>;
   /** Live git status for a worktree (folded from the snapshot/local/remote stream). */
@@ -604,12 +629,16 @@ export interface TuiClient {
    * Run a stacked git action (commit/push/create_pr/…); resolves with the
    * server's result (null if the stream ended without one) when it finishes.
    */
-  readonly runGitStackedAction: (input: {
-    readonly cwd: string;
-    readonly action: GitStackedAction;
-    readonly commitMessage?: string;
-    readonly featureBranch?: boolean;
-  }) => Promise<GitRunStackedActionResult | null>;
+  readonly runGitStackedAction: (
+    input: {
+      readonly cwd: string;
+      readonly action: GitStackedAction;
+      readonly commitMessage?: string;
+      readonly featureBranch?: boolean;
+    },
+    /** Sees each phase, hook and line of hook output as the server reports it. */
+    onProgress?: (event: GitActionProgressEvent) => void,
+  ) => Promise<GitRunStackedActionResult | null>;
   /** Pull the worktree's branch from its upstream. */
   readonly runGitPull: (cwd: string) => Promise<void>;
   /** Fetch the unified diff for the turn that produced the given checkpoint. */
@@ -858,6 +887,8 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
   };
 
   return {
+    ...makeFeatureClient(runtime),
+    ...makeTuiSettingsClient(runtime),
     hostPlatform,
     browseFilesystem: (partialPath, cwd) =>
       runtime.runPromise(
@@ -956,12 +987,13 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         worktreePath: input.worktreePath,
         cols: input.cols,
         rows: input.rows,
+        ...(input.env ? { env: input.env } : {}),
         restartIfNotRunning: true,
       }).pipe(Stream.tap((event) => Effect.sync(() => onEvent(event))));
       return drainStreamUntilUnsubscribe(stream);
     },
 
-    sendReply: (thread, text, attachments = [], modelSelection) =>
+    sendReply: (thread, text, attachments = [], modelSelection, context) =>
       runtime.runPromise(
         Effect.gen(function* () {
           const messageId = MessageIdSchema.make(yield* randomUuid);
@@ -978,6 +1010,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
               text,
               attachments,
               ...(modelSelection ? { modelSelection } : {}),
+              ...(context ? { context } : {}),
             }),
           );
         }),
@@ -1107,6 +1140,12 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
     unsettleThread: (threadId) =>
       runtime.runPromise(unsettleThreadOp({ threadId, reason: "user" }).pipe(Effect.asVoid)),
 
+    snoozeThread: (threadId, snoozedUntil) =>
+      runtime.runPromise(snoozeThreadOp({ threadId, snoozedUntil }).pipe(Effect.asVoid)),
+
+    unsnoozeThread: (threadId) =>
+      runtime.runPromise(unsnoozeThreadOp({ threadId, reason: "user" }).pipe(Effect.asVoid)),
+
     stopSession: (threadId) =>
       runtime.runPromise(stopThreadSession({ threadId }).pipe(Effect.asVoid)),
 
@@ -1152,7 +1191,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       return drainStreamUntilUnsubscribe(stream);
     },
 
-    runGitStackedAction: (input) => {
+    runGitStackedAction: (input, onProgress) => {
       let finished: GitRunStackedActionResult | null = null;
       return runtime.runPromise(
         runStream(WS_METHODS.gitRunStackedAction, {
@@ -1165,6 +1204,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           // The stream ends when the action completes; an action_failed event (or a
           // failed stream) surfaces as a rejected promise.
           Stream.runForEach((event) => {
+            onProgress?.(event);
             if (event.kind === "action_failed") return Effect.fail(new Error(event.message));
             if (event.kind === "action_finished") finished = event.result;
             return Effect.void;
@@ -1217,6 +1257,19 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           cwd: TrimmedNonEmptyString.make(cwd),
           refName: TrimmedNonEmptyString.make(refName),
         }),
+      ),
+
+    terminalOpen: (input) =>
+      runtime.runPromise(
+        request(WS_METHODS.terminalOpen, {
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+          cwd: input.cwd,
+          worktreePath: input.worktreePath,
+          cols: input.cols,
+          rows: input.rows,
+          ...(input.env ? { env: input.env } : {}),
+        }).pipe(Effect.asVoid),
       ),
 
     terminalWrite: (threadId, terminalId, data) =>

@@ -31,14 +31,14 @@ SettingsPage {
 
     component Heading: Label {
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         font.weight: Font.DemiBold
     }
 
     component Caption: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -68,7 +68,7 @@ SettingsPage {
                 Label {
                     text: row.title
                     color: page.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -86,7 +86,7 @@ SettingsPage {
                 visible: row.mixed
                 text: qsTr("Mixed across selected machines")
                 color: page.warning
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             Caption {
@@ -123,7 +123,7 @@ SettingsPage {
             Label {
                 text: tool.modelData.label
                 color: page.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.weight: Font.Medium
             }
 
@@ -132,7 +132,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: tool.modelData.version
                 color: page.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.family: "monospace"
             }
 
@@ -141,7 +141,7 @@ SettingsPage {
                 visible: tool.modelData.comingSoon || tool.modelData.authWarning
                 text: tool.modelData.comingSoon ? qsTr("Coming Soon") : tool.modelData.authLabel
                 color: page.warning
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -316,7 +316,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: page.discovery?.title ?? ""
                 color: page.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -387,7 +387,7 @@ SettingsPage {
         text: forAll ? "" : (page.state?.writingStyle?.instructions ?? "")
         wrapMode: TextEdit.Wrap
         color: page.foreground
-        font.pixelSize: 13
+        font.pixelSize: Math.round(13 * Theme.fontScale)
         placeholderText: forAll ? qsTr("Write the instructions each selected environment should use.")
                                 : qsTr("Keep titles concise. Use short bullet points in descriptions.")
         placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
@@ -451,7 +451,7 @@ SettingsPage {
             visible: (writer.model?.on ?? false) && !(writer.model?.canEnable ?? false)
             text: qsTr("No text generation providers available.")
             color: page.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         ShellComboBox {

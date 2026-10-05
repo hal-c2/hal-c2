@@ -1,4 +1,8 @@
-import type { OrchestrationThreadActivity } from "@hal-c2/contracts";
+import type {
+  OrchestrationThreadActivity,
+  ProviderApprovalDecision,
+  ProviderApprovalOption,
+} from "@hal-c2/contracts";
 
 import { isStalePendingRequestFailureDetail } from "./staleRequest.ts";
 
@@ -7,6 +11,78 @@ export interface PendingApproval {
   readonly requestKind: string;
   readonly detail?: string;
   readonly createdAt: string;
+  /** The choices the provider offers; the default four when it names none. */
+  readonly options: ReadonlyArray<ProviderApprovalOption>;
+  /** The provider process that asked is gone: no answer can reach it. */
+  readonly notResumable: boolean;
+}
+
+/** What the web's approval panel says when the request cannot be answered. */
+export const PROVIDER_GONE = "Provider process is gone — interrupt or restart the run to respond.";
+
+/** What the clients offer when the provider names no options, the primary one first. */
+export const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
+  { decision: "accept", label: "Approve" },
+  { decision: "acceptForSession", label: "Always allow this session" },
+  { decision: "decline", label: "Decline" },
+  { decision: "cancel", label: "Cancel" },
+] as ReadonlyArray<ProviderApprovalOption>;
+
+const DECISIONS = new Set<string>([
+  "accept",
+  "acceptForSession",
+  "acceptAlways",
+  "decline",
+  "cancel",
+]);
+
+/** What kind of permission a request wants (the web's ComposerPendingApprovalPanel titles). */
+export function approvalTitle(requestKind: string): string {
+  switch (requestKind) {
+    case "command":
+      return "Command approval";
+    case "file-read":
+      return "File read approval";
+    case "mcp-elicitation":
+      return "App access approval";
+    case "permission":
+      return "App permission approval";
+    default:
+      return "File change approval";
+  }
+}
+
+/** The chord that answers with a decision, as the panel shows it. */
+export function approvalKey(decision: ProviderApprovalDecision): string {
+  switch (decision) {
+    case "accept":
+      return "^A";
+    case "acceptForSession":
+    case "acceptAlways":
+      return "^S";
+    case "decline":
+      return "^R";
+    case "cancel":
+      return "^X";
+  }
+}
+
+function parseOptions(value: unknown): ReadonlyArray<ProviderApprovalOption> {
+  if (!Array.isArray(value)) return DEFAULT_APPROVAL_OPTIONS;
+  const options: ProviderApprovalOption[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const { decision, label, warning } = entry as Record<string, unknown>;
+    if (typeof decision !== "string" || !DECISIONS.has(decision) || typeof label !== "string") {
+      continue;
+    }
+    options.push({
+      decision,
+      label,
+      ...(typeof warning === "string" && warning.trim().length > 0 ? { warning } : {}),
+    } as ProviderApprovalOption);
+  }
+  return options.length > 0 ? options : DEFAULT_APPROVAL_OPTIONS;
 }
 
 /**
@@ -42,6 +118,8 @@ export function derivePendingApprovals(
         requestKind,
         createdAt: activity.createdAt,
         ...(detail ? { detail } : {}),
+        options: parseOptions(payload?.options),
+        notResumable: payload?.notResumable === true,
       });
       continue;
     }

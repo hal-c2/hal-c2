@@ -74,7 +74,7 @@ Feature: What the engine projects for clients
     Given run 2 of "t1" is running and a background command from run 1 is still active
     Then the shell row of "t1" lists no background tasks
 
-  @mc @backlog
+  @mc
   Scenario: Background work stays with the run that started it
     Given run 1 of "t1" started a background shell command
     When run 2 of "t1" starts

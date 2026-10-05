@@ -104,7 +104,10 @@ QVariantMap defaultBranchCopy(const QString& action, const QString& branch, bool
 }  // namespace
 
 GitController::GitController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
+    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
+  m_elapsedTick.setInterval(1000);
+  connect(&m_elapsedTick, &QTimer::timeout, this, &GitController::publish);
+}
 
 GitController::~GitController() {
   if (m_action) m_client->unsubscribe(m_action);
@@ -296,9 +299,19 @@ void GitController::publish() {
   }
   QVariant pending = QVariant::fromValue(nullptr);
   if (m_pending) pending = defaultBranchCopy(m_pending->action, m_pending->branch, m_pending->includesCommit, terms(s));
+  // The web's formatGitActionElapsed.
+  QVariant progress = QVariant::fromValue(nullptr);
+  if (m_action != 0 && m_startedAt.isValid()) {
+    const qint64 seconds = std::max<qint64>(0, m_startedAt.secsTo(toasts()->now()));
+    progress = QVariantMap{{QStringLiteral("stage"), m_stage},
+                           {QStringLiteral("elapsed"), seconds < 60 ? QStringLiteral("%1s").arg(seconds)
+                                                                    : QStringLiteral("%1m %2s").arg(seconds / 60).arg(seconds % 60)},
+                           {QStringLiteral("hookLine"), nullable(m_hookLine)}};
+  }
   QVariant publishing = QVariant::fromValue(nullptr);
   if (m_publishing) {
-    publishing = QVariantMap{{QStringLiteral("busy"), m_publishing->busy}, {QStringLiteral("error"), nullable(m_publishing->error)}};
+    publishing = QVariantMap{{QStringLiteral("busy"), m_publishing->busy}, {QStringLiteral("error"), nullable(m_publishing->error)},
+                             {QStringLiteral("hosts"), m_publishing->hosts}};
   }
   m_bridge->publish(
       QStringLiteral("git"),
@@ -320,6 +333,7 @@ void GitController::publish() {
           {QStringLiteral("files"), files},
           {QStringLiteral("pendingDefaultBranch"), pending},
           {QStringLiteral("publishing"), publishing},
+          {QStringLiteral("progress"), progress},
       });
 }
 
@@ -354,8 +368,7 @@ bool GitController::handle(const QString& action, const QVariant& payload) {
   } else if (action == QLatin1String("git.init")) {
     init();
   } else if (action == QLatin1String("git.publish")) {
-    m_publishing = Publishing{};
-    publish();
+    openPublish();
   } else if (action == QLatin1String("git.publish.cancel")) {
     if (m_publishing && !m_publishing->busy) m_publishing.reset();
     publish();
@@ -374,8 +387,7 @@ void GitController::runQuick() {
   } else if (action.kind == QLatin1String("run_pull")) {
     pull();
   } else if (action.kind == QLatin1String("open_publish")) {
-    m_publishing = Publishing{};
-    publish();
+    openPublish();
   } else if (action.kind == QLatin1String("open_pr")) {
     openPullRequest();
   } else {
@@ -439,6 +451,9 @@ void GitController::run(const QString& action, const QString& message, const std
     input.insert(QStringLiteral("projectId"), place.projectId);
   }
   m_stage = QStringLiteral("Starting source control action...");
+  m_startedAt = toasts()->now();
+  m_hookLine.clear();
+  m_elapsedTick.start();
   m_progressToast = toasts()->show(QStringLiteral("loading"), m_stage, {}, {}, 0);
   m_action = m_client->subscribe(this, 
       {
@@ -465,9 +480,14 @@ void GitController::onActionFrame(const QJsonObject& frame) {
     const QString label = text(event, "label");
     if (!label.isEmpty() && label != QLatin1String("Running source control action")) m_stage = label;
     toasts()->update(m_progressToast, m_stage);
+    publish();
   } else if (kind == QLatin1String("hook_output")) {
     const QStringList lines = text(event, "text").split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-    if (!lines.isEmpty()) toasts()->update(m_progressToast, m_stage, lines.last().trimmed());
+    if (!lines.isEmpty()) {
+      m_hookLine = lines.last().trimmed();
+      toasts()->update(m_progressToast, m_stage, m_hookLine);
+      publish();
+    }
   } else if (kind == QLatin1String("action_failed")) {
     finishAction();
     toasts()->show(QStringLiteral("error"), QStringLiteral("Action failed"), text(event, "message"), {}, 0);
@@ -492,6 +512,8 @@ void GitController::onActionFrame(const QJsonObject& frame) {
 void GitController::finishAction() {
   if (m_action) m_client->unsubscribe(m_action);
   m_action = 0;
+  m_elapsedTick.stop();
+  m_startedAt = {};
   if (!m_progressToast.isEmpty()) toasts()->dismiss(m_progressToast);
   m_progressToast.clear();
   workspace()->refreshGit();
@@ -566,6 +588,53 @@ void GitController::init() {
 }
 
 // The dialog stays open with the MC's reason when publishing fails.
+void GitController::openPublish() {
+  // The hosts the dialog offers.
+  static const QList<std::pair<QString, QString>> offered{{QStringLiteral("github"), QStringLiteral("GitHub")},
+                                                          {QStringLiteral("gitlab"), QStringLiteral("GitLab")}};
+  const auto hosts = [](const QJsonArray& discovered, bool answered) {
+    QVariantList list;
+    for (const auto& [kind, name] : offered) {
+      QJsonObject found;
+      for (const QJsonValue& value : discovered) {
+        if (text(value.toObject(), "kind") == kind) found = value.toObject();
+      }
+      const QString label = found.isEmpty() || text(found, "label").isEmpty() ? name : text(found, "label");
+      const QJsonObject auth = found.value(QLatin1String("auth")).toObject();
+      // Effect's Option on the wire: {_tag: "Some", value}.
+      const auto some = [](const QJsonValue& option) { return option.toObject().value(QLatin1String("value")).toString(); };
+      QString hint;
+      if (!answered) {
+        hint = QStringLiteral("Checking %1...").arg(label);
+      } else if (found.isEmpty()) {
+        hint = QStringLiteral("Provider status unavailable. Open Settings -> Source Control and rescan.");
+      } else if (text(found, "status") != QLatin1String("available")) {
+        hint = some(found.value(QLatin1String("installHint")));
+        if (hint.isEmpty()) hint = text(found, "installHint");
+        if (hint.isEmpty()) hint = QStringLiteral("%1 is not installed. Open Settings -> Source Control for setup guidance.").arg(label);
+      } else if (text(auth, "status") == QLatin1String("unauthenticated")) {
+        hint = some(auth.value(QLatin1String("detail")));
+        if (hint.isEmpty()) hint = QStringLiteral("%1 is not authenticated. Open Settings -> Source Control for setup guidance.").arg(label);
+      }
+      list.append(QVariantMap{{QStringLiteral("value"), kind}, {QStringLiteral("label"), label}, {QStringLiteral("ready"), hint.isEmpty()},
+                              {QStringLiteral("hint"), nullable(hint)}, {QStringLiteral("account"), nullable(some(auth.value(QLatin1String("account"))))}});
+    }
+    return list;
+  };
+  m_publishing = Publishing{};
+  m_publishing->hosts = hosts({}, false);
+  publish();
+  const auto& place = workspace()->place();
+  if (!place) return;
+  m_client->call(this, place->environmentId, QStringLiteral("server.discoverSourceControl"), QJsonObject{},
+                 [this, hosts](const QJsonValue& result, const std::optional<QString>&) {
+                   if (!m_publishing) return;
+                   // A refusal reads as no host found: each says to rescan.
+                   m_publishing->hosts = hosts(result.toObject().value(QLatin1String("sourceControlProviders")).toArray(), true);
+                   publish();
+                 });
+}
+
 void GitController::submitPublish(const QVariantMap& args) {
   if (!m_publishing || m_publishing->busy) return;
   const QString repository = args.value(QStringLiteral("repository")).toString().trimmed();
@@ -577,7 +646,8 @@ void GitController::submitPublish(const QVariantMap& args) {
   }
   QString remoteName = args.value(QStringLiteral("remoteName")).toString().trimmed();
   if (remoteName.isEmpty()) remoteName = QStringLiteral("origin");
-  m_publishing = Publishing{true, {}};
+  m_publishing->busy = true;
+  m_publishing->error.clear();
   publish();
   const auto& place = workspace()->place();
   m_client->call(this, place->environmentId, QStringLiteral("sourceControl.publishRepository"),
@@ -592,7 +662,8 @@ void GitController::submitPublish(const QVariantMap& args) {
                  [this](const QJsonValue& result, const std::optional<QString>& error) {
                    if (!m_publishing) return;
                    if (error) {
-                     m_publishing = Publishing{false, error->isEmpty() ? QStringLiteral("An error occurred.") : *error};
+                     m_publishing->busy = false;
+                     m_publishing->error = error->isEmpty() ? QStringLiteral("An error occurred.") : *error;
                      publish();
                      return;
                    }

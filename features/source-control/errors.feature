@@ -72,7 +72,7 @@ Feature: When source control goes wrong
       | a missing pull request     | Pull request not found.     |
       | a missing merge request    | Merge request not found.    |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Runaway git commands are stopped
     Given a git command <condition>
     When status is read for "shop"
@@ -90,14 +90,14 @@ Feature: When source control goes wrong
     When the user pushes from the terminal client
     Then the status line reads the failure starting "Git failed:"
 
-  @backlog @tui
+  @tui
   Scenario: The terminal client keeps the failed phase and hook output
     Given the pre-commit hook fails with "lint failed"
     When the user commits from the terminal client
     Then the user sees that the commit phase failed and the hook printed "lint failed"
 
   # Delivered natively (GitController keeps a failure's toast until it is dismissed); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A failed git action stays on screen until dismissed
     Given the push will be rejected by the remote
     When the user pushes

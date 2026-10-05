@@ -79,6 +79,11 @@ public:
   // The same for the draft `id`, whose thread may be on another environment
   // ("Run on"). Takes its own copy of the id: the draft it may name is erased.
   void promote(QString id, const QString& threadKey);
+  // Moves the draft `from` to the logical project `projectKey` (the opening
+  // line's menu, the palette's "Move draft to..."): opens that project's
+  // draft and brings what was typed along, unless that draft has text of its
+  // own. Attachments stay with the draft they were added to.
+  void moveTo(const QString& from, const QString& projectKey);
   void setText(const QString& id, const QString& text);
   // Gives the draft a new thread id and clears its text: its old thread was
   // started in the background and the draft stays for another prompt.
@@ -86,6 +91,9 @@ public:
 
 signals:
   void changed();
+  // A new thread was asked for and `draftId` shows: a new draft, or the
+  // project's one again.
+  void started(const QString& draftId);
 
 private:
   bool startNew(const QVariantMap& payload);

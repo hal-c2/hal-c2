@@ -5,19 +5,35 @@ import * as NodePath from "node:path";
 import {
   DEFAULT_SERVER_SETTINGS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type KnownComposerContextRecord,
   type ModelSelection,
   type OrchestrationThread,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type ServerProvider,
   type ServerSettings,
+  type UsageLimitSourceSnapshots,
   type ThreadEnvMode,
   type VcsRef,
 } from "@hal-c2/contracts";
 import type { ImagePreview } from "@hal-c2/opentui-image";
+import { formatComposerContextReference } from "@hal-c2/shared/composerContextReferences";
+import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
+import {
+  collectLimitAccounts,
+  collectLimitNotices,
+  collectLimitPools,
+  formatResetsIn,
+  hasProviderUsageLimits,
+  isUsageLimitsCommand,
+  USAGE_LIMITS_COMMAND,
+  withUsageLimitsCommands,
+} from "@hal-c2/shared/usageLimits";
 import { truncate } from "@hal-c2/shared/String";
 import type { PropertyMap } from "opentui-qml";
 
 import { derivePendingApprovals } from "../approvals.ts";
+import { readProjectFile } from "../projectActions.ts";
 import {
   extractPastedImagePath,
   findPromptImagePathLines,
@@ -105,10 +121,18 @@ export interface ComposerOptions {
   /** Read an image the user pasted as an absolute local path. */
   readonly readLocalImage: (path: string) => Promise<Uint8Array>;
   readonly decodeImage?: ImageDecoder;
+  /** The host completed the prompt's text (a picked command, skill or file): the cursor follows. */
+  readonly onTextCompleted?: (text: string) => void;
   /** A new-thread draft opened or closed: the sidebar row and the page follow it. */
   readonly onDraftChange?: () => void;
   /** The editor's rows or the composer's other rows changed: the layout follows. */
   readonly onRowsChange?: (rows: number) => void;
+  /** The user stopped this turn from here (its work stays open in the timeline). */
+  readonly onInterrupt?: (turnId: string) => void;
+  /** The host's clock, for when a limit window resets. */
+  readonly nowMs?: () => number;
+  /** The connection to the environment is lost: nothing can be sent. */
+  readonly offline?: () => boolean;
   /** The popover's inner width and content rows; an open picker windows to them. */
   readonly popover?: () => { readonly width: number; readonly maxRows: number };
   /** The agent's open question (not set aside), which the composer answers. */
@@ -192,6 +216,14 @@ export interface TuiComposerState {
   readonly answering: boolean;
   /** The editor row while the editor does not have the keys. */
   readonly caption: StyledText;
+  /** Files referenced with "@", as chips (a click removes one, and its `@path` from the text). */
+  readonly references: ReadonlyArray<{ readonly path: string; readonly label: string }>;
+  /** Context chips (terminal output, diff notes): a click removes one before sending. */
+  readonly contexts: ReadonlyArray<{
+    readonly id: string;
+    readonly kind: string;
+    readonly label: string;
+  }>;
   /** The chips that fit, and "+N more" for the rest (or ""). */
   readonly visibleAttachments: ReadonlyArray<TuiComposerAttachment>;
   readonly moreAttachments: string;
@@ -206,6 +238,12 @@ export interface TuiComposerState {
     readonly primary: StyledText;
   };
   readonly context: TuiComposerContext | null;
+  /** The selected provider is disabled or signed out: what is wrong and how to fix it. */
+  readonly notice: string | null;
+  /** The notice wrapped to the composer, one entry per row. */
+  readonly noticeLines: ReadonlyArray<string>;
+  /** What "/usage-limits" answered, until the next message is sent: one entry per row. */
+  readonly limitLines: ReadonlyArray<string>;
   /** Rows besides the editor: borders, footer, question, attachments, context row. */
   readonly chromeRows: number;
   /** Editor height in rows: grows with the text from 3 to 8, or as set by Ctrl+Up / Ctrl+Down. */
@@ -235,6 +273,9 @@ export interface TuiSelectState {
     readonly disabled?: boolean;
   }>;
   readonly index: number;
+  /** The picker has a search field; `query` is what was typed into it. */
+  readonly searchable: boolean;
+  readonly query: string;
   /**
    * The options in view, as SelectOverlay draws them: a window around the
    * highlighted one, each its marked name over its description (when that
@@ -249,6 +290,10 @@ export interface TuiSelectState {
 }
 
 interface Draft {
+  /** Files picked with "@": each shows as a chip while its `@path` is still in the text. */
+  readonly references?: ReadonlyArray<string>;
+  /** Context picked elsewhere (terminal output, a note on a diff line), sent with the reply. */
+  readonly contexts?: ReadonlyArray<KnownComposerContextRecord>;
   readonly text: string;
   readonly images: ReadonlyArray<ComposerImageAttachment>;
 }
@@ -267,6 +312,8 @@ interface NewDraft {
   readonly contextWorktreePath: string | null;
   readonly refs: ReadonlyArray<VcsRef>;
   readonly refsStatus: TuiNewThreadState["refsStatus"];
+  /** The user picked the workspace: the project file's default no longer applies. */
+  readonly workspaceChosen?: boolean;
   /**
    * The user chose its workspace or branch among this machine's: the thread
    * starts here, not on whichever machine has the most room.
@@ -282,21 +329,34 @@ interface SelectOption {
 }
 
 interface Picker {
+  /** A "choice" picker's asker, which gets the chosen option's value. */
+  readonly request?: PickRequest;
+  readonly query?: string;
   readonly kind: TuiSelectKind;
   readonly title: string;
   readonly status: TuiSelectState["status"];
   readonly options: ReadonlyArray<SelectOption>;
   readonly index: number;
-  /** A "choice" picker's asker: gets the chosen option's value. */
-  readonly onChoose?: (value: string) => void;
 }
 
 /** A choice another controller puts in the picker (`Composer.pick`). */
 export interface PickRequest {
   readonly title: string;
-  readonly status: TuiSelectState["status"];
-  readonly options: ReadonlyArray<SelectOption>;
+  /** "ready" with options and "empty" without, unless given (a list still loading). */
+  readonly status?: TuiSelectState["status"];
+  readonly options: ReadonlyArray<
+    Omit<SelectOption, "description"> & { readonly description?: string }
+  >;
+  /** The option the cursor starts on (the first that can be chosen unless given). */
+  readonly index?: number;
+  /** Runs with the chosen option's value after the picker closed. */
   readonly onChoose: (value: string) => void;
+  /** The mode that has the keys while it is open ("select" unless given). */
+  readonly mode?: TuiMode;
+  /** The mode the keys go back to when it closes ("compose" unless given). */
+  readonly returnMode?: TuiMode;
+  /** A search field above the options: typing narrows them by label and description. */
+  readonly searchable?: boolean;
 }
 
 const EMPTY_DRAFT: Draft = { text: "", images: [] };
@@ -322,8 +382,17 @@ const envMode = (mode: ThreadEnvMode | null | undefined): "local" | "worktree" |
 export interface Composer {
   /** Handle a `composer.*`, `select.*`, `thread.new` or `newThread.*` action. */
   readonly dispatch: (action: string, payload?: unknown) => boolean;
+  /** Close the picker while it holds another controller's choice (with this title, if given). */
+  readonly closeMenu: (title?: string) => void;
+  /** Attach a context record to the open thread's prompt; false without a thread to reply to. */
+  readonly addContext: (record: KnownComposerContextRecord) => boolean;
   /** The open new-thread draft's id and project, for the sidebar row and the page. */
-  readonly draft: () => { readonly draftId: string; readonly projectId: string | null } | null;
+  readonly draft: () => {
+    readonly draftId: string;
+    readonly projectId: string | null;
+    /** The draft holds text or an image (an empty one is not listed in the sidebar). */
+    readonly hasContent: boolean;
+  } | null;
   /** Re-derive after a store change (selection, detail, shell). */
   readonly sync: () => void;
   /** Re-derive after a layout change (compact footer). */
@@ -353,8 +422,11 @@ export interface Composer {
     readonly threadId: string | null;
     readonly interactionMode: ProviderInteractionMode;
     readonly attachmentCount: number;
+    readonly referenceCount: number;
   };
 }
+
+const OFFLINE_REASON = "not connected to the environment";
 
 export function createComposer(options: ComposerOptions): Composer {
   const { client, store, state } = options;
@@ -364,15 +436,91 @@ export function createComposer(options: ComposerOptions): Composer {
   const drafts = new Map<string, Draft>();
   const interactionOverrides = new Map<string, ProviderInteractionMode>();
   const modelOverrides = new Map<string, ModelSelection>();
+  /** The model last sent with, per provider instance, newest last (this session). */
+  const lastUsedModels = new Map<string, ModelSelection>();
+  const rememberModel = (selection: ModelSelection | null | undefined) => {
+    if (!selection) return;
+    lastUsedModels.delete(selection.instanceId);
+    lastUsedModels.set(selection.instanceId, selection);
+  };
   let modelOptions: ReadonlyArray<ModelOption> = [];
   let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
+  // Every configured provider (signed out and disabled ones too), for the composer's notice.
+  let providers: ReadonlyArray<ServerProvider> = [];
+  /** The accounts the MC's usage hubs report, as its config last said. */
+  let usageSources: UsageLimitSourceSnapshots = [];
+  /** "/usage-limits" was asked in this thread: the driver whose limits show above the prompt. */
+  let limitsShown: { readonly key: string; readonly driver: ServerProvider["driver"] } | null =
+    null;
+  let stopLimits: (() => void) | null = null;
+  const closeLimits = () => {
+    stopLimits?.();
+    stopLimits = null;
+    limitsShown = null;
+  };
+  /** The provider behind the model the next turn runs on. */
+  const activeProvider = () =>
+    providers.find((candidate) => candidate.instanceId === activeModel()?.instanceId);
+  /** Answer "/usage-limits": the provider's windows above the prompt, and the command gone from it. */
+  const showLimits = (key: string, provider: ServerProvider) => {
+    closeLimits();
+    limitsShown = { key, driver: provider.driver };
+    setDraft(key, (current) => ({ ...current, text: "" }));
+    store.setStatus(`${provider.displayName ?? provider.driver} limits.`, "info");
+    // Followed while they show, so a window that moves is not left stale.
+    stopLimits = client.subscribeUsageLimits((snapshot) => {
+      providers = snapshot.providers;
+      usageSources = snapshot.sources;
+      publish();
+    });
+    publish();
+  };
+  /** The limits of one driver's accounts (this machine's and its hubs'), a row each. */
+  const limitRows = (driver: ServerProvider["driver"]): string[] => {
+    const now = options.nowMs?.() ?? Date.now();
+    const shown = new Map([
+      [
+        "local" as never,
+        {
+          entry: { target: { label: "This machine" } },
+          serverConfig: { providers, usageLimitSources: usageSources },
+        },
+      ],
+    ]);
+    const label = providers.find((provider) => provider.driver === driver)?.displayName ?? driver;
+    const pool = collectLimitPools(collectLimitAccounts(shown as never), now).find(
+      (candidate) => candidate.driver === driver,
+    );
+    const rows = [...collectLimitNotices(shown as never)];
+    if (!pool) return [...rows, `${label}: no limits reported.`];
+    for (const window of pool.windows) {
+      const resets = window.members
+        .map((member) => formatResetsIn(member.window, now))
+        .find(Boolean);
+      rows.push(
+        [`${label} ${window.label}: ${window.remainingPercent}% left`, resets]
+          .filter(Boolean)
+          .join(" · "),
+      );
+    }
+    return rows;
+  };
   let newDraft: NewDraft | null = null;
   let picker: Picker | null = null;
   /** The chrome rows by source, so a one-line prompt or a popover can drop some (ChatView). */
-  let chromeParts = { question: 0, attachments: 0, compact: 0, context: 0 };
+  let chromeParts = {
+    question: 0,
+    attachments: 0,
+    compact: 0,
+    context: 0,
+    notice: 0,
+    references: 0,
+  };
   /** Set by Ctrl+Up / Ctrl+Down; null follows the text. */
   let rowsOverride: number | null = null;
   let replyPending = false;
+  /** Why the last send to a thread was refused, by draft key, until it is sent again. */
+  const sendFailures = new Map<string, string>();
   let createPending = false;
   let switchPending = false;
   let draftCount = 0;
@@ -405,10 +553,14 @@ export function createComposer(options: ComposerOptions): Composer {
     key ? (drafts.get(key) ?? EMPTY_DRAFT) : EMPTY_DRAFT;
   const setDraft = (key: string | null, update: (draft: Draft) => Draft) => {
     if (!key) return;
+    const had = drafts.has(key);
     const next = update(draftFor(key));
-    if (next.text.length === 0 && next.images.length === 0) drafts.delete(key);
-    else drafts.set(key, next);
+    if (next.text.length === 0 && next.images.length === 0 && !next.contexts?.length) {
+      drafts.delete(key);
+    } else drafts.set(key, next);
     publish();
+    // The new-thread draft's sidebar row follows whether it holds anything.
+    if (key === NEW_TARGET && had !== drafts.has(key)) options.onDraftChange?.();
   };
   // Prompt recall: ↑ in an empty prompt walks back through the thread's sent
   // prompts, ↓ walks forward and past the newest clears the prompt. Recall
@@ -527,18 +679,51 @@ export function createComposer(options: ComposerOptions): Composer {
     const hiddenCount = Math.max(0, attachments.length - visibleCount);
     const hasText = draft.text.length > 0 || draft.images.length > 0;
     const context = composerContext(detail);
+    const references = referencesIn(draft).map((path) => ({
+      path,
+      label: clip(`@${path}`, 28),
+    }));
+    const contexts = (draft.contexts ?? []).map((record) => ({
+      id: record.contextId as string,
+      kind: record.kind as string,
+      label: clip(record.label, 32),
+    }));
+    // Why the message is still in the prompt outranks the provider's standing notice.
+    const refused = key === null ? undefined : sendFailures.get(key);
+    // Being offline stops explaining itself once the connection is back.
+    const failure = refused === OFFLINE_REASON && !options.offline?.() ? undefined : refused;
+    const notice = failure !== undefined ? `Not sent: ${failure}` : providerNotice(model);
+    // Wrapped to the box by word, so the way to fix it is never cut off.
+    const noticeLines: string[] = [];
+    if (notice) {
+      const room = Math.max(8, surfaceWidth - 6);
+      let line = "";
+      for (const word of notice.split(" ")) {
+        if (line !== "" && Bun.stringWidth(`${line} ${word}`) > room) {
+          noticeLines.push(line);
+          line = word;
+        } else line = line === "" ? word : `${line} ${word}`;
+      }
+      noticeLines.push(line);
+    }
+    const limitLines =
+      limitsShown !== null && limitsShown.key === key ? limitRows(limitsShown.driver) : [];
     chromeParts = {
       question: question ? question.visibleOptions + 4 : 0,
       attachments: attachments.length === 0 ? 0 : options.inlineImages ? 4 : 1,
       compact: compact ? 1 : 0,
       context: context ? 1 : 0,
+      notice: noticeLines.length + limitLines.length,
+      references: references.length + contexts.length > 0 ? 1 : 0,
     };
     const chromeRows =
       4 +
       chromeParts.question +
       chromeParts.attachments +
       chromeParts.compact +
-      chromeParts.context;
+      chromeParts.context +
+      chromeParts.notice +
+      chromeParts.references;
     const footerWidth = Math.max(1, surfaceWidth - 2);
     const showOptions = footerWidth >= 24;
     return {
@@ -552,7 +737,9 @@ export function createComposer(options: ComposerOptions): Composer {
         (newDraft !== null || detail !== null) &&
         !replyPending &&
         !createPending &&
-        (draft.text.trim().length > 0 || draft.images.length > 0),
+        (draft.text.trim().length > 0 ||
+          draft.images.length > 0 ||
+          (draft.contexts?.length ?? 0) > 0),
       isRunning: working,
       isSendBusy: replyPending || createPending,
       pendingApprovalCount,
@@ -587,6 +774,8 @@ export function createComposer(options: ComposerOptions): Composer {
               ? chunk(draft.text, { fg: palette.text })
               : chunk(placeholder, { fg: palette.dim }),
           ),
+      references,
+      contexts,
       visibleAttachments: attachments.slice(0, visibleCount),
       moreAttachments: hiddenCount > 0 ? `+${hiddenCount} more` : "",
       footer: {
@@ -617,8 +806,28 @@ export function createComposer(options: ComposerOptions): Composer {
               ),
       },
       context,
+      notice,
+      noticeLines,
+      limitLines,
       chromeRows,
     };
+  };
+
+  /** Why the selected model's provider cannot run a turn right now, and how to fix it. */
+  const providerNotice = (model: ModelSelection | null): string | null => {
+    const provider = model
+      ? providers.find((candidate) => candidate.instanceId === model.instanceId)
+      : undefined;
+    if (!provider) return null;
+    const name = provider.displayName ?? provider.driver ?? provider.instanceId;
+    const then = "then ^K → Refresh providers";
+    if (provider.enabled === false) {
+      return `${name} is disabled: enable it in provider settings, ${then}.`;
+    }
+    if (provider.auth?.status === "unauthenticated") {
+      return `${name} needs sign-in: ${provider.message ?? `sign in to ${name} on this machine`}, ${then}.`;
+    }
+    return null;
   };
 
   /** ComposerFooter's Chip: a dim (accent when active) key hint, then the label. */
@@ -731,6 +940,8 @@ export function createComposer(options: ComposerOptions): Composer {
             ...(disabled ? { disabled } : {}),
           })),
           index: picker.index,
+          searchable: picker.request?.searchable === true,
+          query: picker.query ?? "",
           rows: selectRows(picker),
         }
       : {
@@ -740,9 +951,34 @@ export function createComposer(options: ComposerOptions): Composer {
           status: "empty",
           options: [],
           index: 0,
+          searchable: false,
+          query: "",
           rows: [],
         };
-  const pickerRows = () => (picker ? Math.max(picker.options.length, 1) * 2 + 3 : 0);
+  const pickerRows = () =>
+    picker ? Math.max(picker.options.length, 1) * 2 + 3 + (picker.request?.searchable ? 1 : 0) : 0;
+  /** Narrow a searchable menu to the options whose label or description holds the query. */
+  const searchMenu = (query: string) => {
+    const spec = picker?.request;
+    if (!picker || !spec?.searchable) return;
+    const needle = query.trim().toLowerCase();
+    const matches = spec.options
+      .filter(
+        (option) =>
+          needle === "" ||
+          option.label.toLowerCase().includes(needle) ||
+          (option.description ?? "").toLowerCase().includes(needle),
+      )
+      .map(selectOption);
+    picker = {
+      ...picker,
+      query,
+      options: matches,
+      index: 0,
+      status: matches.length > 0 ? "ready" : "empty",
+    };
+    publish();
+  };
 
   let lastComposer = "";
   let lastNewThread = "";
@@ -788,13 +1024,16 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const openPicker = (next: Picker) => {
     picker = next;
-    options.setMode("select");
+    options.setMode(next.request?.mode ?? "select");
     publish();
   };
   const closePicker = () => {
     if (!picker) return;
+    const request = picker.request;
     picker = null;
-    if (options.mode() === "select") options.setMode("compose");
+    if (options.mode() === (request?.mode ?? "select")) {
+      options.setMode(request?.returnMode ?? "compose");
+    }
     publish();
   };
   /** Opening the picker that is already open closes it (clicking a control twice). */
@@ -814,20 +1053,33 @@ export function createComposer(options: ComposerOptions): Composer {
       0,
       list.findIndex((option) => !option.disabled),
     );
+  const selectOption = (option: PickRequest["options"][number]): SelectOption => ({
+    ...option,
+    description: option.description ?? "",
+  });
   const pick: Composer["pick"] = (request) => {
-    const { onChoose } = request;
+    const list = request.options.map(selectOption);
     openPicker({
+      request,
       kind: "choice",
       title: request.title,
-      status: request.status,
-      options: request.options,
-      index: firstChoosable(request.options),
-      onChoose,
+      status: request.status ?? (list.length > 0 ? "ready" : "empty"),
+      options: list,
+      index:
+        request.index === undefined
+          ? firstChoosable(list)
+          : Math.min(Math.max(0, request.index), Math.max(0, list.length - 1)),
     });
     return (next) => {
       // Closed, or another choice took its place: nothing to update.
-      if (picker?.onChoose !== onChoose) return;
-      picker = { ...picker, ...next, index: firstChoosable(next.options) };
+      if (picker?.request !== request) return;
+      const listed = next.options.map(selectOption);
+      picker = {
+        ...picker,
+        status: next.status ?? (listed.length > 0 ? "ready" : "empty"),
+        options: listed,
+        index: firstChoosable(listed),
+      };
       publish();
     };
   };
@@ -1037,6 +1289,26 @@ export function createComposer(options: ComposerOptions): Composer {
     else {
       const detail = selectedDetail();
       if (!detail) return;
+      // Some providers keep the model a conversation started with (the web's
+      // getStartedThreadModelChangeBlockReason): say so instead of failing the turn.
+      const current = threadModel(detail);
+      const started = detail.messages.length > 0 || detail.latestTurn !== null;
+      const changes =
+        current !== null && (current.instanceId !== instanceId || current.model !== model);
+      const locked = (candidate: ModelSelection | null) =>
+        candidate !== null &&
+        modelOptions.some(
+          (entry) =>
+            entry.instanceId === candidate.instanceId &&
+            entry.requiresNewThreadForModelChange === true,
+        );
+      if (started && changes && (locked(current) || locked(selection))) {
+        store.setStatus(
+          `Start a new thread (^N) to use ${option.label}: ${option.providerLabel} cannot change models once a conversation has started.`,
+          "error",
+        );
+        return;
+      }
       modelOverrides.set(detail.id, selection);
     }
     store.setStatus(`Model → ${option.model} (next turn)`, "success");
@@ -1056,8 +1328,64 @@ export function createComposer(options: ComposerOptions): Composer {
       if (!detail) return;
       modelOverrides.set(detail.id, next);
     }
-    store.setStatus(`Effort → ${String(value)} (next turn)`, "success");
+    const label =
+      modelOptionStates(modelOptions, selection).find((option) => option.id === id)?.label ??
+      "Effort";
+    const reasoning = reasoningChoicesForSelection(modelOptions, selection)?.descriptorId === id;
+    store.setStatus(
+      `${reasoning ? "Effort" : label} → ${typeof value === "boolean" ? (value ? "on" : "off") : value} (next turn)`,
+      "success",
+    );
     publish();
+  };
+
+  /**
+   * Every option of the selected model in one list: a switch flips when
+   * chosen, a choice opens its values. The compact footer has no room for the
+   * controls themselves, so its effort chord opens this instead.
+   */
+  const openOptionsPicker = () => {
+    const selection = activeModel();
+    if ((!newDraft && !selectedDetail()) || !selection) {
+      store.setStatus("Select a model first.", "info");
+      return;
+    }
+    const traits = modelOptionStates(modelOptions, selection);
+    if (traits.length === 0) {
+      store.setStatus("This model has no options.", "info");
+      return;
+    }
+    const shown = (trait: ModelOptionState) =>
+      trait.type === "boolean"
+        ? trait.value === true
+          ? "on"
+          : "off"
+        : (trait.choices.find((choice) => choice.id === trait.value)?.label ?? "—");
+    pick({
+      title: "options",
+      options: traits.map((trait) => ({
+        label: `${trait.label}: ${shown(trait)}`,
+        description: trait.type === "boolean" ? "Enter switches it." : "Enter picks a value.",
+        value: trait.id,
+      })),
+      onChoose: (id) => {
+        const trait = traits.find((candidate) => candidate.id === id);
+        if (!trait) return;
+        if (trait.type === "boolean") {
+          setOption(trait.id, trait.value !== true);
+          return;
+        }
+        pick({
+          title: trait.label.toLowerCase(),
+          options: trait.choices.map((choice) => ({ label: choice.label, value: choice.id })),
+          index: Math.max(
+            0,
+            trait.choices.findIndex((choice) => choice.id === trait.value),
+          ),
+          onChoose: (choice) => setOption(trait.id, choice),
+        });
+      },
+    });
   };
 
   const setRuntimeMode = (mode: RuntimeMode) => {
@@ -1125,7 +1453,14 @@ export function createComposer(options: ComposerOptions): Composer {
           );
       if (currentRef) branch = currentRef.name;
     }
-    newDraft = { ...newDraft, workspaceMode: mode, branch, worktreePath, tied: true };
+    newDraft = {
+      ...newDraft,
+      workspaceMode: mode,
+      branch,
+      worktreePath,
+      workspaceChosen: true,
+      tied: true,
+    };
     store.setStatus(
       mode === "new-worktree" ? "Workspace → New worktree" : "Workspace → Current checkout",
       "success",
@@ -1236,23 +1571,36 @@ export function createComposer(options: ComposerOptions): Composer {
           : (thread?.projectId ?? current.projectScopeId);
     const list = projects();
     const target = list.find((candidate) => candidate.id === selectedProjectId);
-    const context = resolveNewThreadContext({
-      projects: list,
-      selectedProjectId,
-      thread,
-      // Null means inherit: the project's own default, then the server's, then local.
-      defaultEnvironmentMode:
-        envMode(target?.defaultThreadEnvMode) ?? envMode(settings.defaultThreadEnvMode) ?? "local",
-    });
+    // Null means inherit: the project's own default, then the server's, then
+    // the checkout's hal-c2.json (read below), then local.
+    const savedMode =
+      envMode(target?.defaultThreadEnvMode) ?? envMode(settings.defaultThreadEnvMode);
+    const contextFor = (defaultEnvironmentMode: "local" | "worktree") =>
+      resolveNewThreadContext({
+        projects: list,
+        selectedProjectId,
+        thread,
+        defaultEnvironmentMode,
+      });
+    const context = contextFor(savedMode ?? "local");
     const project = list[context.projectIndex] ?? null;
-    const modelSelection = project?.defaultModelSelection ?? thread?.modelSelection ?? null;
+    // As in the web client: the project's default (its own, else the environment's),
+    // then what the open thread's composer shows, then the model last sent with.
+    const defaults = resolveProjectSettings(
+      settings,
+      (project?.id ?? null) as never,
+      project,
+    ).settings;
+    const carried = thread ? (modelOverrides.get(thread.id) ?? thread.modelSelection) : null;
+    const modelSelection =
+      defaults.defaultModelSelection ?? carried ?? [...lastUsedModels.values()].at(-1) ?? null;
     draftCount += 1;
     newDraft = {
       draftId: `draft-${draftCount}`,
       originKey: selectionKey(selection),
       projectId: project?.id ?? null,
       modelSelection: resolveModelSelection(modelOptions, modelSelection) ?? modelSelection,
-      runtimeMode: thread?.runtimeMode ?? "full-access",
+      runtimeMode: defaults.defaultRuntimeMode,
       interactionMode: "default",
       workspaceMode: context.workspaceMode,
       branch: context.branch,
@@ -1270,6 +1618,24 @@ export function createComposer(options: ComposerOptions): Composer {
     // Its branches and files are this project's machine's, whatever thread was open before.
     client.viewProject(project?.id ?? null);
     if (project) void loadRefs(newDraft.draftId, project.workspaceRoot);
+    if (project && savedMode === null) {
+      const draftId = newDraft.draftId;
+      void track(
+        readProjectFile(client.readFile, project.workspaceRoot).then((file) => {
+          const mode = envMode(file?.defaultThreadEnvMode);
+          if (mode === null || newDraft?.draftId !== draftId || newDraft.workspaceChosen) return;
+          const next = contextFor(mode);
+          newDraft = {
+            ...newDraft,
+            workspaceMode: next.workspaceMode,
+            branch: newDraft.branch ?? next.branch,
+            worktreePath: next.worktreePath,
+            contextWorktreePath: next.worktreePath,
+          };
+          publish();
+        }),
+      );
+    }
   };
 
   const closeNewThread = () => {
@@ -1350,6 +1716,7 @@ export function createComposer(options: ComposerOptions): Composer {
         .then(
           ({ threadId, placed, elsewhere }) => {
             createPending = false;
+            rememberModel(modelSelection);
             closeNewThread();
             // The user follows the thread: a list scoped to another project would hide it.
             const scope = store.getState().projectScopeId;
@@ -1380,7 +1747,8 @@ export function createComposer(options: ComposerOptions): Composer {
     const key = target();
     const draft = draftFor(key);
     const typed = draft.text.trim();
-    if (typed.length === 0 && draft.images.length === 0) return;
+    const contexts = draft.contexts ?? [];
+    if (typed.length === 0 && draft.images.length === 0 && contexts.length === 0) return;
     if (!detail || !key) {
       store.setStatus("Select a thread (Alt+↑/↓ or click) to send a message.");
       return;
@@ -1396,8 +1764,33 @@ export function createComposer(options: ComposerOptions): Composer {
       );
       return;
     }
-    const text = typed.length > 0 ? typed : IMAGE_ONLY_PROMPT;
+    // The draft stays as typed: it is sent when the user asks again, once connected.
+    if (options.offline?.()) {
+      sendFailures.set(key, OFFLINE_REASON);
+      store.setStatus("Not sent: not connected.", "error");
+      publish();
+      return;
+    }
+    // Each context record is named in the text by its reference link, after what was typed;
+    // the record itself (the terminal output, the diff lines and the note) rides on the message.
+    const references = contexts.map((record) => formatComposerContextReference(record)).join(" ");
+    const body = [typed, references].filter((part) => part.length > 0).join("\n\n");
+    const text = body.length > 0 ? body : IMAGE_ONLY_PROMPT;
+    // "/usage-limits" is answered here, from what the MC knows: no turn runs for it.
+    const provider = activeProvider();
+    if (
+      contexts.length === 0 &&
+      draft.images.length === 0 &&
+      isUsageLimitsCommand(typed) &&
+      provider &&
+      hasProviderUsageLimits(provider.driver, providers, usageSources)
+    ) {
+      showLimits(key, provider);
+      return;
+    }
+    closeLimits();
     const submitted = draft;
+    sendFailures.delete(key);
     replyPending = true;
     store.setStatus("Sending reply…", "busy");
     publish();
@@ -1409,11 +1802,13 @@ export function createComposer(options: ComposerOptions): Composer {
             text,
             submitted.images.map((image) => image.upload),
             threadModel(detail) ?? undefined,
+            ...(contexts.length > 0 ? [{ version: 1 as const, records: [...contexts] }] : []),
           ),
         )
         .then(
           () => {
             replyPending = false;
+            rememberModel(threadModel(detail));
             // Clear only what was sent; text typed while sending stays.
             setDraft(key, (current) => ({
               text: current.text.startsWith(submitted.text)
@@ -1426,7 +1821,10 @@ export function createComposer(options: ComposerOptions): Composer {
           },
           (error) => {
             replyPending = false;
-            store.setStatus(`send failed: ${String(error)}`, "error");
+            const reason = error instanceof Error ? error.message : String(error);
+            // The status line has room for a few words; the composer says it in full.
+            sendFailures.set(key, reason);
+            store.setStatus(`send failed: ${reason}`, "error");
             publish();
           },
         ),
@@ -1437,6 +1835,7 @@ export function createComposer(options: ComposerOptions): Composer {
     const detail = selectedDetail();
     if (!detail) return;
     void track(client.interrupt(detail.id).catch(() => {}));
+    if (detail.latestTurn) options.onInterrupt?.(detail.latestTurn.turnId);
     store.setStatus("Interrupt sent.", "success");
   };
 
@@ -1593,6 +1992,120 @@ export function createComposer(options: ComposerOptions): Composer {
     });
   };
 
+  // ── Context by trigger character ─────────────────────────────────────────
+
+  const referencesIn = (draft: Draft) =>
+    (draft.references ?? []).filter((path) => draft.text.includes(`@${path}`));
+
+  /** The trigger just typed: "/" opening the prompt, "$" or "@" opening a word. */
+  const typedTrigger = (before: string, text: string): "/" | "$" | "@" | null => {
+    if (text.length !== before.length + 1 || !text.startsWith(before)) return null;
+    const typed = text.at(-1);
+    if (typed === "/") return before === "" ? "/" : null;
+    if (typed !== "$" && typed !== "@") return null;
+    return before === "" || /\s$/.test(before) ? typed : null;
+  };
+
+  /** Put `token` where the trigger character was typed (the end of the prompt). */
+  const completeTrigger = (trigger: string, token: string, reference?: string) => {
+    setDraft(target(), (draft) => ({
+      ...draft,
+      text: `${draft.text.endsWith(trigger) ? draft.text.slice(0, -1) : draft.text}${token} `,
+      ...(reference ? { references: [...new Set([...(draft.references ?? []), reference])] } : {}),
+    }));
+    options.onTextCompleted?.(draftFor(target()).text);
+  };
+
+  /**
+   * "/" lists the provider's commands, "$" its skills and "@" the workspace's
+   * files, each in a searchable picker. Esc leaves the character as typed.
+   */
+  const openTriggerPicker = (trigger: "/" | "$" | "@") => {
+    const model = activeModel();
+    const provider = providers.find((candidate) => candidate.instanceId === model?.instanceId);
+    if (trigger === "@") {
+      const key = target();
+      void track(
+        client.listEntries(composerCwd()).then(
+          (entries) => {
+            // Nothing to offer, or the user typed on (or left) meanwhile: the "@" stays text.
+            const listed = entries.filter((entry) => entry.ignored !== true);
+            if (listed.length === 0 || target() !== key || !draftFor(key).text.endsWith("@")) {
+              return;
+            }
+            if (picker !== null) return;
+            pick({
+              title: "files",
+              searchable: true,
+              options: entries
+                .filter((entry) => entry.ignored !== true)
+                .map((entry) => ({
+                  label: entry.kind === "directory" ? `${entry.path}/` : entry.path,
+                  value: entry.path,
+                })),
+              onChoose: (path) => completeTrigger("@", `@${path}`, path),
+            });
+          },
+          () => {},
+        ),
+      );
+      return;
+    }
+    // A provider with no commands (or skills) opens nothing: the character is just text.
+    if (trigger === "/") {
+      // A provider whose limits the MC knows also answers "/usage-limits" (here, not in a turn).
+      const commands =
+        withUsageLimitsCommands(provider ? [provider] : [], usageSources)[0]?.slashCommands ?? [];
+      if (commands.length === 0) return;
+      pick({
+        title: "commands",
+        searchable: true,
+        options: commands.map((command) => ({
+          label: `/${command.name}`,
+          description: command.description ?? "",
+          value: command.name,
+        })),
+        onChoose: (name) => {
+          // Answered here and takes no arguments: picking it is running it.
+          const key = target();
+          if (name === USAGE_LIMITS_COMMAND.name && provider && key !== null && !newDraft) {
+            showLimits(key, provider);
+            return;
+          }
+          completeTrigger("/", `/${name}`);
+        },
+      });
+      return;
+    }
+    if (!(provider?.skills ?? []).some((skill) => skill.enabled)) return;
+    pick({
+      title: "skills",
+      searchable: true,
+      options: (provider?.skills ?? [])
+        .filter((skill) => skill.enabled)
+        .map((skill) => ({
+          label: `$${skill.name}`,
+          description: skill.shortDescription ?? skill.description ?? "",
+          value: skill.name,
+        })),
+      onChoose: (name) => completeTrigger("$", `$${name}`),
+    });
+  };
+
+  /** Drop a reference chip and its `@path` from the text (the last one without a path). */
+  const removeReference = (path: unknown) => {
+    setDraft(target(), (draft) => {
+      const shown = referencesIn(draft);
+      const gone = typeof path === "string" ? path : shown.at(-1);
+      if (gone === undefined) return draft;
+      return {
+        ...draft,
+        references: (draft.references ?? []).filter((candidate) => candidate !== gone),
+        text: draft.text.replace(`@${gone} `, "").replace(`@${gone}`, ""),
+      };
+    });
+  };
+
   // ── $EDITOR ──────────────────────────────────────────────────────────────
 
   const editInEditor = () => {
@@ -1687,7 +2200,7 @@ export function createComposer(options: ComposerOptions): Composer {
         setProjectScope(value);
         return;
       case "choice":
-        current.onChoose?.(value);
+        current.request?.onChoose(value);
         return;
     }
   };
@@ -1711,6 +2224,14 @@ export function createComposer(options: ComposerOptions): Composer {
     const current = store.getState();
     const key = selectionKey(current.selection);
     if (newDraft && newDraft.originKey !== key) closeNewThread();
+    // A draft's project was removed: the draft goes with it.
+    if (
+      newDraft?.projectId &&
+      current.shell &&
+      !current.shell.projects.some((project) => project.id === newDraft!.projectId)
+    ) {
+      closeNewThread();
+    }
     const detail = selectedDetail();
     if (detail && interactionOverrides.get(detail.id) === detail.interactionMode) {
       interactionOverrides.delete(detail.id);
@@ -1723,7 +2244,24 @@ export function createComposer(options: ComposerOptions): Composer {
       case "composer.text.set": {
         const text = field(payload, "text");
         if (typeof text !== "string") return true;
+        const before = draftFor(target()).text;
         setDraft(target(), (draft) => ({ ...draft, text }));
+        const trigger = typedTrigger(before, text);
+        if (trigger) openTriggerPicker(trigger);
+        return true;
+      }
+      case "composer.reference.remove":
+        removeReference(field(payload, "path"));
+        return true;
+      case "composer.context.remove": {
+        const id = field(payload, "id");
+        setDraft(target(), (draft) => ({
+          ...draft,
+          contexts:
+            typeof id === "string"
+              ? (draft.contexts ?? []).filter((record) => record.contextId !== id)
+              : (draft.contexts ?? []).slice(0, -1),
+        }));
         return true;
       }
       case "composer.history.previous":
@@ -1816,7 +2354,26 @@ export function createComposer(options: ComposerOptions): Composer {
         openModelPicker();
         return true;
       case "composer.effortPicker.toggle":
-        openReasoningPicker();
+        // The compact footer shows no option controls: one menu holds them all.
+        if (composerSurfaceWidth(options.chatWidth()) < COMPACT_SURFACE_WIDTH) openOptionsPicker();
+        else openReasoningPicker();
+        return true;
+      case "composer.optionsPicker.toggle":
+        openOptionsPicker();
+        return true;
+      case "composer.providers.reload":
+        void loadModels().catch(() => {});
+        void track(
+          client.getServerConfig().then(
+            (config) => {
+              settings = config.settings;
+              providers = config.providers ?? [];
+              usageSources = config.usageLimitSources ?? [];
+              publish();
+            },
+            () => {},
+          ),
+        );
         return true;
       case "composer.runtimePicker.toggle":
         openRuntimePicker();
@@ -1873,6 +2430,11 @@ export function createComposer(options: ComposerOptions): Composer {
       case "select.close":
         closePicker();
         return true;
+      case "select.query.set": {
+        const query = field(payload, "query");
+        if (typeof query === "string") searchMenu(query);
+        return true;
+      }
       default:
         return false;
     }
@@ -1884,6 +2446,9 @@ export function createComposer(options: ComposerOptions): Composer {
     client.getServerConfig().then(
       (config) => {
         settings = config.settings;
+        providers = config.providers ?? [];
+        usageSources = config.usageLimitSources ?? [];
+        publish();
       },
       () => {},
     ),
@@ -1891,7 +2456,26 @@ export function createComposer(options: ComposerOptions): Composer {
 
   return {
     dispatch,
-    draft: () => (newDraft ? { draftId: newDraft.draftId, projectId: newDraft.projectId } : null),
+    addContext: (record) => {
+      if (newDraft || !selectedDetail()) return false;
+      setDraft(target(), (draft) => ({
+        ...draft,
+        contexts: [...(draft.contexts ?? []), record],
+      }));
+      return true;
+    },
+    closeMenu: (title) => {
+      if (picker?.kind === "choice" && (title === undefined || picker.title === title))
+        closePicker();
+    },
+    draft: () =>
+      newDraft
+        ? {
+            draftId: newDraft.draftId,
+            projectId: newDraft.projectId,
+            hasContent: drafts.has(NEW_TARGET),
+          }
+        : null,
     sync,
     relayout: publish,
     chromeRows: (overlay) =>
@@ -1899,6 +2483,8 @@ export function createComposer(options: ComposerOptions): Composer {
       (overlay.oneLine || overlay.popover ? 0 : chromeParts.question) +
       (overlay.oneLine ? 0 : chromeParts.attachments) +
       (overlay.oneLine ? 0 : chromeParts.compact) +
+      (overlay.oneLine ? 0 : chromeParts.notice) +
+      (overlay.oneLine ? 0 : chromeParts.references) +
       chromeParts.context,
     pickerRows,
     pick,
@@ -1917,6 +2503,7 @@ export function createComposer(options: ComposerOptions): Composer {
             ? threadInteraction(detail)
             : "default",
         attachmentCount: draftFor(target()).images.length,
+        referenceCount: referencesIn(draftFor(target())).length,
       };
     },
   };

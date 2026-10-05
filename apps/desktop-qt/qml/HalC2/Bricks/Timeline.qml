@@ -6,7 +6,7 @@ import HalC2.Shell
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
 // model with its roles (rowId, kind, author, text, streaming, title, status,
 // statusLabel, marker, entries, hiddenCount, expanded, files, time, icon,
-// intent, attribution, meta, attachments).
+// intent, attribution, meta, attachments, and optionally summary and summaryFailed).
 //
 //   Timeline { anchors.fill: parent; model: Threads.timeline }
 //
@@ -19,7 +19,9 @@ import HalC2.Shell
 // hidden, they keep their place and still take clicks. An agent reply whose
 // turn left a checkpoint offers Revert (revertRequested); files a reply
 // changed or a tool call touched ask to be opened (fileActivated). What those
-// do is the host's (ThreadView).
+// do is the host's (ThreadView). A settled turn's group of calls reads as its
+// summary and opens into the calls; a long message of the user's shows its
+// first lines until it is asked for in full.
 Item {
     id: root
 
@@ -50,6 +52,38 @@ Item {
     signal revertRequested(string rowId)
     // A message went to the clipboard.
     signal copied(string rowId)
+    // A thread to open: a subagent's own, or the one a message came from
+    // (the model's `thread` role, an id in this thread's environment).
+    signal threadActivated(string threadId)
+    // The user asked to edit from their message: the thread rewinds to before it.
+    signal editRequested(string rowId)
+    // Whether a user message's row can be edited from (rewindPointOf).
+    property var editable: rowId => root.model !== null && typeof root.model.rewindPointOf === "function" && root.model.rewindPointOf(rowId).turn !== undefined
+    // The pull request a message mentions is to be linked to the thread.
+    signal pullRequestLinkRequested(string url)
+
+    // Links the pull request a message mentions (the web's link action on a mention).
+    component LinkPullRequestButton: IconButton {
+        property string url
+        objectName: "linkPullRequest"
+        visible: url.length > 0
+        icon: "git-pull-request"
+        tip: qsTr("Link this pull request to the thread")
+        onClicked: root.pullRequestLinkRequested(url)
+    }
+
+    // The user's long messages shown in full, by row id; kept here so a row
+    // scrolled away and back stays as the user left it.
+    property var fullMessages: ({})
+    // packages/shared/src/chatMessages.ts shouldCollapseUserMessage.
+    function collapsible(text) {
+        return text.trim().length > 0 && (text.length > 600 || text.split("\n").length > 8);
+    }
+    function showFull(rowId, full) {
+        const next = Object.assign({}, root.fullMessages);
+        next[rowId] = full;
+        root.fullMessages = next;
+    }
     // The user cited a selection of a reply: an AssistantCitation's selector
     // {text, start, end, prefix, suffix}.
     signal cited(string messageId, var selector)
@@ -123,7 +157,7 @@ Item {
     component RowText: Text {
         color: root.textColor
         font.family: root.uiFamily
-        font.pixelSize: 13
+        font.pixelSize: Math.round(13 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -133,7 +167,7 @@ Item {
         signal clicked
         color: actionHover.hovered ? root.textColor : root.mutedColor
         font.family: root.uiFamily
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         HoverHandler {
             id: actionHover
             cursorShape: Qt.PointingHandCursor
@@ -151,7 +185,7 @@ Item {
         visible: text.length > 0
         color: root.mutedColor
         font.family: root.uiFamily
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         font.features: {
             "tnum": 1
         }
@@ -231,7 +265,7 @@ Item {
             id: pillText
             anchors.centerIn: parent
             font.family: root.uiFamily
-            font.pixelSize: 10
+            font.pixelSize: Math.round(10 * Theme.fontScale)
         }
     }
 
@@ -268,7 +302,7 @@ Item {
             textFormat: Text.PlainText
             color: line.labelColor
             font.family: root.uiFamily
-            font.pixelSize: 14
+            font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: line.labelWeight
             elide: Text.ElideRight
             maximumLineCount: 1
@@ -357,6 +391,8 @@ Item {
             required property var intent
             required property var attribution
             required property var meta
+            // Roles a model may leave out (summary, summaryFailed).
+            required property var model
             required property var messageId
             required property var attachments
             // The tool calls whose details are open, by id.
@@ -416,14 +452,26 @@ Item {
                 id: userMessage
                 Column {
                     spacing: 4
-                    // Who sent it, when not the user.
+                    // Who sent it, when not the user; a known thread opens.
                     RowText {
+                        id: attribution
+                        readonly property string thread: row.model.thread ?? ""
+                        objectName: "messageAttribution"
                         visible: text.length > 0
                         anchors.right: parent.right
                         anchors.rightMargin: 4
                         text: row.attribution ?? ""
-                        color: Qt.alpha(root.mutedColor, 0.7)
-                        font.pixelSize: 11
+                        color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : Qt.alpha(root.mutedColor, 0.7)
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        HoverHandler {
+                            id: attributionHover
+                            enabled: attribution.thread.length > 0
+                            cursorShape: Qt.PointingHandCursor
+                        }
+                        TapHandler {
+                            enabled: attribution.thread.length > 0
+                            onTapped: root.threadActivated(attribution.thread)
+                        }
                     }
                     // How it reached the agent (UserMessageIntentMarker).
                     Row {
@@ -441,7 +489,7 @@ Item {
                         RowText {
                             text: row.intent === "queued_turn" ? qsTr("Queued") : qsTr("Steer")
                             color: root.mutedColor
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                             HoverHandler {
                                 id: intentHover
@@ -506,7 +554,7 @@ Item {
                                         horizontalAlignment: Text.AlignHCenter
                                         text: attachment.modelData.name ?? ""
                                         color: root.mutedColor
-                                        font.pixelSize: 12
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
                                         wrapMode: Text.NoWrap
                                         elide: Text.ElideMiddle
                                     }
@@ -515,13 +563,19 @@ Item {
                         }
                     }
                     Rectangle {
+                        id: bubble
+                        readonly property bool collapsible: root.collapsible(row.text ?? "")
+                        readonly property bool collapsed: collapsible && root.fullMessages[row.rowId] !== true
+                        objectName: "userMessageBody"
                         // A message of images alone has no bubble.
                         visible: (row.text ?? "").length > 0
                         anchors.right: parent.right
                         width: Math.min(parent.width * 0.8, userText.implicitWidth + 24)
-                        height: userText.implicitHeight + 24
+                        // The web's max-h-44.
+                        height: (collapsed ? Math.min(176, userText.implicitHeight) : userText.implicitHeight) + 24
                         radius: 16
                         color: root.messageColor
+                        clip: collapsed
                         Markdown {
                             id: userText
                             x: 12
@@ -533,6 +587,16 @@ Item {
                             textColor: root.messageTextColor
                             onLinkActivated: link => root.linkActivated(link)
                         }
+                    }
+                    ActionLink {
+                        objectName: "messageExpand"
+                        visible: bubble.collapsible
+                        anchors.right: parent.right
+                        anchors.rightMargin: 4
+                        text: bubble.collapsed ? qsTr("Show full message") : qsTr("Show less")
+                        Accessible.role: Accessible.Button
+                        Accessible.name: text
+                        onClicked: root.showFull(row.rowId, bubble.collapsed)
                     }
                     // A message that did not reach the agent says why.
                     Pill {
@@ -559,6 +623,17 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             rowId: row.rowId
                             text: row.time ?? ""
+                        }
+                        LinkPullRequestButton {
+                            url: row.model.pullRequestUrl ?? ""
+                        }
+                        IconButton {
+                            objectName: "editFromHere"
+                            icon: "pencil"
+                            tip: qsTr("Edit from here")
+                            // Asked when the pointer comes over the message.
+                            visible: row.showMeta && root.editable(row.rowId)
+                            onClicked: root.editRequested(row.rowId)
                         }
                         CopyButton {
                             rowId: row.rowId
@@ -612,7 +687,7 @@ Item {
                                         spacing: 12
                                         RowText {
                                             text: changedFiles.changed.length === 1 ? qsTr("1 changed file") : qsTr("%1 changed files").arg(changedFiles.changed.length)
-                                            font.pixelSize: 12
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
                                             font.weight: Font.Medium
                                             wrapMode: Text.NoWrap
                                         }
@@ -623,20 +698,20 @@ Item {
                                                 text: "+" + parent.totals[0]
                                                 color: root.successColor
                                                 font.family: root.monoFamily
-                                                font.pixelSize: 12
+                                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                             }
                                             RowText {
                                                 text: "-" + parent.totals[1]
                                                 color: root.errorColor
                                                 font.family: root.monoFamily
-                                                font.pixelSize: 12
+                                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                             }
                                         }
                                     }
-                                    // The turn's diff, from its first file.
+                                    // The turn's whole diff.
                                     Rectangle {
                                         id: openDiff
-                                        readonly property var first: changedFiles.changed[0]
+                                        objectName: "openTurnDiff"
                                         anchors.right: parent.right
                                         anchors.rightMargin: 8
                                         anchors.verticalCenter: parent.verticalCenter
@@ -661,7 +736,7 @@ Item {
                                                 visible: filesCard.width >= 384
                                                 text: qsTr("Open diff")
                                                 color: openDiffHover.hovered ? root.textColor : root.mutedColor
-                                                font.pixelSize: 12
+                                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                                 wrapMode: Text.NoWrap
                                             }
                                         }
@@ -670,7 +745,7 @@ Item {
                                             cursorShape: Qt.PointingHandCursor
                                         }
                                         TapHandler {
-                                            onTapped: root.fileActivated(openDiff.first ? openDiff.first.path : "", "diff", row.rowId)
+                                            onTapped: root.fileActivated("", "diff", row.rowId)
                                         }
                                         ToolTip.visible: openDiffHover.hovered
                                         ToolTip.delay: 500
@@ -706,7 +781,7 @@ Item {
                                                 text: changedFile.modelData.path
                                                 color: changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
                                                 font.family: root.monoFamily
-                                                font.pixelSize: 12
+                                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                                 wrapMode: Text.NoWrap
                                                 elide: Text.ElideMiddle
                                             }
@@ -720,13 +795,13 @@ Item {
                                                     text: "+" + changedFile.modelData.additions
                                                     color: root.successColor
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: 10
+                                                    font.pixelSize: Math.round(10 * Theme.fontScale)
                                                 }
                                                 RowText {
                                                     text: "-" + changedFile.modelData.deletions
                                                     color: root.errorColor
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: 10
+                                                    font.pixelSize: Math.round(10 * Theme.fontScale)
                                                 }
                                             }
                                             HoverHandler {
@@ -755,6 +830,15 @@ Item {
                             }
                         }
                         IconButton {
+                            objectName: "forkFromResponse"
+                            icon: "git-fork"
+                            tip: qsTr("Fork from this response")
+                            visible: row.showMeta && root.model !== null && typeof root.model.finishedRunOf === "function" && root.model.finishedRunOf(row.rowId).length > 0
+                            onClicked: Shell.dispatch("thread.forkFromRun", {
+                                runId: root.model.finishedRunOf(row.rowId)
+                            })
+                        }
+                        IconButton {
                             objectName: "revertToTurn"
                             icon: "undo-2"
                             tip: qsTr("Revert to here")
@@ -774,6 +858,9 @@ Item {
                             mono: root.monoFamily
                             border.color: Qt.alpha(root.borderColor, 0.7)
                         }
+                        LinkPullRequestButton {
+                            url: row.model.pullRequestUrl ?? ""
+                        }
                         CopyButton {
                             rowId: row.rowId
                         }
@@ -789,14 +876,32 @@ Item {
             Component {
                 id: work
                 Column {
-                    // "+N previous tool calls" (WorkGroupToggleTimelineRow).
+                    id: workGroup
+                    readonly property string summary: row.model.summary ?? ""
+                    // What a settled group did, or "+N previous tool calls"
+                    // while its turn runs (WorkGroupToggleTimelineRow).
                     WorkLine {
+                        objectName: "workGroupToggle"
                         visible: (row.hiddenCount ?? 0) > 0
                         width: parent.width
                         iconName: "hammer"
-                        label: row.expanded ? qsTr("Show fewer tool calls") : qsTr("+%1 previous tool calls").arg(row.hiddenCount)
+                        iconTint: row.model.summaryFailed === true ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
+                        label: workGroup.summary.length > 0 ? workGroup.summary : row.expanded ? qsTr("Show fewer tool calls") : qsTr("+%1 previous tool calls").arg(row.hiddenCount)
                         interactive: true
                         onClicked: root.toggle(row.rowId)
+                        Item {
+                            visible: workGroup.summary.length > 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 16
+                            height: 16
+                            ShellIcon {
+                                anchors.centerIn: parent
+                                name: "chevron-right"
+                                size: 12
+                                color: Qt.alpha(root.iconColor, 0.7)
+                                rotation: row.expanded ? 90 : 0
+                            }
+                        }
                     }
                     Repeater {
                         model: root.list(row.entries)
@@ -813,6 +918,7 @@ Item {
                             width: parent.width
                             WorkLine {
                                 id: callLine
+                                objectName: "workCall"
                                 width: parent.width
                                 iconName: call.modelData.icon || "hammer"
                                 iconTint: call.failed ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
@@ -839,7 +945,7 @@ Item {
                                     visible: text.length > 0
                                     text: call.modelData.statusLabel ?? ""
                                     wrapMode: Text.NoWrap
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                     color: call.failed ? root.toolErrorColor : root.mutedColor
                                 }
                                 Stamp {
@@ -888,7 +994,7 @@ Item {
                                             textFormat: Text.PlainText
                                             wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                             font.family: root.monoFamily
-                                            font.pixelSize: 11
+                                            font.pixelSize: Math.round(11 * Theme.fontScale)
                                         }
                                         RowText {
                                             visible: text.length > 0
@@ -906,7 +1012,7 @@ Item {
                                         RowText {
                                             visible: call.modelData.exitCode !== undefined
                                             text: qsTr("Exit code %1").arg(call.modelData.exitCode)
-                                            font.pixelSize: 11
+                                            font.pixelSize: Math.round(11 * Theme.fontScale)
                                             color: root.mutedColor
                                         }
                                     }
@@ -933,7 +1039,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: row.title ?? ""
                             color: foldHover.hovered ? root.textColor : root.mutedColor
-                            font.pixelSize: 14
+                            font.pixelSize: Math.round(14 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                         }
                         ShellIcon {
@@ -1005,7 +1111,7 @@ Item {
                                     anchors.centerIn: parent
                                     text: qsTr("Plan")
                                     color: root.secondaryTextColor
-                                    font.pixelSize: 12
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
                                     font.weight: Font.Medium
                                     wrapMode: Text.NoWrap
                                 }
@@ -1014,7 +1120,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: parent.width - planBadge.width - 8
                                 text: row.title ?? ""
-                                font.pixelSize: 14
+                                font.pixelSize: Math.round(14 * Theme.fontScale)
                                 font.weight: Font.Medium
                                 wrapMode: Text.NoWrap
                                 elide: Text.ElideRight
@@ -1052,7 +1158,19 @@ Item {
                     }
                     readonly property bool failed: row.status === "failed"
                     readonly property bool hasDetail: (row.text ?? "").length > 0
+                    // Its own thread, when it has one, and the model it runs on.
+                    readonly property string thread: row.model.thread ?? ""
+                    readonly property string agentModel: row.model.agentModel ?? ""
+                    objectName: "subagentRow"
                     implicitHeight: Math.max(24, subagentText.implicitHeight) + 12
+                    HoverHandler {
+                        enabled: subagentRow.thread.length > 0
+                        cursorShape: Qt.PointingHandCursor
+                    }
+                    TapHandler {
+                        enabled: subagentRow.thread.length > 0
+                        onTapped: root.threadActivated(subagentRow.thread)
+                    }
                     Rectangle {
                         id: avatar
                         x: 8
@@ -1092,7 +1210,7 @@ Item {
                                 id: subagentTitle
                                 width: Math.min(implicitWidth, parent.width - (subagentStatus.visible ? subagentStatus.width + 8 : 0))
                                 text: row.title ?? ""
-                                font.pixelSize: 12
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
                                 font.weight: Font.Medium
                                 wrapMode: Text.NoWrap
                                 elide: Text.ElideRight
@@ -1103,15 +1221,16 @@ Item {
                                 visible: subagentRow.hasDetail && row.status !== "completed" && text.length > 0
                                 text: row.statusLabel ?? ""
                                 color: subagentRow.failed ? root.errorColor : root.mutedColor
-                                font.pixelSize: 10
+                                font.pixelSize: Math.round(10 * Theme.fontScale)
                                 wrapMode: Text.NoWrap
                             }
                         }
                         RowText {
                             width: parent.width
-                            text: subagentRow.hasDetail ? row.text : (row.statusLabel ?? "")
+                            objectName: "subagentDetail"
+                            text: (subagentRow.agentModel.length > 0 ? subagentRow.agentModel + " · " : "") + (subagentRow.hasDetail ? row.text : (row.statusLabel ?? ""))
                             color: subagentRow.failed ? root.errorColor : root.mutedColor
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
                         }
@@ -1148,7 +1267,7 @@ Item {
                         text: row.text ?? ""
                         textFormat: Text.PlainText
                         color: Qt.alpha(root.textColor, 0.8)
-                        font.pixelSize: 14
+                        font.pixelSize: Math.round(14 * Theme.fontScale)
                     }
                 }
             }
@@ -1181,7 +1300,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: row.title ?? ""
                             color: root.mutedColor
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             font.weight: Font.Medium
                             wrapMode: Text.NoWrap
                         }
@@ -1192,7 +1311,7 @@ Item {
                             text: "· " + (row.text ?? "")
                             color: root.mutedColor
                             opacity: 0.7
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
                         }
@@ -1251,7 +1370,7 @@ Item {
                 height: 24
                 verticalAlignment: Text.AlignVCenter
                 color: root.mutedColor
-                font.pixelSize: 14
+                font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.features: {
                     "tnum": 1
                 }
@@ -1297,7 +1416,7 @@ Item {
             RowText {
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Scroll to end")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.NoWrap
             }
         }

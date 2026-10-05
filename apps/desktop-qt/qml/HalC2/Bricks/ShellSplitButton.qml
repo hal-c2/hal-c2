@@ -48,7 +48,7 @@ Item {
             radius: 7
             leftPadding: 7
             rightPadding: 7
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             iconName: split.iconName
             enabled: split.actionEnabled
             text: split.compact ? "" : split.text

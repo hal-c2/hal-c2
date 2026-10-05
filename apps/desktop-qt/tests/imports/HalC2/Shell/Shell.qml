@@ -137,4 +137,20 @@ QtObject {
     function readImageFiles(urls) {
         return [];
     }
+
+    function readAttachmentFiles(urls) {
+        return [];
+    }
+
+    function directoryPaths(urls) {
+        return [];
+    }
+
+    function clipboardText() {
+        return "";
+    }
+
+    function pasteAttaches(text, promptLength) {
+        return false;
+    }
 }

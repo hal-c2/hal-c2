@@ -103,6 +103,8 @@ defmodule HalC2.Environment do
         probe([id], input["refreshModels"] == true)
 
       _ ->
+        # Newer models, defaults and compatibility policies, when there are any.
+        HalC2.ModelManifest.refresh()
         HalC2.ProviderUsageLimits.refresh()
         HalC2.UsageLimitSources.refresh()
         probe(["codex" | HalC2.Acp.instances()], input["refreshModels"] == true)
@@ -189,8 +191,7 @@ defmodule HalC2.Environment do
 
   defp builtin_providers do
     for(
-      entry <- [HalC2.Codex.Provider.entry(), HalC2.Claude.Provider.entry()],
-      entry != nil,
+      entry <- HalC2.Codex.Provider.entries() ++ HalC2.Claude.Provider.entries(),
       do: HalC2.ProviderUpdates.put_state(entry)
     ) ++ HalC2.Acp.entries()
   end

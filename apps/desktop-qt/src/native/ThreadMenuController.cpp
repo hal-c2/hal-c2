@@ -7,6 +7,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <memory>
 
 #include "../ShellBridge.h"
 #include "DraftController.h"
@@ -107,9 +108,14 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   if (!thread) return false;
   auto* shell = NativeShell::of(this);
   SidebarController* sidebar = shell->sidebar();
+  const QStringList selection = sidebar->selection();
+  if (!header && selection.size() > 1 && selection.contains(key)) {
+    openSelection(selection, x, y);
+    return true;
+  }
   const sidebar::Capabilities supports = m_store->capabilities(thread->environmentId);
   const bool online = m_store->threadOnline(key);
-  const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+  const qint64 nowMs = sidebar->now().toMSecsSinceEpoch();
   const QJsonObject row = m_store->threadRow(key);
 
   QList<Item> items;
@@ -127,6 +133,15 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
     add(thread->pinnedAt ? Item{QStringLiteral("unpin"), QStringLiteral("Unpin thread"), QStringLiteral("pin-off")}
                          : Item{QStringLiteral("pin"), QStringLiteral("Pin thread"), QStringLiteral("pin")});
   }
+  // Arranging, where the thread has a place to move to.
+  if (sidebar->canMove(key, true) || sidebar->canMove(key, false)) {
+    Item up{QStringLiteral("move-up"), QStringLiteral("Move up"), QStringLiteral("arrow-up")};
+    up.enabled = sidebar->canMove(key, true);
+    add(up);
+    Item down{QStringLiteral("move-down"), QStringLiteral("Move down"), QStringLiteral("arrow-down")};
+    down.enabled = sidebar->canMove(key, false);
+    add(down);
+  }
   if (supports.settlement) {
     const bool settled = thread->settledOverride == QLatin1String("settled");
     add({settled ? QStringLiteral("unsettle") : QStringLiteral("settle"),
@@ -141,6 +156,9 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
       for (const sidebar::SnoozePreset& preset : sidebar->snoozePresets()) {
         snooze.children.append({QStringLiteral("snooze:") + preset.id, SidebarController::snoozeLabel(preset)});
       }
+      Item custom{SidebarController::kCustomSnooze, QStringLiteral("Custom…")};
+      custom.separatorBefore = true;
+      snooze.children.append(custom);
       add(snooze);
     }
   }
@@ -173,6 +191,7 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
     copy.children.append({QStringLiteral("copy-branch"), QStringLiteral("Branch"), QStringLiteral("git-branch")});
   }
   copy.children.append({QStringLiteral("copy-thread-id"), QStringLiteral("Thread ID"), QStringLiteral("hash")});
+  copy.children.append({QStringLiteral("copy-link"), QStringLiteral("Link"), QStringLiteral("link")});
   add(copy, false);
   if (projectKey) add({QStringLiteral("project-settings"), QStringLiteral("Project settings"), QStringLiteral("settings")}, false);
   add({QStringLiteral("fork"), QStringLiteral("Fork thread"), QStringLiteral("git-fork")});
@@ -193,18 +212,200 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   return true;
 }
 
+void ThreadMenuController::openSelection(const QStringList& keys, double x, double y) {
+  auto* shell = NativeShell::of(this);
+  SidebarController* sidebar = shell->sidebar();
+  const qint64 nowMs = sidebar->now().toMSecsSinceEpoch();
+  const qsizetype count = keys.size();
+  qsizetype pinned = 0, regenerable = 0, regenerating = 0;
+  bool snoozable = true, settleable = true, anyRunning = false, online = true;
+  for (const QString& key : keys) {
+    const auto thread = m_store->thread(key);
+    if (!thread) continue;
+    const sidebar::Capabilities supports = m_store->capabilities(thread->environmentId);
+    if (supports.pinning && thread->pinnedAt) ++pinned;
+    if (supports.titleRegeneration) {
+      if (m_store->threadRow(key).value(QLatin1String("titleRegeneration")).isObject()) {
+        ++regenerating;
+      } else {
+        ++regenerable;
+      }
+    }
+    snoozable = snoozable && supports.snooze && sidebar::canSnooze(*thread, nowMs);
+    settleable = settleable && supports.settlement;
+    anyRunning = anyRunning || running(*thread);
+    online = online && m_store->threadOnline(key);
+  }
+  const auto counted = [](const QString& label, qsizetype of) { return QStringLiteral("%1 (%2)").arg(label).arg(of); };
+  QList<Item> items;
+  const auto add = [&items, online](Item item) {
+    if (!online) item.enabled = false;
+    items.append(std::move(item));
+  };
+  // Each count is what the action touches.
+  if (pinned > 0) add({QStringLiteral("unpin"), counted(QStringLiteral("Unpin"), pinned), QStringLiteral("pin-off")});
+  if (settleable) add({QStringLiteral("settle"), counted(QStringLiteral("Settle"), count), QStringLiteral("circle-check")});
+  if (snoozable) {
+    Item snooze{QStringLiteral("snooze"), counted(QStringLiteral("Snooze"), count), QStringLiteral("clock")};
+    for (const sidebar::SnoozePreset& preset : sidebar->snoozePresets()) {
+      snooze.children.append({QStringLiteral("snooze:") + preset.id, SidebarController::snoozeLabel(preset)});
+    }
+    Item custom{SidebarController::kCustomSnooze, QStringLiteral("Custom…")};
+    custom.separatorBefore = true;
+    snooze.children.append(custom);
+    add(snooze);
+  }
+  if (regenerable > 0) {
+    add({QStringLiteral("regenerate-title"), counted(QStringLiteral("Regenerate titles"), regenerable), QStringLiteral("refresh-cw")});
+  } else if (regenerating > 0) {
+    Item busy{QStringLiteral("regenerate-title"), counted(QStringLiteral("Regenerating…"), regenerating), QStringLiteral("refresh-cw")};
+    busy.enabled = false;
+    add(busy);
+  }
+  add({QStringLiteral("mark-unread"), counted(QStringLiteral("Mark unread"), count), QStringLiteral("mail-open")});
+  Item archive{QStringLiteral("archive"), counted(QStringLiteral("Archive"), count), QStringLiteral("archive")};
+  archive.separatorBefore = true;
+  archive.enabled = !anyRunning;
+  add(archive);
+  Item remove{QStringLiteral("delete"), counted(QStringLiteral("Delete"), count), QStringLiteral("trash")};
+  remove.destructive = true;
+  add(remove);
+  shell->controller<MenuController>()->open(x, y, items, [this, keys](const QString& id) { chooseForSelection(keys, id); });
+}
+
+void ThreadMenuController::commandEach(const QStringList& keys, const std::function<QJsonObject(const QString& threadId)>& make,
+                                       std::function<void(const QStringList& failed, const QString& reason)> done) {
+  struct Batch {
+    qsizetype pending = 0;
+    QStringList failed;
+    QString reason;
+  };
+  auto batch = std::make_shared<Batch>();
+  QList<std::pair<QString, sidebar::Thread>> targets;
+  for (const QString& key : keys) {
+    if (const auto thread = m_store->thread(key)) targets.append({key, *thread});
+  }
+  batch->pending = targets.size();
+  if (targets.isEmpty()) return done({}, {});
+  for (const auto& [key, thread] : std::as_const(targets)) {
+    m_client->dispatchCommand(this, thread.environmentId, make(thread.id),
+                              [batch, key, done](const QJsonValue&, const std::optional<QString>& error) {
+                                if (error) {
+                                  if (batch->failed.isEmpty()) batch->reason = *error;
+                                  batch->failed.append(key);
+                                }
+                                if (--batch->pending == 0) done(batch->failed, batch->reason);
+                              });
+  }
+}
+
+void ThreadMenuController::chooseForSelection(const QStringList& keys, const QString& id) {
+  auto* shell = NativeShell::of(this);
+  SidebarController* sidebar = shell->sidebar();
+  const auto typed = [](const char* type) {
+    return [type](const QString& threadId) {
+      return QJsonObject{{QStringLiteral("type"), QLatin1String(type)}, {QStringLiteral("threadId"), threadId}};
+    };
+  };
+  const auto plural = [](qsizetype count) { return count == 1 ? QStringLiteral("thread") : QStringLiteral("threads"); };
+  if (id == SidebarController::kCustomSnooze) {
+    sidebar->askCustomSnooze(keys);
+  } else if (id.startsWith(QLatin1String("snooze:"))) {
+    QString until;
+    for (const sidebar::SnoozePreset& preset : sidebar->snoozePresets()) {
+      if (QStringLiteral("snooze:") + preset.id == id) until = preset.snoozedUntil;
+    }
+    if (until.isEmpty()) return;
+    sidebar->clearSelection();
+    commandEach(keys, [until](const QString& threadId) {
+      return QJsonObject{{QStringLiteral("type"), QStringLiteral("thread.snooze")}, {QStringLiteral("threadId"), threadId},
+                         {QStringLiteral("snoozedUntil"), until}};
+    }, [this, plural, total = keys.size()](const QStringList& failed, const QString& reason) {
+      if (failed.isEmpty()) return;
+      toasts()->error(failed.size() < total ? QStringLiteral("Failed to snooze %1 %2").arg(failed.size()).arg(plural(failed.size()))
+                                             : QStringLiteral("Failed to snooze threads"),
+                      reason);
+    });
+  } else if (id == QLatin1String("unpin")) {
+    QStringList pinned;
+    for (const QString& key : keys) {
+      const auto thread = m_store->thread(key);
+      if (thread && thread->pinnedAt) pinned.append(key);
+    }
+    sidebar->clearSelection();
+    commandEach(pinned, typed("thread.unpin"), [this](const QStringList& failed, const QString& reason) {
+      if (!failed.isEmpty()) toasts()->error(QStringLiteral("Failed to unpin threads"), reason);
+    });
+  } else if (id == QLatin1String("settle")) {
+    sidebar->clearSelection();
+    for (const QString& key : keys) {
+      const auto thread = m_store->thread(key);
+      if (thread && thread->settledOverride != QLatin1String("settled")) {
+        m_bridge->dispatch(QStringLiteral("thread.settle"), QVariantMap{{QStringLiteral("key"), key}});
+      }
+    }
+  } else if (id == QLatin1String("regenerate-title")) {
+    QStringList eligible;
+    for (const QString& key : keys) {
+      const auto thread = m_store->thread(key);
+      if (thread && m_store->capabilities(thread->environmentId).titleRegeneration &&
+          !m_store->threadRow(key).value(QLatin1String("titleRegeneration")).isObject()) {
+        eligible.append(key);
+      }
+    }
+    sidebar->clearSelection();
+    commandEach(eligible, [](const QString& threadId) {
+      return QJsonObject{{QStringLiteral("type"), QStringLiteral("thread.metadata.update")}, {QStringLiteral("threadId"), threadId},
+                         {QStringLiteral("regenerateTitle"), true}};
+    }, [this](const QStringList& failed, const QString& reason) {
+      if (!failed.isEmpty()) toasts()->error(QStringLiteral("Failed to regenerate thread titles"), reason);
+    });
+  } else if (id == QLatin1String("mark-unread")) {
+    sidebar->clearSelection();
+    for (const QString& key : keys) m_bridge->dispatch(QStringLiteral("thread.markUnread"), QVariantMap{{QStringLiteral("key"), key}});
+  } else if (id == QLatin1String("archive")) {
+    sidebar->clearSelection();
+    for (const QString& key : keys) archive(key);
+  } else if (id == QLatin1String("delete")) {
+    const auto run = [this, keys, typed] {
+      commandEach(keys, typed("thread.delete"), [this, keys](const QStringList& failed, const QString& reason) {
+        if (!failed.isEmpty()) toasts()->error(QStringLiteral("Failed to delete threads"), reason);
+        // The threads that could not be deleted stay selected.
+        QStringList deleted;
+        for (const QString& key : keys) {
+          if (!failed.contains(key)) deleted.append(key);
+        }
+        NativeShell::of(this)->sidebar()->deselect(deleted);
+      });
+    };
+    if (setting(this, "confirmThreadDelete")) {
+      shell->controller<MenuController>()->confirm(
+          QStringLiteral("Delete %1 %2?").arg(keys.size()).arg(plural(keys.size())),
+          QStringLiteral("This permanently clears conversation history for these threads."), QStringLiteral("Delete"), true, run);
+    } else {
+      run();
+    }
+  }
+}
+
 void ThreadMenuController::choose(const QString& key, const QString& id, double x, double y) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
   auto* shell = NativeShell::of(this);
   auto* navigation = shell->controller<NavigationController>();
   const QVariantMap keyed{{QStringLiteral("key"), key}};
-  if (id.startsWith(QLatin1String("snooze:"))) {
+  if (id == SidebarController::kCustomSnooze) {
+    shell->sidebar()->askCustomSnooze({key});
+  } else if (id.startsWith(QLatin1String("snooze:"))) {
     for (const sidebar::SnoozePreset& preset : shell->sidebar()->snoozePresets()) {
       if (QStringLiteral("snooze:") + preset.id == id) shell->sidebar()->snooze(key, preset.snoozedUntil);
     }
   } else if (id == QLatin1String("new-thread-on-branch")) {
     newThreadOnBranch(key);
+  } else if (id == QLatin1String("move-up") || id == QLatin1String("move-down")) {
+    m_bridge->dispatch(QStringLiteral("thread.move"),
+                       QVariantMap{{QStringLiteral("key"), key},
+                                   {QStringLiteral("direction"), id == QLatin1String("move-up") ? QStringLiteral("up") : QStringLiteral("down")}});
   } else if (id == QLatin1String("pin")) {
     pin(key);
   } else if (id == QLatin1String("unpin")) {
@@ -245,6 +446,8 @@ void ThreadMenuController::choose(const QString& key, const QString& id, double 
     if (thread->branch) copy(*thread->branch, QStringLiteral("Branch copied"), QStringLiteral("Failed to copy branch"));
   } else if (id == QLatin1String("copy-thread-id")) {
     copy(thread->id, QStringLiteral("Thread ID copied"), QStringLiteral("Failed to copy thread ID"));
+  } else if (id == QLatin1String("copy-link")) {
+    copy(NavigationController::threadLink(key), QStringLiteral("Link copied"), QStringLiteral("Failed to copy link"));
   } else if (id == QLatin1String("project-settings")) {
     openProjectSettings(key);
   } else if (id == QLatin1String("fork")) {
@@ -312,16 +515,58 @@ void ThreadMenuController::archive(const QString& key) {
                                                        NavigationController::Route::thread(key));
                                                  }
                                                });
-                   }});
+                   }, false, QStringLiteral("Archived")});
   });
+}
+
+QString ThreadMenuController::orphanedWorktree(const QString& key) const {
+  const QString worktree = text(m_store->threadRow(key), "worktreePath").trimmed();
+  if (worktree.isEmpty()) return {};
+  for (const sidebar::Thread& other : m_store->threads()) {
+    if (other.key() != key && text(m_store->threadRow(other.key()), "worktreePath").trimmed() == worktree) return {};
+  }
+  return worktree;
 }
 
 void ThreadMenuController::remove(const QString& key) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
+  const QString worktree = orphanedWorktree(key);
+  const QString root = text(m_store->projectRow(thread->environmentId, thread->projectId), "workspaceRoot");
+  if (worktree.isEmpty() || root.isEmpty()) return removeWith(key, {});
+  // The project's own rules, else the environment's.
+  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  const QJsonObject policy = QJsonValue::fromVariant(settings->value(QStringLiteral("projectSettingsOverrides.%1.worktreeCleanup").arg(thread->projectId))).toObject();
+  const QString mode = text(policy, "mode");
+  const bool automatic = mode == QLatin1String("custom") ? policy.value(QLatin1String("rules")).toObject().value(QLatin1String("worktreeOnDelete")).toBool()
+                         : mode == QLatin1String("off")  ? false
+                                                         : settings->value(QStringLiteral("storageCleanup.worktreeOnDelete")).toBool();
+  if (automatic) return removeWith(key, worktree);
+  NativeShell::of(this)->controller<MenuController>()->confirm(
+      QStringLiteral("Delete the worktree too?"),
+      QStringLiteral("This thread is the only one linked to this worktree: %1").arg(worktree.section(QLatin1Char('/'), -1)),
+      QStringLiteral("Delete worktree"), true, [this, key, worktree] { removeWith(key, worktree); }, [this, key] { removeWith(key, {}); });
+}
+
+void ThreadMenuController::removeWith(const QString& key, const QString& worktree) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  const QString root = text(m_store->projectRow(thread->environmentId, thread->projectId), "workspaceRoot");
+  std::function<void()> cleanUp;
+  if (!worktree.isEmpty()) {
+    cleanUp = [this, environmentId = thread->environmentId, root, worktree] {
+      m_client->call(this, environmentId, QStringLiteral("vcs.removeWorktree"),
+                     QJsonObject{{QStringLiteral("cwd"), root}, {QStringLiteral("path"), worktree}, {QStringLiteral("force"), true}},
+                     [this, worktree](const QJsonValue&, const std::optional<QString>& error) {
+                       if (!error) return;
+                       toasts()->error(QStringLiteral("Failed to delete worktree"),
+                                       QStringLiteral("Could not remove %1. %2").arg(worktree.section(QLatin1Char('/'), -1), *error));
+                     });
+    };
+  }
   NativeShell::of(this)->sidebar()->park(
       key, {{QStringLiteral("type"), QStringLiteral("thread.delete")}, {QStringLiteral("threadId"), thread->id}},
-      QStringLiteral("Failed to delete thread"), SidebarController::Leave::ProjectFallback);
+      QStringLiteral("Failed to delete thread"), SidebarController::Leave::ProjectFallback, std::move(cleanUp));
 }
 
 void ThreadMenuController::pin(const QString& key) {
@@ -343,7 +588,7 @@ void ThreadMenuController::unpin(const QString& key) {
                                                {QStringLiteral("threadId"), threadId}};
                                if (orderKey) pin.insert(QStringLiteral("orderKey"), *orderKey);
                                command(key, pin, QStringLiteral("Failed to undo unpin"));
-                             }});
+                             }, false, QStringLiteral("Unpinned")});
             });
   };
   if (setting(this, "confirmThreadUnpin")) {

@@ -11,6 +11,7 @@
 #include "Alerts.h"
 #include "CommandPaletteController.h"
 #include "ComposerController.h"
+#include "FilesIdentity.h"
 #include "Harness.h"
 #include "LoadBalancing.h"
 #include "Move.h"
@@ -373,6 +374,39 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("confirmation.answer"),
                             QVariantMap{{QStringLiteral("requestId"), at(question, QStringLiteral("requestId"))}, {QStringLiteral("accepted"), true}});
   });
+  // Relatives across machines (ThreadLineageController): a move keeps a thread's id.
+  step(QStringLiteral("%1 on %1 is a fork of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = c[0].toLower();
+    putRow(world.mc, c[1], id,
+           {{QStringLiteral("id"), id},
+            {QStringLiteral("title"), c[0]},
+            {QStringLiteral("projectId"), kProject},
+            {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:10:00Z")},
+            {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:10:00Z")},
+            {QStringLiteral("lineage"), QJsonObject{{QStringLiteral("relationshipToParent"), QStringLiteral("fork")},
+                                                     {QStringLiteral("parentThreadId"), idOf(world, c[2])}}}});
+    world.sync();
+  });
+  step(QStringLiteral("the user opens %1 where it lives now").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = idOf(world, c[0]);
+    view(world, keyOn(homeOf(world.mc, id), id));
+    world.sync();
+  });
+  step(QStringLiteral("its parent is %1 on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QVariantMap parent = world.state(QStringLiteral("lineage")).toMap().value(QStringLiteral("parent")).toMap();
+    expect(parent.value(QStringLiteral("key")) == c[1] + QLatin1Char(':') + idOf(world, c[0]) && parent.value(QStringLiteral("title")) == c[0] &&
+               !parent.value(QStringLiteral("missing")).toBool(),
+           QStringLiteral("the lineage is %1").arg(show(world.state(QStringLiteral("lineage")))));
+  });
+  step(QStringLiteral("%1 is listed as its fork").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    QStringList titles;
+    for (const QVariant& fork : world.state(QStringLiteral("lineage")).toMap().value(QStringLiteral("forks")).toList()) {
+      titles.append(fork.toMap().value(QStringLiteral("title")).toString());
+    }
+    expect(titles == QStringList{c[0]}, QStringLiteral("the lineage is %1").arg(show(world.state(QStringLiteral("lineage")))));
+  });
   step(QStringLiteral("%1 was moved from %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(homeOf(world.mc, idOf(world, c[0])) == c[1], QStringLiteral("%1 does not live on %2").arg(c[0], c[1]));
     moveElsewhere(world, c[0], c[2]);
@@ -455,6 +489,8 @@ const Steps steps([] {
     chooseMachine(world, c[0]);
   });
   step(QStringLiteral("%1 is offered").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The project icon picker's images are offered in the same words (FilesIdentitySteps).
+    if (checkIconImageOffered(world, c[0], true)) return;
     const auto entry = item(world, QStringLiteral("machine:") + c[0]);
     const auto listed = choice(world, c[0]);
     expect(entry && entry->value(QStringLiteral("enabled")).toBool() && listed && listed->enabled, offered(world));

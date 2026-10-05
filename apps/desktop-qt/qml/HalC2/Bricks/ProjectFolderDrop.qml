@@ -41,7 +41,7 @@ DropArea {
             wrapMode: Text.Wrap
             text: qsTr("Open folder as a project\n%1\nNo files will be moved or deleted.").arg(root.directoryPath)
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: 18
+            font.pixelSize: Math.round(18 * Theme.fontScale)
         }
     }
 }

@@ -91,7 +91,7 @@ Feature: Thread titles
     When the user opens the thread menu
     Then regenerating the title is unavailable
 
-  @backlog @desktop
+  @desktop
   Scenario: Regenerating titles for several threads
     Given the user has selected three threads, one of which is already regenerating
     When the user regenerates titles for the selection

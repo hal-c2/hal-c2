@@ -136,8 +136,15 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     end
   end
 
-  # Opening the pipe read-write never blocks, whether or not brew is reading it.
+  # Opening the pipe read-write never blocks, whether or not brew is reading it. With
+  # nobody reading yet the line is lost, so this is only for cleaning up.
   defp release(hold), do: System.cmd("sh", ["-c", "echo go 1<>#{hold}"])
+
+  # Hands brew its line: opening the pipe to write waits until brew has opened it to
+  # read, however long brew takes to get there. Off the caller's process, which goes
+  # on reporting; a writer brew never meets is let go by `release/1` at the end.
+  defp release_to_reader(hold),
+    do: spawn(fn -> System.cmd("sh", ["-c", "echo go > #{hold}"]) end)
 
   # Reports Codex's and Claude's update states to `test`, releasing Claude's brew
   # once Codex's update waits for it.
@@ -147,7 +154,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
         for driver <- ["codex", "claudeAgent"],
             state = :persistent_term.get({HalC2.ProviderUpdates, driver, :state}, nil) do
           send(test, {:update_state, driver, state})
-          if driver == "codex" and state["status"] == "queued", do: release(hold)
+          if driver == "codex" and state["status"] == "queued", do: release_to_reader(hold)
         end
 
         watch_updates(test, hold)
@@ -672,5 +679,79 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     if done?.(frame["state"]),
       do: {Enum.reverse(acc), ctx},
       else: install_states(ctx, name, done?, acc)
+  end
+
+  # --- an update to a release that does not work here ----------------------------------
+
+  step "Codex is behind the latest release", context do
+    homebrew_codex(context)
+  end
+
+  # Codex 0.1.0 is supported; its latest release, 0.2.0, is not.
+  step "that latest release is known to be broken with this HAL-C2 release", context do
+    Application.put_env(:hal_c2, :provider_compatibility, [
+      %{
+        "driver" => "codex",
+        "halC2Range" => ">=0",
+        "recommendedRange" => "<0.2",
+        "ranges" => [
+          %{"range" => "<0.2", "status" => "supported"},
+          %{"range" => ">=0.2", "status" => "broken"}
+        ]
+      }
+    ])
+
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :provider_compatibility) end)
+    context
+  end
+
+  # A client offers an update unless the provider says its latest release is broken or
+  # unsupported here (`getProviderVersionAdvisoryPresentation`).
+  step "Codex is not offered an update to that release", context do
+    codex = Enum.find(context.providers, &(&1["instanceId"] == "codex"))
+    assert %{"status" => "behind_latest", "latestVersion" => "0.2.0"} = codex["versionAdvisory"]
+
+    assert %{"status" => "supported", "latestVersionStatus" => "broken"} =
+             codex["compatibilityAdvisory"]
+
+    context
+  end
+
+  # --- sign-out ------------------------------------------------------------------------
+
+  # Grok, signed in, with one thread in the middle of a turn and one that finished.
+  step "the user is signed in to an ACP agent", context do
+    ctx = signed_out_grok(context)
+    File.write!(Path.join(Acp.dir(ctx), "grok.auth"), "signed in")
+    assert %{"status" => "authenticated", "canLogout" => true} = Acp.check("grok")["auth"]
+
+    ctx = Acp.launch(ctx, "Finished", "grok", "hello")
+    [%{"status" => "completed"}] = Acp.await_runs(ctx.threads["Finished"], 1)
+
+    ctx = Acp.launch(ctx, "Running", "grok", "wait for me")
+
+    Acp.await_stream(ctx.threads["Running"], fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+    end)
+
+    assert [_ | _] = Acp.requests(ctx, "grok", "session/prompt")
+    ctx
+  end
+
+  # The client asks first; the MC is told once the user confirms.
+  step "the user signs out and confirms", context do
+    {state, ctx} = World.call!(context, "provider.auth.logout", %{"instanceId" => "grok"})
+    assert %{"phase" => "idle", "message" => "Signed out."} = state
+    ctx
+  end
+
+  step "running threads sharing that sign-in stop", context do
+    assert [%{"status" => "interrupted"}] = Acp.await_runs(context.threads["Running"], 1)
+    assert [_] = Acp.requests(context, "grok", "logout")
+    assert Acp.check("grok")["auth"]["status"] == "unauthenticated"
+    # The thread that had finished keeps what the agent said ("thread history is kept"
+    # checks every thread's messages).
+    assert Acp.assistant_text(context.threads["Finished"]) != ""
+    context
   end
 end

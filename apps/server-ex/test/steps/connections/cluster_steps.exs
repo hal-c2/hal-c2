@@ -340,7 +340,19 @@ defmodule HalC2.Steps.Connections.Cluster do
     %{a: a, b: b} = context.machines
     assert await_connected(a, b)
     assert await_connected(b, a)
-    assert [%{"connected" => true, "version" => @other_version}] = status(b)["members"]
+
+    # The second learns the first's version from the table the first sends as it sees
+    # the second come up. A call the first has answered is behind that send, and a call
+    # to the second made from the first travels behind it on the same connection.
+    status(a)
+
+    members =
+      :peer.call(a.peer, GenServer, :call, [
+        {HalC2.Cluster, HalC2.Cluster.mc_name(b.id)},
+        :status
+      ])["members"]
+
+    assert [%{"connected" => true, "version" => @other_version}] = members
     context
   end
 
@@ -351,6 +363,9 @@ defmodule HalC2.Steps.Connections.Cluster do
   step "the join is refused because the machines run different versions", context do
     assert {:error, message} = context.joined
     assert message =~ "different HAL-C2 versions"
+    # It names both, so the user sees which machine to update.
+    assert message =~ "the joining machine runs #{@other_version}"
+    assert message =~ "the inviting one runs #{HalC2.Upgrade.version()}"
     context
   end
 

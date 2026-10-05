@@ -1,11 +1,13 @@
 #pragma once
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonObject>
 #include <QLocale>
 #include <QObject>
 #include <QSet>
+#include <QTimeZone>
 #include <QTimer>
 #include <QVariant>
 
@@ -48,10 +50,20 @@ public:
   const sidebar::Nullable& scope() const { return m_scope; }
   // The rows' keys in the order they render.
   const QStringList& orderedKeys() const { return m_view.orderedKeys; }
+  // The threads selected for a bulk action, in the order they render:
+  // `thread.select.toggle {key}` adds or removes one, `thread.select.range
+  // {key}` selects from the anchor (the last one toggled or opened) to it,
+  // `thread.select.clear` drops them all, as does scoping the list or opening
+  // a thread. As the web app's threadSelectionStore.
+  QStringList selection() const;
+  void clearSelection();
+  void deselect(const QStringList& keys);
 
   // Tests pin the clock and locale; the app uses the system's.
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  QDateTime now() const { return m_now(); }
   void setLocale(const QLocale& locale) { m_locale = locale; }
+  void setTimeZone(const QTimeZone& zone) { m_zone = zone; }
 
   void refresh();
   // The draft `id` was edited in some window: refreshes when its row here
@@ -74,6 +86,28 @@ public:
             std::function<void()> onSuccess = {});
   // Whether park() is waiting on the MC for the thread `key`.
   bool parking(const QString& key) const { return m_pending.contains(key); }
+  // Arranging: `thread.move {key, direction: "up"|"down"}` moves a pinned or
+  // active row one place; `thread.drop {key, section, beforeKey}` puts a
+  // dragged row before the row `beforeKey` of `section` (at its end without
+  // one). A drop within the pinned or the active rows reorders them; into
+  // another section it pins (at the drop position), unpins, settles,
+  // un-settles or wakes the thread, and into the snoozed shelf does nothing.
+  // The order is the environment's (sidebar::planReorder), which has to
+  // support it (threadPinReorder, threadActiveReorder).
+  // While the thread jump modifier is held (KeybindingController), the first
+  // nine rows show the key that opens them (`jumpLabel`).
+  void setJumpHints(const QStringList& labels, bool shown);
+  // `thread.attachFiles {key, files}` (files dropped on a row, read by the
+  // brick as the composer reads its own): opens the thread and attaches them.
+  // A wake time of the user's own: every snooze menu ends in "Custom…"
+  // (kCustomSnooze), which asks through `customSnooze` ({keys, date, time,
+  // error}, the CustomSnoozeDialog brick). `snooze.custom.submit {mode, date,
+  // time, amount, unit}` snoozes the threads it was asked for, or says what is
+  // wrong with the time; `snooze.custom.cancel` closes it.
+  static inline const QString kCustomSnooze = QStringLiteral("snooze:custom");
+  void askCustomSnooze(const QStringList& keys);
+  // Whether the row can move one place `up` or down within its section.
+  bool canMove(const QString& key, bool up) const;
   // The snooze choices now, and snoozing the thread `key` until one's time,
   // with an Undo toast.
   QList<sidebar::SnoozePreset> snoozePresets() const;
@@ -89,10 +123,27 @@ private:
   void command(const QString& environmentId, QJsonObject command, const QString& failureTitle,
                std::function<void()> onSuccess = {});
   void openSnoozeMenu(const QString& key, double x, double y);
+  // The keys the section ("pinned" or "active") lists, in order.
+  QStringList sectionKeys(const QString& section) const;
+  QString sectionOf(const QString& key) const;
+  // Writes the order keys that put `key` where `ordered` has it; when
+  // `pinning`, the thread is pinned with its key instead of reordered.
+  void arrange(const QString& section, const QStringList& ordered, const QString& key, bool pinning = false);
+  void drop(const QString& key, const QString& section, const QString& beforeKey);
   ToastController* toasts() const;
   // The client settings grouping, ordering and time labels read, from this
   // device's preferences (SettingsController), else their defaults.
   void readSettings();
+  // Reading a thread is a visit: while the window shows one, the MC is told
+  // the thread was seen up to its newest change (`thread.visit`, visitedAt
+  // its updatedAt), which clears "Done" on every device. As the web app's
+  // ChatView: once per change, an unseen completion at once and other
+  // activity at most every few seconds; an MC that does not keep the
+  // watermark (no `lastVisitedAt` on its rows) is not told.
+  void visitOpenThread();
+  // Threads the MC brought over from the first version (`historyOrigin`
+  // "v1_import") are announced once per device, the first time they are listed.
+  void announceMigratedThreads();
   // The open thread, from the shell's route.
   QString activeThreadKey() const;
 
@@ -110,6 +161,16 @@ private:
   sidebar::Nullable m_scope;
   sidebar::View m_view;
   QSet<QString> m_pending;
+  QTimeZone m_zone = QTimeZone::systemTimeZone();
+  // The threads the custom snooze question is about.
+  QStringList m_customSnoozeKeys;
+  QStringList m_jumpLabels;
+  bool m_showJumpHints = false;
+  QString m_visited;  // "<thread key>:<updatedAt>" of the last visit sent
+  QElapsedTimer m_sinceVisit;
+  QTimer m_visitLater;
+  QSet<QString> m_selected;
+  QString m_anchor;
   // The listed drafts' labels, and the open draft's row as it was when the
   // window opened it (nothing when it was empty).
   QHash<QString, QString> m_draftLabels;

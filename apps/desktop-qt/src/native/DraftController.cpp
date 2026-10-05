@@ -69,7 +69,9 @@ void DraftController::activate() {
                                  QStringLiteral("draft")});
   // The web's chat.newLocal: the contextual create, never a project chooser.
   const QString newLocal = QStringLiteral("chat.newLocal");
-  commands->add(newLocal, keybindings::commandLabel(newLocal), [this] { startNew({}); });
+  commands->add(newLocal, keybindings::commandLabel(newLocal), [this] {
+    if (const sidebar::ProjectGroup* group = defaultGroup()) startIn(*group);
+  });
   commands->setListed(newLocal, false);
   commands->addMenu(QStringLiteral("thread.newIn"), tr("New thread in..."), [this] {
     // The window's project first, then the sidebar's order.
@@ -94,6 +96,24 @@ void DraftController::activate() {
     }
     return choices;
   });
+  commands->addMenu(QStringLiteral("draft.moveTo"), tr("Move draft to..."), [this] {
+    QList<CommandRegistry::Choice> choices;
+    const NavigationController::Route& route = NativeShell::of(this)->controller<NavigationController>()->route();
+    const auto shown = shownProject();
+    SidebarController* sidebar = NativeShell::of(this)->sidebar();
+    const auto current = shown ? sidebar->logicalProjectKey(shown->first, shown->second) : std::nullopt;
+    for (const sidebar::ProjectGroup& group : sidebar->groups()) {
+      CommandRegistry::Choice choice;
+      choice.id = group.key;
+      choice.title = group.summary.value(QStringLiteral("displayName")).toString();
+      choice.description = group.summary.value(QStringLiteral("workspaceRoot")).toString();
+      choice.current = current == group.key;
+      choice.run = [this, draftId = route.draftId, key = group.key] { moveTo(draftId, key); };
+      choices.append(choice);
+    }
+    return choices;
+  });
+  commands->setTerms(QStringLiteral("draft.moveTo"), {QStringLiteral("move draft"), QStringLiteral("project"), QStringLiteral("change project")});
   commands->setTerms(QStringLiteral("thread.newIn"), {QStringLiteral("new thread"), QStringLiteral("project"), QStringLiteral("pick"),
                                     QStringLiteral("choose"), QStringLiteral("select")});
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, [this] {
@@ -124,6 +144,8 @@ void DraftController::present() {
   commands->setTitle(newThread, group ? tr("New thread in %1").arg(group->summary.value(QStringLiteral("displayName")).toString())
                                       : keybindings::commandLabel(newThread));
   commands->setListed(newThread, group != nullptr);
+  commands->setListed(QStringLiteral("draft.moveTo"),
+                      shell->controller<NavigationController>()->route().kind == QLatin1String("draft") && shell->sidebar()->groups().size() > 1);
 }
 
 std::optional<std::pair<QString, QString>> DraftController::shownProject() const {
@@ -180,6 +202,13 @@ bool DraftController::startNew(const QVariantMap& payload) {
     group = NativeShell::of(this)->sidebar()->group(requested.toString());
     if (!group) return true;
   } else {
+    // The web's chat.new: with several projects, none of them showing or in
+    // scope, it asks which one.
+    SidebarController* sidebar = NativeShell::of(this)->sidebar();
+    if (!shownProject() && !sidebar->scope() && sidebar->groups().size() > 1) {
+      NativeShell::of(this)->controller<KeybindingController>()->commands()->run(QStringLiteral("thread.newIn"));
+      return true;
+    }
     group = defaultGroup();
   }
   // No project yet: the sidebar offers to add one.
@@ -228,6 +257,7 @@ QString DraftController::start(const QString& environmentId, const QString& proj
     changedEverywhere();
   }
   NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::draft(id));
+  emit started(id);
   return id;
 }
 
@@ -308,8 +338,7 @@ void DraftController::openMenu(const QString& id, double x, double y) {
   NativeShell::of(this)->controller<MenuController>()->open(x, y, {remove}, [this, id](const QString&) { this->remove(id); });
 }
 
-// The sidebar's projects, the open draft's ticked. Picking another opens its
-// draft and brings what was typed along, unless that draft has text of its own.
+// The sidebar's projects, the open draft's ticked; picking another moves the draft (moveTo).
 void DraftController::openProjects(double x, double y) {
   auto* shell = NativeShell::of(this);
   auto* navigation = shell->controller<NavigationController>();
@@ -323,21 +352,23 @@ void DraftController::openProjects(double x, double y) {
     item.checked = current == group.key;
     items.append(item);
   }
-  shell->controller<MenuController>()->open(x, y, items, [this, navigation, from = navigation->route().draftId](const QString& key) {
-    const sidebar::ProjectGroup* group = NativeShell::of(this)->sidebar()->group(key);
-    const auto left = draft(from);
-    if (!group || !left) return;
-    startIn(*group);
-    const QString to = navigation->route().draftId;
-    const auto opened = draft(to);
-    if (to == from || !opened || !opened->text.isEmpty() || left->text.isEmpty()) return;
-    // Through the composer, which the window now shows `to` in, so the caret
-    // lands after the text.
-    m_bridge->dispatch(QStringLiteral("composer.text.set"),
-                       QVariantMap{{QStringLiteral("target"), to}, {QStringLiteral("text"), left->text}, {QStringLiteral("cursor"), left->text.size()}});
-    setText(from, {});
-    changedEverywhere();
-  });
+  shell->controller<MenuController>()->open(x, y, items, [this, from = navigation->route().draftId](const QString& key) { moveTo(from, key); });
+}
+
+void DraftController::moveTo(const QString& from, const QString& projectKey) {
+  const sidebar::ProjectGroup* group = NativeShell::of(this)->sidebar()->group(projectKey);
+  const auto left = draft(from);
+  if (!group || !left) return;
+  startIn(*group);
+  const QString to = NativeShell::of(this)->controller<NavigationController>()->route().draftId;
+  const auto opened = draft(to);
+  if (to == from || !opened || !opened->text.isEmpty() || left->text.isEmpty()) return;
+  // Through the composer, which the window now shows `to` in, so the caret
+  // lands after the text.
+  m_bridge->dispatch(QStringLiteral("composer.text.set"),
+                     QVariantMap{{QStringLiteral("target"), to}, {QStringLiteral("text"), left->text}, {QStringLiteral("cursor"), left->text.size()}});
+  setText(from, {});
+  changedEverywhere();
 }
 
 void DraftController::reconcile() {

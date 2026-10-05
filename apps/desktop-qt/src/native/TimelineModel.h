@@ -71,12 +71,28 @@ public:
     // promoted_queued_to_steer or empty.
     IntentRole,
     // Who sent a user message when not the user: "Sent by automation",
-    // "Sent by another agent", or empty.
+    // "From <thread>" for an agent whose thread is known (ThreadRole opens
+    // it), "Sent by another agent", or empty.
     AttributionRole,
     // Whether an assistant reply carries its time and actions: a settled
     // turn's last reply does, commentary before it does not (the web's
     // showAssistantMeta).
     MetaRole,
+    // What a settled turn's group of calls did, in a sentence ("Ran 2 commands
+    // and sent messages to 3 threads", TimelineSummary.h): the group collapses
+    // into it and opens into its calls. Empty for a single call and while the
+    // turn runs, when the latest call shows instead.
+    SummaryRole,
+    // Whether a call the group's summary counts failed.
+    SummaryFailedRole,
+    // The id of the thread a row leads to: a subagent's own thread, or the
+    // thread of the agent that sent a message. Empty when there is none.
+    ThreadRole,
+    // The model a subagent runs on (its `subagent` entity's), or empty.
+    ModelRole,
+    // The first pull (or merge) request address a message mentions, for
+    // linking it to the thread; empty when it mentions none.
+    PullRequestUrlRole,
     // An assistant reply's message, which a quote of it names as its source.
     MessageIdRole,
     // A user message's images: [{id, name, url}]. `url` is empty until the
@@ -100,6 +116,9 @@ public:
   // "Working for 12s", from the clock; the brick asks once a second.
   Q_INVOKABLE QString workingLabel() const;
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  // Names another thread of this one's environment by id, for messages its
+  // agent sent here; empty when the thread is not known.
+  void setThreadTitles(std::function<QString(const QString& threadId)> titleOf) { m_threadTitle = std::move(titleOf); }
   // The device's timestampFormat (locale, 12-hour, 24-hour) and the locale
   // times are read in; a change redraws every row's time.
   void setTimestampFormat(const QString& format);
@@ -119,10 +138,23 @@ public:
 
   // Opens or closes a fold ("fold:<runId>") or a work group ("work:<itemId>").
   Q_INVOKABLE void toggle(const QString& rowId);
+  // The user stopped this run here: once it settles its work stays open, fold
+  // and calls, so they see where it stopped. A stop from elsewhere, or one a
+  // restart forgot, folds as any turn does; toggle() still closes it.
+  void keepOpen(const QString& runId);
   Q_INVOKABLE int indexOf(const QString& rowId) const;
   // The checkpoint an agent reply's settled turn left, to revert the thread
   // to: {checkpointId, scopeId, turn} (turn counts from 1), or empty.
   Q_INVOKABLE QVariantMap checkpointOf(const QString& rowId) const;
+  // The run an assistant reply's row belongs to once it has finished (a fork
+  // can start from it), else empty.
+  Q_INVOKABLE QString finishedRunOf(const QString& rowId) const;
+  // Where the thread rewinds to when the user edits from their message
+  // `rowId`: {turn (the message's, from 1), checkpointId and scopeId (the
+  // checkpoint the turn before it left), text, attachments (the message's:
+  // [{type, id, name, mimeType, sizeBytes}])}. Empty for any other row, and
+  // without `checkpointId` when no checkpoint precedes the message.
+  Q_INVOKABLE QVariantMap rewindPointOf(const QString& rowId) const;
   // Puts a message's markdown on the clipboard; false for any other row.
   Q_INVOKABLE bool copy(const QString& rowId) const;
   // Asks for an image's address (attachmentWanted) unless one that still
@@ -150,6 +182,9 @@ signals:
   // After a snapshot, or events that touched subagents, runs or commands
   // starting and settling: what the Agents tab lists.
   void agentsChanged();
+  // After a snapshot, or a command or file change starting or settling: the
+  // workspace's files may have changed (WorkspaceFiles lists them again).
+  void workspaceChanged();
   // An image on screen has no address yet (loadAttachment).
   void attachmentWanted(const QString& id);
 
@@ -169,6 +204,11 @@ private:
     QDateTime at;
     // A reply's: whether it is its settled turn's last.
     bool meta = false;
+    // A work group's: its turn settled and it has several calls, so it
+    // collapses into its summary.
+    bool summarized = false;
+    // A work group's: its run was stopped here, so it starts open.
+    bool startsOpen = false;
 
     bool operator==(const Row&) const = default;
   };
@@ -208,13 +248,18 @@ private:
   QList<Row> m_rows;
   QHash<QString, int> m_rowOfItem;
   QSet<QString> m_expandedFolds;   // run ids
-  QSet<QString> m_expandedGroups;  // row ids
+  // Work groups the user toggled, by row id: open ones, or closed ones of a
+  // run stopped here (Row::startsOpen).
+  QSet<QString> m_expandedGroups;
+  QSet<QString> m_keptOpen;  // run ids
   QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
   QDateTime m_workingSince;
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;
   bool m_agentsTouched = false;
+  bool m_workspaceTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
+  std::function<QString(const QString&)> m_threadTitle;
   QString m_timestampFormat = QStringLiteral("locale");
   QLocale m_locale;
 };

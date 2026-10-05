@@ -54,6 +54,18 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   cluster). The scenarios are `features/desktop/native-*.feature` and the
   `@desktop` and `@shared` ones in the files `tests/native/tst_Features.cpp`
   lists, run by the native `tst_Features`.
+- **One owner of retries.** `McClient` is the only thing that reconnects. Before
+  each socket it reads the MC's descriptor and stays blocked on a protocol it
+  does not speak; a drop is retried with growing delays, waits for the network
+  when a remote MC's device is offline, and stops on a credential the MC
+  refuses until the user pairs again. A failed handshake does not say why, so
+  the client asks for a socket ticket: the MC's own token opens the socket
+  directly, a paired session's token only through a ticket, and a token the MC
+  no longer knows gets neither. A thread's stream resubscribes from the
+  offset its last whole snapshot or event reached; every other shape is sent
+  whole. `ConnectionHealthController` turns the phases into `connection`, which
+  is not `connected` until the shell snapshot lands on that socket. Controllers
+  must not add timers of their own to recover a connection.
 - The UI-owned parts of `desktopBridge` (open external, window commands,
   colour scheme, dialogs/context menus) are served by the shell itself; the
   TypeScript-owned parts stay on the Node side.
@@ -238,8 +250,8 @@ path). If `shell.qml` fails to load, the default shell takes over with
 
 ### Local extensions
 
-Extensions are trusted QML components instantiated by `shell.qml`, not a plugin
-registry or a sandbox. `DefaultShell` exposes `sidebar`, `composer`, `workspace`,
+Extensions are trusted QML components instantiated by `shell.qml`, with no
+sandbox. `DefaultShell` exposes `sidebar`, `composer`, `workspace`,
 `centreView`, `terminalDrawer`, and `rightPanel` so extensions do not need to copy
 the layout. Removing a component removes its controls and signal subscriptions.
 `DefaultShell.toolbar` accepts a component above the timeline. Give it an
@@ -250,8 +262,8 @@ rather than positioning buttons over the timeline.
 allows opt-in input handling, and `insertText(text, capturedTarget)` replaces the
 selection only while that draft remains selected and editable. Capture
 `publishedTarget` before asynchronous work; insertion does not submit a turn.
-`ComposerVimKeys` implements a deliberately limited, disabled-by-default modal
-editor. Focus and rename entry points are `Composer.focusInput()`,
+`Composer` hosts a `ComposerVimKeys`, a deliberately limited modal editor the
+`composerVimKeys` setting turns on; a layout must not add a second one. Focus and rename entry points are `Composer.focusInput()`,
 `Composer.toggleCheckoutPicker()`, `Workspace.beginRename()`, and
 `TerminalDrawer.focusTerminal()`.
 
@@ -269,10 +281,13 @@ an attached URL, and an MC origin on loopback. Do not enable that flag for an
 SSH-forwarded backend with a different filesystem; its loopback origin looks
 local.
 
-`examples/folders` adds a native folder explorer using Qt's `TreeView` and
-asynchronous `QFileSystemModel` through `DefaultShell.navigationPanel`. The
-thread sidebar stays visible beside the file browser, or above it on narrow
-windows; the browser does not replace thread navigation. Files are listed
+`DefaultShell` overlays `ProjectFolderDrop` and shows a native folder explorer
+(Qt's `TreeView` over an asynchronous `QFileSystemModel`) beside the thread
+list while `folders.open` is set (`folders.toggle`, "Manage folders" in the
+palette). `examples/folders` keeps one open through
+`DefaultShell.navigationPanel` instead. The thread sidebar stays visible
+beside the file browser, or above it on narrow windows; the browser does not
+replace thread navigation. Files are listed
 read-only. The `FolderExplorer` brick provides create,
 rename, move and confirmed system-Trash actions through `LocalFolderModel`.
 It never falls back to permanent deletion. Operations are limited to plain
@@ -291,6 +306,37 @@ opens the shell's own confirmation (below). Confirming permanently deletes
 that entry's conversation history, including archived threads, and its
 drafts; it leaves files on disk. This is separate from Trash, not a safe
 workaround for renaming or moving a registered project root.
+
+### UI plugins
+
+A plugin is a QML file in `<config dir>/plugins/` whose root is a `Plugin`
+holding `Contribution`s, each naming a slot. The bricks place `PluginSlot`s:
+`sidebar.footer` (`Sidebar`), `composer.actions` (`Composer`) and `statusbar`
+(`DefaultShell`), the names the terminal client uses. A plugin is as trusted
+as a rice: it runs in the shell's engine with the shell's access.
+
+- **Two halves.** `PluginController` (native, shared by every window) owns
+  the files: which exist, which are turned off, where a downloaded one came
+  from (`plugins.json`, the terminal client's format), and it publishes each
+  file's text in `plugins.files`. `PluginRegistry`, a QML singleton and so one
+  per window's engine, instantiates that text and answers with
+  `plugins.report`. The controller cannot make QML objects for an engine it
+  does not own, and QML cannot read files, hence the split.
+- **`import OpenTUI` is rewritten.** The terminal client's plugin files
+  import its runtime's module. The registry replaces that import with
+  `QtQuick` and `HalC2.Bricks` before `Qt.createQmlObject`, so one file loads
+  on both as long as it keeps to what both have (`Text`, `Row`, `Column`,
+  `Rectangle`, `Timer`). The terminal client's `data` context property cannot
+  exist here (an `Item` has a `data` property of its own); a contribution
+  declares `property var slotData` to be given the slot's data.
+- **A report must not answer inside the change that caused it.** The report
+  changes `plugins`, which the registry's `wanted` binding reads; it is sent
+  with `Qt.callLater` and only when it differs from the last one.
+- **The config directory is watched twice.** `ShellRuntime` reloads the
+  whole shell on any QML change under the config directory, plugin files
+  included, and the controller re-reads the saved file. The registry outlives
+  the reload (same engine), so a file that no longer loads leaves the version
+  already running.
 
 ### Independent views and windows
 
@@ -567,7 +613,11 @@ host a project reads, as the web dialog does. Offline its rows stay as last
 synced and nothing is sent. The Previews tab (`PreviewsPanel` over
 `ThreadPreviews`) lists the thread's browser tabs from `preview.list` and the
 `preview` shape, subscribed only while it shows, and opens each in the user's
-browser. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
+browser. The add menu's "Browser tab" (`rightPanel.add {kind: "browser"}`) is
+`preview.open` with no address: an empty tab the Previews tab fills from the
+MC's `localServers` shape (the MC's machine's servers, never this one's), the
+project scripts' `previewUrl`s and this device's last ten pages
+(`previewRecentPages`), with `preview.navigate`. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
 in `RightPanelController::nativeKinds`.
 
 The desktop embeds no browser. QtWebView is WebEngine underneath on Linux,
@@ -660,7 +710,26 @@ it; the drawer is available wherever the header is
   coalesce into the next one, so the shell sees the user's order.
 - **Hidden is not detached.** Once opened, the drawer stays attached while
   hidden, like the web's drawer, so output keeps arriving and switching
-  back costs nothing.
+  back costs nothing. Leaving a thread parks its sessions, still attached,
+  for the last ten threads left; returning reuses them instead of attaching
+  again.
+- **Restored state waits for the list.** The drawer's height and each
+  thread's open flag and active terminal are kept in `shell-terminals.json`
+  (state directory). After a restart they apply only once the MC's
+  `terminals` snapshot says which terminals still exist, so the drawer never
+  opens on a terminal that is gone.
+- **A close asks, an exit does not.** Every close the user makes
+  (`terminal.close`, a terminal tab of the right panel) goes through one
+  `MenuController` question naming each terminal; a shell that exits on its
+  own takes its terminal with it unasked. When `terminal.close` fails the
+  shell is sent `exit` instead, as the web does.
+- **Links are found from the text.** qml-ghostty exposes no cell contents, so
+  `TerminalSplits` maps a click to a character of `Terminal.text()`
+  (`js/terminalLinks.js`, the patterns of `packages/shared/terminalLinks.ts`)
+  by counting a row per `columns` characters. Wide characters above the click
+  shift that count; the fix is a link API in qml-ghostty, not more arithmetic
+  here. Web addresses open in the system browser whatever `browserLinkTarget`
+  says, since the desktop draws no pages.
 - **Groups.** Terminals are laid out in groups, as the web's terminal grid: a
   terminal never split is a group of its own, `terminal.split` (side by side)
   and `terminal.splitVertical` (stacked) add one after the focused terminal,
@@ -773,9 +842,10 @@ limit like the web's. The shell's settings navigation and search are its own
 
 `NavigationController` owns where the window is:
 `route` is `{kind, threadKey, draftId, projectKey, section, title,
-canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `settings`,
+canGoBack, target, targetSeq, search, searchSeq}` with `kind` one of `home`, `thread`, `draft`, `settings`,
 `pullRequests`, `usage` (the `ShellRoute` contract plus
-`title`, `canGoBack` and the settings search's target). `ShellWindow` titles the window from `title` and derives
+`title`, `canGoBack`, the settings search's target, and the query `settings.search {query}` puts in the
+settings navigation's search field). `ShellWindow` titles the window from `title` and derives
 `settingsActive` and `settingsSection` from it; the sidebar's active row and the
 composer's target thread come from it too. It keeps a back stack (home is
 passed through, and moving between settings sections is one step) and writes the last route to `shell-route.json` in the shell's state
@@ -834,7 +904,10 @@ theme.json win). The themed controls (`ShellButton` etc.) take radius, surfaces,
 borders and fonts from `Theme`.
 
 Settings → Appearance chooses and edits themes through `Themes` (`setMode`,
-`choose`, `chooseHalf`, `draft`, `saveCustom`, `duplicate`, `removeCustom`).
+`choose`, `chooseHalf`, `draft`, `saveCustom`, `duplicate`, `requestRemove`,
+`importFiles`, `importText`, `exportTheme`). The editor's draft is the
+controller's (`Themes.editing`), not the page's, so the one `ThemeEditor`
+`ShellWindow` holds keeps unsaved changes while the user moves about.
 The same choices are the actions `theme.mode {mode}`, `theme.choose {id}`,
 `theme.chooseHalf {appearance, id}` and `appearance.cycle`, which is
 `Themes.cycleAppearance()` (System → Light → Dark, with one toast however
@@ -842,8 +915,8 @@ fast it is pressed).
 
 ### `layout`
 
-The shell owns whether the thread list is hidden: `LayoutController`
-publishes `layout {sidebarCollapsed}`, remembers it in the device's
+The shell owns whether the thread list is hidden and how wide it is: `LayoutController`
+publishes `layout {sidebarCollapsed, sidebarWidth}`, remembers them in the device's
 `preferences.json`, and publishes it before the MC's first snapshot so a
 restart does not flash the list. `sidebar.toggle` (action and keybinding
 command, Mod+B by default) flips it. The `Workspace` brick shows a toggle when
@@ -853,6 +926,9 @@ brand band when `showBrand` is on. The right panel's toggle follows the same
 pattern: `Workspace.panelToggle` puts it in the header strip and `RightPanel
 { ownToggle: false }` then takes no width while closed; a rice that leaves
 `ownToggle` on gets the 36 px rail with the toggle instead.
+`sidebar.resize {width}` sets the list's width (no width resets it), and `ShellWindow` reports its
+own width as `layout.window {width}` so the published `sidebarWidth` shrinks when the thread would
+be left less than its minimum.
 
 It also owns the app's zoom, a device preference (`zoomLevel`, Chromium's
 steps: factor 1.2^level in half steps) that every window follows, published
@@ -924,7 +1000,10 @@ Settings → Keybindings; they resolve only after every rule, so a user's rule
 for the same chord wins, as it does over Electron's menu.
 
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
-`Keybindings.press`. Who takes a key follows focus:
+`Keybindings.press`. Each entry of `Keybindings.shortcuts` says whether the key is the shell's with
+the chrome, the composer's field, another text field or a terminal focused, so a shortcut whose
+condition fails there is disabled and the key stays with the control (mod+z in a text field).
+Who takes a key follows focus:
 
 - A focused terminal keeps every key except the sequences that resolve, in
   that focus, to a native command or a project script.

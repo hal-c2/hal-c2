@@ -84,7 +84,7 @@ Feature: Customising keybindings
       Then the valid rule applies
       And the unknown one is ignored
 
-    @backlog @desktop
+    @desktop
     Scenario: An unreadable file falls back to the defaults
       Given keybindings.json is not valid JSON
       When the client loads keybindings
@@ -160,17 +160,17 @@ Feature: Customising keybindings
         | terminalOpen                      | the terminal is closed                        | does not run |
         | isDesktop                         | the user is in the desktop app                | runs     |
         | somethingUnknown                  | anything                                      | does not run |
+        | terminalFocus                     | a terminal has focus                          | runs     |
+        | previewOpen                       | the preview is closed                         | does not run |
+        | composerFocus && turnRunning      | the composer has focus and no turn is running | does not run |
+        | editableFocus                     | a text field has focus                        | runs     |
+        | !(terminalOpen && previewOpen)    | both the terminal and preview are open        | does not run |
+        | modelPickerOpen                   | the model picker is open                      | runs     |
+        | composerFocus && composerDraft    | the composer has focus and a draft            | runs     |
 
       @backlog
       Examples: Not yet honoured by the native client
         | condition                         | state                                         | outcome  |
-        | terminalFocus                     | a terminal has focus                          | runs     |
         | previewFocus                      | the preview has focus                         | runs     |
-        | previewOpen                       | the preview is closed                         | does not run |
-        | modelPickerOpen                   | the model picker is open                      | runs     |
-        | composerFocus && composerDraft    | the composer has focus and a draft            | runs     |
-        | composerFocus && turnRunning      | the composer has focus and no turn is running | does not run |
-        | editableFocus                     | a text field has focus                        | runs     |
         | isWeb                             | the user is in a browser                      | runs     |
         | terminalFocus \|\| previewFocus   | the preview has focus                         | runs     |
-        | !(terminalOpen && previewOpen)    | both the terminal and preview are open        | does not run |

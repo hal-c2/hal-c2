@@ -10,6 +10,7 @@
 #include "AlertController.h"
 #include "Alerts.h"
 #include "CommandPaletteController.h"
+#include "FilesViewer.h"
 #include "Harness.h"
 #include "Move.h"
 #include "NavigationController.h"
@@ -40,6 +41,8 @@ struct FakeAlerts {
   QStringList delivered;
   QStringList closed;
   QStringList sounds;
+  // What the dock or taskbar badge counts; -1 before it was ever set.
+  int badge = -1;
   QMap<QString, Tracked> threads;  // by title
   QString current;                 // the title the last steps were about
   QString lastToast;               // the title of the last in-app alert
@@ -73,6 +76,8 @@ AlertController& alerts(World& world) {
           state.shown.clear();
         },
         [&state](const QString& kind) { state.sounds.append(kind); },
+        [&state] { return state.allowed; },
+        [&state](int count) { state.badge = count; },
   });
   controller->setFocused(state.focused);
   return *controller;
@@ -222,6 +227,58 @@ void toggleMuteFromPalette(World& world, const QString& title, bool mute) {
 const Steps steps([] {
   const QString q = kQuoted;
 
+  // The shell's own alerts with the window out of focus (timeline/qt-shell-backlog.feature).
+  // AlertController hands them to the desktop's notification service and the
+  // dock or taskbar badge itself (the Presenter): nothing else is installed.
+  const auto inBackground = [](World& world) {
+    if (world.shellSubscriptions() == 0) {
+      world.mc.projects.insert(QStringLiteral("shop"), {{QStringLiteral("id"), QStringLiteral("shop")}, {QStringLiteral("title"), QStringLiteral("shop")},
+                                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")}, {QStringLiteral("scripts"), QJsonArray()}});
+      world.connect();
+      world.sync();
+    }
+    setMode(world, QStringLiteral("notifications"));
+    fake(world).focused = false;
+    alerts(world);
+  };
+  step(QStringLiteral("the native desktop shell has no notification extension installed"), [](World& world, const Captures&, const Table&) {
+    // Nothing but the shell's own presenter is there to deliver a notification.
+    expect(fake(world).shown.isEmpty() && fake(world).delivered.isEmpty(), QStringLiteral("a notification is already shown: %1").arg(describe(world)));
+  });
+  step(QStringLiteral("the app is in the background"), [inBackground](World& world, const Captures&, const Table&) { inBackground(world); });
+  step(QStringLiteral("a turn finishes"), [](World& world, const Captures&, const Table&) {
+    change(world, working(world, QStringLiteral("Tax fix")), QStringLiteral("completes"));
+  });
+  step(QStringLiteral("an operating system notification arrives"), [](World& world, const Captures&, const Table&) {
+    const FakeAlerts& state = fake(world);
+    const QString key = keyOf(world, state.threads.value(QStringLiteral("Tax fix")));
+    expect(state.shown.value(key) == QStringList{QStringLiteral("Thread completed"), QStringLiteral("Tax fix")} && toasts(world).isEmpty(),
+           QStringLiteral("the user sees %1").arg(describe(world)));
+  });
+  const auto twoFinish = [](World& world) {
+    change(world, working(world, QStringLiteral("Tax fix")), QStringLiteral("completes"));
+    change(world, working(world, QStringLiteral("Cart tests")), QStringLiteral("completes"));
+  };
+  step(QStringLiteral("two turns finish"), [twoFinish](World& world, const Captures&, const Table&) { twoFinish(world); });
+  step(QStringLiteral("the dock or taskbar badge shows (\\d+)"), [inBackground, twoFinish](World& world, const Captures& c, const Table&) {
+    // As a precondition: that many turns finished while the app was away.
+    if (!world.checking) {
+      inBackground(world);
+      twoFinish(world);
+    }
+    expect(fake(world).badge == c[0].toInt(), QStringLiteral("the badge shows %1").arg(fake(world).badge));
+  });
+  step(QStringLiteral("the user returns to the app"), [](World& world, const Captures&, const Table&) {
+    fake(world).focused = true;
+    alerts(world);
+  });
+  step(QStringLiteral("the badge is cleared"), [](World& world, const Captures&, const Table&) {
+    expect(fake(world).badge == 0, QStringLiteral("the badge shows %1").arg(fake(world).badge));
+    // A turn that finishes while the user is here is not counted.
+    change(world, working(world, QStringLiteral("Docs")), QStringLiteral("completes"));
+    expect(fake(world).badge == 0, QStringLiteral("the badge shows %1 with the window in front").arg(fake(world).badge));
+  });
+
   step(QStringLiteral("the user has alerts turned on"), [](World& world, const Captures&, const Table&) {
     auto* settings = world.native().controller<SettingsController>();
     settings->set(QStringLiteral("inAppNotificationsEnabled"), true);
@@ -278,6 +335,7 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user is looking at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (lookAtFile(world, c[0])) return;
     if (!fake(world).threads.contains(c[0]) && showMachineThread(world, c[0])) return;
     Tracked& thread = fake(world).threads.contains(c[0]) ? tracked(world, c[0]) : working(world, c[0]);
     world.native().controller<NavigationController>()->open(NavigationController::Route::thread(keyOf(world, thread)));
@@ -304,6 +362,7 @@ const Steps steps([] {
            QStringLiteral("the alert is still shown: %1").arg(describe(world)));
   });
   step(QStringLiteral("%1 is shown").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("isShown"))) return world.onSettingsPage.value(QStringLiteral("isShown"))(c);
     const QString key = keyOf(world, tracked(world, c[0]));
     const QString shown = world.native().controller<NavigationController>()->threadKey();
     expect(shown == key, QStringLiteral("the window shows \"%1\", not \"%2\"").arg(shown, key));
@@ -442,6 +501,31 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+void setAlertFocus(World& world, bool focused) {
+  fake(world).focused = focused;
+  alerts(world);
+}
+
+void setAlertsAllowed(World& world, bool allowed) {
+  fake(world).allowed = allowed;
+  alerts(world);
+}
+
+AlertsSeen alertsSeen(World& world) {
+  alerts(world);
+  const FakeAlerts& state = fake(world);
+  return {state.shown, state.closed, state.sounds, state.badge};
+}
+
+bool clickNotification(World& world, const QString& key, QStringList* raised) {
+  for (const auto& window : world.native().windows()) {
+    QObject::connect(window->bridge(), &ShellBridge::windowCommandRequested, window.get(), [raised, id = window->id()](const QString& command) {
+      if (raised && command == QLatin1String("raise")) raised->append(id);
+    });
+  }
+  return alerts(world).openThread(key);
+}
 
 void awaitSystemNotifications(World& world) {
   auto* settings = world.native().controller<SettingsController>();

@@ -145,26 +145,26 @@ Feature: Usage
     When the user opens Usage
     Then the user is told "Transcripts could not be scanned."
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Usage can be filtered by environment
     Given two connected environments
     When the user selects only one environment in Usage
     Then costs, tokens and limits are shown for that environment only
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Environments still scanning are shown as they finish
     Given two connected environments, one slow to scan
     When the user opens Usage
     Then the fast environment's results appear first
     And the slow environment is shown as still scanning until it responds
 
-  @backlog @desktop
+  @desktop
   Scenario: A custom price is saved to several environments at once
     Given two connected environments
     When the user saves a custom price for "my-model" to both
     Then each environment reports that the price saved
 
-  @backlog @desktop
+  @desktop
   Scenario: An offline environment is marked not saved and can be retried
     Given one of two selected environments is offline
     When the user saves a custom price to both
@@ -172,19 +172,19 @@ Feature: Usage
     When the environment reconnects and the user chooses "Retry failed saves"
     Then the price is saved there without writing again to the other environment
 
-  @backlog @desktop
+  @desktop
   Scenario: Environments with different prices show the price as mixed
     Given two environments with different prices for "my-model"
     When the user opens Model prices with both selected
     Then the price of "my-model" is shown as "Mixed"
 
-  @backlog @desktop
+  @desktop
   Scenario: A reset marked for removal can be undone before saving
     Given the user marked "claude-sonnet" to reset to automatic
     When the user undoes the reset before saving
     Then the custom price of "claude-sonnet" is kept
 
-  @backlog @tui
+  @tui
   Scenario: The TUI shows usage totals
     When the user opens Usage in the TUI
     Then tokens and estimated cost per provider are shown

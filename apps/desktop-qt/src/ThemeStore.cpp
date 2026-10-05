@@ -260,6 +260,21 @@ QString ThemeStore::fontMono() const {
   return m_fontMono.isEmpty() ? firstFontFamily(m_baseFontMono) : firstFontFamily(m_fontMono);
 }
 
+QString ThemeStore::fontPrompt() const {
+  const QString own = m_baseTheme.value(QStringLiteral("fontPrompt")).toString();
+  return own.isEmpty() ? fontUi() : firstFontFamily(own);
+}
+
+QString ThemeStore::fontTerminal() const {
+  const QString own = m_baseTheme.value(QStringLiteral("fontTerminal")).toString();
+  return own.isEmpty() ? fontMono() : firstFontFamily(own);
+}
+
+int ThemeStore::fontSize(const char* part, int fallback) const {
+  const int size = m_baseTheme.value(QStringLiteral("fontSizes")).toMap().value(QLatin1String(part)).toInt();
+  return size > 0 ? size : fallback;
+}
+
 void ThemeStore::applyBaseTheme(const QVariant& theme) {
   const QVariantMap map = theme.toMap();
   if (map.isEmpty() || map == m_baseTheme) {

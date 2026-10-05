@@ -17,6 +17,8 @@
 #include "OnboardingController.h"
 #include "ProviderSettingsController.h"
 #include "SettingsController.h"
+#include "FileActionsController.h"
+#include "PluginController.h"
 #include "ThreadMenuController.h"
 #include "RightPanelController.h"
 #include "ThreadStore.h"
@@ -44,6 +46,7 @@ void World::start() {
   // The shell runs its own local MC, so local folders are its to open.
   m_bridge->setLocalFolderImportEnabled(true);
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
+  m_native->controller<PluginController>()->setConfigDir(configDir());
   m_theme = std::make_unique<ThemeStore>(configDir());
   m_theme->applyBaseTheme(state(QStringLiteral("theme")));
   QObject::connect(m_bridge.get(), &ShellBridge::stateEntryChanged, m_theme.get(), [this](const QString& key, const QVariant& value) {
@@ -56,6 +59,7 @@ void World::start() {
     return true;
   };
   m_native->controller<ThreadMenuController>()->setClipboardWriter(writeClipboard);
+  m_native->controller<FileActionsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<ProviderSettingsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<RightPanelController>()->review()->setClipboardWriter(writeClipboard);
   setTime(m_now);

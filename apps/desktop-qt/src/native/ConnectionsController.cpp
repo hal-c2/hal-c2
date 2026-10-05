@@ -74,8 +74,16 @@ bool ConnectionsController::handle(const QString& action, const QVariant& payloa
     const bool code = input.value(QStringLiteral("what")) == QLatin1String("code");
     const QString text = created.value(code ? QStringLiteral("code") : QStringLiteral("url")).toString();
     if (!text.isEmpty()) {
-      QGuiApplication::clipboard()->setText(text);
-      setNotice(QStringLiteral("success"), code ? QStringLiteral("Pairing code copied.") : QStringLiteral("Pairing link copied."));
+      QClipboard* clipboard = QGuiApplication::clipboard();
+      const bool copied = m_copy ? m_copy(text) : clipboard != nullptr;
+      if (copied && !m_copy) clipboard->setText(text);
+      // A clipboard that refuses leaves the link on the page, selected to copy by hand.
+      m_state.insert(QStringLiteral("revealed"), !copied);
+      if (copied) {
+        setNotice(QStringLiteral("success"), code ? QStringLiteral("Pairing code copied.") : QStringLiteral("Pairing link copied."));
+      } else {
+        setNotice(QStringLiteral("error"), QStringLiteral("Could not copy to the clipboard. Copy the link below by hand."));
+      }
     }
   } else if (action == QLatin1String("connections.pairingLink.revoke")) {
     const QString id = input.value(QStringLiteral("id")).toString();

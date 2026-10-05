@@ -22,6 +22,9 @@
 #include "McClient.h"
 #include "World.h"
 
+// CheckpointEditSteps.cpp
+bool cancelRewindQuestion(World& world);
+
 namespace {
 
 const QString kAt = QStringLiteral("2026-09-23T09:00:00Z");
@@ -278,6 +281,10 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap());
   });
   step(QStringLiteral("the desktop app is connected to its own local environment"), [](World& world, const Captures&, const Table&) {
+    if (world.shellSubscriptions() == 0) {
+      world.connect();
+      world.sync();
+    }
     expect(world.bridge().localFolderImportEnabled() && world.native().client()->isReady(),
            QStringLiteral("the shell is not connected to its own environment"));
   });
@@ -351,6 +358,8 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user cancels"), [](World& world, const Captures&, const Table&) {
+    if (world.answerQuestion) return std::exchange(world.answerQuestion, {})(false);
+    if (cancelRewindQuestion(world)) return;  // CheckpointEditSteps.cpp: "Edit from here?"
     world.bridge().dispatch(QStringLiteral("project.remove.cancel"), QVariantMap());
   });
   step(QStringLiteral("the folder explorer shows %1").arg(q), [](World& world, const Captures& c, const Table&) {

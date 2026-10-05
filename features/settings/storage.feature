@@ -2,6 +2,7 @@
 #   apps/server-ex/lib/hal_c2/storage_cleanup.ex (hourly sweep, worktree rules, browser artifacts)
 #   apps/web/src/components/settings/StorageSettings.tsx
 #   packages/contracts/src/settings.ts (storageCleanup, project worktree cleanup)
+#   apps/tui/src/host/sections/storage.ts
 
 Feature: Storage cleanup
   The MC can remove worktrees and old files it created so disk use does not
@@ -86,13 +87,13 @@ Feature: Storage cleanup
 
   Rule: Storage settings
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: Settings for several machines show mixed values
       Given "laptop" deletes inactive worktrees and "server" does not
       When the user views storage settings for both machines
       Then that rule shows as mixed
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: A machine too old for storage cleanup asks to be updated
       Given the selected machine does not support storage cleanup
       When the user opens storage settings

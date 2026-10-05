@@ -3,7 +3,9 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QQmlPropertyMap>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <limits>
@@ -145,6 +147,8 @@ void CommandPaletteController::activate() {
     connect(commands, signal, this, &CommandPaletteController::rebuild);
   }
   connect(commands, &QAbstractItemModel::dataChanged, this, &CommandPaletteController::rebuild);
+  connect(shell->controller<KeybindingController>(), &KeybindingController::bindingsChanged, this,
+          &CommandPaletteController::rebuild);
   connect(commands, &CommandRegistry::menuRequested, this, &CommandPaletteController::showMenu);
   connect(commands, &CommandRegistry::failed, this, [this](const QString& command, const QString& message) {
     if (command != m_running) return;
@@ -260,6 +264,7 @@ QString CommandPaletteController::emptyText() const {
       return hasQuery && !searching() && m_error.isEmpty() ? tr("No results found.")
                                                            : tr("Type to search across your project.");
     case Mode::Browse:
+      if (relativeWithoutProject()) return tr("Relative paths require an active project.");
       if (!m_error.isEmpty()) return m_error;
       if (!m_browseOptions.emptyText.isEmpty()) return m_browseOptions.emptyText;
       return hasQuery && !searching() ? tr("Press Enter to create this folder and add it as a project.") : QString();
@@ -273,6 +278,16 @@ QString CommandPaletteController::emptyText() const {
 }
 
 QString CommandPaletteController::status() const {
+  // A thread search only reaches the environments that are online: the others are named.
+  if (m_mode == Mode::Command && m_views.isEmpty() && !m_query.startsWith(QLatin1Char('>')) && normalize(m_query).size() >= 2) {
+    QMap<QString, QString> skipped;
+    for (const QString& id : m_store->environments()) {
+      if (m_store->environmentOnline(id)) continue;
+      const QString label = m_store->environment(id).value(QLatin1String("label")).toString();
+      skipped.insert(id, label.isEmpty() ? id : label);
+    }
+    return skipped.isEmpty() ? QString() : tr("Not searched (offline): %1").arg(QStringList(skipped.values()).join(QStringLiteral(", ")));
+  }
   if (m_mode != Mode::Content || m_query.trimmed().isEmpty()) return {};
   if (searching()) return tr("Searching…");
   if (!m_error.isEmpty()) return m_error;
@@ -547,13 +562,39 @@ bool CommandPaletteController::runHighlighted() {
     submit(text);
     return true;
   }
-  if (m_mode == Mode::Browse && (m_highlighted < 0 || m_highlighted >= count())) return addBrowsedFolder();
+  if (m_mode == Mode::Browse && (m_highlighted < 0 || m_highlighted >= count())) {
+    // Enter with nothing highlighted adds the path typed.
+    if (relativeWithoutProject() || !m_add || browsedPath().isEmpty()) return false;
+    const QString path = browsedPath();
+    if (m_browseOptions.keepOpen) {
+      const auto add = m_add;
+      add(path);
+      return true;
+    }
+    const auto add = std::exchange(m_add, nullptr);
+    close(false);
+    add(path);
+    return true;
+  }
   return run(m_highlighted);
 }
 
+// A path that is not absolute is under the folder of the project the window
+// shows; without one there is nowhere for it to be.
+bool CommandPaletteController::relativeWithoutProject() const {
+  const QString query = m_query.trimmed();
+  return m_mode == Mode::Browse && !query.isEmpty() && !query.startsWith(QLatin1Char('/')) &&
+         !query.startsWith(QLatin1Char('~')) && target().root.isEmpty();
+}
+
 bool CommandPaletteController::addBrowsedFolder() {
-  if (!m_open || m_mode != Mode::Browse || !m_add) return false;
-  const QString path = browsedPath();
+  if (!m_open || m_mode != Mode::Browse || !m_add || relativeWithoutProject()) return false;
+  // The folder highlighted, else the path typed.
+  QString path = browsedPath();
+  if (m_highlighted >= 0 && m_highlighted < count()) {
+    const Entry& entry = m_entries.at(m_rows.at(m_highlighted).entry);
+    if (entry.kind == Kind::Folder) path = entry.id;
+  }
   if (path.isEmpty()) return false;
   if (m_browseOptions.keepOpen) {
     // A copy: it stays for another try until the chooser closes the palette.
@@ -657,9 +698,19 @@ bool CommandPaletteController::openEntry(const Entry& entry) {
       }
       return true;
     }
-    case Kind::Setting:
-      navigation->open(Route::settings(entry.id));
+    case Kind::Setting: {
+      // "<section>#<setting>" opens the section at that setting, and
+      // "<section>?<command>" a command's keybindings.
+      const qsizetype mark = entry.id.indexOf(QRegularExpression(QStringLiteral("[#?]")));
+      if (mark >= 0 && entry.id.at(mark) == QLatin1Char('#')) {
+        m_bridge->dispatch(QStringLiteral("settings.openResult"),
+                           QVariantMap{{QStringLiteral("to"), entry.id.left(mark)},
+                                       {QStringLiteral("targetId"), entry.id.mid(mark + 1)}});
+      } else {
+        navigation->open(Route::settings(mark < 0 ? entry.id : entry.id.left(mark)));
+      }
       return true;
+    }
     case Kind::File:
       shell->controller<RightPanelController>()->open(QStringLiteral("files"), {{QStringLiteral("path"), entry.id}});
       return true;
@@ -734,23 +785,33 @@ void CommandPaletteController::rebuildCommand() {
   const QString current = shell->controller<NavigationController>()->threadKey();
   QList<Entry> threads;
   for (const sidebar::Thread& thread : m_store->threads()) {
-    if (thread.archivedAt || thread.subagent) continue;
+    if (thread.subagent) continue;
     const QString key = thread.key();
+    QStringList pullRequests = pullRequestTerms(m_store->threadRow(key));
+    for (QString& term : pullRequests) term = normalize(term);
+    // An archived thread is only found by a pull request linked to it.
+    if (thread.archivedAt && pullRequests.isEmpty()) continue;
     const auto project = m_store->project(thread.environmentId + QLatin1Char(':') + thread.projectId);
     QStringList description;
     if (project) description << project->title;
     if (thread.branch) description << QLatin1Char('#') + *thread.branch;
     if (key == current) description << tr("Current thread");
-    QStringList terms{thread.title};
-    terms << pullRequestTerms(m_store->threadRow(key));
-    // Last, so a pasted id never outranks a title.
-    terms << (project ? project->title : QString()) << thread.branch.value_or(QString()) << thread.id;
-    for (QString& term : terms) term = normalize(term);
+    QStringList terms;
+    if (thread.archivedAt) {
+      terms = pullRequests;
+    } else {
+      terms << normalize(thread.title);
+      terms << pullRequests;
+      // Last, so a pasted id never outranks a title.
+      terms << normalize(project ? project->title : QString()) << normalize(thread.branch.value_or(QString())) << normalize(thread.id);
+    }
     const auto active = sidebar::parseIso(thread.latestUserMessageAt ? thread.latestUserMessageAt
                                           : !thread.updatedAt.isEmpty() ? sidebar::Nullable(thread.updatedAt)
                                                                         : sidebar::Nullable(thread.createdAt));
     Entry entry{Kind::Thread, key, thread.title, description.join(QStringLiteral(" · ")), {}, terms};
     entry.recency = active.value_or(0);
+    entry.pullRequests = pullRequests.join(QLatin1Char(' ')).simplified();
+    entry.archived = thread.archivedAt.has_value();
     threads.append(entry);
   }
   std::stable_sort(threads.begin(), threads.end(),
@@ -776,8 +837,28 @@ void CommandPaletteController::rebuildCommand() {
       if (!needed.isValid() || needed.isNull()) continue;
     }
     const QString label = section.value(QStringLiteral("label")).toString();
-    entries.append({Kind::Setting, section.value(QStringLiteral("to")).toString(), label, tr("Settings"), {},
+    // A setting on the section's page is found by its own title, and opens there.
+    const QString target = section.value(QStringLiteral("targetId")).toString();
+    const QString to = section.value(QStringLiteral("to")).toString();
+    entries.append({Kind::Setting, target.isEmpty() ? to : to + QLatin1Char('#') + target, label,
+                    target.isEmpty() ? tr("Settings") : section.value(QStringLiteral("detail")).toString(), {},
                     {normalize(label), normalize(section.value(QStringLiteral("keywords")).toString())}});
+  }
+  // Each keybinding command, after the settings it mirrors (the web's
+  // secondary settings results): found by its label, id and keys.
+  QHash<QString, qsizetype> shortcuts;
+  for (const QVariant& value : shell->controller<KeybindingController>()->bindings()) {
+    const QVariantMap binding = value.toMap();
+    const QString command = binding.value(QStringLiteral("command")).toString();
+    if (!shortcuts.contains(command)) {
+      const QString label = binding.value(QStringLiteral("label")).toString();
+      shortcuts.insert(command, entries.size());
+      Entry entry{Kind::Setting, NavigationController::kKeybindingsSection + QLatin1Char('?') + command, label,
+                  tr("Keybindings"), {}, {normalize(label), normalize(command)}};
+      entry.secondary = true;
+      entries.append(entry);
+    }
+    entries[shortcuts.value(command)].terms << normalize(binding.value(QStringLiteral("key")).toString());
   }
 
   for (Entry& entry : entries) entry.haystack = entry.terms.join(QLatin1Char(' ')).simplified();
@@ -830,7 +911,7 @@ void CommandPaletteController::refilter(bool refreshed) {
     }
     int recent = 0;
     for (int index = 0; !actionsOnly && index < m_entries.size() && recent < kRecentThreads; ++index) {
-      if (m_entries.at(index).kind != Kind::Thread) continue;
+      if (m_entries.at(index).kind != Kind::Thread || m_entries.at(index).archived) continue;
       add(tr("Recent Threads"), index);
       ++recent;
     }
@@ -867,6 +948,10 @@ void CommandPaletteController::refilter(bool refreshed) {
     if (hasAll(entry.haystack, tokens)) {
       const int tiebreak = entry.kind == Kind::Setting ? settingsRank(entry.terms, query, tokens) : 0;
       byGroup[group].append({index, rank(entry.terms, query, tokens), tiebreak});
+      // Found by its pull request: say how the thread belongs to it.
+      if (entry.kind == Kind::Thread && !entry.pullRequests.isEmpty() && hasAll(entry.pullRequests, tokens)) {
+        snippets.insert(index, entry.archived ? tr("Archived thread") : tr("Linked thread"));
+      }
     } else if (entry.kind == Kind::Thread && messagesCount && m_messageMatches.contains(entry.id)) {
       byGroup[group].append({index, 0, 0});
       snippets.insert(index, m_messageMatches.value(entry.id));
@@ -876,6 +961,8 @@ void CommandPaletteController::refilter(bool refreshed) {
   for (const int group : {Actions, Projects, Settings, Threads}) {
     QList<Match>& matches = byGroup[group];
     std::stable_sort(matches.begin(), matches.end(), [this](const Match& left, const Match& right) {
+      const bool secondary = m_entries.at(left.entry).secondary;
+      if (secondary != m_entries.at(right.entry).secondary) return !secondary;
       if (left.rank != right.rank) return left.rank > right.rank;
       if (left.tiebreak != right.tiebreak) return left.tiebreak > right.tiebreak;
       return m_entries.at(left.entry).recency > m_entries.at(right.entry).recency;
@@ -1119,6 +1206,13 @@ void CommandPaletteController::searchFolders(int generation) {
     refilter(true);
     return;
   }
+  if (relativeWithoutProject()) {
+    m_error.clear();
+    m_entries.clear();
+    m_browseEntries = {};
+    refilter(true);
+    return;
+  }
   // With a pinned name the whole folder is listed and filtered here, as the
   // web does: a leaf that is the pinned name hides nothing.
   const QString& pinned = m_browseOptions.pinned;
@@ -1126,9 +1220,12 @@ void CommandPaletteController::searchFolders(int generation) {
   const QString asked = pinned.isEmpty() || slash < 0 ? query : query.left(slash + 1);
   const QString leaf = asked == query ? QString() : query.mid(slash + 1);
   const QString filter = leaf == pinned ? QString() : leaf;
+  const bool relative = !asked.startsWith(QLatin1Char('/')) && !asked.startsWith(QLatin1Char('~'));
   ++m_pending;
   m_client->call(this, m_browseEnvironment, QStringLiteral("filesystem.browse"),
-                 QJsonObject{{QStringLiteral("partialPath"), asked}},
+                 // A relative path is under the shown project's folder (the contract's cwd).
+                 relative ? QJsonObject{{QStringLiteral("partialPath"), asked}, {QStringLiteral("cwd"), target().root}}
+                          : QJsonObject{{QStringLiteral("partialPath"), asked}},
                  [this, generation, query, asked, filter](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation || m_mode != Mode::Browse) return;
                    m_pending = 0;

@@ -10,6 +10,7 @@
 #   apps/desktop-qt/src/native/UsageController.cpp
 #   apps/desktop-qt/src/native/ProviderSettingsController.cpp (adding and removing hubs)
 #   apps/desktop-qt/tests/tst_ProvidersSettings.qml (the add and remove dialogs)
+#   apps/tui/src/host/sections/usageHubs.ts, apps/tui/src/host/sections/usageLimits.ts
 
 Feature: Usage limit sources
   A CLIProxyAPI hub pools many provider accounts. Adding it as a usage source
@@ -43,43 +44,43 @@ Feature: Usage limit sources
     When the redeem request is sent again after a dropped connection
     Then the hub counts one redemption
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A hub's accounts are pooled into limits
     Given the hub "Team hub" reports a Codex account
     When the user views limits
     Then Codex limits include the account "codex-ops" of the hub
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: An account both a hub and this machine report counts once
     Given Codex is signed in here as "sam@example.com"
     And the hub "Team hub" reports the Codex account "sam@example.com"
     When the user views limits
     Then Codex limits count one account
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A hub that cannot be read is named in limits
     Given the hub "Team hub" cannot be read: "Hub unreachable."
     When the user views limits
     Then usage says "Team hub: Hub unreachable."
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A reset credit a hub also reports is spent through the hub
     Given Codex has a reset credit banked
     And the hub "Team hub" reports the Codex account "sam@example.com" with a banked reset credit
     When the user uses the reset credit and confirms
     Then the credit is spent through the hub
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user adds a hub
     When the user adds a hub with a URL and management key but no label
     Then the hub is listed under the hub's host name
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A hub cannot be added without a URL and key
     When the user fills in a URL but no management key
     Then the user cannot add the hub
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: The user removes a hub
     Given a hub "Team hub"
     When the user removes "Team hub" and confirms
@@ -88,7 +89,7 @@ Feature: Usage limit sources
     And the hub itself is untouched
 
   # The desktop does not know what its own session may do yet.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A read-only connection cannot add hubs
     Given the user is connected with read-only access
     When the user opens usage providers

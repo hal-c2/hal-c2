@@ -81,7 +81,7 @@ Feature: Runs and turns
     When the user sends "Hi" to "t1"
     Then the turn runs in "/work/x"
 
-  @mc @backlog
+  @mc
   Scenario: A worktree that was removed is recreated before the turn starts
     Given "t1" is in worktree "/work/x" and that folder no longer exists
     When the user sends "Hi" to "t1"
@@ -175,7 +175,7 @@ Feature: Runs and turns
 
   # Whether and how often to retry is each provider plugin's own behaviour; the core
   # only waits for the plugin to give up.
-  @mc @backlog
+  @mc
   Scenario: A provider plugin's own retries run before the run fails
     Given a provider whose plugin retries opening its session
     And opening the session fails the first time
@@ -183,14 +183,14 @@ Feature: Runs and turns
     Then the plugin opens the session again
     And the run fails only once the plugin gives up
 
-  @mc @shared @backlog
+  @mc @shared @backlog-mobile
   Scenario: A failed turn keeps the output it had already produced
     Given the provider streamed part of its answer to "t1" and then failed
     When the failure is recorded
     Then the partial answer stays in the failed run
     And the run is marked failed
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-mobile
   Scenario: A provider retry is recorded as a retry
     Given the provider retries a failed request during a turn of "t1"
     When the retry is recorded

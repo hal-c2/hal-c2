@@ -212,6 +212,35 @@ const Steps steps([] {
     expect(page.value(QStringLiteral("error")).toString() == c[0] && page.value(QStringLiteral("status")).isNull(),
            QStringLiteral("the cluster page is %1").arg(show(page)));
   });
+  // A machine that left.
+  step(QStringLiteral("a client lists a machine that has left the cluster"), [cluster](World& world, const Captures&, const Table&) {
+    fake(world).members.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("env-laptop")}, {QStringLiteral("label"), QStringLiteral("laptop")},
+                                          {QStringLiteral("addresses"), QJsonArray()}, {QStringLiteral("connected"), false}});
+    world.connect();
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
+    world.bridge().dispatch(QStringLiteral("cluster.open"), {});
+    world.waitFor([&] { return !at(cluster(world), QStringLiteral("status.members")).toList().isEmpty(); }, QStringLiteral("the cluster to be read"));
+  });
+  step(QStringLiteral("the machine stays listed"), [cluster](World& world, const Captures&, const Table&) {
+    // Read again, it is still a member, shown as offline.
+    const qsizetype reads = fake(world).calls.size();
+    world.bridge().dispatch(QStringLiteral("cluster.refresh"), {});
+    world.waitFor([&] { return fake(world).calls.size() > reads; }, QStringLiteral("the cluster to be read again"));
+    world.sync();
+    const QVariantList members = at(cluster(world), QStringLiteral("status.members")).toList();
+    expect(members.size() == 1 && members[0].toMap().value(QStringLiteral("label")) == QLatin1String("laptop") &&
+               !members[0].toMap().value(QStringLiteral("connected")).toBool(),
+           QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+  });
+  step(QStringLiteral("the user can remove it like any environment"), [cluster, clusterCall](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), QStringLiteral("env-laptop")}});
+    world.waitFor([&] { return at(cluster(world), QStringLiteral("status.members")).toList().isEmpty() && !cluster(world).value(QStringLiteral("busy")).toBool(); },
+                  [&] { return QStringLiteral("the machine to go; the cluster page is %1").arg(show(cluster(world))); });
+    const auto payload = clusterCall(world, QStringLiteral("cluster.remove"));
+    expect(payload && payload->value(QLatin1String("id")) == QLatin1String("env-laptop") &&
+               at(cluster(world), QStringLiteral("notice.text")) == QLatin1String("Removed laptop from the cluster."),
+           QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+  });
   step(QStringLiteral("the cluster page closes"), [](World& world, const Captures&, const Table&) {
     world.sync();
     const QVariant route = world.state(QStringLiteral("route"));

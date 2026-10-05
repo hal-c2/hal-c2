@@ -35,8 +35,34 @@ Rectangle {
     // and the closed panel then takes no width.
     property bool ownToggle: true
 
-    // Not animated: a width animation relays out the thread on every frame.
-    implicitWidth: open ? openWidth : ownToggle ? 36 : 0
+    // Snaps by default: a width animation relays out the thread on every
+    // frame. With Panel animations set, a toggle slides for that long
+    // (model.transitionMs, none for a thread's own layout or reduced motion).
+    readonly property int targetWidth: open ? openWidth : ownToggle ? 36 : 0
+    property real shownWidth: targetWidth
+
+    implicitWidth: shownWidth
+    onTargetWidthChanged: {
+        const duration = dragWidth < 0 ? (model?.transitionMs ?? 0) : 0;
+        slide.stop();
+        if (duration > 0) {
+            slide.from = shownWidth;
+            slide.to = targetWidth;
+            slide.duration = duration;
+            slide.start();
+        } else {
+            shownWidth = targetWidth;
+        }
+    }
+
+    NumberAnimation {
+        id: slide
+        objectName: "panelSlide"
+
+        target: panel
+        property: "shownWidth"
+        easing.type: Easing.OutCubic
+    }
     color: Theme.palette.color("chrome", "#0b0b0d")
     clip: true
 
@@ -125,7 +151,7 @@ Rectangle {
                         Text {
                             text: tab.modelData.title
                             color: tab.active ? panel.foreground : panel.muted
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
@@ -177,6 +203,7 @@ Rectangle {
                 iconSize: 16
                 iconTint: panel.muted
                 visible: panel.open
+                objectName: "panelAdd"
                 Accessible.name: qsTr("Add panel")
                 onClicked: addMenu.open()
 
@@ -236,6 +263,17 @@ Rectangle {
                         enabled: panel.open && panel.model.canAdd.pullRequest === true
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "pull-request"
+                        })
+                    }
+
+                    // An empty browser tab on the MC, filled from the Previews tab.
+                    ShellMenuItem {
+                        objectName: "panelAddBrowser"
+                        text: qsTr("Browser tab")
+                        iconName: "globe"
+                        enabled: panel.open && panel.model.canAdd.previews === true
+                        onTriggered: Shell.dispatch("rightPanel.add", {
+                            kind: "browser"
                         })
                     }
 

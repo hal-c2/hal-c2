@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QObject>
 #include <QStringList>
+#include <QTimer>
 #include <QVariant>
 
 #include "CommandRegistry.h"
@@ -12,6 +13,7 @@
 
 class McClient;
 class ShellBridge;
+class ShellStore;
 
 // The shell's keymap, as the `Keybindings` QML singleton: the web defaults
 // with the user's rules from the MC's keybindings.json merged over them
@@ -33,30 +35,45 @@ class ShellBridge;
 //     come after every keymap binding, and are not rows in Settings.
 //
 // Settings → Keybindings edits the rules through the MC (`bindings`,
-// save/remove/reset); the MC pushes the new rules back to every client.
+// save/remove/reset) on every environment the user reaches and may change;
+// the shell's own MC pushes the new rules back to every client. A
+// keybindings.json the MC cannot parse (its config's `issues`) leaves the
+// defaults in force and is told once, with a way to open the file.
 class KeybindingController : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(CommandRegistry* commands READ commands CONSTANT)
-  // [{sequence, chrome, terminal}]: every sequence the keymap binds, and
-  // whether its shortcut is enabled while the chrome or a terminal has focus.
+  // [{sequence, chrome, composer, editable, terminal, autoRepeat}]: every
+  // sequence the keymap binds, whether its shortcut is enabled while the
+  // chrome, the composer's field, another text field or a terminal has focus,
+  // and whether holding it down repeats it.
   Q_PROPERTY(QVariantList shortcuts READ shortcuts NOTIFY shortcutsChanged)
   // The settings page's rows, sorted by command and key: {id, command, label,
   // key, keyLabel, when, source (Default, Custom or Project), defaultKey,
   // defaultWhen, conflicts (command labels), canReset, canRemove, search}.
   Q_PROPERTY(QVariantList bindings READ bindings NOTIFY bindingsChanged)
   // A save or removal is on its way to the MC.
+  // How many rules the user's keybindings.json holds over the defaults.
+  Q_PROPERTY(int customCount READ customCount NOTIFY bindingsChanged)
   Q_PROPERTY(bool saving READ saving NOTIFY savingChanged)
+  Q_PROPERTY(bool modelPickerOpen READ modelPickerOpen WRITE setModelPickerOpen NOTIFY modelPickerOpenChanged)
+  // Where the MC keeps keybindings.json, or empty before it says.
+  Q_PROPERTY(QString filePath READ filePath NOTIFY filePathChanged)
 
 public:
   // The appearance toggle's command, which ThemeController registers.
   static inline const QString kAppearanceCycle = QStringLiteral("appearance.cycle");
 
-  KeybindingController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
+  KeybindingController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
   // Registers the native commands and follows the MC's rules.
   void activate() override;
   // Keys reach it through press(), never as actions.
-  bool handle(const QString&, const QVariant&) override { return false; }
+  // `keybindings.openFile`.
+  bool handle(const QString& action, const QVariant& payload) override;
+  // What only a brick knows: the model picker it shows is open (the keymap's
+  // modelPickerOpen). ModelPicker sets it.
+  bool modelPickerOpen() const { return m_modelPickerOpen; }
+  void setModelPickerOpen(bool open);
 
   CommandRegistry* commands() { return &m_commands; }
   QVariantList shortcuts() const { return m_shortcuts; }
@@ -95,15 +112,33 @@ public:
   Q_INVOKABLE void remove(const QVariantMap& row);
   // Puts a custom row back to its command's default.
   Q_INVOKABLE void reset(const QVariantMap& row);
+  // Takes every rule of the user's away, once they say so: only the built-in
+  // bindings apply after (`keybindings.resetAll` as an action).
+  Q_INVOKABLE void resetAll();
+  int customCount() const { return int(m_rules.size()); }
+  // Opens keybindings.json on the MC in the editor last used there, else the
+  // first it has; says so when it cannot (`keybindings.openFile` as an action).
+  Q_INVOKABLE void openFile();
+  QString filePath() const { return m_filePath; }
 
   void setMac(bool mac);
+
+  // The thread jump modifier (the one thread.jump.1 is bound with) went down
+  // or up: held for a moment, the sidebar's first rows show their jump keys.
+  void setJumpModifierHeld(bool held);
 
 signals:
   void shortcutsChanged();
   void bindingsChanged();
   void savingChanged();
+  void filePathChanged();
+  void modelPickerOpenChanged();
+
+protected:
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+  QTimer m_jumpHintDelay;
   void setRules(const QJsonArray& rules);
   void refreshShortcuts();
   void refreshRows();
@@ -116,6 +151,7 @@ private:
 
   ShellBridge* m_bridge;
   McClient* m_client;
+  ShellStore* m_store;
   bool m_active = false;
 #ifdef Q_OS_MACOS
   bool m_mac = true;
@@ -123,6 +159,7 @@ private:
   bool m_mac = false;
 #endif
   bool m_terminalOpen = false;
+  bool m_modelPickerOpen = false;
   QJsonArray m_rules;
   QList<keybindings::Binding> m_bindings = keybindings::defaultBindings();
   // Each binding's sequence, as m_bindings.
@@ -133,6 +170,10 @@ private:
   QVariantList m_shortcuts;
   QVariantList m_rows;
   int m_saving = 0;
+  QString m_filePath;
+  // The file's problem last told, so each is told once.
+  QString m_fileIssue;
+  void followFile(const QJsonObject& config);
   // When "Keybindings updated" last showed; pushes closer than the cooldown
   // stay quiet, as the web's do.
   QDateTime m_reloadToastAt;

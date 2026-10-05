@@ -35,7 +35,4 @@ DefaultShell {
             }
         }
     }
-    ProjectFolderDrop {
-        anchors.fill: parent
-    }
 }

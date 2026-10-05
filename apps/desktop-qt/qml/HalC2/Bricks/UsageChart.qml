@@ -64,7 +64,7 @@ Item {
 
     component ChartLabel: Label {
         color: chart.muted
-        font.pixelSize: 10
+        font.pixelSize: Math.round(10 * Theme.fontScale)
         font.features: {
             "tnum": 1
         }
@@ -205,7 +205,7 @@ Item {
                     Layout.bottomMargin: 2
                     text: readout.column ? readout.column.heading : ""
                     color: chart.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
 
                 Repeater {
@@ -230,7 +230,7 @@ Item {
                             Layout.rightMargin: 6
                             text: part.modelData.label
                             color: chart.muted
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                             elide: Text.ElideRight
                         }
 
@@ -238,7 +238,7 @@ Item {
                             objectName: "usageChartValue_" + part.index
                             text: readout.column ? chart.format(readout.column.values[part.index] ?? 0) : ""
                             color: chart.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                         }
                     }
                 }
@@ -259,14 +259,14 @@ Item {
                         Layout.rightMargin: 6
                         text: qsTr("Total")
                         color: chart.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
 
                     ChartLabel {
                         objectName: "usageChartTotal"
                         text: readout.column ? chart.format(readout.column.values.reduce((sum, value) => sum + value, 0)) : ""
                         color: chart.foreground
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                 }
             }

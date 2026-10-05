@@ -37,11 +37,7 @@ Item {
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
     readonly property string monoFamily: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     readonly property bool light: Theme.appearance === "light"
-    readonly property int codeSize: {
-        Settings.device;
-        Settings.document;
-        return Settings.setting("fontSizeCode") ?? 13;
-    }
+    readonly property int codeSize: Theme.fontSizeCode
     // The head every rich text segment carries; a theme change restyles the
     // segments without parsing the reply again.
     readonly property string styleHead: Md.styleHead({
@@ -212,7 +208,7 @@ Item {
         selectionColor: root.selectionColor
         color: root.textColor
         font.family: root.uiFamily
-        font.pixelSize: 14
+        font.pixelSize: Math.round(14 * Theme.fontScale)
         onLinkActivated: link => root.linkActivated(link)
         onSelectedTextChanged: root.track(this)
         function texts() {
@@ -221,6 +217,20 @@ Item {
         ToolTip.visible: hoveredLink.length > 0
         ToolTip.text: hoveredLink
         ToolTip.delay: 600
+        // The secondary button on a link offers what can be done with it.
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: eventPoint => {
+                const link = parent.linkAt(eventPoint.position.x, eventPoint.position.y);
+                if (link.length > 0) {
+                    Shell.dispatch("link.menu", {
+                        url: link,
+                        x: eventPoint.scenePosition.x,
+                        y: eventPoint.scenePosition.y
+                    });
+                }
+            }
+        }
         HoverHandler {
             cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
         }
@@ -286,7 +296,7 @@ Item {
         implicitHeight: 24
         iconName: "quote"
         iconSize: 12
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         focusPolicy: Qt.NoFocus
         enabled: !tooLong
         text: tooLong ? qsTr("Shorten selection") : qsTr("Cite")
@@ -419,7 +429,7 @@ Item {
                                 text: seg.title.length > 0 ? seg.title : seg.language.length > 0 ? seg.language : "text"
                                 elide: Text.ElideRight
                                 font.family: root.monoFamily
-                                font.pixelSize: 11
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
                                 color: Qt.alpha(Theme.palette.color("codeForeground", "#f5f5f5"), 0.72)
                             }
                         }
@@ -579,7 +589,7 @@ Item {
                                                         y: line.head ? 8.8 : 7.2
                                                         width: parent.width - 24
                                                         wrapMode: grid.expanded && !line.head ? TextEdit.WrapAtWordBoundaryOrAnywhere : TextEdit.NoWrap
-                                                        font.pixelSize: 12
+                                                        font.pixelSize: Math.round(12 * Theme.fontScale)
                                                         font.weight: line.head ? Font.DemiBold : Font.Normal
                                                         text: root.rich("<p align=\"" + (grid.spec.align[index] ?? "left") + "\" style=\"margin:0;line-height:19.5px;-qt-line-height-type:minimum\">" + modelData + "</p>")
                                                         onImplicitWidthChanged: Qt.callLater(grid.measure)
@@ -690,7 +700,7 @@ Item {
                                 text: quoteBox.kindOf ? qsTr(quoteBox.kindOf[0]) : ""
                                 color: quoteBox.titleColor
                                 font.family: root.uiFamily
-                                font.pixelSize: 14
+                                font.pixelSize: Math.round(14 * Theme.fontScale)
                                 font.weight: Font.Medium
                             }
                         }

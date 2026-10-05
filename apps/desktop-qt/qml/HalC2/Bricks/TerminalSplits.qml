@@ -1,6 +1,7 @@
 import QtQuick
 import Ghostty
 import HalC2.Shell
+import "js/terminalLinks.js" as TerminalLinks
 
 // One place's terminals (the drawer's, or the right panel's), drawn by
 // qml-ghostty's Terminal from the `Terminals` controller's sessions: the
@@ -78,8 +79,8 @@ FocusScope {
                 objectName: "HalC2Terminal"
                 focus: true
                 padding: 6
-                font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                font.pixelSize: 12
+                font.family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace"
+                font.pixelSize: Theme.fontSizeTerminal
                 backgroundColor: splits.background
                 foregroundColor: splits.foreground
                 cursorColor: splits.foreground
@@ -130,8 +131,31 @@ FocusScope {
                     };
                 }
 
-                // Right-click: the web's terminal menu's selection actions. Adding to chat needs a
-                // composer to add to.
+                // A click on a web address or a file path follows it
+                // (terminal.followLink): the address in the browser, the
+                // path in the editor, from the folder the shell says it is
+                // in. A drag still selects, and a program that tracks the
+                // mouse keeps its clicks.
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton
+                    acceptedModifiers: Qt.KeyboardModifierMask
+                    onTapped: eventPoint => {
+                        const column = Math.floor((eventPoint.position.x - terminal.padding) / terminal.cellWidth);
+                        const row = Math.floor((eventPoint.position.y - terminal.padding) / terminal.cellHeight);
+                        if (column < 0 || column >= terminal.columns || row < 0 || row >= terminal.rows)
+                            return;
+                        const link = TerminalLinks.linkAt(terminal.text(), terminal.columns, Math.round(terminal.scrollOffset) + row, column);
+                        if (link !== null)
+                            Shell.dispatch("terminal.followLink", {
+                                terminalId: cell.terminalId,
+                                kind: link.kind,
+                                text: link.text,
+                                cwd: terminal.workingDirectory
+                            });
+                    }
+                }
+
+                // Right-click: the terminal's menu (TerminalMenu).
                 // A handler, not a MouseArea, so wheel and left-button
                 // selection still reach the Terminal.
                 TapHandler {
@@ -139,25 +163,14 @@ FocusScope {
                     onTapped: eventPoint => menu.popup(eventPoint.position.x, eventPoint.position.y)
                 }
 
-                ShellMenu {
+                TerminalMenu {
                     id: menu
 
-                    ShellMenuItem {
-                        objectName: "terminalAddToChat"
-                        text: qsTr("Add to chat")
-                        visible: (Shell.state.composer?.target ?? null) !== null
-                        height: visible ? implicitHeight : 0
-                        enabled: terminal.hasSelection
-                        onTriggered: {
-                            Shell.dispatch("composer.terminalContext.add", terminal.selectionContext());
-                            terminal.clearSelection();
-                            terminal.forceActiveFocus();
-                        }
-                    }
-                    ShellMenuItem {
-                        text: qsTr("Copy")
-                        enabled: terminal.hasSelection
-                        onTriggered: terminal.copy()
+                    terminal: terminal
+                    addToChat: (Shell.state.composer?.target ?? null) === null ? null : () => {
+                        Shell.dispatch("composer.terminalContext.add", terminal.selectionContext());
+                        terminal.clearSelection();
+                        terminal.forceActiveFocus();
                     }
                 }
 

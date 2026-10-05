@@ -777,6 +777,52 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- the server's owner ---------------------------------------------------------------
+
+  # The thread's `opencode acp --port` process serves its HTTP API; the thread's runtime
+  # owns it through its connection.
+  step "an OpenCode server was started for a thread", context do
+    context = context |> World.fake_providers() |> World.launch_on(@thread, "opencode", "hello")
+    World.await_idle(context, @thread)
+    [{runtime, _}] = Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, @thread))
+    %{conn: conn, server: %{url: url}} = :sys.get_state(runtime)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(conn).sub)
+    assert alive?(os_pid)
+    assert {:ok, socket} = connect(url)
+    :gen_tcp.close(socket)
+
+    Map.put(context, :opencode_server, %{runtime: runtime, conn: conn, os_pid: os_pid, url: url})
+  end
+
+  step "the provider process that owned it crashes", context do
+    %{runtime: runtime, conn: conn} = context.opencode_server
+    refs = Enum.map([runtime, conn], &Process.monitor/1)
+    Process.exit(runtime, :kill)
+    for ref <- refs, do: assert_receive({:DOWN, ^ref, :process, _, _}, 5_000)
+    context
+  end
+
+  step "the OpenCode server is stopped", context do
+    %{os_pid: os_pid, url: url} = context.opencode_server
+    refute alive?(os_pid)
+    assert {:error, :econnrefused} = connect(url)
+    context
+  end
+
+  step "no OpenCode process stays owned by the thread", context do
+    assert Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, @thread)) == []
+    refute Process.alive?(context.opencode_server.conn)
+    context
+  end
+
+  defp alive?(os_pid),
+    do: match?({_, 0}, System.cmd("kill", ["-0", "#{os_pid}"], stderr_to_stdout: true))
+
+  defp connect(url) do
+    %URI{host: host, port: port} = URI.parse(url)
+    :gen_tcp.connect(to_charlist(host), port, [], 1_000)
+  end
+
   # --- rewind and fork over OpenCode's server -------------------------------------------
 
   # A turn sent to the thread `title` and finished.

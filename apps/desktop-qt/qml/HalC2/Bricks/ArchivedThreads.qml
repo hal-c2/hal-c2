@@ -43,7 +43,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Archive")
                     color: page.foreground
-                    font.pixelSize: 18
+                    font.pixelSize: Math.round(18 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 
@@ -72,7 +72,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: page.model ? page.model.title : ""
                     color: page.foreground
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.DemiBold
                 }
 
@@ -80,7 +80,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: page.model ? page.model.description : ""
                     color: page.muted
-                    font.pixelSize: 12
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
                     wrapMode: Text.Wrap
                 }
             }
@@ -109,7 +109,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: group.modelData.title
                             color: page.muted
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
                         }
@@ -134,7 +134,7 @@ Rectangle {
                                         Layout.fillWidth: true
                                         text: row.modelData.title
                                         color: page.foreground
-                                        font.pixelSize: 13
+                                        font.pixelSize: Math.round(13 * Theme.fontScale)
                                         elide: Text.ElideRight
                                     }
 
@@ -142,7 +142,7 @@ Rectangle {
                                         Layout.fillWidth: true
                                         text: row.modelData.description
                                         color: page.muted
-                                        font.pixelSize: 11
+                                        font.pixelSize: Math.round(11 * Theme.fontScale)
                                         elide: Text.ElideRight
                                     }
                                 }

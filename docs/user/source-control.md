@@ -85,6 +85,10 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+Publishing asks for the host, then the repository name and its visibility, and shows a summary to
+confirm before anything is created. A host that is not installed or signed in says how to fix it
+and cannot be chosen until it is ready.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. HAL-C2 can generate commit
@@ -92,6 +96,23 @@ messages, review titles, and descriptions from your changes.
 
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
+
+## Review changes beside a thread
+
+In the desktop app, the **Diff** tab beside a thread shows what a turn changed, everything the
+thread changed, the checkout's uncommitted **Working tree**, or **Branch changes** against a base.
+For branch changes, type another ref and press Enter to compare against it; clear it to return to
+the default base. A thread with no finished turn opens on the working tree. The diff does not follow
+the checkout: choose **Reload** to read it again.
+
+Opening one changed file from a reply shows that file alone; **Show all files** returns to the
+whole turn. Comment on a line to add a note to your prompt: the composer carries it with the file
+and the lines, and removing its chip takes it back out. A changed file opens in your preferred
+editor from the diff or from the commit review.
+
+To work on an existing pull request, run **Start a thread on a pull request…** from the command
+palette, paste its link or number, and choose the local checkout or a new worktree once its title
+and branches are shown.
 
 ## Review and merge
 

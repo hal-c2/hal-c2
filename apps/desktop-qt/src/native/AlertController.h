@@ -26,6 +26,8 @@ class ShellStore;
 // the window has focus, an in-app toast with "Open thread" for any thread but
 // the one shown; without focus, a system notification per thread (a newer one
 // replaces it), which the window's focus clears. Sound follows the mode alone.
+// Turns that finish without focus are counted on the dock or taskbar badge
+// until the window has focus again.
 // The platform side is the Presenter, which the app wires to
 // NativeNotifications and tests fake.
 //
@@ -48,6 +50,13 @@ public:
     std::function<void(bool enabled)> setEnabled;
     // `kind` is "completion" or "input".
     std::function<void(const QString& kind)> play;
+    // Whether the system lets the app notify; unset where it never refuses.
+    // Choosing system notifications while it does not is undone, with a
+    // toast saying how to allow them.
+    std::function<bool()> permitted;
+    // The dock or taskbar badge: how many turns finished since the window
+    // last had focus (0 clears it).
+    std::function<void(int count)> badge;
   };
 
   AlertController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
@@ -98,6 +107,9 @@ private:
   QString m_mode = QStringLiteral("off");
   bool m_inApp = false;
   bool m_focused = true;
+  // Turns finished since the window last had focus.
+  int m_unseen = 0;
   QHash<QString, Seen> m_seen;
   QSet<QString> m_muted;
+  bool m_settingsRead = false;
 };

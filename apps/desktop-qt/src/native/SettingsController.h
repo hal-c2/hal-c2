@@ -13,6 +13,7 @@
 #include "NativeController.h"
 
 class NativeWindow;
+class SettingsScopeController;
 class McClient;
 class ShellBridge;
 
@@ -104,6 +105,18 @@ public:
   Q_INVOKABLE QVariant setting(const QString& key) const;
   Q_INVOKABLE QVariant defaultOf(const QString& key) const;
   Q_INVOKABLE bool isDefault(const QString& key) const;
+  // The MC's rows follow the settings scope while a scoped section shows
+  // (SettingsScopeController): read from the selected environments, written
+  // to each of them, and for a project as its override where the MC allows
+  // one. `mixed` says the environments disagree; `disabledReason` why the row
+  // cannot be changed at this scope ("" when it can).
+  Q_INVOKABLE bool mixed(const QString& key) const;
+  Q_INVOKABLE QString disabledReason(const QString& key) const;
+  // The selected environments that are out of reach, by label: a change leaves them as they were.
+  Q_INVOKABLE QStringList unreachable() const;
+  // Whether every selected environment is connected and has the capability
+  // (ServerConfig environment.capabilities).
+  Q_INVOKABLE bool supports(const QString& capability) const;
   // Whether a row is kept on this device rather than by the MC.
   Q_INVOKABLE bool onDevice(const QString& key) const;
   Q_INVOKABLE void set(const QString& key, const QVariant& value);
@@ -125,6 +138,11 @@ signals:
   void deviceChanged();
 
 private:
+  // The scope a row of the MC's goes through: none for this device's rows, or
+  // while the scope is only this machine's own document.
+  SettingsScopeController* scopeFor(const QString& key) const;
+  // The window's settings scope, followed from first use.
+  SettingsScopeController* scope() const;
   void read(std::function<void()> then = {});
   void attempt(Edit edit, Done done, int retries);
   void onConfig(const QJsonObject& frame);
@@ -151,4 +169,5 @@ private:
   QJsonObject m_device;
   QString m_deviceError;
   bool m_deviceUnreadable = false;
+  mutable bool m_followsScope = false;
 };

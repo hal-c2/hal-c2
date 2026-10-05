@@ -1,15 +1,23 @@
 #include "KeybindingController.h"
 
+#include <QGuiApplication>
+#include <QKeyEvent>
+
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QQmlPropertyMap>
 #include <QSet>
 
 #include <algorithm>
 
 #include "../ShellBridge.h"
+#include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "RightPanelController.h"
 #include "McClient.h"
 #include "SettingsController.h"
+#include "ShellStore.h"
 #include "SidebarController.h"
 #include "TerminalController.h"
 #include "ThreadMenuController.h"
@@ -45,8 +53,10 @@ bool flag(const QVariantMap& focus, const char* key) {
 // The identifiers the settings page knows (KeybindingsSettings.logic.ts): the
 // core ones and every one a default condition uses.
 QSet<QString> knownVariables() {
-  QSet<QString> known{QStringLiteral("terminalFocus"), QStringLiteral("terminalOpen"), QStringLiteral("isWeb"),
-                      QStringLiteral("isDesktop"), QStringLiteral("true"), QStringLiteral("false")};
+  QSet<QString> known{QStringLiteral("terminalFocus"), QStringLiteral("terminalOpen"), QStringLiteral("previewOpen"),
+                      QStringLiteral("composerDraft"),
+                      QStringLiteral("isWeb"), QStringLiteral("isDesktop"), QStringLiteral("true"),
+                      QStringLiteral("false")};
   std::function<void(const keybindings::WhenPtr&)> collect = [&](const keybindings::WhenPtr& when) {
     if (!when) return;
     if (when->kind == keybindings::When::Kind::Identifier) known.insert(when->name);
@@ -59,19 +69,51 @@ QSet<QString> knownVariables() {
 
 }  // namespace
 
-KeybindingController::KeybindingController(ShellBridge* bridge, McClient* client, QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client) {
+KeybindingController::KeybindingController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
+    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
   connect(&m_commands, &CommandRegistry::countChanged, this, &KeybindingController::refreshShortcuts);
   setRules({});
+}
+
+// As the web app's THREAD_JUMP_HINT_SHOW_DELAY_MS: a quick shortcut shows no hints.
+void KeybindingController::setJumpModifierHeld(bool held) {
+  auto* sidebar = NativeShell::of(this)->sidebar();
+  if (held) {
+    if (!m_jumpHintDelay.isActive()) m_jumpHintDelay.start();
+    return;
+  }
+  m_jumpHintDelay.stop();
+  sidebar->setJumpHints({}, false);
+}
+
+bool KeybindingController::eventFilter(QObject* watched, QEvent* event) {
+  if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
+    const auto* key = static_cast<QKeyEvent*>(event);
+    // Qt calls the Command key Control on macOS.
+    const bool modifier = key->key() == Qt::Key_Control || (!m_mac && key->key() == Qt::Key_Meta);
+    setJumpModifierHeld(event->type() == QEvent::KeyPress && modifier);
+  } else if (event->type() == QEvent::ApplicationDeactivate) {
+    setJumpModifierHeld(false);
+  }
+  return QObject::eventFilter(watched, event);
 }
 
 void KeybindingController::activate() {
   if (m_active) return;
   m_active = true;
+  m_jumpHintDelay.setSingleShot(true);
+  m_jumpHintDelay.setInterval(200);
+  connect(&m_jumpHintDelay, &QTimer::timeout, this, [this] {
+    QStringList labels;
+    for (int n = 1; n <= 9; ++n) labels.append(shortcutLabel(QStringLiteral("thread.jump.%1").arg(n)));
+    NativeShell::of(this)->sidebar()->setJumpHints(labels, true);
+  });
+  if (qGuiApp) qGuiApp->installEventFilter(this);
   auto* shell = NativeShell::of(this);
   auto* settings = shell->controller<SettingsController>();
   const auto followRules = [this, settings] {
     setRules(settings->config().value(QLatin1String("keybindingRules")).toArray());
+    followFile(settings->config());
   };
   connect(settings, &SettingsController::configChanged, this, followRules);
   // The web's EventRouter: a reload of keybindings.json is confirmed, at most
@@ -92,8 +134,78 @@ void KeybindingController::activate() {
     refreshShortcuts();
   });
   m_terminalOpen = terminals->isOpen();
+  // Conditions on the route and the running turn (draftThreadRoute, turnRunning).
+  connect(m_bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
+    if (key == QLatin1String("turn") || key == QLatin1String("route") || key == QLatin1String("panel") ||
+        key == QLatin1String("composer")) {
+      refreshShortcuts();
+    }
+  });
   registerCommands();
   followRules();
+}
+
+void KeybindingController::setModelPickerOpen(bool open) {
+  if (open == m_modelPickerOpen) return;
+  m_modelPickerOpen = open;
+  emit modelPickerOpenChanged();
+  refreshShortcuts();
+}
+
+bool KeybindingController::handle(const QString& action, const QVariant&) {
+  if (action == QLatin1String("keybindings.resetAll")) {
+    resetAll();
+    return true;
+  }
+  if (action != QLatin1String("keybindings.openFile")) return false;
+  openFile();
+  return true;
+}
+
+// The web's root route: an unreadable keybindings.json is a warning naming
+// the file, with the file one click away.
+void KeybindingController::followFile(const QJsonObject& config) {
+  const QString path = config.value(QLatin1String("keybindingsConfigPath")).toString();
+  if (path != m_filePath) {
+    m_filePath = path;
+    emit filePathChanged();
+  }
+  QString issue;
+  for (const QJsonValue& value : config.value(QLatin1String("issues")).toArray()) {
+    const QJsonObject entry = value.toObject();
+    if (entry.value(QLatin1String("kind")).toString() == QLatin1String("keybindings.malformed-config")) {
+      issue = entry.value(QLatin1String("message")).toString();
+    }
+  }
+  if (issue == m_fileIssue) return;
+  m_fileIssue = issue;
+  if (issue.isEmpty()) return;
+  NativeShell::of(this)->controller<ToastController>()->show(
+      QStringLiteral("warning"), tr("Invalid keybindings configuration"), issue,
+      ToastController::Action{tr("Open keybindings.json"), [this] { openFile(); }}, 0);
+}
+
+void KeybindingController::openFile() {
+  auto* shell = NativeShell::of(this);
+  auto* settings = shell->controller<SettingsController>();
+  auto* toasts = shell->controller<ToastController>();
+  if (m_filePath.isEmpty()) return;
+  const QJsonArray available = settings->config().value(QLatin1String("availableEditors")).toArray();
+  const QString last = settings->deviceValue(QStringLiteral("lastEditor")).toString();
+  const QString editor = available.contains(last) ? last : available.isEmpty() ? QString() : available.first().toString();
+  if (editor.isEmpty()) {
+    toasts->error(tr("Unable to open keybindings file"), tr("No available editors found."));
+    return;
+  }
+  settings->writeDevice(QStringLiteral("lastEditor"), editor);
+  m_client->call(this, m_client->environment(), QStringLiteral("shell.openInEditor"),
+                 QJsonObject{{QStringLiteral("cwd"), m_filePath}, {QStringLiteral("editor"), editor}},
+                 [toasts](const QJsonValue&, const std::optional<QString>& error) {
+                   if (error) {
+                     toasts->error(tr("Unable to open keybindings file"),
+                                   error->isEmpty() ? tr("The keybindings file was not opened.") : *error);
+                   }
+                 });
 }
 
 // The commands the shell has natively. A command no one registers (the
@@ -128,6 +240,14 @@ void KeybindingController::registerCommands() {
   // The composer brick edits the last queued message when its caret is at
   // the start, and moves the caret there otherwise.
   add(QStringLiteral("thread.editQueuedMessage"), [this] { m_bridge->sendToBricks(QStringLiteral("composer.queue.editLast")); });
+  // The composer brick sends its draft the other way, or in the background
+  // (its own Enter chords do the same while it has the keyboard).
+  for (const auto& [command, intent] : {std::pair{QStringLiteral("composer.sendAlternate"), QStringLiteral("alternate")},
+                                        std::pair{QStringLiteral("composer.sendBackground"), QStringLiteral("background")}}) {
+    add(command, [this, intent] {
+      m_bridge->sendToBricks(QStringLiteral("composer.submit.key"), QVariantMap{{QStringLiteral("intent"), intent}});
+    });
+  }
   // The composer brick hands the stash its latest text first.
   add(QStringLiteral("composer.stash"), [this] { m_bridge->sendToBricks(QStringLiteral("composer.stash.key")); });
   // The composer brick opens its own pickers.
@@ -202,12 +322,25 @@ keybindings::Context KeybindingController::context(const QVariantMap& focus) con
     // Controllers are built in name order; navigation comes after this one.
     if (auto* navigation = shell->controller<NavigationController>()) routeKind = navigation->route().kind;
   }
+  // The desktop's preview is the right panel's Previews tab.
+  bool previewOpen = false;
+  if (auto* shell = NativeShell::of(this)) {
+    if (auto* panel = shell->controller<RightPanelController>()) {
+      previewOpen = panel->isOpen() && panel->activeTab() == QLatin1String("previews");
+    }
+  }
   return {
+      {QStringLiteral("previewOpen"), previewOpen},
+      {QStringLiteral("modelPickerOpen"), m_modelPickerOpen},
+      // The composer holds text the user has not sent.
+      {QStringLiteral("composerDraft"),
+       !m_bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("text")).toString().trimmed().isEmpty()},
       {QStringLiteral("terminalFocus"), flag(focus, "terminal")},
       {QStringLiteral("composerFocus"), flag(focus, "composer")},
       {QStringLiteral("editableFocus"), flag(focus, "editable")},
       {QStringLiteral("terminalOpen"), m_terminalOpen},
       {QStringLiteral("draftThreadRoute"), routeKind == QLatin1String("draft")},
+      {QStringLiteral("turnRunning"), m_bridge->state()->value(QStringLiteral("turn")).toMap().value(QStringLiteral("running")).toBool()},
       {QStringLiteral("isDesktop"), true},
       {QStringLiteral("isWeb"), false},
   };
@@ -235,11 +368,13 @@ bool KeybindingController::press(const QString& sequence, const QVariantMap& foc
   return false;
 }
 
-// One entry per sequence; the chrome and terminal flags say whether the key
-// is the shell's with that focus. The chrome's covers a focused composer.
+// One entry per sequence; each flag says whether the key is the shell's with
+// that focus: the chrome, a terminal, the composer's field, or any other text
+// field (`editable`).
 void KeybindingController::refreshShortcuts() {
   const QVariantMap chrome;
   const QVariantMap composer{{QStringLiteral("composer"), true}, {QStringLiteral("editable"), true}};
+  const QVariantMap editable{{QStringLiteral("editable"), true}};
   const QVariantMap terminal{{QStringLiteral("terminal"), true}};
   const auto native = [this](const QString& command) { return m_commands.contains(command) || isScriptRun(command); };
   QVariantList shortcuts;
@@ -249,7 +384,11 @@ void KeybindingController::refreshShortcuts() {
     seen.insert(sequence);
     shortcuts.append(QVariantMap{
         {QStringLiteral("sequence"), sequence},
-        {QStringLiteral("chrome"), native(resolve(sequence, chrome)) || native(resolve(sequence, composer))},
+        // Held down, a toggle that cycles must not spin through its states.
+        {QStringLiteral("autoRepeat"), resolve(sequence, chrome) != kAppearanceCycle},
+        {QStringLiteral("chrome"), native(resolve(sequence, chrome))},
+        {QStringLiteral("composer"), native(resolve(sequence, composer))},
+        {QStringLiteral("editable"), native(resolve(sequence, editable))},
         {QStringLiteral("terminal"), native(resolve(sequence, terminal))},
     });
   }
@@ -430,18 +569,44 @@ void KeybindingController::reset(const QVariantMap& row) {
        row);
 }
 
+void KeybindingController::resetAll() {
+  if (m_rules.isEmpty()) return;
+  auto* menu = NativeShell::of(this)->controller<MenuController>();
+  if (!menu) return;
+  const QJsonArray rules = m_rules;
+  menu->confirm(tr("Reset every keybinding to its default?"),
+                rules.size() == 1 ? tr("This removes your 1 custom keybinding.") : tr("This removes your %1 custom keybindings.").arg(rules.size()),
+                tr("Reset keybindings"), true, [this, rules] {
+                  for (const QJsonValue& rule : rules) {
+                    call(QStringLiteral("hal-c2.removeKeybinding"), rule.toObject(), tr("Unable to reset keybindings"),
+                         tr("A keybinding was not removed."));
+                  }
+                });
+}
+
 void KeybindingController::call(const QString& method, const QJsonObject& input, const QString& failureTitle,
                                 const QString& failure) {
-  ++m_saving;
+  // The keymap is the user's on every environment they reach, as the web
+  // saves it: the shell's own, and each other one that is online and theirs
+  // to change. The shell's own answers as `config.keybindings`.
+  ShellStore* store = m_store;
+  QStringList environments{m_client->environment()};
+  for (const QString& environmentId : store->environments()) {
+    if (!environments.contains(environmentId) && store->environmentOnline(environmentId)) {
+      environments.append(environmentId);
+    }
+  }
+  for (const QString& environmentId : std::as_const(environments)) {
+    ++m_saving;
+    m_client->call(this, environmentId, method, input,
+                   [this, failureTitle, failure](const QJsonValue&, const std::optional<QString>& error) {
+                     --m_saving;
+                     emit savingChanged();
+                     if (error) {
+                       NativeShell::of(this)->controller<ToastController>()->error(
+                           failureTitle, error->isEmpty() ? failure : *error);
+                     }
+                   });
+  }
   emit savingChanged();
-  m_client->call(this, m_client->environment(), method, input,
-                 // The new rules come back as the config's `config.keybindings`.
-                 [this, failureTitle, failure](const QJsonValue&, const std::optional<QString>& error) {
-                   --m_saving;
-                   emit savingChanged();
-                   if (error) {
-                     NativeShell::of(this)->controller<ToastController>()->error(
-                         failureTitle, error->isEmpty() ? failure : *error);
-                   }
-                 });
 }

@@ -87,7 +87,7 @@ Feature: Exploring project files
     When the user expands "src"
     Then "app.ts" and "lib" are shown under "src"
 
-  @backlog @desktop
+  @desktop
   Scenario: Expanding and collapsing every folder at once
     When the user expands every folder
     Then "cart.ts" is visible
@@ -106,23 +106,23 @@ Feature: Exploring project files
     When the user opens "src/lib/cart.ts" from a message
     Then the tree reveals and selects "src/lib/cart.ts"
 
-  @backlog @desktop
+  @desktop
   Scenario: The tree refreshes when the agent changes files
     When the agent creates "src/checkout.ts"
     Then "src/checkout.ts" appears in the tree
 
-  @backlog @desktop
+  @desktop
   Scenario: A file can be sent to the composer as a mention
     When the user adds "src/app.ts" to the chat
     Then the composer mentions "src/app.ts"
 
-  @backlog @desktop
+  @desktop
   Scenario: Adding a file to the chat without an open chat is refused
     Given no chat is open for "shop"
     When the user adds "src/app.ts" to the chat
     Then the user is told to open a chat for this project and try again
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: File actions available from a file entry
     When the user chooses to <action> "src/app.ts"
     Then <outcome>

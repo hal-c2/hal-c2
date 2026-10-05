@@ -74,7 +74,6 @@ Feature: Permission modes
     When the user sends a message
     Then Cursor starts in auto-accept edits
 
-  @backlog
   Scenario: Claude still asks before a command in auto-accept edits
     Given a Claude thread in auto-accept edits
     When Claude asks to run a command
@@ -91,7 +90,6 @@ Feature: Permission modes
     When OpenCode asks to run a command
     Then the user is asked to approve the command
 
-  @backlog
   Scenario: Allowing an ACP command once does not allow it again
     Given a supervised thread runs on an ACP agent such as OpenCode or Cursor
     When the user allows a command once
@@ -160,28 +158,25 @@ Feature: Permission modes
       | Codex       | the provider's automatic reviewer approves it   |
       | Claude      | the provider's automatic reviewer approves it   |
       | OpenCode    | the user is asked, as in supervised             |
+      | Antigravity | the user is asked, as in supervised             |
 
-    # Cursor and Antigravity rows split out: they still need MC work.
+    # The Cursor row is split out: its sidecar turns Cursor's review on in supervised only.
     @backlog
     Examples: Not yet on the MC
       | provider    | outcome                                         |
       | Cursor      | the provider's automatic reviewer approves it   |
-      | Antigravity | the user is asked, as in supervised             |
 
-  @backlog
   Scenario: Grok remembers an always-allowed command for the session
     Given the user chose "Always allow this session" for a Grok command
     When Grok runs the same command again
     Then it is allowed without asking
     And a different command still asks
 
-  @backlog
   Scenario: A Grok session grant stays in its session
     Given the user chose "Always allow this session" for a Grok command
     When a thread in another project asks Grok to run the same command
     Then the user is asked to approve it
 
-  @backlog
   Scenario: Antigravity can still ask in full access
     Given an Antigravity thread in full access
     When Antigravity sends its own approval request
@@ -205,7 +200,7 @@ Feature: Permission modes
     When the user switches the thread to supervised
     Then the next turn asks before commands and file changes
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The permission mode can be changed from the desktop and mobile composers
     Given a supervised thread
     When the user switches the thread to auto-accept edits on desktop or mobile

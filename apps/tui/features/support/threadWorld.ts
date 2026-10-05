@@ -222,7 +222,10 @@ export async function openThread(
   const respond: ClientResponses = (ctx.respond ??= {});
   ctx.thread = detail;
   // The Background's project (T1's environment.ts) names the thread's project.
-  const projectTitle = ctx.projectTitle ?? (ctx as { env?: Environment }).env?.projects[0]?.title;
+  const environment = (ctx as { env?: Environment }).env;
+  const projectTitle = ctx.projectTitle ?? environment?.projects[0]?.title;
+  // This client is the Background's connection: `ui()` must not replace its snapshot.
+  if (environment) environment.connected = true;
   // Thread fixtures are timed against the real clock (`at`), not the environment's pinned one.
   delete ctx.nowMs;
   useClient(ctx, {
@@ -253,8 +256,9 @@ export async function updateThread(
   ctx: ThreadWorld,
   change: (detail: OrchestrationThread) => Partial<OrchestrationThread>,
 ): Promise<OrchestrationThread> {
-  if (!ctx.thread) throw new Error("updateThread: no thread is open");
-  const next = { ...ctx.thread, ...change(ctx.thread) } as OrchestrationThread;
+  // A domain Background ("the user is looking at a thread in …") opens nothing itself.
+  if (!ctx.thread) await openThread(ctx);
+  const next = { ...ctx.thread!, ...change(ctx.thread!) } as OrchestrationThread;
   ctx.thread = next;
   ctx.fake!.emitThread(next, ctx.page);
   await settle();

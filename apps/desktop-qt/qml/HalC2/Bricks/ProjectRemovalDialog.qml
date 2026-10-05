@@ -37,7 +37,7 @@ Dialog {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: 17
+        font.pixelSize: Math.round(17 * Theme.fontScale)
         font.weight: Font.DemiBold
         color: Theme.palette.color("text", "#e4e4e7")
         elide: Text.ElideRight
@@ -48,7 +48,7 @@ Dialog {
             Layout.fillWidth: true
             text: (dialog.removal?.threadCount ?? 0) > 0 ? qsTr("Its %n thread(s) and their conversation history will be cleared permanently.", "", dialog.removal?.threadCount ?? 0) : qsTr("It has no threads.")
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
         Label {
@@ -57,14 +57,14 @@ Dialog {
             visible: (dialog.removal?.count ?? 1) > 1
             text: qsTr("This removes %1 grouped project entries.").arg(dialog.removal?.count ?? 1)
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
         Label {
             Layout.fillWidth: true
             text: qsTr("The files on disk are kept.")
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
         Label {
@@ -73,7 +73,7 @@ Dialog {
             visible: text.length > 0
             text: (dialog.removal?.environment ?? "") !== "" ? qsTr("Environment: %1").arg(dialog.removal.environment) : ""
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
         Label {
@@ -81,7 +81,7 @@ Dialog {
             visible: text.length > 0
             text: dialog.removal?.workspaceRoot ?? ""
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-            font.pixelSize: 11
+            font.pixelSize: Math.round(11 * Theme.fontScale)
             color: Theme.palette.color("textMuted", "#a1a1aa")
             wrapMode: Text.WrapAnywhere
         }

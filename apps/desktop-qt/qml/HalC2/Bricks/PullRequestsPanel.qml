@@ -21,6 +21,13 @@ Rectangle {
     readonly property color warningColor: Theme.palette.color("warning", "#f59e0b")
     readonly property color infoColor: Theme.palette.color("info", "#38bdf8")
     readonly property bool online: source !== null && source.online
+    // The project's other open pull requests, under the linked ones.
+    readonly property var projectOpen: source?.projectOpen ?? []
+
+    onVisibleChanged: if (visible && source && typeof source.loadProject === "function")
+        source.loadProject()
+    Component.onCompleted: if (visible && source && typeof source.loadProject === "function")
+        source.loadProject()
 
     function stateIcon(state) {
         if (state === "merged")
@@ -64,7 +71,7 @@ Rectangle {
             text: root.source && root.source.count > 0 ? qsTr("%1 open · %2 linked").arg(root.source.openCount).arg(root.source.count) : qsTr("Pull requests")
             elide: Text.ElideRight
             color: root.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Row {
@@ -116,7 +123,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("This environment is unreachable. Pull requests show as last synced.")
             color: root.warningColor
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Item {
@@ -156,6 +163,17 @@ Rectangle {
         }
 
         Text {
+            objectName: "pullRequestsNotice"
+            x: 12
+            width: parent.width - 24
+            visible: text.length > 0
+            wrapMode: Text.Wrap
+            text: root.source ? root.source.notice : ""
+            color: Theme.palette.color("textMuted", "#a1a1aa")
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        Text {
             objectName: "pullRequestsProblem"
             x: 12
             width: parent.width - 24
@@ -163,7 +181,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: root.source ? root.source.problem : ""
             color: root.errorColor
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
     }
 
@@ -172,14 +190,14 @@ Rectangle {
         anchors.centerIn: parent
         width: parent.width - 32
         spacing: 8
-        visible: list.count === 0
+        visible: list.count === 0 && root.projectOpen.length === 0
 
         Text {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: qsTr("No linked pull requests")
             color: root.foreground
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             font.weight: Font.Medium
         }
         Text {
@@ -188,7 +206,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("Pull requests the agent opens from this thread land here. Link one yourself from a URL or a number.")
             color: root.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
     }
 
@@ -206,6 +224,95 @@ Rectangle {
         boundsBehavior: Flickable.StopAtBounds
         model: root.source
 
+        // The open pull requests of the thread's project: each opens its review.
+        footer: Column {
+            width: list.width - 12
+            visible: root.projectOpen.length > 0 || (root.source?.projectProblem ?? "").length > 0
+            height: visible ? implicitHeight : 0
+            topPadding: 10
+
+            Text {
+                objectName: "projectPullRequestsTitle"
+                x: 8
+                height: 24
+                verticalAlignment: Text.AlignVCenter
+                text: qsTr("Open in this project")
+                color: root.muted
+                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.weight: Font.Medium
+            }
+            Text {
+                x: 8
+                width: parent.width - 16
+                visible: text.length > 0
+                text: root.source?.projectProblem ?? ""
+                color: root.errorColor
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+            Repeater {
+                model: root.projectOpen
+
+                delegate: AbstractButton {
+                    id: open
+
+                    required property var modelData
+
+                    objectName: "projectPullRequest-" + modelData.number
+                    width: parent.width
+                    height: 44
+                    Accessible.name: qsTr("Review #%1 %2").arg(modelData.number).arg(modelData.title)
+                    onClicked: Shell.dispatch("rightPanel.reviewProject", {
+                        key: open.modelData.key
+                    })
+                    background: Rectangle {
+                        radius: 6
+                        color: open.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                    }
+                    contentItem: Item {
+                        ShellIcon {
+                            x: 8
+                            y: 8
+                            name: "git-pull-request"
+                            size: 14
+                            color: open.modelData.draft ? root.muted : root.successColor
+                        }
+                        Text {
+                            x: 30
+                            y: 5
+                            width: parent.width - x - linkButton.width - 12
+                            text: open.modelData.title
+                            color: root.foreground
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            x: 30
+                            y: 24
+                            width: parent.width - x - linkButton.width - 12
+                            text: [qsTr("#%1").arg(open.modelData.number), open.modelData.author, open.modelData.branches].filter(part => part.length > 0).join(" · ")
+                            color: root.muted
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            elide: Text.ElideRight
+                        }
+                        ShellButton {
+                            id: linkButton
+
+                            objectName: "projectPullRequestLink-" + open.modelData.number
+                            anchors.right: parent.right
+                            anchors.rightMargin: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            implicitHeight: 24
+                            subtle: true
+                            text: qsTr("Link")
+                            enabled: root.online
+                            onClicked: root.source.link(open.modelData.url)
+                        }
+                    }
+                }
+            }
+        }
+
         delegate: AbstractButton {
             id: row
 
@@ -222,6 +329,8 @@ Rectangle {
             required property bool conflicting
             required property string branches
             required property string sourceLabel
+            // A role a model may leave out (stackLabel).
+            required property var model
             required property string unlinkLabel
 
             objectName: "pullRequestRow-" + number
@@ -268,7 +377,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.foreground
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.weight: Font.Medium
             }
 
@@ -277,11 +386,11 @@ Rectangle {
                 anchors.right: menuButton.left
                 anchors.rightMargin: 4
                 y: 25
-                text: [qsTr("%1 #%2").arg(row.repository).arg(row.number), row.branches].filter(part => part.length > 0).join(" · ")
+                text: [qsTr("%1 #%2").arg(row.repository).arg(row.number), row.branches, row.model.stackLabel ?? ""].filter(part => part.length > 0).join(" · ")
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.muted
-                font.pixelSize: 11
+                font.pixelSize: Math.round(11 * Theme.fontScale)
             }
 
             Row {
@@ -293,32 +402,32 @@ Rectangle {
                     objectName: "pullRequestState"
                     text: row.stateLabel
                     color: root.stateColor(row.state)
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {
                     objectName: "pullRequestChecks"
                     visible: text.length > 0
                     text: row.checksLabel
                     color: root.checksColor(row.checks)
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {
                     objectName: "pullRequestReview"
                     visible: text.length > 0
                     text: row.reviewLabel
                     color: root.reviewColor(row.review)
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {
                     visible: row.conflicting
                     text: qsTr("Conflicts")
                     color: root.errorColor
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {
                     text: row.sourceLabel
                     color: root.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
             }
 

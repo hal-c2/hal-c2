@@ -14,6 +14,9 @@ Rectangle {
     id: root
 
     property var details: null
+    // The thread's project's actions (ProjectActionsController).
+    readonly property var actions: details !== null ? Shell.state.projectActions ?? null : null
+    readonly property string environmentId: details !== null ? Shell.state.workspace?.activeEnvironmentId ?? "" : ""
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -32,7 +35,7 @@ Rectangle {
     component Heading: Text {
         Layout.topMargin: 10
         color: root.muted
-        font.pixelSize: 11
+        font.pixelSize: Math.round(11 * Theme.fontScale)
         font.weight: Font.Medium
         font.capitalization: Font.AllUppercase
     }
@@ -56,7 +59,7 @@ Rectangle {
             text: parent.value
             elide: Text.ElideMiddle
             color: parent.tint
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
         }
     }
 
@@ -71,7 +74,7 @@ Rectangle {
             Layout.fillWidth: true
             text: qsTr("Thread details")
             color: root.foreground
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             font.weight: Font.Medium
         }
         ShellButton {
@@ -104,13 +107,27 @@ Rectangle {
             }
             Fact {
                 objectName: "threadDetailsEnvironment"
-                icon: "server"
+                icon: Shell.state.environmentIcons?.[root.environmentId]?.icon ?? "server"
                 value: root.details ? (root.details.online ? root.details.environment : qsTr("%1 (unreachable)").arg(root.details.environment)) : ""
                 tint: root.details?.online === false ? Theme.palette.color("warning", "#f59e0b") : root.foreground
             }
-            Fact {
-                icon: "folder"
-                value: root.details?.project ?? ""
+            RowLayout {
+                Layout.fillWidth: true
+                visible: (root.details?.project ?? "").length > 0
+                spacing: 8
+
+                ProjectIcon {
+                    objectName: "threadDetailsProjectIcon"
+                    size: 14
+                    icon: Shell.state.projectIcons?.[Shell.state.projectActions?.projectKey ?? ""] ?? null
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: root.details?.project ?? ""
+                    elide: Text.ElideMiddle
+                    color: root.foreground
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                }
             }
             Fact {
                 objectName: "threadDetailsCheckout"
@@ -121,6 +138,96 @@ Rectangle {
                 objectName: "threadDetailsBranch"
                 icon: "git-branch"
                 value: root.details?.branch ?? ""
+            }
+
+            ShellButton {
+                id: openWorkspace
+
+                readonly property var editor: (Shell.state.workspace?.editors ?? []).find(candidate => candidate.id === Shell.state.workspace?.preferredEditorId) ?? null
+
+                objectName: "threadDetailsOpenEditor"
+                visible: root.details !== null && editor !== null
+                subtle: true
+                iconName: "external-link"
+                text: qsTr("Open in %1").arg(editor?.label ?? "")
+                onClicked: Shell.dispatch("workspace.openInEditor", {})
+            }
+
+            Heading {
+                visible: root.actions !== null
+                text: qsTr("Actions")
+            }
+            Repeater {
+                model: root.actions?.scripts ?? []
+
+                delegate: RowLayout {
+                    id: action
+
+                    required property var modelData
+
+                    Layout.fillWidth: true
+                    spacing: 4
+
+                    ShellButton {
+                        objectName: "threadDetailsAction-" + action.modelData.id
+                        Layout.fillWidth: true
+                        subtle: true
+                        iconName: "play"
+                        text: action.modelData.setup ? qsTr("%1 (setup)").arg(action.modelData.name) : action.modelData.name
+                        Accessible.name: qsTr("Run %1").arg(action.modelData.name)
+                        onClicked: Shell.dispatch("workspace.runScript", {
+                            scriptId: action.modelData.id
+                        })
+                    }
+                    Text {
+                        visible: text.length > 0
+                        text: action.modelData.shortcut
+                        color: root.muted
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                    }
+                    ShellButton {
+                        objectName: "threadDetailsActionEdit-" + action.modelData.id
+                        subtle: true
+                        iconName: "settings"
+                        Accessible.name: qsTr("Edit %1").arg(action.modelData.name)
+                        onClicked: Shell.dispatch("projectActions.edit", {
+                            scriptId: action.modelData.id
+                        })
+                    }
+                }
+            }
+            Text {
+                objectName: "threadDetailsProjectFileProblem"
+                Layout.fillWidth: true
+                visible: root.actions?.file === "invalid"
+                text: qsTr("hal-c2.json is invalid, so its actions are not offered.")
+                color: Theme.palette.color("warning", "#f59e0b")
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+            Repeater {
+                model: root.actions?.imports ?? []
+
+                delegate: ShellButton {
+                    required property var modelData
+
+                    objectName: "threadDetailsImport-" + modelData.name
+                    Layout.fillWidth: true
+                    subtle: true
+                    iconName: "plus"
+                    text: qsTr("Import %1 from hal-c2.json").arg(modelData.name)
+                    onClicked: Shell.dispatch("projectActions.import", {
+                        name: modelData.name
+                    })
+                }
+            }
+            ShellButton {
+                objectName: "threadDetailsAddAction"
+                visible: root.actions !== null
+                subtle: true
+                iconName: "plus"
+                text: qsTr("Add action")
+                onClicked: Shell.dispatch("projectActions.add")
             }
 
             Heading {
@@ -154,14 +261,14 @@ Rectangle {
                             Layout.fillWidth: true
                             text: relation.modelData.relation
                             color: root.muted
-                            font.pixelSize: 11
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
                         }
                         Text {
                             Layout.fillWidth: true
                             text: relation.modelData.title
                             elide: Text.ElideRight
                             color: root.foreground
-                            font.pixelSize: 12
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
                         }
                     }
                 }

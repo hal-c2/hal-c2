@@ -40,6 +40,7 @@ struct Instance {
   QStringList runtimeModes;  // supportedRuntimeModes; empty: all
   QJsonArray models;
   QJsonArray slashCommands;
+  QJsonObject usageLimits;  // ServerProviderUsageLimits, when the provider reports them
   QJsonArray skills;
 
   bool ready() const { return enabled && available && status == QLatin1String("ready"); }
@@ -129,6 +130,8 @@ QList<Suggestion> slashItems(const Instance* instance, const Trigger& trigger, b
 QList<Suggestion> skillItems(const Instance* instance, const Trigger& trigger);
 // The @ menu: the entries of a workspace search, as file links.
 QList<Suggestion> pathItems(const QList<std::pair<QString, bool>>& entries);
+// A path as the prompt names it: the @ menu's file link, with its trailing space.
+QString pathLink(const QString& path);
 // The text the empty menu shows for the trigger.
 QString emptyText(const QString& kind);
 

@@ -11,6 +11,7 @@
 #include "Harness.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "SettingsRows.h"
 #include "SettingsScopeController.h"
 #include "World.h"
 
@@ -293,6 +294,7 @@ const Steps steps([] {
                   [&] { return QStringLiteral("the scope to be disabled; it is %1").arg(show(scope(world))); });
   });
   step(QStringLiteral("the setting cannot be changed"), [](World& world, const Captures&, const Table&) {
+    if (!world.settingRow.isEmpty()) return expectRowLocked(world, world.settingRow);  // a row of Settings → General
     expect(!scope(world).value(QStringLiteral("editable")).toBool(), QStringLiteral("the setting to be locked"));
     const qsizetype writes = fakeConfig(world.mc).writes.size();
     world.bridge().dispatch(QStringLiteral("storageSettings.set"),

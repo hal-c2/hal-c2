@@ -12,6 +12,8 @@ Loader {
     readonly property string brick: Views.brickFor(kind)
     // The loaded view's corner radius, for layouts that round the centre.
     property real radius: 0
+    // Whether the loaded view is a conversation scrolled away from its latest output.
+    readonly property bool conversationScrolled: status === Loader.Ready && item.scrolledAway === true
 
     active: brick.length > 0
     source: active ? Qt.resolvedUrl(brick + ".qml") : ""

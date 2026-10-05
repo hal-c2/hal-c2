@@ -13,6 +13,9 @@ Window {
 
     // Whether the thread list is hidden (LayoutController, sidebar.toggle).
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
+    // How wide the thread list is drawn (LayoutController: the width the user
+    // dragged it to, less when the window leaves it no room).
+    readonly property int sidebarWidth: Shell.state.layout ? (Shell.state.layout.sidebarWidth ?? 256) : 256
     // The app's zoom (LayoutController, mod+= / mod+- / mod+0): the body
     // scales, and the menu hosts and overlays stay in window coordinates, so
     // a menu opened at a pointer's scenePosition lands under it.
@@ -27,6 +30,8 @@ Window {
     readonly property bool terminalFocused: hasAncestor(root.activeFocusItem, "HalC2Terminal")
     // A text field has the keyboard (the web's editableFocus).
     readonly property bool editableFocused: root.activeFocusItem !== null && root.activeFocusItem.cursorPosition !== undefined
+    // The composer's own field has it (the web's composerFocus).
+    readonly property bool composerFocused: editableFocused && root.activeFocusItem.composerInput === true
 
     function hasAncestor(item, objectName) {
         for (let node = item; node; node = node.parent) {
@@ -39,6 +44,11 @@ Window {
 
     width: 1280
     height: 820
+    // The layout fits the thread list to the room the window leaves it.
+    onWidthChanged: Shell.dispatch("layout.window", { width: Math.round(width / zoom) })
+    // Again once the layout is there: the shell may start after the window.
+    onSidebarWidthChanged: Shell.dispatch("layout.window", { width: Math.round(width / zoom) })
+    Component.onCompleted: Shell.dispatch("layout.window", { width: Math.round(width / zoom) })
     minimumWidth: 640
     minimumHeight: 400
     visible: true
@@ -66,25 +76,27 @@ Window {
 
     ConfirmDialog {}
 
+    CustomSnoozeDialog {}
+
+    PullRequestThreadDialog {}
+
+    EditFromHereDialog {}
+
+    ProjectActionEditor {}
+
+    ProjectIconPicker {}
+
+    AttachmentViewer {}
+
     CommandPalette {}
 
-    // The palette's "Toggle theme editor": the active theme's colours.
-    ThemeEditor {
-        id: themeEditor
+    // The theme editor (Themes.editorOpen): the palette's "Toggle theme
+    // editor", its shortcut, and Settings → Appearance open it.
+    ThemeEditor {}
 
-        onClosed: Themes.editorOpen = false
-
-        Connections {
-            target: Themes
-
-            function onEditorOpenChanged() {
-                if (Themes.editorOpen) {
-                    themeEditor.edit(Themes.draft());
-                } else {
-                    themeEditor.close();
-                }
-            }
-        }
+    // Its colour picker: over the layout, under the menus and dialogs.
+    ThemeInspector {
+        anchors.fill: parent
     }
 
     // The quit shortcut's hint (QuitController): hold, or press again.
@@ -106,7 +118,7 @@ Window {
             anchors.centerIn: parent
             text: parent.hint ? parent.hint.message : ""
             color: "white"
-            font.pixelSize: 24
+            font.pixelSize: Math.round(24 * Theme.fontScale)
             font.bold: true
         }
     }
@@ -120,10 +132,13 @@ Window {
         anchors.fill: parent
     }
 
+    ConnectionNotice {}
+
     // One window shortcut per sequence the keymap (Keybindings) binds. A key
     // with no command in the current focus stands down and stays with the
     // focused control. A focused terminal keeps every key except the shell's
-    // own terminal-context commands (Ctrl+J and co).
+    // own terminal-context commands (Ctrl+J and co), and a text field every
+    // key whose command stands down for it (mod+z).
     Instantiator {
         model: Keybindings.shortcuts
 
@@ -132,9 +147,11 @@ Window {
 
             sequence: modelData.sequence
             context: Qt.WindowShortcut
-            enabled: root.terminalFocused ? modelData.terminal : modelData.chrome
+            autoRepeat: modelData.autoRepeat
+            enabled: root.terminalFocused ? modelData.terminal : root.composerFocused ? modelData.composer : root.editableFocused ? modelData.editable : modelData.chrome
             onActivated: Keybindings.press(modelData.sequence, {
                 terminal: root.terminalFocused,
+                composer: root.composerFocused,
                 editable: root.editableFocused
             })
         }

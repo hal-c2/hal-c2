@@ -1,5 +1,6 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/codex/provider.ex (model/list), apps/server-ex/lib/hal_c2/claude/provider.ex (the bundled manifest's Claude catalog)
+#   apps/server-ex/lib/hal_c2/codex/provider.ex (model/list, aliases), apps/server-ex/lib/hal_c2/claude/provider.ex (the manifest's Claude catalog)
+#   apps/server-ex/lib/hal_c2/model_manifest.ex (bundled, fetched and cached manifest; policies)
 #   apps/server-ex/lib/hal_c2/acp.ex (models from the model config option, subProvider)
 #   apps/server-ex/lib/hal_c2/settings.ex (textGenerationModelSelection, defaultModelSelection dropped for disabled providers)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (defaults and fallback)
@@ -63,24 +64,20 @@ Feature: Models
     When the MC starts without network access
     Then models are listed from the bundled manifest
 
-  @backlog
   Scenario: A newer manifest is fetched and used
     Given a newer model manifest is published
     When the MC refreshes the manifest
     Then the newer models and defaults are offered
 
-  @backlog
   Scenario: An invalid manifest download keeps the last usable manifest
     When the MC downloads a manifest that is not valid
     Then the last usable manifest is kept
 
-  @backlog
   Scenario: A bundled manifest newer than the cached one wins
     Given the MC was updated with a manifest newer than its cached copy
     When the MC starts
     Then the bundled manifest is used
 
-  @backlog
   Scenario: A fetched compatibility policy replaces the bundled one for its provider only
     Given the bundled manifest has compatibility policies for OpenCode and another provider
     And a newer manifest changes only OpenCode's policy
@@ -119,7 +116,6 @@ Feature: Models
     When the user adds the custom model "my-model" to Codex
     Then "my-model" offers the same options as Codex's own models
 
-  @backlog
   Scenario: A custom model's options can be copied from a built-in model
     When the user copies the options of a built-in Claude model into "my-model"
     Then "my-model" offers the same options
@@ -130,13 +126,13 @@ Feature: Models
     When the user removes the custom model "my-model"
     Then it is no longer offered or listed as a favourite
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: Favourite, hidden and ordered models are remembered on the device
     When the user favourites one model, hides another and moves a third up
     Then the model picker on this device reflects those choices
     And other devices keep their own choices
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-mc
   Scenario: A hidden model can be shown again
     Given the user hid the model "Haiku"
     When the user shows "Haiku" in the picker again
@@ -147,13 +143,11 @@ Feature: Models
     When the user starts a new thread in "shop"
     Then the thread uses "Opus"
 
-  @backlog
   Scenario: Old model names still resolve
     Given a thread saved with an older alias of a Codex model
     When the user opens the thread
     Then the thread shows the current name of that model
 
-  @backlog
   Scenario: A provider that needs a new thread to change models says so
     Given a provider that cannot change models inside a thread
     When the user picks another model in an existing thread

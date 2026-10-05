@@ -104,6 +104,30 @@ describe("ThreadShapeFold", () => {
     expect(turnItem?.status).toBe("completed");
   });
 
+  it("skips an entity kind it does not know and applies the events after it", () => {
+    const shape = new ThreadShapeFold(v2ThreadId);
+    const [snapshot] = shape.snapshot({
+      rows: [
+        ["thread", v2ThreadId, thread],
+        ["turn-item", "item-1", message("Hel")],
+      ],
+      part: 0,
+      done: true,
+      offset: 1,
+      at: 1,
+    });
+    if (snapshot?.kind !== "snapshot") throw new Error("expected snapshot");
+
+    const items = shape.events([
+      [2, "hologram", "hologram-1", { s: { id: "hologram-1", depth: 3 } }, 2],
+      [3, "turn-item", "item-1", { a: { text: "lo" } }, 3],
+    ]);
+
+    expect(items.map((i) => (i.kind === "event" ? i.sequence : i.kind))).toEqual([3]);
+    const [turnItem] = fold(items, snapshot.projection)?.turnItems ?? [];
+    expect(turnItem?.type === "assistant_message" && turnItem.text).toBe("Hello");
+  });
+
   it("a deleted thread becomes the v2 delete event", () => {
     const shape = new ThreadShapeFold(v2ThreadId);
     shape.snapshot({

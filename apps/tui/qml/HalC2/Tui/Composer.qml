@@ -29,7 +29,10 @@ Item {
     readonly property string auxMode: Shell.state.mode === "rename" && Shell.state.overlay !== null
         ? "rename"
         : Shell.state.mode === "commit" && Shell.state.git.commitPrompt !== null ? "commit"
-        : Shell.state.mode === "join" && Shell.state.cluster.joining ? "join" : ""
+        : Shell.state.mode === "join" && Shell.state.cluster.joining ? "join"
+        : Shell.state.mode === "ask" && Shell.state.ask !== null ? "ask" : ""
+    // What the box is asking for: the mode's name, or the host's question (`ask.label`).
+    readonly property string auxLabel: auxMode === "ask" ? Shell.state.ask.label : auxMode
     // Prefill the title each time a rename opens, and start each commit message
     // empty (typing breaks a `text` binding).
     onAuxModeChanged: {
@@ -37,6 +40,9 @@ Item {
         if (auxMode === "commit") commitInput.text = ""
         if (auxMode === "join") joinInput.text = ""
     }
+    // One question can follow another without the mode changing.
+    readonly property int askSeq: Shell.state.ask !== null ? Shell.state.ask.seq : 0
+    onAskSeqChanged: if (Shell.state.ask !== null) askInput.text = Shell.state.ask.value
 
     width: model.surfaceWidth
     alignSelf: "center"
@@ -59,8 +65,24 @@ Item {
             height: 1
             Text {
                 flexShrink: 0
-                text: dock.auxMode + " ▸ "
+                text: dock.auxLabel + " ▸ "
                 color: Theme.colors.accent
+            }
+            TextInput {
+                id: askInput
+                objectName: "askInput"
+                visible: dock.auxMode === "ask"
+                flexGrow: 1
+                height: 1
+                focus: dock.auxMode === "ask"
+                placeholderText: Shell.state.ask !== null ? Shell.state.ask.placeholder : ""
+                placeholderColor: Theme.colors.dim
+                cursorColor: Theme.colors.accent
+                color: Theme.colors.text
+                focusedColor: Theme.colors.text
+                backgroundColor: Theme.colors.bg
+                focusedBackgroundColor: Theme.colors.bg
+                onAccepted: Shell.dispatch("ask.submit", { text: text })
             }
             TextInput {
                 id: renameInput
@@ -112,7 +134,7 @@ Item {
             }
         }
         Text {
-            text: "Enter " + dock.auxMode + " · Esc cancel"
+            text: (dock.auxMode === "ask" ? "Enter accept" : "Enter " + dock.auxMode) + " · Esc cancel"
             color: Theme.colors.dim
         }
     }
@@ -130,6 +152,77 @@ Item {
         paddingX: 1
 
         PendingUserInput {}
+
+        // The provider cannot run a turn (signed out, disabled): what to do about it.
+        Item {
+            objectName: "composerNotice"
+            visible: dock.model.notice !== null
+            flexDirection: "column"
+            flexShrink: 0
+            Repeater {
+                model: dock.model.noticeLines
+                delegate: Text {
+                    height: 1
+                    flexShrink: 0
+                    wrapMode: "none"
+                    text: (index === 0 ? "⚠ " : "  ") + modelData
+                    color: Theme.colors.warning
+                }
+            }
+        }
+
+        // What "/usage-limits" answered: the provider's windows, until the next message is sent.
+        Item {
+            objectName: "composerLimits"
+            visible: dock.model.limitLines.length > 0
+            flexDirection: "column"
+            flexShrink: 0
+            Repeater {
+                model: dock.model.limitLines
+                delegate: Text {
+                    height: 1
+                    flexShrink: 0
+                    wrapMode: "none"
+                    text: modelData
+                    color: Theme.colors.dim
+                }
+            }
+        }
+
+        // Files referenced with "@": a click on a chip drops it and its mention.
+        Item {
+            objectName: "composerReferences"
+            visible: dock.model.references.length + dock.model.contexts.length > 0
+            flexDirection: "row"
+            height: 1
+            flexShrink: 0
+            overflow: "hidden"
+            Repeater {
+                model: dock.model.references
+                delegate: Text {
+                    objectName: "composerReference-" + modelData.path
+                    marginRight: 1
+                    flexShrink: 0
+                    wrapMode: "none"
+                    onMouseDown: Shell.dispatch("composer.reference.remove", { path: modelData.path })
+                    Span { text: "× "; color: Theme.colors.accent }
+                    Span { text: modelData.label; color: Theme.colors.text }
+                }
+            }
+            // Terminal output and diff notes picked as context: sent with the reply.
+            Repeater {
+                model: dock.model.contexts
+                delegate: Text {
+                    objectName: "composerContext-" + modelData.id
+                    marginRight: 1
+                    flexShrink: 0
+                    wrapMode: "none"
+                    onMouseDown: Shell.dispatch("composer.context.remove", { id: modelData.id })
+                    Span { text: "× "; color: Theme.colors.accent }
+                    Span { text: modelData.label; color: Theme.colors.text }
+                }
+            }
+        }
 
         Item {
             objectName: "composerAttachments"
@@ -155,7 +248,7 @@ Item {
                         width: 8
                         height: 3
                         fit: "fill"
-                        protocol: "kitty"
+                        protocol: Shell.state.graphics.protocol
                         source: modelData.image ? modelData.image.source : null
                     }
                 }

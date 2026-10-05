@@ -47,7 +47,7 @@ Feature: Appearance
         | Light  | Dark   |
         | Dark   | System |
 
-    @backlog @desktop
+    @desktop
     Scenario: Holding the appearance shortcut does not spin through modes
       Given the appearance is System
       When the user holds the appearance shortcut down
@@ -66,7 +66,7 @@ Feature: Appearance
       When the user chooses the "Nord" theme in Settings → Appearance
       Then the app uses "Nord"
 
-    @backlog @desktop
+    @desktop
     Scenario: The theme shortcut opens the theme picker without leaving the thread
       When the user presses the theme shortcut
       Then the theme picker opens over the thread
@@ -109,17 +109,23 @@ Feature: Appearance
 
   Rule: Interface
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Interface sliders change the look
       When the user sets <setting> to <value>
       Then <effect>
 
       Examples:
         | setting       | value | effect                                   |
-        | contrast      | 20    | text and borders stand out more          |
         | glass opacity | 50    | translucent surfaces are more see-through |
 
-    @backlog @desktop
+      # Contrast runs from 50 to 200 (packages/contracts settings.ts), so 20 is not a
+      # value the row can take, and below 100 it softens rather than sharpens.
+      @backlog
+      Examples: Not drawn by the desktop yet
+        | setting       | value | effect                                   |
+        | contrast      | 20    | text and borders stand out more          |
+
+    @desktop
     Scenario Outline: The environment can be identified at a glance
       When the user sets environment identification to "<mode>"
       And the environment is a Nightly build
@@ -131,7 +137,7 @@ Feature: Appearance
         | Version pill | the app shows a Nightly version pill           |
         | None         | the app shows no environment marker            |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Diff colors can be changed
       When the user sets diff colors to "<scheme>"
       Then added and removed lines are shown in <colors>
@@ -141,13 +147,13 @@ Feature: Appearance
         | Red & green   | green and red   |
         | Blue & orange | blue and orange |
 
-    @backlog @desktop
+    @desktop
     Scenario: Composer context stays visible after the first message
       Given the user turned on composer context
       When the user sends the first message in a new thread
       Then branch and worktree controls stay visible below the composer
 
-    @backlog @desktop
+    @desktop
     Scenario: Composer context retreats by default
       Given composer context is off
       When the user sends the first message in a new thread
@@ -177,20 +183,20 @@ Feature: Appearance
       When the user toggles the sidebar
       Then the sidebar appears without animation
 
-    @backlog @desktop
+    @desktop
     Scenario: Panel animations can be slowed down
       When the user sets panel animations to 200 ms
       And the user toggles the right panel
       Then the right panel slides open over 200 ms
 
-    @backlog @desktop
+    @desktop
     Scenario: Panel animations respect reduced motion
       Given the operating system asks for reduced motion
       And panel animations are set to 200 ms
       When the user toggles the right panel
       Then the right panel opens immediately
 
-    @backlog @desktop
+    @desktop
     Scenario: Switching threads never replays panel transitions
       Given panel animations are set to 200 ms
       When the user switches to a thread with a different panel layout
@@ -198,7 +204,7 @@ Feature: Appearance
 
   Rule: Fonts and text
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Font preferences change their part of the app
       When the user sets the <font> font to "<family>" at <size>
       Then <area> uses "<family>" at <size>
@@ -216,12 +222,12 @@ Feature: Appearance
       When the user resets the interface font
       Then the interface uses the system default font
 
-    @backlog @desktop
+    @desktop
     Scenario: Font smoothing is offered only on macOS
       Given the user is on Linux
       Then font smoothing is not offered
 
-    @backlog @desktop
+    @desktop
     Scenario: Word wrap applies to code
       When the user turns on word wrap
       Then long lines in code blocks, tables, diffs and file previews wrap instead of scrolling

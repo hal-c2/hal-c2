@@ -139,6 +139,31 @@ defmodule HalC2.Steps.Providers.Claude do
     Map.put(context, :gated, gated["slug"])
   end
 
+  # The picker leaves the model out; a thread already on it (or a default naming it)
+  # still picks it.
+  step "the user picks that model", context do
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "hello", %{"model" => context.gated})
+
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the user is told which Claude version the model needs", context do
+    model = Enum.find(claude_manifest()["models"], &(&1["slug"] == context.gated))
+    min = get_in(model, ["adapter", "claudeCode", "minVersion"])
+
+    assert [%{"lastError" => error}] =
+             StreamState.list(World.stream(context, @thread), "provider-session")
+
+    assert error ==
+             "Claude Code v2.1.0 is too old for #{model["name"]}. Upgrade to v#{min} or newer to access it."
+
+    # Claude was never started for the turn.
+    refute Enum.any?(World.provider_log(context, "claude"), &Map.has_key?(&1, "in"))
+    context
+  end
+
   step "that model is not offered", context do
     refute Enum.any?(context.models, &(&1["slug"] == context.gated))
     context
@@ -454,6 +479,515 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "that run completes and the user's run stays completed", context do
     World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  # The fake's "in the background" turn starts a subagent with the Agent tool (tool use
+  # agent-1, task task-agent-1); the task then says what it does and ends.
+  step "Claude starts a subagent", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    task = %{"type" => "system", "task_id" => "task-agent-1", "tool_use_id" => "agent-1"}
+
+    claude_says(
+      context,
+      Map.merge(task, %{"subtype" => "task_progress", "summary" => "Reading lib"})
+    )
+
+    claude_says(
+      context,
+      Map.merge(task, %{
+        "subtype" => "task_notification",
+        "status" => "completed",
+        "summary" => "lib has three modules"
+      })
+    )
+
+    Map.merge(context, %{
+      thread: @thread,
+      subagent_prompt: "List what is in the repo",
+      subagent_answer: "lib has three modules"
+    })
+  end
+
+  step "Claude starts a monitor in the thread", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "start a monitor")
+
+    World.await_runs(context, @thread, ["completed"])
+    Map.put(context, :thread, @thread)
+  end
+
+  step "the thread lists the monitor as background work", context do
+    id = World.thread_id(context, @thread)
+
+    World.await_row(
+      id,
+      &match?(
+        [%{"taskId" => "mon-1", "taskType" => "dynamic_tool", "description" => "Monitor"}],
+        &1["pendingBackgroundTasks"]
+      )
+    )
+
+    context
+  end
+
+  step "the monitor is not shown as a command", context do
+    items = World.entities(context, @thread, "turn-item")
+    assert [] = Enum.filter(items, &(&1["type"] == "command_execution"))
+
+    assert [%{"type" => "dynamic_tool", "toolName" => "Monitor", "status" => "running"}] =
+             Enum.filter(items, &(get_in(&1, ["nativeItemRef", "nativeId"]) == "mon-1"))
+
+    # It stops being background work when Claude reports it ended.
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-mon-1",
+      "tool_use_id" => "mon-1",
+      "status" => "completed",
+      "summary" => "Monitor ended"
+    })
+
+    World.await_row(World.thread_id(context, @thread), &(&1["pendingBackgroundTasks"] == []))
+    context
+  end
+
+  # --- a resumed subagent ----------------------------------------------------------------
+
+  # The subagent of the fake's "in the background" turn finished; then the runtime that
+  # knew it is gone, as after a restart of the MC, and in the next turn Claude sends
+  # the subagent (its task id) another message.
+  step "Claude resumed a subagent after the MC restarted", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    task = %{"type" => "system", "task_id" => "task-agent-1", "tool_use_id" => "agent-1"}
+
+    claude_says(
+      context,
+      Map.merge(task, %{
+        "subtype" => "task_notification",
+        "status" => "completed",
+        "summary" => "lib has three modules"
+      })
+    )
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "subagent"), &(&1["status"] == "completed"))
+    end)
+
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    ref = Process.monitor(runtime)
+    Process.exit(runtime, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+
+    context = World.post_message(context, @thread, "wait and resume it")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(get_in(&1, ["in", "message", "content"]) == "wait and resume it")
+    )
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-send",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "send-1",
+            "name" => "SendMessage",
+            "input" => %{"to" => "task-agent-1", "message" => "Also check the tests"}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "send-1",
+      "description" => "Survey the repo",
+      "task_type" => "local_agent",
+      "is_backgrounded" => true
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{"type" => "tool_result", "tool_use_id" => "send-1", "content" => "Message delivered"}
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "send-1",
+      "status" => "completed",
+      "summary" => "The tests pass"
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success"})
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "the user opens the subagent's thread", context do
+    state = World.stream(context, @thread)
+    # Still the one subagent, and its one thread.
+    assert [%{"status" => "completed", "result" => "The tests pass"} = subagent] =
+             StreamState.list(state, "subagent")
+
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+
+    messages =
+      child
+      |> StreamState.list("turn-item")
+      |> Enum.filter(&(&1["type"] in ["user_message", "assistant_message"]))
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.map(&{&1["type"], &1["text"]})
+
+    Map.put(context, :child_messages, messages)
+  end
+
+  step "the thread shows the message that resumed it", context do
+    assert [
+             {"user_message", "List what is in the repo"},
+             {"assistant_message", "lib has three modules"},
+             {"user_message", "Also check the tests"},
+             {"assistant_message", "The tests pass"}
+           ] = context.child_messages
+
+    context
+  end
+
+  step "the parent thread does not", context do
+    state = World.stream(context, @thread)
+
+    refute Enum.any?(
+             StreamState.list(state, "message"),
+             &((&1["text"] || "") =~ "Also check the tests")
+           )
+
+    refute Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(inspect(&1, limit: :infinity) =~ "Also check the tests")
+           )
+
+    # The message is not a tool call of the parent's either.
+    refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["toolName"] == "SendMessage"))
+    context
+  end
+
+  # --- several accounts ------------------------------------------------------------------
+
+  @work "claude-work"
+
+  # The built-in instance keeps the MC's own Claude config directory; the second
+  # instance names another in its variables.
+  step "the user adds a second Claude instance with its own config directory", context do
+    context = World.fake_providers(context)
+    personal = Mc.tmp_dir(context.mc, "claude-personal")
+    work = Mc.tmp_dir(context.mc, "claude-work")
+    World.put_os_env("CLAUDE_CONFIG_DIR", personal)
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providerInstances", %{}), @work], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "displayName" => "Claude (work)",
+          "environment" => [
+            %{"name" => "CLAUDE_CONFIG_DIR", "value" => work, "sensitive" => false}
+          ]
+        })
+      end)
+
+    {providers, context} = World.provider_list(context)
+    assert %{"driver" => "claudeAgent"} = Enum.find(providers, &(&1["instanceId"] == @work))
+    assert claude(providers)
+    Map.merge(context, %{claude_dirs: %{"claudeAgent" => personal, @work => work}})
+  end
+
+  # `claude auth login` with that directory leaves the login in it.
+  step "the user signs in to the CLI with that config directory", context do
+    File.write!(
+      Path.join(context.claude_dirs[@work], ".claude.json"),
+      JSON.encode!(%{"oauthAccount" => %{"emailAddress" => "work@example.com"}})
+    )
+
+    context
+  end
+
+  step "each instance uses its own account and history", context do
+    context = World.launch_on(context, "Personal", "claudeAgent", "hello from home")
+    World.await_runs(context, "Personal", ["completed"])
+    context = World.launch_on(context, "Work", @work, "hello from work")
+    World.await_runs(context, "Work", ["completed"])
+
+    starts =
+      for %{"argv" => _, "account" => account, "env" => env} <-
+            World.provider_log(context, "claude"),
+          do: {env["CLAUDE_CONFIG_DIR"], account}
+
+    assert {context.claude_dirs["claudeAgent"], "me@example.com"} in starts
+    assert {context.claude_dirs[@work], "work@example.com"} in starts
+
+    # Each conversation is kept under its own instance's directory only.
+    history = fn instance ->
+      Path.join(context.claude_dirs[instance], "projects/*/*.jsonl")
+      |> Path.wildcard()
+      |> Enum.map_join(&File.read!/1)
+    end
+
+    assert history.("claudeAgent") =~ "hello from home"
+    refute history.("claudeAgent") =~ "hello from work"
+    assert history.(@work) =~ "hello from work"
+    refute history.(@work) =~ "hello from home"
+    context
+  end
+
+  # --- the fetched manifest --------------------------------------------------------------
+
+  @new_model "claude-nova-9"
+
+  # The manifest the MC fetches (a file here, where it would be a URL) gains a model,
+  # edited after this release was cut.
+  step "the model manifest lists a new Claude model", context do
+    context = World.fake_providers(context, claude_version: "999.0.0")
+    bundled = HalC2.ModelManifest.bundled()
+    catalog = bundled["providers"]["claudeAgent"]
+
+    nova =
+      hd(catalog["models"])
+      |> Map.take(["profile"])
+      |> Map.merge(%{"slug" => @new_model, "name" => "Claude Nova 9", "status" => "current"})
+
+    published =
+      bundled
+      |> Map.put("updatedAt", "2099-01-01T00:00:00Z")
+      |> put_in(["providers", "claudeAgent", "models"], catalog["models"] ++ [nova])
+      |> update_in(["currentModels", "claudeAgent"], &((&1 || []) ++ [@new_model]))
+
+    file = Path.join(context.mc.home, "published-models.json")
+    File.write!(file, JSON.encode!(published))
+    World.put_app_env(:model_manifest_url, file)
+    HalC2.ModelManifest.forget()
+    ExUnit.Callbacks.on_exit(&HalC2.ModelManifest.forget/0)
+
+    # Until the MC refreshes, Claude's models are the release's own.
+    {providers, context} = World.provider_list(context)
+    refute @new_model in Enum.map(claude(providers)["models"], & &1["slug"])
+    context
+  end
+
+  step "the new model is offered after the next refresh", context do
+    {_, context} = World.call!(context, "server.refreshProviders", %{})
+    {providers, context} = World.provider_list(context)
+    models = claude(providers)["models"]
+
+    assert %{"name" => "Claude Nova 9", "isCustom" => false} =
+             Enum.find(models, &(&1["slug"] == @new_model))
+
+    # It joins the release's models, which are all still offered.
+    assert length(models) ==
+             length(HalC2.ModelManifest.bundled()["providers"]["claudeAgent"]["models"]) + 1
+
+    context
+  end
+
+  # --- compaction ------------------------------------------------------------------------
+
+  defp compactions(context),
+    do: Enum.filter(World.entities(context, @thread, "turn-item"), &(&1["type"] == "compaction"))
+
+  # The newest usage any of the thread's provider turns reported: what the meter shows.
+  defp context_usage(context) do
+    World.entities(context, @thread, "provider-turn")
+    |> Enum.filter(& &1["tokenUsage"])
+    |> Enum.max_by(& &1["tokenUsage"]["updatedAt"], fn -> %{} end)
+    |> Map.get("tokenUsage")
+  end
+
+  step "the Claude instance compacts after 200000 tokens", context do
+    context
+    |> World.fake_providers()
+    |> World.put_settings(%{
+      "providers" => %{"claudeAgent" => %{"autoCompactWindow" => "200000"}}
+    })
+  end
+
+  step "the conversation grows past that size", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "grow the conversation")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude compacts the conversation and the timeline says so", context do
+    # Claude was told the size to compact at.
+    assert [%{"argv" => argv}] =
+             Enum.filter(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+
+    assert [settings] = for(["--settings", json] <- pairs(argv), do: JSON.decode!(json))
+    assert settings["autoCompactWindow"] == 200_000
+
+    assert [
+             %{
+               "title" => "Context compacted",
+               "status" => "completed",
+               "beforeTokenCount" => 205_000,
+               "afterTokenCount" => 42_000
+             }
+           ] = compactions(context)
+
+    context
+  end
+
+  step "Claude compacted the conversation of a thread", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.put_settings(%{
+        "providers" => %{"claudeAgent" => %{"autoCompactWindow" => "200000"}}
+      })
+      |> World.launch_on(@thread, "claudeAgent", "grow the conversation")
+
+    World.await_runs(context, @thread, ["completed"])
+    assert [_] = compactions(context)
+    assert %{"usedTokens" => 42_000} = context_usage(context)
+    context
+  end
+
+  step "the user sends the next message", context do
+    context = World.post_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  # The same Claude session takes the message: nothing is started again, or resumed
+  # from before the compaction.
+  step "Claude continues from the compacted conversation", context do
+    log = World.provider_log(context, "claude")
+    assert [%{"argv" => argv}] = Enum.filter(log, &Map.has_key?(&1, "argv"))
+    refute "--resume" in argv
+    refute Enum.any?(argv, &String.starts_with?(&1, "--resume-session-at"))
+
+    assert ["grow the conversation", "hello"] =
+             for(
+               %{"in" => %{"type" => "user", "message" => %{"content" => text}}} <- log,
+               do: text
+             )
+
+    assert "Hello from claude" in World.replies(context, @thread)
+    assert [_] = compactions(context)
+    context
+  end
+
+  step "the context meter keeps the usage Claude reported after compaction", context do
+    assert %{"usedTokens" => 42_000} = context_usage(context)
+    context
+  end
+
+  # --- routers ---------------------------------------------------------------------------
+
+  @router_model "anthropic/claude-sonnet-router"
+
+  # The Claude instance's variables in settings: its own config directory, and the
+  # router Claude Code is pointed at (the token is a secret of the instance).
+  step "a Claude instance with its own config directory and a router's endpoint and token in its environment",
+       context do
+    context = World.fake_providers(context)
+    config = Mc.tmp_dir(context.mc, "claude-router")
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providerInstances", %{}), "claudeAgent"], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "environment" => [
+            %{"name" => "CLAUDE_CONFIG_DIR", "value" => config, "sensitive" => false},
+            %{
+              "name" => "ANTHROPIC_BASE_URL",
+              "value" => "https://openrouter.test/api",
+              "sensitive" => false
+            },
+            %{"name" => "ANTHROPIC_AUTH_TOKEN", "value" => "sk-or-secret", "sensitive" => true}
+          ]
+        })
+      end)
+
+    Map.put(context, :router_config, config)
+  end
+
+  step "the router's model id is added as a custom model", context do
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, ["providerInstances", "claudeAgent", "config"], %{
+          "customModels" => [@router_model]
+        })
+      end)
+
+    {providers, context} = World.provider_list(context)
+    assert @router_model in Enum.map(claude(providers)["models"], & &1["slug"])
+    context
+  end
+
+  step "the user sends a message with that model", context do
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "hello", %{"model" => @router_model})
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the turn runs through the router with that model", context do
+    assert [%{"argv" => argv, "env" => env}] =
+             Enum.filter(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+
+    assert ["--model", @router_model] in pairs(argv)
+
+    assert env == %{
+             "CLAUDE_CONFIG_DIR" => context.router_config,
+             "ANTHROPIC_BASE_URL" => "https://openrouter.test/api",
+             "ANTHROPIC_AUTH_TOKEN" => "sk-or-secret"
+           }
+
+    # The token is kept as a secret: the settings a client reads do not carry it.
+    {%{"settings" => settings}, context} = World.call!(context, "hal-c2.readSettings")
+    refute inspect(settings, limit: :infinity) =~ "sk-or-secret"
+    assert "Hello from claude" in World.replies(context, @thread)
+    context
+  end
+
+  # Writes the settings as a client does.
+  defp write_settings(context, fun) do
+    {%{"settings" => settings, "version" => version}, context} =
+      World.call!(context, "hal-c2.readSettings")
+
+    {_, context} =
+      World.call!(context, "hal-c2.writeSettings", %{
+        "settings" => fun.(settings),
+        "version" => version
+      })
+
     context
   end
 

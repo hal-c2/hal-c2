@@ -9,6 +9,7 @@ import {
   type GitPanelAction,
 } from "../gitActions.logic.ts";
 import { clip } from "../format.ts";
+import { gitElapsed, type GitLogLine, type GitProgress } from "../store.ts";
 
 /** One row of the source-control panel's action list. */
 export interface TuiGitAction {
@@ -30,7 +31,7 @@ export interface TuiGitAction {
  * terminal's source-control panel draws (summary lines, the keyboard-navigable
  * action list, the pending commit message prompt).
  */
-export interface TuiGitState extends ShellGitState {
+export interface TuiGitState extends Omit<ShellGitState, "progress"> {
   /** The branch as the "on …" row draws it, clipped to the panel. */
   readonly branchText: string;
   readonly actions: ReadonlyArray<TuiGitAction>;
@@ -48,6 +49,15 @@ export interface TuiGitState extends ShellGitState {
   readonly changesLine: string;
   /** Set while the panel asks for a commit message for this action. */
   readonly commitPrompt: { readonly action: GitStackedAction; readonly label: string } | null;
+  /** The running (or last) action's phases, hooks and hook output, clipped to the panel. */
+  readonly log: ReadonlyArray<{ readonly kind: GitLogLine["kind"]; readonly text: string }>;
+  /** The last action failed: its error stays in `log` until dismissed. */
+  readonly failed: boolean;
+  /**
+   * The running action's stage ("Committing...") and how long it has run ("7s"); null when
+   * idle. A hook's output is listed in `log`, not on a `hookLine` as the contract's has it.
+   */
+  readonly progress: { readonly stage: string; readonly elapsed: string } | null;
 }
 
 export function buildTuiGitState(input: {
@@ -57,6 +67,8 @@ export function buildTuiGitState(input: {
   readonly commitPrompt: TuiGitState["commitPrompt"];
   /** The panel's width; RightPanel clips its rows to the room inside border and padding. */
   readonly width: number;
+  readonly log?: ReadonlyArray<GitLogLine>;
+  readonly progress?: GitProgress | null;
 }): TuiGitState {
   const { status, busy } = input;
   const room = Math.max(6, input.width - 4);
@@ -125,6 +137,18 @@ export function buildTuiGitState(input: {
           )
         : "working tree clean",
     commitPrompt: input.commitPrompt,
+    // The newest lines that fit a short pane; an error is always the last and stays.
+    log: (input.log ?? []).slice(-8).map((line) => ({
+      kind: line.kind,
+      text: clip(
+        `${line.kind === "phase" ? "▸ " : line.kind === "error" ? "✗ " : line.kind === "hook" ? "⚙ " : "  "}${line.text}`,
+        room,
+      ),
+    })),
+    failed: (input.log ?? []).some((line) => line.kind === "error"),
+    progress: input.progress
+      ? { stage: input.progress.stage, elapsed: gitElapsed(input.progress.elapsedMs) }
+      : null,
   };
 }
 

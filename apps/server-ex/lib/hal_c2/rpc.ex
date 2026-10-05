@@ -29,9 +29,12 @@ defmodule HalC2.Rpc do
   end
 
   def handle("hal-c2.writeSettings", %{"settings" => %{} = settings, "version" => version}) do
-    case HalC2.Settings.put(settings, version) do
-      {:ok, version} -> {:ok, %{"version" => version}}
+    with :ok <- HalC2.Settings.validate(settings),
+         {:ok, version} <- HalC2.Settings.put(settings, version) do
+      {:ok, %{"version" => version}}
+    else
       {:error, :stale} -> {:error, %{"_tag" => "StaleSettings", "message" => "settings changed"}}
+      {:error, %{} = invalid} -> {:error, invalid}
     end
   end
 

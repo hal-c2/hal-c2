@@ -4,6 +4,7 @@
 #   packages/contracts/src/rpc.ts (vcs.refreshStatus, subscribeVcsStatus, vcs.init)
 #   apps/server-ex/lib/hal_c2/vcs.ex (status, init)
 #   apps/server-ex/lib/hal_c2/vcs/watch.ex
+#   apps/server-ex/lib/hal_c2/source_control/change_requests.ex (GitLab, Forgejo, Azure DevOps, Bitbucket)
 #   apps/server-ex/lib/hal_c2/background_policy.ex (automaticGitFetchInterval)
 #   apps/web/src/components/GitActionsControl.tsx (Initialize Git)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Initialize Git, git pill)
@@ -33,7 +34,7 @@ Feature: Repository status and working tree changes
     And it reports 2 commits ahead and 1 behind
 
   # Delivered natively (WorkspaceController follows the checkout's vcs status); no desktop test yet.
-  @mc @desktop @tui @backlog-desktop
+  @mc @desktop @tui
   Scenario: Status follows the checkout while the thread is open
     Given the user is looking at a thread in "shop"
     When the agent's turn ends after editing a file
@@ -76,7 +77,7 @@ Feature: Repository status and working tree changes
     When status is read on "main"
     Then the status carries no pull request
 
-  @backlog @mc
+  @mc
   Scenario Outline: Status names the open change request on other hosts
     Given "shop" has its primary remote on <host>
     And the current branch has an open change request there
@@ -97,14 +98,14 @@ Feature: Repository status and working tree changes
     Then the status says it is not a repository
 
   # Delivered natively (GitController, vcs.init); source-control/git-actions.feature runs it in its own words, not these steps.
-  @mc @desktop @backlog-desktop
+  @mc @desktop
   Scenario: Initializing a repository in a plain folder
     Given the project "notes" is not in a git repository
     When the user initializes Git for "notes"
     Then "notes" becomes a git repository
     And the git actions for "notes" become available
 
-  @backlog @tui
+  @tui
   Scenario: Initializing a repository from the terminal client
     Given the project "notes" is not in a git repository
     When the user initializes Git for "notes" from the terminal client

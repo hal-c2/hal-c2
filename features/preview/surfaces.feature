@@ -6,7 +6,7 @@
 #   apps/server-ex/lib/hal_c2/local_servers.ex (subscribeDiscoveredLocalServers)
 #   apps/server-ex/lib/hal_c2/rpc.ex (preview.open, navigate, reportStatus, resize, refresh, close, list)
 #   apps/server-ex/test/hal_c2/preview_test.exs
-#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (add menu has no browser entry)
+#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (the add menu's Browser tab)
 #   apps/desktop-qt/src/native/ThreadPreviews.cpp (the right panel's Previews tab)
 #   apps/desktop-qt/qml/HalC2/Bricks/PreviewsPanel.qml
 #   apps/desktop-qt/tests/native/features/PreviewSteps.cpp
@@ -184,8 +184,9 @@ Feature: In-app preview browser
     # The desktop embeds no browser: drawing the page needs QtWebEngine or
     # QtWebView, which on Linux is WebEngine underneath and has no input, zoom or
     # popup control. Until one is chosen the Previews tab lists
-    # the thread's browser tabs and opens them in the user's browser, and the
-    # scenarios that draw the page wait (@backlog-desktop).
+    # the thread's browser tabs, offers where a new one can go and opens them
+    # in the user's browser, and the scenarios that draw the page wait
+    # (@backlog-desktop).
 
     @desktop @backlog-desktop
     Scenario: The user opens a local dev server in a browser tab beside the thread
@@ -193,13 +194,13 @@ Feature: In-app preview browser
       When the user opens the preview
       Then the page opens in a browser tab beside the thread instead of a desktop-only notice
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The user adds a browser tab from the side panel
       Given the side panel is open
       When the user opens the side panel's add menu
       Then it offers a browser tab next to diff, files, terminal and pull request
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A new browser tab offers local servers and recent pages
       Given the thread's project has a dev server running and recently visited pages
       When the user opens a new browser tab
@@ -311,13 +312,13 @@ Feature: In-app preview browser
       When the tab at "http://localhost:5173" is closed on the MC
       Then no browser tabs are listed
 
-    @backlog @tui
+    @tui
     Scenario: The terminal client lists preview addresses without an embedded browser
       Given a project with configured and discovered preview addresses
       When the user opens previews in the terminal client
       Then the addresses are listed with ways to open or copy each one
 
-    @backlog @tui
+    @tui
     Scenario: The terminal client refreshes or closes existing preview tabs
       Given the thread has preview tabs
       When the user refreshes or closes one in the terminal client

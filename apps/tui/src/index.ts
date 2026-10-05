@@ -10,10 +10,12 @@ import { runShell } from "opentui-qml";
 
 import { makeClusterClient } from "./clusterClient.ts";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
-import { detectInlineImageTransport } from "./terminalGraphics.ts";
+import { detectInlineImageTransport, inlineImageProtocol } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
-import { enginePluginPort } from "./host/plugins.ts";
-import { readUserConfig } from "./host/userConfig.ts";
+import { fileMutedThreads, MUTED_THREADS_FILE } from "./host/mutedThreads.ts";
+import { enginePluginPort, filePluginStore, PLUGIN_RECORDS_FILE } from "./host/plugins.ts";
+import { movePromptCursorToEnd } from "./host/promptCursor.ts";
+import { PLUGINS_DIR, readUserConfig, saveKeymapOverrides } from "./host/userConfig.ts";
 import { resolveShellConfigDir } from "./shellConfigDir.ts";
 import {
   connectRemoteMc,
@@ -28,7 +30,7 @@ import {
   ensureColorCapabilityEnv,
   prepareTerminalViewport,
   scheduleColorCapabilityLog,
-  TUI_RENDERER_CONFIG,
+  tuiRendererConfig,
 } from "./terminalStartup.ts";
 
 // oxlint-disable-next-line hal-c2/no-global-process-runtime -- @hal-c2/shared/hostProcess imports node:sea, which the Bun-run TUI lacks.
@@ -84,6 +86,43 @@ async function resolveConnection(): Promise<
     bearerToken: mc.bearerToken,
     environmentId: mc.environmentId,
     orchestrationProtocolVersion: mc.orchestrationProtocolVersion,
+  };
+}
+
+/**
+ * Dev mode (`HAL_C2_TUI_DEV=1`): tell the host when one of the loaded plugin
+ * files is saved. Editors write in bursts and often replace the file, so the
+ * directory is watched and a burst is reported once.
+ */
+function watchPluginFiles(
+  files: ReadonlyArray<string>,
+  onChange: (file: string) => void,
+): () => void {
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const watchers = [...new Set(files.map((file) => NodePath.dirname(file)))].flatMap((dir) => {
+    try {
+      return [
+        NodeFS.watch(dir, (_event, name) => {
+          const file = name === null ? null : NodePath.join(dir, String(name));
+          if (file === null || !files.includes(file)) return;
+          clearTimeout(timers.get(file));
+          timers.set(
+            file,
+            setTimeout(() => {
+              timers.delete(file);
+              onChange(file);
+            }, 100),
+          );
+        }),
+      ];
+    } catch {
+      // A directory that cannot be watched: its plugins are reloaded on restart.
+      return [];
+    }
+  });
+  return () => {
+    for (const timer of timers.values()) clearTimeout(timer);
+    for (const watcher of watchers) watcher.close();
   };
 }
 
@@ -157,7 +196,7 @@ async function main(): Promise<void> {
   // motion stays disabled so terminal drag-selection works, while clicks and wheel
   // reporting remain enabled explicitly in the shared renderer configuration.
   const inlineImages = detectInlineImageTransport();
-  const renderer = await createCliRenderer(TUI_RENDERER_CONFIG);
+  const renderer = await createCliRenderer(tuiRendererConfig());
 
   scheduleColorCapabilityLog({ log: appendLog, capabilities: () => renderer.capabilities });
   installKittyClipboardExtension(renderer, {
@@ -180,12 +219,21 @@ async function main(): Promise<void> {
     resolveDone();
   };
 
+  let shellRoot: Parameters<typeof movePromptCursorToEnd>[0] | null = null;
   const host = createHost({
     client,
     size: { columns: renderer.width, rows: renderer.height },
     onQuit: handleExit,
     log: appendLog,
+    startupWarnings: configWarnings,
+    promptCursorToEnd: (text) => {
+      if (shellRoot) movePromptCursorToEnd(shellRoot, text);
+    },
+    features: {
+      saveKeymap: (overrides) => saveKeymapOverrides(configDir, overrides),
+    },
     inlineImages,
+    imageProtocol: inlineImageProtocol(process.env),
     // Cell pixels size image previews; unknown until the terminal reports them.
     cellPixels: () =>
       renderer.resolution && renderer.width > 0 && renderer.height > 0
@@ -198,6 +246,15 @@ async function main(): Promise<void> {
       renderer.copyToClipboardOSC52(text);
       return renderer.isOsc52Supported();
     },
+    // The launcher says which HAL-C2 release this client is; servers behind it are offered an update.
+    appVersion: process.env.HAL_C2_TUI_APP_VERSION?.trim() || null,
+    dismissedUpdates: fileMutedThreads(NodePath.join(configDir, "dismissed-updates.json")),
+    // Plugins turned off, and where downloaded ones came from, are this device's too.
+    pluginStore: filePluginStore(NodePath.join(configDir, PLUGIN_RECORDS_FILE)),
+    pluginDir: NodePath.join(configDir, PLUGINS_DIR),
+    ...(process.env.HAL_C2_TUI_DEV === "1" ? { watchPlugins: watchPluginFiles } : {}),
+    // Muted threads are this device's: they live beside the user's shell config.
+    mutedThreads: fileMutedThreads(NodePath.join(configDir, MUTED_THREADS_FILE)),
     // ^G: hand the terminal to the editor, then take the screen back.
     runEditor: async ({ cmd, args }, file) => {
       renderer.suspend();
@@ -213,7 +270,6 @@ async function main(): Promise<void> {
       }
     },
   });
-  for (const message of configWarnings) host.reportWarning(message);
 
   try {
     // Raw mode usually delivers Ctrl+C as a keystroke (the shell dispatches
@@ -240,6 +296,7 @@ async function main(): Promise<void> {
       onWarning: host.reportWarning,
       onError: host.reportError,
     });
+    shellRoot = app.root;
     host.attachPlugins(enginePluginPort(app.engine));
 
     await done;

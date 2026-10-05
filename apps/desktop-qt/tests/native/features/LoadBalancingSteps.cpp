@@ -337,25 +337,26 @@ const Steps steps([] {
     openConnections(world, QSize(820, 140));
     waitForGroup(world);
     expect(!group(world)->property("open").toBool() && !inView(world), QStringLiteral("the group is open or already in view"));
-  });
-  // What SettingsNav.qml's result row does when it is clicked.
-  step(QStringLiteral("the user opens the search result %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QVariantList found = results(world, c[0]);
-    for (const QVariant& result : found) {
-      if (at(result, QStringLiteral("label")).toString() != c[0]) continue;
-      world.bridge().dispatch(QStringLiteral("settings.openResult"),
-                              QVariantMap{{QStringLiteral("to"), at(result, QStringLiteral("to"))},
-                                          {QStringLiteral("targetId"), at(result, QStringLiteral("targetId"))}});
-      return;
-    }
-    fail(QStringLiteral("the search finds %1").arg(show(found)));
+    // The steps are SettingsSearchSteps', which on this page do this.
+    // What SettingsNav.qml's result row does when it is clicked.
+    world.onSettingsPage.insert(QStringLiteral("openResult"), [&world](const QStringList& c) {
+      const QVariantList found = results(world, c[0]);
+      for (const QVariant& result : found) {
+        if (at(result, QStringLiteral("label")).toString() != c[0]) continue;
+        world.bridge().dispatch(QStringLiteral("settings.openResult"),
+                                QVariantMap{{QStringLiteral("to"), at(result, QStringLiteral("to"))},
+                                            {QStringLiteral("targetId"), at(result, QStringLiteral("targetId"))}});
+        return;
+      }
+      fail(QStringLiteral("the search finds %1").arg(show(found)));
+    });
+    world.onSettingsPage.insert(QStringLiteral("inView"), [&world](const QStringList&) {
+      world.waitFor([&] { return inView(world); }, QStringLiteral("the group to be scrolled into view"));
+    });
   });
   step(QStringLiteral("the \"Load balancing\" group is open"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return group(world)->property("open").toBool() && page(world).item(QStringLiteral("loadBalancingBody"))->isVisible(); },
                   [&] { return QStringLiteral("the group to open; the route is %1").arg(show(world.state(QStringLiteral("route")))); });
-  });
-  step(QStringLiteral("the page brings the setting into view"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return inView(world); }, QStringLiteral("the group to be scrolled into view"));
   });
 });
 

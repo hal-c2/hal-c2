@@ -1,4 +1,8 @@
 #include "RightPanelController.h"
+#include "MenuController.h"
+
+#include <QClipboard>
+#include <QGuiApplication>
 
 #include <QDir>
 #include <QFile>
@@ -13,9 +17,11 @@
 
 #include "KeybindingController.h"
 #include "Keybindings.h"
+#include "LayoutController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "McClient.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "TerminalController.h"
@@ -88,6 +94,19 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
           client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
           [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this),
       m_devices(client, this) {
+  // The pages this device opened from a browser tab, kept with its preferences.
+  m_previews.setRecents(
+      [this] {
+        const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+        return settings ? settings->deviceValue(QStringLiteral("previewRecentPages")).toStringList() : QStringList();
+      },
+      [this](const QStringList& urls) {
+        if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) settings->writeDevice(QStringLiteral("previewRecentPages"), urls);
+      });
+  // A note on the diff's lines joins the prompt and is said to have.
+  connect(&m_diff, &ThreadDiff::commentRequested, this, [this](const QVariantMap& comment) {
+    m_bridge->dispatch(QStringLiteral("composer.reviewComment.add"), comment);
+  });
   connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
   connect(&m_devices, &ThreadDevices::closed, this, &RightPanelController::closeTabIn);
   connect(&m_devices, &ThreadDevices::namesChanged, this, &RightPanelController::publish);
@@ -107,6 +126,35 @@ void RightPanelController::activate() {
   auto* shell = NativeShell::of(this);
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, &RightPanelController::retarget);
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &RightPanelController::retarget);
+  // Diffs and file previews wrap long lines as Settings → Appearance says,
+  // until the user says otherwise in the panel.
+  if (auto* settings = shell->controller<SettingsController>()) {
+    const auto follow = [this, settings] {
+      const bool wrap = settings->setting(QStringLiteral("wordWrap")).toBool();
+      m_diff.setDefaultWrap(wrap);
+      m_files.setDefaultWrap(wrap);
+      // Settings → General's diff defaults: how a diff opens.
+      m_diff.setDefaultIgnoreWhitespace(settings->setting(QStringLiteral("diffIgnoreWhitespace")).toBool());
+      const bool split = settings->setting(QStringLiteral("diffLayout")).toString() == QLatin1String("split");
+      const bool collapsed = settings->setting(QStringLiteral("diffFilesCollapsed")).toBool();
+      for (DiffModel* model : {m_diff.model(), m_review.model()}) {
+        model->setSplit(split);
+        model->setCollapsedByDefault(collapsed);
+      }
+    };
+    connect(settings, &SettingsController::deviceChanged, this, follow);
+    follow();
+    connect(settings, &SettingsController::deviceChanged, this, &RightPanelController::openProactively);
+    connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::openProactively);
+    connect(&m_diff, &ThreadDiff::turnsChanged, this, &RightPanelController::openProactively);
+    // The layout toggle in a diff's toolbar changes the setting too.
+    for (DiffModel* model : {m_diff.model(), m_review.model()}) {
+      connect(model, &DiffModel::splitChanged, this, [settings, model] {
+        const QString layout = model->split() ? QStringLiteral("split") : QStringLiteral("stacked");
+        if (settings->setting(QStringLiteral("diffLayout")).toString() != layout) settings->set(QStringLiteral("diffLayout"), layout);
+      });
+    }
+  }
   // Its panel groups come and go with their terminals.
   if (auto* terminals = shell->controller<TerminalController>()) {
     connect(terminals, &TerminalController::changed, this, &RightPanelController::update);
@@ -116,7 +164,14 @@ void RightPanelController::activate() {
       keys->commands()->add(command, keybindings::commandLabel(command), std::move(run));
     };
     add(QStringLiteral("rightPanel.toggle"), [this] { toggle(); });
-    add(QStringLiteral("rightPanel.close"), [this] { closeTab(); });
+    // The web's mod+w closes the innermost thing: the active tab, else the window.
+    add(QStringLiteral("rightPanel.close"), [this] {
+      if (m_onThread && panel().open && !panel().active.isEmpty()) {
+        closeTab();
+      } else {
+        m_bridge->windowCommand(QStringLiteral("close"));
+      }
+    });
     add(QStringLiteral("rightPanel.toggleMaximized"), [this] { toggleMaximized(); });
     add(QStringLiteral("threadPanel.toggle"), [this] { toggleDetails(); });
     add(QStringLiteral("diff.toggle"), [this] { toggleDiff(); });
@@ -144,6 +199,29 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
   const QVariantMap map = payload.toMap();
   if (action == QLatin1String("rightPanel.toggle")) {
     toggle();
+  } else if (action == QLatin1String("link.menu")) {
+    // A link in the conversation: opening and copying it, and linking the
+    // pull request it names to the thread.
+    const QString url = map.value(QStringLiteral("url")).toString();
+    QList<MenuController::Item> items{{QStringLiteral("open"), tr("Open link"), QStringLiteral("external-link")},
+                                      {QStringLiteral("copy"), tr("Copy link"), QStringLiteral("copy")}};
+    const QString environmentId = m_thread.left(m_thread.indexOf(QLatin1Char(':')));
+    if (m_onThread && ThreadPullRequests::parseUrl(url) &&
+        (m_store->supports(environmentId, QStringLiteral("threadPullRequests")) ||
+         m_store->supports(environmentId, QStringLiteral("threadPullRequestLinking")))) {
+      items.append({QStringLiteral("link-pull-request"), tr("Link pull request to thread"), QStringLiteral("git-pull-request")});
+    }
+    NativeShell::of(this)->controller<MenuController>()->open(
+        map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items, [this, url](const QString& id) {
+          if (id == QLatin1String("open")) {
+            m_bridge->openExternal(QUrl(url));
+          } else if (id == QLatin1String("copy")) {
+            if (QClipboard* clipboard = QGuiApplication::clipboard()) clipboard->setText(url);
+          } else {
+            showTab(QStringLiteral("pull-requests"));
+            m_pullRequests.link(url);
+          }
+        });
   } else if (action == QLatin1String("rightPanel.activate")) {
     showTab(map.value(QStringLiteral("id")).toString());
   } else if (action == QLatin1String("rightPanel.close")) {
@@ -162,6 +240,15 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     toggleDetails();
   } else if (action == QLatin1String("rightPanel.review")) {
     reviewPullRequest(map.value(QStringLiteral("key")).toString());
+  } else if (action == QLatin1String("rightPanel.linkPullRequest")) {
+    // A pull request a message mentions: the tab shows it once it is linked.
+    if (m_onThread) {
+      showTab(QStringLiteral("pull-requests"));
+      m_pullRequests.link(map.value(QStringLiteral("url")).toString());
+    }
+  } else if (action == QLatin1String("rightPanel.reviewProject")) {
+    // A pull request of the thread's project that is not linked to it.
+    if (m_onThread) showTab(kReviewTab + map.value(QStringLiteral("key")).toString());
   } else if (action == QLatin1String("rightPanel.openThread")) {
     openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {
@@ -194,14 +281,55 @@ void RightPanelController::retarget() {
     }
     TimelineModel* timeline = shell->controller<ThreadStore>()->timeline(threadKey);
     m_diff.setThread(environmentId, threadId, timeline);
+    m_diff.setCheckout(root);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root);
+    m_files.setTimeline(timeline);
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
+    // The project's own preview addresses (its scripts' previewUrl).
+    QStringList configured;
+    const QJsonObject project = m_store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString());
+    for (const QJsonValue& script : project.value(QLatin1String("scripts")).toArray()) {
+      const QString url = script.toObject().value(QLatin1String("previewUrl")).toString();
+      if (!url.isEmpty()) configured.append(url);
+    }
+    m_previews.setConfigured(configured);
     m_devices.setThread(environmentId, threadId, m_store->mcServing(environmentId));
+    openProactively();
   }
   presentCommands();
   update();
+}
+
+void RightPanelController::openProactively() {
+  if (!m_active || !m_onThread) return;
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  if (!settings || !settings->setting(QStringLiteral("proactivePanelsEnabled")).toBool()) return;
+  // Linked pull requests first: the one there is, else their list.
+  QStringList links;
+  for (int row = 0; row < m_pullRequests.rowCount(); ++row) links.append(m_pullRequests.value(row, ThreadPullRequests::KeyRole).toString());
+  QString target = links.join(QLatin1Char('\n'));
+  if (target.isEmpty()) {
+    // Otherwise the latest turn's diff, when it changed at least 3 files or 50 lines.
+    const QJsonObject checkpoint = m_diff.latestCheckpoint();
+    const QJsonArray files = checkpoint.value(QLatin1String("files")).toArray();
+    int lines = 0;
+    for (const QJsonValue& file : files) {
+      lines += file.toObject().value(QLatin1String("additions")).toInt() + file.toObject().value(QLatin1String("deletions")).toInt();
+    }
+    if (files.size() >= 3 || lines >= 50) target = QStringLiteral("diff:") + checkpoint.value(QLatin1String("id")).toString();
+  }
+  if (target.isEmpty() || m_proactive.value(m_thread) == target) return;
+  m_proactive.insert(m_thread, target);
+  if (target.startsWith(QLatin1String("diff:"))) {
+    // A pull request under review keeps the panel.
+    if (!(panel().open && kindOf(panel().active) == QLatin1String("pull-request"))) showTab(QStringLiteral("diff"));
+  } else if (links.size() == 1) {
+    reviewPullRequest(links.first());
+  } else {
+    showTab(QStringLiteral("pull-requests"));
+  }
 }
 
 // The palette offers linking where the thread's environment links pull
@@ -289,7 +417,13 @@ void RightPanelController::open(const QString& tab, const QVariantMap& options) 
     } else if (!run.isEmpty()) {
       m_diff.selectRun(run);
     }
-    if (!path.isEmpty()) m_diff.revealFile(path);
+    // One file of the turn is shown alone; the turn's diff shows them all.
+    if (options.value(QStringLiteral("only")).toBool()) {
+      m_diff.focusFile(path);
+    } else {
+      m_diff.showAllFiles();
+      if (!path.isEmpty()) m_diff.revealFile(path);
+    }
   } else if (!path.isEmpty()) {
     m_files.openFile(path, options.value(QStringLiteral("line")).toInt());
   }
@@ -343,12 +477,20 @@ void RightPanelController::closeTab(const QString& id) {
   if (!m_onThread) return;
   Panel& state = panel();
   const QString closing = id.isEmpty() ? (state.open ? state.active : QString()) : id;
-  if (closing.isEmpty() || !removeTab(state, closing)) return;
-  if (kindOf(closing) == QLatin1String("terminal")) {
-    // Its terminals go too, as the web's closeTerminalSurface.
-    if (auto* terminals = NativeShell::of(this)->controller<TerminalController>()) terminals->closeGroup(closing.mid(kTerminalTab.size()));
+  if (closing.isEmpty() || !state.tabs.contains(closing)) return;
+  auto* terminals = kindOf(closing) == QLatin1String("terminal") ? NativeShell::of(this)->controller<TerminalController>() : nullptr;
+  if (!terminals) {
+    if (removeTab(state, closing)) update();
+    return;
   }
-  update();
+  // Its terminals go too, as the web's closeTerminalSurface: asked once for all of them.
+  const QString group = closing.mid(kTerminalTab.size());
+  const QString thread = m_thread;
+  terminals->confirmClose(terminals->groupTerminals(group), [this, terminals, thread, closing, group] {
+    if (!m_onThread || thread != m_thread || !removeTab(panel(), closing)) return;
+    terminals->closeGroup(group);
+    update();
+  });
 }
 
 void RightPanelController::addTab(const QString& kind) {
@@ -358,6 +500,12 @@ void RightPanelController::addTab(const QString& kind) {
     auto* terminals = NativeShell::of(this)->controller<TerminalController>();
     const QString group = terminals && terminals->threadKey() == m_thread ? terminals->addPanelGroup() : QString();
     if (!group.isEmpty()) showTab(kTerminalTab + group);
+    return;
+  }
+  if (kind == QLatin1String("browser")) {
+    // A new browser tab: an empty one on the MC, filled from the Previews tab.
+    showTab(QStringLiteral("previews"));
+    m_previews.newTab();
     return;
   }
   if (kind == QLatin1String("pull-request")) {
@@ -490,10 +638,19 @@ void RightPanelController::update() {
 
 void RightPanelController::publish() {
   if (!m_onThread) {
+    m_publishedThread.clear();
     m_bridge->publish(QStringLiteral("panel"), QVariant());
     return;
   }
   const Panel state = current();
+  // Opening or closing within a thread slides for as long as the user set
+  // (LayoutController); a thread's own layout, shown on arriving, snaps.
+  int transitionMs = 0;
+  if (m_thread == m_publishedThread && state.open != m_publishedOpen) {
+    if (auto* layout = NativeShell::of(this)->controller<LayoutController>()) transitionMs = layout->panelAnimationMs();
+  }
+  m_publishedThread = m_thread;
+  m_publishedOpen = state.open;
   QVariantList tabs;
   for (const QString& id : state.tabs) {
     tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id, m_devices)}});
@@ -505,12 +662,14 @@ void RightPanelController::publish() {
                     QVariantMap{
                         {QStringLiteral("threadKey"), m_thread},
                         {QStringLiteral("isOpen"), state.open},
+                        {QStringLiteral("transitionMs"), transitionMs},
                         {QStringLiteral("activeId"), state.active},
                         {QStringLiteral("tabs"), tabs},
                         {QStringLiteral("width"), m_width},
                         {QStringLiteral("maximized"), state.open && state.maximized},
                         {QStringLiteral("detailsOpen"), state.details},
                         {QStringLiteral("details"), state.details ? QVariant(threadDetails()) : QVariant()},
+
                         {QStringLiteral("canAdd"),
                          QVariantMap{{QStringLiteral("diff"), true},
                                      {QStringLiteral("files"), !m_files.root().isEmpty()},

@@ -26,8 +26,8 @@ Rectangle {
         anchors.margins: 1
         padding: 6
         focus: true
-        font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-        font.pixelSize: 12
+        font.family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace"
+        font.pixelSize: Theme.fontSizeTerminal
         backgroundColor: root.color
         foregroundColor: Theme.palette.color("text", "#e4e4e7")
         cursorColor: foregroundColor
@@ -46,6 +46,18 @@ Rectangle {
             screen.restore(root.session.transcript());
             if (screen.width > 0 && screen.height > 0)
                 root.session.resize(screen.columns, screen.rows);
+        }
+
+        // No draft here to add a selection to: copy and paste only.
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: eventPoint => menu.popup(eventPoint.position.x, eventPoint.position.y)
+        }
+
+        TerminalMenu {
+            id: menu
+
+            terminal: screen
         }
 
         Connections {

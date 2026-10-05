@@ -128,7 +128,7 @@ Feature: Connections settings
       When the user turns it off
       Then agent activity is no longer shared
 
-    @backlog @desktop
+    @desktop
     Scenario: A session without administrative access sees this machine read-only
       Given the user's session may not manage this machine's access
       When the user looks at this machine
@@ -161,7 +161,7 @@ Feature: Connections settings
       Then the link is on the clipboard
       And the user is told it was copied
 
-    @backlog @desktop
+    @desktop
     Scenario: A copy that the clipboard refuses reveals the link instead
       Given the clipboard is unavailable
       When the user copies a pairing link

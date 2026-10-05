@@ -12,6 +12,7 @@
 #include "Harness.h"
 #include "NavigationController.h"
 #include "McClient.h"
+#include "Stream.h"
 #include "ThreadList.h"
 #include "World.h"
 
@@ -24,6 +25,12 @@ QString& sectionsProject() {
   static QString key;
   return key;
 }
+
+// What the list showed across a reconnect.
+struct Reconnect {
+  int subscriptions = 0;
+  qsizetype fewest = 0;
+};
 
 QString iso(const QDateTime& time) {
   return time.toUTC().toString(Qt::ISODate);
@@ -241,9 +248,43 @@ const Steps steps([] {
            QStringLiteral("the list shows %1").arg(QStringList(projects.values()).join(u", ")));
   });
 
+  // Reconnecting: the MC's snapshot brings what the shell missed, and the rows
+  // it already listed stay listed all the while.
+  step(QStringLiteral("the client was disconnected while two threads were created"), [](World& world, const Captures&, const Table&) {
+    const QString project = world.mc.projects.firstKey();
+    putThread(world, QStringLiteral("t-earlier"), {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), QStringLiteral("Earlier work")}});
+    world.sync();
+    Reconnect& state = world.mc.part<Reconnect>();
+    state.subscriptions = world.shellSubscriptions();
+    state.fewest = sidebar(world).value(QStringLiteral("active")).toList().size();
+    QObject::connect(&world.bridge(), &ShellBridge::stateEntryChanged, &world.bridge(), [&state](const QString& key, const QVariant& value) {
+      if (key == QLatin1String("sidebar")) state.fewest = std::min(state.fewest, value.toMap().value(QStringLiteral("active")).toList().size());
+    });
+    world.mc.drop();
+    world.waitFor([&] { return !world.native().client()->isReady(); }, QStringLiteral("the shell to notice the lost connection"));
+    for (const QString& title : {QStringLiteral("Made offline one"), QStringLiteral("Made offline two")}) {
+      const QString id = titleId(title);
+      world.mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("projectId"), project}, {QStringLiteral("title"), title},
+                                   {QStringLiteral("createdAt"), kAt}, {QStringLiteral("updatedAt"), kAt}});
+    }
+  });
+  step(QStringLiteral("the client reconnects"), [](World& world, const Captures&, const Table&) {
+    const int before = world.mc.part<Reconnect>().subscriptions;
+    world.waitFor([&] { return world.native().client()->isReady() && world.shellSubscriptions() > before; }, QStringLiteral("the shell to reconnect"));
+  });
+  step(QStringLiteral("both threads are listed without reloading the whole list"), [](World& world, const Captures&, const Table&) {
+    for (const QString& title : {QStringLiteral("Made offline one"), QStringLiteral("Made offline two")}) waitForSection(world, title, QStringLiteral("active"));
+    const QVariantList active = sidebar(world).value(QStringLiteral("active")).toList();
+    expect(active.size() == 3 && world.mc.part<Reconnect>().fewest >= 1,
+           QStringLiteral("the list holds %1 threads and held as few as %2").arg(active.size()).arg(world.mc.part<Reconnect>().fewest));
+  });
+
   // Snoozing.
-  step(QStringLiteral("the local time is Wednesday 10:00"), [](World& world, const Captures&, const Table&) {
-    world.setTime(QDateTime(QDate(2026, 9, 23), QTime(10, 0)));
+  // A day of the week the scenarios' clock starts in (Wednesday 23 September 2026).
+  step(QStringLiteral("the local time is (\\w+day) (\\d+):(\\d+)"), [](World& world, const Captures& c, const Table&) {
+    QDate date(2026, 9, 21);
+    while (QLocale::c().dayName(date.dayOfWeek()) != c[0]) date = date.addDays(1);
+    world.setTime(QDateTime(date, QTime(c[1].toInt(), c[2].toInt())));
   });
   step(QStringLiteral("%1 is snoozed until tomorrow").arg(q), [](World& world, const Captures& c, const Table&) {
     snoozeUntilTomorrow(world, c[0]);
@@ -305,6 +346,7 @@ const Steps steps([] {
     waitForSection(world, c[0], QStringLiteral("settled"));
   });
   step(QStringLiteral("%1 is settled").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.checking) return waitForSection(world, c[0], QStringLiteral("settled"));
     // Another thread began since, so un-settling has to lift it above one.
     putThread(world, QStringLiteral("t-newer"), {{QStringLiteral("projectId"), world.mc.projects.firstKey()}, {QStringLiteral("title"), QStringLiteral("Newer")},
                                                  {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:30:00Z")}});
@@ -352,6 +394,8 @@ const Steps steps([] {
            const auto finished = [&](const QString& visitedAt) {
              run(QStringLiteral("completed"));
              row.insert(QStringLiteral("latestRunCompletedAt"), iso(now.addSecs(-600)));
+             // The MC stamps the thread when its run ends.
+             row.insert(QStringLiteral("updatedAt"), iso(now.addSecs(-600)));
              row.insert(QStringLiteral("lastVisitedAt"), visitedAt);
            };
            if (state == QLatin1String("has an agent working")) {
@@ -382,6 +426,17 @@ const Steps steps([] {
              finished(iso(now.addSecs(-3600)));
            }
          });
+         // The conversation holds what the agent said when it stopped on the limit.
+         if (state.contains(QLatin1String("usage limit"))) {
+           stream::FakeStreams& streams = world.mc.part<stream::FakeStreams>();
+           streams.thread = idOf(threadKeyOf(world, c[0]));
+           streams.environment = world.mc.environmentId;
+           stream::startRun(world, 900, QStringLiteral("failed"));
+           stream::addItem(world, QStringLiteral("error"),
+                           {{QStringLiteral("status"), QStringLiteral("failed")},
+                            {QStringLiteral("failure"), QJsonObject{{QStringLiteral("class"), QStringLiteral("usage_limit")},
+                                                                    {QStringLiteral("message"), QStringLiteral("You've hit your usage limit. It resets at 2:00 PM.")}}}});
+         }
        });
   step(QStringLiteral("the row for %1 reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();

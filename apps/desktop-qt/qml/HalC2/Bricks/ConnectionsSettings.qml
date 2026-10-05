@@ -46,14 +46,14 @@ SettingsPage {
         Layout.fillWidth: true
         Layout.topMargin: 12
         color: page.foreground
-        font.pixelSize: 14
+        font.pixelSize: Math.round(14 * Theme.fontScale)
         font.weight: Font.DemiBold
     }
 
     component Note: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -74,7 +74,7 @@ SettingsPage {
             Layout.fillWidth: true
             text: row.label
             color: page.foreground
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * Theme.fontScale)
             elide: Text.ElideRight
         }
 
@@ -82,7 +82,7 @@ SettingsPage {
             Layout.maximumWidth: 320
             text: row.detail
             color: page.muted
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             elide: Text.ElideRight
         }
 
@@ -107,8 +107,21 @@ SettingsPage {
             visible: page.notice !== null
             text: page.notice ? page.notice.text : ""
             color: page.notice && page.notice.kind === "error" ? page.danger : Theme.palette.color("success", "#22c55e")
-            font.pixelSize: 12
+            font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
+        }
+
+        Heading {
+            text: qsTr("This machine")
+        }
+
+        ConnectionStatusRow {
+            Layout.fillWidth: true
+        }
+
+        EnvironmentIconPicker {
+            Layout.fillWidth: true
+            environmentId: Shell.state.sidebar?.localEnvironmentId ?? ""
         }
 
         Heading {
@@ -204,6 +217,12 @@ SettingsPage {
                     readOnly: true
                     selectByMouse: true
                     text: page.created ? page.created.url : ""
+                    // The clipboard refused it: selected, ready to copy by hand.
+                    readonly property bool revealed: page.model !== null && page.model.revealed === true
+                    onRevealedChanged: if (revealed) {
+                        forceActiveFocus();
+                        selectAll();
+                    }
                 }
 
                 ShellButton {

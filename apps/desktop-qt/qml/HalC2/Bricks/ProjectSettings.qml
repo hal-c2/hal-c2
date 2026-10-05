@@ -26,14 +26,14 @@ SettingsPage {
 
     component Heading: Label {
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         font.weight: Font.DemiBold
     }
 
     component Caption: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -61,7 +61,7 @@ SettingsPage {
                 Label {
                     text: row.title
                     color: page.foreground
-                    font.pixelSize: 13
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
 
@@ -79,7 +79,7 @@ SettingsPage {
                 visible: row.mixed
                 text: qsTr("Mixed across selected machines")
                 color: page.warning
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             Caption {
@@ -162,6 +162,23 @@ SettingsPage {
             description: page.state?.icon?.custom ? qsTr("Current: %1").arg(page.state.icon.label)
                                                   : qsTr("Automatic, from the project's favicon when it has one.")
 
+            ProjectIcon {
+                objectName: "preview"
+                size: 20
+                icon: Shell.state.projectIcons?.[page.state?.checkouts?.[0]?.key ?? ""] ?? null
+            }
+
+            ShellButton {
+                objectName: "choose"
+                enabled: page.editable
+                subtle: true
+                text: qsTr("Choose…")
+                onClicked: Shell.dispatch("projectIcon.open", {
+                    projectKey: page.state?.checkouts?.[0]?.key ?? "",
+                    name: page.state?.name ?? ""
+                })
+            }
+
             TextField {
                 objectName: "emoji"
                 implicitWidth: 64
@@ -204,7 +221,7 @@ SettingsPage {
                     Label {
                         text: modelData.environment
                         color: page.foreground
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
 
@@ -272,6 +289,64 @@ SettingsPage {
         }
     }
 
+    // Where the default model comes from: the layers it resolves through, and
+    // from an environment's view the projects that override it.
+    ColumnLayout {
+        id: sources
+
+        readonly property var inheritance: page.state?.model?.inheritance ?? null
+
+        objectName: "modelSources"
+        Layout.fillWidth: true
+        spacing: 4
+
+        ShellButton {
+            objectName: "inspect"
+            subtle: true
+            text: sources.inheritance === null ? qsTr("Where this comes from") : qsTr("Hide where this comes from")
+            onClicked: page.send("inspect", { key: sources.inheritance === null ? "model" : "" })
+        }
+
+        Repeater {
+            model: sources.inheritance?.layers ?? []
+
+            delegate: Caption {
+                required property var modelData
+
+                objectName: "layer:" + modelData.key
+                color: modelData.effective ? page.foreground : page.muted
+                font.weight: modelData.effective ? Font.DemiBold : Font.Normal
+                text: modelData.effective ? qsTr("%1: %2 (in effect)").arg(modelData.label).arg(modelData.value) : qsTr("%1: %2").arg(modelData.label).arg(modelData.value)
+            }
+        }
+
+        Repeater {
+            model: sources.inheritance?.overridingProjects ?? []
+
+            delegate: RowLayout {
+                id: overriding
+
+                required property var modelData
+
+                Layout.fillWidth: true
+                spacing: 8
+
+                Caption {
+                    text: qsTr("%1 overrides it with %2.").arg(overriding.modelData.title).arg(overriding.modelData.value)
+                }
+
+                ShellButton {
+                    objectName: "clear:" + overriding.modelData.projectId
+                    subtle: true
+                    enabled: page.editable
+                    text: qsTr("Reset")
+                    Accessible.name: qsTr("Reset the override of %1").arg(overriding.modelData.title)
+                    onClicked: page.send("clearOverride", { environmentId: overriding.modelData.environmentId, projectId: overriding.modelData.projectId })
+                }
+            }
+        }
+    }
+
     Choice {
         name: "permissions"
         title: qsTr("Permissions")
@@ -289,6 +364,8 @@ SettingsPage {
         title: qsTr("Worktree submodules")
         description: qsTr("Which submodules a new worktree checks out.")
     }
+
+    ProjectActionsSettings {}
 
     Caption {
         objectName: "note"

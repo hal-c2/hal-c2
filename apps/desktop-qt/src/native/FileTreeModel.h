@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QList>
 #include <QString>
+#include <QVariantList>
 
 #include <functional>
 #include <optional>
@@ -24,6 +25,8 @@ class FileTreeModel : public QAbstractListModel {
   Q_PROPERTY(QString rootProblem READ rootProblem NOTIFY rootChanged)
   Q_PROPERTY(QString selectedPath READ selectedPath NOTIFY selectedChanged)
   Q_PROPERTY(bool filtered READ filtered NOTIFY rootChanged)
+  // Every folder is kept open (expandAll), down to the ones still loading.
+  Q_PROPERTY(bool allExpanded READ allExpanded NOTIFY allExpandedChanged)
 
 public:
   enum Role {
@@ -70,11 +73,22 @@ public:
   Q_INVOKABLE void toggle(const QString& path);
   Q_INVOKABLE void expand(const QString& path);
   Q_INVOKABLE void collapse(const QString& path);
+  // Opens every folder, loading each as it becomes known; folders git
+  // ignores stay closed (a dependency tree is not what the user asked for).
+  Q_INVOKABLE void expandAll();
+  // Closes every folder: only the top level shows.
+  Q_INVOKABLE void collapseAll();
+  bool allExpanded() const { return m_expandAll; }
+  // Lists every folder already loaded again, in place: what is open stays open.
+  void refresh();
   // Lists a folder that failed again.
   Q_INVOKABLE void retry(const QString& folder);
   Q_INVOKABLE void select(const QString& path);
   // The row showing `path` (an entry, not a placeholder), or -1.
   Q_INVOKABLE int rowOf(const QString& path) const;
+  // A loaded folder's entries ("" the top) as {path, name, directory}, folders
+  // first: what the viewer's path trail offers beside a file.
+  Q_INVOKABLE QVariantList entriesIn(const QString& folder) const;
   // The visible paths, in order, for tests and keyboard walking.
   QStringList visiblePaths() const;
 
@@ -85,6 +99,7 @@ public:
 signals:
   void rootChanged();
   void selectedChanged();
+  void allExpandedChanged();
   // A folder's children landed (or failed); reveal() walks on from here.
   void folderSettled(const QString& folder);
 
@@ -118,6 +133,9 @@ private:
   Folders m_folders;
   Folders m_search;
   bool m_searching = false;
+  bool m_expandAll = false;
+  // Opens `folder`'s folders, as expandAll asks.
+  void expandUnder(const QString& folder);
   QList<Row> m_rows;
   QString m_selected;
 };

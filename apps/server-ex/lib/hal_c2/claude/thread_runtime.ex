@@ -226,13 +226,25 @@ defmodule HalC2.Claude.ThreadRuntime do
     launch =
       turn.model
       |> Provider.launch(Map.get(turn, :options, %{}))
+      |> auto_compact(Entities.instance(ids))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
 
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
     session = state.session
 
-    case open_session(state, turn) do
+    # A model the installed CLI is too old for is refused here, naming the version.
+    opened =
+      case Provider.too_old(turn.model) do
+        nil -> open_session(state, turn)
+        message -> {:error, {:too_old, message}}
+      end
+
+    case opened do
+      {:error, {:too_old, message}} ->
+        finish(state, "failed", message)
+        {:reply, :ok, %{state | turn: nil}}
+
       {:ok, state, turn} ->
         state = %{state | turn: turn}
         started(state)
@@ -427,7 +439,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   # next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do
-    end_work(state, "interrupted")
+    unless HalC2.Orchestration.Recovery.stopping?(), do: end_work(state, "interrupted")
     :ok
   catch
     _, _ -> :ok
@@ -1005,6 +1017,48 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # The part of a steered turn that the new message cut short; the turn goes on.
+  # Claude compacted the conversation: the timeline says so, and the context meter
+  # takes the size Claude reports for what is left.
+  defp message(
+         %{"type" => "system", "subtype" => "compact_boundary"} = message,
+         %{turn: turn} = state
+       )
+       when turn != nil do
+    meta = message["compact_metadata"] || %{}
+    native = message["uuid"] || "compaction:#{turn.ids.provider_turn}"
+    count = fn key -> if is_number(meta[key]) and meta[key] > 0, do: round(meta[key]) end
+    before = count.("pre_tokens")
+    left = count.("post_tokens")
+
+    fields =
+      %{"driver" => "claudeAgent", "title" => "Context compacted"}
+      |> then(&if(before, do: Map.put(&1, "beforeTokenCount", before), else: &1))
+      |> then(&if(left, do: Map.put(&1, "afterTokenCount", left), else: &1))
+
+    state =
+      state
+      |> flush()
+      |> ensure_item(native, :compaction, fields)
+      |> finish_item(native, "completed", & &1)
+
+    if left do
+      usage = %{"usedTokens" => left, "updatedAt" => Entities.now()}
+
+      commit(state, fn stream ->
+        [
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            turn.ids.provider_turn,
+            &Map.put(&1, "tokenUsage", usage)
+          )
+        ]
+      end)
+    end
+
+    state
+  end
+
   defp message(%{"type" => "result", "terminal_reason" => reason}, %{steered: true} = state)
        when reason in ["aborted_streaming", "aborted_tools"] and not state.interrupted,
        do: %{state | steered: false}
@@ -1190,17 +1244,55 @@ defmodule HalC2.Claude.ThreadRuntime do
        when name in @agent_tools,
        do: state
 
+  # SendMessage to a subagent Claude started earlier resumes it: the message is the
+  # subagent's, shown in its own thread and not as a tool call of this one. The
+  # subagent is found in the thread's record, so this holds after the MC restarted.
   defp assistant_block(
-         %{"type" => "tool_use", "id" => tool_id, "name" => name} = block,
+         %{"type" => "tool_use", "id" => tool_id, "name" => "SendMessage"} = block,
          _id,
          _index,
          state
-       ) do
+       )
+       when not is_map_key(state.items, tool_id) do
     input = block["input"] || %{}
 
-    # A background command's tool result only says it started; its task ends it.
+    cond do
+      is_map_key(state.work, tool_id) ->
+        state
+
+      entity = resumable(state, input["to"]) ->
+        state = flush(state)
+        sub = NativeSubagent.resume(work_ids(state), entity, input["message"])
+        put_in(state.work[tool_id], %{sub: sub, item: nil, background: true})
+
+      true ->
+        tool_block(block, state)
+    end
+  end
+
+  defp assistant_block(%{"type" => "tool_use"} = block, _id, _index, state),
+    do: tool_block(block, state)
+
+  defp assistant_block(_block, _id, _index, state), do: state
+
+  # The subagent of this thread that Claude knows as the agent `to` (its task id).
+  defp resumable(state, to) when is_binary(to) do
+    HalC2.Streams.ensure(state.thread_id)
+    |> HalC2.Streams.Server.state()
+    |> StreamState.list("subagent")
+    |> Enum.find(&(&1["origin"] == "provider_native" and &1["nativeTaskId"] == to))
+  end
+
+  defp resumable(_state, _to), do: nil
+
+  defp tool_block(%{"id" => tool_id, "name" => name} = block, state) do
+    input = block["input"] || %{}
+
+    # A background command's tool result only says it started; its task ends it. A
+    # monitor (the `Monitor` tool) always runs on: it is background work of its own
+    # kind, never a command.
     state =
-      if name == "Bash" and input["run_in_background"] == true,
+      if (name == "Bash" and input["run_in_background"] == true) or name == "Monitor",
         do: put_in(state.work[tool_id], %{sub: nil, item: nil, background: true}),
         else: state
 
@@ -1221,8 +1313,6 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     ensure_item(state, tool_id, kind, fields)
   end
-
-  defp assistant_block(_block, _id, _index, state), do: state
 
   defp tool_result(state, tool_id, result) do
     case state.work[tool_id] do
@@ -1354,6 +1444,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
       work = state.work[tool] ->
         work = %{work | background: work.background or background?}
+        # Claude's name for the subagent, which a later SendMessage addresses.
+        if work.sub, do: name_subagent(state, work.sub, task_id)
 
         %{
           state
@@ -1378,6 +1470,17 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  defp name_subagent(state, sub, task_id) do
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "subagent", sub.id, fn
+          nil -> nil
+          entity -> Map.put(entity, "nativeTaskId", task_id)
+        end)
+      ]
+    end)
+  end
+
   # No run to join: nothing is recorded.
   defp subagent_task(%{turn: nil, last_ids: nil} = state, _tool, _task), do: state
 
@@ -1390,6 +1493,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         "title" => task["description"]
       })
 
+    name_subagent(state, sub, task_id)
     work = %{sub: sub, item: nil, background: task["is_backgrounded"] != false}
 
     %{
@@ -1441,6 +1545,19 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # The ids work joins: the running turn's, or between turns the latest one's.
+  # The instance's `autoCompactWindow` (the tokens after which Claude compacts by
+  # itself) goes to the CLI with its other settings; unset leaves Claude's default.
+  defp auto_compact(launch, instance) do
+    with window when is_binary(window) <-
+           HalC2.Settings.instance_setting(instance, "autoCompactWindow"),
+         {tokens, ""} when tokens >= 100_000 and tokens <= 1_000_000 <-
+           Integer.parse(String.trim(window)) do
+      %{launch | settings: Map.put(launch.settings, "autoCompactWindow", tokens)}
+    else
+      _ -> launch
+    end
+  end
+
   defp work_ids(%{turn: %{ids: ids}}), do: ids
   defp work_ids(state), do: state.last_ids
 

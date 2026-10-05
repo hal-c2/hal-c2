@@ -11,6 +11,8 @@ RowLayout {
 
     readonly property var model: Shell.state.git ?? null
     readonly property bool ready: model !== null && model.available
+    // The running action's stage, elapsed time and last hook line, or null.
+    readonly property var progress: ready ? model.progress ?? null : null
     // Why a checkout the MC cannot reach (its machine is offline) has no git actions.
     readonly property string unavailableReason: model !== null && !model.available ? (model.unavailableReason ?? "") : ""
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -43,7 +45,7 @@ RowLayout {
         visible: git.unavailableReason !== ""
         text: git.compact ? qsTr("No git") : qsTr("Git unavailable")
         color: git.muted
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
 
         HoverHandler {
             id: unavailableHover
@@ -55,7 +57,7 @@ RowLayout {
 
     ShellButton {
         implicitHeight: 24
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         iconName: "git-branch"
         visible: git.ready && !git.model.isRepo
         enabled: git.ready && !git.model.initPending
@@ -69,8 +71,9 @@ RowLayout {
         actionEnabled: git.ready && git.model.quickAction.disabledReason === null
         compact: git.compact
         iconName: git.quickIcon
-        text: git.ready ? git.model.quickAction.label : ""
-        toolTip: git.ready ? (git.model.quickAction.disabledReason ?? "") : ""
+        // A running action says its stage and how long it has run.
+        text: !git.ready ? "" : git.progress ? qsTr("%1 %2").arg(git.progress.stage).arg(git.progress.elapsed) : git.model.quickAction.label
+        toolTip: !git.ready ? "" : git.progress ? (git.progress.hookLine ?? "") : (git.model.quickAction.disabledReason ?? "")
         onClicked: Shell.dispatch("git.quick")
         onMenuRequested: {
             Shell.dispatch("git.refresh");
@@ -184,7 +187,7 @@ RowLayout {
             Text {
                 text: qsTr("Commit changes")
                 color: git.foreground
-                font.pixelSize: 15
+                font.pixelSize: Math.round(15 * Theme.fontScale)
                 font.bold: true
             }
 
@@ -192,7 +195,7 @@ RowLayout {
                 Layout.fillWidth: true
                 text: qsTr("Review and confirm your commit. Leave the message blank to auto-generate one.")
                 color: git.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -200,7 +203,7 @@ RowLayout {
                 visible: git.ready && git.model.isDefaultRef
                 text: qsTr("Warning: committing on the default branch %1").arg(git.ready ? (git.model.branch ?? "") : "")
                 color: Theme.palette.color("warning", "#e0af68")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             ListView {
@@ -237,20 +240,36 @@ RowLayout {
                         Layout.fillWidth: true
                         text: modelData.path
                         color: git.foreground
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         elide: Text.ElideMiddle
+                    }
+
+                    ShellButton {
+                        objectName: "fileOpen-" + modelData.path
+                        subtle: true
+                        iconName: "square-arrow-out-up-right"
+                        iconSize: 12
+                        iconTint: git.muted
+                        implicitWidth: 22
+                        implicitHeight: 22
+                        Accessible.name: qsTr("Open %1 in the editor").arg(modelData.path)
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Open in editor")
+                        onClicked: Shell.dispatch("workspace.openFile", {
+                            path: modelData.path
+                        })
                     }
 
                     Text {
                         text: "+" + modelData.insertions
                         color: Theme.palette.color("update", "#22c55e")
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
 
                     Text {
                         text: "−" + modelData.deletions
                         color: Theme.palette.color("error", "#ef4444")
-                        font.pixelSize: 11
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
                 }
             }
@@ -274,7 +293,7 @@ RowLayout {
                         color: git.foreground
                         wrapMode: TextEdit.Wrap
                         background: null
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                     }
                 }
             }
@@ -288,6 +307,7 @@ RowLayout {
                 }
 
                 ShellButton {
+                    objectName: "commitCancel"
                     text: qsTr("Cancel")
                     onClicked: commitDialog.close()
                 }
@@ -341,7 +361,7 @@ RowLayout {
                 Layout.fillWidth: true
                 text: confirmDialog.pending ? confirmDialog.pending.title : ""
                 color: git.foreground
-                font.pixelSize: 15
+                font.pixelSize: Math.round(15 * Theme.fontScale)
                 font.bold: true
                 wrapMode: Text.Wrap
             }
@@ -350,7 +370,7 @@ RowLayout {
                 Layout.fillWidth: true
                 text: confirmDialog.pending ? confirmDialog.pending.description : ""
                 color: git.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -387,12 +407,19 @@ RowLayout {
         }
     }
     // ---- Publish repository ------------------------------------------
+    // Three steps: the host (and whether it is ready), the repository and
+    // its visibility, then a summary to confirm.
     Popup {
         id: publishDialog
         objectName: "publishDialog"
 
         // Open while GitController has the dialog open; Escape and Cancel tell it.
         readonly property var form: git.ready ? (git.model.publishing ?? null) : null
+        readonly property bool busy: form?.busy ?? false
+        readonly property var hosts: form?.hosts ?? []
+        readonly property var host: hosts.length > 0 ? hosts[Math.max(0, provider.currentIndex)] : null
+        // 0: host, 1: repository, 2: summary.
+        property int step: 0
 
         onFormChanged: {
             if (form !== null && !opened) {
@@ -416,7 +443,10 @@ RowLayout {
                 Shell.dispatch("git.publish.cancel");
             }
         }
-        onOpened: repository.text = ""
+        onOpened: {
+            repository.text = "";
+            step = 0;
+        }
 
         background: Rectangle {
             radius: Theme.radius
@@ -431,79 +461,93 @@ RowLayout {
             Text {
                 text: qsTr("Publish repository")
                 color: git.foreground
-                font.pixelSize: 15
+                font.pixelSize: Math.round(15 * Theme.fontScale)
                 font.bold: true
             }
 
             Text {
+                objectName: "publishStep"
                 Layout.fillWidth: true
-                text: qsTr("Create the repository on its host, add it as a remote and push this branch.")
+                text: [qsTr("Step 1 of 3 · Host"), qsTr("Step 2 of 3 · Repository"), qsTr("Step 3 of 3 · Summary")][publishDialog.step]
                 color: git.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+            }
+
+            // The host.
+            ComboBox {
+                id: provider
+
+                objectName: "publishHost"
+                Layout.fillWidth: true
+                visible: publishDialog.step === 0
+                popup.scale: publishDialog.scale
+                popup.transformOrigin: Item.TopLeft
+                textRole: "label"
+                valueRole: "value"
+                model: publishDialog.hosts
+            }
+            Text {
+                objectName: "publishHostHint"
+                Layout.fillWidth: true
+                visible: publishDialog.step === 0 && text.length > 0
+                text: publishDialog.host?.hint ?? ""
+                color: Theme.palette.color("warning", "#e0af68")
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 6
-
-                ComboBox {
-                    id: provider
-
-                    popup.scale: publishDialog.scale
-                    popup.transformOrigin: Item.TopLeft
-                    textRole: "label"
-                    valueRole: "value"
-                    model: [
-                        {
-                            value: "github",
-                            label: "GitHub"
-                        },
-                        {
-                            value: "gitlab",
-                            label: "GitLab"
-                        }
-                    ]
-                }
-
-                ComboBox {
-                    id: visibility
-
-                    popup.scale: publishDialog.scale
-                    popup.transformOrigin: Item.TopLeft
-                    textRole: "label"
-                    valueRole: "value"
-                    model: [
-                        {
-                            value: "private",
-                            label: qsTr("Private")
-                        },
-                        {
-                            value: "public",
-                            label: qsTr("Public")
-                        }
-                    ]
-                }
-            }
-
+            // The repository and who sees it.
             TextField {
                 id: repository
 
+                objectName: "publishRepository"
                 Layout.fillWidth: true
+                visible: publishDialog.step === 1
                 placeholderText: qsTr("owner/repository")
                 placeholderTextColor: git.muted
                 color: git.foreground
-                font.pixelSize: 13
-                enabled: !(publishDialog.form?.busy ?? false)
-                onAccepted: publishButton.clicked()
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                onAccepted: nextButton.clicked()
+            }
+            ComboBox {
+                id: visibility
+
+                objectName: "publishVisibility"
+                visible: publishDialog.step === 1
+                popup.scale: publishDialog.scale
+                popup.transformOrigin: Item.TopLeft
+                textRole: "label"
+                valueRole: "value"
+                model: [
+                    {
+                        value: "private",
+                        label: qsTr("Private")
+                    },
+                    {
+                        value: "public",
+                        label: qsTr("Public")
+                    }
+                ]
+            }
+
+            // What publishing will do.
+            Text {
+                objectName: "publishSummary"
+                Layout.fillWidth: true
+                visible: publishDialog.step === 2
+                text: qsTr("Create the %1 repository %2 on %3, add it as the remote origin and push %4.").arg(visibility.currentValue === "public" ? qsTr("public") : qsTr("private")).arg(repository.text.trim()).arg(publishDialog.host?.label ?? "").arg(git.ready && git.model.branch ? git.model.branch : qsTr("this branch"))
+                color: git.foreground
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                wrapMode: Text.Wrap
             }
 
             Text {
+                objectName: "publishError"
                 Layout.fillWidth: true
                 visible: text !== ""
                 text: publishDialog.form?.error ?? ""
                 color: Theme.palette.color("error", "#ef4444")
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -516,17 +560,40 @@ RowLayout {
                 }
 
                 ShellButton {
-                    text: qsTr("Cancel")
-                    enabled: !(publishDialog.form?.busy ?? false)
-                    onClicked: publishDialog.close()
+                    objectName: "publishBack"
+                    text: publishDialog.step === 0 ? qsTr("Cancel") : qsTr("Back")
+                    enabled: !publishDialog.busy
+                    onClicked: {
+                        if (publishDialog.step === 0) {
+                            publishDialog.close();
+                        } else {
+                            publishDialog.step -= 1;
+                        }
+                    }
                 }
 
                 ShellButton {
-                    id: publishButton
+                    id: nextButton
 
+                    objectName: "publishNext"
                     primary: true
-                    text: publishDialog.form?.busy ? qsTr("Publishing…") : qsTr("Publish")
-                    enabled: !(publishDialog.form?.busy ?? false) && repository.text.trim() !== ""
+                    visible: publishDialog.step < 2
+                    text: qsTr("Next")
+                    // A host that is not ready goes no further.
+                    enabled: publishDialog.step === 0 ? (publishDialog.host?.ready ?? false) : repository.text.trim() !== ""
+                    onClicked: {
+                        if (enabled) {
+                            publishDialog.step += 1;
+                        }
+                    }
+                }
+
+                ShellButton {
+                    objectName: "publishConfirm"
+                    primary: true
+                    visible: publishDialog.step === 2
+                    text: publishDialog.busy ? qsTr("Publishing…") : qsTr("Publish")
+                    enabled: !publishDialog.busy
                     onClicked: Shell.dispatch("git.publish.submit", {
                         provider: provider.currentValue,
                         visibility: visibility.currentValue,

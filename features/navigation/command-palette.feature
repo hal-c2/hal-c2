@@ -25,13 +25,13 @@ Feature: Command palette
 
   Rule: Opening and closing
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: The palette opens from its shortcut
       When the user presses the command palette shortcut
       Then the command palette is open
       And the search field has keyboard focus
 
-    @shared @backlog-mobile @backlog-tui
+    @shared @backlog-mobile
     Scenario: The palette closes from its shortcut
       Given the command palette is open
       When the user presses the command palette shortcut
@@ -200,12 +200,12 @@ Feature: Command palette
       And the "Appearance" setting is listed before the thread "Appearance"
 
     # The web's settings search lists each keybinding command as a secondary entry.
-    @backlog @desktop
+    @desktop
     Scenario: Shortcut entries sort after the settings they mirror
       When the user searches the palette for "model"
       Then the "Default model" setting is listed before the "Model Picker" shortcut
 
-    @backlog @tui
+    @tui
     Scenario: The terminal palette ranks title prefix, then substring, then keyword, then subsequence
       Given the palette commands "New thread", "Renew token" and "Toggle terminal"
       When the user types "new" into the palette
@@ -313,7 +313,7 @@ Feature: Command palette
       When the user opens the command palette
       Then "Link pull request to thread" is not listed
 
-    @backlog @desktop
+    @desktop
     Scenario: Open pull requests shows the pull requests page as the user left it
       Given the user last filtered the pull requests page to their own open pull requests
       When the user runs "Open pull requests" from the palette
@@ -332,7 +332,7 @@ Feature: Command palette
       Then "shop" is added as a project
       And the user can start a thread in it
 
-    @backlog @desktop
+    @desktop
     Scenario: Threads linked to a pull request include archived ones
       Given a pull request is linked to an archived thread
       When the user searches the palette for that pull request
@@ -351,7 +351,7 @@ Feature: Command palette
         | Change appearance | Dark      | the app appearance is dark         |
         | New thread in...  | docs-site | a new thread starts in "docs-site" |
 
-    @backlog @desktop
+    @desktop
     Scenario: A settings result opens that setting
       When the user searches the palette for "word wrap" and chooses the setting
       Then settings open with the word wrap setting highlighted

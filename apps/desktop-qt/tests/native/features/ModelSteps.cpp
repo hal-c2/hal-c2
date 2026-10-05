@@ -7,7 +7,14 @@
 #include <QJsonObject>
 #include <QVariantMap>
 
+#include "ComposerBrick.h"
 #include "FakeConfig.h"
+#include <QTest>
+
+#include "Brick.h"
+#include "Keymap.h"
+#include "Turn.h"
+#include "NavigationController.h"
 #include "Harness.h"
 #include "NativeShell.h"
 #include "SettingsController.h"
@@ -190,6 +197,27 @@ const Steps steps([] {
                   QStringLiteral("the picker to lock the provider"));
   });
 
+  // providers/permission-modes.feature: the composer's own permission picker.
+  step(QStringLiteral("a supervised thread"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<Catalogue>().providers = codexAndClaude();
+    publishProviders(world.mc, codexAndClaude());
+    lookAtThread(world, kProject);
+    updateThread(world, {{QStringLiteral("modelSelection"),
+                          QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}}},
+                         {QStringLiteral("runtimeMode"), QStringLiteral("approval-required")}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("runtimeMode")) == QLatin1String("approval-required"); },
+                  [&] { return QStringLiteral("a supervised composer; it shows %1").arg(show(composer(world))); });
+  });
+  step(QStringLiteral("the user switches the thread to auto-accept edits on desktop or mobile"), [](World& world, const Captures&, const Table&) {
+    for (const QVariant& mode : composer(world).value(QStringLiteral("runtimeModes")).toList()) {
+      if (mode.toMap().value(QStringLiteral("value")) == QLatin1String("auto-accept-edits")) {
+        world.bridge().dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("auto-accept-edits")}});
+        return;
+      }
+    }
+    fail(QStringLiteral("the composer does not offer auto-accept edits: %1").arg(show(composer(world).value(QStringLiteral("runtimeModes")))));
+  });
+
   // What the user does.
   step(QStringLiteral("the user looks through the models"), [](World& world, const Captures&, const Table&) { world.sync(); });
   step(QStringLiteral("the user chooses the model %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -286,7 +314,7 @@ const Steps steps([] {
   step(QStringLiteral("the next turn runs in (.+)"), [](World& world, const Captures& c, const Table&) {
     QString mode;
     for (const QVariant& entry : composer(world).value(QStringLiteral("runtimeModes")).toList()) {
-      if (entry.toMap().value(QStringLiteral("label")) == c[0]) mode = entry.toMap().value(QStringLiteral("value")).toString();
+      if (entry.toMap().value(QStringLiteral("label")).toString().compare(c[0], Qt::CaseInsensitive) == 0) mode = entry.toMap().value(QStringLiteral("value")).toString();
     }
     const QString before = world.mc.threads.value(kThread).value(QLatin1String("runtimeMode")).toString();
     // The mode is set before the message, unless the thread already runs in it.
@@ -304,6 +332,90 @@ const Steps steps([] {
     world.mc.part<Catalogue>().providers = codexAndClaude();
     publishProviders(world.mc, codexAndClaude());
     world.sync();
+  });
+});
+
+// The picker itself (qml/HalC2/Bricks/ModelPicker.qml) open over the thread:
+// its numbered keys and the keymap's modelPickerOpen
+// (navigation/focus.feature, keybinding-customisation.feature).
+struct OpenPicker {
+  QString second;
+  QString thread;
+};
+
+QObject* pickerPopup(World& world) {
+  return world.brick->item(QStringLiteral("picker"))->property("popup").value<QObject*>();
+}
+
+const Steps pickerSteps([] {
+  Brick::registerSingletons();
+
+  step(QStringLiteral("the model picker is open"), [](World& world, const Captures&, const Table&) {
+    if (modelPickerShownOpen(world)) return;
+    world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject},
+                                          {QStringLiteral("title"), kProject},
+                                          {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
+                                          {QStringLiteral("scripts"), QJsonArray()}});
+    world.mc.part<Catalogue>().providers = codexAndClaude();
+    if (world.shellSubscriptions() == 0) {
+      world.connect();
+    } else {
+      world.mc.sendRow(kProject, world.mc.projects.value(kProject), QStringLiteral("project"));
+    }
+    world.sync();
+    publishProviders(world.mc, codexAndClaude());
+    // A second thread, which mod+2 would jump to.
+    world.mc.threads.insert(QStringLiteral("thread-other"), {{QStringLiteral("id"), QStringLiteral("thread-other")}, {QStringLiteral("title"), QStringLiteral("Other")},
+                                                               {QStringLiteral("projectId"), kProject},
+                                                               {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T08:00:00Z")},
+                                                               {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T08:00:00Z")}});
+    world.mc.sendRow(QStringLiteral("thread-other"), world.mc.threads.value(QStringLiteral("thread-other")));
+    lookAtThread(world, kProject);
+    updateThread(world, {{QStringLiteral("modelSelection"),
+                          QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}}},
+                         {QStringLiteral("runtimeMode"), QStringLiteral("full-access")}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == QLatin1String("gpt-5"); },
+                  [&] { return QStringLiteral("the composer on gpt-5; it shows %1").arg(show(composer(world))); });
+    world.brick = std::make_unique<Brick>(world,
+                                          "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\n"
+                                          "Item { ModelPicker { objectName: \"picker\"; y: 500; width: 220\n"
+                                          "  selectedInstanceId: Shell.state.composer ? Shell.state.composer.selectedInstanceId : null\n"
+                                          "  selectedModel: Shell.state.composer ? Shell.state.composer.selectedModel : null } }\n",
+                                          QSize(800, 700));
+    world.brick->takesKeys = true;
+    expect(QTest::qWaitForWindowActive(&world.brick->window()), QStringLiteral("the window did not become active"));
+    QQuickItem* picker = world.brick->item(QStringLiteral("picker"));
+    QMetaObject::invokeMethod(picker, "open");
+    world.waitFor([&] { return pickerPopup(world)->property("opened").toBool(); }, QStringLiteral("the model picker to open"));
+    OpenPicker& state = world.mc.part<OpenPicker>();
+    state.thread = world.native().controller<NavigationController>()->threadKey();
+    for (const QVariant& row : picker->property("rows").toList()) {
+      if (row.toMap().value(QStringLiteral("jumpIndex")).toInt() == 1 && row.toMap().value(QStringLiteral("kind")) == QLatin1String("model")) {
+        state.second = at(row, QStringLiteral("model.slug")).toString();
+      }
+    }
+    expect(!state.second.isEmpty() && state.second != QLatin1String("gpt-5"), QStringLiteral("the picker lists %1").arg(show(picker->property("rows"))));
+    // The keyboard is in the picker's search field.
+    setKeyFocus(world, {{QStringLiteral("editable"), true}});
+  });
+  step(QStringLiteral("the second model is chosen"), [](World& world, const Captures&, const Table&) {
+    const OpenPicker& state = world.mc.part<OpenPicker>();
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == state.second; },
+                  [&] { return QStringLiteral("%1 to be chosen; the composer shows %2").arg(state.second, composer(world).value(QStringLiteral("selectedModel")).toString()); });
+    expect(!pickerPopup(world)->property("opened").toBool(), QStringLiteral("the picker is still open"));
+  });
+  step(QStringLiteral("no thread jump happens"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(world.native().controller<NavigationController>()->threadKey() == world.mc.part<OpenPicker>().thread && !keyRan(world, QStringLiteral("thread.jump.2")),
+           QStringLiteral("%1; the route is %2").arg(describeKeyPress(world), show(world.state(QStringLiteral("route")))));
+  });
+  step(QStringLiteral("the composer has focus and a draft"), [](World& world, const Captures&, const Table&) {
+    openTurnThread(world);
+    const QString target = world.native().controller<NavigationController>()->threadKey();
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), target}, {QStringLiteral("text"), QStringLiteral("Add tax")}, {QStringLiteral("cursor"), 7}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("text")) == QLatin1String("Add tax"); }, QStringLiteral("the draft"));
+    setKeyFocus(world, {{QStringLiteral("composer"), true}, {QStringLiteral("editable"), true}});
   });
 });
 

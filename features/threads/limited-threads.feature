@@ -27,7 +27,7 @@ Feature: Threads stopped by a usage limit
     When the user looks at the thread list
     Then the row for "Port tests" reads "Limited"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The conversation keeps the agent's explanation of the limit
     Given "Port tests" stopped on a usage limit
     When the user opens "Port tests"
@@ -76,26 +76,26 @@ Feature: Threads stopped by a usage limit
     When Claude stops "Port tests" on a usage limit that resets at 14:00
     Then "Port tests" is scheduled to resume at 14:00
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Snoozing a limited thread until its reset
     Given "Port tests" stopped on a usage limit that resets at 14:00
     When the user snoozes "Port tests" until the reset
     Then "Port tests" is snoozed until 14:00
     And it wakes without sending a message
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Snoozing and auto-resume together wake and continue the thread
     Given the user turned on auto-resume and snoozing for limited threads
     When Claude stops "Port tests" on a usage limit that resets at 14:00
     Then at 14:00 "Port tests" wakes and continues
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Waking a limited thread early
     Given "Port tests" is snoozed until its limit resets
     When the user wakes "Port tests" now
     Then "Port tests" is active again
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Agents without a reset time offer a manual retry
     Given the agent stopped "Port tests" on a limit without saying when it resets
     When the user opens "Port tests"

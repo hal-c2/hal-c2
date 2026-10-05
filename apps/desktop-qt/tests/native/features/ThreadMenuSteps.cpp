@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "FilesViewer.h"
 #include "Harness.h"
 #include "MenuController.h"
 #include "Move.h"
@@ -51,6 +52,17 @@ void projectCommand(FakeMc& mc, const QJsonObject& command) {
   } else if (type == QLatin1String("thread.settle")) {
     row.insert(QStringLiteral("settledOverride"), QStringLiteral("settled"));
     row.insert(QStringLiteral("settledAt"), now);
+    // Settling clears the thread's pinned and active places (orchestration.ex),
+    // and its snooze, as the Node server's projector does.
+    for (const char* key : {"pinnedAt", "pinOrderKey", "activeOrderKey", "snoozedUntil", "snoozedAt"}) row.remove(QLatin1String(key));
+  } else if (type == QLatin1String("thread.mark-unread")) {
+    // Just before the latest run completed, as the Node server's projector.
+    const QDateTime completed = QDateTime::fromString(row.value(QLatin1String("latestRunCompletedAt")).toString(), Qt::ISODateWithMs);
+    row.insert(QStringLiteral("lastVisitedAt"), completed.addMSecs(-1).toUTC().toString(Qt::ISODateWithMs));
+  } else if (type == QLatin1String("thread.active.reorder")) {
+    row.insert(QStringLiteral("activeOrderKey"), command.value(QLatin1String("orderKey")));
+  } else if (type == QLatin1String("thread.pin.reorder")) {
+    row.insert(QStringLiteral("pinOrderKey"), command.value(QLatin1String("orderKey")));
   } else if (type == QLatin1String("thread.unsettle")) {
     row.remove(QStringLiteral("settledOverride"));
     row.remove(QStringLiteral("settledAt"));
@@ -111,11 +123,25 @@ FakeThreadMenu& fake(World& world) {
   return world.mc.part<FakeThreadMenu>();
 }
 
+QHash<QString, std::function<void(World&)>>& provided() {
+  static QHash<QString, std::function<void(World&)>> makers;
+  return makers;
+}
+
+std::optional<QString> titled(World& world, const QString& title) {
+  for (auto row = world.mc.threads.cbegin(); row != world.mc.threads.cend(); ++row) {
+    if (row.value().value(QLatin1String("title")).toString() == title) return world.mc.environmentId + QLatin1Char(':') + row.key();
+  }
+  return std::nullopt;
+}
+
 // A thread by key (`env-a:t1`) or by title.
 QString keyOf(World& world, const QString& thread) {
   if (thread.contains(QLatin1Char(':'))) return thread;
-  for (auto row = world.mc.threads.cbegin(); row != world.mc.threads.cend(); ++row) {
-    if (row.value().value(QLatin1String("title")).toString() == thread) return world.mc.environmentId + QLatin1Char(':') + row.key();
+  if (const auto key = titled(world, thread)) return *key;
+  if (provided().contains(thread)) {
+    provided().value(thread)(world);
+    if (const auto key = titled(world, thread)) return *key;
   }
   fail(QStringLiteral("no thread is titled \"%1\"").arg(thread));
 }
@@ -276,14 +302,15 @@ const Steps steps([] {
     }
     expect(enabled.join(QStringLiteral(", ")) == c[0], QStringLiteral("the menu can choose \"%1\"").arg(enabled.join(QStringLiteral(", "))));
   });
-  // Fork and Move are the fork's additions, specified in the native feature.
+  // Fork and Move are the fork's additions, specified in the native feature;
+  // moving a thread up or down is threads/pinning-and-order.feature's.
   step(QStringLiteral("the actions read, in order: (.+)"), [](World& world, const Captures& c, const Table&) {
     QStringList expected;
     for (const QString& phrase : c[0].split(QStringLiteral(", "))) expected.append(itemId(phrase));
     QStringList actual;
     for (const QVariant& entry : items(world)) {
       const QString id = entry.toMap().value(QStringLiteral("id")).toString();
-      if (id != QLatin1String("fork") && id != QLatin1String("move")) actual.append(id);
+      if (id != QLatin1String("fork") && !id.startsWith(QLatin1String("move"))) actual.append(id);
     }
     expect(actual == expected, QStringLiteral("the menu reads %1").arg(actual.join(QStringLiteral(", "))));
     const auto branch = item(world, QStringLiteral("new-thread-on-branch"));
@@ -450,6 +477,11 @@ const Steps steps([] {
     world.waitFor([&] { return sectionOf(world, keyOf(world, c[0])) == QLatin1String("active"); }, QStringLiteral("the thread to be unpinned"));
   });
   step(QStringLiteral("%1 is pinned").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.checking) {
+      world.waitFor([&] { return sectionOf(world, keyOf(world, c[0])) == QLatin1String("pinned"); },
+                    [&] { return QStringLiteral("%1 pinned; it is in \"%2\"").arg(c[0], sectionOf(world, keyOf(world, c[0]))); });
+      return;
+    }
     updateRow(world, idOf(world, c[0]), [](QJsonObject& row) {
       row.insert(QStringLiteral("pinnedAt"), QStringLiteral("2026-09-23T09:30:00Z"));
       row.insert(QStringLiteral("pinOrderKey"), QStringLiteral("a0"));
@@ -477,6 +509,8 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("%1 opens").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();  // a thread the MC just made is listed by now
+    if (fileOpened(world, c[0])) return;
     const QString key = keyOf(world, c[0]);
     world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },
                   [&] { return QStringLiteral("%1 to open; the route is %2").arg(key, show(world.state(QStringLiteral("route")))); });
@@ -635,4 +669,8 @@ void updateThreadRow(World& world, const QString& id, const std::function<void(Q
 
 void projectThreadCommands(World& world) {
   fake(world).project = true;
+}
+
+void provideThread(const QString& title, std::function<void(World& world)> make) {
+  provided().insert(title, std::move(make));
 }

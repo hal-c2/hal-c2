@@ -1437,6 +1437,11 @@ export function makeV3Session(input: {
       probe: Effect.void,
       closed: Effect.never,
       mcCall,
+      callEnvironment: (environmentId, method, payload) =>
+        Effect.tryPromise({
+          try: () => socket.call(environmentId, method, payload),
+          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        }),
       mcMembers,
     } satisfies RpcSession;
   });

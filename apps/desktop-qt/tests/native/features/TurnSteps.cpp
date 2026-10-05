@@ -9,7 +9,9 @@
 #include <QVariantMap>
 
 #include "CommandPaletteController.h"
+#include "ComposerBrick.h"
 #include "ComposerController.h"
+#include "Brick.h"
 #include "Harness.h"
 #include "Keymap.h"
 #include "NativeShell.h"
@@ -45,7 +47,12 @@ void openThread(World& world) {
                                         {QStringLiteral("title"), kProject},
                                         {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
                                         {QStringLiteral("scripts"), QJsonArray()}});
-  world.connect();
+  if (world.shellSubscriptions() == 0) {
+    world.connect();
+  } else {
+    // Already connected: the project arrives as a row.
+    world.mc.sendRow(kProject, world.mc.projects.value(kProject), QStringLiteral("project"));
+  }
   world.sync();
   lookAtThread(world, kProject);
 }
@@ -322,6 +329,11 @@ const Steps steps([] {
       }
       // Or the welcome wizard's pairing, setup terminal or import error.
       if (onboardingTells(world, c[0])) return true;
+      if (world.toldInPlace && world.toldInPlace().contains(c[0])) return true;
+      // Or why the add-provider wizard does not take the instance id.
+      if (at(world.state(QStringLiteral("providerSettings")), QStringLiteral("wizard.instanceIdError")) == c[0]) return true;
+      // Or what a brick on screen says.
+      if (world.brick && world.brick->shows(c[0])) return true;
       return conditionProblem(world) == c[0];
     };
     world.waitFor(told, [&] {
@@ -369,6 +381,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user answers %1").arg(q), [](World& world, const Captures& c, const Table&) { answer(world, c[0]); });
   step(QStringLiteral("the agent receives %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (composerMessageReceived(world, c[0])) return;
     const QVariant received = receivedAnswer(world);
     expect(received == QVariant(c[0]), QStringLiteral("the agent received %1").arg(show(received)));
   });
@@ -622,4 +635,12 @@ void pickAnswer(World& world, const QString& label) {
 
 void openTurnThread(World& world) {
   openThread(world);
+}
+
+void startWorkingTurn(World& world) {
+  startWorking(world);
+}
+
+void queueTurnMessage(World& world, const QString& text) {
+  queueMessage(world, text);
 }

@@ -125,6 +125,12 @@ This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
 memory. The action is available only when the provider supports rewind.
 
+## Keep or hand off a proposed plan
+
+When the agent proposes a plan, **Implement** carries it out in the same thread. In the desktop
+app the plan's menu also implements it in a new thread beside the planning one, copies it, downloads
+it as a Markdown file, or saves it to a path in the thread's workspace.
+
 ## Prompt stash
 
 On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save
@@ -135,6 +141,12 @@ stash menu when there are several.
 Stashes containing uploaded files must be restored in their original environment.
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
+
+## Vim keys
+
+On desktop, turn on **Vim keys in the composer** in Settings → General. `Esc` leaves insert
+mode; `h`, `j`, `k`, `l`, `w`, `b`, `0` and `$` move, `x` deletes, `u` undoes, and `i`, `a`, `I`
+and `A` insert again. `Enter` sends only in insert mode.
 
 ## Voice input on iPhone
 

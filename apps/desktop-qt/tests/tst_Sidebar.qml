@@ -127,6 +127,52 @@ Item {
             compare(Shell.state.sidebar.active.length, 2);
         }
 
+        // Scenario Outline: Reordering threads by dragging within a section is kept (features/threads/pinning-and-order.feature)
+        function test_dragArrangesThreads() {
+            let sidebar = createTemporaryObject(sidebarComponent, root);
+            verify(!!sidebar, "Component exists");
+            const next = JSON.parse(JSON.stringify(Shell.state.sidebar));
+            next.active.push(Object.assign({}, next.active[0], {
+                key: "second",
+                title: qsTr("Second")
+            }));
+            Shell.state = {
+                sidebar: next
+            };
+            let list = findChild(sidebar, "list");
+            tryCompare(list, "count", 2);
+            let row = null;
+            tryVerify(() => !!(row = findChild(sidebar, "threadRow:second")));
+            mousePress(row, 100, 40);
+            mouseMove(row, 100, 10);
+            mouseMove(row, 100, -30);
+            mouseMove(row, 100, -50);
+            verify(findChild(sidebar, "dropLine").visible);
+            mouseRelease(row, 100, -50);
+            tryCompare(Shell, "dispatchCount", 1);
+            compare(Shell.dispatchedActions[0].action, "thread.drop");
+            compare(Shell.dispatchedActions[0].payload.key, "second");
+            compare(Shell.dispatchedActions[0].payload.section, "active");
+            compare(Shell.dispatchedActions[0].payload.beforeKey, "thread");
+            verify(!findChild(sidebar, "dropLine").visible);
+        }
+
+        // Scenario Outline: Selecting several threads (features/threads/menu-and-selection.feature)
+        function test_modifierClicksSelect() {
+            let sidebar = createTemporaryObject(sidebarComponent, root);
+            verify(!!sidebar, "Component exists");
+            let list = findChild(sidebar, "list");
+            tryCompare(list, "count", 1);
+            let row = findChild(sidebar, "threadRow:thread");
+            mouseClick(row, 100, 40, Qt.LeftButton, Qt.ControlModifier);
+            tryCompare(Shell, "dispatchCount", 1);
+            compare(Shell.dispatchedActions[0].action, "thread.select.toggle");
+            mouseClick(row, 100, 40, Qt.LeftButton, Qt.ShiftModifier);
+            tryCompare(Shell, "dispatchCount", 2);
+            compare(Shell.dispatchedActions[1].action, "thread.select.range");
+            compare(Shell.dispatchedActions[1].payload.key, "thread");
+        }
+
         function test_reorderParkFoldAndRemove() {
             let sidebar = createTemporaryObject(sidebarComponent, root);
             verify(!!sidebar, "Component exists");

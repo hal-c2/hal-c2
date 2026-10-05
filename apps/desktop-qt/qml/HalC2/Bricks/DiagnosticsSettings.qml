@@ -36,7 +36,7 @@ SettingsPage {
                 id: label
                 Layout.fillWidth: true
                 color: diagnostics.foreground
-                font.pixelSize: 14
+                font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
 
@@ -72,14 +72,14 @@ SettingsPage {
                 Label {
                     text: modelData[0]
                     color: diagnostics.muted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
 
                 Label {
                     objectName: "stat:" + modelData[0]
                     text: modelData[1]
                     color: diagnostics.foreground
-                    font.pixelSize: 14
+                    font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.Medium
                 }
             }
@@ -93,7 +93,7 @@ SettingsPage {
         visible: message.length > 0
         text: message
         color: diagnostics.danger
-        font.pixelSize: 12
+        font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }
 
@@ -119,7 +119,7 @@ SettingsPage {
                 text: modelData
                 elide: Text.ElideRight
                 color: row.header ? diagnostics.muted : diagnostics.foreground
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
             }
         }
     }
@@ -151,66 +151,102 @@ SettingsPage {
         cells: [qsTr("Name"), qsTr("CPU"), qsTr("Memory"), qsTr("PID"), qsTr("Type"), ""]
     }
 
+    // The processes, grouped by what they are for; a group folds away.
     Repeater {
-        model: diagnostics.processes.rows ?? []
+        model: diagnostics.processes.groups ?? [{ id: "", label: "", count: 0, collapsed: false, rows: diagnostics.processes.rows ?? [] }]
 
-        RowLayout {
-            id: process
+        ColumnLayout {
+            id: group
 
             required property var modelData
 
-            objectName: "process:" + modelData.pid
+            objectName: "processGroup:" + modelData.id
             Layout.fillWidth: true
-            spacing: 12
+            spacing: 4
 
-            Label {
-                Layout.fillWidth: true
-                Layout.leftMargin: 12 * process.modelData.depth
-                text: process.modelData.name
-                elide: Text.ElideRight
-                color: diagnostics.foreground
-                font.pixelSize: 12
-                ToolTip.visible: hover.hovered
-                ToolTip.text: process.modelData.command
+            RowLayout {
+                visible: group.modelData.label.length > 0
+                spacing: 8
 
-                HoverHandler {
-                    id: hover
+                ShellButton {
+                    objectName: "fold"
+                    subtle: true
+                    text: group.modelData.collapsed ? qsTr("Show") : qsTr("Hide")
+                    Accessible.name: group.modelData.collapsed ? qsTr("Show %1 processes").arg(group.modelData.label) : qsTr("Hide %1 processes").arg(group.modelData.label)
+                    onClicked: Shell.dispatch("diagnostics.group", { id: group.modelData.id })
+                }
+
+                Label {
+                    objectName: "label"
+                    text: qsTr("%1 (%2)").arg(group.modelData.label).arg(group.modelData.count)
+                    color: diagnostics.foreground
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.weight: Font.DemiBold
                 }
             }
 
             Repeater {
-                model: [process.modelData.cpu, process.modelData.memory, String(process.modelData.pid), process.modelData.type]
+                model: group.modelData.collapsed ? [] : group.modelData.rows
 
-                Label {
+                RowLayout {
+                    id: process
+
                     required property var modelData
-                    Layout.preferredWidth: 80
-                    text: modelData
-                    color: diagnostics.foreground
-                    font.pixelSize: 12
+
+                    objectName: "process:" + modelData.pid
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12 * process.modelData.depth
+                        text: process.modelData.name
+                        elide: Text.ElideRight
+                        color: diagnostics.foreground
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        ToolTip.visible: hover.hovered
+                        ToolTip.text: process.modelData.command
+
+                        HoverHandler {
+                            id: hover
+                        }
+                    }
+
+                    Repeater {
+                        model: [process.modelData.cpu, process.modelData.memory, String(process.modelData.pid), process.modelData.type]
+
+                        Label {
+                            required property var modelData
+                            Layout.preferredWidth: 80
+                            text: modelData
+                            color: diagnostics.foreground
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+                    }
+
+                    ShellButton {
+                        objectName: "sigint"
+                        subtle: true
+                        text: "INT"
+                        enabled: !process.modelData.signaling
+                        Accessible.name: qsTr("Send SIGINT")
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Send SIGINT")
+                        onClicked: Shell.dispatch("diagnostics.signal", { pid: process.modelData.pid, signal: "SIGINT" })
+                    }
+
+                    ShellButton {
+                        objectName: "sigkill"
+                        subtle: true
+                        text: "KILL"
+                        tint: diagnostics.danger
+                        enabled: !process.modelData.signaling
+                        Accessible.name: qsTr("Send SIGKILL")
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Send SIGKILL")
+                        onClicked: Shell.dispatch("diagnostics.signal", { pid: process.modelData.pid, signal: "SIGKILL" })
+                    }
                 }
-            }
-
-            ShellButton {
-                objectName: "sigint"
-                subtle: true
-                text: "INT"
-                enabled: !process.modelData.signaling
-                Accessible.name: qsTr("Send SIGINT")
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Send SIGINT")
-                onClicked: Shell.dispatch("diagnostics.signal", { pid: process.modelData.pid, signal: "SIGINT" })
-            }
-
-            ShellButton {
-                objectName: "sigkill"
-                subtle: true
-                text: "KILL"
-                tint: diagnostics.danger
-                enabled: !process.modelData.signaling
-                Accessible.name: qsTr("Send SIGKILL")
-                ToolTip.visible: hovered
-                ToolTip.text: qsTr("Send SIGKILL")
-                onClicked: Shell.dispatch("diagnostics.signal", { pid: process.modelData.pid, signal: "SIGKILL" })
             }
         }
     }

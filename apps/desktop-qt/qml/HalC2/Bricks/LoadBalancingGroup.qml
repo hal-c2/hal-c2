@@ -66,7 +66,7 @@ ShellCard {
                     Label {
                         text: qsTr("Load balancing")
                         color: group.foreground
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
 
@@ -75,7 +75,7 @@ ShellCard {
                         Layout.fillWidth: true
                         text: group.model ? group.model.summary : ""
                         color: group.muted
-                        font.pixelSize: 12
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
                         elide: Text.ElideRight
                     }
                 }
@@ -105,7 +105,7 @@ ShellCard {
                 Layout.fillWidth: true
                 text: qsTr("New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.")
                 color: group.muted
-                font.pixelSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
 
@@ -124,7 +124,7 @@ ShellCard {
                         Layout.fillWidth: true
                         text: machine.modelData.label
                         color: group.foreground
-                        font.pixelSize: 13
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
                         elide: Text.ElideRight
                     }
 

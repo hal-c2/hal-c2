@@ -84,7 +84,7 @@ Feature: Managing environments on a client
     Then the terminal client says it is unreachable
     And stays on the current environment
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: The icon cannot be changed
     Given <situation>
     When the user tries to change the environment's icon

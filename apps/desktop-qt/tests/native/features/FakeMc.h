@@ -119,6 +119,8 @@ public:
   QList<QJsonObject> commands;
   // The environment each of `commands` was sent to ("" for the MC's own).
   QStringList commandEnvironments;
+  // Every call, in order, whoever answers it.
+  QList<Rpc> calls;
   QHash<QString, QString> refusals;
   // What an accepted command does to the MC's rows (the real MC's
   // projection), run before it is answered.
@@ -131,12 +133,15 @@ public:
       {QStringLiteral("threadSnooze"), true},
       {QStringLiteral("threadVisitedTracking"), true},
       {QStringLiteral("threadPinning"), true},
+      {QStringLiteral("threadPinReorder"), true},
+      {QStringLiteral("threadActiveReorder"), true},
       {QStringLiteral("threadTitleRegeneration"), true},
       {QStringLiteral("pullRequests"), true},
       {QStringLiteral("threadPullRequests"), true},
       {QStringLiteral("threadPullRequestLinking"), true},
   };
   bool holdSnapshot = false;
+  bool answerPings = true;  // false: the MC has stopped answering, its socket still open
   // The cluster's other members, in the order they joined, and the MC serving
   // each environment.
   QStringList members;
@@ -173,6 +178,7 @@ public:
     if (m_socket) m_socket->close();
   }
   void stopAccepting() { m_tcp.close(); }
+  void startAccepting() { m_tcp.listen(QHostAddress::LocalHost, m_port); }
 
 private:
   void accept();

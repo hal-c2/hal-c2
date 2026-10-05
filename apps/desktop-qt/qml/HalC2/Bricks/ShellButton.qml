@@ -35,7 +35,7 @@ Button {
     leftPadding: iconOnly || chevronOnly ? glyphPadding : 8
     rightPadding: iconOnly || chevronOnly ? glyphPadding : 8
     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
-    font.pixelSize: 13
+    font.pixelSize: Math.round(13 * Theme.fontScale)
     font.weight: Font.Medium
     hoverEnabled: true
     scale: down ? 0.97 : 1
