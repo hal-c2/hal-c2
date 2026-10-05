@@ -317,6 +317,20 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
       await host.quit();
     });
 
+    it("An MC home the MC would not use stops the start", async () => {
+      const release = fakeRelease();
+      const home = temporaryDirectory();
+
+      for (const mcHome of ["scratch/mc", NodePath.join(home, ".t3", "elixir")]) {
+        const host = startHost({
+          env: { HAL_C2_MC_RELEASE: release, HOME: home, HAL_C2_MC_HOME: mcHome },
+        });
+
+        expect(await errorMessage(host)).toContain("HAL_C2_MC_HOME");
+        expect(readRecord(release)).toBeUndefined();
+      }
+    });
+
     it("A configured MC release is the MC the desktop app runs", async () => {
       const release = fakeRelease();
       const { host } = await standalone({ release });

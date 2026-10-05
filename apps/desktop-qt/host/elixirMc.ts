@@ -12,7 +12,13 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { HAL_C2_APP_DIR, HAL_C2_DEV_APP_DIR, resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
+import {
+  absoluteEnvPath,
+  HAL_C2_APP_DIR,
+  HAL_C2_DEV_APP_DIR,
+  LEGACY_HOME_DIR_NAMES,
+  resolveHalC2Dirs,
+} from "@hal-c2/shared/xdgDirs";
 
 import { HostError } from "./hostError.ts";
 
@@ -119,14 +125,27 @@ function mcDirs(input: {
       state: NodePath.join(input.home, "state", "elixir"),
     };
   }
+  const homeDir = input.homeDir ?? NodeOS.homedir();
   const mcHome = input.env.HAL_C2_MC_HOME?.trim();
   if (mcHome) {
-    return { data: NodePath.join(mcHome, "data"), state: NodePath.join(mcHome, "state") };
+    // The MC ignores such a root and opens the installed app's files instead
+    // (`HalC2.Paths.root?/4`), so the desktop app does not start it there.
+    const root = absoluteEnvPath(mcHome, hostPlatform);
+    const inOldHome = LEGACY_HOME_DIR_NAMES.some((name) => {
+      const within = NodePath.relative(NodePath.join(homeDir, name), root ?? "");
+      return !within.startsWith("..") && !NodePath.isAbsolute(within);
+    });
+    if (root === undefined || inOldHome) {
+      throw new HostError(
+        `HAL_C2_MC_HOME (${mcHome}) must be an absolute path outside ~/.hal-c2 and ~/.t3.`,
+      );
+    }
+    return { data: NodePath.join(root, "data"), state: NodePath.join(root, "state") };
   }
   const fromSource = input.launch.cwd !== undefined;
   const dirs = resolveHalC2Dirs({
     env: fromSource ? { ...input.env, HAL_C2_HOME: undefined } : input.env,
-    homeDir: input.homeDir ?? NodeOS.homedir(),
+    homeDir,
     platform: hostPlatform,
     profile: fromSource ? HAL_C2_DEV_APP_DIR : HAL_C2_APP_DIR,
   });
