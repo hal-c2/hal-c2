@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 
 import {
   absoluteEnvPath,
+  isLegacyHome,
   HAL_C2_APP_DIR,
   HAL_C2_DEV_APP_DIR,
   LEGACY_HOME_DIR_NAMES,
@@ -119,13 +120,19 @@ function mcDirs(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly homeDir?: string;
 }): { readonly data: string; readonly state: string } {
+  const homeDir = input.homeDir ?? NodeOS.homedir();
   if (input.home !== undefined) {
+    // The MC ignores an old home as its home too (`HalC2.Desktop.apply_bootstrap/1`).
+    if (isLegacyHome(input.home, { homeDir, platform: hostPlatform })) {
+      throw new HostError(
+        `The HAL-C2 home (${input.home}) must be a directory other than ~/.hal-c2 and ~/.t3.`,
+      );
+    }
     return {
       data: NodePath.join(input.home, "data", "elixir"),
       state: NodePath.join(input.home, "state", "elixir"),
     };
   }
-  const homeDir = input.homeDir ?? NodeOS.homedir();
   // Blank counts as set, as it does for the MC (config/runtime.exs).
   const mcHome = input.env.HAL_C2_MC_HOME;
   if (mcHome) {

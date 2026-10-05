@@ -70,6 +70,19 @@ Feature: The desktop app runs its own MC
         | a relative path       |
         | a directory in ~/.t3  |
 
+    # The MC ignores an old home as its home too.
+    @desktop
+    Scenario Outline: An old home as the HAL-C2 home stops the start
+      Given the desktop app's HAL-C2 home is <home>
+      When the user starts the desktop app
+      Then no MC is started
+      And the desktop app says the HAL-C2 home cannot be an old home
+
+      Examples:
+        | home      |
+        | ~/.t3     |
+        | ~/.hal-c2 |
+
     @desktop
     Scenario: In a checkout without a release the MC runs from source
       Given no MC release is configured or bundled

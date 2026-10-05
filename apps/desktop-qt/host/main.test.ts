@@ -338,6 +338,21 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
       }
     });
 
+    it("An old home as the HAL-C2 home stops the start", async () => {
+      const release = fakeRelease();
+      const home = temporaryDirectory();
+
+      for (const name of [".t3", ".hal-c2"]) {
+        const host = startHost({
+          args: [`--base-dir=${NodePath.join(home, name)}`],
+          env: { HAL_C2_MC_RELEASE: release, HOME: home },
+        });
+
+        expect(await errorMessage(host)).toContain("HAL-C2 home");
+        expect(readRecord(release)).toBeUndefined();
+      }
+    });
+
     it("A configured MC release is the MC the desktop app runs", async () => {
       const release = fakeRelease();
       const { host } = await standalone({ release });
