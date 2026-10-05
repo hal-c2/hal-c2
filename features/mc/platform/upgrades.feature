@@ -195,6 +195,14 @@ Feature: MC self-update and hot upgrades
     And the MC reports the new version
 
   @mc
+  Scenario: A developer's bundle updates the MCs clustered with the installed one
+    Given the MC is clustered with another running from a release
+    And a bundle on this machine the MC has not seen
+    When a developer reloads the local MC with that bundle
+    Then the MC loads the changed modules in place
+    And the other MC loaded that bundle's code too
+
+  @mc
   Scenario: A bundle built on its machine that needs a restart restarts the installed MC
     Given a bundle on this machine the MC has not seen that needs a restart
     When a developer reloads the local MC with that bundle

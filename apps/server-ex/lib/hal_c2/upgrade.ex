@@ -77,14 +77,45 @@ defmodule HalC2.Upgrade do
 
   @doc """
   Updates to `version` from its bundle archive at `path` on this machine
-  (`mix hal_c2.upgrade --release`), as `update/2` does from a fetched one.
+  (`mix hal_c2.upgrade --release`), as `update/2` does from a fetched one. The MCs
+  clustered with this one update first, taking the bundle from it: members only
+  connect to members on their own version, so afterwards they could not. How each
+  went is the result's `members`.
   """
   def update_from(path, version) do
     if File.regular?(path) do
       :ok = HalC2.Upgrade.Source.put(version, platform(), path)
-      update(%{"targetVersion" => version})
+      input = %{"targetVersion" => version}
+      # Off this process, which is left none of the members' messages.
+      members = Task.async(fn -> update_members(input) end) |> Task.await(:infinity)
+      with {:ok, result} <- update(input), do: {:ok, Map.put(result, "members", members)}
     else
       failure("#{path} is not a bundle.")
+    end
+  end
+
+  # A member that moved to the new version drops its connections, this one among
+  # them, so its going down counts as the end of its update too.
+  defp update_members(input) do
+    members = Node.list()
+    for mc <- members, do: Node.monitor(mc, true)
+    started = :erpc.multicall(members, __MODULE__, :start, [input, self()], 15_000)
+
+    for {mc, reply} <- Enum.zip(members, started) do
+      outcome =
+        with {:ok, :ok} <- reply do
+          receive do
+            {:hal_c2_server_update, ^mc, %{"type" => "complete"}} -> "updated"
+            {:hal_c2_server_update, ^mc, {:error, %{"reason" => reason}}} -> reason
+            {:nodedown, ^mc} -> "left to run it"
+          after
+            :timer.minutes(10) -> "did not finish"
+          end
+        else
+          _ -> "cannot be updated from another MC"
+        end
+
+      %{"mc" => Atom.to_string(mc), "outcome" => outcome}
     end
   end
 

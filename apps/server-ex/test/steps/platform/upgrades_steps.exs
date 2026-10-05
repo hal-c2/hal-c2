@@ -544,6 +544,30 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
+  step "the MC is clustered with another running from a release", context do
+    {mc, peer} = Mc.cluster(context.mc)
+    peer_release(peer)
+    %{context | mc: mc, clients: %{}} |> Map.put(:peer, peer)
+  end
+
+  # Its release location is unreachable, so the bundle came from the MC asked.
+  step "the other MC loaded that bundle's code too", context do
+    assert {:ok, %{"members" => [%{"mc" => name, "outcome" => outcome}]}} = context.reply
+    assert name == Atom.to_string(context.peer.name)
+    # Moving to the version drops its connections, which can outrun its last word.
+    assert outcome in ["updated", "left to run it"]
+    assert :erpc.call(context.peer.name, Upgrade, :version, []) == context.target
+    assert File.read!(cached(context.peer, context.target)) == File.read!(context.archive)
+
+    assert :erpc.call(context.peer.name, :erlang, :function_exported, [
+             HalC2.JsonRpc.Connection,
+             :__hal_c2_variant__,
+             0
+           ])
+
+    context
+  end
+
   step "a developer reloads the local MC with that bundle", context do
     assert {200, _, result} =
              Mc.request(context.mc, :post, "/api/dev/reload",
