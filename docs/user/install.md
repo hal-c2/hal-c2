@@ -88,6 +88,12 @@ Code keeps working, and changes you make in either app afterwards stay in that
 app. Caches and downloaded tools are not copied; HAL-C2 fetches them again when
 it needs them.
 
+To bring over threads you made in T3 Code after that, run
+`hal-c2-service threads import` in a terminal while HAL-C2 is running. It lists
+the threads of T3 Code and of an earlier HAL-C2 on this machine; mark the ones
+you want with Tab and press Enter. Each comes with its subagent threads,
+attachments and terminal scrollback, and the old install is only read.
+
 Worktrees your threads already use stay where they are, such as under
 `~/.t3/worktrees`, and keep working. New worktrees go to HAL-C2's data
 directory. Keep the old worktrees as long as a thread still works in one of

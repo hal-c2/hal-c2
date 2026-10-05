@@ -239,7 +239,7 @@ defmodule HalC2.Web.Router do
   end
 
   # Threads of a T3 Code or Node HAL-C2 install on this machine, for
-  # `mix hal_c2.threads.import` (`HalC2.Import.PreviousInstall`).
+  # `HalC2.Import.Picker` (`HalC2.Import.PreviousInstall`).
   get "/api/previous-installs" do
     with_scope(conn, "access:read", fn _session ->
       {200, %{"sources" => HalC2.Import.PreviousInstall.sources()}}

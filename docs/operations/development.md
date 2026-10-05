@@ -88,7 +88,9 @@ different preference when needed.
 `mise run threads:import` lists the threads of the T3 Code and Node HAL-C2 installs on this machine
 and imports the ones you pick into the running MC, each with its subagent threads, attachments and
 terminal scrollback. The install is only read, so its server can stay up. An MC started before this
-command existed needs `mise run mc:reload` first.
+command existed needs `mise run mc:reload` first. That is the MC run from the checkout;
+`mise run threads:import --release` imports into the installed MC instead, which also has the picker
+as `hal-c2-service threads import`.
 
 ### Moving a thread between data directories
 

@@ -1,7 +1,7 @@
 defmodule HalC2.Import.PreviousInstall do
   @moduledoc """
   Picks threads out of a T3 Code or Node HAL-C2 install on this machine and brings
-  them onto the running MC, for `mix hal_c2.threads.import`.
+  them onto the running MC, for `HalC2.Import.Picker`.
 
   A source is a data directory holding the Node server's database: `userdata` and
   `dev` under an old home (`HalC2.Paths.legacy_candidates/3`, `state.sqlite` or
