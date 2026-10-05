@@ -255,6 +255,29 @@ defmodule HalC2.Web.SocketTest do
            } = error
   end
 
+  test "a request that raises is logged and still answered", %{port: port} do
+    [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
+    client = connect(port)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        client =
+          WsClient.send_json(client, %{
+            "t" => "rpc",
+            "id" => 1,
+            "environment" => environment,
+            "method" => "hal-c2.threadRows",
+            # Not a thread id, so reading the thread raises.
+            "payload" => %{"threadId" => %{}}
+          })
+
+        {error, _, _client} = WsClient.recv_until(client, &(&1["t"] == "rpc.error"))
+        assert %{"id" => 1} = error
+      end)
+
+    assert log =~ "[error] hal-c2.threadRows failed: "
+  end
+
   test "an MC without a feature fails that subscription, not the socket", %{port: port} do
     # No terminal hub runs here, as on an MC from before terminals.
     client =
