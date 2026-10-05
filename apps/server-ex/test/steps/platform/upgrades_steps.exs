@@ -501,6 +501,10 @@ defmodule HalC2.Steps.Platform.Upgrades do
     bundle(context, %{}, [Mc.variant(HalC2.JsonRpc.Connection)], false)
   end
 
+  step "a bundle on this machine the MC has not seen that needs a restart", context do
+    bundle(context, %{"erts" => "18.0"}, [], false)
+  end
+
   step "a developer reloads the local MC with that bundle", context do
     assert {200, _, result} =
              Mc.request(context.mc, :post, "/api/dev/reload",

@@ -174,6 +174,12 @@ Feature: MC self-update and hot upgrades
     And the MC reports the new version
 
   @mc
+  Scenario: A bundle built on its machine that needs a restart restarts the installed MC
+    Given a bundle on this machine the MC has not seen that needs a restart
+    When a developer reloads the local MC with that bundle
+    Then the MC restarts into the new version instead
+
+  @mc
   Scenario: Only the MC's own access token reloads it
     Given MCs started from a checkout
     When someone asks the local MC to reload with another token
