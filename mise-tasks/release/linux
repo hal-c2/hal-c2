@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#MISE description="Build the Linux release into release/: the MC (release:mc) and the Qt desktop AppImage that carries it"
+#MISE dir="{{config_root}}"
+#MISE depends=["release:mc"]
+set -euo pipefail
+
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
+  echo "release:linux builds on x86_64 Linux only (apps/desktop-qt/scripts/package-linux.sh)." >&2
+  exit 1
+}
+
+node apps/desktop-qt/scripts/dev-qt.mjs --configure-only --release
+# linuxdeploy's own strip is older than the system libraries a rolling distribution
+# ships (.relr.dyn) and fails on them. CI packages on Ubuntu and keeps stripping.
+export NO_STRIP="${NO_STRIP:-1}"
+# Beside a Qt 5 the Qt plugin would pick qmake-qt5 and find no modules to deploy.
+export QMAKE="${QMAKE:-$(command -v qmake6 || command -v qmake)}"
+# package-linux.sh stages the MC release:mc just built (apps/server-ex/_build/prod/rel/hal_c2).
+apps/desktop-qt/scripts/package-linux.sh apps/desktop-qt/build/release
+
+read -r _ version <apps/server-ex/_build/prod/rel/hal_c2/releases/start_erl.data || true # no trailing newline
+out="release/hal-c2-qt-$version-linux-x64.AppImage"
+cp apps/desktop-qt/build/release/hal-c2-qt-x86_64.AppImage "$out"
+echo "$out"

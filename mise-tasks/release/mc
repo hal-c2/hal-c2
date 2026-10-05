@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#MISE description="Build the MC release for this machine into release/: the upgrade bundle and the single-file MC whose `install` registers the background service"
+#MISE dir="{{config_root}}/apps/server-ex"
+#MISE depends=["install:js"]
+set -euo pipefail
+# install:js: the release bundles the Cursor sidecar with packages/cursor-acp's esbuild.
+
+# A single-file MC unpacks only a version it has not installed yet, so a local build
+# gets a version of its own each time. A published release sets HAL_C2_MC_VERSION.
+package_version="$(node -p 'require("../server/package.json").version')"
+export HAL_C2_MC_VERSION="${HAL_C2_MC_VERSION:-$package_version-local.$(date -u +%Y%m%d%H%M%S)}"
+export MIX_ENV=prod
+
+mix local.hex --force --if-missing
+mix local.rebar --force --if-missing
+mix deps.get --only prod
+# Earlier builds leave their lib/hal_c2-<version> behind, and the bundle packs all of lib/.
+rm -rf _build/prod/rel/hal_c2
+mix release --overwrite
+mix hal_c2.bundle ../../release

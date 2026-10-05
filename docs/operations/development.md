@@ -22,10 +22,13 @@ mise run mc:cluster      # that MC's cluster: no args lists it; invite, join LIN
 mise run mc:update-cluster olafura@ai-beast   # other machines' checkouts and dev MCs to this commit, over SSH
 mise run mc:pair         # one-time pairing URL for that MC (--tailscale to publish it)
 mise run mc:reload       # compile this checkout and load it into that MC; sockets and agents stay up
+mise run mc:reload --release   # build a release of this checkout and move the installed MC to it
 mise run desktop           # build the Qt shell, pair it with the running MC, launch
 mise run desktop:build     # build only (--release for a Release build)
 mise run tui               # bundle apps/tui and open it on the running MC
 mise run tui:build         # the TUI bundle; tui depends on it
+mise run release:linux     # the MC and the desktop AppImage in release/ (release:mc for the MC alone)
+mise run release:install   # build and install: the MC as this user's background service, the desktop as a launcher entry
 ```
 
 Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own
