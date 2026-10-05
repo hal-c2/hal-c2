@@ -2544,6 +2544,224 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  step "a T3 Code install on this machine holds the threads {string} and {string}",
+       %{args: [a, b]} = context do
+    home = Path.join(context.mc.home, "t3")
+    dir = Path.join(home, "dev")
+    root = Path.join(context.mc.home, "legacy-shop")
+    File.mkdir_p!(Path.join(dir, "attachments"))
+    File.mkdir_p!(Path.join([dir, "logs", "terminals"]))
+    File.mkdir_p!(root)
+    World.put_env("T3CODE_HOME", home)
+
+    [a_id, b_id] = for title <- [a, b], do: "t3-#{String.downcase(title)}"
+    sub = a_id <> "-sub"
+    at = "2026-09-01T10:00:00.000Z"
+
+    message = fn id, n, role, text, attachments ->
+      {"thread", id, "message.sent", "2026-09-01T11:00:0#{n}.000Z",
+       %{
+         "id" => "#{id}-m#{n}",
+         "threadId" => id,
+         "role" => role,
+         "text" => text,
+         "attachments" => attachments,
+         "createdAt" => "2026-09-01T11:00:0#{n}.000Z"
+       }}
+    end
+
+    thread = fn id, title ->
+      {"thread", id, "thread.created", at, Map.put(v2_thread(id, title), "worktreePath", root)}
+    end
+
+    image = %{"type" => "image", "id" => "#{a_id}-img", "name" => "cart.png"}
+
+    events = [
+      thread.(a_id, a),
+      message.(a_id, 1, "user", "#{a} question", [image]),
+      message.(a_id, 2, "assistant", "#{a} answer", []),
+      {"thread", a_id, "provider-thread.updated", at,
+       %{
+         "id" => "pt-t3",
+         "appThreadId" => a_id,
+         "driver" => "codex",
+         "status" => "idle",
+         "nativeThreadRef" => %{"driver" => "codex", "nativeId" => "thr-t3"}
+       }},
+      # The turn T3 Code was still running.
+      {"thread", a_id, "run.updated", at,
+       %{"id" => "run-t3", "threadId" => a_id, "ordinal" => 1, "status" => "running"}},
+      thread.(sub, "Look into the cart"),
+      message.(sub, 1, "assistant", "The cart rounds twice.", []),
+      thread.(b_id, b),
+      message.(b_id, 1, "user", "#{b} question", [])
+    ]
+
+    File.write!(Path.join([dir, "attachments", "#{a_id}-img.png"]), <<0x89, "PNG t3">>)
+
+    File.write!(
+      Path.join([
+        dir,
+        "logs",
+        "terminals",
+        "terminal_#{Base.url_encode64(a_id, padding: false)}.log"
+      ]),
+      "$ make\nbuilt\n"
+    )
+
+    context = v2_log(context, events, [a, b], 2, Path.join(dir, "state.sqlite"))
+    {log, _} = context.v2_log
+    {:ok, db} = Exqlite.Sqlite3.open(log)
+
+    :ok =
+      Exqlite.Sqlite3.execute(db, """
+      CREATE TABLE projection_projects (
+        project_id TEXT, title TEXT, workspace_root TEXT, scripts_json TEXT, deleted_at TEXT);
+      CREATE TABLE orchestration_v2_projection_threads (
+        thread_id TEXT, project_id TEXT, title TEXT, updated_at TEXT, payload_json TEXT);
+      INSERT INTO projection_projects VALUES ('v2-project', 'legacy shop', '#{root}', '[]', NULL);
+      INSERT INTO orchestration_v2_projection_threads VALUES
+        ('#{a_id}', 'v2-project', '#{a}', '2026-09-01T11:00:02.000Z', '{}'),
+        ('#{b_id}', 'v2-project', '#{b}', '2026-09-02T11:00:01.000Z', '{}'),
+        ('#{sub}', 'v2-project', 'Look into the cart', '2026-09-03T11:00:01.000Z',
+         '{"lineage":{"parentThreadId":"#{a_id}","relationshipToParent":"subagent"}}');
+      """)
+
+    :ok = Exqlite.Sqlite3.close(db)
+
+    Map.merge(context, %{
+      t3: %{dir: dir, root: root, ids: %{a => a_id, b => b_id}, sub: sub},
+      v2_log_hash: :crypto.hash(:sha256, File.read!(log))
+    })
+  end
+
+  step "the user asks which threads that install holds", context do
+    assert {:ok, %{"sources" => sources}} =
+             HalC2.Cluster.Command.request(:get, "/api/previous-installs")
+
+    assert [%{"path" => path, "label" => "T3 Code (development)"}] =
+             Enum.filter(sources, &(&1["path"] == context.t3.dir))
+
+    {:ok, %{"threads" => offered}} =
+      HalC2.Cluster.Command.request(:post, "/api/previous-installs/threads", %{"source" => path})
+
+    Map.put(context, :offered, offered)
+  end
+
+  step "{string} and {string} are offered with their project, newest first",
+       %{args: titles} = context do
+    assert for(t <- context.offered, do: {t["title"], t["project"], t["imported"]}) ==
+             for(title <- titles, do: {title, "legacy shop", false})
+
+    context
+  end
+
+  step "the thread {string}'s subagent ran in is counted with it, not offered on its own",
+       %{args: [title]} = context do
+    assert for(t <- context.offered, do: {t["title"], t["subagents"]}) |> Enum.sort() ==
+             Enum.sort(for {t, _} <- context.t3.ids, do: {t, if(t == title, do: 1, else: 0)})
+
+    context
+  end
+
+  step "the user imports/imported {string} from that install", %{args: [title]} = context do
+    id = context.t3.ids[title]
+
+    answer =
+      HalC2.Cluster.Command.request(:post, "/api/previous-installs/import", %{
+        "source" => context.t3.dir,
+        "threadIds" => [id]
+      })
+
+    context |> Map.put(:t3_answer, answer) |> put_in([:threads, title], id)
+  end
+
+  step "{string} is listed in a new project at the folder it worked in",
+       %{args: [title]} = context do
+    id = context.t3.ids[title]
+    assert {:ok, %{"imported" => [^id], "failed" => []}} = context.t3_answer
+    assert %{"title" => ^title, "projectId" => "v2-project"} = World.row(context, title)
+
+    assert %{"title" => "legacy shop", "workspaceRoot" => root} =
+             World.await_row("v2-project", & &1)
+
+    assert root == context.t3.root
+    context
+  end
+
+  step "{string} is listed in {string}", %{args: [title, project]} = context do
+    id = context.t3.ids[title]
+    assert {:ok, %{"imported" => [^id], "failed" => []}} = context.t3_answer
+    here = World.project(context, project)
+    assert %{"projectId" => project_id} = World.row(context, title)
+    assert project_id == here.id
+    assert World.thread(context, title)["worktreePath"] == here.root
+    assert HalC2.Shell.row(node(), "v2-project") == nil
+    context
+  end
+
+  step "{string} has its messages, its subagent's thread, its attachment and its terminal scrollback",
+       %{args: [title]} = context do
+    id = context.t3.ids[title]
+
+    texts =
+      for m <- HalC2.StreamState.list(World.stream(context, title), "message"), do: m["text"]
+
+    assert Enum.sort(texts) == ["#{title} answer", "#{title} question"]
+
+    assert {_kind, %{"title" => "Look into the cart"}} = HalC2.Shell.row(node(), context.t3.sub)
+    assert File.read!(HalC2.Attachments.path(%{"id" => "#{id}-img"})) == <<0x89, "PNG t3">>
+    assert HalC2.Terminal.saved_scrollback(id) == [{"term-1", "$ make\nbuilt\n"}]
+    context
+  end
+
+  step "{string} keeps its tie to the agent's session, with the turn it was running ended",
+       %{args: [title]} = context do
+    state = World.stream(context, title)
+
+    assert [%{"nativeThreadRef" => %{"nativeId" => "thr-t3"}}] =
+             HalC2.StreamState.list(state, "provider-thread")
+
+    assert [%{"status" => "interrupted"}] = HalC2.StreamState.list(state, "run")
+    context
+  end
+
+  step "{string} is not imported", %{args: [title]} = context do
+    assert HalC2.Shell.row(node(), context.t3.ids[title]) == nil
+    context
+  end
+
+  step "the install is left unchanged", context do
+    {log, _} = context.v2_log
+    assert :crypto.hash(:sha256, File.read!(log)) == context.v2_log_hash
+    context
+  end
+
+  step "the user is told {string} is already here", %{args: [title]} = context do
+    id = context.t3.ids[title]
+
+    assert {:ok, %{"imported" => [], "failed" => [%{"id" => ^id, "message" => message}]}} =
+             context.t3_answer
+
+    assert message == "It is already here."
+    context
+  end
+
+  step "that install offers {string} as imported", %{args: [title]} = context do
+    {:ok, %{"threads" => offered}} =
+      HalC2.Cluster.Command.request(:post, "/api/previous-installs/threads", %{
+        "source" => context.t3.dir
+      })
+
+    assert for(t <- offered, t["imported"], do: t["title"]) == [title]
+    context
+  end
+
+  step "the project {string} is at the folder that install worked in",
+       %{args: [title]} = context do
+    World.create_project(context, title, %{"workspaceRoot" => context.t3.root})
+  end
+
   step "{string} keeps its read state without showing new activity", %{args: [title]} = context do
     row = World.row(context, title)
     assert row["lastVisitedAt"] == "2026-09-01T12:00:00.000Z"
@@ -3061,8 +3279,8 @@ defmodule HalC2.Steps.Threads do
 
   # Writes a Node server event log (its `orchestration_events` table) of
   # `{aggregate, stream, type, occurred_at, payload}` events.
-  defp v2_log(context, events, titles, version \\ 2) do
-    path = Path.join(context.mc.home, "previous-state.sqlite")
+  defp v2_log(context, events, titles, version \\ 2, path \\ nil) do
+    path = path || Path.join(context.mc.home, "previous-state.sqlite")
     {:ok, db} = Exqlite.Sqlite3.open(path)
 
     :ok =

@@ -19,6 +19,9 @@ defmodule HalC2.Import.V2 do
 
   A thread logged only as version 1 events (before the Node server moved to v2) is
   folded by `HalC2.Import.V1Thread` into the v2 entities the Node server migrates it to.
+
+  Options: `:only`, the stream ids to import, and `:rewrite`, a function every event's
+  payload goes through first (`HalC2.ThreadArchive.rewriter/4`, to land in another project).
   """
 
   @quiet_events ["thread.visited", "thread.marked-unread"]
@@ -45,7 +48,8 @@ defmodule HalC2.Import.V2 do
 
       report =
         Enum.reduce(streams, totals, fn {aggregate, stream_id, legacy?}, totals ->
-          stream_report = import_stream(db, store, aggregate, stream_id, legacy?)
+          stream_report =
+            import_stream(db, store, aggregate, stream_id, legacy?, opts[:rewrite] || (& &1))
 
           Map.merge(totals, stream_report, fn _k, a, b -> a + b end)
           |> Map.update!(:streams, &(&1 + 1))
@@ -73,25 +77,40 @@ defmodule HalC2.Import.V2 do
     Enum.join([first | Enum.map(rest, &String.capitalize/1)])
   end
 
+  # Named streams are looked up one by one, so picking a few threads out of a large
+  # log does not read all of it.
   defp source_streams(db, only) do
+    filter = if only, do: "AND stream_id = ?1", else: ""
+
     {:ok, stmt} =
       Sqlite3.prepare(db, """
-      SELECT aggregate_kind, stream_id, MAX(application_event_version IS 2)
+      SELECT aggregate_kind, stream_id, MAX(application_event_version IS 2), MIN(sequence)
       FROM orchestration_events
-      WHERE aggregate_kind IN ('project', 'thread') OR application_event_version = 2
+      WHERE (aggregate_kind IN ('project', 'thread') OR application_event_version = 2) #{filter}
       GROUP BY aggregate_kind, stream_id ORDER BY MIN(sequence)
       """)
 
-    {:ok, rows} = Sqlite3.fetch_all(db, stmt)
+    rows =
+      if only do
+        only
+        |> Enum.flat_map(fn id ->
+          :ok = Sqlite3.bind(stmt, [id])
+          {:ok, rows} = Sqlite3.fetch_all(db, stmt)
+          rows
+        end)
+        |> Enum.sort_by(fn [_, _, _, first] -> first end)
+      else
+        {:ok, rows} = Sqlite3.fetch_all(db, stmt)
+        rows
+      end
 
-    for [aggregate, id, v2] <- rows,
-        only == nil or id in only,
-        do: {aggregate, id, aggregate == "thread" and v2 == 0}
+    :ok = Sqlite3.release(db, stmt)
+    for [aggregate, id, v2, _] <- rows, do: {aggregate, id, aggregate == "thread" and v2 == 0}
   end
 
   # A thread with any v2 event was migrated by the Node server; its v1 events are
   # history the v2 ones already carry.
-  defp import_stream(db, store, aggregate, stream_id, legacy?) do
+  defp import_stream(db, store, aggregate, stream_id, legacy?, rewrite) do
     {:ok, stmt} =
       Sqlite3.prepare(db, """
       SELECT event_type, payload_json, occurred_at FROM orchestration_events
@@ -108,6 +127,7 @@ defmodule HalC2.Import.V2 do
       latest: %{},
       bound_sessions: MapSet.new(),
       v1: if(legacy?, do: HalC2.Import.V1Thread.new(stream_id)),
+      rewrite: rewrite,
       pending: [],
       pending_count: 0,
       source_events: 0,
@@ -137,7 +157,7 @@ defmodule HalC2.Import.V2 do
             source_bytes: acc.source_bytes + byte_size(json)
         }
 
-        acc = diff_event(acc, type, JSON.decode!(json), occurred_at)
+        acc = diff_event(acc, type, acc.rewrite.(JSON.decode!(json)), occurred_at)
         if acc.pending_count >= @batch, do: flush(acc, store, stream_kind, stream_id), else: acc
       end)
 

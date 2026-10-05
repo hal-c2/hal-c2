@@ -238,6 +238,28 @@ defmodule HalC2.Web.Router do
     end)
   end
 
+  # Threads of a T3 Code or Node HAL-C2 install on this machine, for
+  # `mix hal_c2.threads.import` (`HalC2.Import.PreviousInstall`).
+  get "/api/previous-installs" do
+    with_scope(conn, "access:read", fn _session ->
+      {200, %{"sources" => HalC2.Import.PreviousInstall.sources()}}
+    end)
+  end
+
+  post "/api/previous-installs/threads" do
+    with_scope(conn, "access:read", fn _session ->
+      with {:ok, body} <- json_body(conn),
+           do: previous_install_answer(HalC2.Import.PreviousInstall.scan(body))
+    end)
+  end
+
+  post "/api/previous-installs/import" do
+    with_scope(conn, "access:write", fn _session ->
+      with {:ok, body} <- json_body(conn),
+           do: previous_install_answer(HalC2.Import.PreviousInstall.import_threads(body))
+    end)
+  end
+
   # A pull request's patch, which is large enough to want HTTP rather than the socket.
   post "/api/pull-requests/diff" do
     with_scope(conn, "orchestration:read", fn _session ->
@@ -320,6 +342,9 @@ defmodule HalC2.Web.Router do
        HalC2.Cluster.detail(reason)
      )}
   end
+
+  defp previous_install_answer({:ok, body}), do: {200, body}
+  defp previous_install_answer({:error, message}), do: {409, %{"message" => message}}
 
   # The session a socket opens for, or nil for one opened with the MC's own token.
   defp socket_session(%{"wsTicket" => ticket}), do: HalC2.Auth.take_ticket(ticket)

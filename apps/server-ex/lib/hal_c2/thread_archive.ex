@@ -698,7 +698,8 @@ defmodule HalC2.ThreadArchive do
     {:ok, %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
   end
 
-  defp v1_terminal(name, thread_id) do
+  @doc "The terminal a Node server's scrollback file `name` belongs to in `thread_id`, or `nil`."
+  def v1_terminal(name, thread_id) do
     prefix = "terminal_#{Base.url_encode64(thread_id, padding: false)}"
 
     cond do
