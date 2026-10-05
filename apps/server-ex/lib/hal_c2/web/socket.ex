@@ -16,6 +16,8 @@ defmodule HalC2.Web.Socket do
 
   alias HalC2.Web.{Protocol, Wire}
 
+  require Logger
+
   @max_buffered 8 * 1024 * 1024
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
@@ -499,9 +501,17 @@ defmodule HalC2.Web.Socket do
       # take minutes.
       :erpc.call(mc, HalC2.Rpc, :handle, args, timeout)
     catch
-      :error, {:erpc, :timeout} -> {:error, "#{method} timed out"}
-      :error, {:erpc, reason} -> {:error, "MC unavailable: #{reason}"}
-      kind, reason -> {:error, Exception.format(kind, reason)}
+      :error, {:erpc, :timeout} ->
+        {:error, "#{method} timed out"}
+
+      :error, {:erpc, reason} ->
+        {:error, "MC unavailable: #{reason}"}
+
+      kind, reason ->
+        # The client is told, and so is the log: a failure only a client saw is lost.
+        message = Exception.format(kind, reason)
+        Logger.error("#{method} failed: #{message}")
+        {:error, message}
     end
   end
 
