@@ -714,8 +714,11 @@ defmodule HalC2.Orchestration do
     )
   end
 
+  # A question's item is named after its node, whatever names them: this MC
+  # (`node:approval:...`) or the Node server a thread was imported from
+  # (`node:provider:...`).
   defp question_item(request),
-    do: String.replace_prefix(request["nodeId"] || "", "node:approval:", "turn-item:approval:")
+    do: String.replace_prefix(request["nodeId"] || "", "node:", "turn-item:")
 
   defp resolve_message_request(state, request, status, answer) do
     at = Entities.now()
@@ -2736,9 +2739,12 @@ defmodule HalC2.Orchestration do
   def upsert(state, kind, id, fun) do
     current = StreamState.get(state, kind)[id]
 
-    case Patch.diff(current, fun.(current)) do
-      :unchanged -> nil
-      patch -> {kind, id, patch}
+    # `fun` returning nil leaves the entity as it is, a missing one included.
+    with %{} = next <- fun.(current),
+         %{} = patch <- Patch.diff(current, next) do
+      {kind, id, patch}
+    else
+      _ -> nil
     end
   end
 

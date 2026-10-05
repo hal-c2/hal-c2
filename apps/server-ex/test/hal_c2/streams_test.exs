@@ -18,6 +18,18 @@ defmodule HalC2.StreamsTest do
 
   defp append(text), do: [{"turn-item", "item-1", %{"a" => %{"text" => text}}}]
 
+  test "a stream whose log holds a patch that sets nothing still loads" do
+    {:ok, _} =
+      HalC2.Store.append([
+        {:thread, "th-1", thread("th-1") ++ [{"turn-item", "item-1", %{"s" => nil}}]}
+      ])
+
+    state = Streams.Server.state(Streams.ensure("th-1"))
+    assert state.seq == 2
+    assert HalC2.StreamState.get(state, "turn-item") == %{}
+    assert {:ok, 3} = Streams.commit("th-1", :thread, append("more"))
+  end
+
   test "subscribers get the current state, then live events" do
     {:ok, _} = Streams.commit("th-1", :thread, thread("th-1"))
     :ok = Streams.subscribe("th-1", self(), nil)

@@ -194,6 +194,16 @@ Feature: Codex
     When the user answers it
     Then the answer starts a new turn
 
+  Scenario: A question Codex did not wait on can be dismissed
+    Given Codex asked a question and kept working
+    When the user dismisses it
+    Then the question is closed without an answer
+
+  Scenario: A question in a thread imported from the Node server can be dismissed
+    Given a thread imported with a Codex question that is not answered yet
+    When the user dismisses it
+    Then the question is closed without an answer
+
   Scenario: Unanswered Codex questions survive a reconnect
     Given Codex asked a question that is not answered yet
     When the client reconnects to the MC
