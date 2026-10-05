@@ -88,6 +88,7 @@ FocusScope {
 
                 onActiveFocusChanged: if (activeFocus)
                     Terminals.focusTerminal(cell.terminalId)
+                Keys.onPressed: event => menu.keyPressed(event)
                 onInput: data => terminal.session.write(data)
                 // Only a laid-out Terminal knows its grid; the first pass is 1x1.
                 onResized: (columns, rows) => {
