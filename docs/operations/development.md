@@ -78,7 +78,8 @@ with its image attachments, and `vp run thread:import --archive <archive.json> -
 remaps it onto the destination project after backing up its database. `vp run thread:list --source
 <dir>` finds thread ids. A source or destination can be a workspace containing `.hal-c2`, a root such as that `.hal-c2`, or
 a data directory containing `statev2.sqlite`, such as `~/.local/share/hal-c2-dev` for the main
-checkout's development database.
+checkout's development database. A source can also be a T3 Code data directory holding
+`state.sqlite`, such as `~/.t3/dev`; a destination cannot.
 Stop the destination server before importing. Terminal history can hold credentials, so export
 skips it unless you pass `--include-terminal-logs`.
 

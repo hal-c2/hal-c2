@@ -412,4 +412,38 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
       assert.include(error.message, "your own HAL-C2 install");
     }),
   );
+
+  it.effect("exports from a T3 Code data directory but never imports into one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "thread-transfer-t3-" });
+      const archivePath = path.join(root, "thread.json");
+      const database = yield* createFixtureDatabase({
+        workspace: path.join(root, "source"),
+        projectId: "project-source",
+        threadId: "thread-v1",
+        orchestrationVersion: 1,
+      });
+      const t3 = path.dirname(database);
+      yield* fs.rename(database, path.join(t3, "state.sqlite"));
+
+      const threads = yield* listThreads({ source: t3 });
+      assert.deepEqual(
+        threads.map((thread) => thread.id),
+        ["thread-v1"],
+      );
+      const exported = yield* exportThread({
+        source: t3,
+        threadId: "thread-v1",
+        output: archivePath,
+      });
+      assert.equal(exported.threadId, "thread-v1");
+
+      const error = yield* importThread({ archive: archivePath, destination: t3 }).pipe(
+        Effect.flip,
+      );
+      assert.include(error.message, "No HAL-C2 database found");
+    }),
+  );
 });
