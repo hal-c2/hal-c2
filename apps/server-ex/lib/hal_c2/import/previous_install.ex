@@ -44,9 +44,10 @@ defmodule HalC2.Import.PreviousInstall do
     do: Enum.find(Enum.map(@databases, &Path.join(dir, &1)), &File.regular?/1)
 
   @doc """
-  The threads of the source at `input["source"]`, newest first, without the ones
-  subagents ran in: `%{"threads" => [%{"id", "title", "project", "updatedAt",
-  "subagents", "imported"}]}`.
+  The threads of the source at `input["source"]`, the ones still in play before the
+  settled ones and newest first within each, without the ones subagents ran in:
+  `%{"threads" => [%{"id", "title", "project", "updatedAt", "subagents", "settled",
+  "imported"}]}`.
   """
   def scan(%{"source" => path}) do
     with {:ok, index} <- index(path) do
@@ -62,11 +63,13 @@ defmodule HalC2.Import.PreviousInstall do
             "project" => (project && project.title) || thread.project,
             "updatedAt" => thread.updated_at,
             "subagents" => length(family(index, thread.id)) - 1,
+            "settled" => thread.settled,
             "imported" => MapSet.member?(here, thread.id)
           }
         end
 
-      {:ok, %{"threads" => Enum.sort_by(threads, &{&1["updatedAt"] || "", &1["id"]}, :desc)}}
+      threads = Enum.sort_by(threads, &{!&1["settled"], &1["updatedAt"] || "", &1["id"]}, :desc)
+      {:ok, %{"threads" => threads}}
     end
   end
 
@@ -188,15 +191,31 @@ defmodule HalC2.Import.PreviousInstall do
         v2 =
           rows(db, "orchestration_v2_projection_threads", """
           thread_id, project_id, title, updated_at,
-          json_extract(payload_json, '$.lineage.parentThreadId')
+          json_extract(payload_json, '$.lineage.parentThreadId'),
+          json_extract(payload_json, '$.settledOverride'),
+          json_extract(payload_json, '$.settledAt')
           """)
 
-        v1 = rows(db, "projection_threads", "thread_id, project_id, title, updated_at, NULL")
+        v1 =
+          rows(
+            db,
+            "projection_threads",
+            "thread_id, project_id, title, updated_at, NULL, NULL, NULL"
+          )
 
         threads =
-          for [id, project, title, updated_at, parent] <- v1 ++ v2, into: %{} do
+          for [id, project, title, updated_at, parent, override, settled_at] <- v1 ++ v2,
+              into: %{} do
             {id,
-             %{id: id, project: project, title: title, updated_at: updated_at, parent: parent}}
+             %{
+               id: id,
+               project: project,
+               title: title,
+               updated_at: updated_at,
+               parent: parent,
+               # As the source's sidebar had it: the user's choice wins over the rule's.
+               settled: override == "settled" or (settled_at != nil and override != "active")
+             }}
           end
 
         projects =

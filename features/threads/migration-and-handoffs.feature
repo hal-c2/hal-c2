@@ -31,6 +31,7 @@ Feature: Carrying threads and context across servers and agents
     Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
     When the user asks which threads that install holds
     Then "Beta" and "Alpha" are offered with their project, newest first
+    And a thread that was settled there is offered after them, as settled
     And the thread "Alpha"'s subagent ran in is counted with it, not offered on its own
 
   @mc

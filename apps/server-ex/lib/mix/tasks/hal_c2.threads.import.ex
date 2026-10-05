@@ -6,8 +6,9 @@ defmodule Mix.Tasks.HalC2.Threads.Import do
 
       mix hal_c2.threads.import
 
-  Type to filter, Tab marks a thread, Enter imports the marked ones (or the one under
-  the cursor), Ctrl-C leaves. The MC must be running; the install is only read.
+  Threads still in play come first, settled ones after and marked as such. Type to
+  filter (`active` and `settled` match too), Tab marks a thread, Enter imports the
+  marked ones (or the one under the cursor), Ctrl-C leaves. The MC must be running; the install is only read.
   """
 
   use Mix.Task
@@ -181,7 +182,8 @@ defmodule Mix.Tasks.HalC2.Threads.Import do
     words = state.filter |> String.downcase() |> String.split()
 
     Enum.filter(state.rows, fn row ->
-      text = String.downcase("#{row["title"]} #{row["project"]}")
+      state = if row["settled"], do: "settled", else: "active"
+      text = String.downcase("#{row["title"]} #{row["project"]} #{state}")
       Enum.all?(words, &String.contains?(text, &1))
     end)
   end
@@ -242,7 +244,11 @@ defmodule Mix.Tasks.HalC2.Threads.Import do
       if (row["subagents"] || 0) > 0, do: " +#{row["subagents"]} subagent threads", else: ""
 
     day = String.slice(row["updatedAt"] || "", 0, 10)
-    detail = Enum.reject([row["project"], day], &(&1 in [nil, ""])) |> Enum.join(" · ")
+    settled = if row["settled"], do: "settled"
+
+    detail =
+      Enum.reject([row["project"], day, settled], &(&1 in [nil, ""])) |> Enum.join(" · ")
+
     text = clip("#{mark} #{row["title"]}  (#{detail}#{subagents})")
 
     cond do
