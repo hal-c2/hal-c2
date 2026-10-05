@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="Compile and load changed modules into the running dev MC without a restart (mix hal_c2.upgrade --dev [MC ...])"
+#MISE description="Compile and load changed modules into the running dev MC without a restart (mix hal_c2.upgrade --dev [MC ...]); --release builds a release and moves the installed MC to it"
 #MISE dir="{{config_root}}/apps/server-ex"
+#USAGE flag "--release" help="Update the installed MC (the hal-c2 service) instead of the dev MC, in place when the change allows"
+#USAGE arg "[mcs]..." help="Dev MCs to reload by node name instead of the local one"
 set -euo pipefail
-exec mix hal_c2.upgrade --dev "$@"
+if [[ ${usage_release:-false} == true ]]; then
+  exec mix hal_c2.upgrade --release
+fi
+# shellcheck disable=SC2086 # usage joins the names with spaces
+exec mix hal_c2.upgrade --dev ${usage_mcs:-}

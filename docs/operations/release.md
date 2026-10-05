@@ -6,6 +6,26 @@ HAL-C2 ships the MC, the Qt desktop and the TUI. The release pipeline inherited 
 (Electron desktop, the npm CLI, the hosted web app, AUR and the mobile store builds) was removed
 with its workflows; `git log -- .github/workflows/release.yml` has it.
 
+## Building one locally
+
+```sh
+mise run release:mc      # release/hal-c2-mc-<version>-<platform>: the single-file MC, and its .tar.gz upgrade bundle
+mise run release:linux   # the same, plus release/hal-c2-qt-<version>-linux-x64.AppImage
+```
+
+A local build is versioned `<package version>-local.<UTC timestamp>` unless `HAL_C2_MC_VERSION`
+names one, because a single-file MC only unpacks a version it has not installed before.
+
+`mise run release:install` builds and installs it for your user. The MC becomes the systemd user
+unit `hal-c2.service` ([Running HAL-C2 in the background](../user/background-service.md)),
+unpacked into `~/.local/share/hal-c2/elixir/release`. It listens on 3781 and keeps its files in the
+`hal-c2` profile, so the dev MC (3780, `hal-c2-dev`) can stay up beside it. On x86_64 Linux the
+desktop AppImage goes to `~/.local/bin/hal-c2` with a launcher entry. It uses the service's MC
+rather than starting the one it carries, because that MC already runs on the same files.
+
+Once the service runs, `mise run mc:reload --release` builds this checkout and moves the service to
+it, in place when the change allows and through a restart when it does not.
+
 ## MC
 
 `.github/workflows/release-mc.yml` publishes the bundles MCs update from (`HalC2.Upgrade`):

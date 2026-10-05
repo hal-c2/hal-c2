@@ -36,10 +36,16 @@ Feature: Starting the MC
     And a client can connect with that URL
 
   @mc
-  Scenario: The MC listens on port 3780 by default
+  Scenario: An MC run from a checkout listens on port 3780 by default
     Given no port is configured
     When the MC starts
     Then it serves clients on port 3780
+
+  @mc
+  Scenario: A release MC listens on port 3781, beside one run from a checkout
+    Given no port is configured for a release
+    When the MC starts
+    Then it serves clients on port 3781
 
   @mc
   Scenario: The port comes from the environment

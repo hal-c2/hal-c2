@@ -6,16 +6,23 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
       mix hal_c2.upgrade MC [MC ...] [--cookie COOKIE]
       mix hal_c2.upgrade --dev [MC ...] [--cookie COOKIE]
+      mix hal_c2.upgrade --release
 
   Without `--dev`, builds the prod release and its bundle, sends the bundle to the
   first MC, and has each named MC update to it; the others fetch it over HTTP
   from a peer that already has it. MCs must run a release under `bin/hal-c2-service` for changes that
   need a restart.
 
-  With `--dev`, compiles and has MCs started from this checkout (`mix run`)
-  load what changed. Without MC names that is the MC `mix hal_c2.server` runs
-  here (`mise run mc:reload`), reached over its HTTP port with its access token, so
-  it needs no distribution.
+  With `--dev`, compiles and has MCs run from source (`mix run`) load what
+  changed. Without MC names that is the MC `mix hal_c2.server` runs on this machine
+  (`mise run mc:reload`), reached over its HTTP port with its access token, so it
+  needs no distribution; it loads this checkout's build even when it was started
+  from another checkout or worktree.
+
+  With `--release`, builds the prod release under a version of its own and has the
+  installed MC on this machine update to it (`mise run mc:reload --release`), over
+  its HTTP port with its access token as well. That MC is the one in the user's
+  `hal-c2` profile, or in `HAL_C2_MC_HOME` when that is set.
 
   Named MCs are reached from a hidden short-name node started with `--cookie`, so
   they must run with plain distribution (`elixir --sname ... -S mix hal_c2.server`).
@@ -29,10 +36,18 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
   @impl true
   def run(args) do
-    {opts, mcs} = OptionParser.parse!(args, strict: [dev: :boolean, cookie: :string])
+    {opts, mcs} =
+      OptionParser.parse!(args, strict: [dev: :boolean, release: :boolean, cookie: :string])
+
     mcs = Enum.map(mcs, &String.to_atom/1)
 
     cond do
+      opts[:release] && mcs == [] ->
+        # A version of its own: an MC refuses the version it already runs.
+        stamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
+        build("#{Mix.Project.config()[:version]}-local.#{stamp}")
+        local_release(Mix.Tasks.HalC2.Bundle.bundle())
+
       opts[:dev] && mcs == [] ->
         Mix.Task.run("compile")
         local()
@@ -52,10 +67,13 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     end
   end
 
-  defp build do
+  defp build(version \\ nil) do
+    # Earlier builds leave their lib/hal_c2-<version> behind, and the bundle packs all of lib/.
+    File.rm_rf!("_build/prod/rel/hal_c2")
+
     {_, 0} =
       System.cmd("mix", ~w(release --overwrite),
-        env: [{"MIX_ENV", "prod"}],
+        env: [{"MIX_ENV", "prod"}] ++ if(version, do: [{"HAL_C2_MC_VERSION", version}], else: []),
         into: IO.stream(),
         stderr_to_stdout: true
       )
@@ -88,7 +106,12 @@ defmodule Mix.Tasks.HalC2.Upgrade do
           Mix.raise("No MC has run from #{HalC2.Paths.data_dir()}; start one with `mise run mc`")
       end
 
-    request = {~c"#{base}/api/dev/reload", [{~c"authorization", ~c"Bearer #{token}"}], ~c"", ""}
+    # This checkout's build, so an MC started from another checkout moves to it.
+    body = JSON.encode!(%{"build" => Mix.Project.build_path()})
+
+    request =
+      {~c"#{base}/api/dev/reload", [{~c"authorization", ~c"Bearer #{token}"}],
+       ~c"application/json", body}
 
     case :httpc.request(:post, request, [timeout: 60_000], body_format: :binary) do
       {:ok, {{_, 200, _}, _, body}} ->
@@ -96,7 +119,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
         loaded(base, report["changed"], report["needsRestart"])
 
       {:ok, {{_, 404, _}, _, _}} ->
-        Mix.raise("The MC at #{base} runs from a release; name it to upgrade it")
+        Mix.raise("The MC at #{base} runs from a release; update it with --release")
 
       {:ok, {{_, 409, _}, _, body}} ->
         Mix.raise("#{base}: #{JSON.decode!(body)["reason"]}")
@@ -106,6 +129,53 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
       {:error, _} ->
         Mix.raise("No MC answers at #{base}; start one with `mise run mc`")
+    end
+  end
+
+  # The installed MC on this machine, through `POST /api/dev/reload` with a bundle.
+  defp local_release(path) do
+    Mix.Task.run("app.config")
+    {:ok, _} = Application.ensure_all_started(:inets)
+
+    # A checkout's own home is the dev profile; the installed MC's is the user's.
+    home =
+      case Application.get_env(:hal_c2, :home) do
+        :dev -> nil
+        home -> home
+      end
+
+    dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
+
+    with {:ok, record} <- File.read(Path.join(dirs.state, "server-runtime.json")),
+         {:ok, %{"origin" => base}} <- JSON.decode(record),
+         {:ok, token} <- File.read(Path.join(dirs.data, "access-token")) do
+      body = JSON.encode!(%{"bundle" => path, "version" => manifest(path)["version"]})
+
+      request =
+        {~c"#{base}/api/dev/reload", [{~c"authorization", ~c"Bearer #{String.trim(token)}"}],
+         ~c"application/json", body}
+
+      case :httpc.request(:post, request, [timeout: :timer.minutes(15)], body_format: :binary) do
+        {:ok, {{_, 200, _}, _, body}} ->
+          result = JSON.decode!(body)
+          Mix.shell().info("#{base}: #{result["method"]} to #{result["targetVersion"]}")
+
+        {:ok, {{_, 409, _}, _, body}} ->
+          Mix.raise("#{base}: #{JSON.decode!(body)["reason"]}")
+
+        {:ok, {{_, 404, _}, _, _}} ->
+          Mix.raise(
+            "The MC at #{base} runs from a checkout, or a release too old to update this way"
+          )
+
+        {:ok, {{_, status, _}, _, _}} ->
+          Mix.raise("#{base} answered #{status}; is it an MC from another home?")
+
+        {:error, _} ->
+          Mix.raise("No MC answers at #{base}; is the installed MC running?")
+      end
+    else
+      _ -> Mix.raise("No installed MC has run from #{dirs.data}")
     end
   end
 

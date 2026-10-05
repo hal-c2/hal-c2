@@ -4,6 +4,8 @@
 #   docs/internals/context-handoffs.md
 #   apps/web/src/components/LegacyThreadMigrationToast.tsx
 #   apps/server-ex/lib/hal_c2/import/v2.ex
+#   apps/server-ex/lib/hal_c2/import/previous_install.ex
+#   apps/server-ex/lib/mix/tasks/hal_c2.threads.import.ex
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex
 # Moving a thread to another machine, where the handoff is the fallback: threads/moving-between-machines.feature.
 
@@ -23,6 +25,38 @@ Feature: Carrying threads and context across servers and agents
     Given the previous server recorded visits to "Alpha"
     When the MC imports that log
     Then "Alpha" keeps its read state without showing new activity
+
+  @mc
+  Scenario: The threads of an older install on the same machine are offered
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    When the user asks which threads that install holds
+    Then "Beta" and "Alpha" are offered with their project, newest first
+    And the thread "Alpha"'s subagent ran in is counted with it, not offered on its own
+
+  @mc
+  Scenario: A thread picked from an older install comes with everything it had
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    When the user imports "Alpha" from that install
+    Then "Alpha" is listed in a new project at the folder it worked in
+    And "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
+    And "Alpha" keeps its tie to the agent's session, with the turn it was running ended
+    And "Beta" is not imported
+    And the install is left unchanged
+
+  @mc
+  Scenario: A picked thread joins the project already at its folder
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And the project "shop" is at the folder that install worked in
+    When the user imports "Alpha" from that install
+    Then "Alpha" is listed in "shop"
+
+  @mc
+  Scenario: A thread that was already picked is not imported again
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And the user imported "Alpha" from that install
+    When the user imports "Alpha" from that install
+    Then the user is told "Alpha" is already here
+    And that install offers "Alpha" as imported
 
   @backlog @mc
   Scenario: Threads from the first version are migrated once

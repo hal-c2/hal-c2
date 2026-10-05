@@ -14,6 +14,7 @@ packages/*/dist
 build/
 .logs/
 release/
+!mise-tasks/release/
 release-mock/
 .t3
 .hal-c2

@@ -23,6 +23,7 @@ import {
   exchangePairingToken,
   fetchDescriptor,
   findLocalMcToken,
+  findRunningMc,
   mcDataDir,
   mcPort,
   readAccessToken,
@@ -97,8 +98,10 @@ async function stop(code: number): Promise<never> {
 }
 
 async function standalone(home: string | undefined): Promise<McAccess> {
-  const port = await mcPort(process.env);
   const launch = resolveMcLaunch(hostDir, process.env);
+  const running = findRunningMc({ launch, home, env: process.env });
+  if (running !== undefined) return running;
+  const port = await mcPort(process.env);
   const started = startMc({ launch, port, home, env: process.env });
   mc = started;
   await waitForMc(started, MC_START_TIMEOUT_MS);

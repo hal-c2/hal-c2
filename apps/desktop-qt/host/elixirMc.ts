@@ -104,16 +104,58 @@ export function mcDataDir(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly homeDir?: string;
 }): string {
-  if (input.home !== undefined) return NodePath.join(input.home, "data", "elixir");
+  return mcDirs(input).data;
+}
+
+function mcDirs(input: {
+  readonly launch: McLaunch;
+  readonly home: string | undefined;
+  readonly env: NodeJS.ProcessEnv;
+  readonly homeDir?: string;
+}): { readonly data: string; readonly state: string } {
+  if (input.home !== undefined) {
+    return {
+      data: NodePath.join(input.home, "data", "elixir"),
+      state: NodePath.join(input.home, "state", "elixir"),
+    };
+  }
   const mcHome = input.env.HAL_C2_MC_HOME?.trim();
-  if (mcHome) return NodePath.join(mcHome, "data");
+  if (mcHome) {
+    return { data: NodePath.join(mcHome, "data"), state: NodePath.join(mcHome, "state") };
+  }
   const dirs = resolveHalC2Dirs({
     env: input.env,
     homeDir: input.homeDir ?? NodeOS.homedir(),
     platform: hostPlatform,
     profile: input.launch.cwd === undefined ? HAL_C2_APP_DIR : HAL_C2_DEV_APP_DIR,
   });
-  return NodePath.join(dirs.data, "elixir");
+  return {
+    data: NodePath.join(dirs.data, "elixir"),
+    state: NodePath.join(dirs.state, "elixir"),
+  };
+}
+
+/**
+ * The MC already running on the files this launch would use, such as the background
+ * service: its address and access token, from its runtime record. Two MCs must not
+ * share those files, so the desktop app uses this one instead of starting its own,
+ * and fails when it cannot read that MC's token.
+ */
+export function findRunningMc(input: {
+  readonly launch: McLaunch;
+  readonly home: string | undefined;
+  readonly env: NodeJS.ProcessEnv;
+}): { readonly origin: string; readonly token: string } | undefined {
+  const dirs = mcDirs(input);
+  const record = readRuntimeRecord(NodePath.join(dirs.state, "server-runtime.json"));
+  if (record === undefined || !processIsAlive(record.pid)) return undefined;
+  const token = readAccessToken(dirs.data);
+  if (token === undefined) {
+    throw new HostError(
+      `An MC is already running on ${dirs.data} (pid ${record.pid}), but its access token cannot be read.`,
+    );
+  }
+  return { origin: record.origin, token };
 }
 
 /**

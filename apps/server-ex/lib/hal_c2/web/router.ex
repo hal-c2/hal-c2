@@ -238,6 +238,28 @@ defmodule HalC2.Web.Router do
     end)
   end
 
+  # Threads of a T3 Code or Node HAL-C2 install on this machine, for
+  # `mix hal_c2.threads.import` (`HalC2.Import.PreviousInstall`).
+  get "/api/previous-installs" do
+    with_scope(conn, "access:read", fn _session ->
+      {200, %{"sources" => HalC2.Import.PreviousInstall.sources()}}
+    end)
+  end
+
+  post "/api/previous-installs/threads" do
+    with_scope(conn, "access:read", fn _session ->
+      with {:ok, body} <- json_body(conn),
+           do: previous_install_answer(HalC2.Import.PreviousInstall.scan(body))
+    end)
+  end
+
+  post "/api/previous-installs/import" do
+    with_scope(conn, "access:write", fn _session ->
+      with {:ok, body} <- json_body(conn),
+           do: previous_install_answer(HalC2.Import.PreviousInstall.import_threads(body))
+    end)
+  end
+
   # A pull request's patch, which is large enough to want HTTP rather than the socket.
   post "/api/pull-requests/diff" do
     with_scope(conn, "orchestration:read", fn _session ->
@@ -320,6 +342,9 @@ defmodule HalC2.Web.Router do
        HalC2.Cluster.detail(reason)
      )}
   end
+
+  defp previous_install_answer({:ok, body}), do: {200, body}
+  defp previous_install_answer({:error, message}), do: {409, %{"message" => message}}
 
   # The session a socket opens for, or nil for one opened with the MC's own token.
   defp socket_session(%{"wsTicket" => ticket}), do: HalC2.Auth.take_ticket(ticket)
@@ -456,19 +481,37 @@ defmodule HalC2.Web.Router do
   end
 
   # An MC run from a checkout loads what `mix compile` changed since it started
-  # (`mix hal_c2.upgrade --dev` with no MC names). Only the MC's own token may ask.
+  # (`mix hal_c2.upgrade --dev` with no MC names). An MC run from a release updates to
+  # a bundle on this machine instead (`--release`). Only the MC's own token may ask.
   post "/api/dev/reload" do
     bearer = conn |> get_req_header("authorization") |> List.first("")
+    body = with {:ok, body} <- json_body(conn), do: body
 
     cond do
-      HalC2.Upgrade.release_root() != nil ->
-        send_resp(conn, 404, "")
-
       not Plug.Crypto.secure_compare(bearer, "Bearer " <> HalC2.Web.token()) ->
         send_resp(conn, 401, "")
 
+      HalC2.Upgrade.release_root() != nil ->
+        case body do
+          %{"bundle" => bundle, "version" => version}
+          when is_binary(bundle) and is_binary(version) ->
+            case HalC2.Upgrade.update_from(bundle, version) do
+              {:ok, result} -> json(conn, 200, result)
+              {:error, %{"reason" => reason}} -> json(conn, 409, %{"reason" => reason})
+            end
+
+          _ ->
+            send_resp(conn, 404, "")
+        end
+
       true ->
-        case HalC2.Upgrade.reload_checkout() do
+        build =
+          case body do
+            %{"build" => build} when is_binary(build) -> build
+            _ -> nil
+          end
+
+        case HalC2.Upgrade.reload_checkout(build) do
           {:ok, report} ->
             names = &Enum.map(&1, fn mod -> inspect(mod) end)
 
@@ -479,7 +522,9 @@ defmodule HalC2.Web.Router do
             })
 
           {:error, reason} ->
-            json(conn, 409, %{"reason" => inspect(reason)})
+            json(conn, 409, %{
+              "reason" => if(is_binary(reason), do: reason, else: inspect(reason))
+            })
         end
     end
   end

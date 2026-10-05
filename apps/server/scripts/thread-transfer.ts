@@ -233,6 +233,7 @@ const stateDirBeside = (dataDir: string, path: Path.Path): string => {
 
 const resolveHalC2Location = Effect.fn("resolveThreadTransferHalC2Location")(function* (
   input: string,
+  options?: { readonly readOnly: boolean },
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -243,6 +244,17 @@ const resolveHalC2Location = Effect.fn("resolveThreadTransferHalC2Location")(fun
       dataDir: root,
       stateDir: stateDirBeside(root, path),
       databasePath: directDatabase,
+      workspaceRoot: null,
+    } satisfies HalC2Location;
+  }
+  // A T3 Code data directory (`~/.t3/dev`, `~/.t3/userdata`) names it `state.sqlite`.
+  // It is only ever a source: an import must not write into T3 Code's data.
+  const t3Database = path.join(root, "state.sqlite");
+  if (options?.readOnly && (yield* fs.exists(t3Database))) {
+    return {
+      dataDir: root,
+      stateDir: root,
+      databasePath: t3Database,
       workspaceRoot: null,
     } satisfies HalC2Location;
   }
@@ -439,7 +451,7 @@ const loadListedThreads = Effect.fn("loadListedThreads")(function* (
 });
 
 export const listThreads = Effect.fn("listThreads")(function* (input: ListThreadsInput) {
-  const location = yield* resolveHalC2Location(input.source);
+  const location = yield* resolveHalC2Location(input.source, { readOnly: true });
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const projects = yield* sql<ProjectRow>`
@@ -499,7 +511,7 @@ const loadArchive = Effect.fn("loadThreadTransferArchive")(function* (filePath: 
 export const exportThread = Effect.fn("exportThread")(function* (input: ExportThreadInput) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const location = yield* resolveHalC2Location(input.source);
+  const location = yield* resolveHalC2Location(input.source, { readOnly: true });
   const output = path.resolve(input.output);
   if (yield* fs.exists(output)) {
     return yield* transferError("export thread", `Output '${output}' already exists.`);

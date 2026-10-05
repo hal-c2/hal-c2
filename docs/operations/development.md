@@ -21,11 +21,14 @@ mise run mc              # MC in the foreground, ready to cluster (--host, --por
 mise run mc:cluster      # that MC's cluster: no args lists it; invite, join LINK, remove MEMBER
 mise run mc:update-cluster olafura@ai-beast   # other machines' checkouts and dev MCs to this commit, over SSH
 mise run mc:pair         # one-time pairing URL for that MC (--tailscale to publish it)
-mise run mc:reload       # compile and load what changed into that MC; sockets and agents stay up
+mise run mc:reload       # compile this checkout and load it into that MC; sockets and agents stay up
+mise run mc:reload --release   # build a release of this checkout and move the installed MC to it
 mise run desktop           # build the Qt shell, pair it with the running MC, launch
 mise run desktop:build     # build only (--release for a Release build)
 mise run tui               # bundle apps/tui and open it on the running MC
 mise run tui:build         # the TUI bundle; tui depends on it
+mise run release:linux     # the MC and the desktop AppImage in release/ (release:mc for the MC alone)
+mise run release:install   # build and install: the MC as this user's background service, the desktop as a launcher entry
 ```
 
 Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own
@@ -34,6 +37,10 @@ changed. The Qt shell pairs with the MC on
 `HAL_C2_MC_PORT` (default 3780); `--url` takes a pairing link for another MC, and
 `--standalone` starts the shell's own MC from source, as the installed app does, so do not
 combine it with `mise run mc` on the same home.
+
+Every checkout and worktree shares the one dev MC, because its files are in the XDG `hal-c2-dev`
+profile. `mise run mc:reload` therefore moves that MC to the build of the checkout it is run from,
+whichever checkout started it.
 
 The TUI finds the MC through the runtime record and access token the MC keeps in the
 XDG `hal-c2-dev` profile, so start `mise run mc` first;
@@ -71,6 +78,13 @@ Read ports from the `[dev-runner]` output. Worktrees derive stable preferences f
 but occupied ports can shift them. `HAL_C2_PORT_OFFSET` or `HAL_C2_DEV_INSTANCE` can select a
 different preference when needed.
 
+### Importing threads from T3 Code or the Node server
+
+`mise run threads:import` lists the threads of the T3 Code and Node HAL-C2 installs on this machine
+and imports the ones you pick into the running MC, each with its subagent threads, attachments and
+terminal scrollback. The install is only read, so its server can stay up. An MC started before this
+command existed needs `mise run mc:reload` first.
+
 ### Moving a thread between data directories
 
 `vp run thread:export --source <dir> --thread-id <id> --output <archive.json>` exports one thread
@@ -78,7 +92,8 @@ with its image attachments, and `vp run thread:import --archive <archive.json> -
 remaps it onto the destination project after backing up its database. `vp run thread:list --source
 <dir>` finds thread ids. A source or destination can be a workspace containing `.hal-c2`, a root such as that `.hal-c2`, or
 a data directory containing `statev2.sqlite`, such as `~/.local/share/hal-c2-dev` for the main
-checkout's development database.
+checkout's development database. A source can also be a T3 Code data directory holding
+`state.sqlite`, such as `~/.t3/dev`; a destination cannot.
 Stop the destination server before importing. Terminal history can hold credentials, so export
 skips it unless you pass `--include-terminal-logs`.
 

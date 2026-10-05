@@ -72,6 +72,21 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the MC listens on the next free port
 
+    @desktop
+    Scenario: An MC already running on the desktop's files is used instead of starting another
+      Given the background service runs an MC on the files the desktop app's MC would use
+      When the user starts the desktop app
+      Then the shell is told that MC's address and the MC's own access token
+      And the desktop app starts no MC of its own
+
+    @desktop
+    Scenario: A running MC whose access token cannot be read stops the start
+      Given the background service runs an MC on the files the desktop app's MC would use
+      And that MC's access token cannot be read
+      When the user starts the desktop app
+      Then the start fails saying an MC already runs on those files
+      And the desktop app starts no MC of its own
+
   Rule: Starting again reuses the environment
 
     # The address was the served web app's, whose saved state lived per origin.
