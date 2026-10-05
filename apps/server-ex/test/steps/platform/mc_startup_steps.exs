@@ -394,6 +394,48 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
+  step "the MC is running under the service wrapper", context do
+    bin = Path.join(Mc.tmp_dir(context.mc, "release"), "bin")
+    File.mkdir_p!(bin)
+    wrapper = Path.join(bin, "hal-c2-service")
+    File.cp!(Path.join(project_dir(), "rel/overlays/bin/hal-c2-service"), wrapper)
+    File.chmod!(wrapper, 0o755)
+    log = Path.join(bin, "starts.log")
+    ready = Path.join(bin, "ready")
+    {_, 0} = System.cmd("mkfifo", [ready])
+
+    # A stand-in for bin/hal_c2 that says when it is up and takes a moment to stop,
+    # as an MC closing its threads does.
+    File.write!(Path.join(bin, "hal_c2"), """
+    #!/bin/sh
+    trap 'echo stopping >> "#{log}"; echo stopped >> "#{log}"; exit 0' TERM
+    echo up > "#{ready}"
+    while :; do sleep 1 & wait $!; done
+    """)
+
+    File.chmod!(Path.join(bin, "hal_c2"), 0o755)
+    Map.put(context, :wrapper, %{path: wrapper, log: log, ready: ready})
+  end
+
+  # systemd and launchd signal the process they started, which is the wrapper.
+  step "the service manager stops the wrapper", %{wrapper: wrapper} = context do
+    {out, 0} =
+      System.cmd("sh", [
+        "-c",
+        ~s("$0" & pid=$!; read _ < "$1"; kill -TERM "$pid"; wait "$pid"; echo "$?"),
+        wrapper.path,
+        wrapper.ready
+      ])
+
+    Map.put(context, :wrapper_status, out |> String.trim() |> String.to_integer())
+  end
+
+  step "the MC is told to stop and the wrapper waits for it", context do
+    assert context.wrapper_status == 0
+    assert File.read!(context.wrapper.log) == "stopping\nstopped\n"
+    context
+  end
+
   step "a user asks to install the background service", context do
     Mc.release(context.mc, service: false)
     user_home = Mc.tmp_dir(context.mc, "user-home")

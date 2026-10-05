@@ -184,6 +184,12 @@ Feature: Starting the MC
     And any other exit stops the wrapper
 
   @mc
+  Scenario: Stopping the background service lets the MC shut down
+    Given the MC is running under the service wrapper
+    When the service manager stops the wrapper
+    Then the MC is told to stop and the wrapper waits for it
+
+  @mc
   Scenario: A user installs the MC as a background service with one command
     When a user asks to install the background service
     Then the MC is registered with the system's service manager

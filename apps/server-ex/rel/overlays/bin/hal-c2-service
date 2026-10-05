@@ -16,9 +16,24 @@ esac
 
 releases="$here/../releases"
 export HAL_C2_SERVICE=1
+
+# The service manager stops the MC by signalling this script. The MC gets the signal
+# and this script waits for it, so the MC shuts down instead of being killed with
+# whatever else is left once this script is gone.
+child=
+stopping=
+trap 'stopping=1; [ -n "$child" ] && kill -TERM "$child" 2>/dev/null' TERM INT
+
 while :; do
-  "$here/hal_c2" start "$@"
-  status=$?
+  "$here/hal_c2" start "$@" &
+  child=$!
+  # A trapped signal interrupts `wait`; wait again until the MC itself has exited.
+  while :; do
+    wait "$child"
+    status=$?
+    kill -0 "$child" 2>/dev/null || break
+  done
+  [ -n "$stopping" ] && exit "$status"
   [ "$status" -eq 75 ] && continue
   if [ "$status" -ne 0 ] && [ -f "$releases/start_erl.data.previous" ]; then
     mv "$releases/start_erl.data.previous" "$releases/start_erl.data"
