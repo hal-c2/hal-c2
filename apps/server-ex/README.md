@@ -77,7 +77,8 @@ MCs get a version's bundle from a cluster peer that has it, or else from the
 
 ```sh
 HAL_C2_MC_VERSION=0.0.43-mine mix hal_c2.upgrade hal_c2@host     # build a release, send it, update
-mise run MC:reload                                  # compile, reload changes into `mise run mc`
+mise run mc:reload                                  # compile, reload changes into `mise run mc`
+mise run mc:update-cluster olafura@ai-beast         # the same commit and a reload on other machines, over SSH
 mix hal_c2.upgrade --dev hal_c2_a@my-mac hal_c2_b@my-mac        # MCs run with `mix run`: reload changes
 MIX_ENV=prod mix hal_c2.bundle                        # just pack _build/prod/rel/hal_c2 and its single file
 ```
