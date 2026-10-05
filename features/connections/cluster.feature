@@ -3,6 +3,7 @@
 #   apps/server-ex/lib/hal_c2/cluster/epmd.ex (member names to addresses, no port mapper)
 #   apps/server-ex/lib/hal_c2/cluster/discovery.ex (reconnecting, strategies)
 #   apps/server-ex/lib/hal_c2/cluster/tailscale.ex, cluster/static.ex (discovery strategies)
+#   apps/server-ex/lib/hal_c2/tailscale_serve.ex (invites over Tailscale Serve)
 #   apps/server-ex/lib/hal_c2/cluster/command.ex, lib/mix/tasks/hal_c2.cluster.ex (status, invite, join, remove)
 #   apps/server-ex/rel/env.sh.eex, mise-tasks/mc/_default (boot flags)
 #   apps/server-ex/lib/hal_c2/shell.ex (cluster-wide sidebar, offline peers)
@@ -53,6 +54,16 @@ Feature: Clustering one person's machines
     Given two MCs that are not clustered
     When the first makes a cluster invite
     Then the invite carries the fingerprint of the first's certificate
+
+  # Two MCs on one machine, such as an installed one and a development one, share its
+  # tailnet name, and only one of them can have the default HTTPS port.
+  @mc
+  Scenario: An invite over Tailscale takes another port when another MC holds the default one
+    Given two MCs that are not clustered
+    And Tailscale serves the second at the machine's tailnet HTTPS name
+    When the first makes a cluster invite over Tailscale
+    Then the invite points at the tailnet name on the first's own port
+    And the tailnet HTTPS name still reaches the second
 
   # A link that names no certificate gives the joining machine nothing to check the answer
   # against, so whoever answers it could name any machines as members.

@@ -120,7 +120,8 @@ defmodule HalC2.Cluster do
   (in the fragment, which is never sent anywhere), for another machine to `join/1`
   with within five minutes: `%{"link", "expiresAt", "localOnly"}`. It points at
   `"baseUrl"` when given, else with `"tailscale" => true` at this MC's Tailscale Serve
-  name (published if need be), else at the address the MC listens on. `localOnly`
+  name (published if need be, on the MC's own port number when something else holds
+  HTTPS 443), else at the address the MC listens on. `localOnly`
   says no other machine can reach the link.
   """
   def invite(input \\ %{}) do
@@ -146,7 +147,7 @@ defmodule HalC2.Cluster do
   defp invite_base(%{"baseUrl" => base}) when is_binary(base) and base != "", do: {:ok, base}
 
   defp invite_base(%{"tailscale" => true}) do
-    case HalC2.TailscaleServe.publish(HalC2.Web.port(), HalC2.TailscaleServe.default_port()) do
+    case HalC2.TailscaleServe.publish_free(HalC2.Web.port()) do
       {:ok, base} -> {:ok, base}
       {:error, message} -> {:error, {:tailscale, message}}
     end
