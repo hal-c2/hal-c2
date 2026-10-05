@@ -32,6 +32,8 @@ interface SliceFilesWorld extends FilesWorld {
   editorWrites?: string;
   /** Resolved when the user "saves and quits" a held editor. */
   editorHold?: ReturnType<typeof deferred>;
+  /** Settles when the stand-in editor has been run. */
+  editorStarted?: ReturnType<typeof deferred>;
 }
 
 const files = (ctx: World) => ctx.host!.state.get("files") as TuiFilesState;
@@ -43,9 +45,11 @@ const writes = (ctx: World) => ctx.fake!.calls.filter((call) => call.method === 
 /** A stand-in for `$EDITOR`: records what it was run on, then writes and exits (or waits). */
 function useEditor(ctx: SliceFilesWorld) {
   const runs: EditorRun[] = (ctx.editorRuns ??= []);
+  const started = (ctx.editorStarted = deferred());
   ctx.runEditor = async (command, file) => {
     const path = file.replace(/:\d+$/, "");
     runs.push({ command, file, content: NodeFS.readFileSync(path, "utf8") });
+    started.resolve(undefined);
     if (ctx.editorHold) await ctx.editorHold.promise;
     if (ctx.editorWrites !== undefined) NodeFS.writeFileSync(path, ctx.editorWrites);
   };
@@ -136,6 +140,7 @@ step("the user opens {string} in their editor", async (ctx: SliceFilesWorld, pat
   await openFile(ctx, path);
   await pressKey(ctx, "PgDn");
   await pressKey(ctx, "e");
+  await ctx.editorStarted!.promise;
   await settle(ctx);
 });
 
@@ -163,6 +168,8 @@ step("the user is editing {string}", async (ctx: SliceFilesWorld, path: string) 
   ctx.held = (ctx.held ?? 0) + 1;
   await openFile(ctx, path);
   await pressKey(ctx, "e");
+  // The copy is written before the editor starts: wait for the run, not a tick.
+  await ctx.editorStarted!.promise;
   await settle(ctx);
   expect(ctx.editorRuns).toHaveLength(1);
   expect(status(ctx).text).toBe(`Editing ${path} in $EDITOR…`);
