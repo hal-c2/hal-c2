@@ -388,6 +388,7 @@ defmodule HalC2.Steps.Providers.Cursor do
     ref = Process.monitor(runtime)
     :ok = GenServer.stop(runtime, :shutdown)
     assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    Mc.settle_registry(HalC2.Acp.Registry)
     assert [%{"status" => "running"}] = Acp.runs(thread)
     assert Registry.lookup(HalC2.Acp.Registry, thread) == []
     # The sidebar still shows it as the thread's active run, which the check reads.

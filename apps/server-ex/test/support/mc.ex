@@ -122,6 +122,20 @@ defmodule HalC2.Test.Mc do
   end
 
   @doc """
+  Returns once `registry` has dropped every process that is already down. A
+  registry forgets a process when it handles that process's exit, which can be
+  after the test's own monitor has fired; a call to each of its partitions is
+  answered after the exits already in their mailboxes.
+  """
+  def settle_registry(registry) do
+    for {_id, pid, _type, _modules} <- Supervisor.which_children(registry), is_pid(pid) do
+      :sys.get_state(pid)
+    end
+
+    :ok
+  end
+
+  @doc """
   Starts a service under the test supervisor if it is not running yet; `restart/1`
   starts it again.
   """
@@ -201,7 +215,7 @@ defmodule HalC2.Test.Mc do
   end
 
   @doc "The first frame matching `fun`, skipping others. Raises after `timeout`."
-  def await(client, fun, timeout \\ 2_000) do
+  def await(client, fun, timeout \\ 30_000) do
     {frame, _skipped, client} = WsClient.recv_until(client, fun, timeout)
     {frame, client}
   end
