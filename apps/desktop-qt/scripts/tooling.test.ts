@@ -76,6 +76,21 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
   );
 });
 
+describe.skipIf(platform === "win32")("dev-qt", () => {
+  it("refuses a standalone MC release without a home of its own", () => {
+    const result = NodeChildProcess.spawnSync(
+      process.execPath,
+      [NodeURL.fileURLToPath(new URL("./dev-qt.mjs", import.meta.url)), "--standalone"],
+      {
+        encoding: "utf8",
+        env: { ...process.env, HAL_C2_MC_RELEASE: "/opt/hal-c2-mc", HAL_C2_MC_HOME: "" },
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("--home-dir");
+  });
+});
+
 describe.skipIf(platform === "win32")("theme-from-terminal output", () => {
   it("writes into the shell's config dir: HAL_C2_HOME, then XDG, or the dev profile", async () => {
     const {

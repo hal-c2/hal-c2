@@ -14,7 +14,8 @@
  *   --url <url>        skip pairing and attach to the MC this pairing link names
  *   --standalone       no pairing: the shell starts its own MC from source, as the
  *                      installed app does. Without --home-dir that MC is the dev
- *                      profile's, so not next to `mise run mc`.
+ *                      profile's, so not next to `mise run mc`; an MC release
+ *                      (HAL_C2_MC_RELEASE) has no dev profile and needs --home-dir.
  *   --release          build with CMAKE_BUILD_TYPE=Release (no disk QML loading)
  *   --configure-only   stop after the CMake build
  *   --help
@@ -216,6 +217,19 @@ async function pairWithMc() {
     .map((line) => line.trim())
     .find((line) => /^https?:\/\/\S+[?#]token=/.test(line));
   return url ?? fail(`mix hal_c2.pair printed no pairing link (exit ${String(result.status)}).`);
+}
+
+// A release keeps its files in the installed app's directories (or HAL_C2_HOME):
+// only a root keeps a development launch out of them.
+if (
+  options.standalone &&
+  !options.homeDir?.trim() &&
+  process.env.HAL_C2_MC_RELEASE?.trim() &&
+  !process.env.HAL_C2_MC_HOME?.trim()
+) {
+  fail(
+    "--standalone with HAL_C2_MC_RELEASE would run that release on the installed app's files. Pass --home-dir <dir> (or set HAL_C2_MC_HOME).",
+  );
 }
 
 build();
