@@ -126,6 +126,55 @@ defmodule HalC2.Cluster.Command do
     end
   end
 
+  @doc """
+  Posts to a path that answers in JSON lines (the import of a thread): `progress` is
+  given each `"progress"` line as it arrives, and the last line is the answer.
+  """
+  def stream(path, body, timeout, progress) do
+    {:ok, _} = Application.ensure_all_started(:inets)
+
+    with {:ok, token} <- token() do
+      request =
+        {to_charlist(origin() <> path), [{~c"authorization", ~c"Bearer #{token}"}],
+         ~c"application/json", JSON.encode!(body)}
+
+      options = [sync: false, stream: :self, body_format: :binary]
+
+      case :httpc.request(:post, request, [timeout: timeout], options) do
+        {:ok, ref} -> lines(ref, "", "", timeout, progress)
+        {:error, _} -> {:error, "No MC answers at #{origin()}; is it running?"}
+      end
+    end
+  end
+
+  # `last` is the newest whole line, `buffer` the start of the next one.
+  defp lines(ref, last, buffer, timeout, progress) do
+    receive do
+      {:http, {^ref, :stream_start, _}} ->
+        lines(ref, last, buffer, timeout, progress)
+
+      {:http, {^ref, :stream, data}} ->
+        {complete, [rest]} = String.split(buffer <> data, "\n") |> Enum.split(-1)
+        for line <- complete, %{"progress" => step} <- [JSON.decode!(line)], do: progress.(step)
+        lines(ref, List.last(complete, last), rest, timeout, progress)
+
+      {:http, {^ref, :stream_end, _}} ->
+        case JSON.decode(if(buffer == "", do: last, else: buffer)) do
+          {:ok, %{"message" => message}} -> {:error, message}
+          {:ok, answer} -> {:ok, answer}
+          {:error, _} -> {:error, "The MC stopped answering before the import was done."}
+        end
+
+      {:http, {^ref, {{_, status, _}, _, answer}}} ->
+        {:error, "The MC answered #{status}: #{answer}"}
+
+      {:http, {^ref, {:error, _}}} ->
+        {:error, "The MC stopped answering before the import was done."}
+    after
+      timeout -> {:error, "The MC took too long to answer."}
+    end
+  end
+
   defp token do
     case File.read(HalC2.Web.token_path()) do
       {:ok, token} -> {:ok, String.trim(token)}

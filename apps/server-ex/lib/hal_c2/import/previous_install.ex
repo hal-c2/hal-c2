@@ -80,14 +80,16 @@ defmodule HalC2.Import.PreviousInstall do
   `%{"imported" => [id], "failed" => [%{"id", "message"}]}`. One thread failing
   leaves the others alone.
   """
-  def import_threads(%{"source" => path, "threadIds" => ids}) when is_list(ids) do
+  def import_threads(input, report \\ fn _progress -> :ok end)
+
+  def import_threads(%{"source" => path, "threadIds" => ids}, report) when is_list(ids) do
     with {:ok, index} <- index(path) do
       files = %{
         attachments: ls(Path.join(path, "attachments")),
         terminals: ls(Path.join([path, "logs", "terminals"]))
       }
 
-      results = Enum.map(ids, &{&1, import_thread(path, index, files, &1)})
+      results = Enum.map(ids, &{&1, import_thread(path, index, files, &1, report)})
 
       {:ok,
        %{
@@ -97,17 +99,34 @@ defmodule HalC2.Import.PreviousInstall do
     end
   end
 
-  def import_threads(_), do: {:error, "Name the install and the threads to import."}
+  def import_threads(_, _), do: {:error, "Name the install and the threads to import."}
 
-  defp import_thread(path, index, files, id) do
+  # `report` hears how far the thread is: its events read, then its threads finished.
+  defp import_thread(path, index, files, id, report) do
     with %{} = thread <- index.threads[id] || {:error, "It is not in #{path}."},
          [_ | _] = missing <- family(index, id) -- MapSet.to_list(here()),
          {:ok, project, target} <- target(index.projects[thread.project]) do
       rewrite =
         ThreadArchive.rewriter(project.root, target["workspaceRoot"], project.id, target["id"])
 
-      {:ok, _} = HalC2.Import.V2.run(database(path), Store, only: missing, rewrite: rewrite)
-      Enum.each(missing, &finish(path, files, &1))
+      events = &report.(%{"stage" => "events", "done" => &1, "total" => &2})
+      threads = &report.(%{"stage" => "files", "done" => &1, "total" => length(missing)})
+
+      {:ok, _} =
+        HalC2.Import.V2.run(database(path), Store,
+          only: missing,
+          rewrite: rewrite,
+          progress: events
+        )
+
+      threads.(0)
+
+      missing
+      |> Enum.with_index(1)
+      |> Enum.each(fn {id, n} ->
+        finish(path, files, id)
+        threads.(n)
+      end)
     else
       [] -> {:error, "It is already here."}
       {:error, message} -> {:error, message}

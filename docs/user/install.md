@@ -91,7 +91,7 @@ it needs them.
 To bring over threads you made in T3 Code after that, run
 `hal-c2-service threads import` in a terminal while HAL-C2 is running. It lists
 the threads of T3 Code and of an earlier HAL-C2 on this machine; mark the ones
-you want with Tab and press Enter. Each comes with its subagent threads,
+you want with Space and press Enter. Each comes with its subagent threads,
 attachments and terminal scrollback, and the old install is only read.
 
 Worktrees your threads already use stay where they are, such as under

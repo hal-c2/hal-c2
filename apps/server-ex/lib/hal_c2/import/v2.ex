@@ -45,11 +45,20 @@ defmodule HalC2.Import.V2 do
     try do
       streams = source_streams(db, Keyword.get(opts, :only))
       totals = %{streams: 0, source_events: 0, events: 0, source_bytes: 0, bytes: 0}
+      progress = progress(db, streams, opts[:progress])
 
       report =
         Enum.reduce(streams, totals, fn {aggregate, stream_id, legacy?}, totals ->
           stream_report =
-            import_stream(db, store, aggregate, stream_id, legacy?, opts[:rewrite] || (& &1))
+            import_stream(
+              db,
+              store,
+              aggregate,
+              stream_id,
+              legacy?,
+              opts[:rewrite] || (& &1),
+              &progress.(totals.source_events + &1)
+            )
 
           Map.merge(totals, stream_report, fn _k, a, b -> a + b end)
           |> Map.update!(:streams, &(&1 + 1))
@@ -59,6 +68,28 @@ defmodule HalC2.Import.V2 do
     after
       Sqlite3.close(db)
     end
+  end
+
+  # `opts[:progress]` is told `(events read, events to read)` as the import goes.
+  defp progress(_db, _streams, nil), do: fn _read -> :ok end
+
+  defp progress(db, streams, report) do
+    {:ok, stmt} =
+      Sqlite3.prepare(db, """
+      SELECT COUNT(*) FROM orchestration_events
+      WHERE aggregate_kind = ?1 AND stream_id = ?2
+        AND (?3 OR aggregate_kind = 'project' OR application_event_version = 2)
+      """)
+
+    total =
+      Enum.sum_by(streams, fn {aggregate, stream_id, legacy?} ->
+        :ok = Sqlite3.bind(stmt, [aggregate, stream_id, if(legacy?, do: 1, else: 0)])
+        {:ok, [[count]]} = Sqlite3.fetch_all(db, stmt)
+        count
+      end)
+
+    :ok = Sqlite3.release(db, stmt)
+    fn read -> report.(read, total) end
   end
 
   @doc "Maps a Node event to `{kind, entity_id, entity}`, or `nil` when it carries no entity."
@@ -110,7 +141,7 @@ defmodule HalC2.Import.V2 do
 
   # A thread with any v2 event was migrated by the Node server; its v1 events are
   # history the v2 ones already carry.
-  defp import_stream(db, store, aggregate, stream_id, legacy?, rewrite) do
+  defp import_stream(db, store, aggregate, stream_id, legacy?, rewrite, progress) do
     {:ok, stmt} =
       Sqlite3.prepare(db, """
       SELECT event_type, payload_json, occurred_at FROM orchestration_events
@@ -128,6 +159,7 @@ defmodule HalC2.Import.V2 do
       bound_sessions: MapSet.new(),
       v1: if(legacy?, do: HalC2.Import.V1Thread.new(stream_id)),
       rewrite: rewrite,
+      progress: progress,
       pending: [],
       pending_count: 0,
       source_events: 0,
@@ -161,6 +193,7 @@ defmodule HalC2.Import.V2 do
         if acc.pending_count >= @batch, do: flush(acc, store, stream_kind, stream_id), else: acc
       end)
 
+    acc.progress.(acc.source_events)
     if status == :more, do: step(db, stmt, acc, store, stream_kind, stream_id), else: acc
   end
 

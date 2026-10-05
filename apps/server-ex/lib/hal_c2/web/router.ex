@@ -255,8 +255,7 @@ defmodule HalC2.Web.Router do
 
   post "/api/previous-installs/import" do
     with_scope(conn, "access:write", fn _session ->
-      with {:ok, body} <- json_body(conn),
-           do: previous_install_answer(HalC2.Import.PreviousInstall.import_threads(body))
+      with {:ok, body} <- json_body(conn), do: {:lines, &previous_install_import(body, &1)}
     end)
   end
 
@@ -343,6 +342,14 @@ defmodule HalC2.Web.Router do
      )}
   end
 
+  # The import's progress a line at a time, then its outcome as the last line.
+  defp previous_install_import(body, line) do
+    case HalC2.Import.PreviousInstall.import_threads(body, &line.(%{"progress" => &1})) do
+      {:ok, answer} -> line.(answer)
+      {:error, message} -> line.(%{"message" => message})
+    end
+  end
+
   defp previous_install_answer({:ok, body}), do: {200, body}
   defp previous_install_answer({:error, message}), do: {409, %{"message" => message}}
 
@@ -367,6 +374,12 @@ defmodule HalC2.Web.Router do
 
             {status, body} when is_integer(status) and is_binary(body) ->
               send_resp(conn, status, body)
+
+            # A long request that says how far it is: JSON lines, the answer last.
+            {:lines, fun} ->
+              conn = conn |> put_resp_content_type("application/x-ndjson") |> send_chunked(200)
+              fun.(&chunk(conn, [JSON.encode_to_iodata!(&1), "\n"]))
+              conn
 
             {status, body} when is_integer(status) ->
               json(conn, status, body)

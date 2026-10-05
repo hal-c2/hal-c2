@@ -2679,13 +2679,27 @@ defmodule HalC2.Steps.Threads do
   step "the user imports/imported {string} from that install", %{args: [title]} = context do
     id = context.t3.ids[title]
 
+    test = self()
+    input = %{"source" => context.t3.dir, "threadIds" => [id]}
+
     answer =
-      HalC2.Cluster.Command.request(:post, "/api/previous-installs/import", %{
-        "source" => context.t3.dir,
-        "threadIds" => [id]
-      })
+      HalC2.Cluster.Command.stream(
+        "/api/previous-installs/import",
+        input,
+        30_000,
+        &send(test, {:import_progress, &1})
+      )
 
     context |> Map.put(:t3_answer, answer) |> put_in([:threads, title], id)
+  end
+
+  step "the user was shown how far the import was until it was done", context do
+    assert_received {:import_progress, %{"stage" => "events", "done" => total, "total" => total}}
+                    when total > 0
+
+    # "Alpha" and the thread its subagent ran in.
+    assert_received {:import_progress, %{"stage" => "files", "done" => 2, "total" => 2}}
+    context
   end
 
   step "{string} is listed in a new project at the folder it worked in",

@@ -6,7 +6,7 @@ defmodule HalC2.Import.Picker do
   over HTTP with its own access token.
 
   Threads still in play come first, settled ones after and marked as such. Type to
-  filter (`active` and `settled` match too), Tab marks a thread, Enter imports the
+  filter (`active` and `settled` match too), Space marks a thread, Enter imports the
   marked ones (or the one under the cursor), Ctrl-C leaves. The MC must be running; the install is only read.
   """
 
@@ -98,7 +98,7 @@ defmodule HalC2.Import.Picker do
          do: Enum.find(sources, &(&1["path"] == path))
   end
 
-  # One request a thread, so the progress is real and one slow thread shows.
+  # One request a thread, so one slow thread shows; the MC says how far each is.
   defp import_threads(source, picked) do
     total = length(picked)
 
@@ -106,10 +106,18 @@ defmodule HalC2.Import.Picker do
       picked
       |> Enum.with_index(1)
       |> Enum.flat_map(fn {thread, n} ->
-        IO.write("\e[H\e[2JImporting #{n} of #{total}: #{thread["title"]}\r\n")
-        input = %{"source" => source["path"], "threadIds" => [thread["id"]]}
+        IO.write([
+          "\e[H\e[2J\e[1m",
+          clip("Importing #{n} of #{total}: #{thread["title"]}"),
+          "\e[0m\r\n",
+          bar(n - 1, total),
+          "  threads\r\n\r\nReading the thread\r\n"
+        ])
 
-        case Command.request(:post, "/api/previous-installs/import", input, :timer.minutes(30)) do
+        input = %{"source" => source["path"], "threadIds" => [thread["id"]]}
+        path = "/api/previous-installs/import"
+
+        case Command.stream(path, input, :timer.minutes(30), &progress/1) do
           {:ok, %{"failed" => [%{"message" => message}]}} -> ["#{thread["title"]}: #{message}"]
           {:ok, _} -> []
           {:error, message} -> ["#{thread["title"]}: #{message}"]
@@ -117,6 +125,34 @@ defmodule HalC2.Import.Picker do
       end)
 
     {:done, ["Imported #{total - length(failed)} of #{total} threads." | failed]}
+  end
+
+  # Where the thread being imported is, on the line under the heading.
+  defp progress(%{"stage" => "events", "done" => done, "total" => total}),
+    do: IO.write(["\e[4;1H\e[K", bar(done, total), "  #{done} of #{total} events"])
+
+  defp progress(%{"stage" => "files", "done" => done, "total" => total}) do
+    IO.write([
+      "\e[4;1H\e[K",
+      bar(done, total),
+      "  attachments and terminal logs, #{done} of #{total} threads"
+    ])
+  end
+
+  defp progress(_), do: :ok
+
+  defp bar(done, total) do
+    width = 30
+    filled = if total > 0, do: div(min(done, total) * width, total), else: width
+    percent = if total > 0, do: div(min(done, total) * 100, total), else: 100
+
+    [
+      "[",
+      String.duplicate("█", filled),
+      String.duplicate("░", width - filled),
+      "] ",
+      String.pad_leading("#{percent}%", 4)
+    ]
   end
 
   # --- the list ---------------------------------------------------------------------
@@ -152,7 +188,7 @@ defmodule HalC2.Import.Picker do
           true -> loop(state)
         end
 
-      :tab when state.many? and current != nil ->
+      :mark when state.many? and current != nil ->
         marked =
           cond do
             current["imported"] ->
@@ -221,7 +257,7 @@ defmodule HalC2.Import.Picker do
   defp draw(state, shown) do
     height = page()
     top = max(state.cursor - height + 1, 0)
-    keys = if state.many?, do: "Tab marks, Enter imports", else: "Enter chooses"
+    keys = if state.many?, do: "Space marks, Enter imports", else: "Enter chooses"
 
     lines =
       shown
@@ -281,7 +317,8 @@ defmodule HalC2.Import.Picker do
       :eof -> :quit
       "\r" -> :enter
       "\n" -> :enter
-      "\t" -> :tab
+      " " -> :mark
+      "\t" -> :mark
       <<127>> -> :backspace
       <<8>> -> :backspace
       "\e" -> escape()

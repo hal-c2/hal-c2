@@ -38,7 +38,8 @@ Feature: Carrying threads and context across servers and agents
   Scenario: A thread picked from an older install comes with everything it had
     Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
     When the user imports "Alpha" from that install
-    Then "Alpha" is listed in a new project at the folder it worked in
+    Then the user was shown how far the import was until it was done
+    And "Alpha" is listed in a new project at the folder it worked in
     And "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
     And "Alpha" keeps its tie to the agent's session, with the turn it was running ended
     And "Beta" is not imported
