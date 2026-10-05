@@ -12,7 +12,8 @@ defmodule HalC2.Streams.Relay do
   @doc """
   Starts a relay for the calling stream. It runs `initial`, which sends `subscriber`
   what it starts from, then passes on every stream message it is sent, in order. It
-  stops with the stream or the subscriber; the stream kills it to stop sooner.
+  stops with the stream or the subscriber once it is passing messages on; the stream
+  kills it to stop sooner, as it does when it stops itself.
   """
   @spec start(pid, (-> any)) :: pid
   def start(subscriber, initial) do

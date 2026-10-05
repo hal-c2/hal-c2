@@ -201,6 +201,9 @@ defmodule HalC2.Streams.Server do
 
   @impl true
   def terminate(_reason, state) do
+    # One still sending what a subscriber starts from would not see the stream go.
+    for {_pid, relay} <- state.relays, do: Process.exit(relay, :kill)
+
     if state.shell_scheduled, do: handle_info(:shell, state)
 
     if state.stream.seq - state.snapshot_seq >= @snapshot_every,
@@ -212,8 +215,16 @@ defmodule HalC2.Streams.Server do
     do:
       {:ok,
        state
-       |> Map.put_new(:relays, %{})
+       |> Map.put_new_lazy(:relays, fn -> relays(state.subscribers) end)
        |> Map.merge(%{v: @state_version, stream: StreamState.migrate(state.stream)})}
+
+  # Relays for subscribers a version without them was sending to itself. They are
+  # live already, so there is nothing to start them from.
+  defp relays(subscribers) do
+    for {pid, _ref} <- subscribers, node(pid) != node(), into: %{} do
+      {pid, Relay.start(pid, fn -> :ok end)}
+    end
+  end
 
   # Forgets a subscriber. Its relay is killed, not left to finish: what it still
   # holds is no longer wanted, and would mix with what a new subscription is sent.
