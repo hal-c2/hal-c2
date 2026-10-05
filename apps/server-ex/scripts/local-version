@@ -7,9 +7,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 package_version="$(node -p 'require("../server/package.json").version')"
-if [[ -z "$(git status --porcelain)" ]]; then
+# Untracked files count whatever status.showUntrackedFiles says: Mix compiles them.
+if [[ -z "$(git status --porcelain --untracked-files=normal)" ]]; then
   stamp="$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)"
-  echo "$package_version-local.$stamp.g$(git rev-parse --short=10 HEAD)"
+  # Cut here, not by git: --short grows with the checkout's other objects.
+  commit="$(git rev-parse HEAD)"
+  echo "$package_version-local.$stamp.g${commit:0:12}"
 else
   echo "$package_version-local.$(date -u +%Y%m%d%H%M%S)"
 fi
