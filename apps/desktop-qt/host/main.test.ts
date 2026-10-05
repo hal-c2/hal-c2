@@ -376,6 +376,22 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
       expect(readRecord(release)).toBeUndefined();
       await host.quit();
     });
+
+    it("A running MC whose access token cannot be read stops the start", async () => {
+      const mc = await runningMc();
+      const data = temporaryDirectory();
+      const state = temporaryDirectory();
+      const stateDir = NodePath.join(state, "hal-c2", "elixir");
+      NodeFS.mkdirSync(stateDir, { recursive: true });
+      writeRuntimeRecord(stateDir, mc.origin);
+      const release = fakeRelease();
+      const host = startHost({
+        env: { HAL_C2_MC_RELEASE: release, XDG_DATA_HOME: data, XDG_STATE_HOME: state },
+      });
+
+      expect(await errorMessage(host)).toContain("its access token cannot be read");
+      expect(readRecord(release)).toBeUndefined();
+    });
   });
 
   describe("Starting again reuses the environment", () => {

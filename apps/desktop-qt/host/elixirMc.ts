@@ -138,7 +138,8 @@ function mcDirs(input: {
 /**
  * The MC already running on the files this launch would use, such as the background
  * service: its address and access token, from its runtime record. Two MCs must not
- * share those files, so the desktop app uses this one instead of starting its own.
+ * share those files, so the desktop app uses this one instead of starting its own,
+ * and fails when it cannot read that MC's token.
  */
 export function findRunningMc(input: {
   readonly launch: McLaunch;
@@ -149,7 +150,12 @@ export function findRunningMc(input: {
   const record = readRuntimeRecord(NodePath.join(dirs.state, "server-runtime.json"));
   if (record === undefined || !processIsAlive(record.pid)) return undefined;
   const token = readAccessToken(dirs.data);
-  return token === undefined ? undefined : { origin: record.origin, token };
+  if (token === undefined) {
+    throw new HostError(
+      `An MC is already running on ${dirs.data} (pid ${record.pid}), but its access token cannot be read.`,
+    );
+  }
+  return { origin: record.origin, token };
 }
 
 /**
