@@ -296,6 +296,27 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
       await host.quit();
     });
 
+    it("A development shell does not start an MC release without a home of its own", async () => {
+      const release = fakeRelease();
+      const env = {
+        HAL_C2_MC_RELEASE: release,
+        HAL_C2_MC_PORT: String(await freePort()),
+        // Neither is a home the shell chose.
+        HAL_C2_HOME: temporaryDirectory(),
+        HAL_C2_MC_HOME: temporaryDirectory(),
+      };
+      const refused = startHost({ args: ["--dev"], env });
+
+      expect(await errorMessage(refused)).toContain("--home-dir");
+      expect(readRecord(release)).toBeUndefined();
+
+      const home = temporaryDirectory();
+      const host = startHost({ args: ["--dev", `--base-dir=${home}`], env });
+      await ready(host);
+      expect(readRecord(release)?.bootstrap.halC2Home).toBe(home);
+      await host.quit();
+    });
+
     it("A configured MC release is the MC the desktop app runs", async () => {
       const release = fakeRelease();
       const { host } = await standalone({ release });

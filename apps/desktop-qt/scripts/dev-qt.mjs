@@ -219,19 +219,6 @@ async function pairWithMc() {
   return url ?? fail(`mix hal_c2.pair printed no pairing link (exit ${String(result.status)}).`);
 }
 
-// A release keeps its files in the installed app's directories (or HAL_C2_HOME):
-// only a root keeps a development launch out of them.
-if (
-  options.standalone &&
-  !options.homeDir?.trim() &&
-  process.env.HAL_C2_MC_RELEASE?.trim() &&
-  !process.env.HAL_C2_MC_HOME?.trim()
-) {
-  fail(
-    "--standalone with HAL_C2_MC_RELEASE would run that release on the installed app's files. Pass --home-dir <dir> (or set HAL_C2_MC_HOME).",
-  );
-}
-
 build();
 if (options.configureOnly) process.exit(0);
 

@@ -252,6 +252,8 @@ int main(int argc, char* argv[]) {
   if (!storage.root.isEmpty()) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
   }
+  // The host starts no MC release for a development shell that has no root.
+  if (parser.isSet(devOption)) backendOptions.hostArguments.prepend(QStringLiteral("--dev"));
   // Attach mode: the host starts no MC; it pairs the shell with the MC the
   // link names, and fails for a URL that is not one.
   if (parser.isSet(urlOption)) {

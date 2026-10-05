@@ -49,6 +49,14 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then that release is started
 
+    # A release has no development profile; it would open the installed app's files.
+    @desktop
+    Scenario: A development shell does not start an MC release without a home of its own
+      Given "HAL_C2_MC_RELEASE" names an MC release
+      When a developer starts the desktop app with --dev and no home directory
+      Then no MC is started
+      And the desktop app says the release needs a home directory
+
     @desktop
     Scenario: In a checkout without a release the MC runs from source
       Given no MC release is configured or bundled
