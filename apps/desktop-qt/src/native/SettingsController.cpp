@@ -119,6 +119,8 @@ SettingsController::SettingsController(ShellBridge*, McClient* client, QObject* 
   // A reconnect may reach a restarted MC, whose versions start again; the
   // config snapshot that follows the re-sent subscription reads them afresh.
   connect(m_client, &McClient::readyChanged, this, [this](bool ready) {
+    // The shell may have left its MC for another (NativeShell::close).
+    if (ready && m_active) follow();
     if (ready || !m_ready) return;
     m_ready = false;
     ++m_generation;
@@ -129,11 +131,18 @@ SettingsController::SettingsController(ShellBridge*, McClient* client, QObject* 
 void SettingsController::activate() {
   if (m_active) return;
   m_active = true;
+  follow();
+}
+
+void SettingsController::follow() {
+  if (m_subscription && m_followed == m_client->environment()) return;
+  if (m_subscription) m_client->unsubscribe(m_subscription);
+  m_followed = m_client->environment();
   // `usageLimitsCommand`: this client answers /usage-limits itself (the composer).
-  m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("config")},
-                       {QStringLiteral("environment"), m_client->environment()},
-                       {QStringLiteral("usageLimitsCommand"), true}},
-                      [this](const QJsonObject& frame) { onConfig(frame); });
+  m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("config")},
+                                              {QStringLiteral("environment"), m_followed},
+                                              {QStringLiteral("usageLimitsCommand"), true}},
+                                       [this](const QJsonObject& frame) { onConfig(frame); });
 }
 
 void SettingsController::onConfig(const QJsonObject& frame) {

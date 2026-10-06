@@ -206,6 +206,22 @@ void NativeShell::open(const QUrl& origin, const QString& token) {
   // What the cache kept of this MC shows while the socket opens.
   m_store.open(origin);
   m_client.open(origin, token);
+  emit opened(origin, token);
+}
+
+void NativeShell::close() {
+  m_client.close();
+  // Nothing written for a machine it leaves is kept: its drafts go with its
+  // rows, and after them, so a window that showed either lands on neither.
+  auto* drafts = controller<DraftController>();
+  QStringList left;
+  for (const DraftController::Draft& draft : drafts ? drafts->drafts() : QList<DraftController::Draft>()) {
+    if (m_store.servesEnvironment(draft.environmentId)) left.append(draft.id);
+  }
+  m_store.clear();
+  for (const QString& id : std::as_const(left)) drafts->remove(id);
+  m_sharedBridge->setMcOrigin({});
+  for (const auto& window : m_windows) window->bridge()->setMcOrigin({});
 }
 
 NativeWindow* NativeShell::openWindow(const QString& id) {

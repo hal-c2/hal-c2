@@ -347,6 +347,12 @@ void ShellStore::setEnvironment(const QString& mc, const QJsonObject& environmen
   unsaved(mc);
 }
 
+void ShellStore::clear() {
+  m_mcs.clear();
+  m_problem.clear();
+  emit changed();
+}
+
 void ShellStore::onFrame(const QJsonObject& frame) {
   const QString type = frame.value(QLatin1String("t")).toString();
   if (type == QLatin1String("shell")) {

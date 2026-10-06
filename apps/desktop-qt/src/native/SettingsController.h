@@ -146,6 +146,8 @@ private:
   void read(std::function<void()> then = {});
   void attempt(Edit edit, Done done, int retries);
   void onConfig(const QJsonObject& frame);
+  // Follows the config of the environment the client's MC serves.
+  void follow();
   void fail(const QString& error);
   // In `window` (the one that made the change), else the one in use.
   void toast(const QString& title, const QString& reason, NativeWindow* window = nullptr);
@@ -157,6 +159,9 @@ private:
   McClient* m_client;
   bool m_active = false;
   bool m_ready = false;
+  // The config subscription, and the environment it names.
+  int m_subscription = 0;
+  QString m_followed;
   QJsonObject m_settings;
   int m_version = 0;
   QString m_error;
