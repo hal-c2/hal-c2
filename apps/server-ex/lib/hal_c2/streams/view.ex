@@ -18,7 +18,8 @@ defmodule HalC2.Streams.View do
   handed a patch to an entity it does not have. An entity that comes to be held
   (a field its kind is chosen by changed) is sent whole in place of the patch, and
   one that stops being held is deleted for the client: an item whose run was rolled
-  back goes that way, with every other item of the run.
+  back goes that way, with every other item of the run. A run is rolled back for
+  good, so that is the one way out of a window and there is no way back in.
   """
 
   alias HalC2.StreamState
@@ -163,27 +164,21 @@ defmodule HalC2.Streams.View do
     sent ++ rolled(view, stream, before, events, settled)
   end
 
-  # A run that was rolled back, or brought back, takes its items with it without
-  # an event to any of them: the ones the client held go, the ones it now holds come.
+  # A run that is rolled back takes its items with it without an event to any of
+  # them: the ones the client held go. Nothing brings a run back (`rolled_back` is
+  # where `HalC2.Orchestration.Rollback` leaves it for good), so nothing comes.
   defp rolled(%{window: nil}, _stream, _before, _events, _settled), do: []
 
   defp rolled(view, stream, before, events, settled) do
     rolled_back? = &(StreamState.get(&1, "run")[&2]["status"] == "rolled_back")
 
     for %{kind: "run", entity: run} = event <- Enum.uniq_by(Enum.reverse(events), & &1.entity),
-        gone? <- [rolled_back?.(stream, run)],
-        gone? != rolled_back?.(before, run),
+        rolled_back?.(stream, run) and not rolled_back?.(before, run),
         {kind, id, entity} <- of_run(stream, run),
         not MapSet.member?(settled, {kind, id}),
         kind?(view.kinds, kind, entity),
-        if(gone?,
-          do: in_window?(view.window, before, kind, StreamState.get(before, kind)[id] || entity),
-          else: in_window?(view.window, stream, kind, entity)
-        ) do
-      if gone?,
-        do: %{event | kind: kind, entity: id, patch: HalC2.Patch.delete()},
-        else: %{event | kind: kind, entity: id, patch: replacement(kind, entity)}
-    end
+        in_window?(view.window, before, kind, StreamState.get(before, kind)[id] || entity),
+        do: %{event | kind: kind, entity: id, patch: HalC2.Patch.delete()}
   end
 
   defp of_run(stream, run) do

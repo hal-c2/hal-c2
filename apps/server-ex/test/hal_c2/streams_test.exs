@@ -360,7 +360,7 @@ defmodule HalC2.StreamsTest do
     refute_receive {:hal_c2_stream, "th-16", {:events, _, _}}, 50
   end
 
-  test "a run rolled back takes its items out of a window, and brings them back with it" do
+  test "a run rolled back takes its items out of a window" do
     seq = long_thread("th-17")
     :ok = Streams.subscribe("th-17", self(), nil, %{window: {:items, 4}})
     {^seq, %{floor: 2}, rows} = client_snapshot("th-17")
@@ -387,16 +387,6 @@ defmodule HalC2.StreamsTest do
 
     assert_receive {:hal_c2_stream, "th-17",
                     {:events, [%{kind: "run", entity: "run-1"}], ^earlier}}
-
-    {:ok, back} = Streams.commit("th-17", :thread, status.(3, "completed"))
-    assert_receive {:hal_c2_stream, "th-17", {:events, events, ^back}}
-
-    whole =
-      for %{kind: "turn-item", entity: id, patch: %{"d" => true, "s" => %{"ordinal" => _}}} <-
-            events,
-          do: id
-
-    assert Enum.sort(whole) == ~w(item-5 item-6)
   end
 
   test "a client that was away while a run was rolled back is told its items are gone" do
