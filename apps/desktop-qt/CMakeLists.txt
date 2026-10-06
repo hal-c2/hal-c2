@@ -61,6 +61,8 @@ qt_add_executable(hal-c2-qt
   src/NativeNotifications.h
   src/BackendProcess.cpp
   src/BackendProcess.h
+  src/ScriptedRun.cpp
+  src/ScriptedRun.h
   src/ShellRuntime.cpp
   src/ShellRuntime.h
   src/ShellWindows.cpp
