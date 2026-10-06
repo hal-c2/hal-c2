@@ -17,6 +17,11 @@ const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads")
 ThreadStore::ThreadStore(ShellBridge*, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_client(client), m_store(store) {
   connect(store, &ShellStore::changed, this, &ThreadStore::retry);
+  // Threads shown from what was kept of another MC go with its thread list;
+  // their copies stay in the cache for when the client is opened there again.
+  connect(store, &ShellStore::originChanged, this, [this] {
+    for (const QString& key : m_threads.keys()) close(key);
+  });
   connect(client, &McClient::readyChanged, this, [this](bool ready) {
     if (ready) return retry();
     // What was loaded stays, without passing for live; the resubscription

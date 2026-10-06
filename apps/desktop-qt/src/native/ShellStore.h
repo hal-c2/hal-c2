@@ -97,6 +97,9 @@ public:
 
 signals:
   void changed();
+  // The client was opened at another MC than the one whose rows it held:
+  // nothing kept of the first is this one's to show.
+  void originChanged();
 
 private:
   void onFrame(const QJsonObject& frame);

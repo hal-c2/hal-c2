@@ -242,9 +242,19 @@ public:
     }
     if (jobs.isEmpty()) return;
     QSqlDatabase db = QSqlDatabase::database(m_connection, false);
+    // Without a transaction each change still lands whole or not at all: it
+    // is a savepoint of its own (whole()).
     const bool transaction = db.transaction();
     for (const Job& job : std::as_const(jobs)) job(db);
-    if (transaction && !db.commit()) qWarning("[cache] not saved: %s", qPrintable(db.lastError().text()));
+    if (!transaction || db.commit()) return;
+    qWarning("[cache] not saved: %s", qPrintable(db.lastError().text()));
+    // A commit that failed is still open, and would swallow every later one.
+    // What it held is lost, and the changes that follow build on it: nothing
+    // kept can be trusted to match its cursor, so nothing is kept.
+    db.rollback();
+    for (const char* table : {"entities", "threads", "shell_rows", "shell_mcs"}) {
+      run(db, QStringLiteral("DELETE FROM %1").arg(QLatin1String(table)));
+    }
   }
 
 private:

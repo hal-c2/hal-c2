@@ -230,7 +230,10 @@ const Steps steps([] {
     const QString thread = kept(world).thread;
     expect(sidebarSectionOf(world, thread).isEmpty() && world.native().store()->environments().isEmpty() && !world.native().store()->thread(thread),
            QStringLiteral("the thread list is %1").arg(show(world.state(QStringLiteral("sidebar")))));
-    // Nor is it kept for a later start.
+    // Nor the conversation that was open on it.
+    expect(store(world)->activeTimeline() == nullptr && store(world)->openThreads().isEmpty(),
+           QStringLiteral("the first MC's thread %1 is still open").arg(store(world)->activeThread()));
+    // Nor is its thread list kept for a later start.
     expect(world.native().cache()->shell().origin.isEmpty(), QStringLiteral("the first MC's thread list is still kept"));
   });
   step(QStringLiteral("what the client kept was deleted"), [](World& world, const Captures&, const Table&) {

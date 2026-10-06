@@ -49,7 +49,10 @@ void ShellStore::open(const QUrl& origin) {
   // The MC whose rows are held, kept or its own, stays as it is.
   if (key == m_origin) return;
   flush();
+  const bool another = !m_origin.isEmpty();
   hold(m_cache ? m_cache->shell(key) : cache::Shell(), key);
+  // What was shown of the MC it held before is not this one's.
+  if (another) emit originChanged();
 }
 
 void ShellStore::hold(const cache::Shell& kept, const QString& origin) {
