@@ -8,7 +8,8 @@ import "js/markdown.js" as Md
 // brick draws its segments: prose as rich text (one selection runs across a
 // segment), code blocks with a header, copy and wrap toggle, tables with
 // expand and copy, and quotes with their rule. `streaming` keeps each block
-// its own segment so a delta re-lays out only the last one.
+// its own segment so a delta re-lays out only the last one, and a text that
+// grows is parsed from its last unfinished block on, not from its start.
 Item {
     id: root
 
@@ -51,6 +52,13 @@ Item {
         rule: css(borderColor)
     })
 
+    // What opens every rich text, made once per theme and not per segment.
+    readonly property string richHead: "<html><head>" + styleHead + "</head><body>"
+
+    // What js/markdown.js keeps of this brick's text between deltas, made by
+    // the first `sync` (which a binding may call before any other is set).
+    property var reading: null
+
     // The segments in view, for tests and the brick's own sizing.
     readonly property alias segmentCount: segmentModel.count
 
@@ -68,7 +76,7 @@ Item {
     }
 
     function rich(html) {
-        return "<html><head>" + styleHead + "</head><body>" + html + "</body></html>";
+        return richHead + html + "</body></html>";
     }
 
     // Every text of the reply, in reading order.
@@ -135,11 +143,14 @@ Item {
 
     // Brings the model in line with the parsed segments: unchanged segments
     // keep their items untouched, a changed one gets only the roles that
-    // differ, and a segment that changes kind is rebuilt.
+    // differ, and a segment that changes kind is rebuilt. The segments before
+    // `reading.stable` are the ones the model has, and are not looked at.
     function sync() {
-        const next = Md.segments(text, { streaming: streaming, lineBreaks: lineBreaks });
+        if (reading === null)
+            reading = Md.state();
+        const next = Md.segments(text, { streaming: streaming, lineBreaks: lineBreaks }, reading);
         const roles = ["html", "code", "language", "title", "open", "indent", "payload", "alert", "gap"];
-        for (let i = 0; i < next.length; ++i) {
+        for (let i = Math.min(reading.stable, segmentModel.count); i < next.length; ++i) {
             const segment = next[i];
             if (i >= segmentModel.count) {
                 segmentModel.append(segment);
@@ -714,8 +725,9 @@ Item {
                             source: Qt.resolvedUrl("Markdown.qml")
                             onLoaded: {
                                 item.fitWidth = Qt.binding(() => root.fitWidth);
-                                item.text = Qt.binding(() => seg.payload);
+                                // Before the text, which is parsed as it is set.
                                 item.lineBreaks = Qt.binding(() => root.lineBreaks);
+                                item.text = Qt.binding(() => seg.payload);
                                 // A quote reads muted; an alert's body is ordinary text.
                                 item.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
                                 item.linkActivated.connect(root.linkActivated);
