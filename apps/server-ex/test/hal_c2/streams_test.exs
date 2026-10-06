@@ -438,6 +438,31 @@ defmodule HalC2.StreamsTest do
     assert Enum.sort(gone) == ~w(item-5 item-6)
   end
 
+  test "a client that holds no runs is still told a rolled-back run's items are gone" do
+    seq = long_thread("th-22")
+    rolled = [{"run", "run-3", %{"s" => %{"status" => "rolled_back"}}}]
+    {:ok, last} = Streams.commit("th-22", :thread, rolled)
+
+    gone = fn events ->
+      for(%{entity: id, patch: patch} <- events, patch == HalC2.Patch.delete(), do: id)
+      |> Enum.sort()
+    end
+
+    # From the log.
+    items_only = %{kinds: %{"turn-item" => %{}}, window: %{floor: 2}}
+    client = %{handle: Streams.Server.handle(), kinds: items_only.kinds, window: {:floor, 2}}
+    :ok = Streams.subscribe("th-22", self(), seq, client)
+    assert_receive {:hal_c2_stream, "th-22", {:events, events, ^last}}
+    assert Enum.all?(events, &(&1.kind == "turn-item"))
+    assert gone.(events) == ~w(item-5 item-6)
+
+    # And as what changed since, which is what a larger catch-up is made of.
+    stream = Streams.Server.state(Streams.ensure("th-22"))
+    events = HalC2.Streams.View.changed_since(items_only, stream, seq)
+    assert Enum.all?(events, &(&1.kind == "turn-item"))
+    assert gone.(events) == ~w(item-5 item-6)
+  end
+
   test "a client that kept a window resumes it" do
     seq = long_thread("th-14")
 

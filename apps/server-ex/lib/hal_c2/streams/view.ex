@@ -200,13 +200,17 @@ defmodule HalC2.Streams.View do
     Enum.flat_map(events, fn %{kind: kind, entity: id, patch: patch} = event ->
       entity = StreamState.get(stream, kind)[id]
 
-      with false <- StreamState.void?(event),
-           true <- holds?(view, stream, kind, entity),
-           %{} = patch <- Wire.patch(kind, patch, entity && entity["type"]) do
-        [%{event | patch: patch} | rolled_since(view, stream, event)]
-      else
-        _ -> []
-      end
+      sent =
+        with false <- StreamState.void?(event),
+             true <- holds?(view, stream, kind, entity),
+             %{} = patch <- Wire.patch(kind, patch, entity && entity["type"]) do
+          [%{event | patch: patch}]
+        else
+          _ -> []
+        end
+
+      # Whether or not the client holds runs: its items are what it is owed.
+      sent ++ rolled_since(view, stream, event)
     end)
   end
 
@@ -235,11 +239,12 @@ defmodule HalC2.Streams.View do
       at = stream.updated_at || 0
 
       upserts =
-        for {seq, kind, id, entity} <- upserts,
-            holds?(view, stream, kind, entity),
-            event = %{seq: seq, kind: kind, entity: id, patch: replacement(kind, entity), at: at},
-            event <- [event | rolled_since(view, stream, event)],
-            do: event
+        Enum.flat_map(upserts, fn {seq, kind, id, entity} ->
+          event = %{seq: seq, kind: kind, entity: id, patch: replacement(kind, entity), at: at}
+          sent = if holds?(view, stream, kind, entity), do: [event], else: []
+          # Whether or not the client holds runs: its items are what it is owed.
+          sent ++ rolled_since(view, stream, event)
+        end)
 
       deletes =
         for {seq, kind, id} <- deletes, holds?(view, stream, kind, nil) do
