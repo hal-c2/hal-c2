@@ -358,6 +358,11 @@ bool ShellRuntime::pressKey(const QString& chord) {
     const QChar character(key);
     text = modifiers.testFlag(Qt::ShiftModifier) ? character.toUpper() : character.toLower();
   }
+#if defined(Q_OS_MACOS)
+  // Elsewhere a key press tries the shortcuts itself. On macOS that is the
+  // Cocoa plugin's doing, which a scripted press does not pass through.
+  if (QWindowSystemInterface::handleShortcutEvent(window, 0, key, modifiers, 0, 0, 0, text)) return true;
+#endif
   using Delivery = QWindowSystemInterface::SynchronousDelivery;
   QWindowSystemInterface::handleKeyEvent<Delivery>(window, QEvent::KeyPress, key, modifiers, text);
   QWindowSystemInterface::handleKeyEvent<Delivery>(window, QEvent::KeyRelease, key, modifiers,
