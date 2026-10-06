@@ -7,6 +7,7 @@
 #   apps/mobile/src/native/HalC2ComposerEditor
 #   apps/mobile/modules/hal-c2-composer-editor
 #   apps/mobile/src/features/files/ (attachment screen, remove from draft)
+#   apps/mobile-qt/qml/HalC2/Mobile/ThreadScreen.qml (the shared Composer brick on a phone: stop, model and effort, drafts)
 # Drafting, sending, queueing and steering are specified in features/composer/. This file
 # covers the phone twist: the on-screen keyboard, touch attachments and small-screen sheets.
 
@@ -30,7 +31,7 @@ Feature: Writing to an agent from a phone
     When the user dismisses the keyboard
     Then the draft still reads "add a test"
 
-  @backlog @mobile
+  @mobile
   Scenario: A draft survives the app being closed
     Given the user has typed "add a test"
     When the app is closed and reopened
@@ -61,7 +62,7 @@ Feature: Writing to an agent from a phone
       | steer now                     | the agent receives the message during the turn  |
       | restart the turn              | the current turn stops and a new one starts     |
 
-  @backlog @mobile
+  @mobile
   Scenario: The user stops the agent from the composer
     Given the agent is working on a turn
     When the user stops the agent
@@ -162,7 +163,7 @@ Feature: Writing to an agent from a phone
       | @       | files         |
       | #       | pull requests |
 
-  @backlog @mobile
+  @mobile
   Scenario: The user changes the model and reasoning level from the composer
     When the user picks the model "Opus" with high reasoning
     Then the next message is sent to "Opus" with high reasoning

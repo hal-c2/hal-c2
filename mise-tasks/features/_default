@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="Run every surface's feature suite (MC, TUI, Qt desktop), continuing past failures"
+#MISE description="Run every surface's feature suite (MC, TUI, Qt desktop, QML phone), continuing past failures"
 #USAGE flag "--backlog" help="Also run @backlog scenarios on the MC and the TUI (or set INCLUDE_BACKLOG=1)"
 set -euo pipefail
 summary=() status=0
-for task in features:mc:all features:tui:all features:desktop; do
+for task in features:mc:all features:tui:all features:desktop features:mobile; do
   args=()
-  [[ $task == features:desktop ]] || args=("$@")
+  [[ $task == features:desktop || $task == features:mobile ]] || args=("$@")
   # ${args[@]+…}: an empty array under set -u is an error on macOS bash 3.2.
   if mise run "$task" ${args[@]+"${args[@]}"}; then
     summary+=("  ok      $task")

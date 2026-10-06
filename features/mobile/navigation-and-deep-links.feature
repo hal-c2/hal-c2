@@ -4,6 +4,7 @@
 #   apps/mobile/src/features/shortcuts/ (Android launcher shortcuts, allowlisted links)
 #   apps/mobile/app.config.ts (hal-c2, hal-c2-dev and hal-c2-preview schemes)
 #   apps/mobile/plugins/withIosSceneLifecycle
+#   apps/mobile-qt/qml/HalC2/Mobile/MobileShell.qml (screens follow the route; Back goes back one step)
 # Desktop navigation and the command palette are specified in features/navigation/.
 # This file covers links into the phone app and moving between phone screens.
 
@@ -15,7 +16,7 @@ Feature: Navigating the phone app and opening links into it
     Given the phone is paired with "My MacBook"
     And "My MacBook" has the thread "Fix checkout"
 
-  @backlog @mobile
+  @mobile
   Scenario: Opening a thread keeps the home screen one step back
     When the user opens "Fix checkout" from the home screen
     Then going back returns to the home screen

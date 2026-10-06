@@ -10,6 +10,12 @@
 #   apps/mobile/src/features/cloud/HalC2ConnectProfilePage.tsx (registered servers)
 #   apps/mobile/src/features/cloud/linkEnvironment.ts
 #   apps/mobile/app.config.ts (local network usage, camera)
+#   apps/mobile-qt/src/Pairing.cpp (one environment at a time: pairing.pair, pairing.forget)
+#   apps/mobile-qt/qml/HalC2/Mobile/PairingScreen.qml
+#   apps/mobile-qt/qml/HalC2/Mobile/EnvironmentSheet.qml (forgetting an environment, asked first)
+#   apps/desktop-qt/src/native/PairingExchange.cpp (reading a link, spending its token)
+#   apps/desktop-qt/src/native/ConnectionHealthController.cpp (an MC of another protocol, trace id)
+#   apps/desktop-qt/qml/HalC2/Bricks/ConnectionNotice.qml (try again, copy trace ID)
 # Shared pairing and relay behaviour lives in features/connections/. This file covers the
 # phone journey: first launch, scanning a code, and managing environments from a phone.
 
@@ -17,7 +23,7 @@ Feature: Pairing a phone with environments
   A phone has no environment of its own. The user pairs it with one or more environments by
   scanning a code or entering a pairing link, and can later rename, reconnect or remove them.
 
-  @backlog @mobile
+  @mobile
   Scenario: First launch with no environments invites the user to add one
     Given the app has never been paired
     When the user opens the app
@@ -50,7 +56,7 @@ Feature: Pairing a phone with environments
     Then the user is told the code is not a valid pairing code
     And no environment is added
 
-  @backlog @mobile
+  @mobile
   Scenario: Pasting a pairing link adds the environment
     When the user enters a pairing link that carries a token
     And the user adds the environment
@@ -67,14 +73,14 @@ Feature: Pairing a phone with environments
       | devbox.tailnet.ts.net#token=abc | https://devbox.tailnet.ts.net           |
       | https://devbox.example/?token=a | https://devbox.example                  |
 
-  @backlog @mobile
+  @mobile
   Scenario: A spent or wrong pairing token is refused
     Given the pairing token has already been used
     When the user tries to pair with it
     Then the user is told pairing failed
     And the pairing form keeps what the user entered
 
-  @backlog @mobile
+  @mobile
   Scenario: An unreachable address reports that the environment cannot be reached
     Given the environment at the pairing address is offline
     When the user tries to pair with it
@@ -93,26 +99,26 @@ Feature: Pairing a phone with environments
     When the user renames it to "My MacBook"
     Then the environment is shown as "My MacBook" everywhere on the phone
 
-  @backlog @mobile
+  @mobile
   Scenario: The user reconnects an environment by hand
     Given an environment has lost its connection
     When the user asks to reconnect it
     Then the phone tries to connect again straight away
 
-  @backlog @mobile
+  @mobile
   Scenario: The user removes an environment from the phone
     Given the phone is paired with "My MacBook"
     When the user removes "My MacBook" and confirms
     Then "My MacBook" is no longer listed
     And its cached threads are removed from the phone
 
-  @backlog @mobile
+  @mobile
   Scenario: Cancelling removal keeps the environment
     Given the phone is paired with "My MacBook"
     When the user starts to remove "My MacBook" but cancels
     Then "My MacBook" is still listed
 
-  @backlog @mobile
+  @mobile
   Scenario: The user copies a connection trace id for support
     Given an environment connection has a trace id
     When the user copies the trace id
@@ -167,7 +173,7 @@ Feature: Pairing a phone with environments
       | Read PRs     | read pull requests only                |
       | Read and act | read and act on pull requests          |
 
-  @backlog @mobile
+  @mobile
   Scenario: An environment running an incompatible version is explained
     Given an environment runs a server version the app does not support
     Then the user is told to use compatible versions of the app and server
