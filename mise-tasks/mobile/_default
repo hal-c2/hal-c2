@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#MISE description="Build the phone client for this machine and run it (args go to hal-c2-mobile)"
+#MISE dir="{{config_root}}/apps/mobile-qt"
+set -euo pipefail
+# QT_PREFIX or CMAKE_PREFIX_PATH says where Qt 6 lives; the default is qmake6's on PATH, then Homebrew's.
+qt=${QT_PREFIX:-${CMAKE_PREFIX_PATH:-$(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null || brew --prefix qt 2>/dev/null || true)}}
+[[ -n $qt ]] || { echo "mobile: Qt 6 was not found; set QT_PREFIX to its install (e.g. /opt/homebrew)." >&2; exit 1; }
+[[ -f build/host/build.ninja ]] ||
+  cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O1 "-DCMAKE_PREFIX_PATH=$qt"
+cmake --build build/host
+# Off a phone the binary wants --home-dir: its default home there is the
+# installed desktop app's. A --home-dir among the args replaces this one.
+exec build/host/hal-c2-mobile --home-dir "$(cd ../.. && pwd)/.hal-c2/mobile" "$@"
