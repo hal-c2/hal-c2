@@ -6,6 +6,7 @@
 #include <functional>
 
 #include "NativeController.h"
+#include "PairingExchange.h"
 
 class McClient;
 class NativeWindow;
@@ -49,6 +50,8 @@ public:
   // This app's version (QCoreApplication::applicationVersion by default).
   void setClientVersion(const QString& version);
   void setClipboardWriter(std::function<bool(const QString&)> write) { m_writeClipboard = std::move(write); }
+  // What `connection.pair` says this client is; the desktop unless told.
+  void setPairingClient(const pairing::Client& client) { m_pairingClient = client; }
 
   // Whether a server on `server` is behind a client on `client` (apps/web
   // versionSkew.ts): two nightlies compare whole, anything else by its core
@@ -67,6 +70,7 @@ private:
   ShellStore* m_store;
   QNetworkAccessManager* m_http = nullptr;
   std::function<bool(const QString&)> m_writeClipboard;
+  pairing::Client m_pairingClient{QStringLiteral("HAL-C2 desktop"), QStringLiteral("desktop"), {}};
   QString m_clientVersion;
   // The store's snapshot count when the socket last became ready: the
   // connection is described once it grows.

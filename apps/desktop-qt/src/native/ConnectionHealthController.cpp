@@ -3,15 +3,9 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QGuiApplication>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QHostAddress>
 #include <QNetworkAccessManager>
 #include <QNetworkInformation>
-#include <QNetworkReply>
-#include <QUrl>
-#include <QUrlQuery>
 
 #include "KeybindingController.h"
 #include "McClient.h"
@@ -185,43 +179,24 @@ bool ConnectionHealthController::handle(const QString& action, const QVariant& p
 // and connects with it. Everything the shell holds stays as it is.
 void ConnectionHealthController::pair(const QString& pairingUrl) {
   if (m_pairing) return;
-  const QUrl link(pairingUrl);
-  const QString token = QUrlQuery(link.fragment()).queryItemValue(QStringLiteral("token"));
-  if (!link.isValid() || link.host().isEmpty() || token.isEmpty()) {
+  const auto link = pairing::readLink(pairingUrl);
+  if (!link) {
     m_pairingError = tr("Enter a pairing link from the environment.");
     update();
     return;
   }
-  QUrl origin;
-  origin.setScheme(link.scheme());
-  origin.setHost(link.host());
-  origin.setPort(link.port());
   m_pairing = true;
   m_pairingError.clear();
   update();
   if (!m_http) m_http = new QNetworkAccessManager(this);
-  QUrl exchange = origin;
-  exchange.setPath(QStringLiteral("/oauth/token"));
-  QNetworkRequest request(exchange);
-  request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/x-www-form-urlencoded"));
-  request.setTransferTimeout(5000);
-  QUrlQuery form;
-  form.addQueryItem(QStringLiteral("grant_type"), QStringLiteral("urn:ietf:params:oauth:grant-type:token-exchange"));
-  form.addQueryItem(QStringLiteral("subject_token_type"), QStringLiteral("urn:hal-c2:params:oauth:token-type:environment-bootstrap"));
-  form.addQueryItem(QStringLiteral("subject_token"), token);
-  form.addQueryItem(QStringLiteral("client_label"), QStringLiteral("HAL-C2 desktop"));
-  form.addQueryItem(QStringLiteral("client_device_type"), QStringLiteral("desktop"));
-  QNetworkReply* answer = m_http->post(request, form.toString(QUrl::FullyEncoded).toUtf8());
-  connect(answer, &QNetworkReply::finished, this, [this, answer, origin] {
-    answer->deleteLater();
+  pairing::exchange(m_http, this, *link, m_pairingClient, [this](const pairing::Result& result) {
     m_pairing = false;
-    const QString access = QJsonDocument::fromJson(answer->readAll()).object().value(QLatin1String("access_token")).toString();
-    if (answer->error() != QNetworkReply::NoError || access.isEmpty()) {
+    if (result.outcome != pairing::Outcome::Paired) {
       m_pairingError = tr("The pairing link is invalid or expired. Ask for a fresh one.");
       update();
       return;
     }
-    NativeShell::of(this)->shell()->open(origin, access);
+    NativeShell::of(this)->shell()->open(result.origin, result.token);
     update();
   });
 }
