@@ -52,6 +52,20 @@ private:
     return {key, {QStringLiteral("log-1"), offset, std::nullopt}, true, {run(1), item(QStringLiteral("a"), 1, QStringLiteral("one")), item(QStringLiteral("b"), 1)}, {}};
   }
 
+  // Runs statements on the cache's file from outside it, as a disk that
+  // starts refusing writes would change what it accepts.
+  void tamper(const QStringList& statements) {
+    {
+      QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("tamper"));
+      db.setDatabaseName(QDir(m_dir->path()).filePath(QStringLiteral("client-cache.sqlite")));
+      QVERIFY(db.open());
+      QSqlQuery query(db);
+      for (const QString& statement : statements) QVERIFY2(query.exec(statement), qPrintable(statement));
+      db.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("tamper"));
+  }
+
   std::unique_ptr<QTemporaryDir> m_dir;
 
 private slots:
@@ -203,18 +217,6 @@ private slots:
   // never changed, until it can be.
   void aCopyThatMissedAChangeIsNeverRead() {
     const QString key = QStringLiteral("env-a:thread-1");
-    const QString file = QDir(m_dir->path()).filePath(QStringLiteral("client-cache.sqlite"));
-    const auto tamper = [&file](const QStringList& statements) {
-      {
-        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("tamper"));
-        db.setDatabaseName(file);
-        QVERIFY(db.open());
-        QSqlQuery query(db);
-        for (const QString& statement : statements) QVERIFY2(query.exec(statement), qPrintable(statement));
-        db.close();
-      }
-      QSqlDatabase::removeDatabase(QStringLiteral("tamper"));
-    };
     auto cache = open();
     cache->storeThread(copy(key));
     QVERIFY(load(*cache, key).found());
@@ -239,6 +241,40 @@ private slots:
     const cache::Thread again = load(*cache, key);
     QCOMPARE(again.cursor.offset, 14);
     QCOMPARE(ids(again), QStringList({QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("run-1")}));
+  }
+
+  // The thread list goes the same way: one that missed a change is not read,
+  // and the rows that changed afterwards do not pass for all of an MC's rows.
+  void aThreadListThatMissedAChangeIsNeverRead() {
+    const QString origin = QStringLiteral("http://127.0.0.1:3780");
+    const QJsonObject environment{{QStringLiteral("environmentId"), QStringLiteral("env-a")}};
+    const auto change = [&](bool reset, qint64 rev, const QString& id) {
+      const cache::ShellRow row{id, QStringLiteral("thread"), {{QStringLiteral("id"), id}}};
+      return QList<cache::ShellMcUpdate>{{QStringLiteral("mc-a"), false, reset, QStringLiteral("epoch-1"), rev, environment, {row}, {}}};
+    };
+    auto cache = open();
+    cache->storeShell(origin, change(true, 2, QStringLiteral("t1")));
+    QCOMPARE(cache->shell(origin).mcs.size(), 1);
+
+    tamper({QStringLiteral("CREATE TRIGGER refuse_put BEFORE INSERT ON shell_rows WHEN NEW.id = 'bad' BEGIN SELECT RAISE(ABORT, 'refused'); END"),
+            QStringLiteral("CREATE TRIGGER refuse_drop BEFORE DELETE ON shell_mcs BEGIN SELECT RAISE(ABORT, 'refused'); END")});
+    cache->storeShell(origin, change(false, 3, QStringLiteral("bad")));
+    // Its version still says 2 and its rows are whole as of 2, but the MC
+    // was told the client holds 3.
+    QVERIFY(cache->shell(origin).mcs.isEmpty());
+    cache->storeShell(origin, change(false, 4, QStringLiteral("t4")));
+    QVERIFY(cache->shell(origin).mcs.isEmpty());
+
+    // Once it can be dropped it is. One changed row is not the MC's rows.
+    tamper({QStringLiteral("DROP TRIGGER refuse_drop")});
+    cache->storeShell(origin, change(false, 5, QStringLiteral("t5")));
+    QVERIFY(cache->shell(origin).mcs.isEmpty());
+    // All of its rows are.
+    cache->storeShell(origin, change(true, 6, QStringLiteral("t6")));
+    const QList<cache::ShellMc> shell = cache->shell(origin).mcs;
+    QCOMPARE(shell.size(), 1);
+    QCOMPARE(shell.first().rev, 6);
+    QCOMPARE(shell.first().rows.size(), 1);
   }
 
   void anotherSchemaStartsOver() {

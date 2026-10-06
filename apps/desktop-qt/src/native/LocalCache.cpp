@@ -80,11 +80,39 @@ bool dropThread(QSqlDatabase& db, const QString& key) {
   return true;
 }
 
-// The threads whose copy missed a change and could not be dropped either:
-// not read, and not changed until they are dropped. One set per worker thread.
-QSet<QString>& lost() {
-  thread_local QSet<QString> keys;
-  return keys;
+// The thread list kept of one MC goes the same way: its versions first.
+bool dropShell(QSqlDatabase& db, const QString& origin) {
+  if (!run(db, QStringLiteral("DELETE FROM shell_mcs WHERE origin = ?"), {origin})) return false;
+  run(db, QStringLiteral("DELETE FROM shell_rows WHERE origin = ?"), {origin});
+  return true;
+}
+
+// What can no longer be vouched for: a copy that missed a change and could
+// not be dropped either. It is not read, and not changed, until it can be
+// dropped. One record per worker thread, which is one per cache.
+struct Lost {
+  QSet<QString> threads;  // by key
+  QSet<QString> shells;   // by origin
+  // After a commit that failed: every copy, until all of them are dropped.
+  bool everything = false;
+};
+
+Lost& lost() {
+  thread_local Lost record;
+  return record;
+}
+
+// Whether the cache holds anything to read or to bring up to date: always,
+// but after a failed commit only once everything it held is dropped.
+bool usable(QSqlDatabase& db) {
+  if (!lost().everything) return true;
+  const bool threads = run(db, QStringLiteral("DELETE FROM threads"));
+  if (threads) run(db, QStringLiteral("DELETE FROM entities"));
+  const bool shells = run(db, QStringLiteral("DELETE FROM shell_mcs"));
+  if (shells) run(db, QStringLiteral("DELETE FROM shell_rows"));
+  if (!threads || !shells) return false;
+  lost() = {};
+  return true;
 }
 
 QVariant nextUse(QSqlDatabase& db) {
@@ -170,9 +198,20 @@ bool applyShell(QSqlDatabase& db, const QString& origin, const QList<cache::Shel
       continue;
     }
     const QVariant epoch = mc.epoch.isEmpty() ? QVariant(QMetaType::fromType<QString>()) : QVariant(mc.epoch);
-    if (!run(db, QStringLiteral("INSERT OR REPLACE INTO shell_mcs(origin, mc, epoch, rev, environment) VALUES(?, ?, ?, ?, ?)"),
-             {origin, mc.mc, epoch, mc.rev, json(mc.environment)})) {
-      return false;
+    if (mc.reset) {
+      if (!run(db, QStringLiteral("INSERT OR REPLACE INTO shell_mcs(origin, mc, epoch, rev, environment) VALUES(?, ?, ?, ?, ?)"),
+               {origin, mc.mc, epoch, mc.rev, json(mc.environment)})) {
+        return false;
+      }
+    } else {
+      QSqlQuery version(db);
+      if (!run(version, QStringLiteral("UPDATE shell_mcs SET epoch = ?, rev = ?, environment = ? WHERE origin = ? AND mc = ?"),
+               {epoch, mc.rev, json(mc.environment), origin, mc.mc})) {
+        return false;
+      }
+      // Only the rows that changed, for an MC whose rows are not kept (they
+      // were dropped): kept, they would pass for all of its rows.
+      if (version.numRowsAffected() == 0) continue;
     }
     for (const QString& id : mc.gone) {
       gone.addBindValue(origin);
@@ -199,9 +238,11 @@ cache::Shell readShell(QSqlDatabase& db, QString origin) {
     origin = last.value(0).toString();
   } else {
     // One MC's sidebar is kept: the one the client was last opened at.
-    run(db, QStringLiteral("DELETE FROM shell_mcs WHERE origin <> ?"), {origin});
-    run(db, QStringLiteral("DELETE FROM shell_rows WHERE origin <> ?"), {origin});
+    if (run(db, QStringLiteral("DELETE FROM shell_mcs WHERE origin <> ?"), {origin})) {
+      run(db, QStringLiteral("DELETE FROM shell_rows WHERE origin <> ?"), {origin});
+    }
   }
+  if (lost().shells.contains(origin)) return {};
   cache::Shell shell;
   QSqlQuery members(db);
   if (!run(members, QStringLiteral("SELECT mc, epoch, rev, environment FROM shell_mcs WHERE origin = ?"), {origin})) return {};
@@ -264,10 +305,8 @@ public:
     // What it held is lost, and the changes that follow build on it: nothing
     // kept can be trusted to match its cursor, so nothing is kept.
     db.rollback();
-    // The cursors and versions first: rows without them are no copy.
-    for (const char* table : {"threads", "shell_mcs", "entities", "shell_rows"}) {
-      run(db, QStringLiteral("DELETE FROM %1").arg(QLatin1String(table)));
-    }
+    lost().everything = true;
+    usable(db);
   }
 
 private:
@@ -351,17 +390,23 @@ void LocalCache::drain() {
 
 cache::Shell LocalCache::shell(const QString& origin) {
   cache::Shell shell;
-  post([&shell, origin](QSqlDatabase& db) { shell = readShell(db, origin); });
+  post([&shell, origin](QSqlDatabase& db) {
+    if (usable(db)) shell = readShell(db, origin);
+  });
   wait();
   return shell;
 }
 
 void LocalCache::storeShell(const QString& origin, const QList<cache::ShellMcUpdate>& mcs) {
   post([origin, mcs](QSqlDatabase& db) {
+    if (!usable(db)) return;
+    if (lost().shells.contains(origin)) {
+      if (!dropShell(db, origin)) return;
+      lost().shells.remove(origin);
+    }
+    // A sidebar that missed a change would be resumed from the wrong version.
     whole(db, [&] { return applyShell(db, origin, mcs); }, [&] {
-      // A sidebar that missed a change would be resumed from the wrong version.
-      run(db, QStringLiteral("DELETE FROM shell_mcs WHERE origin = ?"), {origin});
-      run(db, QStringLiteral("DELETE FROM shell_rows WHERE origin = ?"), {origin});
+      if (!dropShell(db, origin)) lost().shells.insert(origin);
     });
   });
 }
@@ -375,7 +420,7 @@ void LocalCache::loadThread(const QString& key, QObject* context, std::function<
     return;
   }
   post([this, key, context = QPointer<QObject>(context), reply = std::move(reply)](QSqlDatabase& db) {
-    QMetaObject::invokeMethod(this, [context, reply, thread = lost().contains(key) ? cache::Thread() : readThread(db, key)] {
+    QMetaObject::invokeMethod(this, [context, reply, thread = !usable(db) || lost().threads.contains(key) ? cache::Thread() : readThread(db, key)] {
       if (context) reply(thread);
     }, Qt::QueuedConnection);
   });
@@ -383,20 +428,21 @@ void LocalCache::loadThread(const QString& key, QObject* context, std::function<
 
 void LocalCache::storeThread(const cache::ThreadUpdate& update) {
   post([update](QSqlDatabase& db) {
-    if (lost().contains(update.key)) {
+    if (!usable(db)) return;
+    if (lost().threads.contains(update.key)) {
       if (!dropThread(db, update.key)) return;
-      lost().remove(update.key);
+      lost().threads.remove(update.key);
     }
     // A copy that missed a change no longer matches its cursor.
     whole(db, [&] { return applyThread(db, update); }, [&] {
-      if (!dropThread(db, update.key)) lost().insert(update.key);
+      if (!dropThread(db, update.key)) lost().threads.insert(update.key);
     });
   });
 }
 
 void LocalCache::trimThread(const QString& key, qint64 floor) {
   post([key, floor](QSqlDatabase& db) {
-    if (lost().contains(key)) return;
+    if (!usable(db) || lost().threads.contains(key)) return;
     QSqlQuery raised(db);
     if (!run(raised, QStringLiteral("UPDATE threads SET floor = ? WHERE key = ? AND (floor IS NULL OR floor < ?)"), {floor, key, floor}) ||
         raised.numRowsAffected() == 0) {
@@ -408,14 +454,15 @@ void LocalCache::trimThread(const QString& key, qint64 floor) {
 
 void LocalCache::forgetThread(const QString& key) {
   post([key](QSqlDatabase& db) {
-    if (!dropThread(db, key)) lost().insert(key);
+    if (usable(db) && !dropThread(db, key)) lost().threads.insert(key);
   });
 }
 
 void LocalCache::forgetEnvironment(const QString& environmentId) {
   const QString prefix = environmentId + QLatin1Char(':');
   post([prefix](QSqlDatabase& db) {
-    run(db, QStringLiteral("DELETE FROM threads WHERE substr(key, 1, ?) = ?"), {prefix.size(), prefix});
+    // Their cursors first; while those stay, so do the copies they vouch for.
+    if (!usable(db) || !run(db, QStringLiteral("DELETE FROM threads WHERE substr(key, 1, ?) = ?"), {prefix.size(), prefix})) return;
     run(db, QStringLiteral("DELETE FROM entities WHERE substr(thread, 1, ?) = ?"), {prefix.size(), prefix});
   });
 }
