@@ -383,7 +383,7 @@ defmodule HalC2.Streams.Server do
        missed =
          case replay do
            events when is_list(events) ->
-             HalC2.Web.Protocol.coalesce(events) |> then(&View.events(view, stream, &1))
+             HalC2.Web.Protocol.coalesce(events) |> then(&View.replayed(view, stream, &1))
 
            :too_many when is_integer(offset) and offset <= stream.seq ->
              View.changed_since(view, stream, offset)

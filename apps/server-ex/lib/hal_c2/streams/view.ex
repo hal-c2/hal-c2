@@ -15,7 +15,10 @@ defmodule HalC2.Streams.View do
   that reaches the start of the thread.
 
   Whatever is left out here is never sent as an event either, so a client is never
-  handed a patch to an entity it does not have.
+  handed a patch to an entity it does not have. An entity that comes to be held
+  (a field its kind is chosen by changed) is sent whole in place of the patch, and
+  one that stops being held is deleted for the client: an item whose run was rolled
+  back goes that way, with every other item of the run.
   """
 
   alias HalC2.StreamState
@@ -121,24 +124,109 @@ defmodule HalC2.Streams.View do
   end
 
   @doc """
-  Events as they go to the view's client: those to entities it holds, trimmed.
-  `before` is the stream as it was before them, for the entities they deleted.
+  A commit's events as they go to the view's client, trimmed. `before` is the
+  stream as it was before them, which says what the client held until now.
   """
   @spec events(t, StreamState.t(), StreamState.t(), [HalC2.Store.event()]) ::
           [HalC2.Store.event()]
-  def events(view, stream, before \\ StreamState.new(), events) do
+  def events(view, stream, before, events) do
+    {sent, settled} =
+      Enum.flat_map_reduce(events, MapSet.new(), fn event, settled ->
+        %{kind: kind, entity: id, patch: patch} = event
+        was = StreamState.get(before, kind)[id]
+        now = StreamState.get(stream, kind)[id]
+        held? = was != nil and holds?(view, before, kind, was)
+        holds? = now != nil and holds?(view, stream, kind, now)
+
+        cond do
+          StreamState.void?(event) or MapSet.member?(settled, {kind, id}) ->
+            {[], settled}
+
+          # Held all along, or made by this commit: its patches are all there is to say.
+          holds? and (held? or was == nil) ->
+            case Wire.patch(kind, patch, now["type"]) do
+              nil -> {[], settled}
+              patch -> {[%{event | patch: patch}], settled}
+            end
+
+          holds? ->
+            {[%{event | patch: replacement(kind, now)}], MapSet.put(settled, {kind, id})}
+
+          held? ->
+            {[%{event | patch: HalC2.Patch.delete()}], MapSet.put(settled, {kind, id})}
+
+          true ->
+            {[], settled}
+        end
+      end)
+
+    sent ++ rolled(view, stream, before, events, settled)
+  end
+
+  # A run that was rolled back, or brought back, takes its items with it without
+  # an event to any of them: the ones the client held go, the ones it now holds come.
+  defp rolled(%{window: nil}, _stream, _before, _events, _settled), do: []
+
+  defp rolled(view, stream, before, events, settled) do
+    rolled_back? = &(StreamState.get(&1, "run")[&2]["status"] == "rolled_back")
+
+    for %{kind: "run", entity: run} = event <- Enum.uniq_by(Enum.reverse(events), & &1.entity),
+        gone? <- [rolled_back?.(stream, run)],
+        gone? != rolled_back?.(before, run),
+        {kind, id, entity} <- of_run(stream, run),
+        not MapSet.member?(settled, {kind, id}),
+        kind?(view.kinds, kind, entity),
+        if(gone?,
+          do: in_window?(view.window, before, kind, StreamState.get(before, kind)[id] || entity),
+          else: in_window?(view.window, stream, kind, entity)
+        ) do
+      if gone?,
+        do: %{event | kind: kind, entity: id, patch: HalC2.Patch.delete()},
+        else: %{event | kind: kind, entity: id, patch: replacement(kind, entity)}
+    end
+  end
+
+  defp of_run(stream, run) do
+    for kind <- @windowed,
+        {id, %{"runId" => ^run} = entity} <- StreamState.get(stream, kind),
+        do: {kind, id, entity}
+  end
+
+  defp replacement(kind, entity), do: %{"d" => true, "s" => Wire.entity(kind, entity)}
+
+  @doc """
+  The log's events since a client's offset as they go to it, merged per entity and
+  trimmed. What the client held at its offset is not known here, only what it holds
+  now, so an entity held now is taken to have been held then; the one way out of a
+  view, a run rolled back since, deletes that run's items.
+  """
+  @spec replayed(t, StreamState.t(), [HalC2.Store.event()]) :: [HalC2.Store.event()]
+  def replayed(view, stream, events) do
     Enum.flat_map(events, fn %{kind: kind, entity: id, patch: patch} = event ->
-      entity = StreamState.get(stream, kind)[id] || StreamState.get(before, kind)[id]
+      entity = StreamState.get(stream, kind)[id]
 
       with false <- StreamState.void?(event),
            true <- holds?(view, stream, kind, entity),
            %{} = patch <- Wire.patch(kind, patch, entity && entity["type"]) do
-        [%{event | patch: patch}]
+        [%{event | patch: patch} | rolled_since(view, stream, event)]
       else
         _ -> []
       end
     end)
   end
+
+  defp rolled_since(%{window: window} = view, stream, %{kind: "run", entity: run} = event)
+       when window != nil do
+    if StreamState.get(stream, "run")[run]["status"] == "rolled_back" do
+      for {kind, id, entity} <- of_run(stream, run), kind?(view.kinds, kind, entity) do
+        %{event | kind: kind, entity: id, patch: HalC2.Patch.delete()}
+      end
+    else
+      []
+    end
+  end
+
+  defp rolled_since(_view, _stream, _event), do: []
 
   @doc """
   What a copy of the view as of `offset` lacks, as events that replace each entity
@@ -152,10 +240,11 @@ defmodule HalC2.Streams.View do
       at = stream.updated_at || 0
 
       upserts =
-        for {seq, kind, id, entity} <- upserts, holds?(view, stream, kind, entity) do
-          patch = %{"d" => true, "s" => Wire.entity(kind, entity)}
-          %{seq: seq, kind: kind, entity: id, patch: patch, at: at}
-        end
+        for {seq, kind, id, entity} <- upserts,
+            holds?(view, stream, kind, entity),
+            event = %{seq: seq, kind: kind, entity: id, patch: replacement(kind, entity), at: at},
+            event <- [event | rolled_since(view, stream, event)],
+            do: event
 
       deletes =
         for {seq, kind, id} <- deletes, holds?(view, stream, kind, nil) do

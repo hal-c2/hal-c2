@@ -332,6 +332,90 @@ defmodule HalC2.StreamsTest do
     assert ids(rows, "turn-item") == ~w(item-1 item-2 item-5 item-6)
   end
 
+  test "an entity that comes into a client's view is sent whole, and one that leaves is deleted" do
+    {:ok, _} = Streams.commit("th-16", :thread, thread("th-16"))
+    message = %{"id" => "m1", "role" => "assistant", "text" => "Draft"}
+    {:ok, _} = Streams.commit("th-16", :thread, [{"message", "m1", %{"s" => message}}])
+
+    :ok = Streams.subscribe("th-16", self(), nil, %{kinds: %{"message" => %{"role" => "user"}}})
+    assert {_seq, _meta, []} = client_snapshot("th-16")
+
+    # A patch alone would leave the client with a message made of one field.
+    {:ok, entered} =
+      Streams.commit("th-16", :thread, [{"message", "m1", %{"s" => %{"role" => "user"}}}])
+
+    assert_receive {:hal_c2_stream, "th-16", {:events, [event], ^entered}}
+
+    assert %{entity: "m1", patch: %{"d" => true, "s" => %{"role" => "user", "text" => "Draft"}}} =
+             event
+
+    {:ok, left} =
+      Streams.commit("th-16", :thread, [{"message", "m1", %{"s" => %{"role" => "assistant"}}}])
+
+    assert_receive {:hal_c2_stream, "th-16", {:events, [%{entity: "m1", patch: gone}], ^left}}
+    assert gone == HalC2.Patch.delete()
+
+    # And nothing more is said of it.
+    {:ok, _} = Streams.commit("th-16", :thread, [{"message", "m1", %{"a" => %{"text" => "!"}}}])
+    refute_receive {:hal_c2_stream, "th-16", {:events, _, _}}, 50
+  end
+
+  test "a run rolled back takes its items out of a window, and brings them back with it" do
+    seq = long_thread("th-17")
+    :ok = Streams.subscribe("th-17", self(), nil, %{window: {:items, 4}})
+    {^seq, %{floor: 2}, rows} = client_snapshot("th-17")
+    assert ids(rows, "turn-item") == ~w(item-3 item-4 item-5 item-6)
+
+    status = fn run, status -> [{"run", "run-#{run}", %{"s" => %{"status" => status}}}] end
+    {:ok, rolled} = Streams.commit("th-17", :thread, status.(3, "rolled_back"))
+    assert_receive {:hal_c2_stream, "th-17", {:events, events, ^rolled}}
+
+    gone =
+      for %{kind: kind, entity: id, patch: %{"d" => true} = patch} <- events,
+          map_size(patch) == 1,
+          do: {kind, id}
+
+    assert Enum.sort(gone) == [
+             {"node", "node-5"},
+             {"node", "node-6"},
+             {"turn-item", "item-5"},
+             {"turn-item", "item-6"}
+           ]
+
+    # A run before the window's floor was never held: nothing is said of its items.
+    {:ok, earlier} = Streams.commit("th-17", :thread, status.(1, "rolled_back"))
+
+    assert_receive {:hal_c2_stream, "th-17",
+                    {:events, [%{kind: "run", entity: "run-1"}], ^earlier}}
+
+    {:ok, back} = Streams.commit("th-17", :thread, status.(3, "completed"))
+    assert_receive {:hal_c2_stream, "th-17", {:events, events, ^back}}
+
+    whole =
+      for %{kind: "turn-item", entity: id, patch: %{"d" => true, "s" => %{"ordinal" => _}}} <-
+            events,
+          do: id
+
+    assert Enum.sort(whole) == ~w(item-5 item-6)
+  end
+
+  test "a client that was away while a run was rolled back is told its items are gone" do
+    seq = long_thread("th-18")
+    rolled = [{"run", "run-3", %{"s" => %{"status" => "rolled_back"}}}]
+    {:ok, last} = Streams.commit("th-18", :thread, rolled)
+
+    client = %{handle: Streams.Server.handle(), window: {:floor, 2}}
+    :ok = Streams.subscribe("th-18", self(), seq, client)
+    assert_receive {:hal_c2_stream, "th-18", {:events, events, ^last}}
+
+    gone =
+      for %{kind: "turn-item", entity: id, patch: %{"d" => true} = patch} <- events,
+          map_size(patch) == 1,
+          do: id
+
+    assert Enum.sort(gone) == ~w(item-5 item-6)
+  end
+
   test "a client that kept a window resumes it" do
     seq = long_thread("th-14")
 
