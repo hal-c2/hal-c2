@@ -198,6 +198,49 @@ private slots:
     QVERIFY(cache->shell().origin.isEmpty());
   }
 
+  // A change that cannot be written leaves a copy that no longer matches its
+  // cursor. It is dropped; one that cannot even be dropped is never read, and
+  // never changed, until it can be.
+  void aCopyThatMissedAChangeIsNeverRead() {
+    const QString key = QStringLiteral("env-a:thread-1");
+    const QString file = QDir(m_dir->path()).filePath(QStringLiteral("client-cache.sqlite"));
+    const auto tamper = [&file](const QStringList& statements) {
+      {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("tamper"));
+        db.setDatabaseName(file);
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        for (const QString& statement : statements) QVERIFY2(query.exec(statement), qPrintable(statement));
+        db.close();
+      }
+      QSqlDatabase::removeDatabase(QStringLiteral("tamper"));
+    };
+    auto cache = open();
+    cache->storeThread(copy(key));
+    QVERIFY(load(*cache, key).found());
+
+    // The disk refuses one row, and refuses to give the cursor up.
+    tamper({QStringLiteral("CREATE TRIGGER refuse_put BEFORE INSERT ON entities WHEN NEW.id = 'c' BEGIN SELECT RAISE(ABORT, 'refused'); END"),
+            QStringLiteral("CREATE TRIGGER refuse_drop BEFORE DELETE ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END")});
+    cache->storeThread({key, {QStringLiteral("log-1"), 11, std::nullopt}, false, {item(QStringLiteral("c"), 1)}, {}});
+    // Its cursor still says 10 and its rows are whole as of 10, but what
+    // follows was built on 11: it is not handed out.
+    QVERIFY(!load(*cache, key).found());
+
+    // Nor brought forward by a later change while it cannot be dropped.
+    cache->storeThread({key, {QStringLiteral("log-1"), 12, std::nullopt}, false, {item(QStringLiteral("d"), 1)}, {}});
+    QVERIFY(!load(*cache, key).found());
+
+    // Once it can be dropped it is, and a snapshot makes a copy again.
+    tamper({QStringLiteral("DROP TRIGGER refuse_drop")});
+    cache->storeThread({key, {QStringLiteral("log-1"), 13, std::nullopt}, false, {item(QStringLiteral("e"), 1)}, {}});
+    QVERIFY(!load(*cache, key).found());
+    cache->storeThread(copy(key, 14));
+    const cache::Thread again = load(*cache, key);
+    QCOMPARE(again.cursor.offset, 14);
+    QCOMPARE(ids(again), QStringList({QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("run-1")}));
+  }
+
   void anotherSchemaStartsOver() {
     const QString key = QStringLiteral("env-a:thread-1");
     {

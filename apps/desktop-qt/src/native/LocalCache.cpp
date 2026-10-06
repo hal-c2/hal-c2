@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QPointer>
+#include <QSet>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -70,9 +71,20 @@ void whole(QSqlDatabase& db, const std::function<bool()>& change, const std::fun
   run(db, QStringLiteral("RELEASE change"));
 }
 
-void dropThread(QSqlDatabase& db, const QString& key) {
+// A copy is what its cursor says it is, so the cursor goes first: rows left
+// without one are no copy, while a cursor left without its rows would pass
+// for a whole one. False when the cursor could not be taken away.
+bool dropThread(QSqlDatabase& db, const QString& key) {
+  if (!run(db, QStringLiteral("DELETE FROM threads WHERE key = ?"), {key})) return false;
   run(db, QStringLiteral("DELETE FROM entities WHERE thread = ?"), {key});
-  run(db, QStringLiteral("DELETE FROM threads WHERE key = ?"), {key});
+  return true;
+}
+
+// The threads whose copy missed a change and could not be dropped either:
+// not read, and not changed until they are dropped. One set per worker thread.
+QSet<QString>& lost() {
+  thread_local QSet<QString> keys;
+  return keys;
 }
 
 QVariant nextUse(QSqlDatabase& db) {
@@ -187,8 +199,8 @@ cache::Shell readShell(QSqlDatabase& db, QString origin) {
     origin = last.value(0).toString();
   } else {
     // One MC's sidebar is kept: the one the client was last opened at.
-    run(db, QStringLiteral("DELETE FROM shell_rows WHERE origin <> ?"), {origin});
     run(db, QStringLiteral("DELETE FROM shell_mcs WHERE origin <> ?"), {origin});
+    run(db, QStringLiteral("DELETE FROM shell_rows WHERE origin <> ?"), {origin});
   }
   cache::Shell shell;
   QSqlQuery members(db);
@@ -252,7 +264,8 @@ public:
     // What it held is lost, and the changes that follow build on it: nothing
     // kept can be trusted to match its cursor, so nothing is kept.
     db.rollback();
-    for (const char* table : {"entities", "threads", "shell_rows", "shell_mcs"}) {
+    // The cursors and versions first: rows without them are no copy.
+    for (const char* table : {"threads", "shell_mcs", "entities", "shell_rows"}) {
       run(db, QStringLiteral("DELETE FROM %1").arg(QLatin1String(table)));
     }
   }
@@ -347,8 +360,8 @@ void LocalCache::storeShell(const QString& origin, const QList<cache::ShellMcUpd
   post([origin, mcs](QSqlDatabase& db) {
     whole(db, [&] { return applyShell(db, origin, mcs); }, [&] {
       // A sidebar that missed a change would be resumed from the wrong version.
-      run(db, QStringLiteral("DELETE FROM shell_rows WHERE origin = ?"), {origin});
       run(db, QStringLiteral("DELETE FROM shell_mcs WHERE origin = ?"), {origin});
+      run(db, QStringLiteral("DELETE FROM shell_rows WHERE origin = ?"), {origin});
     });
   });
 }
@@ -362,7 +375,7 @@ void LocalCache::loadThread(const QString& key, QObject* context, std::function<
     return;
   }
   post([this, key, context = QPointer<QObject>(context), reply = std::move(reply)](QSqlDatabase& db) {
-    QMetaObject::invokeMethod(this, [context, reply, thread = readThread(db, key)] {
+    QMetaObject::invokeMethod(this, [context, reply, thread = lost().contains(key) ? cache::Thread() : readThread(db, key)] {
       if (context) reply(thread);
     }, Qt::QueuedConnection);
   });
@@ -370,13 +383,20 @@ void LocalCache::loadThread(const QString& key, QObject* context, std::function<
 
 void LocalCache::storeThread(const cache::ThreadUpdate& update) {
   post([update](QSqlDatabase& db) {
+    if (lost().contains(update.key)) {
+      if (!dropThread(db, update.key)) return;
+      lost().remove(update.key);
+    }
     // A copy that missed a change no longer matches its cursor.
-    whole(db, [&] { return applyThread(db, update); }, [&] { dropThread(db, update.key); });
+    whole(db, [&] { return applyThread(db, update); }, [&] {
+      if (!dropThread(db, update.key)) lost().insert(update.key);
+    });
   });
 }
 
 void LocalCache::trimThread(const QString& key, qint64 floor) {
   post([key, floor](QSqlDatabase& db) {
+    if (lost().contains(key)) return;
     QSqlQuery raised(db);
     if (!run(raised, QStringLiteral("UPDATE threads SET floor = ? WHERE key = ? AND (floor IS NULL OR floor < ?)"), {floor, key, floor}) ||
         raised.numRowsAffected() == 0) {
@@ -387,13 +407,15 @@ void LocalCache::trimThread(const QString& key, qint64 floor) {
 }
 
 void LocalCache::forgetThread(const QString& key) {
-  post([key](QSqlDatabase& db) { dropThread(db, key); });
+  post([key](QSqlDatabase& db) {
+    if (!dropThread(db, key)) lost().insert(key);
+  });
 }
 
 void LocalCache::forgetEnvironment(const QString& environmentId) {
   const QString prefix = environmentId + QLatin1Char(':');
   post([prefix](QSqlDatabase& db) {
-    run(db, QStringLiteral("DELETE FROM entities WHERE substr(thread, 1, ?) = ?"), {prefix.size(), prefix});
     run(db, QStringLiteral("DELETE FROM threads WHERE substr(key, 1, ?) = ?"), {prefix.size(), prefix});
+    run(db, QStringLiteral("DELETE FROM entities WHERE substr(thread, 1, ?) = ?"), {prefix.size(), prefix});
   });
 }
