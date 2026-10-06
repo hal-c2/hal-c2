@@ -21,6 +21,9 @@ Item {
     property string section: "active"
     // Keyboard cursor: draws the focus ring and shows the actions.
     property bool focused: false
+    // A row under a finger: a drag is left to the list, which scrolls, and
+    // a long press asks for the menu a right click opens.
+    property bool touch: false
     property double ageNow: Date.now()
 
     signal activated
@@ -293,7 +296,7 @@ Item {
         property bool cancelled: false
 
         target: null
-        enabled: !row.draft && !row.offline
+        enabled: !row.draft && !row.offline && !row.touch
         acceptedButtons: Qt.LeftButton
         onActiveChanged: {
             if (active) {
@@ -321,6 +324,12 @@ Item {
                 row.menuRequested(point.scenePosition.x, point.scenePosition.y);
             }
         }
+    }
+
+    TapHandler {
+        enabled: row.touch
+        acceptedDevices: PointerDevice.TouchScreen
+        onLongPressed: row.menuRequested(point.scenePosition.x, point.scenePosition.y)
     }
 
     // Row actions never take focus: the keyboard cursor stays on the list

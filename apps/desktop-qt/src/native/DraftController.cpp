@@ -264,7 +264,7 @@ QString DraftController::start(const QString& environmentId, const QString& proj
 // Home passes through (NavigationController), so the draft takes its place
 // rather than stacking on it, as the web's replace navigation does.
 void DraftController::land() {
-  if (!m_active || !m_store->synchronized()) return;
+  if (!m_landsOnDraft || !m_active || !m_store->synchronized()) return;
   if (NativeShell::of(this)->controller<NavigationController>()->route().kind != QLatin1String("home")) {
     setLandingFailed(false);
     return;

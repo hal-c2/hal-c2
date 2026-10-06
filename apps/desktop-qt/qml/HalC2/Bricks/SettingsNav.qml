@@ -21,19 +21,23 @@ Rectangle {
     readonly property int searchSeq: route !== null ? (route.searchSeq ?? 0) : 0
 
     onSearchSeqChanged: search.text = route !== null ? (route.search ?? "") : ""
+    // Sections a layout does not offer, by path ("/settings/keybindings"):
+    // they are left out of the list and of what search finds.
+    property var leftOut: []
     // Every row says whether it is a search result, so a row never reads the
     // other shape while the query and the rows change together.
     readonly property var rows: {
         const state = Shell.state;
+        const offered = section => nav.leftOut.indexOf(section.to) < 0;
         if (query.length === 0) {
-            return Pages.navRows(state).map(section => ({
+            return Pages.navRows(state).filter(offered).map(section => ({
                         result: false,
                         to: section.to,
                         label: section.label,
                         action: section.action
                     }));
         }
-        return Pages.searchRows(query, state, Keybindings.bindings).map(section => ({
+        return Pages.searchRows(query, state, Keybindings.bindings).filter(offered).map(section => ({
                     result: true,
                     to: section.to,
                     title: section.label,

@@ -71,6 +71,9 @@ public:
   void startIn(const sidebar::ProjectGroup& group);
   // On `home`, opens the most recent project's draft (see above).
   void land();
+  // Whether a window with no thread lands on a draft at all. A client whose
+  // home is the thread list itself (the phone) turns it off and stays home.
+  void setLandsOnDraft(bool lands) { m_landsOnDraft = lands; }
   // Deletes the draft; every window that shows it leaves it.
   void remove(const QString& id);
   // The draft's first turn was sent as the thread `threadKey`: the draft is
@@ -124,4 +127,5 @@ private:
   QList<Draft>& m_drafts;
   bool m_active = false;
   bool m_landingFailed = false;
+  bool m_landsOnDraft = true;
 };
