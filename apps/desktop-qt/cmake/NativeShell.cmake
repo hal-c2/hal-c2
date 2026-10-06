@@ -29,7 +29,8 @@ function(hal_c2_add_native_library)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(HAL_C2_FFMPEG REQUIRED libavcodec libavutil libswscale)
   target_include_directories(hal_c2_native PUBLIC ${HAL_C2_FFMPEG_INCLUDE_DIRS})
-  target_link_libraries(hal_c2_native PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Qml Qt6::Quick Qt6::Network Qt6::WebSockets)
+  # Qt6::Sql is the client cache (src/native/LocalCache.cpp), which needs the SQLite driver at run time.
+  target_link_libraries(hal_c2_native PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Qml Qt6::Quick Qt6::Network Qt6::Sql Qt6::WebSockets)
   # The built-in palettes (scripts/gen-themes.mjs), as :/hal-c2/themes.json.
   qt_add_resources(hal_c2_native hal_c2_native_themes PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
                    FILES "${_hal_c2_src}/native/themes.json")

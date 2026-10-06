@@ -44,8 +44,9 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   `ready` line carries the MC's origin and access token, and `NativeShell`
   opens one protocol-3 socket (`McClient`) and folds the `shell` snapshot and
   row deltas (`ShellStore`, projects and threads). The controllers start on
-  the first snapshot (`NativeShell::isActive`, `ready`); nothing is sent to the
-  MC before it. Every environment the shell sees is the MC's own or a
+  the first snapshot (`NativeShell::isActive`, `ready`); until then the windows
+  only show what the client cache kept (see the client cache below), and no
+  controller acts on it. Every environment the shell sees is the MC's own or a
   member of its cluster: `ShellStore` keeps each MC's rows by MC, and a
   member that goes offline keeps them, so the sidebar rows and header say
   `offline`. Another machine is added by clustering (`cluster.join`), never
@@ -61,9 +62,11 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   refuses until the user pairs again. A failed handshake does not say why, so
   the client asks for a socket ticket: the MC's own token opens the socket
   directly, a paired session's token only through a ticket, and a token the MC
-  no longer knows gets neither. A thread's stream resubscribes from the
-  offset its last whole snapshot or event reached; every other shape is sent
-  whole. `ConnectionHealthController` turns the phases into `connection`, which
+  no longer knows gets neither. A subscription says where it resumes from each
+  time its `sub` frame is sent (`McClient::Resume`): the owner of the data is
+  asked, never the client, so there is one copy of each offset. A thread's
+  stream resumes from its model's cursor and the shell from the row versions
+  it holds; every other shape is sent whole. `ConnectionHealthController` turns the phases into `connection`, which
   is not `connected` until the shell snapshot lands on that socket. Controllers
   must not add timers of their own to recover a connection.
 - The UI-owned parts of `desktopBridge` (open external, window commands,
@@ -141,7 +144,7 @@ bar row still use that brick.
 ## Setup
 
 Requirements: CMake ≥ 3.21, Ninja, a C++20 compiler, Qt ≥ 6.9 with
-`WebSockets`, Node (the host runs from TypeScript source).
+`WebSockets` and `Sql` with its SQLite driver, Node (the host runs from TypeScript source).
 
 - macOS: `brew install qt` (6.11 at time of writing).
 - Linux: the distro's Qt 6 with its WebSockets module, or the official
@@ -1160,11 +1163,43 @@ re-lays out the list; `Timeline.alwaysShowMeta` shows them where there is no
 hover (on by default on Android and iOS). A thread is
 addressed by its environment (`ThreadStore::streamShape`), which the MC
 routes to the cluster member serving it; a stream that errors waits for
-the shell to list the thread's MC online again. A part-0 snapshot after a reconnect or `resync` replaces the
+the shell to list the thread's MC online again. A part-0 snapshot replaces the
 entities but not the rows: row ids are stable, streamed text only emits
 `dataChanged` for its row, and structural changes are applied as inserts,
 moves and removes, so the `Timeline` brick keeps its scroll position. The
 active thread is the navigation route's.
+
+### Client cache
+
+Why the MC sends a client only what it lacks is in [sync.md](sync.md). This is the client's half:
+`LocalCache`, one SQLite file in the cache directory (`client-cache.sqlite`) written on a worker
+thread. It holds the thread list by the origin the client was opened at, and the threads the user
+opened by `environmentId:threadId`. It is a cache in the storage sense: deleting it, or opening
+one of another schema, costs one full load and nothing else. The mobile client builds the same
+`src/native`, so nothing in it may assume a desktop.
+
+- **A copy is always whole as of its cursor.** A thread's entities and its cursor (`handle`,
+  `offset`, `floor`) are written in one transaction, and so are an MC's rows and their version
+  (`epoch`, `rev`). That is what lets the next `sub` say what the client holds. A change to a copy
+  the cache no longer has is dropped rather than applied: half a copy would pass for a whole one.
+- **The owner of the data owns its cursor.** `TimelineModel` and `ShellStore` say what a `sub`
+  carries; `McClient` only asks them (`McClient::Resume`). A catch-up that takes several `events`
+  frames is held until the frame that moves the offset, because a connection that dropped in
+  between would be sent the same merged appends again.
+- **Memory equals cache for an open thread.** A thread opens as its newest turns
+  (`TimelineModel::windowItems`) and grows with `loadEarlier()`. When it is closed or evicted the
+  cached copy is trimmed back to that window, so a thread never comes back larger than it opens
+  and the cache never holds rows the model would not show.
+- **Cached rows are not the MC's word.** `ShellStore::synchronized()` stays false until the
+  `shell` frame, every MC reads as offline until then, and whatever removes or decides (drafts,
+  routes, alerts, forgetting a thread) waits for it. Before it, `NativeShell` only previews
+  (`NativeController::preview`): the sidebar, the route of a thread the cache lists, and that
+  thread's kept rows as `loading` or `unreachable`, never `live`. Starting the controllers on
+  cached rows instead would let them call an MC that has not answered.
+- **The cache is shown before the MC is known.** The desktop learns its MC's origin from the host,
+  seconds after the window is up, so `ShellStore::showKept` holds the rows of the MC the client was
+  last opened at until then. Only one origin's thread list is kept, and being opened at another
+  drops it at once.
 
 Which brick draws each route in the window's centre is one list,
 `Bricks/js/centreViews.js`, which `CentreHost` loads from; every layout

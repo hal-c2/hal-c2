@@ -21,7 +21,10 @@ import HalC2.Shell
 // changed or a tool call touched ask to be opened (fileActivated). What those
 // do is the host's (ThreadView). A settled turn's group of calls reads as its
 // summary and opens into the calls; a long message of the user's shows its
-// first lines until it is asked for in full.
+// first lines until it is asked for in full. A model that holds only a
+// thread's newest turns (hasEarlier) is asked for the ones before them
+// (loadEarlier()) when the user reaches the top, or while what is loaded does
+// not fill the view; their rows go in above without moving what is on screen.
 Item {
     id: root
 
@@ -109,6 +112,20 @@ Item {
         view.following = true;
         view.stick();
     }
+
+    // Whether the turns before the ones loaded are on their way.
+    readonly property bool loadingEarlier: root.model !== null && root.model.loadingEarlier === true
+    // Asks the model for the turns before the ones it holds, if it has any
+    // and is not already fetching them.
+    function loadEarlier() {
+        if (root.model && root.model.hasEarlier === true && !root.loadingEarlier && typeof root.model.loadEarlier === "function")
+            root.model.loadEarlier();
+    }
+    // What is loaded of a live thread leaves room in the view, so there is no
+    // top to scroll to: the turns before it are fetched until it is filled.
+    readonly property bool unfilled: root.model !== null && root.model.hasEarlier === true && !root.loadingEarlier && root.model.status === "live" && view.count > 0 && view.contentHeight + view.topMargin + view.bottomMargin < view.height
+    onUnfilledChanged: if (unfilled)
+        Qt.callLater(view.fill)
 
     // The model's list roles arrive as arrays from C++ and as ListModels from
     // a QML ListModel.
@@ -326,6 +343,7 @@ Item {
 
     ListView {
         id: view
+        objectName: "timelineRows"
 
         property bool following: true
         property bool positioning: false
@@ -341,6 +359,52 @@ Item {
         }
         function nearEnd() {
             return contentY + height >= originY + contentHeight - 4;
+        }
+        // Once the rows are laid out and still leave room.
+        function fill() {
+            forceLayout();
+            if (root.unfilled)
+                root.loadEarlier();
+        }
+
+        // Rows that go in above the first (earlier turns) leave what is on
+        // screen where it is. A ListView resting at its very top would show
+        // them instead, so the first row in view is held to its place.
+        property int heldIndex: -1
+        property real heldOffset: 0
+        function hold() {
+            heldIndex = following ? -1 : indexAt(width / 2, contentY + topMargin + 1);
+            const item = heldIndex >= 0 ? itemAtIndex(heldIndex) : null;
+            if (item)
+                heldOffset = item.y - contentY;
+            else
+                heldIndex = -1;
+        }
+        function release(added) {
+            if (heldIndex < 0)
+                return;
+            const index = heldIndex + added;
+            heldIndex = -1;
+            positioning = true;
+            forceLayout();
+            positionViewAtIndex(index, ListView.Beginning);
+            const item = itemAtIndex(index);
+            if (item)
+                contentY = item.y - heldOffset;
+            positioning = false;
+        }
+        Connections {
+            target: root.model
+            ignoreUnknownSignals: true
+            function onRowsAboutToBeInserted(parent, first, last) {
+                if (first === 0)
+                    view.hold();
+            }
+            function onRowsInserted(parent, first, last) {
+                // Once every listener of the model has heard of them.
+                if (first === 0 && view.heldIndex >= 0)
+                    Qt.callLater(view.release, last - first + 1);
+            }
         }
 
         anchors.fill: parent
@@ -358,10 +422,17 @@ Item {
         // decides whether the view follows; the list settling its layout or
         // growing below the end does not.
         onContentYChanged: {
-            if (!positioning && (moving || dragging || scrollBar.pressed))
+            if (!positioning && (moving || dragging || scrollBar.pressed)) {
                 following = nearEnd();
+                if (atYBeginning)
+                    root.loadEarlier();
+            }
         }
-        onMovementEnded: following = nearEnd()
+        onMovementEnded: {
+            following = nearEnd();
+            if (atYBeginning)
+                root.loadEarlier();
+        }
         onContentHeightChanged: if (following)
             Qt.callLater(stick)
         onCountChanged: if (following)
@@ -1386,6 +1457,29 @@ Item {
                 height: 1
                 color: Qt.alpha(root.borderColor, 0.6)
             }
+        }
+    }
+
+    // Earlier turns are on their way: a static line over the top of the
+    // rows, so nothing under it moves when it comes and goes.
+    Rectangle {
+        objectName: "loadingEarlier"
+        visible: root.loadingEarlier
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: view.top
+        anchors.topMargin: 12
+        width: earlierText.implicitWidth + 16
+        height: 24
+        radius: 12
+        color: root.canvasColor
+        border.color: Qt.alpha(root.borderColor, 0.6)
+        RowText {
+            id: earlierText
+            anchors.centerIn: parent
+            text: qsTr("Loading earlier turns…")
+            color: root.mutedColor
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+            wrapMode: Text.NoWrap
         }
     }
 

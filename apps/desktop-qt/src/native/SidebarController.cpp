@@ -37,6 +37,11 @@ void SidebarController::activate() {
   refresh();
 }
 
+void SidebarController::preview() {
+  m_previewing = true;
+  refresh();
+}
+
 const sidebar::ProjectGroup* SidebarController::group(const QString& key) const {
   for (const sidebar::ProjectGroup& group : m_groups) {
     if (group.key == key) return &group;
@@ -54,7 +59,7 @@ std::optional<QString> SidebarController::logicalProjectKey(const QString& envir
 }
 
 void SidebarController::refresh() {
-  if (!m_active) return;
+  if (!m_active && !m_previewing) return;
   readSettings();
   const QList<sidebar::Thread> threads = m_store->threads();
   const QString ownEnvironment = m_store->environmentOf(m_client->mc());

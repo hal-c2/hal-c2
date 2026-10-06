@@ -125,12 +125,17 @@ void McClient::drop(const QString& reason) {
   onClosed(socket);
 }
 
-int McClient::subscribe(QObject* context, const QJsonObject& shape, FrameHandler onFrame) {
+int McClient::subscribe(QObject* context, const QJsonObject& shape, FrameHandler onFrame, Resume resume) {
   const int id = m_nextId++;
   const auto gone = connect(context, &QObject::destroyed, this, [this, id] { unsubscribe(id); });
-  m_subscriptions.insert(id, {shape, std::move(onFrame), gone});
+  m_subscriptions.insert(id, {shape, std::move(onFrame), gone, std::move(resume)});
   sendSub(id);
   return id;
+}
+
+void McClient::more(int id, int items) {
+  if (!m_subscriptions.contains(id)) return;
+  send({{QStringLiteral("t"), QStringLiteral("more")}, {QStringLiteral("id"), id}, {QStringLiteral("items"), items}});
 }
 
 void McClient::unsubscribe(int id) {
@@ -387,27 +392,16 @@ void McClient::onMessage(const QString& text) {
     }
     return;
   }
-  const auto subscription = m_subscriptions.find(id);
-  if (subscription == m_subscriptions.end()) return;
+  const auto subscription = m_subscriptions.constFind(id);
+  if (subscription == m_subscriptions.constEnd()) return;
+  const FrameHandler handler = subscription->onFrame;
   if (type == QLatin1String("resync")) {
-    // Fell behind: from the offset the MC names, else from where it had got to.
-    if (frame.value(QLatin1String("offset")).isDouble()) subscription->offset = frame.value(QLatin1String("offset"));
+    // Fell behind, and the MC dropped the shape: its owner takes the offset
+    // the MC names, and it is asked for again from there.
+    handler(frame);
     sendSub(id);
     return;
   }
-  // A stream resumes from the last offset it reached with its snapshot whole;
-  // one cut off part-way starts over.
-  if (subscription->shape.value(QLatin1String("type")) != QLatin1String("stream")) {
-    // Every other shape is sent whole again.
-  } else if (type == QLatin1String("snapshot")) {
-    subscription->offset = frame.value(QLatin1String("done")).toBool() ? frame.value(QLatin1String("offset")) : QJsonValue(QJsonValue::Null);
-  } else if ((type == QLatin1String("events") || type == QLatin1String("live")) && !subscription->offset.isNull() &&
-             frame.value(QLatin1String("offset")).isDouble()) {
-    subscription->offset = frame.value(QLatin1String("offset"));
-  } else if (type == QLatin1String("error")) {
-    subscription->offset = QJsonValue::Null;
-  }
-  const FrameHandler handler = subscription->onFrame;
   // The MC ended the shape and already forgot it.
   if (type == QLatin1String("end")) endSubscription(id);
   handler(frame);
@@ -478,12 +472,17 @@ void McClient::scheduleRetry() {
 void McClient::sendSub(int id) {
   const auto subscription = m_subscriptions.constFind(id);
   if (subscription == m_subscriptions.constEnd() || !m_ready) return;
-  send({
+  QJsonObject frame{
       {QStringLiteral("t"), QStringLiteral("sub")},
       {QStringLiteral("id"), id},
       {QStringLiteral("shape"), subscription->shape},
-      {QStringLiteral("offset"), subscription->offset},
-  });
+      {QStringLiteral("offset"), QJsonValue::Null},
+  };
+  if (subscription->resume) {
+    const QJsonObject resume = subscription->resume();
+    for (auto it = resume.begin(); it != resume.end(); ++it) frame.insert(it.key(), it.value());
+  }
+  send(frame);
 }
 
 void McClient::send(const QJsonObject& message) {

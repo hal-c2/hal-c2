@@ -14,9 +14,11 @@
 #     EnvironmentConnectionNotice.tsx, ConnectionTraceId.tsx
 #   apps/tui/src/connection.ts
 #   apps/tui/src/features.backlog.test.ts (environment-connections)
+#   apps/desktop-qt/src/native/McClient.cpp, ThreadStore.cpp, ShellStore.cpp (each `sub` says where it resumes from)
 #   Shared domain: tui/reconnect.feature holds the terminal client's reconnects;
 #   mobile/offline-and-lifecycle.feature holds the phone's foreground and offline journeys;
-#   mc/platform/websocket-protocol.feature holds resuming streams on the MC.
+#   mc/platform/websocket-protocol.feature holds resuming streams on the MC;
+#   local-cache.feature holds what a client keeps between runs.
 
 Feature: Connection health
   Each environment has one connection owner in a client. It retries transport failures with
@@ -115,10 +117,13 @@ Feature: Connection health
     Then the client resumes the thread from where it stopped
 
   @desktop @mobile @backlog-mobile
-  Scenario: A thread left for longer loads a fresh snapshot
+  Scenario: A thread left for longer comes back from what the client kept
     Given the user left a thread more than five minutes ago
+    And the agent answered "Shipping is next." meanwhile
     When the user returns
-    Then the client loads the thread again
+    Then the client asks for the thread from where its copy stands
+    And the MC sends only what the client lacks
+    And the thread shows "Shipping is next." after the conversation it kept
 
   @desktop @mobile @backlog-mobile
   Scenario: Subscriptions follow a replaced connection
@@ -198,4 +203,4 @@ Feature: Connection health
     Given a client following threads on two cluster members
     When the cluster connection drops and returns
     Then each thread stream resumes from its last offset
-    And the shell is sent again whole
+    And the thread list asks only for the rows changed since

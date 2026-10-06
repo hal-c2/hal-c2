@@ -5,9 +5,13 @@
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
+#include <QUrl>
 
+#include "LocalCache.h"
 #include "SidebarModel.h"
 
 class McClient;
@@ -19,11 +23,36 @@ class McClient;
 // them with it. A thread that moved to
 // another machine leaves a forwarding record (`movedTo`) on the one it left:
 // the thread is listed where it lives, and located() follows the record.
+//
+// The rows are kept in the LocalCache with the version the MC gave each MC's
+// (`epoch`, `rev`), so the next subscription, after a reconnect or a restart,
+// says what it holds (`have`) and is sent only the rows changed since. Rows
+// read from the cache show at once but are not the MC's word yet: every MC
+// reads as offline and synchronized() stays false until its `shell` frame.
 class ShellStore : public QObject {
   Q_OBJECT
 
 public:
+  // How long row changes wait for more before they go to the cache.
+  static constexpr int flushDelayMs = 500;
+
   explicit ShellStore(McClient* client, QObject* parent = nullptr);
+  ~ShellStore() override;
+
+  // Where the rows are kept between runs; without one nothing is.
+  void setCache(LocalCache* cache) { m_cache = cache; }
+  // Before the client knows where its MC is (the desktop's host is still
+  // starting it): holds the rows kept for the MC it was last opened at.
+  void showKept();
+  // The client is being opened at `origin`: the rows last kept for it are
+  // held until its MC answers (previewing()). Another origin's rows go.
+  void open(const QUrl& origin);
+  // Whether the rows held came from the cache and no MC has confirmed them.
+  bool previewing() const { return m_previewing; }
+  // What a `shell` subscription carries as `have`: each MC's version as held.
+  QJsonObject have() const;
+  // Hands the cache the row changes it has not been given.
+  void flush();
 
   QList<sidebar::Thread> threads() const;
   QList<sidebar::Project> projects() const;
@@ -57,8 +86,10 @@ public:
   bool threadOnline(const QString& threadKey) const;
   // Whether an MC serving `environmentId` is online.
   bool environmentOnline(const QString& environmentId) const;
+  // Whether the MC has said what the cluster holds: only then is a row that
+  // is missing a row that is gone.
   bool synchronized() const { return m_synchronized; }
-  // How many whole snapshots have landed: one per (re)subscription the MC answered.
+  // How many `shell` frames have landed: one per (re)subscription the MC answered.
   quint64 snapshots() const { return m_snapshots; }
   // Why the MC turned the shell subscription down (its `error` frame); empty
   // once a snapshot lands. The rows it had stay as they were.
@@ -72,6 +103,14 @@ private:
   void setEnvironment(const QString& mc, const QJsonObject& environment);
   void putRows(const QString& mc, const QJsonArray& rows);
   void putRow(const QString& mc, const QString& id, const QString& kind, const QJsonObject& fields);
+  // The MC's rows as of `epoch` and `rev` (a frame's); none when it gave no version.
+  void setVersion(const QString& mc, const QJsonValue& epoch, const QJsonValue& rev);
+  // Drops the MC's rows, which the frame being applied replaces; the keys of
+  // its threads go to `threads`.
+  void resetRows(const QString& mc, QSet<QString>& threads);
+  void removeMc(const QString& mc);
+  // Forgets the cached copies of `threads` (keys) that are no longer listed.
+  void forgetThreads(const QSet<QString>& threads);
   // Whether `row` is the thread itself: not the forwarding record of a move,
   // nor the copy its old machine still holds once the new one has it.
   bool lives(const QJsonObject& row) const;
@@ -81,11 +120,28 @@ private:
     QJsonObject capabilities;
     QJsonObject environment;
     bool online = false;
+    // The version of its rows; no epoch when the MC gave none.
+    QString epoch;
+    qint64 rev = 0;
     QHash<QString, QJsonObject> threads;
     QHash<QString, QJsonObject> projects;
   };
+  // What the cache has not been told of one MC.
+  struct Unsaved {
+    bool reset = false;
+    QHash<QString, cache::ShellRow> put;
+    QSet<QString> gone;
+  };
+  Unsaved& unsaved(const QString& mc);
+  // Takes the rows the cache kept for `origin` in place of the ones held.
+  void hold(const cache::Shell& kept, const QString& origin);
 
   QHash<QString, Mc> m_mcs;
+  LocalCache* m_cache = nullptr;
+  QString m_origin;
+  QHash<QString, Unsaved> m_unsaved;
+  QTimer m_flushTimer;
+  bool m_previewing = false;
   bool m_synchronized = false;
   quint64 m_snapshots = 0;
   QString m_problem;

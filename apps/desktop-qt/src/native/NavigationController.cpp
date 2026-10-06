@@ -84,6 +84,14 @@ void NavigationController::setStorePath(const QString& path) {
   m_route = *restored;
 }
 
+void NavigationController::preview() {
+  // Only a thread the cache lists. What a route that names nothing becomes is
+  // decided on the MC's rows (activate()), never on cached ones.
+  if (m_active || m_route.kind != QLatin1String("thread") || !m_store->thread(m_route.threadKey)) return;
+  m_previewing = true;
+  publish();
+}
+
 void NavigationController::activate() {
   if (m_active) return;
   m_active = true;
@@ -251,7 +259,7 @@ void NavigationController::go(const Route& to, bool replace) {
 }
 
 void NavigationController::publish() {
-  if (!m_active) return;
+  if (!m_active && !m_previewing) return;
   QString title;
   if (m_route.kind == QLatin1String("thread")) {
     if (const auto thread = m_store->thread(m_route.threadKey)) title = thread->title;

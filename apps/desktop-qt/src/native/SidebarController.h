@@ -39,6 +39,9 @@ public:
 
   // Starts publishing `sidebar` and claiming its actions.
   void activate();
+  // Publishes `sidebar` from rows the cache kept, before the MC answers;
+  // actions wait for activate().
+  void preview();
   bool isActive() const { return m_active; }
 
   // The logical projects, in sidebar order.
@@ -154,6 +157,7 @@ private:
   QLocale m_locale;
   QTimer m_minute;
   bool m_active = false;
+  bool m_previewing = false;
   sidebar::GroupingSettings m_grouping;
   QString m_timestampFormat = QStringLiteral("locale");
   QString m_threadSortOrder = QStringLiteral("updated_at");

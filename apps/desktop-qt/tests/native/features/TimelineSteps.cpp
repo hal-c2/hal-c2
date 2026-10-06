@@ -23,18 +23,86 @@ namespace {
 
 using namespace stream;
 
-void sendSnapshot(FakeMc& mc, int id, const QString& thread) {
-  QJsonArray rows;
-  const QMap<QString, QJsonObject> entities = mc.part<FakeStreams>().threads.value(thread);
-  for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
-    const QStringList key = it.key().split(QLatin1Char('\n'));
-    rows.append(QJsonArray{key.at(0), key.at(1), *it});
+// Answers a `sub` to a thread's stream as the MC does (lib/hal_c2/streams/server.ex):
+// the events since its offset when it resumes the MC's log, else a snapshot
+// of what its view holds; then `live`.
+void answer(FakeMc& mc, int id, const QJsonObject& shape) {
+  FakeStreams& fake = mc.part<FakeStreams>();
+  const QJsonObject sub = mc.subscriptions.last();
+  const QString thread = shape.value(QLatin1String("stream")).toString();
+  fake.asked.append({thread, sub, fake.sent.size(), fake.unfollowed.take(thread)});
+  const QMap<QString, QJsonObject> entities = fake.threads.value(thread);
+  const QJsonObject window = sub.value(QLatin1String("window")).toObject();
+  const bool opens = window.value(QLatin1String("items")).isDouble();
+  View view{shape.value(QLatin1String("kinds")).toObject()};
+  if (opens) {
+    view.windowed = true;
+    view.floor = takeRuns(entities, QJsonValue::Null, window.value(QLatin1String("items")).toInt()).second;
+  } else if (window.contains(QLatin1String("floor"))) {
+    view.windowed = true;
+    view.floor = window.value(QLatin1String("floor"));
   }
-  const int offset = mc.part<FakeStreams>().seq;
-  mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), offset},
-             {QStringLiteral("at"), iso(now())}, {QStringLiteral("part"), 0}, {QStringLiteral("rows"), rows},
-             {QStringLiteral("done"), true}});
-  mc.send({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), offset}});
+  fake.views.insert(id, view);
+  const QJsonValue offset = sub.value(QLatin1String("offset"));
+  const bool resumes = !opens && offset.isDouble() && offset.toInt() <= fake.seq &&
+                       (!sub.contains(QLatin1String("handle")) || sub.value(QLatin1String("handle")) == fake.handle);
+  if (resumes) {
+    QJsonArray events;
+    for (const FakeStreams::Change& change : fake.log.value(thread)) {
+      if (change.seq <= offset.toInt()) continue;
+      if (!holds(view, entities, change.kind, entities.value(change.kind + QLatin1Char('\n') + change.id))) continue;
+      events.append(QJsonArray{change.seq, change.kind, change.id, change.patch, iso(now())});
+    }
+    if (std::exchange(fake.cutCatchUp, false) && events.size() > 1) {
+      // The first part of two carries the offset the client is at; the
+      // connection goes before the second.
+      QJsonArray first;
+      first.append(events.first());
+      deliver(mc, {{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), offset}, {QStringLiteral("events"), first}});
+      mc.drop();
+      return;
+    }
+    if (!events.isEmpty()) {
+      deliver(mc, {{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), id},
+                   {QStringLiteral("offset"), events.last().toArray().at(0)}, {QStringLiteral("events"), events}});
+    }
+  } else {
+    QJsonArray rows;
+    for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
+      const QStringList key = it.key().split(QLatin1Char('\n'));
+      if (holds(view, entities, key.at(0), *it)) rows.append(QJsonArray{key.at(0), key.at(1), *it});
+    }
+    QJsonObject snapshot{{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq},
+                         {QStringLiteral("at"), iso(now())}, {QStringLiteral("part"), 0}, {QStringLiteral("rows"), rows},
+                         {QStringLiteral("done"), true}, {QStringLiteral("handle"), fake.handle}};
+    if (view.windowed) snapshot.insert(QStringLiteral("floor"), view.floor);
+    deliver(mc, snapshot);
+  }
+  deliver(mc, {{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq}, {QStringLiteral("handle"), fake.handle}});
+}
+
+// Answers `more`: the runs before the follower's window, as a page that
+// moves its floor down. Held while the scenario holds `pages`.
+void sendPage(FakeMc& mc, int id, int items) {
+  FakeStreams& fake = mc.part<FakeStreams>();
+  if (!fake.views.contains(id)) return;
+  View& view = fake.views[id];
+  const QMap<QString, QJsonObject> entities = fake.threads.value(mc.shapeOf(id).value(QLatin1String("stream")).toString());
+  QJsonArray rows;
+  QJsonValue floor = QJsonValue::Null;
+  if (view.windowed && !view.floor.isNull()) {
+    const auto [runs, lower] = takeRuns(entities, view.floor, items);
+    floor = lower;
+    View page{view.kinds};
+    for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
+      const QStringList key = it.key().split(QLatin1Char('\n'));
+      if (key.at(0) != QLatin1String("turn-item") && key.at(0) != QLatin1String("message") && key.at(0) != QLatin1String("node")) continue;
+      if (runs.contains(it->value(QLatin1String("runId")).toString()) && holds(page, entities, key.at(0), *it)) rows.append(QJsonArray{key.at(0), key.at(1), *it});
+    }
+    view.floor = floor;
+  }
+  deliver(mc, {{QStringLiteral("t"), QStringLiteral("page")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq},
+               {QStringLiteral("rows"), rows}, {QStringLiteral("floor"), floor}, {QStringLiteral("done"), true}});
 }
 
 const FakeMc::Extension streams([](FakeMc& mc) {
@@ -46,7 +114,17 @@ const FakeMc::Extension streams([](FakeMc& mc) {
       mc.forget(id);
       return;
     }
-    sendSnapshot(mc, id, shape.value(QLatin1String("stream")).toString());
+    answer(mc, id, shape);
+  });
+  mc.onFrame(QStringLiteral("more"), [&mc](const QJsonObject& frame) {
+    const int id = frame.value(QLatin1String("id")).toInt();
+    const int items = frame.value(QLatin1String("items")).toInt();
+    mc.part<FakeStreams>().sent.append(frame);
+    if (mc.holding(QStringLiteral("pages"))) {
+      mc.defer([&mc, id, items] { sendPage(mc, id, items); });
+    } else {
+      sendPage(mc, id, items);
+    }
   });
 });
 
@@ -163,6 +241,9 @@ const Steps steps([] {
     expect(redrawn.size() == 1 && inserted.isEmpty() && removed.isEmpty() && reset.isEmpty(),
            QStringLiteral("streamed text redrew %1 rows, inserted %2, removed %3, reset %4")
                .arg(redrawn.size()).arg(inserted.size()).arg(removed.size()).arg(reset.size()));
+    // And of that row only what shows the text: its delegate reads nothing else again.
+    const QList<int> roles = redrawn.first().at(2).value<QList<int>>();
+    expect(roles == QList<int>{TimelineModel::EntriesRole}, QStringLiteral("streamed text redrew %1 roles of its row").arg(roles.size()));
   });
   step(QStringLiteral("the reasoning is finished"), [](World& world, const Captures&, const Table&) {
     set(world, QStringLiteral("turn-item"), lastEntry(world).value(QStringLiteral("id")).toString(),
@@ -279,14 +360,50 @@ const Steps steps([] {
     change(world, QStringLiteral("turn-item"), QStringLiteral("reply"), {{QStringLiteral("a"), QJsonObject{{QStringLiteral("text"), QStringLiteral(" now shows tax.")}}}, {QStringLiteral("s"), QJsonObject{{QStringLiteral("streaming"), false}}}});
     settleRun(world, QStringLiteral("completed"), 30);
   });
+  step(QStringLiteral("the agent finishes the reply while the MC cannot be reached"), [](World& world, const Captures&, const Table&) {
+    // No retry gets through until the MC is back, so the client misses both changes.
+    world.mc.stopAccepting();
+    world.mc.drop();
+    world.waitFor([&] { return !world.native().client()->isReady(); }, QStringLiteral("the shell to see the drop"));
+    change(world, QStringLiteral("turn-item"), QStringLiteral("reply"), {{QStringLiteral("a"), QJsonObject{{QStringLiteral("text"), QStringLiteral(" now shows tax.")}}}, {QStringLiteral("s"), QJsonObject{{QStringLiteral("streaming"), false}}}});
+    settleRun(world, QStringLiteral("completed"), 30);
+  });
+  step(QStringLiteral("the MC is back and the connection drops again part-way through the catch-up"), [](World& world, const Captures&, const Table&) {
+    // The first part of the catch-up arrives and the connection goes; the
+    // next connection is sent all of it.
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    fake.cutCatchUp = true;
+    const qsizetype asked = fake.asked.size();
+    world.mc.startAccepting();
+    world.waitFor([&] { return !fake.cutCatchUp && fake.asked.size() >= asked + 2 && timeline(world).status() == QLatin1String("live"); },
+                  [&] { return QStringLiteral("the thread to catch up on a second connection; it was asked for %1 times and %2").arg(fake.asked.size() - asked).arg(describe(timeline(world))); });
+    world.sync();
+  });
+  step(QStringLiteral("the client asked again from where it was"), [](World& world, const Captures&, const Table&) {
+    const FakeStreams& fake = world.mc.part<FakeStreams>();
+    expect(fake.asked.size() >= 3, QStringLiteral("the thread was asked for %1 times").arg(fake.asked.size()));
+    const QJsonObject cut = fake.asked.at(fake.asked.size() - 2).sub;
+    const QJsonObject again = fake.asked.last().sub;
+    // The part it was sent moved nothing: the same offset, and both changes once more.
+    const QList<QJsonObject> sent = sentSince(world, fake.asked.last().sentBefore, QStringLiteral("events"));
+    expect(cut.value(QLatin1String("offset")).isDouble() && again.value(QLatin1String("offset")) == cut.value(QLatin1String("offset")) &&
+               sent.size() == 1 && sent.first().value(QLatin1String("events")).toArray().size() == 2 &&
+               sentSince(world, fake.asked.at(fake.asked.size() - 2).sentBefore, QStringLiteral("snapshot")).isEmpty(),
+           QStringLiteral("it asked with %1 and then %2").arg(show(cut.toVariantMap()), show(again.toVariantMap())));
+  });
   step(QStringLiteral("the agent writes more than the shell has read"), [](World& world, const Captures&, const Table&) {
     change(world, QStringLiteral("turn-item"), QStringLiteral("reply"), {{QStringLiteral("a"), QJsonObject{{QStringLiteral("text"), QStringLiteral(" now shows tax.")}}}}, true);
   });
   step(QStringLiteral("the MC tells the shell to resync the thread"), [](World& world, const Captures&, const Table&) {
     const FakeStreams& fake = world.mc.part<FakeStreams>();
     const qsizetype before = world.mc.subscriptions.size();
+    // The MC drops the subscription and names the offset before the first
+    // event it could not send (socket.ex): here, the last one it did send.
+    const QList<QJsonObject> sent = sentSince(world, 0, QStringLiteral("events"));
+    const QJsonValue offset = sent.isEmpty() ? QJsonValue(0) : sent.last().value(QLatin1String("offset"));
     for (const int id : followers(world, fake.thread)) {
-      world.mc.send({{QStringLiteral("t"), QStringLiteral("resync")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), 0}});
+      world.mc.send({{QStringLiteral("t"), QStringLiteral("resync")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), offset}});
+      world.mc.forget(id);
     }
     world.waitFor([&] { return world.mc.subscriptions.size() > before; }, QStringLiteral("the shell to subscribe again"));
     world.sync();

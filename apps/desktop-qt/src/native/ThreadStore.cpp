@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QTimeZone>
 
+#include "LocalCache.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "McClient.h"
@@ -26,8 +27,43 @@ ThreadStore::ThreadStore(ShellBridge*, McClient* client, ShellStore* store, QObj
       }
     }
   });
+  connect(client, &McClient::phaseChanged, this, &ThreadStore::showConnection);
   m_idleTimer.setSingleShot(true);
   connect(&m_idleTimer, &QTimer::timeout, this, &ThreadStore::evictIdle);
+}
+
+LocalCache* ThreadStore::cache() const {
+  const NativeWindow* window = NativeShell::of(this);
+  return window ? window->shell()->cache() : nullptr;
+}
+
+QString ThreadStore::connectionProblem() const {
+  switch (m_client->phase()) {
+    case McClient::Phase::Refused:
+      return tr("This device is no longer paired with its environment.");
+    case McClient::Phase::Blocked:
+      return tr("Its environment speaks another version of HAL-C2.");
+    case McClient::Phase::Offline:
+      return tr("This device is offline.");
+    case McClient::Phase::Retrying:
+      return tr("The connection to its environment dropped.");
+    case McClient::Phase::Closed:
+    case McClient::Phase::Connecting:
+    case McClient::Phase::Ready:
+      break;
+  }
+  return {};
+}
+
+void ThreadStore::showConnection() {
+  const QString problem = connectionProblem();
+  if (problem.isEmpty()) return;
+  for (const Followed& followed : std::as_const(m_threads)) {
+    // One with nothing to show keeps saying it is loading.
+    if (followed.model && followed.model->status() != QLatin1String("live") && followed.model->rowCount() > 0) {
+      followed.model->setStatus(QStringLiteral("unreachable"), problem);
+    }
+  }
 }
 
 QDateTime ThreadStore::now() const {
@@ -35,7 +71,15 @@ QDateTime ThreadStore::now() const {
 }
 
 ThreadStore::~ThreadStore() {
-  for (Followed& followed : m_threads) unfollow(followed);
+  for (Followed& followed : m_threads) {
+    unfollow(followed);
+    if (followed.model) followed.model->park();
+  }
+}
+
+void ThreadStore::preview() {
+  const QString key = NativeShell::of(this)->controller<NavigationController>()->threadKey();
+  if (!key.isEmpty() && m_store->thread(key)) open(key);
 }
 
 void ThreadStore::activate() {
@@ -53,7 +97,8 @@ void ThreadStore::activate() {
 QJsonObject ThreadStore::streamShape(const QString& environmentId, const QString& threadId) {
   return {{QStringLiteral("type"), QStringLiteral("stream")},
           {QStringLiteral("environment"), environmentId},
-          {QStringLiteral("stream"), threadId}};
+          {QStringLiteral("stream"), threadId},
+          {QStringLiteral("kinds"), TimelineModel::streamKinds()}};
 }
 
 TimelineModel* ThreadStore::timeline(const QString& threadKey) const {
@@ -113,7 +158,25 @@ void ThreadStore::open(const QString& threadKey) {
       configure(followed.model);
       connect(followed.model, &TimelineModel::attachmentWanted, this,
               [this, threadKey, model = followed.model.data()](const QString& id) { signAttachment(model, threadKey, id); });
-      follow(threadKey);
+      connect(followed.model, &TimelineModel::earlierWanted, this, [this, threadKey](int items) {
+        m_client->more(m_threads.value(threadKey).subscription, items);
+      });
+      LocalCache* kept = cache();
+      followed.model->setCache(kept);
+      if (kept && kept->isOpen()) {
+        // What the cache kept shows first, and says where the stream resumes.
+        followed.restoring = true;
+        kept->loadThread(threadKey, followed.model, [this, threadKey, model = followed.model.data()](const cache::Thread& thread) {
+          const auto it = m_threads.find(threadKey);
+          if (it == m_threads.end() || it->model != model) return;
+          it->restoring = false;
+          model->restore(thread);
+          showConnection();
+          follow(threadKey);
+        });
+      } else {
+        follow(threadKey);
+      }
     }
     evict();
   }
@@ -133,7 +196,16 @@ void ThreadStore::close(const QString& threadKey) {
     m_active.clear();
     emit activeThreadChanged();
   }
-  if (model) model->deleteLater();
+  if (!model) return;
+  if (m_store->synchronized() && !m_store->thread(threadKey)) {
+    // Deleted, moved to another machine, or its environment removed: there
+    // is nothing to come back to.
+    model->setCache(nullptr);
+    if (LocalCache* kept = cache()) kept->forgetThread(threadKey);
+  } else {
+    model->park();
+  }
+  model->deleteLater();
 }
 
 void ThreadStore::reload(const QString& threadKey) {
@@ -143,6 +215,7 @@ void ThreadStore::reload(const QString& threadKey) {
   it->waitOnline = false;
   it->model->setStatus(QStringLiteral("loading"));
   follow(threadKey);
+  showConnection();
 }
 
 // A signed address stops working a little before the MC says, so an image
@@ -168,9 +241,10 @@ void ThreadStore::evict() {
 }
 
 void ThreadStore::forgetRemoved() {
+  // Only on the MC's word: rows from the cache may be behind.
   if (!m_store->synchronized()) return;
   for (const QString& key : m_threads.keys()) {
-    if (m_threads.value(key).listed && !m_store->servesEnvironment(key.left(key.indexOf(QLatin1Char(':'))))) close(key);
+    if (m_threads.value(key).listed && !m_store->thread(key)) close(key);
   }
 }
 
@@ -194,13 +268,17 @@ void ThreadStore::evictIdle() {
 
 void ThreadStore::follow(const QString& threadKey) {
   Followed& followed = m_threads[threadKey];
-  if (followed.subscription) return;
+  if (followed.subscription || followed.restoring) return;
   if (!m_store->thread(threadKey)) return;  // not in the sidebar yet: ShellStore::changed retries
   followed.waitOnline = false;
   followed.listed = true;
   const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
-  followed.subscription = m_client->subscribe(this, streamShape(threadKey.left(colon), threadKey.mid(colon + 1)),
-                                              [this, threadKey](const QJsonObject& frame) { onFrame(threadKey, frame); });
+  // The model says where each `sub` frame resumes from: the first, and the
+  // ones after a reconnect or `resync`.
+  followed.subscription = m_client->subscribe(
+      this, streamShape(threadKey.left(colon), threadKey.mid(colon + 1)),
+      [this, threadKey](const QJsonObject& frame) { onFrame(threadKey, frame); },
+      [model = followed.model] { return model ? model->subscribing() : QJsonObject(); });
 }
 
 void ThreadStore::unfollow(Followed& followed) {
@@ -212,14 +290,9 @@ void ThreadStore::onFrame(const QString& threadKey, const QJsonObject& frame) {
   if (it == m_threads.end() || !it->model) return;
   TimelineModel* model = it->model;
   const QString type = frame.value(QLatin1String("t")).toString();
-  if (type == QLatin1String("snapshot")) {
-    model->snapshot(frame.value(QLatin1String("part")).toInt(), frame.value(QLatin1String("rows")).toArray(),
-                    frame.value(QLatin1String("done")).toBool());
-  } else if (type == QLatin1String("events")) {
-    model->events(frame.value(QLatin1String("events")).toArray());
-  } else if (type == QLatin1String("live")) {
-    model->setStatus(QStringLiteral("live"));
-  } else if (type == QLatin1String("error") || type == QLatin1String("end")) {
+  if (type != QLatin1String("error") && type != QLatin1String("end")) {
+    model->receive(frame);
+  } else {
     // The MC ends a refused subscription itself; forget it and retry when
     // the MC (or the connection) comes back.
     unfollow(*it);

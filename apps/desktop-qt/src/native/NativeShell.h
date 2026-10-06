@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "LocalCache.h"
 #include "NativeController.h"
 #include "McClient.h"
 #include "ShellStore.h"
@@ -60,6 +61,8 @@ public:
 private:
   friend class NativeShell;
   void activate();
+  // Shows the cached sidebar and the thread the window was left on.
+  void preview();
   bool handle(const QString& action, const QVariant& payload);
 
   NativeShell* m_shell;
@@ -79,7 +82,8 @@ private:
 // sidebar and controllers (NativeController.h): the composer's turn RPCs, the
 // terminal drawer, navigation and the rest, beside the shared ones every
 // window reads alike (settings, alerts, quitting). The controllers start once
-// the first shell snapshot lands.
+// the first shell snapshot lands; until then the windows show the sidebar and
+// the open thread the cache kept (LocalCache), which nothing acts on.
 class NativeShell : public QObject {
   Q_OBJECT
 
@@ -92,6 +96,8 @@ public:
 
   McClient* client() { return &m_client; }
   ShellStore* store() { return &m_store; }
+  // What the client keeps of the MC between runs (setStoreDirs' `cache`).
+  LocalCache* cache() { return &m_cache; }
   // The main window's.
   SidebarController* sidebar() { return main()->sidebar(); }
   // The main window's controller of type T, else the shared one, or null.
@@ -140,7 +146,8 @@ public:
   // the route and panels of the window `kMain` directly in `state` and any
   // other's under `shell-windows/<id>/`, and which are open, oldest first, in
   // `<state>/shell-windows.json`. The first window takes the first of those.
-  void setStoreDirs(const QString& state, const QString& data);
+  // `cache` holds the client's cache of the MC; without it nothing is cached.
+  void setStoreDirs(const QString& state, const QString& data, const QString& cache = {});
   // Opens the rest of the windows that were open when the app last quit.
   void restoreWindows();
 
@@ -176,6 +183,8 @@ private:
   QStringList savedWindows() const;
   QString windowDir(const QString& id) const;
 
+  // Before the store and the windows that write to it, so it goes after them.
+  LocalCache m_cache;
   McClient m_client;
   ShellStore m_store;
   // The bridge the shared controllers publish on, which every window's
