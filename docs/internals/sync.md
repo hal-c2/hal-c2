@@ -54,8 +54,12 @@ seq read out of the events.
 ### Trimming belongs to the thread's MC
 
 Command output and file diffs are the bulk of a thread and no client shows them. They are trimmed
-in the stream process, once for every client and before the cluster hop. Trimming in the socket
-would carry them across to the MC the client is connected to and drop them there.
+on the MC that owns the thread, once for every client and before the cluster hop. Trimming in the
+socket would carry them across to the MC the client is connected to and drop them there.
+
+A subscriber on another MC is fed through its own relay process, so a slow link stalls only that
+subscriber. Everything it is sent goes through the relay, pages included: a page is the thread as
+of a seq, and one that overtook the events before it would have them applied twice.
 
 ## The sidebar: versions
 
