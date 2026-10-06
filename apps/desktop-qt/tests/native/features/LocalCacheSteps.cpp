@@ -219,6 +219,25 @@ const Steps steps([] {
     start(world);
   });
   step(QStringLiteral("the app starts and has not been told where its MC is"), [](World& world, const Captures&, const Table&) { launch(world); });
+  step(QStringLiteral("the app starts and its MC has not sent its thread list yet"), [](World& world, const Captures&, const Table&) {
+    world.mc.holdSnapshot = true;
+    start(world);
+    // The MC has heard the client ask for its thread list, and holds its answer.
+    world.waitFor([&] { return world.mc.subscriptions.size() > kept(world).subs; }, QStringLiteral("the client to ask for the thread list"));
+    world.sync();
+  });
+  step(QStringLiteral("the MC has not been asked for the thread"), [](World& world, const Captures&, const Table&) {
+    QStringList asked;
+    for (qsizetype i = kept(world).subs; i < world.mc.subscriptions.size(); ++i) {
+      asked.append(world.mc.subscriptions.at(i).value(QLatin1String("shape")).toObject().value(QLatin1String("type")).toString());
+    }
+    expect(asked == QStringList{QStringLiteral("shell")} && !world.native().store()->synchronized(),
+           QStringLiteral("since it started the client asked for %1").arg(asked.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the MC sends its thread list"), [](World& world, const Captures&, const Table&) {
+    world.mc.holdSnapshot = false;
+    world.mc.sendSnapshot();
+  });
   step(QStringLiteral("the app starts pointed at another MC"), [](World& world, const Captures&, const Table&) {
     launch(world);
     expect(!sidebarSectionOf(world, kept(world).thread).isEmpty(), QStringLiteral("nothing was kept to show"));

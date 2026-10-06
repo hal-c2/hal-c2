@@ -275,8 +275,11 @@ void ThreadStore::follow(const QString& threadKey) {
   Followed& followed = m_threads[threadKey];
   if (followed.subscription || followed.restoring) return;
   if (!m_store->thread(threadKey)) return;  // not in the sidebar yet: ShellStore::changed retries
-  followed.waitOnline = false;
   followed.listed = true;
+  // Listed by what the client kept, and shown from it: the MC is asked for
+  // the thread once its own list says it is still there (retry()).
+  if (!m_store->synchronized()) return;
+  followed.waitOnline = false;
   const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
   // The model says where each `sub` frame resumes from: the first, and the
   // ones after a reconnect or `resync`.

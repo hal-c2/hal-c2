@@ -39,6 +39,15 @@ Feature: What a client keeps between runs
     And neither is shown as live
 
   @desktop @mobile @backlog-mobile
+  Scenario: A kept thread is asked for once its MC has listed it
+    Given the user was reading a thread in "shop" when the app quit
+    When the app starts and its MC has not sent its thread list yet
+    Then the thread shows the conversation it kept
+    And the MC has not been asked for the thread
+    When the MC sends its thread list
+    Then the client asks for the thread from where its copy stands
+
+  @desktop @mobile @backlog-mobile
   Scenario: What a client kept of one MC is not shown for another
     Given the user was reading a thread in "shop" when the app quit
     When the app starts pointed at another MC
