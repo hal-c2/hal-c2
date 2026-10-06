@@ -72,3 +72,8 @@ target_link_libraries(hal-c2-mobile PRIVATE
   hal_c2_bricksplugin
   hal_c2_mobileplugin
 )
+
+if(ANDROID)
+  include(cmake/AndroidPackage.cmake)
+  hal_c2_android_package(hal-c2-mobile)
+endif()
