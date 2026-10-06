@@ -11,8 +11,9 @@ defmodule HalC2.Streams.Server do
         chunks when it starts fresh, where `rows` is a list of `{kind, id, entity}`
         and `floor` is its window's (absent without a window),
       * `{:events, events, seq}` chunks when it resumes from an offset: the log's
-        events since, merged per entity, or past `@max_replay` of them one event
-        replacing each entity changed since (`HalC2.StreamState.changed_since/2`),
+        events since, merged per entity, or one event replacing each entity changed
+        since (`HalC2.StreamState.changed_since/2`) when the log holds more than
+        `@max_replay` of them or they do not fit one chunk,
     * `{:live, seq, handle}` once it is caught up, then
     * `{:events, events, seq}` for every later commit that touches its view, and
     * `{:page, seq, rows, floor, :more | :done}` chunks answering `more/3`.
@@ -383,7 +384,15 @@ defmodule HalC2.Streams.Server do
        missed =
          case replay do
            events when is_list(events) ->
-             HalC2.Web.Protocol.coalesce(events) |> then(&View.replayed(view, stream, &1))
+             merged =
+               HalC2.Web.Protocol.coalesce(events) |> then(&View.replayed(view, stream, &1))
+
+             # Sent in parts it could be cut off part-way, and a client that had
+             # applied the first of them would be sent them again. A patch applied
+             # twice appends its text twice; a whole entity is the same either way.
+             if length(chunk(merged, [], 0, [])) > 1,
+               do: View.changed_since(view, stream, offset),
+               else: merged
 
            :too_many when is_integer(offset) and offset <= stream.seq ->
              View.changed_since(view, stream, offset)
@@ -397,8 +406,8 @@ defmodule HalC2.Streams.Server do
            :ok
 
          events when is_list(events) ->
-           # Merged events only make sense whole: a client cut off part-way resumes
-           # from where it was, so only the last chunk moves its offset.
+           # A client cut off part-way resumes from where it was, so only the last
+           # chunk moves its offset.
            send_chunks(events, fn chunk, more ->
              seq = if more == :done, do: List.last(chunk).seq, else: offset
              send(pid, {:hal_c2_stream, id, {:events, chunk, seq}})

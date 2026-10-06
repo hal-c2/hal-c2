@@ -144,16 +144,18 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     Map.put(context, :seq, last)
   end
 
-  step "it receives what it missed in several frames", context do
+  step "it receives what it missed in several frames of whole entities", context do
     {live, skipped, client} =
       WsClient.recv_until(World.client(context), &(&1["t"] == "live" and &1["id"] == 2), 5_000)
 
     parts = for %{"t" => "events", "id" => 2} = frame <- skipped, do: frame
     assert length(parts) > 1
+    events = Enum.flat_map(parts, & &1["events"])
+    assert Enum.map(events, &Enum.at(&1, 2)) == ~w(big1 big2 big3 big4)
 
-    assert for(part <- parts, [_seq, _kind, id | _] <- part["events"], do: id) ==
-             ~w(big1 big2 big3 big4)
-
+    # Whole entities, so a part applied twice (the socket dropped before the last
+    # and the client asked again from where it was) leaves the same thread.
+    assert Enum.all?(events, &match?([_, _, _, %{"d" => true, "s" => %{}}, _], &1))
     assert live["offset"] == context.seq
     refute Enum.any?(skipped, &(&1["t"] == "snapshot"))
     context |> Map.put(:parts, parts) |> World.put_client(client)

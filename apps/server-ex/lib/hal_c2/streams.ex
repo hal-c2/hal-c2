@@ -26,11 +26,13 @@ defmodule HalC2.Streams do
   @doc "The stream's server, started if needed."
   @spec ensure(String.t()) :: pid
   def ensure(stream_id) do
-    case Registry.lookup(HalC2.Streams.Registry, stream_id) do
-      [{pid, _}] ->
-        pid
-
-      [] ->
+    # The registry forgets a stream a moment after it stops: one found there that
+    # has stopped is started again, as one not found is.
+    with [{pid, _}] <- Registry.lookup(HalC2.Streams.Registry, stream_id),
+         true <- Process.alive?(pid) do
+      pid
+    else
+      _ ->
         case DynamicSupervisor.start_child(HalC2.Streams.Supervisor, {Server, stream_id}) do
           {:ok, pid} -> pid
           {:error, {:already_started, pid}} -> pid

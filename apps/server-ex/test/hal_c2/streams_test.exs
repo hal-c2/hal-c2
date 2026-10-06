@@ -229,6 +229,38 @@ defmodule HalC2.StreamsTest do
     assert_receive {:hal_c2_stream, "th-8", {:live, ^last, _}}
   end
 
+  test "a catch-up that takes several parts is made of whole entities, which may be applied twice" do
+    {:ok, offset} =
+      Streams.commit("th-20", :thread, thread("th-20") ++ [item(1, 1, %{"text" => ""})])
+
+    big = String.duplicate("x", 100_000)
+
+    for n <- 1..4 do
+      append = {"turn-item", "item-1", %{"a" => %{"text" => big}}}
+      note = {"note", "n-#{n}", %{"s" => %{"text" => big}}}
+      {:ok, _} = Streams.commit("th-20", :thread, [append, note])
+    end
+
+    :ok = Streams.subscribe("th-20", self(), offset, %{handle: Streams.Server.handle()})
+    assert_receive {:hal_c2_stream, "th-20", {:events, first, ^offset}}
+    assert_receive {:hal_c2_stream, "th-20", {:events, _rest, seq}} when seq > offset
+
+    # The reply grew by appends, but a part that was applied and then sent again
+    # must not append them twice.
+    assert Enum.all?(first, &match?(%{patch: %{"d" => true, "s" => %{}}}, &1))
+  end
+
+  test "a store that was running before it kept an id still names its log" do
+    id = HalC2.Store.id()
+    # As after taking this version's code in place: nothing put the id where it is read.
+    key = {:id, {HalC2.Store, HalC2.Store}}
+    assert :persistent_term.get(key) == id
+    :persistent_term.erase(key)
+
+    assert HalC2.Store.id() == id
+    assert Streams.Server.handle() =~ id
+  end
+
   test "an offset that came with another handle starts over" do
     {:ok, seq} = Streams.commit("th-9", :thread, thread("th-9"))
     :ok = Streams.subscribe("th-9", self(), seq, %{handle: "another-store.1"})

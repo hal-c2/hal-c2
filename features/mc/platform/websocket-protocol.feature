@@ -63,11 +63,11 @@ Feature: The protocol 3 WebSocket
     And no snapshot
 
   @mc
-  Scenario: A large catch-up arrives in parts that only count once whole
+  Scenario: A large catch-up arrives in parts that are safe to apply twice
     Given the client saw a thread up to some offset and disconnected
     And more was written since than one frame carries
     When it subscribes again from that offset
-    Then it receives what it missed in several frames
+    Then it receives what it missed in several frames of whole entities
     And only the last of them moves its offset
 
   @mc

@@ -47,9 +47,11 @@ snapshots written before the record existed carry none, so a client behind such 
 over once. Deletions are remembered up to a bound, past which `since` moves up; that is the only
 way a long-lived stream forgets.
 
-A catch-up merged per entity only makes sense whole. Its frames carry the offset the client is at
-after applying them, which only the last frame moves. Clients store the frame's offset, never a
-seq read out of the events.
+A catch-up that fits one frame is the log's patches, merged per entity. One that does not is sent
+as whole entities instead, in parts. A connection can drop between parts, and a client that
+applied the first of them is then sent them again: a patch applied twice appends its text twice,
+a whole entity is the same either way. The parts before the last carry the offset the client
+started from, so a client stores the frame's offset, never a seq read out of the events.
 
 ### Trimming belongs to the thread's MC
 
