@@ -6,11 +6,13 @@
 
 #include "FFmpeg.h"
 
+#ifdef HAL_C2_HAS_FFMPEG
 namespace {
 // Frees a converted picture's pixels; set once FFmpeg has loaded, which it
 // has before any picture exists.
 decltype(&::av_free) freePixels = nullptr;
 }  // namespace
+#endif
 
 DeviceDecoder::DeviceDecoder(QObject* parent) : QObject(parent) {
   m_thread.setObjectName(QStringLiteral("device-decoder"));
@@ -130,6 +132,7 @@ void DeviceDecoder::drain() {
           break;
         }
       }
+#ifdef HAL_C2_HAS_FFMPEG
       m_openEpoch = epoch;
       m_av->packet_unref(m_packet);
       const qsizetype size = unit.data.size() - unit.offset;
@@ -149,11 +152,14 @@ void DeviceDecoder::drain() {
         m_av->frame_move_ref(m_last, m_picture);
         decoded = true;
       }
+#endif
     }
+#ifdef HAL_C2_HAS_FFMPEG
     if (decoded && !failed) {
       source = QSize(m_last->width, m_last->height);
       newest = convert(m_last, limit);
     }
+#endif
     bool notify = false;
     {
       QMutexLocker lock(&m_mutex);
@@ -174,6 +180,21 @@ void DeviceDecoder::drain() {
     if (notify) emit frameReady();
   }
 }
+
+#ifndef HAL_C2_HAS_FFMPEG
+
+// No decoder in this build: open() says so and drain() stops there.
+QString DeviceDecoder::open(const QByteArray&) {
+  return ffmpeg::missing();
+}
+
+void DeviceDecoder::close() {}
+
+QImage DeviceDecoder::convert(AVFrame*, const QSize&) {
+  return {};
+}
+
+#else
 
 QString DeviceDecoder::open(const QByteArray& avcc) {
   close();
@@ -234,3 +255,5 @@ QImage DeviceDecoder::convert(AVFrame* picture, const QSize& limit) {
   m_av->scale(m_scaler, picture->data, picture->linesize, 0, picture->height, planes, strides);
   return QImage(bits, size.width(), size.height(), stride, QImage::Format_RGB32, [](void* data) { freePixels(data); }, bits);
 }
+
+#endif
