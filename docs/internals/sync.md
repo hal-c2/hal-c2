@@ -21,11 +21,13 @@ A client that keeps a thread keeps three things with it.
 
 - **Offset**: the seq of the last event it applied. Seqs count every event in one MC's store, so
   an offset means nothing in another store.
-- **Handle**: names the store the offset came from and the trimming rules
-  ([`wire.ex`](../../apps/server-ex/lib/hal_c2/web/wire.ex)) its entities were sent under. A
-  thread that moved to another machine, or an MC whose trimming changed, has another handle, and
-  the client starts over. Without the handle a kept offset would be replayed against a log it did
-  not come from. Change `Wire.version/0` whenever trimming changes what a client stores.
+- **Handle**: names what the copy is a copy of: the store the offset came from, the trimming rules
+  ([`wire.ex`](../../apps/server-ex/lib/hal_c2/web/wire.ex)) its entities were sent under, and
+  the kinds of entity the client asked for. A thread that moved to another machine, an MC whose
+  trimming changed, or a client that now asks for other kinds has another handle, and the client
+  starts over. Without the handle a kept offset would be replayed against a log it did not come
+  from, or against a copy that never held what is now asked for. Change `Wire.version/0`
+  whenever trimming changes what a client stores.
 - **Window**: a long thread opens as its newest runs. The window's floor is a run ordinal; turn
   items, messages and nodes of earlier runs are not held, everything else is. Earlier runs arrive
   as pages when the client asks.

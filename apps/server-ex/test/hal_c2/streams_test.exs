@@ -261,6 +261,29 @@ defmodule HalC2.StreamsTest do
     assert Streams.Server.handle() =~ id
   end
 
+  test "an offset kept for other kinds starts over" do
+    {:ok, seq} = Streams.commit("th-23", :thread, thread("th-23") ++ [run(1), item(1, 1)])
+
+    runs = %{"run" => %{}}
+    :ok = Streams.subscribe("th-23", self(), nil, %{kinds: runs})
+    {^seq, %{handle: handle}, rows} = client_snapshot("th-23")
+    assert Enum.map(rows, &elem(&1, 0)) == ["run"]
+    assert_receive {:hal_c2_stream, "th-23", {:live, ^seq, ^handle}}
+    :ok = Streams.unsubscribe("th-23", self())
+
+    # Nothing changed since, but the copy never held the items it now asks for.
+    items = %{"turn-item" => %{}}
+    :ok = Streams.subscribe("th-23", self(), seq, %{handle: handle, kinds: items})
+    assert {^seq, %{handle: other}, [{"turn-item", "item-1", _}]} = client_snapshot("th-23")
+    assert other != handle
+
+    # The same kinds resume.
+    :ok = Streams.unsubscribe("th-23", self())
+    :ok = Streams.subscribe("th-23", self(), seq, %{handle: other, kinds: items})
+    assert_receive {:hal_c2_stream, "th-23", {:live, ^seq, ^other}}
+    refute_received {:hal_c2_stream, "th-23", {:snapshot, _, _, _, _, _}}
+  end
+
   test "an offset that came with another handle starts over" do
     {:ok, seq} = Streams.commit("th-9", :thread, thread("th-9"))
     :ok = Streams.subscribe("th-9", self(), seq, %{handle: "another-store.1"})
@@ -450,7 +473,8 @@ defmodule HalC2.StreamsTest do
 
     # From the log.
     items_only = %{kinds: %{"turn-item" => %{}}, window: %{floor: 2}}
-    client = %{handle: Streams.Server.handle(), kinds: items_only.kinds, window: {:floor, 2}}
+    handle = Streams.Server.handle(items_only.kinds)
+    client = %{handle: handle, kinds: items_only.kinds, window: {:floor, 2}}
     :ok = Streams.subscribe("th-22", self(), seq, client)
     assert_receive {:hal_c2_stream, "th-22", {:events, events, ^last}}
     assert Enum.all?(events, &(&1.kind == "turn-item"))

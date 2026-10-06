@@ -67,12 +67,16 @@ defmodule HalC2.Streams.Server do
   def idle_stop, do: @idle_stop
 
   @doc """
-  Names this MC's log as clients see it. Offsets count this store's events and
-  entities are trimmed by this version's rules, so a client resumes from an offset
-  only where both still hold.
+  Names what a client's copy is a copy of: this store's log, as this version trims
+  it, of the `kinds` the client asked for. Offsets count this store's events, and
+  what was left out of a copy by its kinds was never sent, so a client resumes from
+  an offset only while all three still hold.
   """
-  @spec handle() :: String.t()
-  def handle, do: "#{Store.id()}.#{HalC2.Web.Wire.version()}"
+  @spec handle(View.kinds()) :: String.t()
+  def handle(kinds \\ nil) do
+    log = "#{Store.id()}.#{HalC2.Web.Wire.version()}"
+    if kinds, do: "#{log}.#{:erlang.phash2(kinds)}", else: log
+  end
 
   def start_link(stream_id),
     do:
@@ -365,7 +369,7 @@ defmodule HalC2.Streams.Server do
   end
 
   defp initial(%{id: id, stream: stream} = state, pid, offset, client) do
-    handle = handle()
+    handle = handle(client[:kinds])
     # An offset from another log, or a window that was never set, resumes nothing.
     resumes? = client[:handle] in [nil, handle] and not match?({:items, _}, client[:window])
 

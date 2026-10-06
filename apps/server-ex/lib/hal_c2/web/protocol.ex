@@ -138,7 +138,8 @@ defmodule HalC2.Web.Protocol do
   `floor` with it and subscribes with them. It is then sent only what it lacks, as
   `events`: the changes since its offset, or past a point one event replacing each
   entity changed since. A snapshot follows only when the handle no longer names
-  this MC's log (the thread moved, or the wire format changed).
+  what the client holds (the thread moved, the wire format changed, or the client
+  asks for other kinds than its copy was made of).
   """
 
   @version 3
