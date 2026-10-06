@@ -269,6 +269,12 @@ const Steps steps([] {
     world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nSidebar { height: 600 }\n", QSize(256, 600));
     world.waitFor([&] { return world.brick->shows(QStringLiteral("Tax line")); }, QStringLiteral("the window to draw the thread list"));
   });
+  step(QStringLiteral("the first-run screen does not cover them"), [](World& world, const Captures&, const Table&) {
+    // WelcomeWizard covers the window for any gate but "app".
+    const QVariantMap onboarding = world.state(QStringLiteral("onboarding")).toMap();
+    expect(onboarding.value(QStringLiteral("gate")) == QLatin1String("app") && onboarding.value(QStringLiteral("recovery")).toString().isEmpty(),
+           QStringLiteral("the first-run gate is \"%1\"").arg(onboarding.value(QStringLiteral("gate")).toString()));
+  });
   step(QStringLiteral("neither is shown as live"), [](World& world, const Captures&, const Table&) {
     ShellStore* shell = world.native().store();
     QStringList online;

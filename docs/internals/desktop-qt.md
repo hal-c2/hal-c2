@@ -1195,7 +1195,10 @@ one of another schema, costs one full load and nothing else. The mobile client b
   routes, alerts, forgetting a thread) waits for it. Before it, `NativeShell` only previews
   (`NativeController::preview`): the sidebar, the route of a thread the cache lists, and that
   thread's kept rows as `loading` or `unreachable`, never `live`. Starting the controllers on
-  cached rows instead would let them call an MC that has not answered.
+  cached rows instead would let them call an MC that has not answered. The first-run gate is the
+  one thing preview settles: it covers the whole window until it knows setup is done, so a device
+  that recorded finishing setup lifts it from that record. Without that the kept rows are painted
+  under the cover and nobody sees them.
 - **The cache is shown before the MC is known.** The desktop learns its MC's origin from the host,
   seconds after the window is up, so `ShellStore::showKept` holds the rows of the MC the client was
   last opened at until then. Only one origin's thread list is kept, and being opened at another

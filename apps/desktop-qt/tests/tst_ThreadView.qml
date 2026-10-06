@@ -315,9 +315,8 @@ Item {
             compare(opened.length, 2);
             compare(opened[1].payload.tab, "files");
             compare(opened[1].payload.path, "src/cart.ts");
-            const details = findText(timeline.itemAtIndex(2), "+ const tax = 0.2;");
-            verify(details !== null);
-            verify(!visibleIn(details), "opening the file leaves the call's details closed");
+            // A closed call lays its details out only once it opens.
+            verify(!visibleIn(findText(timeline.itemAtIndex(2), "+ const tax = 0.2;")), "opening the file leaves the call's details closed");
         }
 
         function hoverReply(view) {

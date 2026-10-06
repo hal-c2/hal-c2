@@ -3,6 +3,7 @@
 #   apps/desktop-qt/src/native/ShellStore.cpp (the kept thread list, `have`, changed rows and resets)
 #   apps/desktop-qt/src/native/ThreadStore.cpp, TimelineModel.cpp (restoring a thread, resuming it, trimming what is kept)
 #   apps/desktop-qt/src/native/NativeShell.cpp (showing what was kept before the MC answers)
+#   apps/desktop-qt/src/native/OnboardingController.cpp (the first-run gate of a device that finished setup)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (a `sub`'s offset, handle, window and have)
 #   apps/server-ex/lib/hal_c2/streams/server.ex (resuming a log from an offset, starting over on another handle)
 #   apps/server-ex/lib/hal_c2/shell.ex (row versions: epoch and rev)
@@ -24,6 +25,7 @@ Feature: What a client keeps between runs
     When the app starts while its MC is not answering
     Then the thread list shows what the client kept
     And the thread shows the conversation it kept
+    And the first-run screen does not cover them
     And neither is shown as live
 
   # The desktop's host starts its MC after the window is up, and only then says where it is.
@@ -33,6 +35,7 @@ Feature: What a client keeps between runs
     When the app starts and has not been told where its MC is
     Then the thread list shows what the client kept
     And the thread shows the conversation it kept
+    And the first-run screen does not cover them
     And neither is shown as live
 
   @desktop @mobile @backlog-mobile

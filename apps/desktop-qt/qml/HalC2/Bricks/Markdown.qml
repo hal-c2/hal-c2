@@ -177,6 +177,20 @@ Item {
             measure();
     }
 
+    // A table's header, rows and alignments. A segment that becomes a table
+    // is one for a moment before its payload is a table's: an empty one then.
+    function tableSpec(payload) {
+        try {
+            return JSON.parse(payload);
+        } catch (error) {
+            return {
+                header: [],
+                rows: [],
+                align: []
+            };
+        }
+    }
+
     onTextChanged: sync()
     onStreamingChanged: sync()
     onLineBreaksChanged: sync()
@@ -500,8 +514,29 @@ Item {
                         id: grid
                         objectName: "markdownTable"
 
-                        readonly property var spec: JSON.parse(seg.payload)
+                        readonly property var spec: root.tableSpec(seg.payload)
                         readonly property var rows: [spec.header].concat(spec.rows)
+
+                        // The table's lines, kept in step with its rows: one
+                        // that grows as the reply streams is the only one
+                        // whose cells are made again.
+                        function syncLines() {
+                            for (let r = 0; r < rows.length; ++r) {
+                                const cells = JSON.stringify(rows[r]);
+                                if (r >= lineModel.count)
+                                    lineModel.append({
+                                        cellsJson: cells
+                                    });
+                                else if (lineModel.get(r).cellsJson !== cells)
+                                    lineModel.setProperty(r, "cellsJson", cells);
+                            }
+                            if (lineModel.count > rows.length)
+                                lineModel.remove(rows.length, lineModel.count - rows.length);
+                        }
+                        onRowsChanged: syncLines()
+                        ListModel {
+                            id: lineModel
+                        }
                         property bool expanded: Settings.setting("wordWrap") ?? true
                         property bool copied: false
                         property var widths: []
@@ -522,7 +557,8 @@ Item {
                             const next = [];
                             for (let r = 0; r < lines.count; ++r) {
                                 const line = lines.itemAt(r);
-                                if (!line)
+                                // One that is going away answers nothing.
+                                if (!line || typeof line.cell !== "function")
                                     continue;
                                 for (let c = 0; c < line.cellCount; ++c) {
                                     const cell = line.cell(c);
@@ -539,7 +575,7 @@ Item {
                             const all = [];
                             for (let r = 0; r < lines.count; ++r) {
                                 const line = lines.itemAt(r);
-                                for (let c = 0; line && c < line.cellCount; ++c) {
+                                for (let c = 0; line && typeof line.cell === "function" && c < line.cellCount; ++c) {
                                     if (line.cell(c))
                                         all.push(line.cell(c));
                                 }
@@ -550,7 +586,10 @@ Item {
                         implicitWidth: naturalWidth
                         implicitHeight: footer.y + footer.height
                         onExpandedChanged: Qt.callLater(measure)
-                        Component.onCompleted: Qt.callLater(measure)
+                        Component.onCompleted: {
+                            syncLines();
+                            Qt.callLater(measure);
+                        }
 
                         Timer {
                             id: copiedTimer
@@ -568,10 +607,11 @@ Item {
                                 id: tableBody
                                 Repeater {
                                     id: lines
-                                    model: grid.rows
+                                    model: lineModel
                                     delegate: Item {
                                         id: line
-                                        required property var modelData
+                                        required property string cellsJson
+                                        readonly property var modelData: JSON.parse(cellsJson)
                                         required property int index
                                         readonly property bool head: index === 0
                                         readonly property int cellCount: cells.count
@@ -585,10 +625,13 @@ Item {
                                             id: cellRow
                                             Repeater {
                                                 id: cells
-                                                model: line.modelData
+                                                // By count, so a row that grows keeps its cells
+                                                // and only the one whose text changed is laid out.
+                                                model: line.modelData.length
                                                 delegate: Item {
-                                                    required property string modelData
+                                                    id: cell
                                                     required property int index
+                                                    readonly property string html: line.modelData[index] ?? ""
                                                     readonly property alias text: cellText
                                                     width: (grid.widths[index] ?? 0) * grid.scale
                                                     height: cellRow.rowHeight
@@ -602,7 +645,7 @@ Item {
                                                         wrapMode: grid.expanded && !line.head ? TextEdit.WrapAtWordBoundaryOrAnywhere : TextEdit.NoWrap
                                                         font.pixelSize: Math.round(12 * Theme.fontScale)
                                                         font.weight: line.head ? Font.DemiBold : Font.Normal
-                                                        text: root.rich("<p align=\"" + (grid.spec.align[index] ?? "left") + "\" style=\"margin:0;line-height:19.5px;-qt-line-height-type:minimum\">" + modelData + "</p>")
+                                                        text: root.rich("<p align=\"" + (grid.spec.align[index] ?? "left") + "\" style=\"margin:0;line-height:19.5px;-qt-line-height-type:minimum\">" + cell.html + "</p>")
                                                         onImplicitWidthChanged: Qt.callLater(grid.measure)
                                                     }
                                                 }

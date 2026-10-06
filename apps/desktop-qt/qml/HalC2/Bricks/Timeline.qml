@@ -392,7 +392,25 @@ Item {
             if (item)
                 contentY = item.y - heldOffset;
             positioning = false;
+            // The rows just made above it are still finding their heights.
+            settlingIndex = index;
+            settlingOffset = heldOffset;
         }
+        // The row that was held stays where it is while the rows above it
+        // settle, until the user moves the view or the rows change again.
+        property int settlingIndex: -1
+        property real settlingOffset: 0
+        function settle() {
+            if (settlingIndex < 0 || following || moving || dragging || scrollBar.pressed)
+                return;
+            const item = itemAtIndex(settlingIndex);
+            if (!item || Math.abs(item.y - settlingOffset - contentY) < 0.5)
+                return;
+            positioning = true;
+            contentY = item.y - settlingOffset;
+            positioning = false;
+        }
+        onMovementStarted: settlingIndex = -1
         Connections {
             target: root.model
             ignoreUnknownSignals: true
@@ -433,10 +451,18 @@ Item {
             if (atYBeginning)
                 root.loadEarlier();
         }
-        onContentHeightChanged: if (following)
-            Qt.callLater(stick)
-        onCountChanged: if (following)
-            Qt.callLater(stick)
+        onContentHeightChanged: {
+            if (following)
+                Qt.callLater(stick);
+            else
+                settle();
+        }
+        onCountChanged: {
+            // Another row list: what was held is no longer at that index.
+            settlingIndex = -1;
+            if (following)
+                Qt.callLater(stick);
+        }
         onHeightChanged: if (following)
             Qt.callLater(stick)
 
@@ -949,6 +975,67 @@ Item {
                 Column {
                     id: workGroup
                     readonly property string summary: row.model.summary ?? ""
+
+                    // The calls on screen, kept in step with the row's
+                    // entries by id: a call that streams changes its own
+                    // line, and the lines beside it are left alone.
+                    function callOf(entry) {
+                        return {
+                            id: entry.id ?? "",
+                            type: entry.type ?? "",
+                            status: entry.status ?? "",
+                            statusLabel: entry.statusLabel ?? "",
+                            icon: entry.icon ?? "",
+                            time: entry.time ?? "",
+                            label: entry.label ?? "",
+                            detail: entry.detail ?? "",
+                            command: entry.command ?? "",
+                            path: entry.path ?? "",
+                            exited: entry.exitCode !== undefined && entry.exitCode !== null,
+                            exitCode: entry.exitCode ?? 0
+                        };
+                    }
+                    function syncCalls() {
+                        const next = root.list(row.entries);
+                        let at = 0;
+                        for (; at < next.length && at < calls.count; ++at) {
+                            const want = callOf(next[at]);
+                            const have = calls.get(at);
+                            if (have.id !== want.id)
+                                break;
+                            for (const key in want) {
+                                if (have[key] !== want[key])
+                                    calls.setProperty(at, key, want[key]);
+                            }
+                        }
+                        // From the first line that is another call's.
+                        if (at < calls.count)
+                            calls.remove(at, calls.count - at);
+                        for (; at < next.length; ++at)
+                            calls.append(callOf(next[at]));
+                    }
+                    ListModel {
+                        id: calls
+                    }
+                    Connections {
+                        target: row
+                        function onEntriesChanged() {
+                            workGroup.syncCalls();
+                        }
+                    }
+                    // A QML ListModel keeps its entries in a list of their
+                    // own, which changes in place.
+                    Connections {
+                        target: row.entries && typeof row.entries.get === "function" ? row.entries : null
+                        ignoreUnknownSignals: true
+                        function onDataChanged() {
+                            workGroup.syncCalls();
+                        }
+                        function onCountChanged() {
+                            workGroup.syncCalls();
+                        }
+                    }
+                    Component.onCompleted: syncCalls()
                     // What a settled group did, or "+N previous tool calls"
                     // while its turn runs (WorkGroupToggleTimelineRow).
                     WorkLine {
@@ -975,10 +1062,12 @@ Item {
                         }
                     }
                     Repeater {
-                        model: root.list(row.entries)
+                        model: calls
                         delegate: Column {
                             id: call
-                            required property var modelData
+                            // The call's fields, each of which changes on its own.
+                            required property var model
+                            readonly property var modelData: model
                             // Kept on the row, so streamed output does not close it.
                             readonly property bool open: row.openCalls[modelData.id] === true
                             readonly property bool hasDetails: (modelData.detail ?? "").length > 0 || (modelData.command ?? "").length > 0
@@ -1070,7 +1159,9 @@ Item {
                                         RowText {
                                             visible: text.length > 0
                                             width: parent.width
-                                            text: call.modelData.detail ?? ""
+                                            // Laid out once it shows: text streamed
+                                            // into a closed call costs nothing.
+                                            text: call.open ? call.modelData.detail ?? "" : ""
                                             textFormat: Text.PlainText
                                             wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                             font.family: call.panel ? root.monoFamily : root.uiFamily
@@ -1081,7 +1172,7 @@ Item {
                                             elide: Text.ElideRight
                                         }
                                         RowText {
-                                            visible: call.modelData.exitCode !== undefined
+                                            visible: call.modelData.exited
                                             text: qsTr("Exit code %1").arg(call.modelData.exitCode)
                                             font.pixelSize: Math.round(11 * Theme.fontScale)
                                             color: root.mutedColor

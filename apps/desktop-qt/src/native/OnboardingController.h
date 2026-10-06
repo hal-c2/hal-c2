@@ -63,6 +63,10 @@ public:
   ~OnboardingController() override;
 
   void activate() override;
+  // A device that finished setup shows what the client kept (LocalCache)
+  // without waiting for the MC to say so again. The wizard is only ever
+  // decided on the MC's own rows.
+  void preview() override;
   bool handle(const QString& action, const QVariant& payload) override;
 
   QObject* terminal() const;
@@ -123,6 +127,7 @@ private:
   McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
+  bool m_previewing = false;
   QTimer m_timeout;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
 

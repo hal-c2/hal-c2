@@ -125,6 +125,32 @@ Item {
             compare(code.wrapMode, TextEdit.WrapAtWordBoundaryOrAnywhere);
         }
 
+        // A table that grows as the reply streams makes cells for its new
+        // row only.
+        function test_growingTableKeepsTheRowsItHas() {
+            const head = "| Region | Rate |\n|---|---:|\n| North | 21% |\n";
+            const md = make(head + "| South | 9", { streaming: true });
+            const cells = () => {
+                const found = [];
+                const walk = item => {
+                    if (item.objectName === "tableCell")
+                        found.push(item);
+                    for (let i = 0; i < item.children.length; ++i)
+                        walk(item.children[i]);
+                };
+                walk(md);
+                return found;
+            };
+            tryVerify(() => cells().length === 6);
+            const before = cells();
+            md.text = head + "| South | 9% |\n| West | 1";
+            tryVerify(() => cells().length === 8);
+            const after = cells();
+            for (let i = 0; i < 6; ++i)
+                verify(after[i] === before[i], "cell " + i + " is the one that was there");
+            verify(after[5].text.indexOf("9%") >= 0, "the row that grew shows its new text");
+        }
+
         function test_tableCopiesAsMarkdownAndCsv() {
             const md = make("| Region | Rate |\n|---|---:|\n| EU, north | 21% |\n| a\\|b | \"q\" |");
             const table = findChild(md, "markdownTable");
