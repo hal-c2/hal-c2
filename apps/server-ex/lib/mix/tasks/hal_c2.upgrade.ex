@@ -22,7 +22,8 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   With `--release`, builds the prod release under this commit's local version and has the
   installed MC on this machine update to it (`mise run mc:reload --release`), over
   its HTTP port with its access token as well. That MC is the one in the user's
-  `hal-c2` profile, or in `HAL_C2_MC_HOME` when that is set.
+  `hal-c2` profile, or in `HAL_C2_MC_HOME` when that is set. The MCs clustered with
+  it update to the build too, whatever their platform, when it only changes code.
 
   Named MCs are reached from a hidden short-name node started with `--cookie`, so
   they must run with plain distribution (`elixir --sname ... -S mix hal_c2.server`).
@@ -160,6 +161,9 @@ defmodule Mix.Tasks.HalC2.Upgrade do
         {:ok, {{_, 200, _}, _, body}} ->
           result = JSON.decode!(body)
           Mix.shell().info("#{base}: #{result["method"]} to #{result["targetVersion"]}")
+
+          for %{"mc" => mc, "outcome" => outcome} <- result["members"] || [],
+              do: Mix.shell().info("#{mc}: #{outcome}")
 
         {:ok, {{_, 409, _}, _, body}} ->
           Mix.raise("#{base}: #{JSON.decode!(body)["reason"]}")

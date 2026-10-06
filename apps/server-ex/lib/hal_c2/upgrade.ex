@@ -6,12 +6,15 @@ defmodule HalC2.Upgrade do
   with the `upgrade.json` manifest `mix release` writes (`HalC2.Upgrade.Source` finds
   one). The MC compares it with the manifest of the release it runs:
 
-    * Same runtime, applications, native libraries and configuration, and no
-      supervisor among the changed modules: the bundle is installed next to the
-      running release, code paths move to it, and `HalC2.Hot` loads the changed
-      modules, migrating running processes through `code_change/3`. Nothing
-      restarts; sockets and provider sessions stay up.
-    * Anything else: the bundle is installed, `releases/start_erl.data` names it,
+    * Only HAL-C2's own code changes (the same OTP release, dependencies, platform
+      packages and configuration, and no supervisor among the changed modules):
+      that code alone is taken from the bundle (`HalC2.Upgrade.Code`), code paths
+      move to it, and `HalC2.Hot` loads the changed modules, migrating running
+      processes through `code_change/3`. Nothing restarts; sockets and provider
+      sessions stay up. The Erlang runtime the bundle carries is not used, so one
+      built for another platform, or with another patch of Erlang, does as well.
+    * Anything else: the bundle, which must then be this platform's, is installed
+      whole, `releases/start_erl.data` names it,
       and the MC exits with status 75, which `bin/hal-c2-service` answers by starting
       it again, now on the new version. Turns cut off go on where the project asks
       for that (`HalC2.Orchestration.Recovery`). The previous `start_erl.data` is kept
@@ -31,6 +34,7 @@ defmodule HalC2.Upgrade do
   # `bin/hal-c2-service` starts the MC again when it exits with this status. The exit
   # itself is `:restart_exit` in the app env (`System.stop/1` unless a test swaps it).
   @restart_status 75
+  @members_timeout :timer.minutes(5)
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -74,14 +78,49 @@ defmodule HalC2.Upgrade do
 
   @doc """
   Updates to `version` from its bundle archive at `path` on this machine
-  (`mix hal_c2.upgrade --release`), as `update/2` does from a fetched one.
+  (`mix hal_c2.upgrade --release`), as `update/2` does from a fetched one. The MCs
+  clustered with this one update first, taking the bundle from it: members only
+  connect to members on their own version, so afterwards they could not. How each
+  went is the result's `members`.
   """
   def update_from(path, version) do
     if File.regular?(path) do
       :ok = HalC2.Upgrade.Source.put(version, platform(), path)
-      update(%{"targetVersion" => version})
+      input = %{"targetVersion" => version}
+      # Off this process, which is left none of the members' messages.
+      members = Task.async(fn -> update_members(input) end) |> Task.await(:infinity)
+      with {:ok, result} <- update(input), do: {:ok, Map.put(result, "members", members)}
     else
       failure("#{path} is not a bundle.")
+    end
+  end
+
+  # A member that moved to the new version drops its connections, this one among
+  # them, so its going down counts as the end of its update too.
+  #
+  # They all get `@members_timeout` between them, which leaves this MC's own update
+  # its time within what `mix hal_c2.upgrade --release` waits for an answer.
+  defp update_members(input) do
+    members = Node.list()
+    deadline = System.monotonic_time(:millisecond) + @members_timeout
+    for mc <- members, do: Node.monitor(mc, true)
+    started = :erpc.multicall(members, __MODULE__, :start, [input, self()], 15_000)
+
+    for {mc, reply} <- Enum.zip(members, started) do
+      outcome =
+        with {:ok, :ok} <- reply do
+          receive do
+            {:hal_c2_server_update, ^mc, %{"type" => "complete"}} -> "updated"
+            {:hal_c2_server_update, ^mc, {:error, %{"reason" => reason}}} -> reason
+            {:nodedown, ^mc} -> "left to run it"
+          after
+            max(deadline - System.monotonic_time(:millisecond), 0) -> "has not finished"
+          end
+        else
+          _ -> "cannot be updated from another MC"
+        end
+
+      %{"mc" => Atom.to_string(mc), "outcome" => outcome}
     end
   end
 
@@ -166,27 +205,33 @@ defmodule HalC2.Upgrade do
 
   @doc """
   What installing `bundle` would take: `:hot` with the modules that change, or
-  `{:restart, reasons}`.
+  `{:restart, reasons}`. Only what HAL-C2's own code runs on is a reason: the Erlang
+  runtime within an OTP release is not, nor are the native libraries of dependencies
+  that stay the same.
   """
   def plan(bundle, running \\ running_manifest()) do
     target = manifest(bundle)
 
     reasons =
-      [
-        running == nil && "the running release has no upgrade manifest",
-        target == nil && "the bundle has no upgrade manifest",
-        running && target && running["erts"] != target["erts"] && "the Erlang runtime changes",
-        running && target && running["otpRelease"] != target["otpRelease"] && "OTP changes",
-        running && target &&
-          Map.keys(running["applications"] || %{}) != Map.keys(target["applications"] || %{}) &&
-          "applications are added or removed",
-        running && target && running["nifs"] != target["nifs"] && "native libraries change",
-        running && target && running["config"] != target["config"] && "configuration changes"
-      ]
+      if running && target do
+        [
+          target["code"] == nil && "the bundle does not name HAL-C2's own code",
+          running["otpRelease"] != target["otpRelease"] && "OTP changes",
+          changed_dependencies(running, target),
+          running["packages"] && running["packages"] != target["packages"] &&
+            "platform packages change",
+          running["config"] != target["config"] && "configuration changes"
+        ]
+      else
+        [
+          running == nil && "the running release has no upgrade manifest",
+          target == nil && "the bundle has no upgrade manifest"
+        ]
+      end
       |> Enum.filter(& &1)
 
     if reasons == [] do
-      changed = changed_modules(bundle, target)
+      changed = changed_modules(bundle)
 
       case Enum.filter(changed, &restart_module?(&1)) do
         [] -> {:hot, Enum.map(changed, &elem(&1, 0))}
@@ -195,6 +240,17 @@ defmodule HalC2.Upgrade do
     else
       {:restart, reasons}
     end
+  end
+
+  # A dependency this MC runs another version of, or not at all. Ones the new
+  # version no longer has stay until a restart.
+  defp changed_dependencies(running, target) do
+    changed =
+      for {name, vsn} <- target["dependencies"] || %{},
+          (running["applications"] || %{})[name] != vsn,
+          do: name
+
+    changed != [] && "dependencies change (#{changed |> Enum.sort() |> Enum.join(", ")})"
   end
 
   # --- server --------------------------------------------------------------------
@@ -278,9 +334,10 @@ defmodule HalC2.Upgrade do
           notify(progress, "installing")
           outcome = %{"id" => id, "fromVersion" => from, "targetVersion" => target}
           result = %{"targetVersion" => target, "method" => "hot-upgrade", "updateId" => id}
+          plan = plan(bundle)
 
-          case install(bundle, root, target) do
-            :ok -> activate(plan(bundle), bundle, root, target, outcome, result)
+          case install(plan, bundle, root, target) do
+            :ok -> activate(plan, bundle, root, target, outcome, result)
             {:error, reason} -> failure("Installing #{target} failed: #{reason}")
           end
         end
@@ -288,6 +345,29 @@ defmodule HalC2.Upgrade do
   end
 
   defp run(_input, _progress), do: failure("No target version was given.")
+
+  defp install({:hot, _modules}, bundle, root, target) do
+    case manifest(bundle) do
+      %{"version" => ^target} = manifest ->
+        HalC2.Upgrade.Code.install(bundle, root, running_manifest(), manifest)
+
+      _ ->
+        {:error, "the bundle is not #{target}"}
+    end
+  end
+
+  defp install({:restart, reasons}, bundle, root, target) do
+    mine = platform()
+
+    case manifest(bundle) do
+      %{"platform" => other} when is_binary(other) and other != mine ->
+        {:error,
+         "it needs a restart (#{Enum.join(reasons, "; ")}), which takes the #{mine} release, and only the #{other} one was found"}
+
+      _ ->
+        install(bundle, root, target)
+    end
+  end
 
   defp activate({:hot, modules}, bundle, root, target, outcome, result) do
     case load(bundle, root, target, modules) do
@@ -403,8 +483,10 @@ defmodule HalC2.Upgrade do
   # Code paths move to the new release's directories, so modules loaded later come
   # from it too, then the changed modules load and running processes migrate.
   defp load(bundle, root, target, modules) do
-    for {app, vsn} <- (manifest(bundle) || %{})["applications"] || %{} do
-      ebin = Path.join([root, "lib", "#{app}-#{vsn}", "ebin"])
+    new = manifest(bundle)
+
+    for app <- new["code"] do
+      ebin = Path.join([root, "lib", "#{app}-#{new["applications"][app]}", "ebin"])
       if File.dir?(ebin), do: :code.replace_path(String.to_atom(app), String.to_charlist(ebin))
     end
 
@@ -453,21 +535,26 @@ defmodule HalC2.Upgrade do
     end
   end
 
-  # Every compiled module in the bundle's applications and protocol consolidation.
+  # Every compiled module of HAL-C2's own applications in the bundle, and its
+  # protocol consolidation, which their implementations are compiled into.
   defp beams(bundle) do
+    new = manifest(bundle)
+
     for dir <-
-          Path.wildcard(Path.join([bundle, "lib", "*", "ebin"])) ++
+          Enum.map(
+            new["code"],
+            &Path.join([bundle, "lib", "#{&1}-#{new["applications"][&1]}", "ebin"])
+          ) ++
             Path.wildcard(Path.join([bundle, "releases", "*", "consolidated"])),
         file <- Path.wildcard(Path.join(dir, "*.beam")) do
       {String.to_atom(Path.basename(file, ".beam")), File.read!(file)}
     end
   end
 
-  defp changed_modules(bundle, _target) do
-    for {mod, bin} = beam <- beams(bundle),
-        loaded_md5(mod) != nil,
-        loaded_md5(mod) != beam_md5(bin),
-        do: beam
+  # Modules new in the bundle count: a release loads every module when it starts
+  # and none later, so one not loaded here would never be.
+  defp changed_modules(bundle) do
+    for {mod, bin} = beam <- beams(bundle), loaded_md5(mod) != beam_md5(bin), do: beam
   end
 
   # Supervisors, and the application that lists the tree, only take effect at start.

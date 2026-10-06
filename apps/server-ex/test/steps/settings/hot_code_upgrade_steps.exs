@@ -6,7 +6,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   The MC runs from a release root on disk (`RELEASE_ROOT`) whose only code of
   its own is a probe module reporting the version it was built as. A later
   version is a bundle holding the probe rebuilt; a bundle that "changes a native
-  library" differs in its manifest's `nifs`, which forces a restart. The service
+  library" has another version of the dependency carrying it, which forces a restart. The service
   is the real `bin/hal-c2-service` around a stand-in `bin/hal_c2` that logs each boot and
   runs until the MC signals the stop an update restart makes.
   """
@@ -485,7 +485,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     )
   end
 
-  defp write_manifest(dir, version, nifs) do
+  defp write_manifest(dir, version, dependency) do
     rel = Path.join([dir, "releases", version])
     File.mkdir_p!(rel)
 
@@ -496,8 +496,9 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
         "otpRelease" => System.otp_release(),
         "erts" => to_string(:erlang.system_info(:version)),
         "platform" => Upgrade.platform(),
-        "applications" => %{"hal_c2_probe" => version},
-        "nifs" => %{"hal_c2_probe" => nifs},
+        "applications" => %{"hal_c2_probe" => version, "exqlite" => dependency},
+        "code" => ["hal_c2_probe"],
+        "dependencies" => %{"exqlite" => dependency},
         "config" => "same"
       })
     )
