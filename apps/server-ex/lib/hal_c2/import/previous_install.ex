@@ -1,7 +1,7 @@
 defmodule HalC2.Import.PreviousInstall do
   @moduledoc """
   Picks threads out of a T3 Code or Node HAL-C2 install on this machine and brings
-  them onto the running MC, for `mix hal_c2.threads.import`.
+  them onto the running MC, for `HalC2.Import.Picker`.
 
   A source is a data directory holding the Node server's database: `userdata` and
   `dev` under an old home (`HalC2.Paths.legacy_candidates/3`, `state.sqlite` or
@@ -44,9 +44,10 @@ defmodule HalC2.Import.PreviousInstall do
     do: Enum.find(Enum.map(@databases, &Path.join(dir, &1)), &File.regular?/1)
 
   @doc """
-  The threads of the source at `input["source"]`, newest first, without the ones
-  subagents ran in: `%{"threads" => [%{"id", "title", "project", "updatedAt",
-  "subagents", "imported"}]}`.
+  The threads of the source at `input["source"]`, the ones still in play before the
+  settled ones and newest first within each, without the ones subagents ran in:
+  `%{"threads" => [%{"id", "title", "project", "updatedAt", "subagents", "settled",
+  "imported"}]}`.
   """
   def scan(%{"source" => path}) do
     with {:ok, index} <- index(path) do
@@ -62,11 +63,13 @@ defmodule HalC2.Import.PreviousInstall do
             "project" => (project && project.title) || thread.project,
             "updatedAt" => thread.updated_at,
             "subagents" => length(family(index, thread.id)) - 1,
+            "settled" => thread.settled,
             "imported" => MapSet.member?(here, thread.id)
           }
         end
 
-      {:ok, %{"threads" => Enum.sort_by(threads, &{&1["updatedAt"] || "", &1["id"]}, :desc)}}
+      threads = Enum.sort_by(threads, &{!&1["settled"], &1["updatedAt"] || "", &1["id"]}, :desc)
+      {:ok, %{"threads" => threads}}
     end
   end
 
@@ -77,14 +80,16 @@ defmodule HalC2.Import.PreviousInstall do
   `%{"imported" => [id], "failed" => [%{"id", "message"}]}`. One thread failing
   leaves the others alone.
   """
-  def import_threads(%{"source" => path, "threadIds" => ids}) when is_list(ids) do
+  def import_threads(input, report \\ fn _progress -> :ok end)
+
+  def import_threads(%{"source" => path, "threadIds" => ids}, report) when is_list(ids) do
     with {:ok, index} <- index(path) do
       files = %{
         attachments: ls(Path.join(path, "attachments")),
         terminals: ls(Path.join([path, "logs", "terminals"]))
       }
 
-      results = Enum.map(ids, &{&1, import_thread(path, index, files, &1)})
+      results = Enum.map(ids, &{&1, import_thread(path, index, files, &1, report)})
 
       {:ok,
        %{
@@ -94,17 +99,34 @@ defmodule HalC2.Import.PreviousInstall do
     end
   end
 
-  def import_threads(_), do: {:error, "Name the install and the threads to import."}
+  def import_threads(_, _), do: {:error, "Name the install and the threads to import."}
 
-  defp import_thread(path, index, files, id) do
+  # `report` hears how far the thread is: its events read, then its threads finished.
+  defp import_thread(path, index, files, id, report) do
     with %{} = thread <- index.threads[id] || {:error, "It is not in #{path}."},
          [_ | _] = missing <- family(index, id) -- MapSet.to_list(here()),
          {:ok, project, target} <- target(index.projects[thread.project]) do
       rewrite =
         ThreadArchive.rewriter(project.root, target["workspaceRoot"], project.id, target["id"])
 
-      {:ok, _} = HalC2.Import.V2.run(database(path), Store, only: missing, rewrite: rewrite)
-      Enum.each(missing, &finish(path, files, &1))
+      events = &report.(%{"stage" => "events", "done" => &1, "total" => &2})
+      threads = &report.(%{"stage" => "files", "done" => &1, "total" => length(missing)})
+
+      {:ok, _} =
+        HalC2.Import.V2.run(database(path), Store,
+          only: missing,
+          rewrite: rewrite,
+          progress: events
+        )
+
+      threads.(0)
+
+      missing
+      |> Enum.with_index(1)
+      |> Enum.each(fn {id, n} ->
+        finish(path, files, id)
+        threads.(n)
+      end)
     else
       [] -> {:error, "It is already here."}
       {:error, message} -> {:error, message}
@@ -188,15 +210,31 @@ defmodule HalC2.Import.PreviousInstall do
         v2 =
           rows(db, "orchestration_v2_projection_threads", """
           thread_id, project_id, title, updated_at,
-          json_extract(payload_json, '$.lineage.parentThreadId')
+          json_extract(payload_json, '$.lineage.parentThreadId'),
+          json_extract(payload_json, '$.settledOverride'),
+          json_extract(payload_json, '$.settledAt')
           """)
 
-        v1 = rows(db, "projection_threads", "thread_id, project_id, title, updated_at, NULL")
+        v1 =
+          rows(
+            db,
+            "projection_threads",
+            "thread_id, project_id, title, updated_at, NULL, NULL, NULL"
+          )
 
         threads =
-          for [id, project, title, updated_at, parent] <- v1 ++ v2, into: %{} do
+          for [id, project, title, updated_at, parent, override, settled_at] <- v1 ++ v2,
+              into: %{} do
             {id,
-             %{id: id, project: project, title: title, updated_at: updated_at, parent: parent}}
+             %{
+               id: id,
+               project: project,
+               title: title,
+               updated_at: updated_at,
+               parent: parent,
+               # As the source's sidebar had it: the user's choice wins over the rule's.
+               settled: override == "settled" or (settled_at != nil and override != "active")
+             }}
           end
 
         projects =

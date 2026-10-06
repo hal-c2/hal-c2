@@ -8,10 +8,12 @@ here="$(cd "$(dirname "$0")" && pwd)"
 
 # `hal-c2-service install|status|restart|uninstall` manages this release with the user's
 # service manager (`HalC2.Service.main/1`); `hal-c2-service cluster ...` the running
-# MC's cluster (`HalC2.Cluster.Command`).
+# MC's cluster (`HalC2.Cluster.Command`); `hal-c2-service threads import` picks threads
+# of T3 Code or an older HAL-C2 on this machine to import (`HalC2.Import.Picker`).
 case "${1:-}" in
   install | status | restart | uninstall) exec "$here/hal_c2" eval "HalC2.Service.main([\"$1\"])" ;;
   cluster) shift && exec "$here/hal_c2" eval "HalC2.Cluster.Command.main(System.argv())" "$@" ;;
+  threads) shift && exec "$here/hal_c2" eval "HalC2.Import.Picker.main(System.argv())" "$@" ;;
 esac
 
 releases="$here/../releases"

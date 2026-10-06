@@ -2623,6 +2623,8 @@ defmodule HalC2.Steps.Threads do
       INSERT INTO orchestration_v2_projection_threads VALUES
         ('#{a_id}', 'v2-project', '#{a}', '2026-09-01T11:00:02.000Z', '{}'),
         ('#{b_id}', 'v2-project', '#{b}', '2026-09-02T11:00:01.000Z', '{}'),
+        ('t3-settled', 'v2-project', 'Done long ago', '2026-09-04T11:00:01.000Z',
+         '{"settledOverride":"settled","settledAt":"2026-09-04T12:00:00.000Z"}'),
         ('#{sub}', 'v2-project', 'Look into the cart', '2026-09-03T11:00:01.000Z',
          '{"lineage":{"parentThreadId":"#{a_id}","relationshipToParent":"subagent"}}');
       """)
@@ -2650,15 +2652,25 @@ defmodule HalC2.Steps.Threads do
 
   step "{string} and {string} are offered with their project, newest first",
        %{args: titles} = context do
-    assert for(t <- context.offered, do: {t["title"], t["project"], t["imported"]}) ==
+    assert for(
+             t <- context.offered,
+             not t["settled"],
+             do: {t["title"], t["project"], t["imported"]}
+           ) ==
              for(title <- titles, do: {title, "legacy shop", false})
 
     context
   end
 
+  step "a thread that was settled there is offered after them, as settled", context do
+    assert %{"title" => "Done long ago", "settled" => true} = List.last(context.offered)
+    context
+  end
+
   step "the thread {string}'s subagent ran in is counted with it, not offered on its own",
        %{args: [title]} = context do
-    assert for(t <- context.offered, do: {t["title"], t["subagents"]}) |> Enum.sort() ==
+    assert for(t <- context.offered, not t["settled"], do: {t["title"], t["subagents"]})
+           |> Enum.sort() ==
              Enum.sort(for {t, _} <- context.t3.ids, do: {t, if(t == title, do: 1, else: 0)})
 
     context
@@ -2667,13 +2679,27 @@ defmodule HalC2.Steps.Threads do
   step "the user imports/imported {string} from that install", %{args: [title]} = context do
     id = context.t3.ids[title]
 
+    test = self()
+    input = %{"source" => context.t3.dir, "threadIds" => [id]}
+
     answer =
-      HalC2.Cluster.Command.request(:post, "/api/previous-installs/import", %{
-        "source" => context.t3.dir,
-        "threadIds" => [id]
-      })
+      HalC2.Cluster.Command.stream(
+        "/api/previous-installs/import",
+        input,
+        30_000,
+        &send(test, {:import_progress, &1})
+      )
 
     context |> Map.put(:t3_answer, answer) |> put_in([:threads, title], id)
+  end
+
+  step "the user was shown how far the import was until it was done", context do
+    assert_received {:import_progress, %{"stage" => "events", "done" => total, "total" => total}}
+                    when total > 0
+
+    # "Alpha" and the thread its subagent ran in.
+    assert_received {:import_progress, %{"stage" => "files", "done" => 2, "total" => 2}}
+    context
   end
 
   step "{string} is listed in a new project at the folder it worked in",

@@ -5,7 +5,7 @@
 #   apps/web/src/components/LegacyThreadMigrationToast.tsx
 #   apps/server-ex/lib/hal_c2/import/v2.ex
 #   apps/server-ex/lib/hal_c2/import/previous_install.ex
-#   apps/server-ex/lib/mix/tasks/hal_c2.threads.import.ex
+#   apps/server-ex/lib/hal_c2/import/picker.ex
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex
 # Moving a thread to another machine, where the handoff is the fallback: threads/moving-between-machines.feature.
 
@@ -31,13 +31,15 @@ Feature: Carrying threads and context across servers and agents
     Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
     When the user asks which threads that install holds
     Then "Beta" and "Alpha" are offered with their project, newest first
+    And a thread that was settled there is offered after them, as settled
     And the thread "Alpha"'s subagent ran in is counted with it, not offered on its own
 
   @mc
   Scenario: A thread picked from an older install comes with everything it had
     Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
     When the user imports "Alpha" from that install
-    Then "Alpha" is listed in a new project at the folder it worked in
+    Then the user was shown how far the import was until it was done
+    And "Alpha" is listed in a new project at the folder it worked in
     And "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
     And "Alpha" keeps its tie to the agent's session, with the turn it was running ended
     And "Beta" is not imported
