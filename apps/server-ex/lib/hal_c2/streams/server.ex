@@ -75,7 +75,14 @@ defmodule HalC2.Streams.Server do
   @spec handle(View.kinds()) :: String.t()
   def handle(kinds \\ nil) do
     log = "#{Store.id()}.#{HalC2.Web.Wire.version()}"
-    if kinds, do: "#{log}.#{:erlang.phash2(kinds)}", else: log
+    if kinds, do: "#{log}.#{digest(kinds)}", else: log
+  end
+
+  # The same for the same kinds on any MC and version, and not for any other.
+  defp digest(kinds) do
+    :crypto.hash(:sha256, :erlang.term_to_binary(kinds, [:deterministic, minor_version: 2]))
+    |> binary_part(0, 8)
+    |> Base.encode16(case: :lower)
   end
 
   def start_link(stream_id),
