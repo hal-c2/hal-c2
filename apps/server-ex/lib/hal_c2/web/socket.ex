@@ -612,6 +612,9 @@ defmodule HalC2.Web.Socket do
            }}
 
         {:error, reason} ->
+          # A call that gave up may still be taken, and would feed a socket that is
+          # not following the stream.
+          :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self()])
           {:push, Protocol.encode(error_frame(id, reason)), state}
       end
     end

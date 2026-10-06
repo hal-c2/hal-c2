@@ -13,7 +13,8 @@ defmodule HalC2.Streams.Server do
 
   Snapshots are split into chunks of about `@chunk_bytes` because a subscriber may be
   on another MC, and one large message would stall every other message on that
-  MC connection until it finished.
+  MC connection until it finished. Such a subscriber is sent everything through its
+  own `HalC2.Streams.Relay`, so a slow connection holds up nobody else.
 
   Replay reads the log, not memory, so a reconnecting client costs one query rather
   than a buffered copy of the thread. The process hibernates between bursts and stops
@@ -24,8 +25,9 @@ defmodule HalC2.Streams.Server do
   use GenServer, restart: :transient
 
   alias HalC2.{Store, StreamState}
+  alias HalC2.Streams.Relay
 
-  @state_version 1
+  @state_version 2
   @idle_stop :timer.minutes(5)
   @snapshot_every 500
   # A subscriber further behind than this gets a snapshot instead of a replay.
@@ -100,15 +102,26 @@ defmodule HalC2.Streams.Server do
        stream: state,
        snapshot_seq: state.seq,
        shell_scheduled: false,
-       subscribers: %{}
+       subscribers: %{},
+       relays: %{}
      }, @idle_stop}
   end
 
   @impl true
   def handle_call({:subscribe, pid, offset}, _from, state) do
-    deliver_initial(state, pid, offset)
-    ref = Process.monitor(pid)
-    {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, ref)}}
+    state = drop(state, pid)
+    initial = initial(state, pid, offset)
+
+    relays =
+      if node(pid) == node() do
+        initial.()
+        state.relays
+      else
+        Map.put(state.relays, pid, Relay.start(pid, initial))
+      end
+
+    subscribers = Map.put(state.subscribers, pid, Process.monitor(pid))
+    {:reply, :ok, %{state | subscribers: subscribers, relays: relays}}
   end
 
   def handle_call({:commit, stream_kind, changes}, _from, state) do
@@ -160,15 +173,13 @@ defmodule HalC2.Streams.Server do
 
   @impl true
   def handle_cast({:unsubscribe, pid}, state) do
-    {ref, subscribers} = Map.pop(state.subscribers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
-    state = %{state | subscribers: subscribers}
+    state = drop(state, pid)
     {:noreply, state, timeout(state)}
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _}, state) do
-    state = %{state | subscribers: Map.delete(state.subscribers, pid)}
+    state = drop(state, pid)
     {:noreply, state, timeout(state)}
   end
 
@@ -190,6 +201,9 @@ defmodule HalC2.Streams.Server do
 
   @impl true
   def terminate(_reason, state) do
+    # One still sending what a subscriber starts from would not see the stream go.
+    for {_pid, relay} <- state.relays, do: Process.exit(relay, :kill)
+
     if state.shell_scheduled, do: handle_info(:shell, state)
 
     if state.stream.seq - state.snapshot_seq >= @snapshot_every,
@@ -198,42 +212,70 @@ defmodule HalC2.Streams.Server do
 
   @impl true
   def code_change(_old_vsn, state, _extra),
-    do: {:ok, %{state | v: @state_version, stream: StreamState.migrate(state.stream)}}
+    do:
+      {:ok,
+       state
+       |> Map.put_new_lazy(:relays, fn -> relays(state.subscribers) end)
+       |> Map.merge(%{v: @state_version, stream: StreamState.migrate(state.stream)})}
 
-  defp deliver_initial(state, pid, offset) do
+  # Relays for subscribers a version without them was sending to itself. They are
+  # live already, so there is nothing to start them from.
+  defp relays(subscribers) do
+    for {pid, _ref} <- subscribers, node(pid) != node(), into: %{} do
+      {pid, Relay.start(pid, fn -> :ok end)}
+    end
+  end
+
+  # Forgets a subscriber. Its relay is killed, not left to finish: what it still
+  # holds is no longer wanted, and would mix with what a new subscription is sent.
+  defp drop(state, pid) do
+    {ref, subscribers} = Map.pop(state.subscribers, pid)
+    if ref, do: Process.demonitor(ref, [:flush])
+    {relay, relays} = Map.pop(state.relays, pid)
+    if relay, do: Process.exit(relay, :kill)
+    %{state | subscribers: subscribers, relays: relays}
+  end
+
+  # What sends `pid` the state it starts from, for the stream or the subscriber's
+  # relay to run. It holds only what it sends.
+  defp initial(%{id: id, stream: stream} = state, pid, offset) do
     replay =
-      if is_integer(offset) and offset <= state.stream.seq,
-        do:
-          Store.reduce_stream(state.path, state.id, offset, [], &[&1 | &2],
-            limit: @max_replay + 1
-          ),
+      if is_integer(offset) and offset <= stream.seq,
+        do: Store.reduce_stream(state.path, id, offset, [], &[&1 | &2], limit: @max_replay + 1),
         else: :none
+
+    live = {:hal_c2_stream, id, {:live, stream.seq}}
 
     case replay do
       events when is_list(events) and length(events) <= @max_replay ->
         # Counted before the events that change nothing are left out, or a replay cut
         # short by the limit could pass for a whole one.
         events = events |> Enum.reject(&StreamState.void?/1) |> Enum.reverse()
-        send(pid, {:hal_c2_stream, state.id, {:events, events}})
+
+        fn ->
+          send(pid, {:hal_c2_stream, id, {:events, events}})
+          send(pid, live)
+        end
 
       _ ->
-        send_snapshot(state, pid)
+        fn ->
+          send_snapshot(id, stream, pid)
+          send(pid, live)
+        end
     end
-
-    send(pid, {:hal_c2_stream, state.id, {:live, state.stream.seq}})
   end
 
-  defp send_snapshot(state, pid) do
+  defp send_snapshot(id, stream, pid) do
     # Creation order, which is the order lists such as runs and turn items are shown in.
-    chunks = chunk_rows(StreamState.rows(state.stream), [], 0, [])
+    chunks = chunk_rows(StreamState.rows(stream), [], 0, [])
     last = length(chunks) - 1
 
     for {chunk, i} <- Enum.with_index(chunks),
         do:
           send(
             pid,
-            {:hal_c2_stream, state.id,
-             {:snapshot, state.stream.seq, state.stream.updated_at, chunk,
+            {:hal_c2_stream, id,
+             {:snapshot, stream.seq, stream.updated_at, chunk,
               if(i == last, do: :done, else: :more)}}
           )
   end
@@ -256,7 +298,11 @@ defmodule HalC2.Streams.Server do
   end
 
   defp broadcast(state, message),
-    do: for({pid, _} <- state.subscribers, do: send(pid, {:hal_c2_stream, state.id, message}))
+    do:
+      for(
+        {pid, _} <- state.subscribers,
+        do: send(Map.get(state.relays, pid, pid), {:hal_c2_stream, state.id, message})
+      )
 
   defp timeout(%{subscribers: subs}) when map_size(subs) == 0, do: @idle_stop
   defp timeout(_state), do: :infinity
