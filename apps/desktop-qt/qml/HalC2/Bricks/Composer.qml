@@ -1351,9 +1351,11 @@ Rectangle {
                     Accessible.name: qsTr("Switch branch")
                     onClicked: branchPicker.open()
 
-                    // The web's "Copy branch name", on the secondary button.
+                    // The web's "Copy branch name", on the secondary button
+                    // (a finger has no buttons, and would count as it).
                     TapHandler {
                         acceptedButtons: Qt.RightButton
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                         onTapped: branchMenu.popup()
                     }
                     ShellMenu {

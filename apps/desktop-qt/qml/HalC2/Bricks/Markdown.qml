@@ -258,9 +258,11 @@ Item {
         ToolTip.visible: hoveredLink.length > 0
         ToolTip.text: hoveredLink
         ToolTip.delay: 600
-        // The secondary button on a link offers what can be done with it.
+        // The secondary button on a link offers what can be done with it
+        // (a finger has no buttons, and would count as it).
         TapHandler {
             acceptedButtons: Qt.RightButton
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             onTapped: eventPoint => {
                 const link = parent.linkAt(eventPoint.position.x, eventPoint.position.y);
                 if (link.length > 0) {

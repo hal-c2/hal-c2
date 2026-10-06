@@ -310,9 +310,11 @@ Item {
         }
     }
 
-    // The menu opens on press, anywhere on the row, like the web app's.
+    // The menu opens on press, anywhere on the row, like the web app's. A
+    // finger has no buttons to tell apart, so it would open the menu too.
     TapHandler {
         acceptedButtons: Qt.RightButton
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         gesturePolicy: TapHandler.WithinBounds
         onPressedChanged: {
             if (pressed) {
