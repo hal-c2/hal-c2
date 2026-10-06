@@ -21,6 +21,7 @@ mise run mc              # MC in the foreground, ready to cluster (--host, --por
 mise run mc:cluster      # that MC's cluster: no args lists it; invite, join LINK, remove MEMBER
 mise run mc:update-cluster olafura@ai-beast   # other machines' checkouts and dev MCs to this commit, over SSH
 mise run mc:pair         # one-time pairing URL for that MC (--tailscale to publish it)
+mise run mc:pair --release     # the same for the installed MC, when both run
 mise run mc:reload       # compile this checkout and load it into that MC; sockets and agents stay up
 mise run mc:reload --release   # build a release of this checkout and move the installed MC to it
 mise run desktop           # build the Qt shell, pair it with the running MC, launch

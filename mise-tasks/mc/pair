@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Print a one-time pairing URL for the running MC (mix hal_c2.pair [BASE_URL] or --tailscale)"
+#MISE description="Print a one-time pairing URL for the running MC (mix hal_c2.pair [BASE_URL] or --tailscale); --release pairs with the installed MC when this checkout's runs beside it"
 #MISE dir="{{config_root}}/apps/server-ex"
 set -euo pipefail
 exec mix hal_c2.pair "$@"

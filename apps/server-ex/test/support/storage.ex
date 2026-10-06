@@ -160,19 +160,54 @@ defmodule HalC2.Test.Storage do
   def pair(context) do
     running = context.running_profile
     other = if running == nil, do: :dev, else: nil
-    guard!(context, other)
     store = HalC2.Store.home_path()
-    Application.put_env(:hal_c2, :home, other)
-    refute HalC2.Store.home_path() == store
+    context = pair_from(context, other, [])
+    refute Paths.mc_dirs(other, System.get_env(), Paths.user_home()).data == Path.dirname(store)
+    context
+  end
+
+  @doc """
+  Runs `mix hal_c2.pair --release` from a checkout (the development profile), whichever
+  server the scenario runs: what it printed, or `{:error, message}`, is
+  `context.pair_output`.
+  """
+  def pair_release(context), do: pair_from(context, :dev, ["--release"])
+
+  defp pair_from(context, profile, args) do
+    guard!(context, profile)
+    Application.put_env(:hal_c2, :home, profile)
 
     lines =
       try do
-        Mc.run_task(Mix.Tasks.HalC2.Pair, [])
+        Mc.run_task(Mix.Tasks.HalC2.Pair, args)
       after
-        Application.put_env(:hal_c2, :home, running)
+        Application.put_env(:hal_c2, :home, context.running_profile)
       end
 
     Map.put(context, :pair_output, lines)
+  end
+
+  @doc """
+  Leaves the runtime record a second server would, in the other profile than the one
+  the scenario's server runs in: alive (this process), at an address nothing answers
+  on. Only the record, as a tool looking for a running server reads nothing else.
+  """
+  def running_beside(context) do
+    other = if context.running_profile == nil, do: :dev, else: nil
+    guard!(context, other)
+    state = Paths.mc_dirs(other, System.get_env(), Paths.user_home()).state
+    File.mkdir_p!(state)
+
+    record = %{
+      "version" => 1,
+      "pid" => String.to_integer(System.pid()),
+      "port" => 1,
+      "origin" => "http://127.0.0.1:1",
+      "startedAt" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    File.write!(Path.join(state, "server-runtime.json"), JSON.encode!(record) <> "\n")
+    context
   end
 
   # Every directory the MC may write to or migrate from is inside the scenario.
