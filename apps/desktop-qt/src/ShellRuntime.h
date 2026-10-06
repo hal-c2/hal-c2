@@ -36,6 +36,12 @@ public:
   struct Options {
     QString configDir;
     QString qmlSourceDir;  // empty = compiled-in bricks only
+    // The built-in root, under an import root: read from a source dir that has
+    // it, compiled in otherwise.
+    QString defaultShell = QStringLiteral("HalC2/Bricks/DefaultShell.qml");
+    // A second on-disk import root, for a client whose own QML sits beside the
+    // bricks (apps/mobile-qt); empty = compiled in.
+    QString clientQmlSourceDir;
   };
 
   ShellRuntime(Options options, ShellBridge* bridge, ThemeStore* theme, QObject* parent = nullptr);
@@ -75,6 +81,8 @@ private:
   void rebuildWatchList();
   QString sourceFingerprint() const;
   QUrl defaultShellUrl() const;
+  // The on-disk import roots in use, the client's own first.
+  QStringList sourceDirs() const;
   QQuickWindow* rootWindow() const;
   void applyWindowTheme();
 
