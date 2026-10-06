@@ -36,7 +36,7 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   # --- client frames ---------------------------------------------------------------
 
-  step ~r/^the client sends an? (?<frame>sub|unsub|ping|rpc) frame with (?<fields>.+)$/,
+  step ~r/^the client sends an? (?<frame>sub|more|unsub|ping|rpc) frame with (?<fields>.+)$/,
        %{args: [frame, _fields]} = context do
     context = Fixtures.setup(context)
     client = World.client(context)
@@ -46,6 +46,15 @@ defmodule HalC2.Steps.Parity.Protocol do
         message = %{"t" => "sub", "id" => 1, "shape" => %{"type" => "shell"}, "offset" => nil}
         client = WsClient.send_json(client, message)
         context |> World.put_client(client) |> Map.put(:sent, %{id: 1})
+
+      "more" ->
+        context = Shapes.subscribe(context, "stream")
+        id = context.shape.id
+
+        client =
+          WsClient.send_json(World.client(context), %{"t" => "more", "id" => id, "items" => 1})
+
+        context |> World.put_client(client) |> Map.put(:sent, %{id: id})
 
       "unsub" ->
         context = Shapes.subscribe(context, "scheduledTasks")
@@ -67,7 +76,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     end
   end
 
-  step ~r/^the MC answers with (?<answer>the shape's first frames under that id|nothing further under that id|an rpc\.result or an rpc\.error under that id)$/,
+  step ~r/^the MC answers with (?<answer>the shape's first frames under that id|a page under that id|nothing further under that id|an rpc\.result or an rpc\.error under that id)$/,
        %{args: [answer]} = context do
     id = context.sent.id
 
@@ -76,6 +85,12 @@ defmodule HalC2.Steps.Parity.Protocol do
         {frame, client} = Mc.await(World.client(context), &(&1["id"] == id))
         assert %{"t" => "shell", "mcs" => [_ | _], "rows" => rows} = frame
         assert is_list(rows)
+        World.put_client(context, client)
+
+      "a page under that id" ->
+        {frame, client} = Mc.await(World.client(context), &(&1["t"] == "page"))
+        # Nothing lies before a stream held whole.
+        assert %{"id" => ^id, "rows" => [], "floor" => nil, "done" => true} = frame
         World.put_client(context, client)
 
       "nothing further under that id" ->
@@ -161,9 +176,10 @@ defmodule HalC2.Steps.Parity.Protocol do
     "projects or threads on one MC change" => "shell.rows",
     "an MC's environment descriptor changes" => "shell.environment",
     "an MC joins or leaves the cluster" => "shell.mc",
-    "a stream subscription starts or falls too far behind" => "snapshot",
+    "a stream subscription starts without a usable offset" => "snapshot",
     "stream entities change" => "events",
     "a stream has caught up" => "live",
+    "a client asks for the runs before its window" => "page",
     "a client falls behind" => "resync",
     "a shape is over" => "end",
     "a config subscription opens" => "config",
@@ -193,7 +209,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "the relay client install progresses" => "relayClientInstall"
   }
 
-  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
+  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|a stream subscription starts without a usable offset|stream entities change|a stream has caught up|a client asks for the runs before its window|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
        %{args: [text]} = context do
     frame = Map.fetch!(@whens, text)
 
@@ -238,12 +254,13 @@ defmodule HalC2.Steps.Parity.Protocol do
     "rpc.result" => ~w(id result),
     "rpc.error" => ~w(id error detail),
     "shell" => ~w(id mcs rows),
-    "shell.rows" => ~w(id mc rows),
+    "shell.rows" => ~w(id mc rows epoch rev reset),
     "shell.environment" => ~w(id mc environment),
     "shell.mc" => ~w(id mc online),
-    "snapshot" => ~w(id offset at part rows done),
+    "snapshot" => ~w(id offset at part rows done handle),
     "events" => ~w(id offset events),
-    "live" => ~w(id offset),
+    "live" => ~w(id offset handle),
+    "page" => ~w(id offset rows floor done),
     "resync" => ~w(id offset),
     "end" => ~w(id),
     "config" => ~w(id mc config),
@@ -274,7 +291,11 @@ defmodule HalC2.Steps.Parity.Protocol do
   end
 
   defp check_frame("shell", frame),
-    do: for(n <- frame["mcs"], do: assert(Map.keys(n) -- ["mc"] == ~w(environment online)))
+    do:
+      for(
+        n <- frame["mcs"],
+        do: assert(Map.keys(n) -- ["mc"] == ~w(environment epoch online reset rev))
+      )
 
   defp check_frame("events", frame) do
     for [seq, kind, id, _patch, at] <- frame["events"],
@@ -563,7 +584,7 @@ defmodule HalC2.Steps.Parity.Shapes do
   @doc "The shape a frame type belongs to; nil for socket frames."
   def shape_for(t) when t in ~w(hello pong error rpc.result rpc.error), do: nil
   def shape_for("shell" <> _), do: "shell"
-  def shape_for(t) when t in ~w(snapshot events live resync), do: "stream"
+  def shape_for(t) when t in ~w(snapshot events live page resync), do: "stream"
   def shape_for("end"), do: "previewAutomation"
   def shape_for("config" <> _), do: "config"
   def shape_for(t), do: t
@@ -846,6 +867,12 @@ defmodule HalC2.Steps.Parity.Shapes do
 
       "live" ->
         await(context, t, id)
+
+      "page" ->
+        client =
+          WsClient.send_json(World.client(context), %{"t" => "more", "id" => id, "items" => 1})
+
+        await(World.put_client(context, client), t, id)
 
       "events" ->
         item = %{"s" => %{"id" => "parity-item", "text" => "hi"}}

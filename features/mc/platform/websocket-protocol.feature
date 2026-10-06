@@ -3,7 +3,9 @@
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (protocol 3 frames)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (subscriptions, buffering, resync, state migration)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/ws upgrade)
-#   apps/server-ex/lib/hal_c2/streams/server.ex (replay window, snapshot chunks, idle stop)
+#   apps/server-ex/lib/hal_c2/streams/server.ex (handles, replay, what changed since, chunks, idle stop)
+#   apps/server-ex/lib/hal_c2/streams/view.ex (the kinds and window a client holds)
+#   apps/server-ex/lib/hal_c2/shell.ex (row versions)
 #   apps/server-ex/test/hal_c2/scenarios_test.exs (all executable scenarios except access)
 #   packages/client-runtime/src/v3/clusterSocket.ts (resubscribe from offset, resync)
 #   packages/client-runtime/src/v3/session.ts (unserved methods fail as unsupported)
@@ -53,11 +55,32 @@ Feature: The protocol 3 WebSocket
     Then it receives only the events it missed
 
   @mc
-  Scenario: A client too far behind gets a snapshot instead of a replay
+  Scenario: A client too far behind is sent what changed instead of the log
     Given the client saw a thread up to some offset and disconnected
-    And more than 2000 events were written since
+    And one note grew by more than 2000 events since
     When it subscribes again from that offset
+    Then it receives that note once, whole
+    And no snapshot
+
+  @mc
+  Scenario: A client that kept a thread between connections resumes it by its handle
+    Given the client saw a thread up to some offset and disconnected
+    And fewer than 2000 events were written since
+    When it subscribes again with that offset and the handle it was given
+    Then it receives only the events it missed
+
+  @mc
+  Scenario: An offset kept from another log starts over
+    Given the client saw a thread up to some offset and disconnected
+    When it subscribes again with that offset and a handle this MC did not give
     Then it receives a fresh snapshot of the thread
+
+  @mc
+  Scenario: A client is sent only the kinds of entity it asks for
+    Given a thread where the agent is writing a reply
+    When the client subscribes to its turn items and the user's messages
+    Then the snapshot holds the reply's turn item but neither its message nor its node
+    And text added to the reply arrives once, for the turn item
 
   @mc
   Scenario: A client that falls far behind is told to resync
@@ -191,6 +214,19 @@ Feature: The protocol 3 WebSocket
     When its socket drops and it connects again
     Then it resubscribes each thread from its last offset
     And it takes the shell whole
+
+  @mc
+  Scenario: A client that kept the sidebar is sent only the rows that changed
+    Given the client followed the shell and kept its rows with their version
+    And one thread was renamed since
+    When it follows the shell again with that version
+    Then it receives that thread's row and no other
+
+  @mc
+  Scenario: A sidebar kept from another run of the MC is replaced
+    Given the client followed the shell and kept its rows with their version
+    When it follows the shell again with a version the MC never gave
+    Then the MC sends every row and says they replace the client's
 
   @shared @backlog-mobile
   Scenario: A client refuses a server speaking an unknown protocol

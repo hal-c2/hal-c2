@@ -487,7 +487,7 @@ defmodule HalC2.Orchestration.Delegation do
 
   # Waits for the task to end; a timeout leaves it running and returns its state.
   defp wait(thread_id, task_id, timeout) do
-    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+    :ok = HalC2.Streams.watch(thread_id, self())
     deadline = System.monotonic_time(:millisecond) + timeout
 
     try do

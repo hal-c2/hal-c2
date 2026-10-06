@@ -40,9 +40,18 @@ defmodule HalC2.Streams do
 
   @doc """
   Subscribes `pid` to a stream. Delivers either the full state or, when `offset` is
-  recent enough, only the events after it; see `HalC2.Streams.Server.subscribe/3`.
+  recent enough, only the events after it; see `HalC2.Streams.Server`.
   """
   defdelegate subscribe(stream_id, pid, offset), to: Server
+
+  @doc "Subscribes `pid` for a client, which is sent only what its view of the stream lacks."
+  defdelegate subscribe(stream_id, pid, offset, client), to: Server
+
+  @doc "Tells `pid` whenever the stream changes, without sending it the stream."
+  defdelegate watch(stream_id, pid), to: Server
+
+  @doc "See `HalC2.Streams.Server.more/3`."
+  defdelegate more(stream_id, pid, items), to: Server
   defdelegate unsubscribe(stream_id, pid), to: Server
 
   @doc "See `HalC2.Streams.Server.transact/3`."

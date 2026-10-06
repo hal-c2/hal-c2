@@ -684,7 +684,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
   step "its state is migrated to the new version's shape", context do
     assert {:push, {:text, pong}, state} = context.handled
     assert JSON.decode!(IO.iodata_to_binary(pong)) == %{"t" => "pong"}
-    assert %{v: 2, scopes: :all} = state
+    assert %{v: 3, scopes: :all} = state
     context
   end
 

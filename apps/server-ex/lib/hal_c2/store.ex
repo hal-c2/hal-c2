@@ -19,7 +19,8 @@ defmodule HalC2.Store do
   connection instead, which SQLite runs alongside writes.
 
   The meta table records the schema version the file was written with. An MC
-  refuses to open a store from a newer schema rather than misread it.
+  refuses to open a store from a newer schema rather than misread it. It also holds
+  the store's `id/1`, which names this log: offsets are only comparable within it.
   """
 
   use GenServer
@@ -209,6 +210,21 @@ defmodule HalC2.Store do
     end
   end
 
+  @doc """
+  The id this store was created with. A client that kept an offset resumes from it
+  only against the store the offset came from (`HalC2.Streams.Server.handle/0`).
+  """
+  @spec id(pid | atom) :: String.t()
+  def id(store \\ __MODULE__) do
+    with pid when is_pid(pid) <- GenServer.whereis(store),
+         {_, _} = key <- path_key(pid),
+         id when id != nil <- :persistent_term.get({:id, key}, nil) do
+      id
+    else
+      _ -> exit({:noproc, {__MODULE__, :id, [store]}})
+    end
+  end
+
   # A named store keeps its path under its name, so a restart replaces the entry
   # instead of leaving one behind for each process it has been.
   defp path_key(pid) do
@@ -331,6 +347,17 @@ defmodule HalC2.Store do
         db,
         "INSERT OR IGNORE INTO meta VALUES ('schema_version', '#{@schema_version}')"
       )
+
+    :ok =
+      Sqlite3.execute(
+        db,
+        "INSERT OR IGNORE INTO meta VALUES ('store_id', lower(hex(randomblob(8))))"
+      )
+
+    {:ok, id_stmt} = Sqlite3.prepare(db, "SELECT value FROM meta WHERE key = 'store_id'")
+    {:row, [id]} = Sqlite3.step(db, id_stmt)
+    :ok = Sqlite3.release(db, id_stmt)
+    :persistent_term.put({:id, path_key(self())}, id)
 
     store = self()
     checkpointer = spawn_link(fn -> checkpointer(path, store) end)

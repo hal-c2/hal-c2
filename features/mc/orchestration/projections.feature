@@ -7,6 +7,7 @@
 #     orchestration.getArchivedShellSnapshot)
 #   apps/server-ex/lib/hal_c2/projection/shell.ex, thread_error.ex, background_work.ex, timeline.ex
 #   apps/server-ex/lib/hal_c2/orchestration.ex (getArchivedShellSnapshot)
+#   apps/server-ex/lib/hal_c2/streams/view.ex (windows and pages of a thread)
 #   apps/server/src/orchestration-v2/ (projector, shell and thread projections)
 Feature: What the engine projects for clients
   Clients render projections, not raw entities. A thread's shell row summarizes
@@ -150,15 +151,17 @@ Feature: What the engine projects for clients
     Then it receives the thread, its runs, items, messages, plans, checkpoints and requests
     And it receives the sequence the projection is at
 
-  @mc @backlog
-  Scenario: Subscribing to a thread sends a bounded snapshot and then live events
+  # A client bounds a thread by subscribing with a window (HalC2.Streams.View); without
+  # one it is sent the whole thread, as the legacy clients expect.
+  @mc
+  Scenario: Subscribing to a thread with a window sends a bounded snapshot and then live events
     Given "t1" has a very long history
-    When a client subscribes to "t1"
+    When a client subscribes to "t1" with a window
     Then it receives the newest part of the history with a marker that older history exists
     And it can page older history on request
     And then it receives live events after the snapshot's sequence
 
-  @mc @backlog
+  @mc
   Scenario: A bounded page of history holds only visible turns
     Given "t1" has hidden and visible earlier turns
     When a client asks for a bounded page of the history of "t1"

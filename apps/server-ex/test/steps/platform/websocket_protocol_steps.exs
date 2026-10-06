@@ -97,9 +97,9 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     stream = stream_id()
     {:ok, _} = HalC2.Streams.commit(stream, :thread, [note("first")])
     client = Mc.connect(context.mc) |> sub(1, stream)
-    {%{"offset" => offset}, client} = Mc.await(client, &(&1["t"] == "live"))
+    {%{"offset" => offset, "handle" => handle}, client} = Mc.await(client, &(&1["t"] == "live"))
     Mint.HTTP.close(client.conn)
-    Map.merge(context, %{stream: stream, offset: offset})
+    Map.merge(context, %{stream: stream, offset: offset, handle: handle})
   end
 
   step "fewer than 2000 events were written since", context do
@@ -109,11 +109,93 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     Map.put(context, :missed, Enum.to_list((context.offset + 1)..last))
   end
 
-  step "more than 2000 events were written since", context do
-    {:ok, last} =
-      HalC2.Streams.commit(context.stream, :thread, for(i <- 1..2_001, do: note("n#{i}")))
+  step "one note grew by more than 2000 events since", context do
+    grown = [
+      {"note", "grown", %{"s" => %{"text" => ""}}}
+      | for(_ <- 1..2_001, do: {"note", "grown", %{"a" => %{"text" => "x"}}})
+    ]
 
+    {:ok, last} = HalC2.Streams.commit(context.stream, :thread, grown)
     Map.put(context, :seq, last)
+  end
+
+  step "it receives that note once, whole", context do
+    {live, skipped, client} =
+      WsClient.recv_until(World.client(context), &(&1["t"] == "live" and &1["id"] == 2), 5_000)
+
+    seq = context.seq
+    assert live["offset"] == seq
+    events = for %{"t" => "events", "events" => events} <- skipped, event <- events, do: event
+    assert [[^seq, "note", "grown", %{"d" => true, "s" => %{"text" => text}}, _at]] = events
+    assert byte_size(text) == 2_001
+    context |> Map.put(:skipped, skipped) |> World.put_client(client)
+  end
+
+  step "no snapshot", context do
+    refute Enum.any?(context.skipped, &(&1["t"] == "snapshot"))
+    context
+  end
+
+  step "it subscribes again with that offset and the handle it was given", context do
+    resume = %{"offset" => context.offset, "handle" => context.handle}
+    client = Mc.connect(context.mc) |> sub(2, context.stream, resume)
+    World.put_client(context, client)
+  end
+
+  step "it subscribes again with that offset and a handle this MC did not give", context do
+    resume = %{"offset" => context.offset, "handle" => "another-store.1"}
+    client = Mc.connect(context.mc) |> sub(2, context.stream, resume)
+    context |> Map.put(:seq, context.offset) |> World.put_client(client)
+  end
+
+  step "a thread where the agent is writing a reply", context do
+    stream = stream_id()
+
+    reply = fn kind, id, fields ->
+      {kind, id, %{"s" => Map.merge(%{"id" => id, "runId" => "r1", "text" => ""}, fields)}}
+    end
+
+    {:ok, _} =
+      HalC2.Streams.commit(stream, :thread, [
+        {"run", "r1", %{"s" => %{"id" => "r1", "ordinal" => 1, "status" => "running"}}},
+        reply.("message", "m-user", %{"role" => "user", "text" => "Hi"}),
+        reply.("node", "n1", %{}),
+        reply.("turn-item", "i1", %{"type" => "assistant_message", "messageId" => "m-agent"}),
+        reply.("message", "m-agent", %{"role" => "assistant"})
+      ])
+
+    Map.put(context, :stream, stream)
+  end
+
+  step "the client subscribes to its turn items and the user's messages", context do
+    kinds = %{"run" => %{}, "turn-item" => %{}, "message" => %{"role" => "user"}}
+    client = World.client(context) |> sub(1, context.stream, %{}, kinds)
+    {parts, client} = snapshot_parts(client, 1, [])
+    {_live, client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 1))
+    context |> Map.put(:rows, Enum.flat_map(parts, & &1["rows"])) |> World.put_client(client)
+  end
+
+  step "the snapshot holds the reply's turn item but neither its message nor its node", context do
+    assert Enum.map(context.rows, &Enum.take(&1, 2)) == [
+             ["run", "r1"],
+             ["message", "m-user"],
+             ["turn-item", "i1"]
+           ]
+
+    context
+  end
+
+  step "text added to the reply arrives once, for the turn item", context do
+    {:ok, seq} =
+      HalC2.Streams.commit(context.stream, :thread, [
+        {"turn-item", "i1", %{"a" => %{"text" => "Hello"}}},
+        {"message", "m-agent", %{"a" => %{"text" => "Hello"}}}
+      ])
+
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events"))
+    assert frame["offset"] == seq
+    assert [[_seq, "turn-item", "i1", %{"a" => %{"text" => "Hello"}}, _at]] = frame["events"]
+    World.put_client(context, client)
   end
 
   step "it subscribes again from that offset", context do
@@ -764,6 +846,60 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     World.put_client(context, client)
   end
 
+  step "the client followed the shell and kept its rows with their version", context do
+    context = context |> World.create_thread("One") |> World.create_thread("Two")
+    client = Mc.connect(context.mc) |> Mc.sub(1, %{"type" => "shell"})
+    {shell, client} = Mc.await(client, &(&1["t"] == "shell"))
+    Mint.HTTP.close(client.conn)
+
+    name = Atom.to_string(node())
+    %{"epoch" => epoch, "rev" => rev} = Enum.find(shell["mcs"], &(&1["mc"] == name))
+    assert is_binary(epoch) and is_integer(rev)
+    Map.merge(context, %{have: %{name => [epoch, rev]}, kept: length(shell["rows"])})
+  end
+
+  step "one thread was renamed since", context do
+    id = World.thread_id(context, "Two")
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"title" => "Renamed"}}}])
+
+    World.await_row(id, &(&1["title"] == "Renamed"))
+    Map.put(context, :renamed, id)
+  end
+
+  step "it follows the shell again with that version", context do
+    client = Mc.connect(context.mc) |> shell_sub(context.have)
+    {shell, client} = Mc.await(client, &(&1["t"] == "shell"))
+    context |> Map.put(:shell, shell) |> World.put_client(client)
+  end
+
+  step "it receives that thread's row and no other", context do
+    name = Atom.to_string(node())
+    renamed = context.renamed
+    assert [[^name, ^renamed, "thread", %{"title" => "Renamed"}]] = context.shell["rows"]
+
+    assert %{"reset" => false, "rev" => rev} =
+             Enum.find(context.shell["mcs"], &(&1["mc"] == name))
+
+    assert rev > context.have |> Map.fetch!(name) |> List.last()
+    context
+  end
+
+  step "it follows the shell again with a version the MC never gave", context do
+    have = Map.new(context.have, fn {mc, [_epoch, rev]} -> {mc, ["another-run", rev]} end)
+    client = Mc.connect(context.mc) |> shell_sub(have)
+    {shell, client} = Mc.await(client, &(&1["t"] == "shell"))
+    context |> Map.put(:shell, shell) |> World.put_client(client)
+  end
+
+  step "the MC sends every row and says they replace the client's", context do
+    name = Atom.to_string(node())
+    assert %{"reset" => true} = Enum.find(context.shell["mcs"], &(&1["mc"] == name))
+    assert length(context.shell["rows"]) == context.kept
+    context
+  end
+
   # --- protocol negotiation and revocation -------------------------------------------------
 
   step "a client speaking a protocol newer than the MC's", context do
@@ -819,11 +955,31 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   defp note(text),
     do: {"note", "n-#{System.unique_integer([:positive])}", %{"s" => %{"text" => text}}}
 
-  defp sub(client, id, stream, offset \\ nil) do
+  # `resume` is the offset to continue from, or the frame's fields saying where
+  # (offset, handle, window); `kinds` the entity kinds the client folds.
+  defp sub(client, id, stream, resume \\ nil, kinds \\ nil) do
     shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => stream}
+    shape = if kinds, do: Map.put(shape, "kinds", kinds), else: shape
     frame = %{"t" => "sub", "id" => id, "shape" => shape}
-    WsClient.send_json(client, if(offset, do: Map.put(frame, "offset", offset), else: frame))
+
+    resume =
+      case resume do
+        nil -> %{}
+        offset when is_integer(offset) -> %{"offset" => offset}
+        %{} = fields -> fields
+      end
+
+    WsClient.send_json(client, Map.merge(frame, resume))
   end
+
+  defp shell_sub(client, have),
+    do:
+      WsClient.send_json(client, %{
+        "t" => "sub",
+        "id" => 1,
+        "shape" => %{"type" => "shell"},
+        "have" => have
+      })
 
   defp snapshot_parts(client, id, parts) do
     {frame, client} = Mc.await(client, &(&1["t"] == "snapshot" and &1["id"] == id))

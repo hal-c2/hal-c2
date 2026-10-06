@@ -2,19 +2,34 @@ defmodule HalC2.Streams.Server do
   @moduledoc """
   Owns the live state of one stream and its subscribers.
 
-  Subscribers receive, in order:
+  A *client* subscription (`subscribe/4` with a view) is what a socket holds for a
+  client. Its messages carry entities as clients see them (`HalC2.Web.Wire`), and
+  only those of its `HalC2.Streams.View`. It receives, in order:
 
-    * `{:hal_c2_stream, stream_id, {:snapshot, seq, updated_at, rows, :more | :done}}` chunks when they
-      start fresh or have fallen too far behind, where `rows` is a list of
-      `{kind, entity_id, entity}`, or `{:hal_c2_stream, stream_id, {:events, events}}`
-      replaying only what they missed,
-    * `{:hal_c2_stream, stream_id, {:live, seq}}` once they are caught up, then
-    * `{:hal_c2_stream, stream_id, {:events, events}}` for every later commit.
+    * what it lacks, one of
+      * `{:snapshot, seq, updated_at, rows, :more | :done, %{handle: h, floor: f}}`
+        chunks when it starts fresh, where `rows` is a list of `{kind, id, entity}`
+        and `floor` is its window's (absent without a window),
+      * `{:events, events, seq}` chunks when it resumes from an offset: the log's
+        events since, merged per entity, or past `@max_replay` of them one event
+        replacing each entity changed since (`HalC2.StreamState.changed_since/2`),
+    * `{:live, seq, handle}` once it is caught up, then
+    * `{:events, events, seq}` for every later commit that touches its view, and
+    * `{:page, seq, rows, floor, :more | :done}` chunks answering `more/3`.
 
-  Snapshots are split into chunks of about `@chunk_bytes` because a subscriber may be
+  Each arrives as `{:hal_c2_stream, stream_id, message}`. A client resumes only with
+  the `handle/0` its offset came from; any other starts fresh.
+
+  A plain subscription (`subscribe/3`) is for this MC's own processes: whole
+  entities, as `{:snapshot, seq, updated_at, rows, :more | :done}` or
+  `{:events, events}`, then `{:live, seq}` and `{:events, events}`. `watch/2` asks
+  for none of the state: `{:live, seq}`, then `{:changed, seq}` after every commit.
+
+  Messages are split into chunks of about `@chunk_bytes` because a subscriber may be
   on another MC, and one large message would stall every other message on that
   MC connection until it finished. Such a subscriber is sent everything through its
-  own `HalC2.Streams.Relay`, so a slow connection holds up nobody else.
+  own `HalC2.Streams.Relay`, so a slow connection holds up nobody else, and what it
+  starts from is put together there too, not in the stream.
 
   Replay reads the log, not memory, so a reconnecting client costs one query rather
   than a buffered copy of the thread. The process hibernates between bursts and stops
@@ -25,19 +40,38 @@ defmodule HalC2.Streams.Server do
   use GenServer, restart: :transient
 
   alias HalC2.{Store, StreamState}
-  alias HalC2.Streams.Relay
+  alias HalC2.Streams.{Relay, View}
 
-  @state_version 2
+  @state_version 3
   @idle_stop :timer.minutes(5)
   @snapshot_every 500
-  # A subscriber further behind than this gets a snapshot instead of a replay.
+  # A subscriber further behind than this is not replayed the log.
   @max_replay 2_000
   @chunk_bytes 256 * 1024
   # While a thread streams, its sidebar row is recomputed at most this often.
   @shell_debounce 250
 
+  @typedoc """
+  What a client asks for: the `handle` its offset came from, the `kinds` it folds
+  (`HalC2.Streams.View`), and its `window`, either `{:items, n}` to start with the
+  newest runs holding `n` turn items or `{:floor, f}` to keep the window it has.
+  """
+  @type client :: %{
+          optional(:handle) => String.t() | nil,
+          optional(:kinds) => View.kinds(),
+          optional(:window) => {:items, pos_integer} | {:floor, integer | nil} | nil
+        }
+
   @doc "How long a stream without subscribers stays up."
   def idle_stop, do: @idle_stop
+
+  @doc """
+  Names this MC's log as clients see it. Offsets count this store's events and
+  entities are trimmed by this version's rules, so a client resumes from an offset
+  only where both still hold.
+  """
+  @spec handle() :: String.t()
+  def handle, do: "#{Store.id()}.#{HalC2.Web.Wire.version()}"
 
   def start_link(stream_id),
     do:
@@ -48,7 +82,27 @@ defmodule HalC2.Streams.Server do
 
   @spec subscribe(String.t(), pid, non_neg_integer | nil) :: :ok
   def subscribe(stream_id, pid, offset \\ nil),
-    do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, offset})
+    do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, offset, :plain})
+
+  @spec subscribe(String.t(), pid, non_neg_integer | nil, client) :: :ok
+  def subscribe(stream_id, pid, offset, %{} = client),
+    do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, offset, client})
+
+  @spec watch(String.t(), pid) :: :ok
+  def watch(stream_id, pid),
+    do: stream_id |> HalC2.Streams.ensure() |> GenServer.call({:subscribe, pid, nil, :watch})
+
+  @doc """
+  Sends a client the runs before its window's floor that together hold at least
+  `items` turn items, and moves the floor down to hold them.
+  """
+  @spec more(String.t(), pid, pos_integer) :: :ok
+  def more(stream_id, pid, items) do
+    case Registry.lookup(HalC2.Streams.Registry, stream_id) do
+      [{server, _}] -> GenServer.cast(server, {:more, pid, items})
+      [] -> :ok
+    end
+  end
 
   @spec unsubscribe(String.t(), pid) :: :ok
   def unsubscribe(stream_id, pid) do
@@ -102,15 +156,17 @@ defmodule HalC2.Streams.Server do
        stream: state,
        snapshot_seq: state.seq,
        shell_scheduled: false,
+       # pid => %{ref: monitor, view: View.t() | :plain | :watch}
        subscribers: %{},
+       # pid => the relay of a subscriber on another MC
        relays: %{}
      }, @idle_stop}
   end
 
   @impl true
-  def handle_call({:subscribe, pid, offset}, _from, state) do
+  def handle_call({:subscribe, pid, offset, client}, _from, state) do
     state = drop(state, pid)
-    initial = initial(state, pid, offset)
+    {view, initial} = initial(state, pid, offset, client)
 
     relays =
       if node(pid) == node() do
@@ -120,8 +176,8 @@ defmodule HalC2.Streams.Server do
         Map.put(state.relays, pid, Relay.start(pid, initial))
       end
 
-    subscribers = Map.put(state.subscribers, pid, Process.monitor(pid))
-    {:reply, :ok, %{state | subscribers: subscribers, relays: relays}}
+    sub = %{ref: Process.monitor(pid), view: view}
+    {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, sub), relays: relays}}
   end
 
   def handle_call({:commit, stream_kind, changes}, _from, state) do
@@ -144,7 +200,7 @@ defmodule HalC2.Streams.Server do
 
     stream = Enum.reduce(events, state.stream, &StreamState.apply_event(&2, &1))
     HalC2.Search.index(state.id, events, stream)
-    broadcast(state, {:events, events})
+    broadcast(state, stream, events)
     state = schedule_shell(%{state | stream: stream})
     {:reply, {:ok, last}, state, timeout(state)}
   end
@@ -174,6 +230,34 @@ defmodule HalC2.Streams.Server do
   @impl true
   def handle_cast({:unsubscribe, pid}, state) do
     state = drop(state, pid)
+    {:noreply, state, timeout(state)}
+  end
+
+  def handle_cast({:more, pid, items}, state) do
+    state =
+      case state.subscribers do
+        %{^pid => %{view: %{window: %{floor: floor}} = view} = sub} when floor != nil ->
+          {runs, floor} = View.take_runs(state.stream, floor, items)
+          # By the way its events go, so it arrives after the ones it follows.
+          to = Map.get(state.relays, pid, pid)
+
+          send_chunks(View.page(view, state.stream, runs), fn rows, more ->
+            send(to, {:hal_c2_stream, state.id, {:page, state.stream.seq, rows, floor, more}})
+          end)
+
+          sub = %{sub | view: %{view | window: %{floor: floor}}}
+          %{state | subscribers: Map.put(state.subscribers, pid, sub)}
+
+        # Nothing lies before a window that reaches the start, or before no window.
+        %{^pid => %{view: %{}}} ->
+          to = Map.get(state.relays, pid, pid)
+          send(to, {:hal_c2_stream, state.id, {:page, state.stream.seq, [], nil, :done}})
+          state
+
+        _ ->
+          state
+      end
+
     {:noreply, state, timeout(state)}
   end
 
@@ -211,17 +295,30 @@ defmodule HalC2.Streams.Server do
   end
 
   @impl true
-  def code_change(_old_vsn, state, _extra),
-    do:
-      {:ok,
-       state
-       |> Map.put_new_lazy(:relays, fn -> relays(state.subscribers) end)
-       |> Map.merge(%{v: @state_version, stream: StreamState.migrate(state.stream)})}
+  def code_change(_old_vsn, state, _extra) do
+    # Before version 3 a subscriber was only its monitor, and sockets trimmed what
+    # they were sent themselves. They take a client's messages now, and this MC's
+    # own waiters only ever count them.
+    subscribers =
+      Map.new(state.subscribers, fn
+        {pid, ref} when is_reference(ref) -> {pid, %{ref: ref, view: %{kinds: nil, window: nil}}}
+        sub -> sub
+      end)
+
+    {:ok,
+     state
+     |> Map.put_new_lazy(:relays, fn -> relays(subscribers) end)
+     |> Map.merge(%{
+       v: @state_version,
+       stream: StreamState.migrate(state.stream),
+       subscribers: subscribers
+     })}
+  end
 
   # Relays for subscribers a version without them was sending to itself. They are
   # live already, so there is nothing to start them from.
   defp relays(subscribers) do
-    for {pid, _ref} <- subscribers, node(pid) != node(), into: %{} do
+    for {pid, _sub} <- subscribers, node(pid) != node(), into: %{} do
       {pid, Relay.start(pid, fn -> :ok end)}
     end
   end
@@ -229,65 +326,130 @@ defmodule HalC2.Streams.Server do
   # Forgets a subscriber. Its relay is killed, not left to finish: what it still
   # holds is no longer wanted, and would mix with what a new subscription is sent.
   defp drop(state, pid) do
-    {ref, subscribers} = Map.pop(state.subscribers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
+    {sub, subscribers} = Map.pop(state.subscribers, pid)
+    if sub, do: Process.demonitor(sub.ref, [:flush])
     {relay, relays} = Map.pop(state.relays, pid)
     if relay, do: Process.exit(relay, :kill)
     %{state | subscribers: subscribers, relays: relays}
   end
 
-  # What sends `pid` the state it starts from, for the stream or the subscriber's
-  # relay to run. It holds only what it sends.
-  defp initial(%{id: id, stream: stream} = state, pid, offset) do
-    replay =
-      if is_integer(offset) and offset <= stream.seq,
-        do: Store.reduce_stream(state.path, id, offset, [], &[&1 | &2], limit: @max_replay + 1),
-        else: :none
+  # What a new subscriber is sent from now on, and what sends it the state it
+  # starts from, for the stream or the subscriber's relay to run. Only the log is
+  # read here, so that it ends where the stream stands; the rest is put together
+  # by whoever runs it, from the stream as it is now.
+  defp initial(%{id: id, stream: stream}, pid, _offset, :watch),
+    do: {:watch, fn -> send(pid, {:hal_c2_stream, id, {:live, stream.seq}}) end}
 
-    live = {:hal_c2_stream, id, {:live, stream.seq}}
+  defp initial(%{id: id, stream: stream} = state, pid, offset, :plain) do
+    replay = replay(state, offset)
 
-    case replay do
-      events when is_list(events) and length(events) <= @max_replay ->
-        # Counted before the events that change nothing are left out, or a replay cut
-        # short by the limit could pass for a whole one.
-        events = events |> Enum.reject(&StreamState.void?/1) |> Enum.reverse()
+    {:plain,
+     fn ->
+       case replay do
+         events when is_list(events) ->
+           events = Enum.reject(events, &StreamState.void?/1)
+           send(pid, {:hal_c2_stream, id, {:events, events}})
 
-        fn ->
-          send(pid, {:hal_c2_stream, id, {:events, events}})
-          send(pid, live)
-        end
+         :too_many ->
+           send_chunks(StreamState.rows(stream), fn rows, more ->
+             send(
+               pid,
+               {:hal_c2_stream, id, {:snapshot, stream.seq, stream.updated_at, rows, more}}
+             )
+           end)
+       end
 
-      _ ->
-        fn ->
-          send_snapshot(id, stream, pid)
-          send(pid, live)
-        end
-    end
+       send(pid, {:hal_c2_stream, id, {:live, stream.seq}})
+     end}
   end
 
-  defp send_snapshot(id, stream, pid) do
-    # Creation order, which is the order lists such as runs and turn items are shown in.
-    chunks = chunk_rows(StreamState.rows(stream), [], 0, [])
+  defp initial(%{id: id, stream: stream} = state, pid, offset, client) do
+    handle = handle()
+    # An offset from another log, or a window that was never set, resumes nothing.
+    resumes? = client[:handle] in [nil, handle] and not match?({:items, _}, client[:window])
+
+    window =
+      case client[:window] do
+        {:items, items} -> %{floor: View.tail(stream, items)}
+        {:floor, floor} -> %{floor: floor}
+        nil -> nil
+      end
+
+    view = %{kinds: client[:kinds], window: window}
+    replay = resumes? && replay(state, offset)
+
+    {view,
+     fn ->
+       missed =
+         case replay do
+           events when is_list(events) ->
+             HalC2.Web.Protocol.coalesce(events) |> then(&View.events(view, stream, &1))
+
+           :too_many when is_integer(offset) and offset <= stream.seq ->
+             View.changed_since(view, stream, offset)
+
+           _ ->
+             :unknown
+         end
+
+       case missed do
+         [] ->
+           :ok
+
+         events when is_list(events) ->
+           # Merged events only make sense whole: a client cut off part-way resumes
+           # from where it was, so only the last chunk moves its offset.
+           send_chunks(events, fn chunk, more ->
+             seq = if more == :done, do: List.last(chunk).seq, else: offset
+             send(pid, {:hal_c2_stream, id, {:events, chunk, seq}})
+           end)
+
+         :unknown ->
+           meta = if window, do: %{handle: handle, floor: window.floor}, else: %{handle: handle}
+
+           send_chunks(View.rows(view, stream), fn rows, more ->
+             send(
+               pid,
+               {:hal_c2_stream, id, {:snapshot, stream.seq, stream.updated_at, rows, more, meta}}
+             )
+           end)
+       end
+
+       send(pid, {:hal_c2_stream, id, {:live, stream.seq, handle}})
+     end}
+  end
+
+  # The log's events after `offset`, oldest first, or `:too_many` when there are more
+  # than a replay carries or `offset` is not one this stream reached.
+  defp replay(state, offset) when is_integer(offset) and offset <= state.stream.seq do
+    events =
+      Store.reduce_stream(state.path, state.id, offset, [], &[&1 | &2], limit: @max_replay + 1)
+
+    # Counted before the events that change nothing are left out, or a replay cut
+    # short by the limit could pass for a whole one.
+    if length(events) <= @max_replay, do: Enum.reverse(events), else: :too_many
+  end
+
+  defp replay(_state, _offset), do: :too_many
+
+  # Calls `fun.(chunk, :more | :done)` for `list` in chunks of about `@chunk_bytes`:
+  # once with nothing when `list` is empty, so whoever waits for `:done` gets it.
+  defp send_chunks(list, fun) do
+    chunks = chunk(list, [], 0, [])
     last = length(chunks) - 1
 
     for {chunk, i} <- Enum.with_index(chunks),
-        do:
-          send(
-            pid,
-            {:hal_c2_stream, id,
-             {:snapshot, stream.seq, stream.updated_at, chunk,
-              if(i == last, do: :done, else: :more)}}
-          )
+        do: fun.(chunk, if(i == last, do: :done, else: :more))
   end
 
-  defp chunk_rows([], current, _size, acc), do: Enum.reverse([Enum.reverse(current) | acc])
+  defp chunk([], current, _size, acc), do: Enum.reverse([Enum.reverse(current) | acc])
 
-  defp chunk_rows([row | rest], current, size, acc) do
-    row_size = :erlang.external_size(row)
+  defp chunk([item | rest], current, size, acc) do
+    item_size = :erlang.external_size(item)
 
-    if current != [] and size + row_size > @chunk_bytes,
-      do: chunk_rows(rest, [row], row_size, [Enum.reverse(current) | acc]),
-      else: chunk_rows(rest, [row | current], size + row_size, acc)
+    if current != [] and size + item_size > @chunk_bytes,
+      do: chunk(rest, [item], item_size, [Enum.reverse(current) | acc]),
+      else: chunk(rest, [item | current], size + item_size, acc)
   end
 
   defp schedule_shell(%{shell_scheduled: true} = state), do: state
@@ -297,12 +459,37 @@ defmodule HalC2.Streams.Server do
     %{state | shell_scheduled: true}
   end
 
-  defp broadcast(state, message),
-    do:
-      for(
-        {pid, _} <- state.subscribers,
-        do: send(Map.get(state.relays, pid, pid), {:hal_c2_stream, state.id, message})
-      )
+  # Clients with the same view are sent the same events, trimmed and filtered once.
+  # One on another MC is sent them through its relay.
+  defp broadcast(state, stream, events) do
+    seq = List.last(events).seq
+
+    Enum.reduce(state.subscribers, %{}, fn {pid, %{view: view}}, by_view ->
+      to = Map.get(state.relays, pid, pid)
+
+      case view do
+        :plain ->
+          send(to, {:hal_c2_stream, state.id, {:events, events}})
+          by_view
+
+        :watch ->
+          send(to, {:hal_c2_stream, state.id, {:changed, seq}})
+          by_view
+
+        view ->
+          by_view =
+            Map.put_new_lazy(by_view, view, fn ->
+              View.events(view, stream, state.stream, events)
+            end)
+
+          # A commit that touches nothing the client holds is not news to it.
+          if by_view[view] != [],
+            do: send(to, {:hal_c2_stream, state.id, {:events, by_view[view], seq}})
+
+          by_view
+      end
+    end)
+  end
 
   defp timeout(%{subscribers: subs}) when map_size(subs) == 0, do: @idle_stop
   defp timeout(_state), do: :infinity

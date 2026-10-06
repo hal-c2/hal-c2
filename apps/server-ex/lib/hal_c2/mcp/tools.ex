@@ -657,7 +657,7 @@ defmodule HalC2.Mcp.Tools do
 
   # Waits for a run (the given one, or the latest) to finish, or for the timeout.
   defp wait(thread_id, run_id, timeout) do
-    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+    :ok = HalC2.Streams.watch(thread_id, self())
     deadline = System.monotonic_time(:millisecond) + timeout
 
     try do
