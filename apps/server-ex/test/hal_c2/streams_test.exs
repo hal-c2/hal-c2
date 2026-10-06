@@ -478,6 +478,38 @@ defmodule HalC2.StreamsTest do
              HalC2.Shell.subscribe(self(), %{name => {epoch, 0}})
   end
 
+  test "a shell that takes this version's code in place gives its rows versions" do
+    {:ok, _} = Streams.commit("th-21", :thread, thread("th-21", %{"projectId" => "p"}))
+    :ok = Streams.flush_shell("th-21")
+    :ok = HalC2.Shell.subscribe(self())
+
+    # Its state as the version before kept it: subscribers by their monitor alone.
+    :ok = :sys.suspend(HalC2.Shell)
+
+    :sys.replace_state(HalC2.Shell, fn state ->
+      subscribers = Map.new(state.subscribers, fn {pid, {ref, _kind}} -> {pid, ref} end)
+      state |> Map.drop([:own, :versions]) |> Map.put(:subscribers, subscribers)
+    end)
+
+    :ok = :sys.change_code(HalC2.Shell, HalC2.Shell, nil, nil)
+    :ok = :sys.resume(HalC2.Shell)
+
+    # A member that has not taken it yet is not answered, and does no harm.
+    GenServer.cast(HalC2.Shell, {:peer_rows, :"old@127.0.0.1", [{"x", {"thread", %{}}}]})
+    GenServer.cast(HalC2.Shell, {:peer_hello, :"old@127.0.0.1"})
+
+    assert {epoch, 0} = HalC2.Shell.version()
+    assert is_binary(epoch)
+
+    # The subscriber from before is still told of changes, as it was.
+    {:ok, _} =
+      Streams.commit("th-21", :thread, [{"thread", "th-21", %{"s" => %{"title" => "new"}}}])
+
+    :ok = Streams.flush_shell("th-21")
+    assert_receive {:hal_c2_shell, {:rows, _mc, [{"th-21", {"thread", %{"title" => "new"}}}]}}
+    assert {^epoch, 1} = HalC2.Shell.version()
+  end
+
   test "thread changes update the shell row and notify its subscribers" do
     :ok = HalC2.Shell.subscribe(self())
     {:ok, _} = Streams.commit("th-4", :thread, thread("th-4", %{"projectId" => "p"}))

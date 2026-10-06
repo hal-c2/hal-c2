@@ -166,7 +166,7 @@ defmodule HalC2.Shell do
       if Map.has_key?(state, :versions) do
         state
       else
-        :ets.new(@revs, [:named_table, :protected])
+        if :ets.whereis(@revs) == :undefined, do: :ets.new(@revs, [:named_table, :protected])
 
         subscribers =
           Map.new(state.subscribers, fn {pid, ref} -> {pid, {ref, :plain}} end)
@@ -318,6 +318,12 @@ defmodule HalC2.Shell do
         {:noreply, state}
     end
   end
+
+  # From a member still on a version before rows had versions, in the moment before
+  # this MC drops it for that (`HalC2.Cluster.version_changed/0`). It says hello
+  # again once it runs this version.
+  def handle_cast({:peer_rows, _peer, _rows}, state), do: {:noreply, state}
+  def handle_cast({:peer_hello, _peer}, state), do: {:noreply, state}
 
   @impl true
   def handle_info({:nodeup, peer}, state) do
