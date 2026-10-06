@@ -358,6 +358,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mc/platform/storage-layout.feature:The desktop app's home directory outranks*"),
     QStringLiteral("mc/platform/storage-layout.feature:The desktop app's control socket lives*"),
     QStringLiteral("mc/platform/storage-layout.feature:The desktop app on Windows keeps*"),
+    QStringLiteral("mc/platform/storage-layout.feature:The desktop app a developer builds uses*"),
     QStringLiteral("mc/orchestration/runs.feature:A failed turn keeps the output*"),
     QStringLiteral("mc/orchestration/runs.feature:A provider retry is recorded*"),
     QStringLiteral("mc/orchestration/queue-and-steering.feature:A usage limit keeps the queue*"),

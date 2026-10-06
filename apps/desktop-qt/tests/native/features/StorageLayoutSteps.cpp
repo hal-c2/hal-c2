@@ -6,6 +6,7 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
 #include <QLocalSocket>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
@@ -55,8 +56,7 @@ const Steps steps([] {
   step(QStringLiteral("a developer starts the desktop app from a linked git worktree with --home-dir %1").arg(q),
        [](World& world, const Captures& c, const Table&) {
     Layout& state = layout(world);
-    // With the developer's own HAL_C2_HOME, and with the worktree's, which the
-    // development runner puts in its place (scripts/dev-qt.mjs).
+    // With the developer's own HAL_C2_HOME, and with a worktree's own.
     QProcessEnvironment worktree = state.env;
     worktree.insert(QStringLiteral("HAL_C2_HOME"), QStringLiteral("/code/hal-c2/.claude/worktrees/feature/.hal-c2"));
     for (const QProcessEnvironment& env : {state.env, worktree}) {
@@ -71,6 +71,26 @@ const Steps steps([] {
                  paths.state == c[0] + QStringLiteral("/state") && paths.cache == c[0] + QStringLiteral("/cache"),
              QStringLiteral("the app keeps %1, %2, %3 and %4 and hands the server \"%5\"").arg(paths.config, paths.data, paths.state, paths.cache, paths.root));
     }
+  });
+
+  step(QStringLiteral("a developer starts the desktop app from a linked git worktree with --dev"), [](World& world, const Captures&, const Table&) {
+    Layout& state = layout(world);
+    state.started = {resolveStoragePaths({}, state.env, kHome, StoragePlatform::Unix, StorageProfile::Development)};
+  });
+  step(QStringLiteral("the desktop app keeps its files in:"), [](World& world, const Captures&, const Table& table) {
+    const StoragePaths& paths = layout(world).started.first();
+    const QHash<QString, QString> kinds{{QStringLiteral("config"), paths.config},
+                                        {QStringLiteral("data"), paths.data},
+                                        {QStringLiteral("state"), paths.state},
+                                        {QStringLiteral("cache"), paths.cache}};
+    for (qsizetype row = 1; row < table.size(); ++row) {
+      const QString kind = table.at(row).value(0);
+      expect(kinds.value(kind) == expand(table.at(row).value(1)), QStringLiteral("%1 is %2").arg(kind, kinds.value(kind)));
+    }
+  });
+  step(QStringLiteral("the server it hosts is given no root"), [](World& world, const Captures&, const Table&) {
+    // `root` is what the hosted server is given as --base-dir (main.cpp).
+    expect(layout(world).started.first().root.isEmpty(), QStringLiteral("the server is handed \"%1\"").arg(layout(world).started.first().root));
   });
 
   // The control socket.

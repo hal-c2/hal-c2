@@ -49,11 +49,51 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then that release is started
 
+    # A release has no development profile; it would open the installed app's files.
+    @desktop
+    Scenario: A development shell does not start an MC release without a home of its own
+      Given "HAL_C2_MC_RELEASE" names an MC release
+      When a developer starts the desktop app with --dev and no home directory
+      Then no MC is started
+      And the desktop app says the release needs a home directory
+
+    # The MC ignores such a home and would open the installed app's files instead.
+    @desktop
+    Scenario Outline: An MC home the MC would not use stops the start
+      Given "HAL_C2_MC_HOME" is <home>
+      When the user starts the desktop app
+      Then no MC is started
+      And the desktop app says what "HAL_C2_MC_HOME" must be
+
+      Examples:
+        | home                  |
+        | a relative path       |
+        | a directory in ~/.t3  |
+
+    # The MC ignores an old home as its home too.
+    @desktop
+    Scenario Outline: An old home as the HAL-C2 home stops the start
+      Given the desktop app's HAL-C2 home is <home>
+      When the user starts the desktop app
+      Then no MC is started
+      And the desktop app says the HAL-C2 home cannot be an old home
+
+      Examples:
+        | home      |
+        | ~/.t3     |
+        | ~/.hal-c2 |
+
     @desktop
     Scenario: In a checkout without a release the MC runs from source
       Given no MC release is configured or bundled
       When the user starts the desktop app from a checkout
       Then the MC runs from the checkout's source
+
+    @desktop
+    Scenario: An MC run from source runs in the development environment
+      Given "MIX_ENV" is "prod" where the desktop app starts
+      When the desktop app starts its MC from a checkout
+      Then that MC runs with "MIX_ENV" set to "dev"
 
     @desktop
     Scenario: An MC run from source keeps its access token in the development profile

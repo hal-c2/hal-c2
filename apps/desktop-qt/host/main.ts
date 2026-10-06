@@ -7,7 +7,8 @@
  * connects. With `--attach=<url>` it starts no MC and pairs the shell with the
  * MC a pairing link names instead.
  *
- * Arguments: `--base-dir=<HAL-C2 home>` (the MC's home), `--attach=<url>`.
+ * Arguments: `--base-dir=<HAL-C2 home>` (the MC's home), `--attach=<url>`, `--dev`
+ * (the shell is in the development profile).
  *
  * Protocol (stdout, newline-delimited JSON):
  *   {"type":"ready","MC":{"origin","token"}}  where the shell's own client
@@ -57,12 +58,14 @@ function emit(message: HostMessage): void {
 interface HostArgs {
   readonly baseDir: string | undefined;
   readonly attach: string | undefined;
+  readonly dev: boolean;
 }
 
 function parseArgs(argv: ReadonlyArray<string>): HostArgs {
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
+    if (arg === "--dev") continue;
     const match = /^--(base-dir|attach)(?:=(.*))?$/.exec(arg);
     if (match === null) {
       throw new HostError(`Unknown desktop host argument: ${arg}`);
@@ -77,6 +80,7 @@ function parseArgs(argv: ReadonlyArray<string>): HostArgs {
   return {
     baseDir: baseDir === undefined ? undefined : NodePath.resolve(baseDir),
     attach: values.get("attach"),
+    dev: argv.includes("--dev"),
   };
 }
 
@@ -97,8 +101,15 @@ async function stop(code: number): Promise<never> {
   process.exit(code);
 }
 
-async function standalone(home: string | undefined): Promise<McAccess> {
+async function standalone(home: string | undefined, dev: boolean): Promise<McAccess> {
   const launch = resolveMcLaunch(hostDir, process.env);
+  // Only an MC run from source has a development profile: a release would open
+  // the installed app's files, whatever HAL_C2_HOME or HAL_C2_MC_HOME say.
+  if (dev && home === undefined && launch.cwd === undefined) {
+    throw new HostError(
+      "A development shell (--dev) does not start an MC release on the installed app's files. Give it a home of its own with --home-dir <dir>.",
+    );
+  }
   const running = findRunningMc({ launch, home, env: process.env });
   if (running !== undefined) return running;
   const port = await mcPort(process.env);
@@ -161,7 +172,7 @@ try {
   const args = parseArgs(process.argv.slice(2));
   const access =
     args.attach === undefined
-      ? await standalone(args.baseDir)
+      ? await standalone(args.baseDir, args.dev)
       : await attach(args.attach, args.baseDir);
   if (!stopping) emit({ type: "ready", mc: access });
 } catch (error) {

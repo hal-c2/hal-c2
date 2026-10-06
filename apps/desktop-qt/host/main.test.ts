@@ -15,7 +15,7 @@ import * as NodeReadline from "node:readline";
 import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { mcDataDir, resolveMcLaunch } from "./elixirMc.ts";
+import { mcDataDir, resolveMcLaunch, startMc } from "./elixirMc.ts";
 
 const hostEntry = NodeURL.fileURLToPath(new URL("./main.ts", import.meta.url));
 const nodeBin = process.execPath;
@@ -296,6 +296,63 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
       await host.quit();
     });
 
+    it("A development shell does not start an MC release without a home of its own", async () => {
+      const release = fakeRelease();
+      const env = {
+        HAL_C2_MC_RELEASE: release,
+        HAL_C2_MC_PORT: String(await freePort()),
+        // Neither is a home the shell chose.
+        HAL_C2_HOME: temporaryDirectory(),
+        HAL_C2_MC_HOME: temporaryDirectory(),
+      };
+      const refused = startHost({ args: ["--dev"], env });
+
+      expect(await errorMessage(refused)).toContain("--home-dir");
+      expect(readRecord(release)).toBeUndefined();
+
+      const home = temporaryDirectory();
+      const host = startHost({ args: ["--dev", `--base-dir=${home}`], env });
+      await ready(host);
+      expect(readRecord(release)?.bootstrap.halC2Home).toBe(home);
+      await host.quit();
+    });
+
+    it("An MC home the MC would not use stops the start", async () => {
+      const release = fakeRelease();
+      const home = temporaryDirectory();
+
+      const refused = [
+        "scratch/mc",
+        " ",
+        NodePath.join(home, ".t3", "elixir"),
+        NodePath.join(home, ".t3", "..scratch"),
+      ];
+
+      for (const mcHome of refused) {
+        const host = startHost({
+          env: { HAL_C2_MC_RELEASE: release, HOME: home, HAL_C2_MC_HOME: mcHome },
+        });
+
+        expect(await errorMessage(host)).toContain("HAL_C2_MC_HOME");
+        expect(readRecord(release)).toBeUndefined();
+      }
+    });
+
+    it("An old home as the HAL-C2 home stops the start", async () => {
+      const release = fakeRelease();
+      const home = temporaryDirectory();
+
+      for (const name of [".t3", ".hal-c2"]) {
+        const host = startHost({
+          args: [`--base-dir=${NodePath.join(home, name)}`],
+          env: { HAL_C2_MC_RELEASE: release, HOME: home },
+        });
+
+        expect(await errorMessage(host)).toContain("HAL-C2 home");
+        expect(readRecord(release)).toBeUndefined();
+      }
+    });
+
     it("A configured MC release is the MC the desktop app runs", async () => {
       const release = fakeRelease();
       const { host } = await standalone({ release });
@@ -319,6 +376,18 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
       });
     });
 
+    it("An MC run from source runs in the development environment", async () => {
+      const launch = {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write(`MIX_ENV=${process.env.MIX_ENV}`)"],
+        cwd: temporaryDirectory(),
+      };
+      const mc = startMc({ launch, port: 0, home: undefined, env: { MIX_ENV: "prod" } });
+
+      await mc.exited;
+      expect(mc.output()).toBe("MIX_ENV=dev");
+    });
+
     it("An MC run from source keeps its access token in the development profile", () => {
       const launch = { command: "mix", args: ["hal_c2.server"], cwd: "/checkout/apps/server-ex" };
       const env = { XDG_DATA_HOME: "/xdg/data" };
@@ -334,6 +403,31 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
           homeDir: "/home/user",
         }),
       ).toBe("/xdg/data/hal-c2/elixir");
+
+      // A source MC does not read HAL_C2_HOME; a release, HAL_C2_MC_HOME and the desktop's home do count.
+      const ambient = { ...env, HAL_C2_HOME: "/srv/hal-c2" };
+      expect(mcDataDir({ launch, home: undefined, env: ambient, homeDir: "/home/user" })).toBe(
+        "/xdg/data/hal-c2-dev/elixir",
+      );
+      expect(
+        mcDataDir({
+          launch: { command: "/release/bin/hal_c2", args: ["start"] },
+          home: undefined,
+          env: ambient,
+          homeDir: "/home/user",
+        }),
+      ).toBe("/srv/hal-c2/data/elixir");
+      expect(
+        mcDataDir({
+          launch,
+          home: undefined,
+          env: { ...ambient, HAL_C2_MC_HOME: "/srv/mc" },
+          homeDir: "/home/user",
+        }),
+      ).toBe("/srv/mc/data");
+      expect(mcDataDir({ launch, home: "/tmp/sandbox", env: ambient, homeDir: "/home/user" })).toBe(
+        "/tmp/sandbox/data/elixir",
+      );
     });
 
     it("The MC's JavaScript sidecars run on the desktop app's Node", async () => {

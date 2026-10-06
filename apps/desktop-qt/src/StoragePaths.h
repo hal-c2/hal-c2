@@ -11,6 +11,10 @@
 //   3. otherwise the XDG variables (only absolute values count) with the platform
 //      defaults. Linux and macOS share ~/.config, ~/.local/share, ~/.local/state and
 //      ~/.cache; Windows uses %APPDATA%\hal-c2\config and %LOCALAPPDATA%\hal-c2\<kind>.
+// `--dev` is the development profile: the same XDG layout in directories named
+// `hal-c2-dev`, where a dev MC keeps its files (apps/server-ex/lib/hal_c2/paths.ex),
+// so a shell built from a checkout never opens the installed app's. Like the dev MC
+// it does not read HAL_C2_HOME; `--home-dir` still gives it a root.
 // QStandardPaths is not used: it sends macOS to ~/Library and Windows config to
 // %LOCALAPPDATA%, which would part the shell from the server it hosts.
 struct StoragePaths {
@@ -24,11 +28,14 @@ struct StoragePaths {
 };
 
 enum class StoragePlatform { Unix, Windows };
+enum class StorageProfile { Installed, Development };
 
 StoragePaths resolveStoragePaths(const QString& homeDirOverride,
                                  const QProcessEnvironment& env,
                                  const QString& userHome,
-                                 StoragePlatform platform);
+                                 StoragePlatform platform,
+                                 StorageProfile profile = StorageProfile::Installed);
 
 // The running process's storage: its environment, home and platform.
-StoragePaths resolveStoragePaths(const QString& homeDirOverride);
+StoragePaths resolveStoragePaths(const QString& homeDirOverride,
+                                 StorageProfile profile = StorageProfile::Installed);

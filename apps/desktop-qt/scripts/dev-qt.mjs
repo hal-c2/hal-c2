@@ -6,15 +6,16 @@
  *      with that MC
  *
  * Flags the script consumes:
- *   --home-dir <dir>   the shell's HAL-C2 home (HAL_C2_HOME for hal-c2-qt): where it
- *                      rices from (<dir>/config/shell), and the home a --standalone
- *                      MC gets. Defaults to the checkout's
- *                      .hal-c2 (the shell has no development profile, so it does not
- *                      share `mise run mc`'s hal-c2-dev).
+ *   --home-dir <dir>   one root for the shell's files: where it rices from
+ *                      (<dir>/config/shell), and the home a --standalone MC gets.
+ *                      Without it the shell runs with --dev and keeps its files in
+ *                      the XDG hal-c2-dev profile, beside `mise run mc`'s, from
+ *                      every checkout and worktree.
  *   --url <url>        skip pairing and attach to the MC this pairing link names
  *   --standalone       no pairing: the shell starts its own MC from source, as the
- *                      installed app does. Do not run it next to `mise run mc` on
- *                      the same home.
+ *                      installed app does. Without --home-dir that MC is the dev
+ *                      profile's, so not next to `mise run mc`; an MC release
+ *                      (HAL_C2_MC_RELEASE) has no dev profile and needs --home-dir.
  *   --release          build with CMAKE_BUILD_TYPE=Release (no disk QML loading)
  *   --configure-only   stop after the CMake build
  *   --help
@@ -45,7 +46,7 @@ function usage() {
     [
       "Usage: mise run desktop [--home-dir <dir>] [--url <url> | --standalone] [--release] [--configure-only] [-- <hal-c2-qt args>]",
       "",
-      "  --home-dir <dir>   the shell's HAL-C2 home (default: the checkout's .hal-c2)",
+      "  --home-dir <dir>   the shell's HAL-C2 home (default: the XDG hal-c2-dev profile)",
       "  --url <url>        attach to this MC pairing link instead of pairing",
       "  --standalone       start the shell's own MC from source instead of pairing with `mise run mc`",
       "  --release          Release build (no disk QML loading)",
@@ -143,12 +144,10 @@ function expandHome(raw) {
   return trimmed;
 }
 
-/** `--home-dir`, else the checkout's `.hal-c2`. */
-function resolveRoot() {
+/** `--home-dir` as the shell's root, else the development profile. */
+function storageArgs() {
   const explicit = options.homeDir?.trim() ?? "";
-  return explicit.length > 0
-    ? NodePath.resolve(expandHome(explicit))
-    : NodePath.join(checkoutDir, ".hal-c2");
+  return explicit.length > 0 ? ["--home-dir", NodePath.resolve(expandHome(explicit))] : ["--dev"];
 }
 
 function build() {
@@ -223,18 +222,17 @@ async function pairWithMc() {
 build();
 if (options.configureOnly) process.exit(0);
 
-const root = resolveRoot();
+const storage = storageArgs();
 const url = options.standalone ? undefined : (options.url ?? (await pairWithMc()));
 const binary = binaryPath();
-const binaryArgs = [...(url === undefined ? [] : ["--url", url]), ...shellArgs];
-process.stderr.write(`[dev-qt] root ${root}\n`);
+const binaryArgs = [...storage, ...(url === undefined ? [] : ["--url", url]), ...shellArgs];
+process.stderr.write(`[dev-qt] storage ${storage.join(" ")}\n`);
 process.stderr.write(
   `[dev-qt] launching ${binary} ${url === undefined ? "(standalone)" : "--url <pairing link>"}\n`,
 );
 const child = NodeChildProcess.spawn(binary, binaryArgs, {
   stdio: "inherit",
   cwd: appDir,
-  env: { ...process.env, HAL_C2_HOME: root },
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => child.kill(signal));

@@ -154,11 +154,14 @@ mise run mc       # terminal 1: the MC on 3780 (HAL_C2_MC_PORT)
 mise run desktop    # terminal 2: cmake build, `mix hal_c2.pair`, launch with --url
 ```
 
-`mise run desktop` runs `scripts/dev-qt.mjs`. It uses `--home-dir`, else the
-checkout's `.hal-c2`, as the shell's `HAL_C2_HOME`, so the shell rices from `<root>/config/shell/`
-and keeps its state under `<root>`. Its other flags are `--url` (attach to that link
+`mise run desktop` runs `scripts/dev-qt.mjs`. It starts the shell with `--dev`, the
+development profile: the XDG directories named `hal-c2-dev` that the dev MC uses,
+from every checkout and worktree, so the shell rices from `~/.config/hal-c2-dev/shell/`.
+Like the dev MC, a `--dev` shell does not read `HAL_C2_HOME`. `--home-dir <dir>`
+replaces the profile with one root. Its other flags are `--url` (attach to that link
 instead of pairing), `--standalone` (start the shell's own MC from source, as
-the installed app does; not next to `mise run mc` on the same home),
+the installed app does; without `--home-dir` that is the dev profile's MC, so not
+next to `mise run mc`),
 `--release` (no disk QML loading) and `--configure-only` (build, do not
 launch, which `mise run desktop:build` runs); everything else is forwarded to
 the binary, so `mise run desktop -- --screenshot out.png --action
@@ -168,7 +171,7 @@ rightPanel.toggle` works. Build output lands in
 Standalone: run the binary with no `--url`; the host starts the MC for the
 shell's home.
 
-CLI: `--url`, `--home-dir`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
+CLI: `--url`, `--home-dir`, `--dev`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
 (grab the window once the MC's first snapshot is in, or with the error when the start fails, then quit with
 0, or 2 on a failure; PR evidence without a screen-recording permission, and with
 `QT_QPA_PLATFORM=offscreen` without a window at all), `--action name[=json]` (repeatable; dispatch shell
@@ -184,8 +187,8 @@ taken one is an error rather than a silent move).
 
 Config dir: `<config>/shell/`, so `~/.config/hal-c2/shell/` by default on Linux
 and macOS (`XDG_CONFIG_HOME` moves it), `%APPDATA%\hal-c2\config\shell\` on
-Windows, and `<root>/config/shell/` under `--home-dir`, `HAL_C2_HOME` or a
-sandboxed dev run's `<worktree>/.hal-c2`; `--config-dir` overrides just this
+Windows, `<root>/config/shell/` under `--home-dir` or `HAL_C2_HOME`, and
+`~/.config/hal-c2-dev/shell/` for a `--dev` shell; `--config-dir` overrides just this
 directory. The shell creates it at startup and watches it, so a shell the hosted
 server migrates from an old `~/.hal-c2/shell/` or `~/.t3/shell/` loads without a
 restart.
@@ -195,7 +198,7 @@ restart.
 The file _is_ the interface for colour propagation: theme managers (omarchy
 themes, pywal templates, a hand-written file) write it and the app follows.
 The shell itself does not import terminal configs; the generator that comes
-closest, `vp run theme:qt [shell-dir]` (`scripts/theme-from-terminal.mjs`),
+closest, `vp run theme:qt [--dev] [shell-dir]` (`scripts/theme-from-terminal.mjs`),
 asks the running terminal for its palette over OSC 10 / 11 / 12 / 17 / 4 and
 writes `theme.json` into the shell directory from the answer, keeping the
 shell on the file contract.

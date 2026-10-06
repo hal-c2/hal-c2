@@ -12,7 +12,14 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { HAL_C2_APP_DIR, HAL_C2_DEV_APP_DIR, resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
+import {
+  absoluteEnvPath,
+  isLegacyHome,
+  HAL_C2_APP_DIR,
+  HAL_C2_DEV_APP_DIR,
+  LEGACY_HOME_DIR_NAMES,
+  resolveHalC2Dirs,
+} from "@hal-c2/shared/xdgDirs";
 
 import { HostError } from "./hostError.ts";
 
@@ -96,7 +103,7 @@ export async function mcPort(env: NodeJS.ProcessEnv): Promise<number> {
  * The MC's data directory, resolved the way `HalC2.Paths` resolves it for this
  * launch: the desktop's HAL-C2 home, `HAL_C2_MC_HOME`, else HAL-C2's XDG data
  * directory, in the `hal-c2-dev` profile for an MC run from a checkout
- * (config/config.exs).
+ * (config/config.exs), which does not read `HAL_C2_HOME` (config/runtime.exs).
  */
 export function mcDataDir(input: {
   readonly launch: McLaunch;
@@ -113,21 +120,43 @@ function mcDirs(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly homeDir?: string;
 }): { readonly data: string; readonly state: string } {
+  const homeDir = input.homeDir ?? NodeOS.homedir();
   if (input.home !== undefined) {
+    // The MC ignores an old home as its home too (`HalC2.Desktop.apply_bootstrap/1`).
+    if (isLegacyHome(input.home, { homeDir, platform: hostPlatform })) {
+      throw new HostError(
+        `The HAL-C2 home (${input.home}) must be a directory other than ~/.hal-c2 and ~/.t3.`,
+      );
+    }
     return {
       data: NodePath.join(input.home, "data", "elixir"),
       state: NodePath.join(input.home, "state", "elixir"),
     };
   }
-  const mcHome = input.env.HAL_C2_MC_HOME?.trim();
+  // Blank counts as set, as it does for the MC (config/runtime.exs).
+  const mcHome = input.env.HAL_C2_MC_HOME;
   if (mcHome) {
-    return { data: NodePath.join(mcHome, "data"), state: NodePath.join(mcHome, "state") };
+    // The MC ignores such a root and opens the installed app's files instead
+    // (`HalC2.Paths.root?/4`), so the desktop app does not start it there.
+    const root = absoluteEnvPath(mcHome, hostPlatform);
+    const inOldHome = LEGACY_HOME_DIR_NAMES.some((name) => {
+      const within = NodePath.relative(NodePath.join(homeDir, name), root ?? "");
+      const outside = within === ".." || within.startsWith(`..${NodePath.sep}`);
+      return !outside && !NodePath.isAbsolute(within);
+    });
+    if (root === undefined || inOldHome) {
+      throw new HostError(
+        `HAL_C2_MC_HOME (${mcHome}) must be an absolute path outside ~/.hal-c2 and ~/.t3.`,
+      );
+    }
+    return { data: NodePath.join(root, "data"), state: NodePath.join(root, "state") };
   }
+  const fromSource = input.launch.cwd !== undefined;
   const dirs = resolveHalC2Dirs({
-    env: input.env,
-    homeDir: input.homeDir ?? NodeOS.homedir(),
+    env: fromSource ? { ...input.env, HAL_C2_HOME: undefined } : input.env,
+    homeDir,
     platform: hostPlatform,
-    profile: input.launch.cwd === undefined ? HAL_C2_APP_DIR : HAL_C2_DEV_APP_DIR,
+    profile: fromSource ? HAL_C2_DEV_APP_DIR : HAL_C2_APP_DIR,
   });
   return {
     data: NodePath.join(dirs.data, "elixir"),
@@ -288,6 +317,9 @@ export function startMc(input: {
       HAL_C2_BOOTSTRAP_STDIN: "1",
       // JavaScript sidecars run on the Node that runs this host.
       HAL_C2_NODE_COMMAND: process.execPath,
+      // An MC run from source is the development one, whatever MIX_ENV the desktop
+      // app inherited: any other environment keeps its files somewhere else.
+      ...(input.launch.cwd === undefined ? {} : { MIX_ENV: "dev" }),
     },
     stdio: ["pipe", "pipe", "pipe"],
     // Its own process group, so stop() reaches the BEAM behind mix or the release script.
