@@ -1340,18 +1340,34 @@ defmodule HalC2.Web.Socket do
     buffer = Map.get(state.buffers, id, %{events: [], bytes: 0})
     bytes = buffer.bytes + Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2))
 
-    if bytes > @max_buffered and not Map.get(buffer, :replay, false) do
-      # The client has everything before the oldest event it has not been sent.
-      oldest = List.last(buffer.events) || hd(events)
-      state = unsubscribe(state, id)
-      {:push, Protocol.encode(%{"t" => "resync", "id" => id, "offset" => oldest.seq - 1}), state}
-    else
-      buffer =
-        Map.merge(buffer, %{events: Enum.reverse(events, buffer.events), bytes: bytes, seq: seq})
+    cond do
+      # A part of what the client lacks goes out as it comes, as a snapshot's parts
+      # do. Buffered, the parts of a thread on this MC would all be here before the
+      # first flush and leave as one frame of any size.
+      Map.get(buffer, :replay, false) ->
+        {:push, events_frame(id, events, seq), state}
 
-      state = %{state | buffers: Map.put(state.buffers, id, buffer)}
-      {:ok, schedule_flush(state)}
+      bytes > @max_buffered ->
+        # The client has everything before the oldest event it has not been sent.
+        oldest = List.last(buffer.events) || hd(events)
+        state = unsubscribe(state, id)
+        resync = %{"t" => "resync", "id" => id, "offset" => oldest.seq - 1}
+        {:push, Protocol.encode(resync), state}
+
+      true ->
+        buffer =
+          Map.merge(buffer, %{events: Enum.reverse(events, buffer.events), bytes: bytes, seq: seq})
+
+        state = %{state | buffers: Map.put(state.buffers, id, buffer)}
+        {:ok, schedule_flush(state)}
     end
+  end
+
+  # The offset is the one the stream gave with the last of the events: a replay in
+  # several parts only moves the client's offset with its last.
+  defp events_frame(id, events, seq) do
+    wire = for e <- Protocol.coalesce(events), do: [e.seq, e.kind, e.entity, e.patch, e.at]
+    Protocol.encode(%{"t" => "events", "id" => id, "offset" => seq, "events" => wire})
   end
 
   defp put_floor(frame, %{floor: floor}), do: Map.put(frame, "floor", floor)
@@ -1359,15 +1375,8 @@ defmodule HalC2.Web.Socket do
 
   defp flush(state) do
     frames =
-      for {id, %{events: [_ | _] = events, seq: seq}} <- state.buffers do
-        wire =
-          for e <- events |> Enum.reverse() |> Protocol.coalesce(),
-              do: [e.seq, e.kind, e.entity, e.patch, e.at]
-
-        # The offset is the one the stream gave with the last of them: a replay
-        # in several parts only moves the client's offset with its last.
-        Protocol.encode(%{"t" => "events", "id" => id, "offset" => seq, "events" => wire})
-      end
+      for {id, %{events: [_ | _] = events, seq: seq}} <- state.buffers,
+          do: events_frame(id, Enum.reverse(events), seq)
 
     buffers =
       Map.new(state.buffers, fn {id, buffer} -> {id, %{buffer | events: [], bytes: 0}} end)

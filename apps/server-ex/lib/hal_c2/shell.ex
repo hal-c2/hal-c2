@@ -214,11 +214,13 @@ defmodule HalC2.Shell do
   end
 
   # Where someone holding `have` of an MC at `version` continues from: `{rev, false}`
-  # for the rows after `rev`, or `{0, true}` when what it holds is of no use.
+  # for the rows after `rev`, or `{:all, true}` when what it holds is of no use.
   defp lacking({epoch, rev}, {epoch, held}) when epoch != nil and held <= rev, do: {held, false}
-  defp lacking(_version, _have), do: {0, true}
+  defp lacking(_version, _have), do: {:all, true}
 
-  defp rows_after(mc, 0),
+  # Version 0 is a version like any other: the rows an MC started with, which
+  # whoever holds them as of 0 has.
+  defp rows_after(mc, :all),
     do: for([id, kind_row] <- :ets.match(@table, {{mc, :"$1"}, :"$2"}), do: {id, kind_row})
 
   defp rows_after(mc, rev) do
@@ -291,7 +293,7 @@ defmodule HalC2.Shell do
         {id, kind_row, rev}
       end
 
-    push_rows(peer, version, from, rows, reset?)
+    push_rows(peer, version, if(reset?, do: 0, else: from), rows, reset?)
     if ask_back?, do: hello(peer, state, false)
     {:noreply, state}
   end

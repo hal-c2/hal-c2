@@ -136,6 +136,36 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     context
   end
 
+  step "more was written since than one frame carries", context do
+    # Four notes of 100 KB: more than one 256 KB part.
+    big = String.duplicate("x", 100_000)
+    changes = for i <- 1..4, do: {"note", "big#{i}", %{"s" => %{"text" => big}}}
+    {:ok, last} = HalC2.Streams.commit(context.stream, :thread, changes)
+    Map.put(context, :seq, last)
+  end
+
+  step "it receives what it missed in several frames", context do
+    {live, skipped, client} =
+      WsClient.recv_until(World.client(context), &(&1["t"] == "live" and &1["id"] == 2), 5_000)
+
+    parts = for %{"t" => "events", "id" => 2} = frame <- skipped, do: frame
+    assert length(parts) > 1
+
+    assert for(part <- parts, [_seq, _kind, id | _] <- part["events"], do: id) ==
+             ~w(big1 big2 big3 big4)
+
+    assert live["offset"] == context.seq
+    refute Enum.any?(skipped, &(&1["t"] == "snapshot"))
+    context |> Map.put(:parts, parts) |> World.put_client(client)
+  end
+
+  step "only the last of them moves its offset", context do
+    {last, earlier} = List.pop_at(context.parts, -1)
+    assert Enum.all?(earlier, &(&1["offset"] == context.offset))
+    assert last["offset"] == context.seq
+    context
+  end
+
   step "it subscribes again with that offset and the handle it was given", context do
     resume = %{"offset" => context.offset, "handle" => context.handle}
     client = Mc.connect(context.mc) |> sub(2, context.stream, resume)

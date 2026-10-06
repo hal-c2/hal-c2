@@ -440,6 +440,22 @@ defmodule HalC2.StreamsTest do
     refute_received {:hal_c2_stream, "th-15", {:snapshot, _, _, _, _}}
   end
 
+  test "a client that holds an MC's rows as the MC started with them is sent none of them again" do
+    {:ok, _} = Streams.commit("th-19", :thread, thread("th-19", %{"projectId" => "p"}))
+    :ok = Streams.flush_shell("th-19")
+    # Started again, the shell reads its rows from the store: they are version 0.
+    :ok = stop_supervised(HalC2.Shell)
+    start_supervised!(HalC2.Shell)
+
+    name = Atom.to_string(node())
+
+    %{mcs: [%{epoch: epoch, rev: 0, reset: true}], rows: [{_mc, "th-19", "thread", _row}]} =
+      HalC2.Shell.subscribe(self(), %{})
+
+    assert %{mcs: [%{rev: 0, reset: false}], rows: []} =
+             HalC2.Shell.subscribe(self(), %{name => {epoch, 0}})
+  end
+
   test "thread changes update the shell row and notify its subscribers" do
     :ok = HalC2.Shell.subscribe(self())
     {:ok, _} = Streams.commit("th-4", :thread, thread("th-4", %{"projectId" => "p"}))
