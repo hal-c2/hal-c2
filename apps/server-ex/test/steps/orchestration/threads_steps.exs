@@ -405,6 +405,37 @@ defmodule HalC2.Steps.Orchestration.Threads do
     context
   end
 
+  step "thread {string} was archived with a running turn and a message queued after it",
+       %{args: [thread]} = context do
+    context
+    |> World.running_turn(thread)
+    |> thread_command("thread.archive", thread)
+    |> ok!()
+    |> World.queue_message(thread, "after archiving")
+  end
+
+  step "the queued message is still queued", context do
+    assert {:ok, _} = context.reply
+    running = context.running
+
+    World.await_thread(
+      context,
+      context.thread,
+      &match?(%{^running => %{"status" => "interrupted"}}, HalC2.StreamState.get(&1, "run"))
+    )
+
+    [queued] = context.queued
+    run = Enum.find(World.entities(context, context.thread, "run"), &(&1["id"] == queued))
+    assert run["status"] == "queued"
+    context
+  end
+
+  step "the queued message starts", context do
+    assert {:ok, _} = context.reply
+    World.await_latest_run(context, context.thread, "running")
+    context
+  end
+
   step "thread {string} records when it was deleted", %{args: [thread]} = context do
     assert {:ok, _} = context.reply
     assert is_binary(World.thread(context, thread)["deletedAt"])

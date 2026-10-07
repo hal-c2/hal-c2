@@ -349,16 +349,23 @@ defmodule HalC2.Orchestration do
         %{"type" => "queued-run.reorder", "threadId" => thread_id, "runId" => run_id} = command
       ) do
     queue_change(thread_id, fn state ->
-      queued = queued_runs(state) |> Enum.map(& &1["id"]) |> List.delete(run_id)
+      queued = queued_runs(state) |> Enum.map(& &1["id"])
 
-      order =
-        case Enum.find_index(queued, &(&1 == command["beforeRunId"])) do
-          nil -> queued ++ [run_id]
-          index -> List.insert_at(queued, index, run_id)
-        end
+      # A run that already started, or never existed, has no place in the queue.
+      if run_id in queued do
+        queued = List.delete(queued, run_id)
 
-      for {id, position} <- Enum.with_index(order, 1),
-          do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
+        order =
+          case Enum.find_index(queued, &(&1 == command["beforeRunId"])) do
+            nil -> queued ++ [run_id]
+            index -> List.insert_at(queued, index, run_id)
+          end
+
+        for {id, position} <- Enum.with_index(order, 1),
+            do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
+      else
+        []
+      end
     end)
   end
 
@@ -455,6 +462,19 @@ defmodule HalC2.Orchestration do
           nil ->
             {[], {:error, "unknown thread #{thread_id}"}}
 
+          # A deleted thread is gone for good; deleting it again changes nothing.
+          %{"deletedAt" => deleted} when deleted != nil and type == "thread.delete" ->
+            {[], :ok}
+
+          %{"deletedAt" => deleted} when deleted != nil ->
+            {[], {:error, "Thread #{thread_id} is deleted."}}
+
+          # Read-only while it moves: the destination takes the thread as the move found
+          # it, and a change made here meanwhile would be lost. A visit only marks it read.
+          %{"moving" => %{"label" => to}} = thread when type != "thread.visit" ->
+            {[],
+             {:error, "#{thread["title"]} is moving to #{to}. Try again once it has arrived."}}
+
           thread ->
             case refusal(type, command, thread, state) ||
                    with(
@@ -494,45 +514,32 @@ defmodule HalC2.Orchestration do
   # it goes first and the run is interrupted, which starts it next.
   def dispatch(%{"type" => "queued-message.promote-to-steer", "threadId" => thread_id} = command) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    thread = StreamState.get(state, "thread")[thread_id]
     runs = StreamState.get(state, "run")
     queued = runs[command["queuedRunId"]]
     target = runs[command["targetRunId"]]
     message = queued && StreamState.get(state, "message")[queued["userMessageId"]]
 
-    if queued && message && target && target["status"] in @active_statuses &&
-         steerable?(target) &&
-         runtime(target["providerInstanceId"]).steer(
-           thread_id,
-           target["id"],
-           steer_input(message)
-         ) ==
-           :ok do
-      HalC2.Streams.transact(thread_id, :thread, fn state ->
-        at = Entities.now()
+    cond do
+      thread == nil ->
+        {:error, "unknown thread #{thread_id}"}
 
-        changes =
-          [
-            upsert(
-              state,
-              "run",
-              queued["id"],
-              &Map.merge(&1, %{
-                "status" => "cancelled",
-                "queuePosition" => nil,
-                "completedAt" => at
-              })
-            ),
-            upsert(state, "message", message["id"], &Map.put(&1, "runId", target["id"]))
-          ] ++
-            steer_changes(state, target, message["id"], message, "promoted_queued_to_steer", at)
+      thread["archivedAt"] != nil or thread["deletedAt"] != nil ->
+        {:error, "Thread #{thread_id} is not active."}
 
-        {Enum.reject(changes, &is_nil/1), :ok}
-      end)
+      queued["status"] != "queued" ->
+        {:error, "Queued run #{command["queuedRunId"]} is not queued."}
 
-      HalC2.Streams.transact(thread_id, :thread, fn state -> {renumber(state), :ok} end)
-      {:ok, %{"sequence" => sequence(thread_id)}}
-    else
-      restart_promoted(thread_id, command)
+      message && target && target["status"] in @active_statuses && steerable?(target) &&
+          runtime(target["providerInstanceId"]).steer(
+            thread_id,
+            target["id"],
+            steer_input(message)
+          ) == :ok ->
+        promoted(thread_id, queued, target, message)
+
+      true ->
+        restart_promoted(thread_id, command)
     end
   end
 
@@ -632,6 +639,34 @@ defmodule HalC2.Orchestration do
 
   # A question the provider asked without waiting (Codex's async questions) has no
   # provider call to answer: its answer is a user message.
+  # The provider took the promoted message into its running turn.
+  defp promoted(thread_id, queued, target, message) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      at = Entities.now()
+
+      changes =
+        [
+          upsert(
+            state,
+            "run",
+            queued["id"],
+            &Map.merge(&1, %{
+              "status" => "cancelled",
+              "queuePosition" => nil,
+              "completedAt" => at
+            })
+          ),
+          upsert(state, "message", message["id"], &Map.put(&1, "runId", target["id"]))
+        ] ++
+          steer_changes(state, target, message["id"], message, "promoted_queued_to_steer", at)
+
+      {Enum.reject(changes, &is_nil/1), :ok}
+    end)
+
+    HalC2.Streams.transact(thread_id, :thread, fn state -> {renumber(state), :ok} end)
+    {:ok, %{"sequence" => sequence(thread_id)}}
+  end
+
   defp message_request(thread_id, request_id) do
     request =
       HalC2.Streams.ensure(thread_id)
@@ -2183,15 +2218,22 @@ defmodule HalC2.Orchestration do
     with :ok <- result, do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
-  # Changes to queued runs; positions are renumbered 1.. after each one.
+  # Changes to queued runs; positions are renumbered 1.. after each one. A thread
+  # that does not exist, or was deleted, has no queue to change.
   defp queue_change(thread_id, fun) do
-    HalC2.Streams.transact(thread_id, :thread, fn state ->
-      changes = Enum.reject(fun.(state), &is_nil/1)
-      {changes, :ok}
-    end)
+    changed =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        case StreamState.get(state, "thread")[thread_id] do
+          nil -> {[], {:error, "unknown thread #{thread_id}"}}
+          %{"deletedAt" => at} when at != nil -> {[], {:error, "Thread #{thread_id} is deleted."}}
+          _ -> {Enum.reject(fun.(state), &is_nil/1), :ok}
+        end
+      end)
 
-    HalC2.Streams.transact(thread_id, :thread, fn state -> {renumber(state), :ok} end)
-    {:ok, %{"sequence" => sequence(thread_id)}}
+    with :ok <- changed do
+      HalC2.Streams.transact(thread_id, :thread, fn state -> {renumber(state), :ok} end)
+      {:ok, %{"sequence" => sequence(thread_id)}}
+    end
   end
 
   defp queued_runs(state) do
@@ -2225,7 +2267,10 @@ defmodule HalC2.Orchestration do
     thread = StreamState.get(state, "thread")[thread_id]
     runs = StreamState.list(state, "run")
 
-    with false <- Enum.any?(runs, &(&1["status"] in @active_statuses)),
+    # A deleted thread runs nothing more; an archived one nothing from its queue, as on
+    # the Node server, until it is unarchived and the queue resumed or another turn ends.
+    with true <- thread != nil and thread["deletedAt"] == nil and thread["archivedAt"] == nil,
+         false <- Enum.any?(runs, &(&1["status"] in @active_statuses)),
          %{} = next <- Enum.find(queued_runs(state), &(&1["queueHeld"] != true)),
          %{} = message <- StreamState.get(state, "message")[next["userMessageId"]] do
       {changes, result} = new_run(state, thread, runs, message, next)
@@ -2252,6 +2297,9 @@ defmodule HalC2.Orchestration do
     cond do
       thread == nil ->
         {[], {:error, "unknown thread #{thread_id}"}}
+
+      thread["deletedAt"] != nil ->
+        {[], {:error, "Thread #{thread_id} is deleted."}}
 
       # A thread that is moving is read-only until it arrives; one that moved lives on.
       moving = thread["moving"] ->

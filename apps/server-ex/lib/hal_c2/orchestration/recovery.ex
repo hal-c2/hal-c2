@@ -42,7 +42,10 @@ defmodule HalC2.Orchestration.Recovery do
     settled =
       for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
           mc == node(),
-          row["status"] in @active_runs or (row["pendingBackgroundTasks"] || []) != [],
+          # `status` is the latest run's, so a cancelled queued run can hide a running
+          # one behind it; `activityRunStatus` is the latest active run's.
+          row["status"] in @active_runs or row["activityRunStatus"] != nil or
+            (row["pendingBackgroundTasks"] || []) != [],
           {count, continuable} = settle(thread_id),
           count > 0,
           do: {thread_id, continuable}

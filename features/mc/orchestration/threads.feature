@@ -139,6 +139,18 @@ Feature: Thread lifecycle in the orchestration engine
     When a client unarchives "t1"
     Then the queued message stays cancelled
 
+  # As on the Node server: archiving does not stop a message sent afterwards from
+  # queueing, but nothing starts it until the thread is back.
+  @mc
+  Scenario: An archived thread starts nothing from its queue until it is unarchived
+    Given thread "t1" was archived with a running turn and a message queued after it
+    When the user interrupts the run
+    And the user resumes the queue of "t1"
+    Then the queued message is still queued
+    When a client unarchives "t1"
+    And the user resumes the queue of "t1"
+    Then the queued message starts
+
   @mc
   Scenario: Deleting a thread removes it from the shell
     Given thread "t1" exists in "demo"
