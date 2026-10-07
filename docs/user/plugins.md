@@ -75,7 +75,8 @@ What a running plugin adds reaches every app connected to that machine:
 
 - **Pages** are tabs next to **Threads** at the top of the window. Switch with a
   click or **Ctrl+Alt+]** and **Ctrl+Alt+[** (**⌘⌥]** and **⌘⌥[** on macOS). A
-  plugin on several machines still has one tab.
+  plugin on several machines has one tab, or one per version when they run
+  different versions, each named with its machines.
 - **Threads it starts** carry its mark in the thread list and its header above
   the conversation. A plugin can keep its threads out of the list and show them
   on its page instead. Turn the plugin off and they are ordinary threads again.
