@@ -45,7 +45,7 @@ defmodule HalC2.SettingsPropTest do
         HalC2.Prop.stop_services()
 
         (result == :ok)
-        |> when_fail(IO.puts(HalC2.Prop.report(cmds, [sequential, parallel], :parallel, result)))
+        |> when_fail(IO.puts(HalC2.Prop.report(cmds, sequential, parallel, result)))
         |> aggregate(command_names(cmds))
       end
     end
@@ -80,7 +80,7 @@ defmodule HalC2.SettingsPropTest do
           []
         else
           [
-            {2, {:call, __MODULE__, :external_edit, [doc()]}},
+            {2, {:call, __MODULE__, :external_edit, [doc(), boolean()]}},
             {1, {:call, __MODULE__, :external_garbage, [oneof(["{not json", "[]", "7", ""])]}},
             {2, {:call, __MODULE__, :saved, []}},
             {2, {:call, __MODULE__, :watch, []}},
@@ -110,7 +110,7 @@ defmodule HalC2.SettingsPropTest do
   def next_state(state, _result, {:call, _, :drop, [keys]}),
     do: accepted(state, Map.drop(state.doc, keys))
 
-  def next_state(state, _result, {:call, _, :external_edit, [doc]}) do
+  def next_state(state, _result, {:call, _, :external_edit, [doc, _in_place?]}) do
     if doc == state.doc do
       %{state | file: doc}
     else
@@ -232,22 +232,28 @@ defmodule HalC2.SettingsPropTest do
 
   def saved, do: Settings.saved()
 
-  # What `mix hal_c2.theme` does beside a live MC: replace the file, atomically.
-  def external_edit(doc) do
-    write_file(JSON.encode!(doc))
+  # What `mix hal_c2.theme` does beside a live MC, replacing the file atomically, or
+  # an editor that writes over it in place.
+  def external_edit(doc, in_place?) do
+    write_file(JSON.encode!(doc), in_place?)
     check()
   end
 
   def external_garbage(text) do
-    write_file(text)
+    write_file(text, false)
     check()
   end
 
-  defp write_file(text) do
+  defp write_file(text, in_place?) do
     path = Path.join(HalC2.Paths.config_dir(), "settings.json")
     File.mkdir_p!(Path.dirname(path))
-    File.write!(path <> ".ext", text)
-    File.rename!(path <> ".ext", path)
+
+    if in_place? do
+      File.write!(path, text)
+    else
+      File.write!(path <> ".ext", text)
+      File.rename!(path <> ".ext", path)
+    end
   end
 
   # The file check, run now and waited for: a call after it is handled after it.

@@ -302,10 +302,11 @@ defmodule HalC2.Settings do
     end
   end
 
-  # Writes rename a new file into place, so the inode changes with every save.
+  # The file's contents, hashed. Its inode, size and mtime (in whole seconds) miss an
+  # editor that rewrites it in place to the same size within the second.
   defp stamp(path) do
-    case File.stat(path, time: :posix) do
-      {:ok, stat} -> {stat.inode, stat.size, stat.mtime}
+    case File.read(path) do
+      {:ok, text} -> :erlang.md5(text)
       _ -> nil
     end
   end
