@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -20,7 +21,7 @@ Rectangle {
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    readonly property color border: Theme.palette.color("border", "#27272a")
+    readonly property color borderColor: Theme.palette.color("border", "#27272a")
 
     objectName: "threadDetailsPanel"
     implicitWidth: 280
@@ -29,7 +30,7 @@ Rectangle {
     Rectangle {
         width: 1
         height: parent.height
-        color: root.border
+        color: root.borderColor
     }
 
     component Heading: Text {

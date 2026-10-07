@@ -71,7 +71,7 @@ QStringList threadsOf(World& world, const QStringList& titles) {
 
 void waitForSection(World& world, const QString& key, const QString& section, bool in = true) {
   world.waitFor([&] { return (sidebarSectionOf(world, key) == section) == in; },
-                [&] { return QStringLiteral("%1 %2 %3; it is in %4, the MC has %5").arg(key, in ? u"in"_qs : u"out of"_qs, section, sidebarSectionOf(world, key), world.describeCommands()); });
+                [&] { return QStringLiteral("%1 %2 %3; it is in %4, the MC has %5").arg(key, in ? QStringLiteral("in") : QStringLiteral("out of"), section, sidebarSectionOf(world, key), world.describeCommands()); });
 }
 
 void settleFirst(World& world) {
@@ -207,7 +207,7 @@ const Steps steps([] {
     auto* palette = world.native().controller<CommandPaletteController>();
     expect(palette->isOpen() && palette->submenu() == QLatin1String("New thread in...") && palette->count() == 2,
            QStringLiteral("the palette is %1 on \"%2\" with %3 entries; the route is %4")
-               .arg(palette->isOpen() ? u"open"_qs : u"closed"_qs, palette->submenu())
+               .arg(palette->isOpen() ? QStringLiteral("open") : QStringLiteral("closed"), palette->submenu())
                .arg(palette->count())
                .arg(show(world.state(QStringLiteral("route")))));
     expect(world.state(QStringLiteral("route")).toMap().value(QStringLiteral("kind")) == QLatin1String("usage"),

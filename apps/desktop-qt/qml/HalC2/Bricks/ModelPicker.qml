@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -55,7 +56,7 @@ AbstractButton {
     }
 
     readonly property color divider: control.fade(Theme.palette.color("border", "#27272a"), 0.7)
-    readonly property string fontFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+    readonly property string fontFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
 
     function open() {
         if (enabled && !popup.visible)
@@ -200,6 +201,8 @@ AbstractButton {
     onClicked: popup.visible ? popup.close() : popup.open()
 
     background: Rectangle {
+        id: triggerBackground
+
         readonly property color labelColor: control.hovered || control.pressed || popup.visible ? control.foreground : Theme.palette.color("secondaryLabel", "#a1a1aa")
 
         radius: Math.min(Theme.radius, 8)
@@ -241,7 +244,7 @@ AbstractButton {
             Layout.fillWidth: true
             text: control.triggerTitle
             font: control.font
-            color: control.background.labelColor
+            color: triggerBackground.labelColor
             elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter
         }
@@ -572,10 +575,7 @@ AbstractButton {
                         boundsBehavior: Flickable.StopAtBounds
                         model: control.rows
 
-                        delegate: Loader {
-                            required property var modelData
-                            required property int index
-
+                        delegate: RowSlot {
                             width: ListView.view.width - ListView.view.leftMargin - ListView.view.rightMargin
                             sourceComponent: modelData.kind === "legacy" ? legacyRow : modelRow
                         }
@@ -594,14 +594,21 @@ AbstractButton {
         }
     }
 
+    // A row of the list: it loads `modelRow` or `legacyRow`, which read their
+    // entry and index from it.
+    component RowSlot: Loader {
+        required property var modelData
+        required property int index
+    }
+
     Component {
         id: modelRow
 
         Rectangle {
             id: row
 
-            readonly property var entry: parent ? parent.modelData : null
-            readonly property int rowIndex: parent ? parent.index : -1
+            readonly property var entry: (parent as RowSlot)?.modelData ?? null
+            readonly property int rowIndex: (parent as RowSlot)?.index ?? -1
             readonly property var model: entry ? entry.model : null
             readonly property var instance: entry ? entry.instance : null
             readonly property string disabledReason: model && model.disabledReason !== null ? model.disabledReason : ""
@@ -825,8 +832,8 @@ AbstractButton {
         Rectangle {
             id: legacy
 
-            readonly property var entry: parent ? parent.modelData : null
-            readonly property int rowIndex: parent ? parent.index : -1
+            readonly property var entry: (parent as RowSlot)?.modelData ?? null
+            readonly property int rowIndex: (parent as RowSlot)?.index ?? -1
 
             objectName: entry ? "modelPickerLegacy:" + entry.instanceId : ""
             implicitHeight: 46

@@ -1,4 +1,5 @@
 import QtQuick
+import Ghostty
 import HalC2.Shell
 
 // A terminal's right-click menu, as the web's terminalContextMenuItems: the
@@ -16,7 +17,7 @@ ShellMenu {
     id: menu
 
     // The Ghostty Terminal it acts on.
-    required property Item terminal
+    required property Terminal terminal
     // Adds the selection to the draft; null where there is none.
     property var addToChat: null
 

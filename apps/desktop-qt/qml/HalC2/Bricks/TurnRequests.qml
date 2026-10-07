@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
@@ -33,7 +35,7 @@ Item {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color warning: Theme.palette.color("warning", "#e0af68")
-    readonly property string uiFont: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+    readonly property string uiFont: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
@@ -474,79 +476,6 @@ Item {
                     text: qsTr("Implement")
                     onClicked: Shell.dispatch("composer.plan.implement", {})
                 }
-
-                // Where in the workspace the plan is saved; empty takes the
-                // plan's own file name.
-                Popup {
-                    id: planSaveDialog
-                    objectName: "planSaveDialog"
-
-                    parent: Overlay.overlay
-                    scale: Shell.state.layout?.zoom ?? 1
-                    transformOrigin: Item.TopLeft
-                    x: Math.round((parent.width - width * scale) / 2)
-                    y: Math.round((parent.height - height * scale) / 2)
-                    width: 380
-                    modal: true
-                    padding: 16
-                    onOpened: {
-                        planSavePath.text = "";
-                        planSavePath.forceActiveFocus();
-                    }
-
-                    background: Rectangle {
-                        radius: Theme.radius
-                        color: Theme.palette.color("surfaceOverlay", "#18181b")
-                        border.color: Theme.palette.color("border", "#27272a")
-                        border.width: 1
-                    }
-
-                    contentItem: ColumnLayout {
-                        spacing: 10
-
-                        Text {
-                            text: qsTr("Save plan to workspace")
-                            color: requests.foreground
-                            font.family: requests.uiFont
-                            font.pixelSize: Math.round(15 * Theme.fontScale)
-                            font.bold: true
-                        }
-                        ShellTextField {
-                            id: planSavePath
-
-                            objectName: "planSavePath"
-                            Layout.fillWidth: true
-                            placeholderText: qsTr("Path in the workspace, e.g. docs/plan.md")
-                            Accessible.name: qsTr("Workspace path")
-                            onAccepted: planSaveConfirm.clicked()
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            Item {
-                                Layout.fillWidth: true
-                            }
-                            ShellButton {
-                                text: qsTr("Cancel")
-                                onClicked: planSaveDialog.close()
-                            }
-                            ShellButton {
-                                id: planSaveConfirm
-
-                                objectName: "planSaveConfirm"
-                                primary: true
-                                text: qsTr("Save")
-                                onClicked: {
-                                    Shell.dispatch("plan.save", {
-                                        path: planSavePath.text.trim()
-                                    });
-                                    planSaveDialog.close();
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
 
@@ -555,6 +484,8 @@ Item {
             model: requests.queue
 
             delegate: ShellCard {
+                id: queued
+
                 required property var modelData
 
                 Layout.fillWidth: true
@@ -568,7 +499,7 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
-                        text: modelData.text
+                        text: queued.modelData.text
                         color: requests.foreground
                         font.family: requests.uiFont
                         font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -578,36 +509,109 @@ Item {
 
                     // Editing puts the message in the composer; sending saves it.
                     ShellButton {
-                        objectName: "queueEdit-" + modelData.runId
+                        objectName: "queueEdit-" + queued.modelData.runId
                         implicitHeight: 24
                         subtle: true
-                        text: requests.composerModel?.editingQueuedRunId === modelData.runId ? qsTr("Editing") : qsTr("Edit")
-                        enabled: requests.composerModel?.editingQueuedRunId !== modelData.runId
+                        text: requests.composerModel?.editingQueuedRunId === queued.modelData.runId ? qsTr("Editing") : qsTr("Edit")
+                        enabled: requests.composerModel?.editingQueuedRunId !== queued.modelData.runId
                         onClicked: Shell.dispatch("composer.queue.edit", {
-                            runId: modelData.runId
+                            runId: queued.modelData.runId
                         })
                     }
 
                     ShellButton {
-                        objectName: "queueSteer-" + modelData.runId
+                        objectName: "queueSteer-" + queued.modelData.runId
                         implicitHeight: 24
                         subtle: true
                         text: qsTr("Steer")
                         onClicked: Shell.dispatch("composer.queue.steer", {
-                            runId: modelData.runId
+                            runId: queued.modelData.runId
                         })
                     }
 
                     ShellButton {
-                        objectName: "queueRemove-" + modelData.runId
+                        objectName: "queueRemove-" + queued.modelData.runId
                         implicitHeight: 24
                         subtle: true
                         iconName: "x"
                         implicitWidth: implicitHeight
                         Accessible.name: qsTr("Remove from the queue")
                         onClicked: Shell.dispatch("composer.queue.remove", {
-                            runId: modelData.runId
+                            runId: queued.modelData.runId
                         })
+                    }
+                }
+            }
+        }
+    }
+
+    // Where in the workspace the plan is saved; empty takes the
+    // plan's own file name.
+    Popup {
+        id: planSaveDialog
+        objectName: "planSaveDialog"
+
+        parent: Overlay.overlay
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
+        x: Math.round((parent.width - width * scale) / 2)
+        y: Math.round((parent.height - height * scale) / 2)
+        width: 380
+        modal: true
+        padding: 16
+        onOpened: {
+            planSavePath.text = "";
+            planSavePath.forceActiveFocus();
+        }
+
+        background: Rectangle {
+            radius: Theme.radius
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: Theme.palette.color("border", "#27272a")
+            border.width: 1
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            Text {
+                text: qsTr("Save plan to workspace")
+                color: requests.foreground
+                font.family: requests.uiFont
+                font.pixelSize: Math.round(15 * Theme.fontScale)
+                font.bold: true
+            }
+            ShellTextField {
+                id: planSavePath
+
+                objectName: "planSavePath"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Path in the workspace, e.g. docs/plan.md")
+                Accessible.name: qsTr("Workspace path")
+                onAccepted: planSaveConfirm.clicked()
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Item {
+                    Layout.fillWidth: true
+                }
+                ShellButton {
+                    text: qsTr("Cancel")
+                    onClicked: planSaveDialog.close()
+                }
+                ShellButton {
+                    id: planSaveConfirm
+
+                    objectName: "planSaveConfirm"
+                    primary: true
+                    text: qsTr("Save")
+                    onClicked: {
+                        Shell.dispatch("plan.save", {
+                            path: planSavePath.text.trim()
+                        });
+                        planSaveDialog.close();
                     }
                 }
             }

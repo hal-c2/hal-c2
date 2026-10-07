@@ -320,8 +320,8 @@ bool ran(World& world, const QString& command) {
 QString describePress(World& world) {
   const KeyState& state = keys(world);
   return QStringLiteral("%1 with %2: the shell ran %3, the picker %4, the key went to %5")
-      .arg(state.sequence, focusName(state.focus), show(state.ran), state.picker.isEmpty() ? u"nothing"_qs : state.picker,
-           state.delivered.isEmpty() ? u"the window"_qs : state.delivered);
+      .arg(state.sequence, focusName(state.focus), show(state.ran), state.picker.isEmpty() ? QStringLiteral("nothing") : state.picker,
+           state.delivered.isEmpty() ? QStringLiteral("the window") : state.delivered);
 }
 
 // A thread of a project with a `test` script, shown in the window.
@@ -659,7 +659,7 @@ const Steps steps([] {
     expect(!rowFor(world, rebound, QStringLiteral("mod+n")), describeRows(world, rebound));
   });
   step(QStringLiteral("the valid rule applies"), [](World& world, const Captures&, const Table&) {
-    expect(keymap(world)->resolve(QStringLiteral("Ctrl+Alt+G")) == QLatin1String("diff.toggle"), describeRows(world, u"diff.toggle"_qs));
+    expect(keymap(world)->resolve(QStringLiteral("Ctrl+Alt+G")) == QLatin1String("diff.toggle"), describeRows(world, QStringLiteral("diff.toggle")));
   });
   step(QStringLiteral("the unknown one is ignored"), [](World& world, const Captures&, const Table&) {
     expect(!rowFor(world, QStringLiteral("nothing.known")) && keymap(world)->resolve(QStringLiteral("Ctrl+Alt+U")).isEmpty(),
@@ -704,7 +704,7 @@ const Steps steps([] {
   step(QStringLiteral("each binding is marked Default, Custom or Project"), [](World& world, const Captures&, const Table&) {
     for (const QVariant& value : rows(world)) {
       const QString source = value.toMap().value(QStringLiteral("source")).toString();
-      expect(QStringList{u"Default"_qs, u"Custom"_qs, u"Project"_qs}.contains(source), show(value));
+      expect(QStringList{QStringLiteral("Default"), QStringLiteral("Custom"), QStringLiteral("Project")}.contains(source), show(value));
     }
   });
   step(QStringLiteral("the user searches keybindings for %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -719,7 +719,7 @@ const Steps steps([] {
            const QVariantMap row = value.toMap();
            const bool listed = row.value(QStringLiteral("search")).toString().contains(query);
            const bool matches = row.value(field).toString().toLower().contains(query);
-           expect(listed == matches, QStringLiteral("%1 %2 listed").arg(show(row), listed ? u"is"_qs : u"is not"_qs));
+           expect(listed == matches, QStringLiteral("%1 %2 listed").arg(show(row), listed ? QStringLiteral("is") : QStringLiteral("is not")));
          }
        });
   step(QStringLiteral("%1 is labelled %1").arg(q), [](World& world, const Captures& c, const Table&) {

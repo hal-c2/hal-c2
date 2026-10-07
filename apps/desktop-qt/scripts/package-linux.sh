@@ -85,7 +85,37 @@ chmod +x "${wrapper}"
 export HAL_C2_QMAKE="${qmake}" HAL_C2_QT_PLUGINS="${plugins}" HAL_C2_QT_PLUGIN_VIEW="${view}"
 export QMAKE="${wrapper}"
 
+# The app's own QML modules are compiled into the binary. The plugin's import scanner
+# is told where they were built so that it can follow their imports of Qt's modules,
+# and what it then copies of them (their build directories) is taken out again
+# before the image is made: a copy on disk could be loaded in place of the binary's.
+export QML_MODULES_PATHS="$(cd "${build_dir}" && pwd)/qml"
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
-export OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
-"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt --output appimage
-echo "AppImage at ${OUTPUT}"
+# The plugin bundles only xcb by default, which leaves a Wayland session running
+# the app through XWayland. It takes the Wayland platform plugin when asked (one
+# libqwayland.so since Qt 6.10, an EGL and a generic one before), but not the
+# plugins that one cannot start without (it looks for the names they had before
+# Qt 6.8), so those are copied in after it: the xdg shell, EGL, and the decorations
+# drawn when the compositor draws none. A Qt without Qt Wayland packages for xcb alone.
+wayland=""
+for name in libqwayland.so libqwayland-egl.so libqwayland-generic.so; do
+  [ -f "${plugins}/platforms/${name}" ] && wayland="${wayland:+${wayland};}${name}"
+done
+export EXTRA_PLATFORM_PLUGINS="${wayland}"
+"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt
+rm -rf "${app_dir}/usr/qml/HalC2" "${app_dir}/usr/qml/Ghostty"
+if [ -n "${wayland}" ]; then
+  for plugin in wayland-shell-integration/libxdg-shell.so \
+    wayland-graphics-integration-client/libqt-plugin-wayland-egl.so \
+    wayland-decoration-client/libbradient.so; do
+    mkdir -p "${app_dir}/usr/plugins/$(dirname "${plugin}")"
+    cp "${plugins}/${plugin}" "${app_dir}/usr/plugins/${plugin}"
+  done
+  "${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" \
+    --deploy-deps-only "${app_dir}/usr/plugins/wayland-shell-integration" \
+    --deploy-deps-only "${app_dir}/usr/plugins/wayland-graphics-integration-client" \
+    --deploy-deps-only "${app_dir}/usr/plugins/wayland-decoration-client"
+fi
+export LDAI_OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
+"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --output appimage
+echo "AppImage at ${LDAI_OUTPUT}"

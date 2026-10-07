@@ -43,6 +43,10 @@ cmake --build apps/desktop-qt/build/tests/native
 ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
 ```
 
+`mise run desktop:lint` runs qmllint over the bricks. It knows the `HalC2.Shell` singletons and
+types from `src/ShellQmlTypes.h`, which only tools read: the app registers them itself, so a name
+added to one is added to the other.
+
 `Features` runs the `@desktop` and `@shared` scenarios in the feature files `tst_Features.cpp`
 lists (`features/desktop/native-*.feature`, cluster, pairing, Connections settings and more)
 against a fake MC, skipping `@backlog`,

@@ -133,7 +133,7 @@ private:
         m_tokens.append({Token::Close, {}});
         ++index;
       } else {
-        const QRegularExpressionMatch match = identifier.match(QStringView(expression).mid(index));
+        const QRegularExpressionMatch match = identifier.matchView(QStringView(expression).mid(index));
         if (!match.hasMatch()) return false;
         m_tokens.append({Token::Identifier, match.captured(0)});
         index += match.capturedLength(0);

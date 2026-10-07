@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -118,6 +120,8 @@ Rectangle {
                         id: heading
 
                         ColumnLayout {
+                            id: sectionHeading
+
                             readonly property bool folded: entry.modelData.folded === true
                             readonly property bool open: page.openFolds[entry.modelData.section] === true
 
@@ -137,11 +141,11 @@ Rectangle {
 
                                 ShellButton {
                                     objectName: "fold"
-                                    visible: parent.parent.folded
+                                    visible: sectionHeading.folded
                                     subtle: true
-                                    text: parent.parent.open ? qsTr("Hide") : qsTr("Show")
-                                    Accessible.name: parent.parent.open ? qsTr("Hide %1").arg(entry.modelData.section) : qsTr("Show %1").arg(entry.modelData.section)
-                                    onClicked: page.setFold(entry.modelData.section, !parent.parent.open)
+                                    text: sectionHeading.open ? qsTr("Hide") : qsTr("Show")
+                                    Accessible.name: sectionHeading.open ? qsTr("Hide %1").arg(entry.modelData.section) : qsTr("Show %1").arg(entry.modelData.section)
+                                    onClicked: page.setFold(entry.modelData.section, !sectionHeading.open)
                                 }
                             }
 

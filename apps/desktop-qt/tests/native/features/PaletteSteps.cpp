@@ -122,7 +122,7 @@ QString describe(World& world) {
   QStringList lines;
   for (const Listed& row : rows(world)) lines << QStringLiteral("%1: %2 (%3)").arg(row.group, row.title, row.description);
   return QStringLiteral("the palette (%1, query \"%2\") lists [%3]")
-      .arg(palette(world).isOpen() ? u"open"_qs : u"closed"_qs, palette(world).query(), lines.join(u"; "));
+      .arg(palette(world).isOpen() ? QStringLiteral("open") : QStringLiteral("closed"), palette(world).query(), lines.join(u"; "));
 }
 
 int indexOf(World& world, const QString& title, const QString& kind = {}) {

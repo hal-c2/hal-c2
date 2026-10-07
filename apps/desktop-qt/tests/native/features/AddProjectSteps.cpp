@@ -27,7 +27,7 @@ QString describe(World& world) {
   for (int row = 0; row < model.count(); ++row) {
     lines.append(QStringLiteral("%1 (%2)%3").arg(model.index(row).data(CommandPaletteController::TitleRole).toString(),
                                                  model.index(row).data(CommandPaletteController::DescriptionRole).toString(),
-                                                 model.index(row).data(CommandPaletteController::EnabledRole).toBool() ? u""_qs : u" off"_qs));
+                                                 model.index(row).data(CommandPaletteController::EnabledRole).toBool() ? QStringLiteral("") : QStringLiteral(" off")));
   }
   return QStringLiteral("the palette (%1 \"%2\", query \"%3\") lists [%4] and says \"%5\"")
       .arg(model.mode(), model.submenu(), model.query(), lines.join(QStringLiteral("; ")), model.emptyText());

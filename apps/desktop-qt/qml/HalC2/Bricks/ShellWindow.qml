@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import HalC2.Shell
 import "js/settingsPages.js" as Pages
@@ -29,9 +31,9 @@ Window {
     readonly property string settingsSection: !settingsActive ? "" : Pages.resolve(route.section)
     readonly property bool terminalFocused: hasAncestor(root.activeFocusItem, "HalC2Terminal")
     // A text field has the keyboard (the web's editableFocus).
-    readonly property bool editableFocused: root.activeFocusItem !== null && root.activeFocusItem.cursorPosition !== undefined
+    readonly property bool editableFocused: root.activeFocusItem !== null && "cursorPosition" in root.activeFocusItem
     // The composer's own field has it (the web's composerFocus).
-    readonly property bool composerFocused: editableFocused && root.activeFocusItem.composerInput === true
+    readonly property bool composerFocused: editableFocused && "composerInput" in root.activeFocusItem
 
     function hasAncestor(item, objectName) {
         for (let node = item; node; node = node.parent) {
@@ -42,13 +44,18 @@ Window {
         return false;
     }
 
+    // The layout fits the thread list to the room the window leaves it.
+    function reportWidth() {
+        Shell.dispatch("layout.window", { width: Math.round(root.width / root.zoom) });
+    }
+
     width: 1280
     height: 820
-    // The layout fits the thread list to the room the window leaves it.
-    onWidthChanged: Shell.dispatch("layout.window", { width: Math.round(width / zoom) })
+    onWidthChanged: reportWidth()
     // Again once the layout is there: the shell may start after the window.
-    onSidebarWidthChanged: Shell.dispatch("layout.window", { width: Math.round(width / zoom) })
-    Component.onCompleted: Shell.dispatch("layout.window", { width: Math.round(width / zoom) })
+    // Later, as the answer republishes sidebarWidth while it is still changing.
+    onSidebarWidthChanged: Qt.callLater(reportWidth)
+    Component.onCompleted: reportWidth()
     minimumWidth: 640
     minimumHeight: 400
     visible: true

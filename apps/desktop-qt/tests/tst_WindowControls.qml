@@ -245,12 +245,20 @@ Item {
             compare(window.visibility, Window.Windowed);
             // QtTest adds a double-click interval after every synthetic
             // release, so two clicks never reach a TapHandler as a double
-            // tap. Drive the header's own handler instead.
+            // tap. Drive the header's own handler instead, with the point a
+            // real single tap on it hands over.
             const tap = findChild(window.header, "titleTap");
             verify(tap.enabled);
-            tap.doubleTapped(tap.point, Qt.LeftButton);
+            let point = null;
+            const capture = eventPoint => point = eventPoint;
+            tap.tapped.connect(capture);
+            mouseClick(window.header, window.header.width / 2, window.header.height / 2);
+            tap.tapped.disconnect(capture);
+            verify(point !== null);
+            compare(window.visibility, Window.Windowed);
+            tap.doubleTapped(point, Qt.LeftButton);
             tryCompare(window, "visibility", Window.Maximized);
-            tap.doubleTapped(tap.point, Qt.LeftButton);
+            tap.doubleTapped(point, Qt.LeftButton);
             tryCompare(window, "visibility", Window.Windowed);
             // A framed window leaves it to the system's title bar.
             Theme.frameless = false;

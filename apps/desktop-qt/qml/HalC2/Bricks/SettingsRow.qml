@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -167,7 +169,10 @@ ColumnLayout {
             from: row.spec.min ?? 1
             to: row.spec.max ?? 90
             editable: true
-            value: Rows.settleOn(row.value) ? row.value : (Settings.defaultOf(row.spec.key) ?? from)
+            // Every row has this box, hidden unless it settles: only a
+            // settleDays row's value is a number of days.
+            value: row.spec.kind !== "settleDays" ? from
+                : Rows.settleOn(row.value) ? row.value : (Settings.defaultOf(row.spec.key) ?? from)
             Accessible.name: row.spec.daysTitle ?? ""
             onValueModified: row.set(value)
         }

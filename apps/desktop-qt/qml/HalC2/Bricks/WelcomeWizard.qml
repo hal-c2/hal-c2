@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -134,6 +135,8 @@ Item {
                         model: [qsTr("Connect"), qsTr("Agents"), qsTr("Projects")]
 
                         delegate: AbstractButton {
+                            id: stageButton
+
                             required property int index
                             required property string modelData
 
@@ -151,13 +154,13 @@ Item {
                                     Layout.fillWidth: true
                                     implicitHeight: 3
                                     radius: 2
-                                    color: index <= (wizard.onboarding ? wizard.onboarding.stage : 0)
+                                    color: stageButton.index <= (wizard.onboarding ? wizard.onboarding.stage : 0)
                                         ? Theme.palette.color("accent", "#2563eb") : wizard.border
                                 }
                                 Label {
-                                    text: modelData
+                                    text: stageButton.modelData
                                     font.pixelSize: Math.round(11 * Theme.fontScale)
-                                    color: index === (wizard.onboarding ? wizard.onboarding.stage : 0) ? wizard.foreground : wizard.muted
+                                    color: stageButton.index === (wizard.onboarding ? wizard.onboarding.stage : 0) ? wizard.foreground : wizard.muted
                                 }
                             }
                         }

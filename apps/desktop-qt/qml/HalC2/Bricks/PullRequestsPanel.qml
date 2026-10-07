@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
@@ -168,7 +169,7 @@ Rectangle {
             width: parent.width - 24
             visible: text.length > 0
             wrapMode: Text.Wrap
-            text: root.source ? root.source.notice : ""
+            text: root.source?.notice ?? ""
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
@@ -280,7 +281,7 @@ Rectangle {
                         Text {
                             x: 30
                             y: 5
-                            width: parent.width - x - linkButton.width - 12
+                            width: parent.width - x - openLinkButton.width - 12
                             text: open.modelData.title
                             color: root.foreground
                             font.pixelSize: Math.round(13 * Theme.fontScale)
@@ -289,14 +290,14 @@ Rectangle {
                         Text {
                             x: 30
                             y: 24
-                            width: parent.width - x - linkButton.width - 12
+                            width: parent.width - x - openLinkButton.width - 12
                             text: [qsTr("#%1").arg(open.modelData.number), open.modelData.author, open.modelData.branches].filter(part => part.length > 0).join(" · ")
                             color: root.muted
                             font.pixelSize: Math.round(11 * Theme.fontScale)
                             elide: Text.ElideRight
                         }
                         ShellButton {
-                            id: linkButton
+                            id: openLinkButton
 
                             objectName: "projectPullRequestLink-" + open.modelData.number
                             anchors.right: parent.right
@@ -320,7 +321,6 @@ Rectangle {
             required property string repository
             required property int number
             required property string title
-            required property string state
             required property string stateLabel
             required property string checks
             required property string checksLabel
@@ -329,7 +329,8 @@ Rectangle {
             required property bool conflicting
             required property string branches
             required property string sourceLabel
-            // A role a model may leave out (stackLabel).
+            // A role a model may leave out (stackLabel), and `state`, which as a
+            // required property would shadow Item.state.
             required property var model
             required property string unlinkLabel
 
@@ -351,8 +352,8 @@ Rectangle {
                 x: 8
                 y: 8
                 size: 14
-                name: root.stateIcon(row.state)
-                color: root.stateColor(row.state)
+                name: root.stateIcon(row.model.state)
+                color: root.stateColor(row.model.state)
                 ToolTip.visible: glyphArea.containsMouse
                 ToolTip.text: row.stateLabel
 
@@ -401,7 +402,7 @@ Rectangle {
                 Text {
                     objectName: "pullRequestState"
                     text: row.stateLabel
-                    color: root.stateColor(row.state)
+                    color: root.stateColor(row.model.state)
                     font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
                 Text {

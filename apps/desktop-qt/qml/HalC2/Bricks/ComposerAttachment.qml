@@ -85,8 +85,8 @@ Row {
         tint: chip.failed ? Theme.palette.color("error", "#f87171") : Theme.palette.color("text", "#e4e4e7")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         Accessible.name: qsTr("Remove %1").arg(chip.label)
-        ToolTip.visible: hovered && chip.failed && chip.attachment.error.length > 0
-        ToolTip.text: chip.attachment.error
+        ToolTip.visible: hovered && chip.failed && ToolTip.text.length > 0
+        ToolTip.text: chip.attachment.error ?? ""
         onClicked: chip.removeRequested()
     }
 
@@ -140,7 +140,7 @@ Row {
                 text: chip.source ? chip.source.accessibility : ""
                 color: Theme.palette.color("text", "#e4e4e7")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 wrapMode: Text.Wrap
             }
         }

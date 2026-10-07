@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
@@ -120,7 +121,7 @@ Rectangle {
                 maximumLineCount: 1
                 color: root.foreground
                 font.pixelSize: row.kind === "command" ? 12 : 13
-                font.family: row.kind === "command" ? root.mono : Qt.application.font.family
+                font.family: row.kind === "command" ? root.mono : Application.font.family
                 font.weight: row.kind === "command" ? Font.Normal : Font.Medium
             }
 

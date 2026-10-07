@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -9,9 +10,8 @@ import HalC2.Shell
 SettingsPage {
     id: tasks
 
-    readonly property var state: Shell.state.scheduledTasks ?? null
+    readonly property var settings: Shell.state.scheduledTasks ?? null
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color danger: Theme.palette.color("error", "#ef4444")
 
     objectName: "scheduledTasksSettings"
@@ -39,7 +39,7 @@ SettingsPage {
                 Label {
                     Layout.fillWidth: true
                     text: task.modelData.title
-                    color: tasks.foreground
+                    color: Theme.palette.color("text", "#e4e4e7")
                     font.pixelSize: Math.round(13 * Theme.fontScale)
                     font.weight: Font.Medium
                     elide: Text.ElideRight
@@ -49,7 +49,7 @@ SettingsPage {
                     objectName: "lastRun"
                     visible: text.length > 0
                     text: task.modelData.lastRun ?? ""
-                    color: task.modelData.lastRunStatus === "failed" ? tasks.danger : tasks.muted
+                    color: task.modelData.lastRunStatus === "failed" ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
                     font.pixelSize: Math.round(11 * Theme.fontScale)
                     leftPadding: 6
                     rightPadding: 6
@@ -67,7 +67,7 @@ SettingsPage {
                 objectName: "promptPreview"
                 Layout.fillWidth: true
                 text: task.modelData.prompt
-                color: tasks.muted
+                color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
@@ -78,7 +78,7 @@ SettingsPage {
                 objectName: "when"
                 Layout.fillWidth: true
                 text: task.modelData.schedule + " · " + task.modelData.when
-                color: tasks.muted
+                color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
@@ -87,7 +87,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: task.modelData.lastRunStatus === "failed"
                 text: qsTr("Last run failed: %1").arg(task.modelData.lastRunError || qsTr("unknown error"))
-                color: tasks.danger
+                color: Theme.palette.color("error", "#ef4444")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -121,7 +121,7 @@ SettingsPage {
             subtle: true
             enabled: !task.modelData.busy
             text: qsTr("Delete")
-            tint: tasks.danger
+            tint: Theme.palette.color("error", "#ef4444")
             onClicked: Shell.dispatch("scheduledTasks.delete", task.ids)
         }
     }
@@ -142,14 +142,14 @@ SettingsPage {
         ShellButton {
             objectName: "newTask"
             primary: true
-            enabled: tasks.state?.canCreate ?? false
+            enabled: tasks.settings?.canCreate ?? false
             text: qsTr("New task")
             onClicked: Shell.dispatch("scheduledTasks.new")
         }
     }
 
     Repeater {
-        model: tasks.state?.environments ?? []
+        model: tasks.settings?.environments ?? []
 
         delegate: ColumnLayout {
             id: environment

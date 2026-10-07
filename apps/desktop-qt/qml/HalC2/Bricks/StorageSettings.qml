@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -10,7 +11,7 @@ import HalC2.Shell
 SettingsPage {
     id: storage
 
-    readonly property var state: Shell.state.storageSettings ?? null
+    readonly property var settings: Shell.state.storageSettings ?? null
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
 
@@ -21,6 +22,8 @@ SettingsPage {
         id: rule
 
         required property var modelData
+        readonly property bool editable: Shell.state.settingsScope?.editable ?? false
+
         objectName: "storageRule:" + modelData.key
         Layout.fillWidth: true
         spacing: 12
@@ -47,7 +50,7 @@ SettingsPage {
             Label {
                 Layout.fillWidth: true
                 text: rule.modelData.description
-                color: storage.muted
+                color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -56,7 +59,7 @@ SettingsPage {
         SpinBox {
             objectName: "days"
             visible: rule.modelData.days && rule.modelData.value !== null && !rule.modelData.mixed
-            enabled: storage.editable
+            enabled: rule.editable
             from: 1
             to: 3650
             editable: true
@@ -70,13 +73,13 @@ SettingsPage {
         Label {
             visible: rule.modelData.days && rule.modelData.value === null && !rule.modelData.mixed
             text: qsTr("Off")
-            color: storage.muted
+            color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
         Switch {
             objectName: "control"
-            enabled: storage.editable
+            enabled: rule.editable
             // A mixed rule is neither: choosing sets it everywhere.
             checked: !rule.modelData.mixed && (rule.modelData.days ? rule.modelData.value !== null : rule.modelData.value === true)
             Accessible.name: rule.modelData.title
@@ -92,12 +95,12 @@ SettingsPage {
     ColumnLayout {
         objectName: "storageNotice"
         Layout.fillWidth: true
-        visible: storage.state?.status === "unsupported"
+        visible: storage.settings?.status === "unsupported"
         spacing: 6
 
         Label {
             Layout.fillWidth: true
-            text: storage.state?.notice ?? ""
+            text: storage.settings?.notice ?? ""
             color: Theme.palette.color("text", "#e4e4e7")
             font.pixelSize: Math.round(13 * Theme.fontScale)
             wrapMode: Text.Wrap
@@ -108,7 +111,7 @@ SettingsPage {
             spacing: 6
 
             Repeater {
-                model: storage.state?.eligible ?? []
+                model: storage.settings?.eligible ?? []
 
                 delegate: ShellButton {
                     required property var modelData
@@ -123,7 +126,7 @@ SettingsPage {
 
     ColumnLayout {
         Layout.fillWidth: true
-        visible: storage.state?.status === "ready"
+        visible: storage.settings?.status === "ready"
         spacing: 12
 
         Label {
@@ -136,7 +139,7 @@ SettingsPage {
         RowLayout {
             objectName: "storageMode"
             Layout.fillWidth: true
-            visible: storage.state?.projectScope ?? false
+            visible: storage.settings?.projectScope ?? false
             spacing: 12
 
             ColumnLayout {
@@ -153,7 +156,7 @@ SettingsPage {
                 Label {
                     Layout.fillWidth: true
                     text: {
-                        const mode = storage.state?.mode;
+                        const mode = storage.settings?.mode;
                         if (mode?.mixed) return qsTr("Mixed across selected machines");
                         if (mode?.value === "off") return qsTr("Keep this project's worktrees until you delete them manually.");
                         if (mode?.value === "custom") return qsTr("Use these rules for this project.");
@@ -172,20 +175,20 @@ SettingsPage {
                 implicitWidth: 140
                 readonly property var modes: ["inherit", "off", "custom"]
                 model: [qsTr("Inherit"), qsTr("Off"), qsTr("Custom")]
-                currentIndex: storage.state?.mode?.mixed ? -1 : modes.indexOf(storage.state?.mode?.value ?? "inherit")
-                displayText: storage.state?.mode?.mixed ? qsTr("Mixed") : currentText
+                currentIndex: storage.settings?.mode?.mixed ? -1 : modes.indexOf(storage.settings?.mode?.value ?? "inherit")
+                displayText: storage.settings?.mode?.mixed ? qsTr("Mixed") : currentText
                 Accessible.name: qsTr("Automatic worktree cleanup")
                 onActivated: index => Shell.dispatch("storageSettings.mode", { mode: modes[index] })
             }
         }
 
         Repeater {
-            model: storage.state?.worktrees ?? []
+            model: storage.settings?.worktrees ?? []
             delegate: Rule {}
         }
 
         Label {
-            visible: (storage.state?.artifacts ?? []).length > 0
+            visible: (storage.settings?.artifacts ?? []).length > 0
             text: qsTr("Artifacts and logs")
             color: storage.muted
             font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -193,7 +196,7 @@ SettingsPage {
         }
 
         Repeater {
-            model: storage.state?.artifacts ?? []
+            model: storage.settings?.artifacts ?? []
             delegate: Rule {}
         }
     }

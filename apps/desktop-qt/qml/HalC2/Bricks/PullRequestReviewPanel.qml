@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -22,7 +23,7 @@ Rectangle {
     readonly property bool online: source !== null && source.online
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    readonly property color border: Theme.palette.color("border", "#27272a")
+    readonly property color borderColor: Theme.palette.color("border", "#27272a")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
     readonly property color successColor: Theme.palette.color("success", "#22c55e")
     readonly property color warningColor: Theme.palette.color("warning", "#f59e0b")
@@ -191,7 +192,7 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
-            color: root.border
+            color: root.borderColor
         }
 
         Item {
@@ -459,6 +460,8 @@ Rectangle {
                             model: root.source?.reviewThreads ?? []
 
                             delegate: Rectangle {
+                                id: reviewThread
+
                                 required property var modelData
 
                                 objectName: "reviewThread-" + modelData.id
@@ -467,7 +470,7 @@ Rectangle {
                                 height: threadColumn.implicitHeight + 16
                                 radius: 6
                                 color: "transparent"
-                                border.color: root.border
+                                border.color: root.borderColor
 
                                 ColumnLayout {
                                     id: threadColumn
@@ -482,7 +485,7 @@ Rectangle {
 
                                         Text {
                                             Layout.fillWidth: true
-                                            text: modelData.path + (modelData.line > 0 ? ":" + modelData.line : "") + (modelData.outdated ? qsTr(" · outdated") : "") + (modelData.resolved ? qsTr(" · resolved") : "")
+                                            text: reviewThread.modelData.path + (reviewThread.modelData.line > 0 ? ":" + reviewThread.modelData.line : "") + (reviewThread.modelData.outdated ? qsTr(" · outdated") : "") + (reviewThread.modelData.resolved ? qsTr(" · resolved") : "")
                                             elide: Text.ElideMiddle
                                             color: root.muted
                                             font.pixelSize: Math.round(11 * Theme.fontScale)
@@ -490,13 +493,13 @@ Rectangle {
                                         ShellButton {
                                             objectName: "reviewThreadResolve"
                                             subtle: true
-                                            text: modelData.resolved ? qsTr("Unresolve") : qsTr("Resolve")
+                                            text: reviewThread.modelData.resolved ? qsTr("Unresolve") : qsTr("Resolve")
                                             enabled: root.online && !root.source.busy
-                                            onClicked: root.source.setThreadResolved(modelData.id, !modelData.resolved)
+                                            onClicked: root.source.setThreadResolved(reviewThread.modelData.id, !reviewThread.modelData.resolved)
                                         }
                                     }
                                     Repeater {
-                                        model: modelData.resolved ? [] : modelData.comments
+                                        model: reviewThread.modelData.resolved ? [] : reviewThread.modelData.comments
 
                                         delegate: Text {
                                             required property var modelData
@@ -515,6 +518,8 @@ Rectangle {
                     }
 
                     delegate: ColumnLayout {
+                        id: comment
+
                         required property var modelData
 
                         x: 12
@@ -523,17 +528,17 @@ Rectangle {
 
                         Text {
                             Layout.fillWidth: true
-                            text: [modelData.author, modelData.reviewState.length > 0 ? modelData.reviewState.toLowerCase().replace("_", " ") : "", modelData.path].filter(part => part.length > 0).join(" · ")
+                            text: [comment.modelData.author, comment.modelData.reviewState.length > 0 ? comment.modelData.reviewState.toLowerCase().replace("_", " ") : "", comment.modelData.path].filter(part => part.length > 0).join(" · ")
                             elide: Text.ElideRight
                             color: root.muted
                             font.pixelSize: Math.round(11 * Theme.fontScale)
                         }
                         Text {
                             Layout.fillWidth: true
-                            visible: modelData.body.length > 0
+                            visible: comment.modelData.body.length > 0
                             wrapMode: Text.Wrap
                             textFormat: Text.MarkdownText
-                            text: modelData.body
+                            text: comment.modelData.body
                             color: root.foreground
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             linkColor: Theme.link
@@ -545,7 +550,7 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 1
-                    color: root.border
+                    color: root.borderColor
                 }
 
                 ColumnLayout {
@@ -568,7 +573,7 @@ Rectangle {
                         background: Rectangle {
                             radius: 6
                             color: "transparent"
-                            border.color: reply.activeFocus ? Theme.palette.color("focus", "#3b82f6") : root.border
+                            border.color: reply.activeFocus ? Theme.palette.color("focus", "#3b82f6") : root.borderColor
                         }
                     }
                     Text {

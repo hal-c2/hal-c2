@@ -1,5 +1,6 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
-import QtQuick.Controls.Basic
 import HalC2.Shell
 
 // Shows MenuController's pending context menu when it targets this host's

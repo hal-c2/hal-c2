@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -101,7 +102,7 @@ Dialog {
             Layout.fillHeight: true
             visible: dialog.kind === "markdown" || dialog.kind === "text"
             clip: true
-            contentHeight: body.item?.implicitHeight ?? 0
+            contentHeight: (body.item as Item)?.implicitHeight ?? 0
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar {}
 

@@ -79,6 +79,9 @@ Item {
             property bool fileEmpty: false
             property int revealLine: 0
             property bool wrap: false
+            // WorkspaceFiles notifies both through renderedChanged.
+            property bool rendered: false
+            property bool editing: false
             property var tree: null
             property ListModel lines: ListModel {
                 property int maxColumns: 400

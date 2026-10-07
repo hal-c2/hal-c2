@@ -10,9 +10,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
+# GuiPrivate is used on purpose (the platform window); the reminder is noise.
+set(QT_NO_PRIVATE_MODULE_WARNING ON)
 find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick Sql WebSockets)
 qt_standard_project_setup(REQUIRES 6.9)
 qt_policy(SET QTP0001 NEW)
+# Every QML module is built under one import path, in the directory its name says
+# (qml/HalC2/Bricks, qml/Ghostty), which is where qmllint and the packaging tools'
+# import scanners look for it.
+set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
 
 # Where the QML bricks live on disk. Non-release builds load them from here so
 # edits hot-reload without a rebuild; release builds only use the compiled-in
@@ -91,7 +97,26 @@ target_compile_definitions(hal-c2-qt PRIVATE
 include(cmake/PlatformWindow.cmake)
 hal_c2_target_platform_window(hal-c2-qt)
 
+# HalC2.Shell for qmllint and the import scanners (src/ShellQmlTypes.h). Built only
+# when one of them asks: the app registers the module's types itself.
+qt_add_qml_module(hal_c2_shell_types
+  URI HalC2.Shell
+  VERSION 1.0
+  STATIC
+  NO_PLUGIN
+  DEPENDENCIES QtQuick
+  SOURCES
+    src/ShellQmlTypes.h
+    src/LocalFolderModel.h
+    src/LocalTranscriber.h
+    src/ShellRuntime.h
+    src/ThemeStore.h
+)
+target_link_libraries(hal_c2_shell_types PRIVATE hal_c2_native)
+set_target_properties(hal_c2_shell_types PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 add_subdirectory(qml/HalC2/Bricks)
+add_dependencies(hal_c2_bricks_qmllint hal_c2_shell_types)
 include(cmake/QmlGhostty.cmake)
 
 target_link_libraries(hal-c2-qt PRIVATE

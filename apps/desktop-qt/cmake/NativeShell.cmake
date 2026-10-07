@@ -25,6 +25,8 @@ function(hal_c2_add_native_library)
   file(GLOB _sources CONFIGURE_DEPENDS "${_hal_c2_src}/native/*.cpp" "${_hal_c2_src}/native/*.h")
   add_library(hal_c2_native OBJECT ${_sources} "${_hal_c2_src}/ShellBridge.cpp" "${_hal_c2_src}/ShellBridge.h")
   set_target_properties(hal_c2_native PROPERTIES AUTOMOC ON)
+  # Its classes as HalC2.Shell declares them to tools (src/ShellQmlTypes.h).
+  qt_extract_metatypes(hal_c2_native)
   target_include_directories(hal_c2_native PUBLIC "${_hal_c2_src}" "${_hal_c2_src}/native")
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(HAL_C2_FFMPEG REQUIRED libavcodec libavutil libswscale)

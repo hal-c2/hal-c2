@@ -58,6 +58,8 @@ const Steps steps([] {
          QProcess app;
          QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
          environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+         // A Qt built with journald support logs there when stderr is not a terminal.
+         environment.insert(QStringLiteral("QT_FORCE_STDERR_LOGGING"), QStringLiteral("1"));
          // Every file it keeps goes under the scratch home, never the user's.
          environment.insert(QStringLiteral("HAL_C2_HOME"), start.home->path());
          app.setProcessEnvironment(environment);

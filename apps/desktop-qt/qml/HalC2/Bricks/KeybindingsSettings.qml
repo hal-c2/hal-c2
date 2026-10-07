@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -17,7 +18,6 @@ Rectangle {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warning", "#f59e0b")
-    readonly property color error: Theme.palette.color("error", "#f87171")
 
     function conflictText(labels) {
         if (labels.length === 0)
@@ -67,7 +67,7 @@ Rectangle {
             elide: Text.ElideRight
             font.family: "monospace"
             font.pixelSize: Math.round(12 * Theme.fontScale)
-            color: recorder.recording || recorder.key.length === 0 ? page.muted : page.foreground
+            color: recorder.recording || recorder.key.length === 0 ? Theme.palette.color("textMuted", "#a1a1aa") : Theme.palette.color("text", "#e4e4e7")
             text: recorder.recording ? qsTr("Press shortcut") : recorder.key.length > 0 ? recorder.label : qsTr("Unassigned")
         }
 
@@ -130,7 +130,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: whenField.problem.length > 0
             text: whenField.problem
-            color: page.error
+            color: Theme.palette.color("error", "#f87171")
             font.pixelSize: Math.round(11 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
@@ -140,7 +140,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: whenField.unknown.length > 0
             text: qsTr("Unknown: %1").arg(whenField.unknown.join(", "))
-            color: page.warning
+            color: Theme.palette.color("warning", "#f59e0b")
             font.pixelSize: Math.round(11 * Theme.fontScale)
             wrapMode: Text.Wrap
         }

@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
@@ -82,7 +83,7 @@ Rectangle {
         font.pixelSize: Math.round(12 * Theme.fontScale)
     }
 
-    readonly property string emptyTab: root.source !== null ? root.source.emptyTab : ""
+    readonly property string emptyTab: root.source?.emptyTab ?? ""
 
     ListView {
         id: list
