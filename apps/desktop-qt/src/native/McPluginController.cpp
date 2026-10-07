@@ -88,6 +88,9 @@ void McPluginController::follow() {
     }
     m_client->unsubscribe(it.value());
     m_plugins.remove(it.key());
+    // What could not be fetched from it is asked for again once it is back.
+    const QString prefix = it.key() + QLatin1Char('/');
+    for (auto file = m_files.begin(); file != m_files.end();) file = file.key().startsWith(prefix) ? m_files.erase(file) : std::next(file);
     dropped = true;
     it = m_subscriptions.erase(it);
   }

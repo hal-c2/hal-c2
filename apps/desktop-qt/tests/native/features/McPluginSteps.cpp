@@ -263,6 +263,14 @@ void changeContributions(World& world, const QString& id, const std::function<vo
 
 QVariantMap published(World& world) { return world.state(QStringLiteral("mcPlugins")).toMap(); }
 
+// The page whose tab runs on `environment` alone.
+QVariantMap pageOn(World& world, const QString& environment) {
+  for (const QVariant& page : published(world).value(QStringLiteral("pages")).toList()) {
+    if (page.toMap().value(QStringLiteral("environments")).toStringList() == QStringList{environment}) return page.toMap();
+  }
+  return {};
+}
+
 // Plugin `id` as the client lists it on `environment`.
 QVariantMap listed(World& world, const QString& id, const QString& environment = {}) {
   const QString wanted = environment.isEmpty() ? world.mc.environmentId : environment;
@@ -586,7 +594,28 @@ const Steps steps([] {
     announce(world);
     world.waitFor([&] { return published(world).value(QStringLiteral("pages")).toList().size() == 1; }, [&] { return describe(world); });
   });
-  step(QStringLiteral("the second environment updates %1").arg(q), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("a second environment runs a version of %1 whose %1 page could not be fetched").arg(q), [](World& world, const Captures& c, const Table&) {
+    pluginShell(world);
+    // An empty file is one the fake MC refuses.
+    fake(world).files.insert(QStringLiteral("other/pages/%1.qml").arg(c[1]), QByteArray());
+    QJsonObject other = codeReview();
+    other.insert(QStringLiteral("revision"), QStringLiteral("other"));
+    fake(world).plugins[QStringLiteral("work")] = {other};
+    world.mc.join(QStringLiteral("work"));
+    world.waitFor([&] { return !pageOn(world, QStringLiteral("work")).value(QStringLiteral("error")).toString().isEmpty(); },
+                  [&] { return describe(world); });
+  });
+  step(QStringLiteral("the second environment goes offline and comes back with the page"), [](World& world, const Captures&, const Table&) {
+    fake(world).files.remove(QStringLiteral("other/pages/Reviews.qml"));
+    world.mc.setOnline(QStringLiteral("work"), false);
+    world.waitFor([&] { return published(world).value(QStringLiteral("pages")).toList().size() == 1; }, [&] { return describe(world); });
+    world.mc.setOnline(QStringLiteral("work"), true);
+  });
+  step(QStringLiteral("the %1 tab of the second environment shows its page").arg(q), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !pageOn(world, QStringLiteral("work")).value(QStringLiteral("url")).toString().isEmpty(); },
+                  [&] { return describe(world); });
+  });
+  step(QStringLiteral("the second environment updates %1").arg(q),[](World& world, const Captures&, const Table&) {
     for (QJsonObject& entry : fake(world).plugins[QStringLiteral("work")]) entry.insert(QStringLiteral("revision"), QStringLiteral("newer"));
     announce(world);
   });

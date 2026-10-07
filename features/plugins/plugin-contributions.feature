@@ -111,6 +111,12 @@ Feature: What plugins add to the clients
       Then the tab shows that "code-review" failed with its message
       And the other tabs keep working
 
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A page that could not be fetched is asked for again once its environment is back
+      Given a second environment runs a version of "code-review" whose "Reviews" page could not be fetched
+      When the second environment goes offline and comes back with the page
+      Then the "Reviews" tab of the second environment shows its page
+
   Rule: A plugin's threads look like what they are
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
