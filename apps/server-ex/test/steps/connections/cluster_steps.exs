@@ -455,8 +455,8 @@ defmodule HalC2.Steps.Connections.Cluster do
     context =
       Enum.reduce([:a, :b], context, fn name, context ->
         context = machine(context, name)
-        hold(context.machines[name].address, context.cluster_port)
-        boot(context, name)
+        holder = hold(context.machines[name].address, context.cluster_port)
+        context |> boot(name) |> Map.update(:holders, [holder], &[holder | &1])
       end)
 
     %{a: a, b: b} = context.machines
@@ -478,6 +478,23 @@ defmodule HalC2.Steps.Connections.Cluster do
       assert [address] == context.took[name]
       refute address == "#{machine.address}:#{context.cluster_port}"
     end
+
+    context
+  end
+
+  step "the cluster port is free again and both restart", context do
+    context = context |> stop(:a) |> stop(:b)
+    for holder <- context.holders, do: release(holder)
+    context |> boot(:a) |> boot(:b)
+  end
+
+  step "they connect again on the cluster port", context do
+    %{a: a, b: b} = context.machines
+    assert await_connected(a, b)
+    assert await_connected(b, a)
+
+    for machine <- [a, b],
+        do: assert(status(machine)["addresses"] == ["#{machine.address}:#{context.cluster_port}"])
 
     context
   end
@@ -885,6 +902,14 @@ defmodule HalC2.Steps.Connections.Cluster do
 
     assert_receive {:held, ^holder}, 5_000
     ExUnit.Callbacks.on_exit(fn -> Process.exit(holder, :kill) end)
+    holder
+  end
+
+  # Lets go of a port `hold/2` took, once its socket is closed.
+  defp release(holder) do
+    ref = Process.monitor(holder)
+    Process.exit(holder, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^holder, _}, 5_000
   end
 
   # Whether `machine` reaches `other` when told where it listens.
