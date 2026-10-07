@@ -11,6 +11,11 @@ defmodule HalC2.Web.Socket do
   replays from the log instead of this process holding the backlog. That replay is
   never itself cut short by a resync, or a client behind by more than the limit would
   be told to resync forever.
+
+  The socket monitors each stream's server. One that stops took the subscription
+  with it, so the client is sent a `resync` and resubscribes from what it holds;
+  one whose MC left the cluster is an `error`, and the client follows it again once
+  that MC is back.
   """
 
   @behaviour WebSock
@@ -23,7 +28,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 3
+  @state_version 4
 
   @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
   def rpc_timeout, do: Application.get_env(:hal_c2, :rpc_timeout, :timer.minutes(10))
@@ -41,6 +46,8 @@ defmodule HalC2.Web.Socket do
       scopes: session_scopes(session),
       subs: %{},
       by_stream: %{},
+      # The monitor of each stream subscription's server => {its id, the server}.
+      monitors: %{},
       by_terminal: %{},
       buffers: %{},
       flush_scheduled: false
@@ -449,6 +456,24 @@ defmodule HalC2.Web.Socket do
     {:push, frames, %{state | flush_scheduled: false}}
   end
 
+  # A stream's server stopped, and its subscribers with it. What it sent first is
+  # already here and goes out, then the client follows the stream again from what
+  # it holds: a `resync` without an offset keeps its own. An MC that left the
+  # cluster is not asked again until the client sees it back.
+  def handle_info({:DOWN, ref, :process, _server, reason}, %{monitors: monitors} = state)
+      when is_map_key(monitors, ref) do
+    {id, _server} = monitors[ref]
+    {frames, state} = flush(state)
+    state = forget_stream(%{state | monitors: Map.delete(monitors, ref)}, id)
+
+    frame =
+      if reason == :noconnection,
+        do: error_frame(id, "MC unavailable: noconnection"),
+        else: %{"t" => "resync", "id" => id}
+
+    {:push, frames ++ [Protocol.encode(frame)], state}
+  end
+
   def handle_info(_other, state), do: {:ok, state}
 
   @impl true
@@ -632,8 +657,10 @@ defmodule HalC2.Web.Socket do
       client = Map.take(resume, [:handle, :window, :kinds])
 
       # The owning MC may be gone or slow; the client retries when it is back.
-      case remote(mc, HalC2.Streams, :subscribe, [stream_id, self(), resume.offset, client]) do
-        {:ok, :ok} ->
+      case remote(mc, HalC2.Streams, :follow, [stream_id, self(), resume.offset, client]) do
+        {:ok, {:ok, server}} ->
+          monitors = Map.put(state.monitors, Process.monitor(server), {id, server})
+
           # Until `live`, events are the stream's replay from `offset`: bounded by the
           # stream, and resyncing on them would only ask for the same replay again.
           {:ok,
@@ -641,6 +668,7 @@ defmodule HalC2.Web.Socket do
              state
              | subs: Map.put(state.subs, id, shape),
                by_stream: Map.put(state.by_stream, stream_id, id),
+               monitors: monitors,
                buffers: Map.put(state.buffers, id, %{events: [], bytes: 0, replay: true})
            }}
 
@@ -1085,8 +1113,11 @@ defmodule HalC2.Web.Socket do
         entry -> entry
       end)
 
-    state |> Map.delete(:item_types) |> Map.merge(%{buffers: buffers, v: 3})
+    state |> Map.delete(:item_types) |> Map.merge(%{buffers: buffers, v: 3}) |> migrate()
   end
+
+  # Version 4: stream servers are monitored. Those followed before are not.
+  defp migrate(%{v: 3} = state), do: Map.merge(state, %{monitors: %{}, v: 4})
 
   defp migrate(state), do: state
 
@@ -1325,19 +1356,36 @@ defmodule HalC2.Web.Socket do
         :erpc.cast(mc, HalC2.Terminal.Hub, :unwatch, [self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
-      {{:stream, mc, stream_id}, subs} ->
-        :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self()])
+      {{:stream, mc, stream_id}, _subs} ->
+        # Straight to the server, so it arrives ahead of a resubscribe that follows; an
+        # `:erpc.cast` runs in a process of its own and could land after it.
+        case Enum.find(state.monitors, fn {_ref, {sub, _server}} -> sub == id end) do
+          {ref, {_, server}} ->
+            Process.demonitor(ref, [:flush])
+            GenServer.cast(server, {:unsubscribe, self()})
+            forget_stream(%{state | monitors: Map.delete(state.monitors, ref)}, id)
 
-        %{
-          state
-          | subs: subs,
-            by_stream: Map.delete(state.by_stream, stream_id),
-            buffers: Map.delete(state.buffers, id)
-        }
+          # Followed before stream servers were monitored.
+          nil ->
+            :erpc.cast(mc, HalC2.Streams, :unsubscribe, [stream_id, self()])
+            forget_stream(state, id)
+        end
 
       {_, subs} ->
         %{state | subs: subs}
     end
+  end
+
+  # Drops a stream subscription here, telling its stream nothing.
+  defp forget_stream(state, id) do
+    {{:stream, _mc, stream_id}, subs} = Map.pop(state.subs, id)
+
+    %{
+      state
+      | subs: subs,
+        by_stream: Map.delete(state.by_stream, stream_id),
+        buffers: Map.delete(state.buffers, id)
+    }
   end
 
   defp stream_message(state, id, {:snapshot, seq, updated_at, rows, part_state, meta}) do

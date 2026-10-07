@@ -532,12 +532,15 @@ defmodule HalC2.StreamsTest do
     :ok = Streams.flush_shell("th-21")
     :ok = HalC2.Shell.subscribe(self())
 
-    # Its state as the version before kept it: subscribers by their monitor alone.
+    # Its state as the version before kept it: subscribers by their monitor alone, in
+    # the state rather than a table, and no versions.
     :ok = :sys.suspend(HalC2.Shell)
+    test = self()
 
     :sys.replace_state(HalC2.Shell, fn state ->
-      subscribers = Map.new(state.subscribers, fn {pid, {ref, _kind}} -> {pid, ref} end)
-      state |> Map.drop([:own, :versions]) |> Map.put(:subscribers, subscribers)
+      :ets.delete(HalC2.Shell.Subscribers)
+      :ets.delete(HalC2.Shell.Versions)
+      %{online: state.online, subscribers: %{test => make_ref()}}
     end)
 
     :ok = :sys.change_code(HalC2.Shell, HalC2.Shell, nil, nil)

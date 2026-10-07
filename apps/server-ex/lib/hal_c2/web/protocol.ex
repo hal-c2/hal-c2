@@ -96,7 +96,8 @@ defmodule HalC2.Web.Protocol do
       {"t": "live", "id", "offset", "handle"}     (caught up; later events are live)
       {"t": "page", "id", "offset", "rows": [[kind, id, entity]], "floor", "done"}
         (answers "more": rows to add, and the window's floor once they are)
-      {"t": "resync", "id", "offset"}   (fell behind: resubscribe from offset)
+      {"t": "resync", "id", "offset"?}  (fell behind: resubscribe from offset; without
+        one the stream restarted: resubscribe from what you hold)
       {"t": "error", "id", "reason", "detail"?}
       {"t": "config", "id", "mc", "config"}
       {"t": "config.settings", "id", "settings"}   (the MC's ServerSettings changed)
