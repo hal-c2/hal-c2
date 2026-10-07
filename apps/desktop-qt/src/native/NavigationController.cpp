@@ -11,6 +11,7 @@
 
 #include "DraftController.h"
 #include "KeybindingController.h"
+#include "McPluginController.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -135,6 +136,13 @@ void NavigationController::activate() {
   };
   connect(m_store, &ShellStore::changed, this, present);
   present();
+  // The tabs: the keys step through them, and each page is in the palette.
+  commands->add(QStringLiteral("tabs.next"), tr("Next tab"), [this] { stepTab(1); });
+  commands->add(QStringLiteral("tabs.previous"), tr("Previous tab"), [this] { stepTab(-1); });
+  if (auto* plugins = NativeShell::of(this)->controller<McPluginController>()) {
+    connect(plugins, &McPluginController::pagesChanged, this, &NavigationController::followPages);
+  }
+  followPages();
   m_threadSeen = m_store->thread(m_route.threadKey).has_value();
   // With the route checked, a window with no thread lands on a draft.
   if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) drafts->land();
@@ -162,6 +170,12 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   if (action == QLatin1String("thread.open")) {
     const QString key = map.value(QStringLiteral("key")).toString();
     if (!key.isEmpty()) open(Route::thread(key));
+  } else if (action == QLatin1String("tabs.select")) {
+    selectTab(map.value(QStringLiteral("key")).toString());
+  } else if (action == QLatin1String("tabs.next")) {
+    stepTab(1);
+  } else if (action == QLatin1String("tabs.previous")) {
+    stepTab(-1);
   } else if (action == QLatin1String("link.open")) {
     openLink(QUrl(map.value(QStringLiteral("url")).toString()));
   } else if (action == QLatin1String("draft.open")) {
@@ -239,6 +253,11 @@ void NavigationController::go(const Route& to, bool replace) {
   // stack) opens it where it lives now.
   Route route = to;
   if (!route.threadKey.isEmpty()) route.threadKey = m_store->located(route.threadKey);
+  // Whatever the user opens shows in the threads (settings show over any tab).
+  if (!replace && route.kind != QLatin1String("settings") && m_tab != kThreadsTab) {
+    m_tab = kThreadsTab;
+    if (route == m_route) publish();
+  }
   if (route != m_route) {
     m_target.clear();
     if (route.kind != QLatin1String("settings")) m_search.clear();
@@ -272,14 +291,76 @@ void NavigationController::publish() {
   } else if (m_route.kind == QLatin1String("usage")) {
     title = QStringLiteral("Usage");
   }
+  QVariant plugin = QVariant::fromValue(nullptr);
+  if (const auto thread = m_store->thread(m_route.threadKey); thread && m_route.kind == QLatin1String("thread") && !thread->pluginId.isEmpty()) {
+    plugin = QVariantMap{{QStringLiteral("id"), thread->pluginId}, {QStringLiteral("kind"), thread->pluginKind}};
+  }
+  if (m_tab != kThreadsTab && m_route.kind != QLatin1String("settings")) {
+    if (const auto* plugins = NativeShell::of(this)->controller<McPluginController>()) {
+      for (const QVariant& page : plugins->pages()) {
+        if (page.toMap().value(QStringLiteral("key")) == m_tab) title = page.toMap().value(QStringLiteral("title")).toString();
+      }
+    }
+  }
   QVariantMap state = m_route.toVariant();
   state.insert(QStringLiteral("title"), title);
+  state.insert(QStringLiteral("tab"), m_tab);
+  state.insert(QStringLiteral("plugin"), plugin);
   state.insert(QStringLiteral("canGoBack"), !m_backStack.isEmpty());
   state.insert(QStringLiteral("target"), m_target);
   state.insert(QStringLiteral("targetSeq"), m_targetSeq);
   state.insert(QStringLiteral("search"), m_search);
   state.insert(QStringLiteral("searchSeq"), m_searchSeq);
   m_bridge->publish(QStringLiteral("route"), state);
+}
+
+QStringList NavigationController::tabs() const {
+  QStringList keys{kThreadsTab};
+  if (const auto* plugins = NativeShell::of(this)->controller<McPluginController>()) {
+    for (const QVariant& page : plugins->pages()) keys.append(page.toMap().value(QStringLiteral("key")).toString());
+  }
+  return keys;
+}
+
+bool NavigationController::selectTab(const QString& key) {
+  if (!tabs().contains(key)) return false;
+  // A tab is chosen to be seen: settings make way for it.
+  if (m_route.kind == QLatin1String("settings")) back();
+  if (key != m_tab) {
+    m_tab = key;
+    publish();
+  }
+  return true;
+}
+
+void NavigationController::stepTab(int by) {
+  const QStringList keys = tabs();
+  if (keys.size() < 2) return;
+  const qsizetype at = std::max<qsizetype>(keys.indexOf(m_tab), 0);
+  selectTab(keys.at((at + by + keys.size()) % keys.size()));
+}
+
+void NavigationController::followPages() {
+  auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
+  const auto* plugins = NativeShell::of(this)->controller<McPluginController>();
+  QStringList listed;
+  for (const QVariant& value : plugins ? plugins->pages() : QVariantList()) {
+    const QVariantMap page = value.toMap();
+    const QString key = page.value(QStringLiteral("key")).toString();
+    const QString command = QStringLiteral("tabs.open:") + key;
+    listed.append(command);
+    commands->add(command, page.value(QStringLiteral("title")).toString(), [this, key] { selectTab(key); });
+    commands->setTerms(command, {page.value(QStringLiteral("pluginName")).toString(), QStringLiteral("tab"), QStringLiteral("page")});
+  }
+  for (const QString& gone : std::as_const(m_pageCommands)) {
+    if (!listed.contains(gone)) commands->remove(gone);
+  }
+  m_pageCommands = listed;
+  const bool several = listed.size() > 0;
+  commands->setListed(QStringLiteral("tabs.next"), several);
+  commands->setListed(QStringLiteral("tabs.previous"), several);
+  if (!tabs().contains(m_tab)) m_tab = kThreadsTab;
+  publish();
 }
 
 void NavigationController::reveal(const QString& target) {

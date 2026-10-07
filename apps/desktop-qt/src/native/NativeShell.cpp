@@ -17,6 +17,7 @@
 #include "ComposerController.h"
 #include "DraftController.h"
 #include "KeybindingController.h"
+#include "McPluginController.h"
 #include "NavigationController.h"
 #include "RightPanelController.h"
 #include "TerminalController.h"
@@ -265,6 +266,9 @@ void NativeShell::setStoreDirs(const QString& state, const QString& data, const 
   if (auto* drafts = controller<DraftController>()) drafts->setStorePath(QDir(data).filePath(QStringLiteral("shell-drafts.json")));
   if (auto* composer = controller<ComposerController>()) {
     composer->setStorePath(QDir(data).filePath(QStringLiteral("shell-composer.json")));
+  }
+  if (auto* plugins = shared<McPluginController>(); plugins && !cache.isEmpty()) {
+    plugins->setCacheDir(QDir(cache).filePath(QStringLiteral("mc-plugins")));
   }
   // With the route and drafts read: what was kept of the MC last used shows
   // while the host is still finding or starting it.

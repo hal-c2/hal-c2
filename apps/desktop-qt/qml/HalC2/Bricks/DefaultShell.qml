@@ -8,8 +8,12 @@ import HalC2.Bricks
 // fallback when that file fails to load.
 // Frameless windows get their drag handle and window buttons from the
 // sidebar band and the header strip rather than a separate title bar.
+// Pages MC plugins add are tabs above it all; a plugin's page takes the
+// place of everything right of the sidebar.
 ShellWindow {
     id: root
+
+    readonly property bool pluginTab: (route?.tab ?? "threads") !== "threads" && !settingsActive
 
     // Local QML extensions can customize one brick without copying the layout.
     property alias sidebar: sidebarView
@@ -24,6 +28,13 @@ ShellWindow {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+        ShellTabs {
+            objectName: "shellTabs"
+            Layout.fillWidth: true
+            visible: pages.length > 0 && !root.settingsActive
+            window: root
+        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -103,7 +114,7 @@ ShellWindow {
                 objectName: "folderExplorerHost"
                 Layout.fillHeight: true
                 Layout.preferredWidth: active ? 340 : 0
-                active: (Shell.state.folders?.open ?? false) && !root.settingsActive
+                active: (Shell.state.folders?.open ?? false) && !root.settingsActive && !root.pluginTab
                 visible: active
                 sourceComponent: FolderExplorer {}
             }
@@ -121,7 +132,7 @@ ShellWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 // A maximized right panel covers the thread.
-                visible: !panelView.maximized
+                visible: !panelView.maximized && !root.pluginTab
                 spacing: 0
 
                 Workspace {
@@ -180,12 +191,19 @@ ShellWindow {
                 }
             }
 
+            PluginPages {
+                objectName: "pluginPages"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: root.pluginTab
+            }
+
             // The thread details column (threadPanel.toggle), beside the thread.
             ThreadDetailsPanel {
                 Layout.fillHeight: true
                 Layout.preferredWidth: implicitWidth
                 details: Shell.state.panel?.details ?? null
-                visible: details !== null && !panelView.maximized
+                visible: details !== null && !panelView.maximized && !root.pluginTab
             }
 
             RightPanel {
@@ -198,7 +216,7 @@ ShellWindow {
                 Layout.preferredWidth: implicitWidth
                 // The thread keeps room of its own.
                 maximumWidth: root.width - (navigation.visible ? navigation.width : 0) - minimumWidth
-                visible: available
+                visible: available && !root.pluginTab
             }
         }
 

@@ -101,6 +101,13 @@ qt_add_qml_module(hal_c2_bricks
     PluginSlot.qml
     PluginRegistry.qml
     PluginsSettings.qml
+    ShellTabs.qml
+    PluginPages.qml
+    PluginPage.qml
+    PluginPart.qml
+    PluginContext.qml
+    PluginThreadPart.qml
+    PluginSettings.qml
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml

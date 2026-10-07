@@ -2,12 +2,13 @@
 #   packages/contracts/src/plugin.ts (PluginContributions: pages, threadKinds, slots, settings)
 #   apps/desktop-qt/src/native/McPluginController.cpp (MC plugins per environment, UI parts cached and loaded)
 #   apps/desktop-qt/qml/HalC2/Bricks/PluginRegistry.qml, PluginSlot.qml, PluginContext.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellTabs.qml (the top-level tabs), PluginPage.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/PluginPart.qml, PluginThreadPart.qml (a UI part, a plugin thread's look)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellTabs.qml (the top-level tabs), PluginPages.qml, PluginPage.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml, ThreadView.qml, Sidebar.qml (marks, headers, sidebar sections)
 #   apps/desktop-qt/qml/HalC2/Bricks/PluginsSettings.qml, PluginSettings.qml
-#   apps/desktop-qt/src/native/NavigationController.cpp (route kind "plugin")
+#   apps/desktop-qt/src/native/NavigationController.cpp (the route's tab), SidebarModel.cpp (unlisted plugin threads)
 #   docs/user/plugins.md
 
-@backlog
 Feature: What plugins add to the clients
   A running plugin's UI parts reach every client of its environment. A plugin can add a
   page that the user switches to with the shell's tabs, a section of the sidebar, a
@@ -166,7 +167,7 @@ Feature: What plugins add to the clients
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A plugin adds a section to the sidebar
       Given "code-review" contributes to "sidebar.sections"
-      When the sidebar is shown
+      When the thread list is shown
       Then the plugin's section is shown below the threads
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui

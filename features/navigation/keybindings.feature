@@ -9,7 +9,8 @@
 #   apps/desktop-qt/src/native/TerminalController.cpp (terminal.split, terminal.splitVertical on the focused terminal)
 #   apps/web/src/components/Sidebar.tsx (thread.previous, thread.next and thread.jump follow the sidebar's order)
 #   apps/desktop-qt/qml/HalC2/Bricks/ModelPicker.qml (modelPicker.previousProvider, nextProvider and jump.1-9 while the picker is open)
-#   Keybinding ids: sidebar.toggle, navigation.back, navigation.forward, terminal.toggle,
+#   Keybinding ids: sidebar.toggle, navigation.back, navigation.forward, tabs.next,
+#   tabs.previous (plugins/plugin-contributions.feature), terminal.toggle,
 #   terminal.split, terminal.splitVertical, terminal.new, terminal.close, rightPanel.toggle,
 #   threadPanel.toggle, rightPanel.toggleMaximized, rightPanel.close, pullRequest.copyNumber,
 #   diff.toggle, preview.toggle, preview.refresh, preview.focusUrl, preview.zoomIn,

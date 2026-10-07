@@ -5,6 +5,8 @@
 // Each section's page is <brick>.qml in this module.
 //
 //   action     dispatched instead of settings.navigate
+//   prefix     the section is every route under `to` (one MC plugin's settings
+//              at /settings/plugin/<environment>/<id>); not searched or offered
 //   under      the section it opens from, which stays current; it is not listed itself
 //   requires   shell state the section needs before it is listed
 //   keywords   what the native search matches, beside the label
@@ -31,6 +33,7 @@ var sections = [
     { to: "/settings/plugins", label: "Plugins", brick: "PluginsSettings", requires: "plugins",
       detail: "Add-ons for the sidebar, composer and status bar",
       keywords: "plugins plugin extensions add-ons addons installed disable enable remove load url unsigned errors failed slots" },
+    { to: "/settings/plugin", label: "Plugin", brick: "PluginSettings", under: "/settings/plugins", prefix: true },
     { to: "/settings/snap-shot", label: "SnapShots", brick: "SnapShotSettings",
       detail: "Capture a window into your draft",
       keywords: "snapshot snapshots snap shot capture screenshot window shortcut sound flash animation portal accessibility" },
@@ -68,7 +71,7 @@ function resolve(section) {
 function find(section) {
     var to = resolve(section);
     for (var i = 0; i < sections.length; ++i) {
-        if (sections[i].to === to) return sections[i];
+        if (sections[i].to === to || (sections[i].prefix && to.indexOf(sections[i].to + "/") === 0)) return sections[i];
     }
     return null;
 }
@@ -89,7 +92,7 @@ function brickFor(section) {
 // `state` is the shell's state.
 function available(state) {
     return sections.filter(function (section) {
-        return !section.requires || (state[section.requires] !== undefined && state[section.requires] !== null);
+        return !section.prefix && (!section.requires || (state[section.requires] !== undefined && state[section.requires] !== null));
     });
 }
 
@@ -111,7 +114,7 @@ function settingsOf(section, os) {
 // section's label).
 function paletteEntries(os) {
     var entries = [];
-    sections.forEach(function (section) {
+    sections.filter(function (section) { return !section.prefix; }).forEach(function (section) {
         entries.push({ to: section.to, label: section.label, keywords: section.keywords || "", requires: section.requires || "" });
         settingsOf(section, os).forEach(function (setting) {
             entries.push({ to: section.to, label: setting.title, keywords: setting.keywords || "", requires: setting.requires || section.requires || "",

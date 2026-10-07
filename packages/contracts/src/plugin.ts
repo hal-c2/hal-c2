@@ -135,6 +135,11 @@ export const PluginSlotContribution = Schema.Struct({
 });
 export type PluginSlotContribution = typeof PluginSlotContribution.Type;
 
+/**
+ * What a running plugin adds to its environment's clients. Each part is one
+ * self-contained QML file: clients fetch only the files named here, so a part
+ * cannot import the package's other files.
+ */
 export const PluginContributions = Schema.Struct({
   pages: Schema.optionalKey(Schema.Array(PluginPage)),
   threadKinds: Schema.optionalKey(Schema.Array(PluginThreadKind)),

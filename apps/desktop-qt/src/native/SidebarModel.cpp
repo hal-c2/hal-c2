@@ -187,6 +187,10 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   thread.activityRunStatus = stringField(row, "activityRunStatus");
   thread.hasActionableProposedPlan = row.value(QLatin1String("hasActionableProposedPlan")).toBool();
   thread.pendingBackgroundTasks = row.value(QLatin1String("pendingBackgroundTasks")).toArray().size();
+  const QJsonObject plugin = row.value(QLatin1String("plugin")).toObject();
+  thread.pluginId = plugin.value(QLatin1String("id")).toString();
+  thread.pluginKind = plugin.value(QLatin1String("kind")).toString();
+  thread.listed = plugin.value(QLatin1String("listed")).toBool(true);
 
   const QString status = row.value(QLatin1String("status")).toString(QStringLiteral("idle"));
   if (thread.latestRunId) {
@@ -369,8 +373,9 @@ Partition partition(const QList<Thread>& threads, const std::optional<QSet<QStri
                     const CapabilitiesFor& capabilitiesFor, qint64 nowMs) {
   Partition result;
   for (const Thread& thread : threads) {
-    // Archived threads are hidden; subagents live in their parent's Agents surface.
-    if (thread.archivedAt || thread.subagent) continue;
+    // Archived threads are hidden; subagents live in their parent's Agents
+    // surface, and a plugin's unlisted threads in what the plugin shows.
+    if (thread.archivedAt || thread.subagent || !thread.listed) continue;
     if (scopedProjectKeys &&
         !scopedProjectKeys->contains(thread.environmentId + QLatin1Char(':') + thread.projectId)) {
       continue;
@@ -681,7 +686,7 @@ std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const Q
   double bestAt = kNever;
   for (const Thread& thread : threads) {
     if (thread.environmentId != deleted->environmentId || thread.projectId != deleted->projectId || thread.id == deleted->id ||
-        thread.archivedAt || thread.subagent) {
+        thread.archivedAt || thread.subagent || !thread.listed) {
       continue;
     }
     // Ties go to the greater id, as sortThreads.
@@ -714,7 +719,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
     const auto logical = logicalKeyByPhysicalKey.constFind(thread.environmentId + QLatin1Char(':') + thread.projectId);
     if (logical == logicalKeyByPhysicalKey.constEnd()) continue;
     threadCounts[*logical] += 1;
-    if (!thread.subagent) threadStatuses[*logical].append(status(thread));
+    if (!thread.subagent && thread.listed) threadStatuses[*logical].append(status(thread));
   }
 
   const ProjectGroup* scoped = scopeProjectKey ? input.group(*scopeProjectKey) : nullptr;
@@ -781,6 +786,9 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
           {QStringLiteral("movingTo"), nullable(thread.movingTo)},
           {QStringLiteral("canSettle"), !offline && capabilities.settlement},
           {QStringLiteral("canSnooze"), !offline && capabilities.snooze && canSnooze(thread, nowMs)},
+          {QStringLiteral("plugin"), thread.pluginId.isEmpty() ? QVariant::fromValue(nullptr)
+                                                               : QVariant(QVariantMap{{QStringLiteral("id"), thread.pluginId},
+                                                                                      {QStringLiteral("kind"), thread.pluginKind}})},
       });
     }
     return rows;

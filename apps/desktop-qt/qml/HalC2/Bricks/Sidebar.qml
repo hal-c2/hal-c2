@@ -819,6 +819,18 @@ Rectangle {
             }
         }
 
+        // Sections plugins add below the threads.
+        PluginSlot {
+            objectName: "sidebarSectionsSlot"
+            name: "sidebar.sections"
+            vertical: true
+            visible: shown.length > 0
+            Layout.fillWidth: true
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            Layout.topMargin: 4
+        }
+
         RowLayout {
             Layout.fillWidth: true
             Layout.margins: 8

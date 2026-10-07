@@ -73,6 +73,11 @@ struct Thread {
   bool hasPendingUserInput = false;
   bool hasActionableProposedPlan = false;
   int pendingBackgroundTasks = 0;
+  // The plugin that started it and what kind of thread it is to that plugin
+  // (ThreadPluginMark); one it keeps unlisted opens by id but is not in the list.
+  QString pluginId;
+  QString pluginKind;
+  bool listed = true;
 
   QString key() const { return environmentId + QLatin1Char(':') + id; }
 };

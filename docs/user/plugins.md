@@ -56,3 +56,29 @@ Plugin {
 The same file works in the terminal client. Keep to `Text`, `Row`, `Column`,
 `Rectangle` and `Timer` if you want it on both. A plugin that names a place the
 app does not have is listed as loaded and shows nothing.
+
+## Plugins that run on your MC
+
+Some plugins do work on a machine rather than in one app, such as agent code
+review. They are folders with a `plugin.json`, and
+each MC runs its own: put the folder in `plugins` under the MC's data directory
+(`~/.local/share/hal-c2/elixir/plugins/` on Linux). **Settings → Plugins** lists
+them under the machine that has them, with what they do, who made them and
+screenshots.
+
+Such a plugin is off until you turn it on. Turning it on shows what it asks to
+do, such as commenting on pull requests or starting threads, and why. It runs
+only if you accept, and an update that asks for more waits until you accept
+again. Plugins that run code on the MC say so: they can do anything the MC can.
+
+What a running plugin adds reaches every app connected to that machine:
+
+- **Pages** are tabs next to **Threads** at the top of the window. Switch with a
+  click or **Ctrl+Alt+]** and **Ctrl+Alt+[** (**⌘⌥]** and **⌘⌥[** on macOS). A
+  plugin on several machines still has one tab.
+- **Threads it starts** carry its mark in the thread list and its header above
+  the conversation. A plugin can keep its threads out of the list and show them
+  on its page instead. Turn the plugin off and they are ordinary threads again.
+- **Settings** open from the plugin's entry in **Settings → Plugins**. What the
+  plugin refuses stays unsaved, with its reason. A plugin that failed can be
+  restarted there.

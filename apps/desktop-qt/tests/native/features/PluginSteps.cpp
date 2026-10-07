@@ -17,6 +17,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "PluginController.h"
+#include "Plugins.h"
 #include "ShellWindows.h"
 #include "World.h"
 
@@ -379,6 +380,7 @@ const Steps steps([] {
     waitShown(world, QStringLiteral("statusbar"), c[0]);
   });
   step(QStringLiteral("the user disables %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (isMcPlugin(world, c[0])) return switchMcPlugin(world, c[0]);
     // The plugin list's own switch.
     QQuickItem* page = openPluginList(world);
     QQuickItem* row = nullptr;
@@ -409,6 +411,7 @@ const Steps steps([] {
     world.waitFor([&] { return shownIn(world, QStringLiteral("statusbar")).isEmpty(); }, QStringLiteral("the clock to leave the status bar"));
   });
   step(QStringLiteral("the user enables %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (isMcPlugin(world, c[0])) return switchMcPlugin(world, c[0]);
     QQuickItem* page = openPluginList(world);
     QQuickItem* row = nullptr;
     world.waitFor([&] { return (row = find(page, QStringLiteral("plugin:") + c[0])) != nullptr; }, [&] { return describe(world); });
@@ -496,3 +499,10 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+QQuickWindow* pluginShell(World& world) { return shell(world); }
+QQuickItem* findNamed(QQuickItem* root, const QString& objectName) { return find(root, objectName); }
+void clickItem(World& world, QQuickItem* target) { click(world, target); }
+QQuickItem* showPluginList(World& world) { return openPluginList(world); }
+bool drawsText(const QQuickItem* item, const QString& text) { return draws(item, text); }
+void answerQuestion(World& world, bool accepted) { answer(world, accepted); }

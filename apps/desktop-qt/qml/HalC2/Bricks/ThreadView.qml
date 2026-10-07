@@ -93,7 +93,7 @@ Item {
         id: timeline
         objectName: "threadTimeline"
 
-        anchors.top: lineageBar.bottom
+        anchors.top: pluginHeader.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
@@ -164,6 +164,27 @@ Item {
         anchors.right: parent.right
         height: visible ? implicitHeight : 0
         visible: lineage !== null && !view.draft
+    }
+
+    // The header of a thread an MC plugin started, while the plugin runs.
+    PluginThreadPart {
+        id: pluginHeader
+        objectName: "pluginThreadHeader"
+
+        readonly property string key: view.route?.threadKey ?? ""
+
+        anchors.top: lineageBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? implicitHeight : 0
+        fill: true
+        look: "header"
+        thread: !view.draft && view.route?.plugin ? {
+            id: key.slice(key.indexOf(":") + 1),
+            title: view.workspace?.threadTitle ?? "",
+            environmentId: key.slice(0, key.indexOf(":")),
+            plugin: view.route.plugin
+        } : null
     }
 
     // The agent stopped on a usage limit: when it resets and what to do until then.
