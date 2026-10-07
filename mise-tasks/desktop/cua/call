@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Call a cua-driver tool on the desktop:cua sandbox's app: call <tool> [json], with pid, session and foreground delivery filled in"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+exec apps/desktop-qt/scripts/cua-sandbox.sh call "$@"

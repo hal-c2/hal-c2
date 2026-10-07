@@ -301,9 +301,95 @@ Item {
             compare(external, data.external);
         }
 
+        function test_changedFilesFoldUnderTheirFolders() {
+            rows.append(root.row({
+                rowId: "reply:1",
+                text: "Done.",
+                files: [
+                    { path: "src/cart/tax.ts", additions: 3, deletions: 1 },
+                    { path: "src/cart/total.ts", additions: 2, deletions: 0 },
+                    { path: "docs/cart.md", additions: 4, deletions: 2 },
+                    { path: "README.md", additions: 1, deletions: 1 }
+                ]
+            }));
+            const reply = () => list(openedView).itemAtIndex(0);
+            const openedView = openThread();
+            tryVerify(() => reply() !== null);
+            const shown = () => {
+                const names = [];
+                const walk = item => {
+                    if (item.objectName === "changedFolder" || item.objectName === "changedFile")
+                        names.push(item.modelData.name);
+                    for (let i = 0; i < item.children.length; ++i)
+                        walk(item.children[i]);
+                };
+                walk(reply());
+                return names;
+            };
+            // Top folders only, a folder with one folder in it as one row.
+            compare(shown(), ["docs", "src/cart", "README.md"]);
+            mouseClick(findNamed(reply(), "changedFoldersToggle"));
+            tryCompare({ get names() { return shown().join(" "); } }, "names", "docs cart.md src/cart tax.ts total.ts README.md");
+            // One folder closed by hand, then all of them.
+            // The new rows are stacked until their column places them.
+            const folder = findNamed(reply(), "changedFolder");
+            verify(!isPolishScheduled(folder.parent) || waitForPolish(folder.parent));
+            mouseClick(folder);
+            tryCompare({ get names() { return shown().join(" "); } }, "names", "docs src/cart tax.ts total.ts README.md");
+            mouseClick(findNamed(reply(), "changedFoldersToggle"));
+            tryCompare({ get names() { return shown().join(" "); } }, "names", "docs src/cart README.md");
+        }
+
+        function test_foldersNamedLikeObjectPropertiesFoldToo() {
+            rows.append(root.row({
+                rowId: "reply:1",
+                text: "Done.",
+                files: [
+                    { path: "constructor/a.ts", additions: 1, deletions: 0 },
+                    { path: "__proto__/b.ts", additions: 1, deletions: 0 }
+                ]
+            }));
+            const openedView = openThread();
+            const reply = () => list(openedView).itemAtIndex(0);
+            tryVerify(() => reply() !== null);
+            const files = () => {
+                const names = [];
+                const walk = item => {
+                    if (item.objectName === "changedFile")
+                        names.push(item.modelData.name);
+                    for (let i = 0; i < item.children.length; ++i)
+                        walk(item.children[i]);
+                };
+                walk(reply());
+                return names.join(" ");
+            };
+            const folder = name => {
+                let found = null;
+                const walk = item => {
+                    if (item.objectName === "changedFolder" && item.modelData.name === name)
+                        found = item;
+                    for (let i = 0; i < item.children.length && !found; ++i)
+                        walk(item.children[i]);
+                };
+                walk(reply());
+                return found;
+            };
+            compare(files(), "");
+            verify(!isPolishScheduled(folder("__proto__").parent) || waitForPolish(folder("__proto__").parent));
+            mouseClick(folder("__proto__"));
+            tryCompare({ get names() { return files(); } }, "names", "b.ts");
+            verify(!isPolishScheduled(folder("__proto__").parent) || waitForPolish(folder("__proto__").parent));
+            mouseClick(folder("__proto__"));
+            tryCompare({ get names() { return files(); } }, "names", "");
+        }
+
         function test_aFileATurnChangedOpensInTheRightPanel() {
             const view = answeredThread();
             const timeline = list(view);
+            // Its folder is closed until opened.
+            compare(findNamed(timeline.itemAtIndex(1), "changedFile"), null);
+            mouseClick(findNamed(timeline.itemAtIndex(1), "changedFolder"));
+            tryVerify(() => findNamed(timeline.itemAtIndex(1), "changedFile") !== null);
             mouseClick(findNamed(timeline.itemAtIndex(1), "changedFile"));
             let opened = dispatched("panel.open");
             compare(opened.length, 1);

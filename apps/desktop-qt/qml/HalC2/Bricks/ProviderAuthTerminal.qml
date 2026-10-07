@@ -57,6 +57,7 @@ Rectangle {
         foregroundColor: Theme.palette.color("text", "#e4e4e7")
         cursorColor: Theme.palette.color("text", "#e4e4e7")
         selectionColor: Qt.alpha(Theme.palette.color("accent", "#2563eb"), 0.35)
+        Keys.onPressed: event => menu.keyPressed(event)
         onInput: data => Shell.dispatch("providerSettings.signInTerminal", {
             instanceId: root.instanceId,
             data: data

@@ -132,11 +132,15 @@ void collectNamed(QQuickItem* item, const QString& name, QList<QQuickItem*>& out
   for (QQuickItem* child : item->childItems()) collectNamed(child, name, out);
 }
 
-// The open thread as the ThreadView brick draws it; clicks the newest item
-// named `name` that `matches`.
-void clickInThread(World& world, const QString& name, const std::function<bool(QQuickItem*)>& matches) {
+// The open thread as the ThreadView brick draws it.
+Brick& threadBrick(World& world) {
   if (!world.brick) world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nThreadView {}\n", QSize(820, 1200));
-  Brick& brick = *world.brick;
+  return *world.brick;
+}
+
+// Clicks the newest item named `name` that `matches` in the open thread.
+void clickInThread(World& world, const QString& name, const std::function<bool(QQuickItem*)>& matches) {
+  Brick& brick = threadBrick(world);
   QQuickItem* found = nullptr;
   world.waitFor([&] {
     QList<QQuickItem*> items;
@@ -148,6 +152,19 @@ void clickInThread(World& world, const QString& name, const std::function<bool(Q
     return found != nullptr;
   }, QStringLiteral("the thread to draw %1").arg(name));
   QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(found));
+}
+
+// The changed-files rows the open thread draws: its "changedFolder" or
+// "changedFile" names, sorted.
+QStringList changedRows(World& world, const QString& name) {
+  QList<QQuickItem*> items;
+  collectNamed(threadBrick(world).window().contentItem(), name, items);
+  QStringList names;
+  for (QQuickItem* item : std::as_const(items)) names.append(item->property("modelData").toMap().value(QStringLiteral("name")).toString());
+  // Once each: every turn of the thread has a card of its own.
+  names.removeDuplicates();
+  names.sort();
+  return names;
 }
 
 // checkpoint.rollback as the MC does it (lib/hal_c2/orchestration/rollback.ex):
@@ -403,9 +420,23 @@ const Steps steps([] {
     }
   });
   step(QStringLiteral("the user opens %1 from the list of changed files").arg(q), [](World& world, const Captures& c, const Table&) {
-    clickInThread(world, QStringLiteral("changedFile"), [&](QQuickItem* item) { return item->property("modelData").toMap().value(QStringLiteral("path")) == c[0]; });
+    // Its folder is closed until opened; the file is there once placed under it.
+    clickInThread(world, QStringLiteral("changedFoldersToggle"), [](QQuickItem*) { return true; });
+    clickInThread(world, QStringLiteral("changedFile"), [&](QQuickItem* item) { return item->y() > 0 && item->property("modelData").toMap().value(QStringLiteral("path")) == c[0]; });
     world.sync();
     waitForDiff(world);
+  });
+  step(QStringLiteral("the reply lists the folder %1 with its files hidden").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return changedRows(world, QStringLiteral("changedFolder")) == QStringList{c[0]}; },
+                  [&] { return QStringLiteral("the folder %1; the reply lists %2").arg(c[0], changedRows(world, QStringLiteral("changedFolder")).join(QLatin1String(", "))); });
+    expect(changedRows(world, QStringLiteral("changedFile")).isEmpty(), QStringLiteral("the reply lists %1").arg(changedRows(world, QStringLiteral("changedFile")).join(QLatin1String(", "))));
+  });
+  step(QStringLiteral("the user %1 all folders of the changed files").arg(QStringLiteral("(expands|collapses)")), [](World& world, const Captures&, const Table&) {
+    clickInThread(world, QStringLiteral("changedFoldersToggle"), [](QQuickItem*) { return true; });
+  });
+  step(QStringLiteral("%1 and %1 are listed under their folder").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return changedRows(world, QStringLiteral("changedFile")) == QStringList{c[0], c[1]}; },
+                  [&] { return QStringLiteral("both files; the reply lists %1").arg(changedRows(world, QStringLiteral("changedFile")).join(QLatin1String(", "))); });
   });
   step(QStringLiteral("the diff shows only %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectDiffOf(world, {c[0]});

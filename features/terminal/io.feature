@@ -12,6 +12,8 @@
 #   apps/tui/src/hooks/useKeyBindings.ts (terminal key mode)
 #   apps/tui/src/features.backlog.test.ts (terminal-session-actions)
 #   apps/web/src/components/ThreadTerminalDrawer.tsx (copy, paste, clear shortcut, exit handling)
+#   apps/web/src/terminal/ghostty/surface.ts (copy and paste keys)
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalMenu.qml (menu, copy and paste keys)
 #   apps/web/src/components/useThreadTerminalActions.ts
 #   apps/web/src/lib/terminalCloseShortcut.ts
 #   Cross-domain: tui/keymap.feature owns the terminal client's terminal chords.
@@ -198,6 +200,23 @@ Feature: Terminal input and output
         | action | outcome                                   |
         | Copy   | the selected text is on the clipboard      |
         | Paste  | the clipboard text is sent to the shell    |
+
+    @desktop
+    Scenario Outline: The usual copy and paste keys work in the terminal
+      Given the terminal has a selection
+      When the user presses "<keys>" in the terminal
+      Then <outcome>
+
+      Examples:
+        | keys   | outcome                                 |
+        | Ctrl+C | the selected text is on the clipboard   |
+        | Ctrl+V | the clipboard text is sent to the shell |
+
+    @desktop
+    Scenario: Ctrl+C with nothing selected still interrupts the program
+      Given nothing is selected in the terminal
+      When the user presses "Ctrl+C" in the terminal
+      Then the shell receives Ctrl-C
 
     @desktop
     Scenario: Clearing the web terminal asks the shell to redraw

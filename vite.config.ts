@@ -106,6 +106,7 @@ export default defineConfig({
       "apps/desktop-qt/qml/HalC2/Bricks/js/settingsPages.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/settingsRows.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/centreViews.js",
+      "apps/desktop-qt/qml/HalC2/Bricks/js/changedFilesTree.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/scheduledTasks.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/usageChart.js",

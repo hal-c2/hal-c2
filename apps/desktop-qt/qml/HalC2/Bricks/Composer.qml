@@ -244,10 +244,19 @@ Rectangle {
         });
     }
 
-    // A paste too large for the prompt becomes a text file; Paste as Text
-    // (mod+shift+V) keeps it in the editor.
+    // A copied picture is attached, and so are copied files when there is no
+    // text to paste instead (Shell.clipboardFiles). A paste too large for the
+    // prompt becomes a text file; Paste as Text (mod+shift+V) keeps it in the
+    // editor.
     function paste(asText) {
         const text = Shell.clipboardText();
+        const files = asText ? [] : Shell.clipboardFiles();
+        if (files.length > 0) {
+            Shell.dispatch("composer.attach", {
+                files: files
+            });
+            return true;
+        }
         if (text.length === 0) return false;
         const selected = input.selectionEnd - input.selectionStart;
         if (!asText && Shell.pasteAttaches(text, input.length - selected)) {
@@ -896,6 +905,10 @@ Rectangle {
                             if (event.accepted) return;
                             if (event.key === Qt.Key_V && (event.modifiers & ~Qt.ShiftModifier) === Qt.ControlModifier) {
                                 event.accepted = composer.paste((event.modifiers & Qt.ShiftModifier) !== 0);
+                                if (event.accepted) return;
+                            } else if (event.matches(StandardKey.Paste)) {
+                                // Shift+Insert and the platform's other paste keys.
+                                event.accepted = composer.paste(false);
                                 if (event.accepted) return;
                             }
                             if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
