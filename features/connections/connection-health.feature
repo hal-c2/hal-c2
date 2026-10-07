@@ -13,6 +13,8 @@
 #   apps/mobile/src/features/connection/ConnectionStatusDot.tsx, connectionTone.ts,
 #     EnvironmentConnectionNotice.tsx, ConnectionTraceId.tsx
 #   apps/tui/src/connection.ts
+#   apps/desktop-qt/src/native/ConnectionHealthController.cpp (the device's network: the system's
+#     reachability held against its interfaces, hal-c2/hal-c2#69)
 #   apps/tui/src/features.backlog.test.ts (environment-connections)
 #   apps/desktop-qt/src/native/McClient.cpp, ThreadStore.cpp, ShellStore.cpp (each `sub` says where it resumes from)
 #   Shared domain: tui/reconnect.feature holds the terminal client's reconnects;
@@ -40,6 +42,48 @@ Feature: Connection health
     Given the device has no network
     When the connection drops
     Then the client waits for the network to return before trying again
+
+  # Whether the device has a network is the system's word, held against its interfaces:
+  # Android says disconnected when any one network is lost, the one a phone just left for
+  # another included (hal-c2/hal-c2#69). Only an environment on another machine needs a
+  # network, and which machine it is on is asked again whenever the client is opened.
+  @desktop @mobile @backlog-mobile
+  Scenario: A device that lost one of its two networks keeps trying
+    Given the environment is on another machine
+    And the environment stops answering
+    When the device loses one of its two networks
+    And the connection drops
+    Then the client keeps retrying
+    And does not say the device is offline
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A device that lost every network waits and says it is offline
+    Given the environment is on another machine
+    When the device loses every network
+    And the connection drops
+    Then the client waits for the network
+    And says the device is offline
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A network that comes back is tried at once
+    Given the environment is on another machine
+    And the client is waiting for the network
+    When a network comes back
+    Then it tries again at once
+
+  @desktop @mobile @backlog-mobile
+  Scenario: An environment on this machine is reached without a network
+    Given the environment is on another machine
+    And the client is waiting for the network
+    When the user pairs the client with an environment on this machine
+    Then it connects at once
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A client opened without a network waits for it
+    Given the device loses every network
+    When the client is opened at an environment on another machine
+    Then the client waits for the network
+    And says the device is offline
 
   @desktop @mobile @backlog-mobile
   Scenario: A refused credential waits for the user

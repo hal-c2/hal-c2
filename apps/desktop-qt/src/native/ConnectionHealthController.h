@@ -52,6 +52,19 @@ public:
   void setClipboardWriter(std::function<bool(const QString&)> write) { m_writeClipboard = std::move(write); }
   // What `connection.pair` says this client is; the desktop unless told.
   void setPairingClient(const pairing::Client& client) { m_pairingClient = client; }
+  // What says whether this device has a network: `disconnected` is the
+  // system's word for it, and `interfaceUp` whether an interface besides
+  // loopback is up with an address, which overrules it (Android says
+  // disconnected when any one network is lost). QNetworkInformation and
+  // QNetworkInterface unless tests say.
+  struct Network {
+    std::function<bool()> disconnected;
+    std::function<bool()> interfaceUp;
+  };
+  void setNetwork(Network network) { m_network = std::move(network); }
+  // The network changed, or the MC the client is opened at: says again whether
+  // the client is online (McClient::setOnline), and wakes it when it is.
+  void networkChanged();
 
   // Whether a server on `server` is behind a client on `client` (apps/web
   // versionSkew.ts): two nightlies compare whole, anything else by its core
@@ -70,6 +83,7 @@ private:
   ShellStore* m_store;
   QNetworkAccessManager* m_http = nullptr;
   std::function<bool(const QString&)> m_writeClipboard;
+  Network m_network;
   pairing::Client m_pairingClient{QStringLiteral("HAL-C2 desktop"), QStringLiteral("desktop"), {}};
   QString m_clientVersion;
   // The store's snapshot count when the socket last became ready: the

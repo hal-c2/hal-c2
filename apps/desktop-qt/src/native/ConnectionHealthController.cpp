@@ -107,6 +107,7 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
         QGuiApplication::clipboard()->setText(text);
         return true;
       }),
+      m_network{[] { return false; }, hasNetwork},
       m_clientVersion(QCoreApplication::applicationVersion()) {
   connect(client, &McClient::phaseChanged, this, &ConnectionHealthController::update);
   connect(client, &McClient::readyChanged, this, [this](bool ready) {
@@ -121,19 +122,27 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
       if (state == Qt::ApplicationActive) m_client->wake();
     });
   }
-  // A remote MC is not retried while this device has no network, and is
-  // tried at once when it returns. The MC on this machine needs none.
   if (QNetworkInformation::loadDefaultBackend()) {
     QNetworkInformation* network = QNetworkInformation::instance();
-    connect(network, &QNetworkInformation::reachabilityChanged, this, [this](QNetworkInformation::Reachability reachability) {
-      const QString host = m_client->origin().host();
-      const bool local = host == QLatin1String("localhost") || QHostAddress(host).isLoopback();
-      const bool online = local || reachability != QNetworkInformation::Reachability::Disconnected || hasNetwork();
-      m_client->setOnline(online);
-      if (online) m_client->wake();
-    });
+    m_network.disconnected = [network] { return network->reachability() == QNetworkInformation::Reachability::Disconnected; };
+    connect(network, &QNetworkInformation::reachabilityChanged, this, &ConnectionHealthController::networkChanged);
+  }
+  // The MC the client is opened at may be on this machine where the last one
+  // was not, or the other way round.
+  if (auto* shell = qobject_cast<NativeShell*>(parent)) {
+    connect(shell, &NativeShell::opened, this, &ConnectionHealthController::networkChanged);
   }
   update();
+}
+
+// A remote MC is not retried while this device has no network, and is tried
+// at once when it returns. The MC on this machine needs none.
+void ConnectionHealthController::networkChanged() {
+  const QString host = m_client->origin().host();
+  const bool local = host == QLatin1String("localhost") || QHostAddress(host).isLoopback();
+  const bool online = local || !m_network.disconnected() || m_network.interfaceUp();
+  m_client->setOnline(online);
+  if (online) m_client->wake();
 }
 
 void ConnectionHealthController::activate() {
